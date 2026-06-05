@@ -169,19 +169,19 @@
   - **验证**: `bash extensions/satellite/build.sh && echo OK`
   - **依赖**: 1.1, 1.4, 2.6, 3.2, 4.5, 5.2
 
-- [ ] 7.2 **Run full test suite**
+- [x] 7.2 **Run full test suite**
   - **文件**: all unit tests
   - **内容**: All bun:test cases pass.
   - **验证**: `bun test extensions/satellite/` exits 0
   - **依赖**: 7.1
 
-- [ ] 7.3 **Run repo-wide lint + typecheck (canonical command)**
+- [x] 7.3 **Run repo-wide lint + typecheck (canonical command)**
   - **文件**: all modified files
   - **内容**: Use the repo's canonical check command.
   - **验证**: `npm run check` exits 0
   - **依赖**: 7.1
 
-- [ ] 7.4 **Run repo-wide typecheck**
+- [x] 7.4 **Run repo-wide typecheck**
   - **文件**: all modified files
   - **内容**: `tsgo --noEmit` passes.
   - **验证**: `npx tsgo --noEmit` exits 0
