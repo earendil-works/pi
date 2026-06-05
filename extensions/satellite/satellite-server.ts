@@ -725,8 +725,9 @@ async function handleListDir(args: { path: string; limit?: number }, sessionId: 
 
 // Run fd to search for files. Returns relative paths (mirroring local pi
 // find tool). Errors from fd are surfaced; missing-fd is detected from
-// spawn ENOENT in proc.on("error").
-async function runFd(pattern: string, searchPath: string, limit: number): Promise<{ output: string; truncated: boolean; fdMissing: boolean }> {
+// spawn ENOENT in proc.on("error"). Honors abortSignal so agent Ctrl-C
+// doesn't leave a runaway fd process.
+async function runFd(pattern: string, searchPath: string, limit: number, abortSignal?: AbortSignal): Promise<{ output: string; truncated: boolean; fdMissing: boolean }> {
   return new Promise((resolve) => {
     // Build fd args. --full-path is required when pattern contains "/" so
     // path-containing patterns like "src/**/*.ts" match correctly.
@@ -750,7 +751,18 @@ async function runFd(pattern: string, searchPath: string, limit: number): Promis
     const proc = spawn("fd", args, { stdio: ["ignore", "pipe", "pipe"] });
     const lines: string[] = [];
     let stderr = "";
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (!proc.killed) proc.kill();
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) stop();
+      else abortSignal.addEventListener("abort", stop, { once: true });
+    }
     proc.stdout?.on("data", (chunk: Buffer) => {
+      if (stopped) return;
       for (const line of chunk.toString().split("\n")) {
         if (line) lines.push(line);
       }
@@ -778,7 +790,7 @@ async function runFd(pattern: string, searchPath: string, limit: number): Promis
   });
 }
 
-export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }, sessionId: number | string = 0) {
+export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }, sessionId: number | string = 0, abortSignal?: AbortSignal) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
   const limit = args.limit || 1000;
@@ -790,7 +802,7 @@ export async function handleFindFiles(args: { pattern: string; path?: string; li
     return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
   }
 
-  const result = await runFd(args.pattern, safePath, limit);
+  const result = await runFd(args.pattern, safePath, limit, abortSignal);
 
   if (result.fdMissing) {
     log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`, String(sessionId));
@@ -814,7 +826,8 @@ function truncateLine(line: string): string {
 
 // Run rg to search file contents. Returns line-formatted matches; truncates
 // per-line to GREP_MAX_LINE_LENGTH; kills rg early when limit is reached
-// (mirrors local pi grep tool).
+// (mirrors local pi grep tool). Honors abortSignal so agent Ctrl-C doesn't
+// leave a runaway rg process.
 async function runRg(
   pattern: string,
   searchPath: string,
@@ -823,6 +836,7 @@ async function runRg(
   ignoreCase: boolean,
   literal: boolean,
   context: number,
+  abortSignal?: AbortSignal,
 ): Promise<{ output: string; truncated: boolean; rgMissing: boolean; limitReached: boolean }> {
   return new Promise((resolve) => {
     const args: string[] = ["--no-heading", "--line-number", "--color=never", "--hidden"];
@@ -836,8 +850,19 @@ async function runRg(
     const lines: string[] = [];
     let stderr = "";
     let killedDueToLimit = false;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (!proc.killed) proc.kill();
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) stop();
+      else abortSignal.addEventListener("abort", stop, { once: true });
+    }
 
     proc.stdout?.on("data", (chunk: Buffer) => {
+      if (stopped) return;
       for (const line of chunk.toString().split("\n")) {
         if (!line) continue;
         if (lines.length >= limit) {
@@ -876,6 +901,7 @@ export async function handleGrepFiles(
     context?: number;
   },
   sessionId: number | string = 0,
+  abortSignal?: AbortSignal,
 ) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
@@ -892,7 +918,7 @@ export async function handleGrepFiles(
     return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
   }
 
-  const result = await runRg(args.pattern, safePath, glob, limit, ignoreCase, literal, context);
+  const result = await runRg(args.pattern, safePath, glob, limit, ignoreCase, literal, context, abortSignal);
 
   if (result.rgMissing) {
     log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`, String(sessionId));
@@ -931,8 +957,8 @@ const TOOL_HANDLERS: Record<string, (
     progressCtx,
   ),
   list_dir: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
-  find_files: (args, _s, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid),
-  grep_files: (args, _s, _p, sid) => handleGrepFiles(
+  find_files: (args, abortSignal, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid, abortSignal),
+  grep_files: (args, abortSignal, _p, sid) => handleGrepFiles(
     args as {
       pattern: string;
       path?: string;
@@ -943,6 +969,7 @@ const TOOL_HANDLERS: Record<string, (
       context?: number;
     },
     sid,
+    abortSignal,
   ),
   transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sid),
 };
