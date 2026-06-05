@@ -31,6 +31,7 @@ import { join, dirname, resolve, basename } from "node:path";
 import { appendFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
+import { REMOTE_EXEC_INPUT_SCHEMA } from "./schema.ts";
 import {
   canonicalize,
   isParentTraversal,
@@ -194,54 +195,9 @@ export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
   }),
 ]);
 
-/**
- * Flat schema for MCP `tools/list` introspection.
- *
- * The MCP SDK's `normalizeObjectSchema` discards `z.discriminatedUnion` and `z.union`
- * (it only recognizes `z.object` with a `.shape` field), so registering the strict
- * REMOTE_EXEC_SCHEMA directly produces an empty `{ type: "object", properties: {} }`
- * in the tools/list response — agents cannot discover sub-ops from it.
- *
- * This flat z.object exposes all sub-op names via the `tool` enum so the agent
- * can see the discriminated union's variants. Runtime validation in
- * `REMOTE_EXEC_SCHEMA` is unaffected — we still call `.parse(args)` against the
- * strict schema inside the handler, so this is a display-only fallback.
- */
-export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
-  tool: z.enum([
-    "bash",
-    "read_file",
-    "write_file",
-    "edit_file",
-    "list_dir",
-    "find_files",
-    "grep_files",
-    "transfer_file",
-  ]),
-  command: z.string().optional(),
-  timeout: z.number().optional(),
-  cwd: z.string().optional(),
-  // Apply the same defaults as REMOTE_EXEC_SCHEMA so the MCP SDK's
-  // pre-validation (using this flat schema) matches runtime behavior.
-  path: z.string().optional().default("."),
-  offset: z.number().optional(),
-  limit: z.number().optional().default(500),
-  content: z.string().optional(),
-  edits: z.array(z.object({
-    oldText: z.string(),
-    newText: z.string(),
-  })).optional(),
-  pattern: z.string().optional(),
-  glob: z.string().optional(),
-  ignoreCase: z.boolean().optional(),
-  literal: z.boolean().optional(),
-  context: z.number().optional(),
-  direction: z.enum(["remote_to_local", "local_to_remote"]).optional(),
-  local_path: z.string().optional(),
-  remote_path: z.string().optional(),
-}).passthrough(); // Accept unknown root keys (e.g. nested "args" wrapper) so
-                 // our handler can return a guidance error instead of the
-                 // SDK's terse "root: must not have additional properties".
+// REMOTE_EXEC_INPUT_SCHEMA is imported from ./schema.ts — kept separate so
+// the personal-assistant client can import it for e2e tests of the
+// transfer_file hook (validating against the real schema, not a copy).
 
 // ============================================================================
 // Progress Context (for keepalive heartbeat during long-running tools)

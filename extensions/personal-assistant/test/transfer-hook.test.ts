@@ -6,6 +6,7 @@ import {
 	interceptTransferCall,
 	interceptTransferResult,
 } from "../tools.ts";
+import { REMOTE_EXEC_INPUT_SCHEMA } from "../../satellite/schema.ts";
 
 describe("interceptTransferCall (to_remote — inject content)", () => {
 	let tmpDir: string;
@@ -69,6 +70,42 @@ describe("interceptTransferCall (to_remote — inject content)", () => {
 			input: { tool: "read_file", path: "/x" },
 		};
 		expect(await interceptTransferCall(event)).toBeUndefined();
+	});
+
+	// e2e: the post-hook payload must validate against the server's actual
+	// input schema. We import the schema (not duplicate it) so this test
+	// catches field-name drift between client hook and server.
+	it("post-hook payload (to_remote) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
+		const file1 = join(tmpDir, "local.txt");
+		writeFileSync(file1, "hello world", "utf-8");
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "to_remote", file1, file2: "/hpc/remote.txt" },
+		};
+		await interceptTransferCall(event);
+		const result = REMOTE_EXEC_INPUT_SCHEMA.safeParse(event.input);
+		if (!result.success) {
+			throw new Error(`Hook left invalid payload on the wire: ${result.error.message}`);
+		}
+		expect(result.success).toBe(true);
+	});
+
+	it("post-hook payload (to_local) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: {
+				tool: "transfer_file",
+				direction: "to_local",
+				file1: "/local/out.txt",
+				file2: "/hpc/remote.txt",
+			},
+		};
+		await interceptTransferCall(event);
+		const result = REMOTE_EXEC_INPUT_SCHEMA.safeParse(event.input);
+		if (!result.success) {
+			throw new Error(`Hook left invalid payload on the wire: ${result.error.message}`);
+		}
+		expect(result.success).toBe(true);
 	});
 });
 

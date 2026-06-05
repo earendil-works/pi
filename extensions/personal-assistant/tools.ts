@@ -348,28 +348,57 @@ async function writeFileForTransfer(localPath: string, content: string): Promise
 }
 
 /**
- * `before_tool_call` hook for transfer_file. Mutates event.input in place to
- * inject content for to_remote. Returns `{block, reason}` to surface errors.
+ * `before_tool_call` hook for transfer_file. Mutates event.input in place to:
+ *   - inject `content` for to_remote
+ *   - translate field names (file1→local_path, file2→remote_path,
+ *     direction "to_remote"/"to_local" → "local_to_remote"/"remote_to_local")
+ *     so the post-hook payload validates against the server's
+ *     REMOTE_EXEC_INPUT_SCHEMA (see extensions/satellite/schema.ts)
+ *
+ * Returns `{block, reason}` to surface errors.
  */
 export async function interceptTransferCall(
 	event: { toolName: string; input: Record<string, unknown> },
 ): Promise<{ block: true; reason: string } | undefined> {
 	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
 	if (event.input.tool !== "transfer_file") return undefined;
-	if (event.input.direction !== "to_remote") return undefined;
 
+	const direction = event.input.direction;
 	const file1 = String(event.input.file1 ?? "");
-	if (!file1) return undefined;
+	const file2 = String(event.input.file2 ?? "");
 
-	const result = await readFileForTransfer(file1);
-	if (!result.ok) {
-		return {
-			block: true,
-			reason: `transfer_file(to_remote) failed: cannot read '${file1}': ${result.error}`,
-		};
+	if (direction === "to_remote") {
+		if (!file1) {
+			return {
+				block: true,
+				reason: "transfer_file(to_remote) failed: missing file1 (local path)",
+			};
+		}
+		const result = await readFileForTransfer(file1);
+		if (!result.ok) {
+			return {
+				block: true,
+				reason: `transfer_file(to_remote) failed: cannot read '${file1}': ${result.error}`,
+			};
+		}
+		event.input.content = result.content;
+		event.input.local_path = file1;
+		event.input.remote_path = file2;
+		event.input.direction = "local_to_remote";
+		delete event.input.file1;
+		delete event.input.file2;
+		return undefined;
 	}
 
-	event.input.content = result.content;
+	if (direction === "to_local") {
+		event.input.local_path = file1;
+		event.input.remote_path = file2;
+		event.input.direction = "remote_to_local";
+		delete event.input.file1;
+		delete event.input.file2;
+		return undefined;
+	}
+
 	return undefined;
 }
 
