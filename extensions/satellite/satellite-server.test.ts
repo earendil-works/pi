@@ -6,6 +6,61 @@ import { z } from "zod/v3";
 import * as satellite from "./satellite-server.ts";
 
 // =============================================================================
+// detectIntent direct unit tests (covers S2, S3, S4, S5, S6, S18)
+// =============================================================================
+
+describe("detectIntent", () => {
+  // S2: cat <path> → read_file
+  it("a: cat /foo/x.txt → read_file", () => {
+    expect(satellite.detectIntent("cat /foo/x.txt")).toBe("read_file");
+  });
+
+  // S18: any cat with single file path triggers read_file
+  it("a2: cat /home/user/TJPROJ-backup/notes.md → read_file (path-agnostic)", () => {
+    expect(satellite.detectIntent("cat /home/user/TJPROJ-backup/notes.md")).toBe("read_file");
+  });
+
+  // S3: sed -i → edit_file
+  it("b: sed -i 's/a/b/' /foo/x → edit_file", () => {
+    expect(satellite.detectIntent("sed -i 's/a/b/' /foo/x")).toBe("edit_file");
+  });
+
+  // S4: echo > /path → write_file
+  it("c: echo 'x' > /foo/y → write_file", () => {
+    expect(satellite.detectIntent("echo 'x' > /foo/y")).toBe("write_file");
+  });
+
+  it("c2: printf 'x' > /foo/y → write_file", () => {
+    expect(satellite.detectIntent("printf 'x' > /foo/y")).toBe("write_file");
+  });
+
+  // S5: find → find_files
+  it("d: find /foo -name '*.ts' → find_files", () => {
+    expect(satellite.detectIntent("find /foo -name '*.ts'")).toBe("find_files");
+  });
+
+  // S6/S18 (negative): grep → grep_files
+  it("e: grep -r foo /bar → grep_files", () => {
+    expect(satellite.detectIntent("grep -r foo /bar")).toBe("grep_files");
+  });
+
+  // S6: legitimate bash → null
+  it("f: ls -la /foo → null (legitimate)", () => {
+    expect(satellite.detectIntent("ls -la /foo")).toBe(null);
+  });
+
+  // S18: pipeline → null (cat inside pipe, not a direct read)
+  it("g: cat file1 file2 | grep x → null (pipeline)", () => {
+    expect(satellite.detectIntent("cat file1 file2 | grep x")).toBe(null);
+  });
+
+  // S18: stdin redirect → null
+  it("h: cat < input.txt → null (stdin redirect)", () => {
+    expect(satellite.detectIntent("cat < input.txt")).toBe(null);
+  });
+});
+
+// =============================================================================
 // transfer_file tests
 // =============================================================================
 
@@ -506,8 +561,7 @@ describe("REMOTE_EXEC_SCHEMA - list_dir path optional", () => {
       expect(result.data.limit).toBe(500); // default limit
     }
   });
-
-  it("list_dir with explicit path works correctly", () => {
+it("list_dir with explicit path works correctly", () => {
     const schema = (satellite as any).REMOTE_EXEC_SCHEMA;
     const result = schema.safeParse({ tool: "list_dir", path: "/tmp" });
     expect(result.success).toBe(true);
@@ -526,6 +580,14 @@ describe("REMOTE_EXEC_SCHEMA - list_dir path optional", () => {
       expect(result.data.path).toBe("."); // default path
       expect(result.data.limit).toBe(100);
     }
+  });
+
+  // S20: bash missing command → zod validation fails
+  it("S20: bash with no command field fails schema validation", () => {
+    const schema = (satellite as any).REMOTE_EXEC_SCHEMA;
+    expect(schema).toBeDefined();
+    const result = schema.safeParse({ tool: "bash" });
+    expect(result.success).toBe(false);
   });
 });
 
