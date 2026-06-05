@@ -27,8 +27,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { readdir, readFile, writeFile, mkdir, stat, realpath, open } from "node:fs/promises";
-import { join, dirname, resolve } from "node:path";
-import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, dirname, resolve, basename } from "node:path";
+import { appendFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
 
@@ -40,13 +40,14 @@ import { z } from "zod/v3";
  * Detects file operation intent from bash commands.
  * Order matters: first match wins.
  */
-export function detectIntent(command: string): "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | null {
+export function detectIntent(command: string): "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | "list_dir" | null {
   // Guard: reject pipeline/redirect commands (not direct file ops)
   // Do this BEFORE grep/find patterns but AFTER write_file (which uses > redirect)
   if (/[|<]/.test(command)) return null;
   if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read_file";
   if (/^sed\s+-i\b/.test(command)) return "edit_file";
   if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
+  if (/^(ls|ll|dir)\b/.test(command)) return "list_dir";
   if (/\bfind\s+/.test(command)) return "find_files";
   if (/\bgrep\s+/.test(command)) return "grep_files";
   return null;
@@ -56,7 +57,7 @@ export function detectIntent(command: string): "read_file" | "edit_file" | "writ
 // Guardrail Retry Counter (per-turn, per-intent)
 // ============================================================================
 
-export type GuardrailIntent = "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files";
+export type GuardrailIntent = "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | "list_dir";
 export type TurnId = number | string;
 
 const guardrailCounters = new Map<TurnId, Partial<Record<GuardrailIntent, number>>>();
@@ -96,6 +97,8 @@ function getGuidanceMessage(intent: GuardrailIntent, command: string): string {
       return `Prefer find_files over bash find. Use tool=find_files, pattern='<glob>', path='${path}' for fd with proper limit/truncation.`;
     case "grep_files":
       return `Prefer grep_files over bash grep. Use tool=grep_files, pattern='<regex>', path='${path}' for rg with proper limit/truncation.`;
+    case "list_dir":
+      return `Prefer list_dir over bash ls. Use tool=list_dir, path='${command.match(/(?:^|\s)(?:\/[\w./-]+|~[^\s]*|\.[^\s]*)/)?.[0] ?? path}' for structured output, entry limit, and shell-escape safety.`;
   }
 }
 
@@ -103,8 +106,26 @@ function getGuidanceMessage(intent: GuardrailIntent, command: string): string {
 // Config
 // ============================================================================
 
+const VERSION = "3.0.0";
 const TOKEN = process.env.SATELLITE_TOKEN || "";
 const PORT = parseInt(process.env.SATELLITE_PORT || "29001", 10);
+const RAW_PATH_PATTERN = process.env.SATELLITE_PATH_PATTERN || "";
+const REMOTE_PATH_PATTERN: RegExp | null = RAW_PATH_PATTERN
+  ? new RegExp(RAW_PATH_PATTERN)
+  : null;
+const SESSION_TTL_MS = 10 * 60 * 1000; // 10 min — sweep stale sessions on access
+const DEFAULT_BASH_TIMEOUT_SEC = 30;
+
+// --version short-circuit (before token check so it works in CI)
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  console.log(`satellite-server v${VERSION}`);
+  process.exit(0);
+}
+
+if (!TOKEN) {
+  console.error("ERROR: SATELLITE_TOKEN environment variable is required");
+  process.exit(1);
+}
 
 if (!TOKEN) {
   console.error("ERROR: SATELLITE_TOKEN environment variable is required");
@@ -112,18 +133,132 @@ if (!TOKEN) {
 }
 
 // ============================================================================
+// Path Scope (Layer B — server-side enforcement of remotePathPattern)
+// ============================================================================
+
+/**
+ * Server-side enforcement of the path pattern declared in mcp.json.
+ * Mirrors the client-side `remotePathPattern` (Layer A) so that a jailbroken
+ * or hallucinating model cannot read/write outside the intended scope.
+ *
+ * Behavior:
+ * - No pattern set → no enforcement (backward compatible).
+ * - Resolves the path to its absolute, symlink-free form (realpath), then
+ *   tests the regex. `..` traversal and symlink redirects are caught here
+ *   because realpath collapses them before the regex runs.
+ * - For non-existent paths (e.g. write_file to a new file), falls back to
+ *   resolve() and validates the *parent directory* instead, so an attacker
+ *   can't claim a new path under /etc/.
+ *
+ * Returns the safe (resolved) path on success. Throws on violation so the
+ * per-handler try/catch turns it into a guidance error.
+ */
+async function ensureRemotePath(inputPath: string): Promise<string> {
+  if (!REMOTE_PATH_PATTERN) return inputPath;
+
+  const resolveTarget = async (p: string): Promise<string> => {
+    const real = await realpath(p).catch(() => resolve(p));
+    return real;
+  };
+
+  // Try the path itself first.
+  let target = await resolveTarget(inputPath);
+  let realExists = existsSync(target);
+
+  if (!realExists) {
+    // File doesn't exist yet (e.g. write_file creating a new file).
+    // Validate the parent directory against the pattern instead, so the
+    // new file inherits the parent's scope.
+    const parent = dirname(target);
+    if (parent && parent !== target) {
+      const parentReal = await realpath(parent).catch(() => resolve(parent));
+      target = `${parentReal}/${basename(target)}`;
+    }
+  }
+
+  if (!REMOTE_PATH_PATTERN.test(target)) {
+    throw new Error(
+      `Path access denied: '${target}' is outside the allowed scope ` +
+      `(pattern: ${RAW_PATH_PATTERN}). Configure the satellite server with ` +
+      `a broader SATELLITE_PATH_PATTERN, or use bash to access this path.`
+    );
+  }
+  return target;
+}
+
+/**
+ * Scan a bash command for path-like tokens and validate each one against
+ * the pattern. Returns the first violation found, or null if clean.
+ * Conservative — matches absolute paths and `~user` / `~/...` prefixes.
+ */
+async function validateBashCommand(command: string): Promise<string | null> {
+  if (!REMOTE_PATH_PATTERN) return null;
+
+  // Skip when shell-builtin / assignment / variable expansion (so we don't
+  // false-positive on $PATH, ${HOME}, etc.)
+  // Match: /<word>(/<word>)* or ~/... or ~<user>/...
+  const candidates = new Set<string>();
+  const abs = command.match(/(?<![\w/$\\])(\/[\w.\-]+(?:\/[\w.\-]+)*)/g) ?? [];
+  for (const a of abs) candidates.add(a);
+  const home = command.match(/(?<![\w]~)(~(?:\/[\w.\-]+(?:[\w.\-/]+)?|[A-Za-z0-9_]+(?:[\w.\-/]+)?))/g) ?? [];
+  for (const h of home) candidates.add(h);
+
+  for (const c of candidates) {
+    try {
+      // For ~ we expand manually since bash -c would do it at runtime.
+      const expanded = c.startsWith("~")
+        ? c.replace(/^~/, process.env.HOME ?? "")
+        : c;
+      const real = await realpath(expanded).catch(() => resolve(expanded));
+      if (!REMOTE_PATH_PATTERN.test(real)) {
+        return `Path access denied: '${real}' (from '${c}' in command) is outside the allowed scope ` +
+               `(pattern: ${RAW_PATH_PATTERN}).`;
+      }
+    } catch { /* ignore individual failures, keep scanning */ }
+  }
+  return null;
+}
+
+// ============================================================================
 // Logging
 // ============================================================================
 
 const LOG_FILE = "/tmp/satellite.log";
+const LOG_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 try { mkdirSync("/tmp", { recursive: true }); } catch { /* ignore */ }
 
-function log(msg: string): void {
+let logBytes = 0;
+
+/**
+ * Mask obvious secrets (private keys, bearer tokens, KEY=VAL env pairs,
+ * password=...) in log output. The remote server's stdout/stderr gets
+ * captured to /tmp/satellite-stdout.log, so any literal the user echoes
+ * via bash(cat ~/.ssh/id_rsa) would otherwise land in the log on disk.
+ */
+function scrubSecrets(s: string): string {
+  return s
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[PRIVATE_KEY]")
+    .replace(/\/\.ssh\/id_[a-z0-9_]+/gi, "/.ssh/id_[REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]")
+    .replace(/(?<![\w.])([A-Z][A-Z0-9_]{2,})=([^\s,;&|]+)/g, "$1=[REDACTED]")
+    .replace(/(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*([^\s,;&|]+)/gi, "$1=[REDACTED]");
+}
+
+function log(msg: string, sessionId?: string): void {
   const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
-  const line = `[${ts}] ${msg}`;
+  const prefix = sessionId ? ` session=${sessionId.slice(0, 8)}` : "";
+  const line = `[${ts}]${prefix} ${scrubSecrets(msg)}`;
   console.error(line);
-  try { appendFileSync(LOG_FILE, line + "\n"); } catch { /* ignore */ }
+  try {
+    if (logBytes > LOG_MAX_BYTES) {
+      // Truncate log file when it grows past the cap (cheap rotation)
+      try { unlinkSync(LOG_FILE); } catch { /* ignore */ }
+      logBytes = 0;
+    }
+    appendFileSync(LOG_FILE, line + "\n");
+    logBytes += Buffer.byteLength(line, "utf-8") + 1;
+  } catch { /* ignore */ }
 }
 
 // ============================================================================
@@ -573,10 +708,11 @@ const TOOL_SCHEMAS = {
 // Tool Handlers
 // ============================================================================
 
-async function handleReadFile(args: { path: string; offset?: number; limit?: number }) {
+async function handleReadFile(args: { path: string; offset?: number; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    let content = await readFile(args.path, "utf-8");
+    const safePath = await ensureRemotePath(args.path);
+    let content = await readFile(safePath, "utf-8");
 
     if (content.charCodeAt(0) === 0xFEFF) {
       content = content.slice(1);
@@ -596,73 +732,76 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
       continuation = `\n[${lines.length - endLine} more lines. Use offset=${endLine + 1} to continue.]`;
     }
 
-    log(`read_file ${args.path} → ok ${Date.now() - t0}ms (${content.length} bytes${result.truncated ? `, truncated: ${result.outputLines}/${result.totalLines} lines` : ""})`);
+    log(`read_file ${args.path} → ok ${Date.now() - t0}ms (${content.length} bytes${result.truncated ? `, truncated: ${result.outputLines}/${result.totalLines} lines` : ""})`, String(sessionId));
     return { content: textContent(result.text + continuation) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log(`read_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`);
+    log(`read_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
     return { content: textContent(`Error: ${msg}`), isError: true };
   }
 }
 
-async function handleWriteFile(args: { path: string; content: string }) {
+async function handleWriteFile(args: { path: string; content: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    return await withFileQueue(args.path, async () => {
-      await mkdir(dirname(args.path), { recursive: true });
-      await writeFile(args.path, args.content, "utf-8");
+    const safePath = await ensureRemotePath(args.path);
+    return await withFileQueue(safePath, async () => {
+      await mkdir(dirname(safePath), { recursive: true });
+      await writeFile(safePath, args.content, "utf-8");
       const bytes = Buffer.byteLength(args.content, "utf-8");
-      log(`write_file ${args.path} → ok ${Date.now() - t0}ms (${bytes} bytes)`);
+      log(`write_file ${args.path} → ok ${Date.now() - t0}ms (${bytes} bytes)`, String(sessionId));
       return { content: textContent(`Successfully wrote ${bytes} bytes to ${args.path}`) };
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log(`write_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`);
+    log(`write_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
     return { content: textContent(`Error: ${msg}`), isError: true };
   }
 }
 
-export async function handleTransferFile(args: { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }) {
+export async function handleTransferFile(args: { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
+  // Echo direction/paths in the response so the model can self-verify it
+  // didn't get direction/local/remote mixed up. Most common confusion:
+  // `direction: "upload"` actually reads from remote_path, with the
+  // agent writing the returned content to local_path on its own machine.
+  const echo = `direction=${args.direction}, local=${args.local_path}, remote=${args.remote_path}\n`;
 
-  if (args.direction === "upload") {
-    // upload: server reads remote_path and returns content (agent writes to local_path)
-    try {
-      const content = await readFile(args.remote_path, "utf-8");
-      log(`transfer_file upload ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`);
-      return { content: textContent(content) };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(`transfer_file upload ${args.remote_path} → error ${Date.now() - t0}ms: ${msg}`);
-      return { content: textContent(`Error: ${msg}`), isError: true };
-    }
-  } else {
-    // download: agent must pass `content` field; server writes to remote_path
-    if (args.content === undefined) {
-      return { content: textContent("Error: download requires content field"), isError: true };
-    }
-    const content = args.content; // capture after guard
-    try {
-      return await withFileQueue(args.remote_path, async () => {
-        await mkdir(dirname(args.remote_path), { recursive: true });
-        await writeFile(args.remote_path, content, "utf-8");
+  try {
+    const safeRemote = await ensureRemotePath(args.remote_path);
+    if (args.direction === "upload") {
+      // upload: server reads remote_path and returns content (agent writes to local_path)
+      const content = await readFile(safeRemote, "utf-8");
+      log(`transfer_file upload ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`, String(sessionId));
+      return { content: textContent(echo + content) };
+    } else {
+      // download: agent must pass content field; server writes to remote_path
+      if (args.content === undefined) {
+        return { content: textContent(echo + "Error: download requires content field"), isError: true };
+      }
+      const content = args.content;
+      const result = await withFileQueue(safeRemote, async () => {
+        await mkdir(dirname(safeRemote), { recursive: true });
+        await writeFile(safeRemote, content, "utf-8");
         const bytes = Buffer.byteLength(content, "utf-8");
-        log(`transfer_file download ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`);
-        return { content: textContent(`Successfully wrote ${bytes} bytes to ${args.remote_path}`) };
+        log(`transfer_file download ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`, String(sessionId));
+        return { content: textContent(echo + `Successfully wrote ${bytes} bytes to ${args.remote_path}`) };
       });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(`transfer_file download ${args.remote_path} → error ${Date.now() - t0}ms: ${msg}`);
-      return { content: textContent(`Error: ${msg}`), isError: true };
+      return result;
     }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log(`transfer_file ${args.direction} ${args.remote_path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
+    return { content: textContent(echo + `Error: ${msg}`), isError: true };
   }
 }
 
-async function handleEditFile(args: { path: string; edits: Array<{ oldText: string; newText: string }> }) {
+async function handleEditFile(args: { path: string; edits: Array<{ oldText: string; newText: string }> }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    return await withFileQueue(args.path, async () => {
-      let content = await readFile(args.path, "utf-8");
+    const safePath = await ensureRemotePath(args.path);
+    return await withFileQueue(safePath, async () => {
+      let content = await readFile(safePath, "utf-8");
 
       const hasBOM = content.charCodeAt(0) === 0xFEFF;
       if (hasBOM) content = content.slice(1);
@@ -697,15 +836,15 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
       if (hasCRLF) content = content.replace(/\n/g, "\r\n");
       if (hasBOM) content = "\uFEFF" + content;
 
-      await writeFile(args.path, content, "utf-8");
+      await writeFile(safePath, content, "utf-8");
 
       const diff = generateDiff(args.edits);
-      log(`edit_file ${args.path} → ok ${Date.now() - t0}ms (${args.edits.length} edits)`);
+      log(`edit_file ${args.path} → ok ${Date.now() - t0}ms (${args.edits.length} edits)`, String(sessionId));
       return { content: textContent(`Successfully replaced ${args.edits.length} block(s) in ${args.path}.\n\n${diff}`) };
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log(`edit_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`);
+    log(`edit_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
     return { content: textContent(`Error: ${msg}`), isError: true };
   }
 }
@@ -737,6 +876,19 @@ export async function handleBash(
     const guidance = getGuidanceMessage(intent, args.command);
     return {
       content: textContent(guidance),
+      isError: true,
+    };
+  }
+
+  // Layer C guardrail: scan bash command for path-like tokens that fall
+  // outside the allowed scope. (Layer A is the client-side system prompt,
+  // Layer B is the file sub-op realpath check above. This is Layer C for
+  // arbitrary shell commands — last line of defense for `cat /etc/passwd`.)
+  const pathViolation = await validateBashCommand(args.command);
+  if (pathViolation) {
+    log(`bash "${args.command.slice(0, 80)}" → blocked: ${pathViolation}`, String(turnId));
+    return {
+      content: textContent(pathViolation),
       isError: true,
     };
   }
@@ -797,7 +949,7 @@ export async function handleBash(
       else abortSignal.addEventListener("abort", cleanup, { once: true });
     }
 
-    const timeoutSec = args.timeout ?? 30;
+    const timeoutSec = args.timeout ?? DEFAULT_BASH_TIMEOUT_SEC;
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (timeoutSec > 0) {
@@ -861,11 +1013,12 @@ export async function handleBash(
   }
 }
 
-async function handleListDir(args: { path: string; limit?: number }) {
+async function handleListDir(args: { path: string; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
+    const safePath = await ensureRemotePath(args.path);
     const maxEntries = args.limit || MAX_LS_ENTRIES;
-    const dirEntries = await readdir(args.path, { withFileTypes: true });
+    const dirEntries = await readdir(safePath, { withFileTypes: true });
 
     dirEntries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
@@ -888,11 +1041,11 @@ async function handleListDir(args: { path: string; limit?: number }) {
       output = result.text;
     }
 
-    log(`list_dir ${args.path} → ok ${Date.now() - t0}ms (${dirEntries.length} entries)`);
+    log(`list_dir ${args.path} → ok ${Date.now() - t0}ms (${dirEntries.length} entries)`, String(sessionId));
     return { content: textContent(output || "(empty directory)") };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log(`list_dir ${args.path} → error ${Date.now() - t0}ms: ${msg}`);
+    log(`list_dir ${args.path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
     return { content: textContent(`Error: ${msg}`), isError: true };
   }
 }
@@ -931,7 +1084,7 @@ async function runFd(pattern: string, path: string, limit: number): Promise<{ ou
   });
 }
 
-export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }) {
+export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
   const limit = args.limit || 500;
@@ -939,17 +1092,20 @@ export async function handleFindFiles(args: { pattern: string; path?: string; li
   // Check if fd is available
   const fdCheck = await checkFdAvailable();
   if (!fdCheck.available) {
-    log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`);
+    log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`, String(sessionId));
     return {
       content: textContent("fd not found on remote server. Install with: apt install fd-find"),
       isError: true,
     };
   }
 
-  // Run fd to search for files
-  const result = await runFd(args.pattern, searchPath, limit);
+  // Validate the search path is inside the allowed scope.
+  const safePath = await ensureRemotePath(searchPath);
 
-  log(`find_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`);
+  // Run fd to search for files
+  const result = await runFd(args.pattern, safePath, limit);
+
+  log(`find_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`, String(sessionId));
   return { content: textContent(result.output || "(no matches found)") };
 }
 
@@ -990,7 +1146,7 @@ async function runRg(pattern: string, path: string, glob: string | undefined, li
   });
 }
 
-export async function handleGrepFiles(args: { pattern: string; path?: string; glob?: string; limit?: number }) {
+export async function handleGrepFiles(args: { pattern: string; path?: string; glob?: string; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
   const glob = args.glob;
@@ -999,17 +1155,20 @@ export async function handleGrepFiles(args: { pattern: string; path?: string; gl
   // Check if rg is available
   const rgCheck = await checkRgAvailable();
   if (!rgCheck.available) {
-    log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`);
+    log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`, String(sessionId));
     return {
       content: textContent("ripgrep not found on remote server. Install with: apt install ripgrep"),
       isError: true,
     };
   }
 
-  // Run rg to search for matches
-  const result = await runRg(args.pattern, searchPath, glob, limit);
+  // Validate the search path is inside the allowed scope.
+  const safePath = await ensureRemotePath(searchPath);
 
-  log(`grep_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`);
+  // Run rg to search for matches
+  const result = await runRg(args.pattern, safePath, glob, limit);
+
+  log(`grep_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`, String(sessionId));
   return { content: textContent(result.output || "(no matches found)") };
 }
 
@@ -1025,19 +1184,19 @@ const TOOL_HANDLERS: Record<string, (
   progressCtx?: ProgressContext,
   turnId?: number | string,
 ) => Promise<ToolResult>> = {
-  read_file: (args) => handleReadFile(args as { path: string; offset?: number; limit?: number }),
-  write_file: (args) => handleWriteFile(args as { path: string; content: string }),
-  edit_file: (args) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }),
+  read_file: (args, _s, _p, sid) => handleReadFile(args as { path: string; offset?: number; limit?: number }, sid),
+  write_file: (args, _s, _p, sid) => handleWriteFile(args as { path: string; content: string }, sid),
+  edit_file: (args, _s, _p, sid) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }, sid),
   bash: (args, abortSignal, progressCtx, turnId) => handleBash(
     args as { command: string; timeout?: number; cwd?: string },
     abortSignal,
     progressCtx,
     turnId,
   ),
-  list_dir: (args) => handleListDir(args as { path: string; limit?: number }),
-  find_files: (args) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }),
-  grep_files: (args) => handleGrepFiles(args as { pattern: string; path?: string; glob?: string; limit?: number }),
-  transfer_file: (args) => handleTransferFile(args as { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }),
+  list_dir: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
+  find_files: (args, _s, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid),
+  grep_files: (args, _s, _p, sid) => handleGrepFiles(args as { pattern: string; path?: string; glob?: string; limit?: number }, sid),
+  transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }, sid),
 };
 
 // ============================================================================
@@ -1125,7 +1284,7 @@ function checkSchemaShape(args: Record<string, unknown> | undefined): ToolResult
 function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "satellite",
-    version: "3.0.0",
+    version: VERSION,
   });
 
   server.registerTool(
@@ -1162,7 +1321,9 @@ function createMcpServer(): McpServer {
       const sessionId = (extra as any).sessionId ?? 0;
 
       const result = await handler(toolArgs, extra.signal, progressCtx, sessionId);
-      log(`remote_exec → ${tool} ${Date.now() - t0}ms`);
+      const ms = Date.now() - t0;
+      log(`remote_exec → ${tool} ${ms}ms`);
+      metricInc(tool, result.isError ? "err" : "ok", ms);
       return result;
     }
   );
@@ -1175,10 +1336,77 @@ function createMcpServer(): McpServer {
 // ============================================================================
 
 const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+const sessionLastSeen = new Map<string, number>();
+
+/**
+ * Sweep stale sessions whose last access is older than SESSION_TTL_MS.
+ * MCP transport.onclose fires on graceful DELETE only — TCP RST, network
+ * drop, or client crash leave the session alive forever, leaking the
+ * per-session guardrail counters (and a slot in the transports map).
+ */
+function sweepStaleSessions(): void {
+  const now = Date.now();
+  for (const [sid, lastSeen] of sessionLastSeen) {
+    if (now - lastSeen > SESSION_TTL_MS) {
+      const t = transports.get(sid);
+      try { t?.close(); } catch { /* ignore */ }
+      transports.delete(sid);
+      sessionLastSeen.delete(sid);
+      resetGuardrail(sid);
+      log(`Swept stale session: ${sid}`);
+    }
+  }
+}
+
+function touchSession(sid: string): void {
+  sessionLastSeen.set(sid, Date.now());
+}
 
 function checkAuth(req: Request): boolean {
   const auth = req.headers.get("Authorization");
   return auth === `Bearer ${TOKEN}`;
+}
+
+// ============================================================================
+// Metrics (Prometheus text format)
+// ============================================================================
+
+/** Per-tool call counters and latency. Cheap to maintain, no external deps. */
+const metrics = {
+  startTime: Date.now(),
+  counters: new Map<string, number>(),
+  latencies: new Map<string, number[]>(),
+};
+
+function metricInc(tool: string, status: "ok" | "err", ms: number): void {
+  metrics.counters.set(`${tool}_${status}_total`, (metrics.counters.get(`${tool}_${status}_total`) ?? 0) + 1);
+  const arr = metrics.latencies.get(`${tool}_${status}`) ?? [];
+  arr.push(ms);
+  if (arr.length > 200) arr.shift(); // ring buffer of last 200
+  metrics.latencies.set(`${tool}_${status}`, arr);
+}
+
+function metricsText(): string {
+  const lines: string[] = [];
+  lines.push(`# HELP satellite_uptime_seconds Server uptime`);
+  lines.push(`# TYPE satellite_uptime_seconds gauge`);
+  lines.push(`satellite_uptime_seconds ${((Date.now() - metrics.startTime) / 1000).toFixed(2)}`);
+  lines.push(`# HELP satellite_sessions_active Active MCP sessions`);
+  lines.push(`# TYPE satellite_sessions_active gauge`);
+  lines.push(`satellite_sessions_active ${transports.size}`);
+  lines.push(`# HELP satellite_tool_calls_total Total tool calls by tool and status`);
+  lines.push(`# TYPE satellite_tool_calls_total counter`);
+  for (const [k, v] of metrics.counters) {
+    lines.push(`satellite_tool_calls_total{kind="${k}"} ${v}`);
+  }
+  lines.push(`# HELP satellite_tool_latency_ms Recent latency (avg of last 200 calls)`);
+  lines.push(`# TYPE satellite_tool_latency_ms gauge`);
+  for (const [k, arr] of metrics.latencies) {
+    if (arr.length === 0) continue;
+    const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+    lines.push(`satellite_tool_latency_ms{kind="${k}"} ${avg.toFixed(1)}`);
+  }
+  return lines.join("\n") + "\n";
 }
 
 // ============================================================================
@@ -1245,7 +1473,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id",
 };
 
-log(`Satellite MCP Server v3.0.0 starting on port ${PORT}`);
+log(`Satellite MCP Server v${VERSION} starting on port ${PORT}${REMOTE_PATH_PATTERN ? ` (path pattern: ${RAW_PATH_PATTERN})` : ""}`);
 
 const httpServer = (globalThis as any).Bun.serve({
   port: PORT,
@@ -1260,7 +1488,12 @@ const httpServer = (globalThis as any).Bun.serve({
 
     // Health check (no auth required)
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", version: "3.0.0" }, { headers: corsHeaders });
+      return Response.json({ status: "ok", version: VERSION, pathPattern: RAW_PATH_PATTERN || null, sessions: transports.size }, { headers: corsHeaders });
+    }
+
+    // Metrics (no auth required — same trust model as /health)
+    if (url.pathname === "/metrics") {
+      return new Response(metricsText(), { headers: { ...corsHeaders, "Content-Type": "text/plain; version=0.0.4" } });
     }
 
     // Transfer endpoints (POST /transfer?path= and GET /transfer?path=)
@@ -1298,6 +1531,7 @@ const httpServer = (globalThis as any).Bun.serve({
 
         if (sessionId && transports.has(sessionId)) {
           transport = transports.get(sessionId)!;
+          touchSession(sessionId);
         } else if (!sessionId && isInitializeRequest(body)) {
           // New initialization request
           const newSessionId = randomUUID();
@@ -1305,6 +1539,7 @@ const httpServer = (globalThis as any).Bun.serve({
             sessionIdGenerator: () => newSessionId,
             onsessioninitialized: (sid) => {
               transports.set(sid, transport);
+              sessionLastSeen.set(sid, Date.now());
               log(`Session initialized: ${sid}`);
             },
           });
@@ -1312,6 +1547,7 @@ const httpServer = (globalThis as any).Bun.serve({
             const sid = transport.sessionId;
             if (sid && transports.has(sid)) {
               transports.delete(sid);
+              sessionLastSeen.delete(sid);
               resetGuardrail(sid); // release per-session guardrail counters
               log(`Session closed: ${sid}`);
             }
@@ -1356,6 +1592,10 @@ const httpServer = (globalThis as any).Bun.serve({
 });
 
 log(`Satellite MCP Server ready on port ${PORT}`);
+
+// Sweep stale sessions every minute. Cancels the per-session counters
+// leaked by clients that close the TCP connection without sending DELETE.
+setInterval(sweepStaleSessions, 60_000).unref();
 
 // Graceful shutdown
 process.on("SIGINT", async () => {

@@ -6,6 +6,7 @@
 #   ./deploy.sh --restart-only   # skip build + scp, just restart with current binary
 #                                # (useful after editing deploy.sh itself, or after
 #                                # updating ~/satellite.env on the remote)
+#   ./deploy.sh --rollback       # restore ~/satellite-server.prev, then restart
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -13,17 +14,29 @@ REMOTE="login"
 TOKEN="satellite-token-2024"
 PORT=29001
 RESTART_ONLY=0
+ROLLBACK=0
 
 for arg in "$@"; do
   case "$arg" in
     --restart-only) RESTART_ONLY=1 ;;
+    --rollback) ROLLBACK=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,15p' "$0"
       exit 0
       ;;
     *) echo "Unknown arg: $arg"; exit 1 ;;
   esac
 done
+
+if [ "$ROLLBACK" -eq 1 ]; then
+  echo "=== Rolling back binary ==="
+  REMOTE_HOME=$(ssh "$REMOTE" 'echo $HOME' </dev/null 2>/dev/null)
+  ssh "$REMOTE" "test -f '$REMOTE_HOME/satellite-server.prev' || (echo 'No .prev binary to roll back to' && exit 1)
+                 rm -f '$REMOTE_HOME/satellite-server'
+                 mv '$REMOTE_HOME/satellite-server.prev' '$REMOTE_HOME/satellite-server'
+                 echo 'Rolled back to previous binary'"
+  RESTART_ONLY=1
+fi
 
 if [ "$RESTART_ONLY" -eq 0 ]; then
   echo "=== Building binary ==="
@@ -36,6 +49,9 @@ if [ "$RESTART_ONLY" -eq 0 ]; then
   REMOTE_HOME=$(ssh "$REMOTE" 'echo $HOME' </dev/null 2>/dev/null)
   # Upload to /tmp first then rm+mv to home, since `mv -f` over a same-owner
   # file on this HPC filesystem doesn't bypass the no-overwrite restriction.
+  # Back up the existing binary as .prev first, so a failed new binary can
+  # be rolled back with --rollback.
+  ssh "$REMOTE" "[ -f '$REMOTE_HOME/satellite-server' ] && cp -f '$REMOTE_HOME/satellite-server' '$REMOTE_HOME/satellite-server.prev' || true"
   scp "$SCRIPT_DIR/satellite-server" "$REMOTE:/tmp/satellite-server.new"
   ssh "$REMOTE" "rm -f '$REMOTE_HOME/satellite-server' && mv /tmp/satellite-server.new '$REMOTE_HOME/satellite-server'"
   echo ""
