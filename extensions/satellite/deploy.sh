@@ -69,9 +69,18 @@ if [ -f "\$HOME/satellite.env" ]; then
   # Read with NUL separators so multi-line values (e.g. exported shell functions)
   # are captured as a single KEY=VALUE entry, not split across lines.
   while IFS= read -r -d '' entry; do
-    # Each entry is "KEY=VALUE" — export it. Bash re-creates shell functions
-    # from BASH_FUNC_* env vars automatically.
-    export "$entry" 2>/dev/null || true
+    # BASH_FUNC_X()=() { body } entries have parens in the name which `export`
+    # rejects. Strip the trailing `()` from the name (bash 5.x accepts both
+    # forms when decoding on startup). All other entries export directly.
+    case "$entry" in
+      BASH_FUNC_*'()='*)
+        cleaned="${entry/'()='/=}"
+        export "$cleaned" 2>/dev/null || true
+        ;;
+      *)
+        export "$entry" 2>/dev/null || true
+        ;;
+    esac
   done < "\$HOME/satellite.env"
 fi
 
