@@ -218,9 +218,11 @@ export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
   command: z.string().optional(),
   timeout: z.number().optional(),
   cwd: z.string().optional(),
-  path: z.string().optional(),
+  // Apply the same defaults as REMOTE_EXEC_SCHEMA so the MCP SDK's
+  // pre-validation (using this flat schema) matches runtime behavior.
+  path: z.string().optional().default("."),
   offset: z.number().optional(),
-  limit: z.number().optional(),
+  limit: z.number().optional().default(500),
   content: z.string().optional(),
   edits: z.array(z.object({
     oldText: z.string(),

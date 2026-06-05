@@ -32,7 +32,9 @@ if [ "$RESTART_ONLY" -eq 0 ]; then
 
   echo ""
   echo "=== Uploading binary ==="
-  scp "$SCRIPT_DIR/satellite-server" "$REMOTE:~/satellite-server"
+  # Resolve the remote $HOME explicitly (scp doesn't expand ~ in some configs)
+  REMOTE_HOME=$(ssh "$REMOTE" 'echo $HOME' </dev/null 2>/dev/null)
+  scp "$SCRIPT_DIR/satellite-server" "$REMOTE:$REMOTE_HOME/satellite-server"
   echo ""
 fi
 
