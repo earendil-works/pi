@@ -72,6 +72,41 @@ describe("interceptTransferCall (to_remote — inject content)", () => {
 		expect(await interceptTransferCall(event)).toBeUndefined();
 	});
 
+	it("blocks to_local with missing file1 (silent pass-through was a partial-injection bug)", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "to_local", file2: "/hpc/r.txt" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/missing file1/);
+		// And the input must NOT have been mutated.
+		expect(event.input.direction).toBe("to_local");
+		expect(event.input.local_path).toBeUndefined();
+	});
+
+	it("blocks unknown direction (Zod error at server was opaque)", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "garbage", file1: "/x", file2: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/unknown direction/);
+		// Input must NOT have been mutated to "local_to_remote" or similar.
+		expect(event.input.direction).toBe("garbage");
+	});
+
+	it("blocks missing direction field (not 'to_remote' or 'to_local')", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", file1: "/x", file2: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/unknown direction/);
+	});
+
 	// e2e: the post-hook payload must validate against the server's actual
 	// input schema. We import the schema (not duplicate it) so this test
 	// catches field-name drift between client hook and server.

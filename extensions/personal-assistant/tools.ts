@@ -391,6 +391,12 @@ export async function interceptTransferCall(
 	}
 
 	if (direction === "to_local") {
+		if (!file1) {
+			return {
+				block: true,
+				reason: "transfer_file(to_local) failed: missing file1 (local destination path)",
+			};
+		}
 		event.input.local_path = file1;
 		event.input.remote_path = file2;
 		event.input.direction = "remote_to_local";
@@ -399,7 +405,13 @@ export async function interceptTransferCall(
 		return undefined;
 	}
 
-	return undefined;
+	// Unknown / missing direction. Block with an explicit error instead
+	// of silently letting it reach the server (which would then reject
+	// with a Zod error the model can't easily interpret).
+	return {
+		block: true,
+		reason: `transfer_file failed: unknown direction '${String(direction)}' (expected 'to_remote' or 'to_local')`,
+	};
 }
 
 /**
