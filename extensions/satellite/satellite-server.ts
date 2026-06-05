@@ -53,6 +53,33 @@ export function detectIntent(command: string): "read_file" | "edit_file" | "writ
 }
 
 // ============================================================================
+// Guardrail Retry Counter (per-turn, per-intent)
+// ============================================================================
+
+export type GuardrailIntent = "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files";
+export type TurnId = number;
+
+const guardrailCounters = new Map<TurnId, Partial<Record<GuardrailIntent, number>>>();
+
+export function getGuardrailCount(turnId: TurnId, intent: GuardrailIntent): number {
+  return guardrailCounters.get(turnId)?.[intent] ?? 0;
+}
+
+export function incrementGuardrail(turnId: TurnId, intent: GuardrailIntent): number {
+  const current = getGuardrailCount(turnId, intent);
+  const next = current + 1;
+  if (!guardrailCounters.has(turnId)) {
+    guardrailCounters.set(turnId, {});
+  }
+  guardrailCounters.get(turnId)![intent] = next;
+  return next;
+}
+
+export function resetGuardrail(turnId: TurnId): void {
+  guardrailCounters.delete(turnId);
+}
+
+// ============================================================================
 // Config
 // ============================================================================
 
@@ -966,6 +993,64 @@ function checkAuth(req: Request): boolean {
   return auth === `Bearer ${TOKEN}`;
 }
 
+// ============================================================================
+// Transfer HTTP Handlers (Task 5.1)
+// ============================================================================
+
+/**
+ * POST /transfer?path= — write body bytes to remote path
+ * Auth check is performed by the caller (fetch handler).
+ */
+export async function handleTransferPost(req: Request): Promise<Response> {
+  // Auth check (defense-in-depth, also done at fetch handler level)
+  if (!checkAuth(req)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const url = new URL(req.url);
+  const path = url.searchParams.get("path");
+
+  if (!path) {
+    return Response.json({ error: "Missing path query parameter" }, { status: 400 });
+  }
+
+  try {
+    const buffer = await req.arrayBuffer();
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, Buffer.from(buffer));
+    return Response.json({ bytes: buffer.byteLength }, { headers: corsHeaders });
+  } catch (err) {
+    return Response.json({ error: `Failed to write file: ${err}` }, { status: 500 });
+  }
+}
+
+/**
+ * GET /transfer?path= — read file bytes from remote path
+ * Auth check is performed by the caller (fetch handler).
+ */
+export async function handleTransferGet(req: Request): Promise<Response> {
+  // Auth check (defense-in-depth, also done at fetch handler level)
+  if (!checkAuth(req)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const url = new URL(req.url);
+  const path = url.searchParams.get("path");
+
+  if (!path) {
+    return Response.json({ error: "Missing path query parameter" }, { status: 400 });
+  }
+
+  try {
+    const content = await readFile(path);
+    return new Response(content, {
+      headers: { ...corsHeaders, "Content-Type": "application/octet-stream" },
+    });
+  } catch (err) {
+    return Response.json({ error: `Failed to read file: ${err}` }, { status: 500 });
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -988,6 +1073,18 @@ const httpServer = (globalThis as any).Bun.serve({
     // Health check (no auth required)
     if (url.pathname === "/health") {
       return Response.json({ status: "ok", version: "3.0.0" }, { headers: corsHeaders });
+    }
+
+    // Transfer endpoints (POST /transfer?path= and GET /transfer?path=)
+    // These require auth, which is checked below
+    if (url.pathname === "/transfer") {
+      if (req.method === "POST") {
+        return handleTransferPost(req);
+      }
+      if (req.method === "GET") {
+        return handleTransferGet(req);
+      }
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
     // Auth check for all other endpoints

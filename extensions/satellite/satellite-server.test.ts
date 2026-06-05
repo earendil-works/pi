@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
 import { z } from "zod/v3";
 
 // Import the module
@@ -365,6 +365,129 @@ describe("handleGrepFiles", () => {
 });
 
 // =============================================================================
+// transfer HTTP endpoint tests (Task 5.1)
+// =============================================================================
+
+describe("transfer HTTP endpoints", () => {
+  // The handler functions are exported for unit testing
+  const handleTransferPost = (satellite as any).handleTransferPost;
+  const handleTransferGet = (satellite as any).handleTransferGet;
+
+  // Helper to create a mock Request with optional auth
+  function makeRequest(method: string, path: string, hasAuth: boolean, body?: ArrayBuffer): Request {
+    const headers = new Headers();
+    if (hasAuth) {
+      headers.set("Authorization", "Bearer test-token");
+    }
+    if (body) {
+      headers.set("Content-Type", "application/octet-stream");
+    }
+    const url = `http://localhost:29001/transfer${path}`;
+    return new Request(url, { method, headers, body });
+  }
+
+  describe("handleTransferPost", () => {
+    // POST without auth → 401
+    it("POST without auth returns 401", async () => {
+      expect(handleTransferPost).toBeDefined();
+      const req = makeRequest("POST", "?path=/tmp/test.txt", false);
+      const response = await handleTransferPost(req);
+      expect(response.status).toBe(401);
+    });
+
+    // POST without ?path= → 400
+    it("POST without path query returns 400", async () => {
+      expect(handleTransferPost).toBeDefined();
+      const req = makeRequest("POST", "", true);
+      const response = await handleTransferPost(req);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toContain("path");
+    });
+
+    // POST with valid path and body → 200, bytes written
+    it("POST with valid path and body returns 200 with bytes count", async () => {
+      expect(handleTransferPost).toBeDefined();
+      const testContent = "hello from POST test";
+      const encoder = new TextEncoder();
+      const body = encoder.encode(testContent).buffer;
+      const req = makeRequest("POST", "?path=/tmp/test-transfer-post.txt", true, body);
+      const response = await handleTransferPost(req);
+      expect(response.status).toBe(200);
+      const contentType = response.headers.get("Content-Type");
+      expect(contentType?.startsWith("application/json")).toBeTrue();
+      const body_json = await response.json();
+      expect(body_json.bytes).toBe(testContent.length);
+    });
+
+    // POST creates parent directories recursively
+    it("POST creates parent directories recursively", async () => {
+      expect(handleTransferPost).toBeDefined();
+      const testContent = "testing nested dirs";
+      const encoder = new TextEncoder();
+      const body = encoder.encode(testContent).buffer;
+      const nestedPath = "/tmp/satellite-test-nested/deep/dir/test.txt";
+      const req = makeRequest("POST", `?path=${nestedPath}`, true, body);
+      const response = await handleTransferPost(req);
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe("handleTransferGet", () => {
+    // GET without auth → 401
+    it("GET without auth returns 401", async () => {
+      expect(handleTransferGet).toBeDefined();
+      const req = makeRequest("GET", "?path=/tmp/test.txt", false);
+      const response = await handleTransferGet(req);
+      expect(response.status).toBe(401);
+    });
+
+    // GET without ?path= → 400
+    it("GET without path query returns 400", async () => {
+      expect(handleTransferGet).toBeDefined();
+      const req = makeRequest("GET", "", true);
+      const response = await handleTransferGet(req);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toContain("path");
+    });
+
+    // GET with valid path → 200, body bytes match
+    it("GET with valid path returns 200 with file bytes", async () => {
+      expect(handleTransferGet).toBeDefined();
+      // First create a test file
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const testContent = "hello from GET test";
+      const testPath = "/tmp/test-transfer-get.txt";
+      writeFileSync(testPath, testContent, "utf-8");
+
+      try {
+        const req = makeRequest("GET", `?path=${testPath}`, true);
+        const response = await handleTransferGet(req);
+        expect(response.status).toBe(200);
+        const contentType = response.headers.get("Content-Type");
+        expect(contentType).toBe("application/octet-stream");
+        const buffer = await response.arrayBuffer();
+        const decoder = new TextDecoder("utf-8");
+        const result = decoder.decode(buffer);
+        expect(result).toBe(testContent);
+      } finally {
+        unlinkSync(testPath);
+      }
+    });
+
+    // GET with non-existent file → error response
+    it("GET with non-existent path returns error", async () => {
+      expect(handleTransferGet).toBeDefined();
+      const req = makeRequest("GET", "?path=/tmp/nonexistent-file-12345.txt", true);
+      const response = await handleTransferGet(req);
+      // readFile throws an error, handler should catch and return 500 or similar
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    });
+  });
+});
+
+// =============================================================================
 // list_dir tests (Task 1.3: align list_dir schema to native pi ls)
 // =============================================================================
 
@@ -402,5 +525,75 @@ describe("REMOTE_EXEC_SCHEMA - list_dir path optional", () => {
       expect(result.data.path).toBe("."); // default path
       expect(result.data.limit).toBe(100);
     }
+  });
+});
+
+// =============================================================================
+// guardrailRetry per-turn counter tests (Task 2.4)
+// =============================================================================
+
+describe("guardrailRetry counter", () => {
+  // Cleanup after each test to avoid pollution
+  afterEach(() => {
+    const { resetGuardrail } = satellite as any;
+    if (resetGuardrail) {
+      resetGuardrail(1);
+      resetGuardrail(2);
+      resetGuardrail(3);
+      resetGuardrail(99);
+    }
+  });
+
+  // Test a: getGuardrailCount returns 0 initially
+  it("getGuardrailCount(1, 'read_file') returns 0 initially", () => {
+    const { getGuardrailCount } = satellite as any;
+    expect(getGuardrailCount).toBeDefined();
+    expect(getGuardrailCount(1, "read_file")).toBe(0);
+  });
+
+  // Test b: After incrementGuardrail, returns 1
+  it("after incrementGuardrail(1, 'read_file'), returns 1", () => {
+    const { getGuardrailCount, incrementGuardrail } = satellite as any;
+    expect(incrementGuardrail).toBeDefined();
+    incrementGuardrail(1, "read_file");
+    expect(getGuardrailCount(1, "read_file")).toBe(1);
+  });
+
+  // Test c: After 2 increments, returns 2
+  it("after 2 increments, returns 2", () => {
+    const { getGuardrailCount, incrementGuardrail } = satellite as any;
+    incrementGuardrail(1, "read_file");
+    incrementGuardrail(1, "read_file");
+    expect(getGuardrailCount(1, "read_file")).toBe(2);
+  });
+
+  // Test d: Different intent has its own counter
+  it("edit_file counter is independent of read_file counter", () => {
+    const { getGuardrailCount, incrementGuardrail } = satellite as any;
+    incrementGuardrail(1, "read_file");
+    incrementGuardrail(1, "read_file");
+    // edit_file should still be 0
+    expect(getGuardrailCount(1, "edit_file")).toBe(0);
+    expect(getGuardrailCount(1, "read_file")).toBe(2);
+
+    // Now increment edit_file
+    incrementGuardrail(1, "edit_file");
+    expect(getGuardrailCount(1, "edit_file")).toBe(1);
+    expect(getGuardrailCount(1, "read_file")).toBe(2); // unchanged
+  });
+
+  // Test e: resetGuardrail clears all counters for a turn
+  it("resetGuardrail(3) clears all counters for turn 3", () => {
+    const { getGuardrailCount, incrementGuardrail, resetGuardrail } = satellite as any;
+    incrementGuardrail(3, "read_file");
+    incrementGuardrail(3, "read_file");
+    incrementGuardrail(3, "edit_file");
+    expect(getGuardrailCount(3, "read_file")).toBe(2);
+    expect(getGuardrailCount(3, "edit_file")).toBe(1);
+
+    resetGuardrail(3);
+
+    expect(getGuardrailCount(3, "read_file")).toBe(0);
+    expect(getGuardrailCount(3, "edit_file")).toBe(0);
   });
 });
