@@ -1,0 +1,29 @@
+{
+	"task": "Audit API authentication",
+	"phases": ["Reconnaissance", "Synthesis"],
+	"step": {
+		"type": "chain",
+		"steps": [
+			{
+				"type": "parallel",
+				"steps": [
+					{
+						"type": "single",
+						"agent": "scout",
+						"task": "Find route handlers, middleware, and entry points related to authentication"
+					},
+					{
+						"type": "single",
+						"agent": "scout",
+						"task": "Find auth configuration, session storage, and token validation code"
+					}
+				]
+			},
+			{
+				"type": "single",
+				"agent": "planner",
+				"task": "Synthesize authentication risks and remediation priorities from recon:\n\n{previous}"
+			}
+		]
+	}
+}

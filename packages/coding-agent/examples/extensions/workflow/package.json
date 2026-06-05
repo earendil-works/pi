@@ -1,0 +1,17 @@
+{
+	"name": "pi-extension-workflow",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"clean": "echo 'nothing to clean'",
+		"build": "echo 'nothing to build'",
+		"check": "echo 'nothing to check'"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"dependencies": {
+		"@pi-example/workflow-core": "file:../workflow-core"
+	}
+}
