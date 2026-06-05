@@ -1,22 +1,42 @@
 #!/bin/bash
 # One-click deploy: build binary, upload, restart satellite server on remote HPC
+#
+# Usage:
+#   ./deploy.sh                  # build + scp + restart (full cycle)
+#   ./deploy.sh --restart-only   # skip build + scp, just restart with current binary
+#                                # (useful after editing deploy.sh itself, or after
+#                                # updating ~/satellite.env on the remote)
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REMOTE="login"
 TOKEN="satellite-token-2024"
 PORT=29001
+RESTART_ONLY=0
 
-echo "=== Building binary ==="
-cd "$SCRIPT_DIR"
-bun build --compile satellite-server.ts --outfile satellite-server 2>&1
+for arg in "$@"; do
+  case "$arg" in
+    --restart-only) RESTART_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,12p' "$0"
+      exit 0
+      ;;
+    *) echo "Unknown arg: $arg"; exit 1 ;;
+  esac
+done
 
-echo ""
-echo "=== Uploading binary ==="
-scp "$SCRIPT_DIR/satellite-server" "$REMOTE:~/satellite-server"
+if [ "$RESTART_ONLY" -eq 0 ]; then
+  echo "=== Building binary ==="
+  cd "$SCRIPT_DIR"
+  bun build --compile satellite-server.ts --outfile satellite-server 2>&1
 
-echo ""
-echo "=== Restarting satellite server ==="
+  echo ""
+  echo "=== Uploading binary ==="
+  scp "$SCRIPT_DIR/satellite-server" "$REMOTE:~/satellite-server"
+  echo ""
+fi
+
+echo "=== Restarting satellite server (binary already on remote) ==="
 ssh "$REMOTE" bash -s << ENDSSH
 set -eu
 
