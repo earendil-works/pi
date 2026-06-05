@@ -37,12 +37,14 @@ if [ "$RESTART_ONLY" -eq 0 ]; then
 fi
 
 echo "=== Restarting satellite server (binary already on remote) ==="
-# Pass TOKEN/PORT into the remote shell env (quoted heredoc body is literal,
-# so $TOKEN in the body would not be expanded locally — we set it in ssh's env
-# and the remote shell picks it up).
-TOKEN="$TOKEN" PORT="$PORT" ssh "$REMOTE" bash -s << 'ENDSSH'
+# Pass TOKEN/PORT as positional args to the remote bash. SSH doesn't forward
+# arbitrary env vars by default, and the quoted heredoc body is literal, so
+# we can't rely on local-variable expansion.
+ssh "$REMOTE" bash -s -- "$TOKEN" "$PORT" << 'ENDSSH'
 set -eu
 
+TOKEN="$1"
+PORT="$2"
 BINARY=~/satellite-server
 
 # Kill old satellite process
@@ -72,9 +74,23 @@ fi
 # `export` builtin), so BASH_FUNC_module() is preserved as-is and any spawned
 # bash child will decode it on startup.
 if [ -f "$HOME/satellite.env" ]; then
-  nohup xargs -0 -a "$HOME/satellite.env" env \
-    SATELLITE_TOKEN="$TOKEN" SATELLITE_PORT="$PORT" "$BINARY" \
-    > /tmp/satellite-stdout.log 2>&1 &
+  # Wrap the binary launch in a subshell that loads the env file first.
+  # The `exec` at the end replaces the subshell with the binary, so the
+  # env is preserved and the process tree stays clean. Using a subshell
+  # (vs xargs+env) avoids command-line size limits and correctly handles
+  # multi-line BASH_FUNC_*() entries via `read -d ''`.
+  nohup bash -c '
+    set -a
+    while IFS= read -r -d "" entry; do
+      # BASH_FUNC_X()=() {} — strip () from name so `export` accepts it
+      case "$entry" in
+        BASH_FUNC_*"()="*) export "${entry/"()="/=}" 2>/dev/null || true ;;
+        *) export "$entry" 2>/dev/null || true ;;
+      esac
+    done < "$HOME/satellite.env"
+    set +a
+    exec env SATELLITE_TOKEN="$1" SATELLITE_PORT="$2" "$3"
+  ' bash "$TOKEN" "$PORT" "$BINARY" > /tmp/satellite-stdout.log 2>&1 &
 else
   # Fallback: launch with minimal env (just satellite config vars)
   export SATELLITE_TOKEN="$TOKEN"
