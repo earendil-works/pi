@@ -38,6 +38,19 @@ if [ -n "\$OLD_PID" ]; then
 fi
 
 # Start new binary
+# Inherit full HPC env (module, conda, PATH, LD_LIBRARY_PATH, etc.) from ~/satellite.env.
+# ssh non-interactive sessions don't auto-source the user's .bashrc / .bash_profile,
+# and rc-sourcing is unreliable (some HPC rcs hang on `module load` TTY prompts).
+# The env file is a one-time dump from an interactive login session:
+#   ssh login 'env > ~/satellite.env'
+# Re-run that command whenever modules / conda envs / PATH change, then redeploy.
+if [ -f "\$HOME/satellite.env" ]; then
+  set -a   # auto-export every assignment from the sourced file
+  # shellcheck disable=SC1090
+  . "\$HOME/satellite.env" 2>/dev/null || true
+  set +a
+fi
+
 export SATELLITE_TOKEN="\$TOKEN"
 export SATELLITE_PORT="\$PORT"
 nohup "\$BINARY" > /tmp/satellite-stdout.log 2>&1 &
