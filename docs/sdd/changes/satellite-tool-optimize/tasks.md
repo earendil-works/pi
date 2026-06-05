@@ -120,11 +120,12 @@
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "transfer_file"` — case (a) direction="push" returns isError, (b) upload happy path (mock readFile), (c) download happy path (mock writeFile).
   - **依赖**: 1.2
 
-- [ ] 4.4 **Register new sub-ops in `REMOTE_EXEC_SCHEMA` and `TOOL_HANDLERS`**
+- [x] 4.4 **Register new sub-ops in `REMOTE_EXEC_SCHEMA` and `TOOL_HANDLERS`**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Add 3 entries to discriminated union. Add 3 entries to `TOOL_HANDLERS` map.
   - **验证**: `grep -c "tool: z.literal" extensions/satellite/satellite-server.ts` returns 8
   - **依赖**: 4.1, 4.2, 4.3
+  - **Note**: Side-effect of tasks 4.1-4.3 (which added registrations). All 8 z.literal and TOOL_HANDLERS entries exist.
 
 - [ ] 4.5 **Update top-level `description` to list all 8 ops with "when to use"**
   - **文件**: `extensions/satellite/satellite-server.ts` (line 684)
