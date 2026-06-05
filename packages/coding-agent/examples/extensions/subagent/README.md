@@ -16,8 +16,8 @@ Delegate tasks to specialized subagents with isolated context windows.
 ```
 subagent/
 ├── README.md            # This file
-├── index.ts             # The extension (entry point)
-├── agents.ts            # Agent discovery logic
+├── index.ts             # The extension (thin wrapper over workflow-core)
+├── agents.ts            # Re-exports agent discovery from workflow-core
 ├── agents/              # Sample agent definitions
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans
@@ -37,6 +37,7 @@ From the repository root, symlink the files:
 # Symlink the extension (must be in a subdirectory with index.ts)
 mkdir -p ~/.pi/agent/extensions/subagent
 ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
+ln -sf "$(pwd)/packages/coding-agent/examples/extensions/workflow-core" ~/.pi/agent/extensions/workflow-core
 ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
 
 # Symlink agents
