@@ -65,28 +65,21 @@ fi
 # (NUL separators) to preserve multi-line values like BASH_FUNC_module() body:
 #   ssh login 'env -0 > ~/satellite.env'
 # Re-run that command whenever modules / conda envs / PATH change, then redeploy.
+#
+# Implementation: pipe NUL-separated KEY=VALUE pairs from the file directly into
+# the `env` command as arguments. `env` accepts names with `()` (unlike bash's
+# `export` builtin), so BASH_FUNC_module() is preserved as-is and any spawned
+# bash child will decode it on startup.
 if [ -f "\$HOME/satellite.env" ]; then
-  # Read with NUL separators so multi-line values (e.g. exported shell functions)
-  # are captured as a single KEY=VALUE entry, not split across lines.
-  while IFS= read -r -d '' entry; do
-    # BASH_FUNC_X()=() { body } entries have parens in the name which `export`
-    # rejects. Strip the trailing `()` from the name (bash 5.x accepts both
-    # forms when decoding on startup). All other entries export directly.
-    case "$entry" in
-      BASH_FUNC_*'()='*)
-        cleaned="${entry/'()='/=}"
-        export "$cleaned" 2>/dev/null || true
-        ;;
-      *)
-        export "$entry" 2>/dev/null || true
-        ;;
-    esac
-  done < "\$HOME/satellite.env"
+  nohup xargs -0 -a "\$HOME/satellite.env" env \
+    SATELLITE_TOKEN="\$TOKEN" SATELLITE_PORT="\$PORT" "\$BINARY" \
+    > /tmp/satellite-stdout.log 2>&1 &
+else
+  # Fallback: launch with minimal env (just satellite config vars)
+  export SATELLITE_TOKEN="\$TOKEN"
+  export SATELLITE_PORT="\$PORT"
+  nohup "\$BINARY" > /tmp/satellite-stdout.log 2>&1 &
 fi
-
-export SATELLITE_TOKEN="\$TOKEN"
-export SATELLITE_PORT="\$PORT"
-nohup "\$BINARY" > /tmp/satellite-stdout.log 2>&1 &
 
 sleep 2
 
