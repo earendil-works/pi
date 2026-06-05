@@ -70,6 +70,40 @@ const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
 
+// Remote exec tool input schema - discriminated union of all sub-operations
+const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
+  z.object({
+    tool: z.literal("bash"),
+    command: z.string(),
+    timeout: z.number().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    tool: z.literal("read_file"),
+    path: z.string(),
+    offset: z.number().optional(),
+    limit: z.number().optional(),
+  }),
+  z.object({
+    tool: z.literal("write_file"),
+    path: z.string(),
+    content: z.string(),
+  }),
+  z.object({
+    tool: z.literal("edit_file"),
+    path: z.string(),
+    edits: z.array(z.object({
+      oldText: z.string(),
+      newText: z.string(),
+    })),
+  }),
+  z.object({
+    tool: z.literal("list_dir"),
+    path: z.string().optional().default("."),
+    limit: z.number().optional().default(500),
+  }),
+]);
+
 // ============================================================================
 // Progress Context (for keepalive heartbeat during long-running tools)
 // ============================================================================
@@ -682,38 +716,7 @@ function createMcpServer(): McpServer {
     "remote_exec",
     {
       description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter:\n\n- bash: execute a shell command (command, optional timeout in ms, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (default path \".\", optional limit, default 500)",
-      inputSchema: z.discriminatedUnion("tool", [
-        z.object({
-          tool: z.literal("bash"),
-          command: z.string(),
-          timeout: z.number().optional(),
-          cwd: z.string().optional(),
-        }),
-        z.object({
-          tool: z.literal("read_file"),
-          path: z.string(),
-          offset: z.number().optional(),
-          limit: z.number().optional(),
-        }),
-        z.object({
-          tool: z.literal("write_file"),
-          path: z.string(),
-          content: z.string(),
-        }),
-        z.object({
-          tool: z.literal("edit_file"),
-          path: z.string(),
-          edits: z.array(z.object({
-            oldText: z.string(),
-            newText: z.string(),
-          })),
-        }),
-        z.object({
-          tool: z.literal("list_dir"),
-          path: z.string().optional().default("."),
-          limit: z.number().optional().default(500),
-        }),
-      ]),
+      inputSchema: REMOTE_EXEC_SCHEMA,
     },
     async (args, extra) => {
       const t0 = Date.now();

@@ -42,6 +42,51 @@ function loadSettings(): PiSettings {
 }
 
 // ============================================================================
+// MCP Config Loading (mirrors settings-manager.ts loadMcpConfig)
+// ============================================================================
+
+const MCP_CONFIG_FILE = "mcp.json";
+
+interface McpServerConfig {
+	url: string;
+	token: string;
+	enabled?: boolean;
+	remotePathPattern?: string;
+}
+
+function getAgentDir(): string {
+	return join(homedir(), ".pi", "agent");
+}
+
+function loadMcpConfig(): Record<string, McpServerConfig> {
+	const configPath = join(getAgentDir(), MCP_CONFIG_FILE);
+	if (!existsSync(configPath)) return {};
+	try {
+		return JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, McpServerConfig>;
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Build the remote paths prompt injection text from satellite MCP server configs.
+ * Only servers named "satellite" with a non-empty remotePathPattern are included.
+ */
+export function buildRemotePathsPrompt(
+	configs: Array<{ name: string; remotePathPattern?: string }>,
+): string {
+	const sections: string[] = [];
+	for (const config of configs) {
+		if (config.name === "satellite" && config.remotePathPattern) {
+			sections.push(
+				`## Remote Paths\n\nFiles matching pattern \`${config.remotePathPattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file). Do NOT use local bash/read/write/edit on these paths.`,
+			);
+		}
+	}
+	return sections.join("\n\n");
+}
+
+// ============================================================================
 // SSRF Protection
 // ============================================================================
 
@@ -205,26 +250,39 @@ export function registerTools(pi: ExtensionAPI): void {
 		roundsSinceTodo = 0;
 		contextCount = 0;
 
+		// Layer A: Inject remote paths prompt if satellite MCP server has remotePathPattern
+		const mcpConfig = loadMcpConfig();
+		const satelliteConfigs = Object.entries(mcpConfig).map(([name, config]) => ({
+			name,
+			remotePathPattern: config.remotePathPattern,
+		}));
+		const remotePathsPrompt = buildRemotePathsPrompt(satelliteConfigs);
+
+		const planningSection = [
+			"",
+			"",
+			"## Planning",
+			"",
+			"You have a Todowrite tool available for planning and tracking multi-step tasks (3+ steps).",
+			"Rules:",
+			"  1. Create a plan with todowrite before starting a multi-step task",
+			"  2. Mark the current step as in_progress before working on it",
+			"  3. Mark steps as completed when done — update after EVERY step, do not batch completions",
+			"  4. Up to 3 items can be in_progress at a time (for parallel workflows)",
+			"  5. Use activeForm to describe what you're currently doing (e.g., 'Writing tests')",
+			"  6. Simple single-step tasks do not need a plan — use Todowrite only when it helps",
+			"",
+			"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
+		].join("\n");
+
 		return {
 			systemPrompt:
-				event.systemPrompt +
-				[
-					"",
-					"",
-					"## Planning",
-					"",
-					"You have a Todowrite tool available for planning and tracking multi-step tasks (3+ steps).",
-					"Rules:",
-					"  1. Create a plan with todowrite before starting a multi-step task",
-					"  2. Mark the current step as in_progress before working on it",
-					"  3. Mark steps as completed when done — update after EVERY step, do not batch completions",
-					"  4. Only one item can be in_progress at a time",
-					"  5. Change priority (high/medium/low) as needed to indicate importance",
-					'  6. Simple single-step tasks do not need a plan — use Todowrite only when it helps',
-					"",
-					"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
-				].join("\n"),
-		};
+			systemPrompt:
+				event.systemPrompt + planningSection + (remotePathsPrompt ? "
+
+" + remotePathsPrompt : ""),
+			};
+		});		};
 	});
 
 	// ============================================================================
