@@ -1,0 +1,45 @@
+{
+  "name": "@pi-mono/self-evolver",
+  "version": "0.1.0",
+  "description": "Self-evolution engine for pi-mono: 5D memory-native gene/genome equivalent — apex_distill closed-loop, fitness-driven SKILL pool, dream() evolution cycle",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./5d": {
+      "types": "./dist/memory/index.d.ts",
+      "import": "./dist/memory/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "self-test": "bun run src/self-test.ts"
+  },
+  "keywords": [
+    "pi-mono",
+    "self-evolution",
+    "5d-memory",
+    "gene-pool",
+    "apex-distill",
+    "fitness",
+    "ai-agent"
+  ],
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "bun": "^1.6.0",
+    "typescript": "^5.7.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.78.0"
+  }
+}
