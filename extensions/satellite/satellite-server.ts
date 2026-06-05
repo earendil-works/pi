@@ -5,8 +5,9 @@
  * An MCP server that exposes remote file and shell tools via HTTP transport.
  * Deploys on the remote server as a persistent process.
  *
- * Exposes a single `remote_exec` tool that routes to 5 predefined tools:
- * read_file, write_file, edit_file, bash, list_dir.
+ * Exposes a single `remote_exec` tool that routes to 8 predefined tools:
+ * read_file, write_file, edit_file, bash, list_dir, find_files, grep_files,
+ * transfer_file.
  *
  * 1:1 feature parity with local pi tools:
  * - Bash: streaming output, process tree killing, abort signal, OutputAccumulator
@@ -39,8 +40,8 @@ import {
   waitForChildProcess,
   OutputAccumulator,
   truncateHead,
-  MAX_LINES as _MAX_LINES,
-  MAX_BYTES as _MAX_BYTES,
+  MAX_LINES,
+  MAX_BYTES,
 } from "./utils.ts";
 
 // ============================================================================
@@ -79,11 +80,6 @@ if (!TOKEN) {
 // ============================================================================
 // (canonicalize, isParentTraversal, killProcessTree, waitForChildProcess,
 //  OutputAccumulator, truncateHead are imported from ./utils.ts)
-
-if (!TOKEN) {
-  console.error("ERROR: SATELLITE_TOKEN environment variable is required");
-  process.exit(1);
-}
 
 // ============================================================================
 // Logging
@@ -132,8 +128,6 @@ function log(msg: string, sessionId?: string): void {
 // ============================================================================
 
 const SHELL = "/bin/bash";
-const MAX_LINES = 2000;
-const MAX_BYTES = 50 * 1024;
 const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
@@ -306,58 +300,6 @@ function generateDiff(edits: Array<{ oldText: string; newText: string }>): strin
   }
   return parts.join("\n");
 }
-
-// ============================================================================
-// Tool Validation Schemas
-// ============================================================================
-
-const TOOL_SCHEMAS = {
-  read_file: z.object({
-    path: z.string(),
-    offset: z.number().optional(),
-    limit: z.number().optional(),
-  }),
-  write_file: z.object({
-    path: z.string(),
-    content: z.string(),
-  }),
-  edit_file: z.object({
-    path: z.string(),
-    edits: z.array(z.object({
-      oldText: z.string(),
-      newText: z.string(),
-    })),
-  }),
-  bash: z.object({
-    command: z.string(),
-    timeout: z.number().optional(),
-    cwd: z.string().optional(),
-  }),
-  list_dir: z.object({
-    path: z.string().optional().default("."),
-    limit: z.number().optional(),
-  }),
-  find_files: z.object({
-    pattern: z.string(),
-    path: z.string().optional(),
-    limit: z.number().optional(),
-  }),
-  grep_files: z.object({
-    pattern: z.string(),
-    path: z.string().optional(),
-    glob: z.string().optional(),
-    limit: z.number().optional(),
-    ignoreCase: z.boolean().optional(),
-    literal: z.boolean().optional(),
-    context: z.number().optional(),
-  }),
-  transfer_file: z.object({
-    direction: z.enum(["remote_to_local", "local_to_remote"]),
-    local_path: z.string(),
-    remote_path: z.string(),
-    content: z.string().optional(), // only used for "local_to_remote" direction
-  }),
-};
 
 // ============================================================================
 // Image MIME Detection
