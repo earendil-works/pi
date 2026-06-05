@@ -1,3 +1,4 @@
+// @ts-ignore - bun:test types not available in tsgo; tests run via bun
 import { describe, it, expect, afterEach } from "bun:test";
 import { z } from "zod/v3";
 
