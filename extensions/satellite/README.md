@@ -63,6 +63,47 @@ The server detects bash commands that should use a dedicated sub-op and returns 
 
 Each category has a retry budget of 2 per turn. On the 3rd violation, returns a hard error.
 
+## Deployment to HPC
+
+`./deploy.sh` builds, uploads, and restarts the server on the remote HPC login node (default: `login`, port `29001`).
+
+### One-time setup: capture the HPC env
+
+The server runs as a `nohup`'d process, so it does not source your shell rc files. To make `python3`, `module load`, conda envs, etc. available to bash sub-ops, capture your interactive login env once:
+
+```bash
+ssh login
+env -0 > ~/satellite.env   # MUST use -0: NUL separators preserve
+                           # multi-line BASH_FUNC_*() entries
+exit
+```
+
+Re-run this whenever you change modules, switch conda envs, or update `PATH` on the login node, then redeploy.
+
+### Deploy commands
+
+```bash
+./deploy.sh                  # full cycle: build + scp + restart
+./deploy.sh --restart-only   # skip build + scp, just restart the existing
+                             # binary (use after editing deploy.sh or after
+                             # updating ~/satellite.env on the remote)
+```
+
+The deploy script:
+
+1. Builds `satellite-server` binary locally (skipped with `--restart-only`).
+2. `scp`'s the binary to `/tmp` on the remote, then `rm` + `mv` into `~/satellite-server`. The HPC filesystem blocks in-place overwrites, hence the rm-then-mv dance.
+3. Kills all old `satellite-server` processes (including any `xargs` wrappers from prior failed deploys).
+4. Launches the binary inside a subshell that sources `~/satellite.env`, then `exec`s the binary via `env SATELLITE_TOKEN=... SATELLITE_PORT=...`. The subshell is replaced by the binary, so the process tree stays clean.
+
+### Troubleshooting
+
+- **Health check fails after deploy** — check `/tmp/satellite-stdout.log` on the remote for the server's stderr.
+- **bash sub-op can't find `python3` / `modulecmd`** — re-dump `~/satellite.env` from an interactive session, then `./deploy.sh --restart-only`.
+- **`module` function not available in `bash` sub-op** — expected. `bash -c` does not decode `BASH_FUNC_*` env vars. Capture already-loaded paths instead (your interactive `module load` will have updated `PATH` in `~/satellite.env`).
+- **scp fails with "dest open ... Failure"** — home filesystem is full. The deploy already uploads to `/tmp` first, so this should be rare. Free up space with `ssh login 'du -sh ~/* | sort -h | tail'`.
+- **Old `xargs`/`satellite-server` processes lingering** — the new kill loop handles this, but if pids leak, run `ssh login 'pkill -9 -f satellite-server; sleep 2'` manually.
+
 ## Requirements
 
 - `fd` for `find_files` (install: `apt install fd-find`)
