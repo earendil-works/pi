@@ -433,7 +433,7 @@ describe("transfer HTTP endpoints", () => {
   function makeRequest(method: string, path: string, hasAuth: boolean, body?: ArrayBuffer): Request {
     const headers = new Headers();
     if (hasAuth) {
-      headers.set("Authorization", "Bearer test-token");
+      headers.set("Authorization", `Bearer ${process.env.SATELLITE_TOKEN}`);
     }
     if (body) {
       headers.set("Content-Type", "application/octet-stream");

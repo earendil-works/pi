@@ -1026,7 +1026,7 @@ function createMcpServer(): McpServer {
           ? { sendNotification: (extra as any).sendNotification, progressToken }
           : undefined;
 
-      const sessionId = (extra as any)._meta?.sessionId ?? 0;
+      const sessionId = (extra as any).sessionId ?? 0;
 
       const result = await handler(toolArgs, extra.signal, progressCtx, sessionId);
       log(`remote_exec → ${tool} ${Date.now() - t0}ms`);
