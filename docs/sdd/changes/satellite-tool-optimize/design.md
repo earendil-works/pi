@@ -144,10 +144,10 @@ agent → remote_exec(tool=bash, command="cat /TJPROJ1/x.txt")
 
 ## Implementation Notes
 
-- All changes in `extensions/satellite/satellite-server.ts` single file
+- All changes in `extensions/satellite/satellite-server.ts` single file (server-side)
 - Delete `extensions/satellite/satellite-mcp.ts` (v2 stdio, dead code)
 - No changes to `packages/coding-agent/src/core/mcp/` (manager, tool-factory reused as-is)
-- `mcp.json` schema change: `McpServerConfig` gets optional `remotePathPattern?: string`
+- Layer A reads `mcp.json` directly in `personal-assistant/tools.ts` via existing `loadMcpConfig` helper from `settings-manager.ts` — no `McpServerConfig` schema change
 - System prompt injection via `before_agent_start` hook in `personal-assistant/tools.ts`
 - transfer HTTP endpoints re-use existing `checkAuth` middleware
-- `homedir()` for satellite env is `/root` or operator user; `which fd`/`which rg` rely on PATH
+- `which fd`/`which rg` rely on PATH

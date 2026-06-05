@@ -24,11 +24,10 @@
 **WHEN** satellite handleBash 检测到 `echo/printf >` 模式
 **THEN** 返回 error: "Use write_file (tool='write_file') instead of bash echo redirect. It auto-creates parent directories and handles file locking."
 
-### 场景: 层 B — bash find 自动注入保护
+### 场景: 层 B — bash find 引导到 find_files
 **GIVEN** Agent 调用了 `satellite_remote_exec(tool="bash", command="find /TJPROJ1/ -name '*.ts'")`
-**WHEN** satellite handleBash 检测到 `find` 命令且缺少 timeout/maxdepth
-**THEN** 自动注入: `timeout 30 find -maxdepth 10 -name '*.ts'` 然后 spawn
-**OR** 返回 error 要求 agent 明确指定 timeout 参数
+**WHEN** satellite handleBash 检测到 `find` 命令
+**THEN** 返回 error: "Prefer find_files over bash find. It uses fd with proper limit/truncation. Use tool=find_files, pattern='*.ts', path='/TJPROJ1/'"
 
 ### 场景: 层 B — 合法 bash 命令正常通过
 **GIVEN** Agent 调用了 `satellite_remote_exec(tool="bash", command="ls -la /TJPROJ1/data/")`
@@ -75,6 +74,18 @@
   `satellite_remote_exec(tool="grep_files", pattern="function\\s+handle", path="/TJPROJ1/project/src/", glob="*.ts")`
 **THEN** satellite 执行 rg 搜索 → 返回匹配行(带上下文行数、limit/截断)
 
+### 场景: find_files — 远程 fd 未安装
+**GIVEN** 远程服务器无 `fd` 可执行
+**WHEN** Agent 调 `satellite_remote_exec(tool="find_files", pattern="*.ts", path="/TJPROJ1/")`
+**THEN** satellite 执行 `which fd` 返回空,返回 isError: "fd not found on remote server. Install with: apt install fd-find"
+**AND** 不降级到 system find(决策 5: 不做 fallback,明确报错)
+
+### 场景: grep_files — 远程 rg 未安装
+**GIVEN** 远程服务器无 `rg` 可执行
+**WHEN** Agent 调 `satellite_remote_exec(tool="grep_files", pattern="function", path="/TJPROJ1/")`
+**THEN** 返回 isError: "ripgrep not found. Install with: apt install ripgrep"
+**AND** 不降级到 grep
+
 ### 场景: transfer_file — direction 参数无效
 **GIVEN** Agent 调 `satellite_remote_exec(tool="transfer_file", direction="push", ...)`
 **WHEN** satellite 验证 direction 非 "upload" 或 "download"
@@ -98,10 +109,10 @@
 
 ## 边界条件
 
-### 场景: 路径包含 TJPROJ 但不匹配正则
-**GIVEN** Agent 调 `bash(command="cat /home/user/TJPROJ-backup/notes.md")`
-**WHEN** guardrail 用 `/TJPROJ\d+/` 匹配
-**THEN** "TJPROJ-backup" 不匹配(无数字后缀),不拦截,正常执行
+### 场景: bash guardrail 拦截任意 cat (路径无关)
+**GIVEN** Agent 调 `bash(command="cat /home/user/TJPROJ-backup/notes.md")` (本地文件,但路径含 TJPROJ 字面量)
+**WHEN** bash guardrail detectIntent 检测 `cat <path>` 模式
+**THEN** 不依赖 path 匹配,统一拦截,返回 guidance 指向 `tool="read_file"`(guardrail 关注命令意图,非路径归属)
 
 ### 场景: 远程路径被挂载到本地
 **GIVEN** /TJPROJ1 通过 NFS 挂载到本地文件系统,本地工具可直接读写
