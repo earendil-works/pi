@@ -191,6 +191,48 @@ export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
   }),
 ]);
 
+/**
+ * Flat schema for MCP `tools/list` introspection.
+ *
+ * The MCP SDK's `normalizeObjectSchema` discards `z.discriminatedUnion` and `z.union`
+ * (it only recognizes `z.object` with a `.shape` field), so registering the strict
+ * REMOTE_EXEC_SCHEMA directly produces an empty `{ type: "object", properties: {} }`
+ * in the tools/list response — agents cannot discover sub-ops from it.
+ *
+ * This flat z.object exposes all sub-op names via the `tool` enum so the agent
+ * can see the discriminated union's variants. Runtime validation in
+ * `REMOTE_EXEC_SCHEMA` is unaffected — we still call `.parse(args)` against the
+ * strict schema inside the handler, so this is a display-only fallback.
+ */
+export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
+  tool: z.enum([
+    "bash",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_dir",
+    "find_files",
+    "grep_files",
+    "transfer_file",
+  ]),
+  command: z.string().optional(),
+  timeout: z.number().optional(),
+  cwd: z.string().optional(),
+  path: z.string().optional(),
+  offset: z.number().optional(),
+  limit: z.number().optional(),
+  content: z.string().optional(),
+  edits: z.array(z.object({
+    oldText: z.string(),
+    newText: z.string(),
+  })).optional(),
+  pattern: z.string().optional(),
+  glob: z.string().optional(),
+  direction: z.enum(["upload", "download"]).optional(),
+  local_path: z.string().optional(),
+  remote_path: z.string().optional(),
+});
+
 // ============================================================================
 // Progress Context (for keepalive heartbeat during long-running tools)
 // ============================================================================
@@ -1008,7 +1050,7 @@ function createMcpServer(): McpServer {
     "remote_exec",
     {
       description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter.\n\nGUIDANCE:\n- PREFER `read_file` over `bash(cat <path>)` — supports offset/limit/truncation\n- PREFER `write_file` over `bash(echo > <path>)` — auto-creates parent dirs, atomic\n- PREFER `edit_file` over `bash(sed -i)` — fuzzy matching, multi-edit, diff feedback\n- PREFER `grep_files` over `bash(grep)` — uses rg with proper limit/truncation\n- PREFER `list_dir` over `bash(ls)` — structured output, no shell escape issues\n- Use `bash` ONLY for actual shell operations (env, processes, scripts)\n\nSUB-OPERATIONS:\n- bash: execute a shell command (command, optional timeout in seconds, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (path defaults to '.', optional limit, default 500)\n- grep_files: search file contents (pattern, optional path, optional glob, optional limit)\n- transfer_file: move file between local and remote (direction='upload'|'download', local_path, remote_path). upload: server reads remote_path and returns content (agent writes to local_path). download: agent must pass `content` field; server writes to remote_path",
-      inputSchema: REMOTE_EXEC_SCHEMA,
+      inputSchema: REMOTE_EXEC_INPUT_SCHEMA,
     },
     async (args, extra) => {
       const t0 = Date.now();
