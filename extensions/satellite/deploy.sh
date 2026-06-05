@@ -37,11 +37,12 @@ if [ "$RESTART_ONLY" -eq 0 ]; then
 fi
 
 echo "=== Restarting satellite server (binary already on remote) ==="
-ssh "$REMOTE" bash -s << 'ENDSSH'
+# Pass TOKEN/PORT into the remote shell env (quoted heredoc body is literal,
+# so $TOKEN in the body would not be expanded locally — we set it in ssh's env
+# and the remote shell picks it up).
+TOKEN="$TOKEN" PORT="$PORT" ssh "$REMOTE" bash -s << 'ENDSSH'
 set -eu
 
-TOKEN="$TOKEN"
-PORT="$PORT"
 BINARY=~/satellite-server
 
 # Kill old satellite process
