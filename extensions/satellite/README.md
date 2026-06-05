@@ -51,55 +51,91 @@ The `remote_exec` tool is a discriminated union of 8 sub-operations:
 | `grep_files` | Search file contents (uses `rg`) | `bash(grep ...)` |
 | `transfer_file` | Move file between local/remote | n/a |
 
-## Bash Guardrail
+## Architecture: server = execute, client = guard
 
-The server detects bash commands that should use a dedicated sub-op and returns guidance errors instead of executing them. Patterns intercepted:
+The satellite server is a **pure executor**. All guardrails (path scope,
+intent substitution, schema pre-checks) live on the client side
+(`extensions/personal-assistant/tools.ts`). The server only:
 
-- `cat <path>` → suggests `read_file`
-- `sed -i ...` → suggests `edit_file`
-- `echo/printf > ...` → suggests `write_file`
-- `ls|ll|dir ...` → suggests `list_dir`
-- `find ...` → suggests `find_files`
-- `grep ...` → suggests `grep_files`
+- Canonicalizes paths via `fs.realpath` (pure mechanics)
+- Rejects paths whose realpath still contains `/..` segments (1-line
+  safety net, no config)
+- Truncates bash output via `OutputAccumulator` (50KB / 2000 lines)
+- Scrubs secrets in logs (PEM, `id_*`, `Bearer …`, `KEY=VAL`)
+- Exposes `/health`, `/metrics`, session TTL, log rotation
 
-Each category has a retry budget of 2 per turn. On the 3rd violation, returns a hard error.
+Why: a blocked tool call costs **zero network round-trips** when
+intercepted on the client (the agent sees the `{block, reason}` and
+self-corrects immediately). The server returning a guidance error over
+MCP is one wasted call per mistake.
 
-### Path scope (Layer B enforcement)
+## Sub-operations
 
-If the server is started with `SATELLITE_PATH_PATTERN=/TJPROJ\d+`, all file
-sub-ops (read/write/edit/list/find/grep/transfer) **and** any path-like
-tokens in `bash` commands are validated against the pattern after
-`fs.realpath` resolves symlinks. This is the server-side complement to
-the client-side `remotePathPattern` in mcp.json (Layer A). Catches:
+The `remote_exec` tool is a discriminated union of 8 sub-operations. The
+tool description is intentionally short — a 141-word "mode library" that
+shows the common tasks; exact field shapes come from the JSON schema.
 
-- Direct out-of-scope reads: `read_file /etc/passwd` → rejected
-- Symlink bypass: `ln -s /etc /tmp/x && read_file /tmp/x/passwd` → rejected
-- `..` traversal: `read_file /TJPROJ1/../etc/passwd` → rejected
-- Path-like args in bash: `cat /etc/passwd` → rejected
+| Sub-op | Purpose | Prefer over |
+|--------|---------|-------------|
+| `read_file` | Read file contents with offset/limit | `bash(cat ...)` |
+| `write_file` | Create/overwrite file | `bash(echo > ...)` |
+| `edit_file` | Apply text edits with fuzzy matching | `bash(sed -i ...)` |
+| `list_dir` | List directory entries | `bash(ls ...)` |
+| `bash` | Execute shell command (use sparingly) | n/a |
+| `find_files` | Search files by glob (uses `fd`) | `bash(find ...)` |
+| `grep_files` | Search file contents (uses `rg`) | `bash(grep ...)` |
+| `transfer_file` | Move file between local/remote | n/a |
 
-Mirror the `remotePathPattern` from mcp.json into the env file on login:
+### transfer_file directions
 
-```bash
-ssh login 'echo "SATELLITE_PATH_PATTERN=/TJPROJ\\\\d+" >> ~/satellite.env'
-ssh login './deploy.sh --restart-only'   # or just rerun deploy
+Two clear direction names — no ambiguous "upload/download" from
+whose perspective:
+
+```jsonc
+// server → agent: server reads remote_path, returns content.
+// agent saves to local_path LOCALLY (on its own machine).
+{ "tool": "transfer_file", "direction": "remote_to_local",
+  "remote_path": "/hpc/file.txt", "local_path": "/tmp/file.txt" }
+
+// agent → server: agent's MCP client reads local file and pushes
+// via the HTTP /transfer?path=... endpoint to keep file bytes
+// out of LLM context. Falls back to "content" field for small
+// strings, but for big files prefer the HTTP path.
+{ "tool": "transfer_file", "direction": "local_to_remote",
+  "local_path": "/tmp/big.sh", "remote_path": "/hpc/big.sh" }
 ```
 
-If `SATELLITE_PATH_PATTERN` is unset, no enforcement is applied (backward compatible).
+For `local_to_remote` of a large file: use the HTTP endpoint directly
+to avoid burning LLM context on the file bytes:
 
-### Schema guardrail
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+     --data-binary @/tmp/big.sh \
+     "http://172.30.0.4:29001/transfer?path=/hpc/big.sh"
+```
 
-If a tool call lands on a known agent schema-confusion shape, the server
-returns a guidance error instead of the cryptic MCP SDK message:
+## Client-side guardrails (in `extensions/personal-assistant`)
 
-- `remote_exec({tool, args: {...}})` (nested `args` wrapper) → flat shape required
-- `remote_exec({command})` (missing `tool` field) → discriminator required
+The `tool_call` extension hook is the choke point. It fires before any
+tool runs and can block with `{block: true, reason: "..."}`. Personal-
+assistant registers three guards:
 
-Each error includes the WRONG / Correct example and the full sub-op
-argument shape list, so the model can self-correct on the next turn.
+1. **Schema shape** — catches the "nested `args` wrapper" and "missing
+   `tool` field" mistakes before they reach MCP.
+2. **Path scope** — reads `mcp.json`'s `remotePathPattern` and rejects
+   any path-arg outside that scope (using `realpathSync` to catch
+   symlink bypass and `..` traversal).
+3. **Bash intent** — detects `bash(cat|ls|find|grep|sed -i|echo>)` and
+   suggests the dedicated sub-op, with a per-turn budget of 2 guidance
+   errors then a hard block (mirrors the old server behavior, moved
+   client-side for speed).
+
+All 18 unit tests live in
+`extensions/personal-assistant/test/satellite-guards.test.ts`.
 
 ## Observability
 
-- `GET /health` — JSON status, version, active session count, path pattern
+- `GET /health` — JSON `{ status, version, sessions }`
 - `GET /metrics` — Prometheus text format: per-tool counters, recent
   latency (rolling avg of last 200 calls), uptime, active sessions
 - `/tmp/satellite.log` — log file with per-session correlation
@@ -150,6 +186,7 @@ The deploy script:
 - **`module` function not available in `bash` sub-op** — expected. `bash -c` does not decode `BASH_FUNC_*` env vars. Capture already-loaded paths instead (your interactive `module load` will have updated `PATH` in `~/satellite.env`).
 - **scp fails with "dest open ... Failure"** — home filesystem is full. The deploy already uploads to `/tmp` first, so this should be rare. Free up space with `ssh login 'du -sh ~/* | sort -h | tail'`.
 - **Old `xargs`/`satellite-server` processes lingering** — the new kill loop handles this, but if pids leak, run `ssh login 'pkill -9 -f satellite-server; sleep 2'` manually.
+- **Agent keeps calling `bash(cat ...)` even after warnings** — the per-turn budget for the bash-intent guard is 2 guidance errors, then a hard block on the 3rd. The block clears at `turn_end`. If the budget is the issue, it resets each turn.
 
 ## Requirements
 
