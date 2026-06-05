@@ -148,19 +148,13 @@
 
 ## 6. Layer A: Soft Guardrail via System Prompt
 
-- [ ] 6.1 **Skip `McpServerConfig` change; read mcp.json directly in personal-assistant**
-  - **文件**: (none, design alignment)
-  - **内容**: Per design decision "no changes to packages/coding-agent/src/core/mcp/", we do NOT modify `manager.ts` or `McpServerConfig`. The `remotePathPattern` is read directly from `~/.pi/agent/mcp.json` (or `PI_MCP_CONFIG_PATH` env var) by `personal-assistant/tools.ts`. Use the same loader that `settings-manager.ts:loadMcpConfig` already exposes (import it or call it).
-  - **验证**: `grep "loadMcpConfig\|mcp.json" extensions/personal-assistant/tools.ts` returns ≥1 match
+- [ ] 6.1 **Inject layer A prompt in `before_agent_start` hook**
+  - **文件**: `extensions/personal-assistant/tools.ts` (the existing `before_agent_start` hook at line 203)
+  - **内容**: Per design decision "no changes to packages/coding-agent/src/core/mcp/", do NOT modify `manager.ts` or `McpServerConfig`. Instead, at hook start, call `loadMcpConfig()` (imported from `settings-manager`). For each server named `satellite` with `remotePathPattern`, append: `\n\n## Remote Paths\n\nFiles matching pattern \`${pattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file). Do NOT use local bash/read/write/edit on these paths.` If no satellite config has remotePathPattern, no injection.
+  - **验证**: `grep -A 2 "Remote Paths" extensions/personal-assistant/tools.ts && grep "loadMcpConfig" extensions/personal-assistant/tools.ts`
   - **依赖**: 无
 
-- [ ] 6.2 **Inject layer A prompt in `before_agent_start` hook**
-  - **文件**: `extensions/personal-assistant/tools.ts` (the existing `before_agent_start` hook at line 203)
-  - **内容**: At hook start, call `loadMcpConfig()` (from settings-manager). For each server named `satellite` with `remotePathPattern`, append: `\n\n## Remote Paths\n\nFiles matching pattern \`${pattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file). Do NOT use local bash/read/write/edit on these paths.` If no satellite config has remotePathPattern, no injection.
-  - **验证**: `grep -A 2 "Remote Paths" extensions/personal-assistant/tools.ts`
-  - **依赖**: 6.1
-
-- [ ] 6.3 **Document `remotePathPattern` field in `extensions/satellite/README.md`**
+- [ ] 6.2 **Document `remotePathPattern` field in `extensions/satellite/README.md`**
   - **文件**: `extensions/satellite/README.md` (Create)
   - **内容**: Add section showing how to configure `/TJPROJ\d+/` pattern in mcp.json. Include example block.
   - **验证**: `ls extensions/satellite/README.md && grep remotePathPattern extensions/satellite/README.md`
