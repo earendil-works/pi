@@ -163,7 +163,7 @@
 
 ## 7. Integration & Verification
 
-- [ ] 7.1 **Build satellite binary successfully**
+- [x] 7.1 **Build satellite binary successfully**
   - **文件**: `extensions/satellite/satellite-server.ts` (all prior changes)
   - **内容**: `bash extensions/satellite/build.sh` exits 0. Binary `satellite-server` rebuilt.
   - **验证**: `bash extensions/satellite/build.sh && echo OK`
