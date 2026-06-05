@@ -144,7 +144,15 @@ function migrateModelsJsonConfigValues(agentDir: string): ConfigValueMigration[]
 	const modelsPath = join(agentDir, "models.json");
 	if (!existsSync(modelsPath)) return [];
 
-	const parsed = JSON.parse(stripJsonComments(readFileSync(modelsPath, "utf-8"))) as unknown;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripJsonComments(readFileSync(modelsPath, "utf-8"))) as unknown;
+	} catch (error) {
+		if (error instanceof SyntaxError) {
+			throw new Error(`Failed to parse models.json: ${error.message}\n\nFile: ${modelsPath}`);
+		}
+		throw error;
+	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
 	const modelsData = parsed as Record<string, unknown>;
 	const providers = modelsData.providers;

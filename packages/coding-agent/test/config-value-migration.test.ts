@@ -135,4 +135,22 @@ describe("config value env var syntax migration", () => {
 			'models.json.providers["custom-provider"].modelOverrides["model-b"].headers["x-override-key"]: OVERRIDE_API_KEY -> $OVERRIDE_API_KEY',
 		);
 	});
+
+	it("reports the models.json path when migration sees invalid JSON", () => {
+		const agentDir = createAgentDir();
+		const modelsPath = path.join(agentDir, "models.json");
+		fs.writeFileSync(modelsPath, '{\n  "providers": {\n', "utf-8");
+
+		let thrown: unknown;
+		try {
+			withAgentDir(agentDir, () => runMigrations(agentDir));
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		const message = (thrown as Error).message;
+		expect(message).toContain("Failed to parse models.json:");
+		expect(message).toContain(`File: ${modelsPath}`);
+	});
 });
