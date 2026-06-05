@@ -38,7 +38,18 @@ const replaceEditSchema = Type.Object(
 		}),
 		newText: Type.String({ description: "Replacement text for this targeted edit." }),
 	},
-	{ additionalProperties: false },
+	// No additionalProperties constraint: omitting it (rather than setting `true`) tolerates
+	// extraneous keys at validation while NOT advertising to the model that extra fields are
+	// welcome. tool.parameters is sent verbatim to providers as the wire tool schema, so
+	// `additionalProperties: false` emits "no extra keys" and `true` emits "extras are fine";
+	// omitting it emits neither, so the model is still steered toward clean { oldText, newText }
+	// and only the occasional artifact is silently accepted. oldText/newText stay required
+	// strings; only those reach the edit logic (see applyEditsToNormalizedContent), so unknown
+	// keys are harmlessly ignored. Weaker/smaller models intermittently append a near-duplicate
+	// filler key after a long newText value (e.g. { newText_strip: "" }) as a structural-
+	// completion artifact (also seen on frontier models for large single edits); strict
+	// rejection turned that harmless tic into a hard failure. This aligns the schema with the
+	// already-lenient runtime handlers.
 );
 
 const editSchema = Type.Object(

@@ -10,6 +10,7 @@
 ### Fixed
 
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).
+- Fixed the edit tool to tolerate extraneous keys in `edits[]` items (robustness for noisy/weak models). Weaker models intermittently append a near-duplicate filler key after a long `newText` value (e.g. `{ oldText, newText, newText_strip: "" }`); the strict schema rejected the whole call. The schema now ignores unknown keys, matching the already-lenient runtime handlers. `oldText`/`newText` remain required strings and only those reach the edit logic.
 
 ## [0.78.1] - 2026-06-04
 
