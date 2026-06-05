@@ -58,10 +58,54 @@ The server detects bash commands that should use a dedicated sub-op and returns 
 - `cat <path>` → suggests `read_file`
 - `sed -i ...` → suggests `edit_file`
 - `echo/printf > ...` → suggests `write_file`
+- `ls|ll|dir ...` → suggests `list_dir`
 - `find ...` → suggests `find_files`
 - `grep ...` → suggests `grep_files`
 
 Each category has a retry budget of 2 per turn. On the 3rd violation, returns a hard error.
+
+### Path scope (Layer B enforcement)
+
+If the server is started with `SATELLITE_PATH_PATTERN=/TJPROJ\d+`, all file
+sub-ops (read/write/edit/list/find/grep/transfer) **and** any path-like
+tokens in `bash` commands are validated against the pattern after
+`fs.realpath` resolves symlinks. This is the server-side complement to
+the client-side `remotePathPattern` in mcp.json (Layer A). Catches:
+
+- Direct out-of-scope reads: `read_file /etc/passwd` → rejected
+- Symlink bypass: `ln -s /etc /tmp/x && read_file /tmp/x/passwd` → rejected
+- `..` traversal: `read_file /TJPROJ1/../etc/passwd` → rejected
+- Path-like args in bash: `cat /etc/passwd` → rejected
+
+Mirror the `remotePathPattern` from mcp.json into the env file on login:
+
+```bash
+ssh login 'echo "SATELLITE_PATH_PATTERN=/TJPROJ\\\\d+" >> ~/satellite.env'
+ssh login './deploy.sh --restart-only'   # or just rerun deploy
+```
+
+If `SATELLITE_PATH_PATTERN` is unset, no enforcement is applied (backward compatible).
+
+### Schema guardrail
+
+If a tool call lands on a known agent schema-confusion shape, the server
+returns a guidance error instead of the cryptic MCP SDK message:
+
+- `remote_exec({tool, args: {...}})` (nested `args` wrapper) → flat shape required
+- `remote_exec({command})` (missing `tool` field) → discriminator required
+
+Each error includes the WRONG / Correct example and the full sub-op
+argument shape list, so the model can self-correct on the next turn.
+
+## Observability
+
+- `GET /health` — JSON status, version, active session count, path pattern
+- `GET /metrics` — Prometheus text format: per-tool counters, recent
+  latency (rolling avg of last 200 calls), uptime, active sessions
+- `/tmp/satellite.log` — log file with per-session correlation
+  (`session=<id8>` prefix) and secret scrubbing (PEM, .ssh/id_*,
+  `Bearer …`, `KEY=VAL`, `password=…` / `token=…` assignments).
+  Auto-rotates past 50 MB.
 
 ## Deployment to HPC
 
@@ -87,14 +131,17 @@ Re-run this whenever you change modules, switch conda envs, or update `PATH` on 
 ./deploy.sh --restart-only   # skip build + scp, just restart the existing
                              # binary (use after editing deploy.sh or after
                              # updating ~/satellite.env on the remote)
+./deploy.sh --rollback       # restore ~/satellite-server.prev (auto-saved
+                             # on each deploy), then restart
 ```
 
 The deploy script:
 
 1. Builds `satellite-server` binary locally (skipped with `--restart-only`).
-2. `scp`'s the binary to `/tmp` on the remote, then `rm` + `mv` into `~/satellite-server`. The HPC filesystem blocks in-place overwrites, hence the rm-then-mv dance.
-3. Kills all old `satellite-server` processes (including any `xargs` wrappers from prior failed deploys).
-4. Launches the binary inside a subshell that sources `~/satellite.env`, then `exec`s the binary via `env SATELLITE_TOKEN=... SATELLITE_PORT=...`. The subshell is replaced by the binary, so the process tree stays clean.
+2. Backs up the existing remote binary to `~/satellite-server.prev` for rollback.
+3. `scp`'s the binary to `/tmp` on the remote, then `rm` + `mv` into `~/satellite-server`. The HPC filesystem blocks in-place overwrites, hence the rm-then-mv dance.
+4. Kills all old `satellite-server` processes (including any `xargs` wrappers from prior failed deploys).
+5. Launches the binary inside a subshell that sources `~/satellite.env`, then `exec`s the binary via `env SATELLITE_TOKEN=... SATELLITE_PORT=...`. The subshell is replaced by the binary, so the process tree stays clean.
 
 ### Troubleshooting
 
