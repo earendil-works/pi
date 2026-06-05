@@ -597,3 +597,117 @@ describe("guardrailRetry counter", () => {
     expect(getGuardrailCount(3, "edit_file")).toBe(0);
   });
 });
+
+// =============================================================================
+// default bash timeout tests (Task 3.1)
+// =============================================================================
+
+describe("default bash timeout", () => {
+  // S9: Agent 调 sleep 60 无 timeout 参数 → 30s 后命令仍未返回 → 进程被 kill, 返回 isError
+
+  it("a: sleep 60 with no timeout is killed at 30s and returns isError", async () => {
+    const handleBash = (satellite as any).handleBash;
+    if (!handleBash) {
+      throw new Error("handleBash not implemented or exported");
+    }
+
+    const t0 = Date.now();
+    // Note: sleep 60 should NOT be intercepted by guardrail since 'sleep' is not a guardrail pattern
+    const result = await handleBash({ command: "sleep 60" }); // no timeout arg
+    const elapsed = Date.now() - t0;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/exceeded 30s timeout/);
+    expect(elapsed).toBeLessThan(35_000); // less than 30s + 5s buffer
+    expect(elapsed).toBeGreaterThan(28_000); // at least 28s
+  }, { timeout: 40_000 });
+
+  it("b: sleep 60 with explicit timeout=1 is killed at 1s and returns isError", async () => {
+    const handleBash = (satellite as any).handleBash;
+    if (!handleBash) {
+      throw new Error("handleBash not implemented or exported");
+    }
+
+    const t0 = Date.now();
+    const result = await handleBash({ command: "sleep 60", timeout: 1 });
+    const elapsed = Date.now() - t0;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/exceeded 1s timeout/);
+    expect(elapsed).toBeLessThan(3_000);
+  }, { timeout: 10_000 });
+});
+
+// =============================================================================
+// handleBash guardrail tests (Task 2.5)
+// =============================================================================
+
+describe("handleBash guardrail", () => {
+  // Note: handleBash uses hardcoded turnId=0 internally (plumbed from MCP in task 2.6)
+  // So all tests must use turnId=0 to match
+  const guardrailTurnId = 0;
+
+  // Cleanup after each test
+  afterEach(() => {
+    const { resetGuardrail } = satellite as any;
+    if (resetGuardrail) {
+      resetGuardrail(guardrailTurnId);
+    }
+  });
+
+  // S2: First cat violation → soft guidance error with "Prefer read_file"
+  it("handleBash guardrail: cat /foo/x.txt first call returns isError with Prefer read_file", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(guardrailTurnId); // ensure clean state
+    expect(handleBash).toBeDefined();
+    const result = await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Prefer read_file");
+  });
+
+  // S2: Second cat violation → still soft guidance error
+  it("handleBash guardrail: cat /foo/x.txt second call returns isError (soft block)", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(guardrailTurnId); // ensure clean state
+    // First call
+    await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    // Second call
+    const result = await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Prefer read_file");
+  });
+
+  // S17: Third cat violation → hard block
+  it("handleBash guardrail: cat /foo/x.txt third call returns Blocked with 3 times", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(guardrailTurnId); // ensure clean state
+    await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    const result = await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Blocked");
+    expect(result.content[0].text).toContain("3 times");
+  });
+
+  // S3: Different intent (sed -i) has independent counter
+  it("handleBash guardrail: sed -i 's/a/b/' /foo returns isError with Prefer edit_file", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(guardrailTurnId); // ensure clean state
+    const result = await handleBash({ command: "sed -i 's/a/b/' /foo" }, undefined, undefined);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Prefer edit_file");
+  });
+
+  // S4: ls -la passes through without guardrail (no intent detected)
+  it("handleBash guardrail: ls -la /foo runs normally without guardrail", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(guardrailTurnId); // ensure clean state
+    const result = await handleBash({ command: "ls -la /tmp" }, undefined, undefined);
+    // ls should succeed (not be an error from guardrail)
+    // It may or may not be an isError depending on /tmp existence, but should NOT contain guardrail guidance
+    if (result.content && result.content[0] && result.content[0].text) {
+      expect(result.content[0].text).not.toContain("Prefer");
+      expect(result.content[0].text).not.toContain("Blocked");
+    }
+  });
+});

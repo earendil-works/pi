@@ -79,6 +79,26 @@ export function resetGuardrail(turnId: TurnId): void {
   guardrailCounters.delete(turnId);
 }
 
+/**
+ * Returns guidance text for a detected bash intent.
+ * The path extraction is naive (last token) — enough for guardrail hints.
+ */
+function getGuidanceMessage(intent: GuardrailIntent, command: string): string {
+  const path = command.split(/\s+/).pop() || "<path>";
+  switch (intent) {
+    case "read_file":
+      return `Prefer read_file over bash cat. Use tool=read_file, path='${path}' for offset/limit/truncation support.`;
+    case "edit_file":
+      return `Prefer edit_file over bash sed -i. Use tool=edit_file, path='${path}', edits=[{oldText, newText}] for fuzzy matching and diff feedback.`;
+    case "write_file":
+      return `Prefer write_file over bash echo/printf. Use tool=write_file, path='${path}', content=... for atomic writes.`;
+    case "find_files":
+      return `Prefer find_files over bash find. Use tool=find_files, pattern='<glob>', path='${path}' for fd with proper limit/truncation.`;
+    case "grep_files":
+      return `Prefer grep_files over bash grep. Use tool=grep_files, pattern='<regex>', path='${path}' for rg with proper limit/truncation.`;
+  }
+}
+
 // ============================================================================
 // Config
 // ============================================================================
@@ -644,11 +664,36 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
   }
 }
 
-async function handleBash(
+export async function handleBash(
   args: { command: string; timeout?: number; cwd?: string },
   abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
 ) {
+  // Layer B guardrail: detect bash intent that should use a dedicated sub-op
+  const intent = detectIntent(args.command);
+  if (intent) {
+    const turnId = 0; // TODO: plumb from MCP request in task 2.6
+    const count = getGuardrailCount(turnId, intent);
+
+    if (count >= 2) {
+      // Hard block on 3rd violation
+      return {
+        content: textContent(
+          `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`
+        ),
+        isError: true,
+      };
+    }
+
+    // Soft guidance for first 2 violations
+    incrementGuardrail(turnId, intent);
+    const guidance = getGuidanceMessage(intent, args.command);
+    return {
+      content: textContent(guidance),
+      isError: true,
+    };
+  }
+
   let workDir = args.cwd || bashCwd;
   const t0 = Date.now();
 
@@ -756,6 +801,10 @@ async function handleBash(
 
     log(`bash "${args.command.slice(0, 80)}" → ${exitCode === 0 ? "ok" : "error"} ${duration}ms${snapshot.truncated ? ` (truncated: ${snapshot.outputLines}/${snapshot.totalLines} lines)` : ""}${timedOut ? " (timed out)" : ""}`);
 
+    const isError = timedOut || (exitCode !== 0 && exitCode !== null);
+    if (isError) {
+      return { content: textContent(raw), isError: true };
+    }
     return { content: textContent(raw) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
