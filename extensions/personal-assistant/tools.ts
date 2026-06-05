@@ -417,12 +417,15 @@ export async function interceptTransferResult(
 ): Promise<{ content: Array<{ type: "text"; text: string }> } | undefined> {
 	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
 	if (event.input.tool !== "transfer_file") return undefined;
-	if (event.input.direction !== "to_local") return undefined;
+	// interceptTransferCall already translated `direction: "to_local"` →
+	// `"remote_to_local"` and renamed file1/file2 → local_path/remote_path
+	// on the same event.input object. We read the post-translation shape.
+	if (event.input.direction !== "remote_to_local") return undefined;
 	if (event.isError) return undefined;
 
-	const file1 = String(event.input.file1 ?? "");
-	const file2 = String(event.input.file2 ?? "");
-	if (!file1) return undefined;
+	const localPath = String(event.input.local_path ?? "");
+	const remotePath = String(event.input.remote_path ?? "");
+	if (!localPath) return undefined;
 
 	// Server returned: textContent(echo + content) where echo is
 	// "direction=..., local=..., remote=...\n" — we want the part after echo.
@@ -430,15 +433,15 @@ export async function interceptTransferResult(
 	const echoEnd = raw.indexOf("\n");
 	const bytes = raw.slice(echoEnd + 1);
 
-	const result = await writeFileForTransfer(file1, bytes);
+	const result = await writeFileForTransfer(localPath, bytes);
 	if (!result.ok) {
 		return {
-			content: [{ type: "text", text: `transfer_file(to_local) failed: cannot write '${file1}': ${result.error}` }],
+			content: [{ type: "text", text: `transfer_file(to_local) failed: cannot write '${localPath}': ${result.error}` }],
 		};
 	}
 
 	return {
-		content: [{ type: "text", text: `Downloaded ${result.bytes} bytes: ${file2} → ${file1}` }],
+		content: [{ type: "text", text: `Downloaded ${result.bytes} bytes: ${remotePath} → ${localPath}` }],
 	};
 }
 

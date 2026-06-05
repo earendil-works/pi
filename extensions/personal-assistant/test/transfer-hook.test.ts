@@ -109,7 +109,13 @@ describe("interceptTransferCall (to_remote — inject content)", () => {
 	});
 });
 
-describe("interceptTransferResult (to_local — write file1, replace content)", () => {
+describe("interceptTransferResult (to_local — write local_path, replace content)", () => {
+	// interceptTransferResult receives the SAME event.input that was passed
+	// to interceptTransferCall. That hook translates to_local →
+	// remote_to_local and renames file1/file2 → local_path/remote_path.
+	// So the result hook must read the post-translation shape, not the
+	// pre-translation one. (Bugs here: see the hotfix commit message.)
+
 	let tmpDir: string;
 	beforeEach(() => {
 		tmpDir = mkdtempSync(join(tmpdir(), "transfer-result-"));
@@ -118,38 +124,38 @@ describe("interceptTransferResult (to_local — write file1, replace content)", 
 		if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
 	});
 
-	it("writes file1 with server-returned bytes and replaces content with metadata", async () => {
-		const file1 = join(tmpDir, "out.txt");
+	it("writes local_path with server-returned bytes and replaces content with metadata", async () => {
+		const localPath = join(tmpDir, "out.txt");
 		const echo = "direction=remote_to_local, local=/x, remote=/hpc/r.txt\n";
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file1, file2: "/hpc/r.txt" },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: localPath, remote_path: "/hpc/r.txt" },
 			content: [{ type: "text" as const, text: echo + "downloaded content here" }],
 			isError: false,
 		};
 		const result = await interceptTransferResult(event);
 		expect(result).toBeDefined();
 		expect(result!.content[0].text).toMatch(/Downloaded \d+ bytes/);
-		expect(readFileSync(file1, "utf-8")).toBe("downloaded content here");
+		expect(readFileSync(localPath, "utf-8")).toBe("downloaded content here");
 	});
 
 	it("creates parent directories if missing", async () => {
-		const file1 = join(tmpDir, "deep", "nested", "out.txt");
+		const localPath = join(tmpDir, "deep", "nested", "out.txt");
 		const echo = "direction=remote_to_local, local=/x, remote=/hpc/r.txt\n";
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file1, file2: "/hpc/r.txt" },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: localPath, remote_path: "/hpc/r.txt" },
 			content: [{ type: "text" as const, text: echo + "ok" }],
 			isError: false,
 		};
 		await interceptTransferResult(event);
-		expect(existsSync(file1)).toBe(true);
+		expect(existsSync(localPath)).toBe(true);
 	});
 
 	it("passes through on error (don't write partial data)", async () => {
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file1: "/x", file2: "/hpc/r.txt" },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: "/x", remote_path: "/hpc/r.txt" },
 			content: [{ type: "text" as const, text: "Error: not found" }],
 			isError: true,
 		};
@@ -159,20 +165,59 @@ describe("interceptTransferResult (to_local — write file1, replace content)", 
 	it("ignores non-satellite tools", async () => {
 		const event = {
 			toolName: "other",
-			input: { tool: "transfer_file", direction: "to_local", file1: "/x", file2: "/y" },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: "/x", remote_path: "/y" },
 			content: [{ type: "text" as const, text: "stuff" }],
 			isError: false,
 		};
 		expect(await interceptTransferResult(event)).toBeUndefined();
 	});
 
-	it("ignores to_remote direction (handled in beforeToolCall)", async () => {
+	it("ignores to_remote direction (handled in beforeToolCall, never reaches here)", async () => {
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_remote", file1: "/x", file2: "/y" },
+			input: { tool: "transfer_file", direction: "local_to_remote", local_path: "/x", remote_path: "/y" },
 			content: [{ type: "text" as const, text: "irrelevant" }],
 			isError: false,
 		};
 		expect(await interceptTransferResult(event)).toBeUndefined();
+	});
+
+	// True end-to-end: run call hook → MCP schema validation → result hook.
+	// The 10 single-side tests above could pass even if the result hook
+	// read stale field names (which was the previous bug). This test
+	// catches that class of regression by exercising the actual sequence.
+	it("e2e: call hook translates → result hook writes file (to_local flow)", async () => {
+		const file1 = join(tmpDir, "downloaded.txt");
+		const file2 = "/hpc/remote/data.json";
+
+		// 1. Agent calls with the user's view of the world.
+		const callEvent: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "to_local", file1, file2 },
+		};
+		const callResult = await interceptTransferCall(callEvent);
+		expect(callResult).toBeUndefined();
+
+		// 2. Verify the wire payload validates against the server schema.
+		const wireCheck = REMOTE_EXEC_INPUT_SCHEMA.safeParse(callEvent.input);
+		expect(wireCheck.success).toBe(true);
+
+		// 3. Simulate server response: echo + content. The runner fires
+		//    tool_result with the SAME event object (input still mutated).
+		const echo = `direction=remote_to_local, local=${file1}, remote=${file2}\n`;
+		const resultEvent = {
+			toolName: "satellite_remote_exec" as const,
+			input: callEvent.input,
+			content: [{ type: "text" as const, text: echo + '{"key": "value"}' }],
+			isError: false,
+		};
+		const resultResult = await interceptTransferResult(resultEvent);
+
+		// 4. Verify both: the file was written AND the user sees metadata.
+		expect(resultResult).toBeDefined();
+		expect(readFileSync(file1, "utf-8")).toBe('{"key": "value"}');
+		expect(resultResult!.content[0].text).toMatch(
+			new RegExp(`Downloaded \\d+ bytes: ${file2.replace(/\//g, "\\/")} → ${file1.replace(/\//g, "\\/")}`),
+		);
 	});
 });
