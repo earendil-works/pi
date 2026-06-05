@@ -188,8 +188,8 @@
   - **依赖**: 7.1
 
 ## Verification
-- [ ] 全量测试: `bun test extensions/satellite/`
-- [ ] Lint: `npx biome check extensions/satellite/ packages/coding-agent/src/core/mcp/ extensions/personal-assistant/`
-- [ ] Typecheck: `npx tsgo --noEmit`
-- [ ] Build: `bash extensions/satellite/build.sh`
-- [ ] End-to-end smoke: start server → curl /health → curl /mcp with all 8 sub-ops → curl /transfer upload + download
+- [x] 全量测试: `bun test extensions/satellite/`
+- [x] Lint: `npx biome check extensions/satellite/ packages/coding-agent/src/core/mcp/ extensions/personal-assistant/`
+- [x] Typecheck: `npx tsgo --noEmit`
+- [x] Build: `bash extensions/satellite/build.sh`
+- [x] End-to-end smoke: start server → curl /health → curl /mcp with all 8 sub-ops → curl /transfer upload + download
