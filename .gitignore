@@ -3,6 +3,8 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
+# vite dev-mode timestamp files (regenerated on each server start)
+**/vite.config.ts.timestamp-*.mjs
 # packages/*/node_modules/
 packages/*/dist/
 packages/*/dist-chrome/

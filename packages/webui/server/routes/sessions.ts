@@ -452,7 +452,7 @@ async function readMessages(
         for (const c of inner.content) {
           if (c.type === "text") parts.push({ type: "text", text: c.text ?? "" });
           else if (c.type === "thinking") parts.push({ type: "thinking", text: c.text ?? "" });
-          else if (c.type === "toolCall") parts.push({ type: "toolCall", id: c.id, name: c.name, args: c.args ?? {} });
+          else if (c.type === "toolCall") parts.push({ type: "toolCall", id: c.id, name: c.name, args: c.arguments ?? c.args ?? {} });
           else if (c.type === "image") parts.push({ type: "image", mediaType: c.mediaType, data: c.data });
         }
       } else if (typeof inner.content === "string") {

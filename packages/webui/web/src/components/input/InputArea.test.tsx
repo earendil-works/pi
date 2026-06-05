@@ -118,4 +118,70 @@ describe("InputArea", () => {
     fireEvent.click(sendButton);
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
+
+  describe("Stop button (abort)", () => {
+    let onAbort: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      onAbort = vi.fn();
+    });
+
+    const renderWithAbort = (props?: Partial<React.ComponentProps<typeof InputArea>>) =>
+      render(
+        <InputArea
+          images={props?.images ?? []}
+          text={props?.text ?? "draft"}
+          onChangeText={onChangeText}
+          onAddImage={onAddImage}
+          onRemoveImage={onRemoveImage}
+          onError={onError}
+          onSubmit={onSubmit}
+          onAbort={onAbort}
+          disabled={props?.disabled}
+        />
+      );
+
+    it("renders Stop button instead of Send when onAbort is provided", () => {
+      renderWithAbort();
+      expect(screen.getByRole("button", { name: /stop/i })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
+    });
+
+    it("clicking Stop triggers onAbort, not onSubmit", () => {
+      renderWithAbort();
+      fireEvent.click(screen.getByRole("button", { name: /stop/i }));
+      expect(onAbort).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("Enter does not submit while abort is available (lets user draft a multi-line message)", () => {
+      renderWithAbort();
+      const textarea = screen.getByPlaceholderText(/Generating/i);
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("Stop button is enabled even when text is empty (aborts are independent of the draft)", () => {
+      render(
+        <InputArea
+          images={[]}
+          text=""
+          onChangeText={onChangeText}
+          onAddImage={onAddImage}
+          onRemoveImage={onRemoveImage}
+          onError={onError}
+          onSubmit={onSubmit}
+          onAbort={onAbort}
+        />
+      );
+      const stopButton = screen.getByRole("button", { name: /stop/i });
+      expect(stopButton).not.toHaveAttribute("disabled");
+    });
+
+    it("falls back to Send button when onAbort is omitted", () => {
+      renderInputArea({ text: "Hello" });
+      expect(screen.getByRole("button", { name: /send/i })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
+    });
+  });
 });

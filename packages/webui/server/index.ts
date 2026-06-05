@@ -207,12 +207,20 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   // JSON body parser with size limit
   app.use(express.json({ limit: "32kb" }));
 
-  // Security headers
+  // Security headers. In dev mode (PI_WEB_DEV=1) vite injects React
+  // Refresh + HMR preamble as inline <script type="module"> blocks in
+  // index.html. The strict 'script-src' that protects the production
+  // bundle would block those inline scripts, leaving $RefreshReg$
+  // undefined and causing every React component to throw "can't detect
+  // preamble" on load. Add 'unsafe-inline' to script-src only when
+  // dev mode is on — the dev server is loopback-only and never
+  // user-content, so this is acceptable.
+  const isDev = process.env.PI_WEB_DEV === "1";
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         "default-src": ["'self'"],
-        "script-src": ["'self'"],
+        "script-src": isDev ? ["'self'", "'unsafe-inline'"] : ["'self'"],
         "style-src": ["'self'", "'unsafe-inline'"],
         "connect-src": ["'self'", "ws:", "wss:"],
         "img-src": ["'self'", "data:"],
@@ -242,9 +250,14 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   // running webui/server/index.ts), __dirname is webui/server/ and web lives
   // at webui/web/dist. In the esbuild-bundled install layout, __dirname is
   // coding-agent/dist/webui/ and web lives as a sibling at coding-agent/dist/webui/web/.
-  const webDistCandidates = [join(__dirname, "../web/dist"), join(__dirname, "./web")];
-  const webDist = webDistCandidates.find((candidate) => existsSync(join(candidate, "index.html"))) ?? webDistCandidates[0];
-  mountStatic(app, webDist);
+  //
+  // Skipped in dev mode (PI_WEB_DEV=1) — vite's middlewares own every
+  // non-/api, non-/ws path so the React app is served with HMR enabled.
+  if (process.env.PI_WEB_DEV !== "1") {
+    const webDistCandidates = [join(__dirname, "../web/dist"), join(__dirname, "./web")];
+    const webDist = webDistCandidates.find((candidate) => existsSync(join(candidate, "index.html"))) ?? webDistCandidates[0];
+    mountStatic(app, webDist);
+  }
 
   return { app, deps: { sessionPool, cronWatcher, cronStore, callLlm, settings } };
 }
@@ -262,6 +275,33 @@ export async function startServer(opts: {
 
   const server = createServer(app);
   const wss = attachWsHandler(server, deps.sessionPool);
+
+  // In dev mode, attach vite as express middleware so the React app is
+  // served with HMR on the same port. Vite's HMR WebSocket is wired to the
+  // same httpServer at /__vite_hmr — see attachWsHandler in
+  // server/ws/handler.ts for the matching path reservation. The dynamic
+  // import keeps vite out of the production esbuild bundle (--external:vite
+  // in package.json's build:server script). vite is a devDependency of the
+  // web app, present in node_modules when running via tsx watch but
+  // intentionally absent from the bundled server.bundle.js.
+  let viteClose: (() => Promise<void>) | null = null;
+  if (process.env.PI_WEB_DEV === "1") {
+    const { createServer: createViteServer } = await import(/* @vite-ignore */ "vite");
+    const vite = await createViteServer({
+      configFile: join(__dirname, "../web/vite.config.ts"),
+      root: join(__dirname, "../web"),
+      server: {
+        middlewareMode: true,
+        hmr: { server, path: "/__vite_hmr" },
+      },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+    viteClose = async () => {
+      await vite.close();
+    };
+    console.error("[dev] vite middleware attached — HMR enabled");
+  }
 
   // Wire CronWatcher → WS broadcast: on cron_changed, notify all WS clients
   deps.cronWatcher.subscribe((event) => {
@@ -293,6 +333,9 @@ export async function startServer(opts: {
           console.error("Shutting down");
           deps.cronWatcher.stop();
           deps.sessionPool.cleanupOnExit();
+          if (viteClose) {
+            try { await viteClose(); } catch { /* best effort */ }
+          }
           await new Promise<void>((res) => {
             wss.close();
             server.close(() => res());
@@ -306,6 +349,18 @@ export async function startServer(opts: {
 // CLI mode
 if (import.meta.url === "file://" + process.argv[1]) {
   const port = parseInt(process.env.PI_WEB_PORT || String(PORT), 10);
+
+  // When run via the dev script (scripts/dev-webui.sh) the process is
+  // launched from packages/webui/server so tsx's watch scope is limited
+  // to the webui source. But the SessionPool needs to spawn pi subprocesses
+  // in the user's actual project tree (PI_WEB_CWD, default ~/.pi/agent)
+  // so session JSONL files land in the right directory. Switch cwd here
+  // before constructing the SessionPool / CronWatcher (both read
+  // process.cwd() at construction time).
+  const webuiCwd = process.env.PI_WEB_CWD;
+  if (webuiCwd && webuiCwd !== process.cwd()) {
+    process.chdir(webuiCwd);
+  }
 
   startServer({ port })
     .then(({ stopServer }) => {

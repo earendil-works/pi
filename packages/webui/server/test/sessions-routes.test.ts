@@ -998,6 +998,51 @@ describe("Sessions REST API Endpoints", () => {
 			});
 		});
 
+		// (i3-arguments) pi writes toolCall blocks with the field name `arguments`
+		// (matching its internal AssistantMessage.toolCalls type). Older or
+		// hand-rolled JSONL might use `args`. The server must accept both
+		// and surface the value as `args` in the wire format the webui
+		// expects. Regression test for the "tool block shows {}" bug.
+		it("toolCall written with `arguments` field (pi's actual format) is mapped to `args` in the response", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					message: {
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								id: "tc-real",
+								name: "cron_write",
+								arguments: { operations: [{ action: "list" }] },
+							},
+						],
+					},
+					timestamp: "2025-01-01T00:00:00.000Z",
+				}),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs).toHaveLength(1);
+			// The server must expose the params under the canonical `args` key
+			// the webui renders, even though pi wrote them as `arguments`.
+			expect(msgs[0].parts[0]).toEqual({
+				type: "toolCall",
+				id: "tc-real",
+				name: "cron_write",
+				args: { operations: [{ action: "list" }] },
+			});
+		});
+
 		it("message with thinking part preserves thinking content", async () => {
 			const port = (server.address() as any).port;
 			const sessionId_ = sessionId;

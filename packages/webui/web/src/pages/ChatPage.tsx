@@ -14,7 +14,7 @@ function buildParts(content: any): Part[] {
   return content.map((c: any): Part => {
     if (c.type === "text") return { type: "text", text: c.text ?? "" };
     if (c.type === "thinking") return { type: "thinking", text: c.text ?? "" };
-    if (c.type === "toolCall") return { type: "toolCall", id: c.id ?? "", name: c.name ?? "", args: c.args ?? {} };
+    if (c.type === "toolCall") return { type: "toolCall", id: c.id ?? "", name: c.name ?? "", args: c.arguments ?? c.args ?? {} };
     if (c.type === "toolResult") return { type: "toolResult", toolCallId: c.toolCallId ?? "", content: typeof c.content === "string" ? c.content : JSON.stringify(c.content ?? "") };
     if (c.type === "image") return { type: "image", mediaType: c.mediaType, data: c.data };
     return { type: "text", text: "?" };
@@ -358,6 +358,15 @@ export default function ChatPage() {
     setMessages([]);
   }, []);
 
+  // Abort the in-flight pi turn. Sends the same `abort` RPC the TUI sends
+  // when the user presses Esc. The model stream ends, the server emits
+  // agent_end, the session-pool translates that into session_status_changed
+  // ("idle"), and isThinking flips back to false — clearing the Stop button.
+  const handleAbort = useCallback(() => {
+    if (!ws.isOpen()) return;
+    ws.send({ type: "abort" });
+  }, []);
+
   if (!id) return <div className="flex items-center justify-center h-full"><p>Session not found</p></div>;
 
   return (
@@ -416,6 +425,16 @@ export default function ChatPage() {
           alert(messages[reason] ?? "Image error");
         }}
         onSubmit={handleSubmit}
+        // Drive the Stop button from sessionStatus (the source of truth
+        // emitted by the session-pool as "running" on prompt() and "idle"
+        // on agent_end), not from isThinking. message_update fires for
+        // tool calls as well as text, so a turn that streams text then
+        // invokes a tool would otherwise flip isThinking to false on the
+        // first token and leave the user with no way to abort the still-
+        // running tool. sessionStatus stays "running" through the entire
+        // turn (text + every tool call) and only flips to "idle" when
+        // agent_end arrives.
+        onAbort={sessionStatus === "running" ? handleAbort : undefined}
         disabled={isLoading || isManaged === false}
       />
     </div>

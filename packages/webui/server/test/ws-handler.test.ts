@@ -320,6 +320,46 @@ describe("WsHandler", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Vite HMR coexistence: in dev mode the same httpServer hosts vite's HMR
+  // WebSocket. The upgrade handler must NOT destroy the socket for the HMR
+  // path so vite's own listener can claim it. This regression test pins the
+  // behavior: the HMR path passes through, other non-/ws paths are still
+  // destroyed.
+  // -------------------------------------------------------------------------
+  it("/__vite_hmr path → socket is preserved (vite HMR slot)", async () => {
+    const handlerMod = await import("../ws/handler");
+    expect(handlerMod.VITE_HMR_PATH).toBe("/__vite_hmr");
+
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/__vite_hmr`);
+    let closed = false;
+    let errored = false;
+    ws.on("error", () => { errored = true; });
+    ws.on("close", () => { closed = true; });
+
+    // Give the server a moment. Without a vite listener registered the
+    // upgrade stays pending (no destroy), so the client should NOT see a
+    // hard close or an error from a destroyed socket — it's just waiting.
+    await new Promise<void>((res) => setTimeout(res, 80));
+
+    expect(closed).toBe(false);
+    expect(errored).toBe(false);
+
+    // The pi RPC path still works on the same server.
+    const rpcWs = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => rpcWs.on("open", res));
+    rpcWs.close();
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
   it("setSessionName called once on first prompt", async () => {
     const pool = createFakePool();
     // Track titlesSeen state per session to simulate real behavior:

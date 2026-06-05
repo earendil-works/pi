@@ -20,6 +20,17 @@ const SendIcon = () => (
   </svg>
 );
 
+const StopIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className="w-4 h-4"
+  >
+    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+  </svg>
+);
+
 interface InputAreaProps {
   images: InputImage[];
   text: string;
@@ -28,6 +39,13 @@ interface InputAreaProps {
   onRemoveImage: (id: string) => void;
   onError: (reason: "type" | "size" | "count" | "total") => void;
   onSubmit: () => void;
+  /**
+   * When provided, the trailing button switches from Send to Stop and
+   * onAbort is invoked instead of onSubmit. This is the webui equivalent
+   * of the TUI's Esc-to-interrupt: while pi is generating, the user can
+   * cancel the current turn without waiting for it to finish.
+   */
+  onAbort?: () => void;
   disabled?: boolean;
 }
 
@@ -39,6 +57,7 @@ export function InputArea({
   onRemoveImage,
   onError,
   onSubmit,
+  onAbort,
   disabled,
 }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +74,11 @@ export function InputArea({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      // While aborting, Enter inserts a newline instead of submitting,
+      // matching the TUI's editor behavior (Esc to interrupt, Enter to
+      // commit a multi-line draft). The next turn's send happens after
+      // the current one ends.
+      if (onAbort) return;
       e.preventDefault();
       onSubmit();
     }
@@ -71,20 +95,33 @@ export function InputArea({
           value={text}
           onChange={(e) => onChangeText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message pi..."
+          placeholder={onAbort ? "Generating… you can draft the next message" : "Message pi..."}
           rows={1}
           disabled={disabled}
           style={{ maxHeight: "120px" }}
         />
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={disabled || !text.trim()}
-          className="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          aria-label="Send"
-        >
-          <SendIcon />
-        </button>
+        {onAbort ? (
+          <button
+            type="button"
+            onClick={onAbort}
+            className="p-2 bg-red-600 text-white rounded-md hover:bg-red-700 inline-flex items-center gap-1.5"
+            aria-label="Stop"
+            title="Stop generation"
+          >
+            <StopIcon />
+            <span className="text-xs font-medium pr-1">Stop</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={disabled || !text.trim()}
+            className="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            aria-label="Send"
+          >
+            <SendIcon />
+          </button>
+        )}
       </div>
     </div>
   );

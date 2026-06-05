@@ -2,6 +2,14 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "node:http";
 import type { SessionPool, WSClient } from "../session-pool";
 
+/**
+ * WebSocket path used by vite's HMR client when vite runs as express
+ * middleware in dev mode (PI_WEB_DEV=1). The upgrade handler in this file
+ * preserves any upgrade to this path so vite's own listener can respond;
+ * see the comment in the `upgrade` handler below.
+ */
+export const VITE_HMR_PATH = "/__vite_hmr";
+
 // --- Message types -----------------------------------------------------------
 
 interface SubscribeMsg {
@@ -86,13 +94,25 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
   // --------------------------------------------------------------------------
   httpServer.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", "http://127.0.0.1");
-    if (url.pathname !== "/ws") {
+    // In dev mode (PI_WEB_DEV=1) the same httpServer is shared with vite's
+    // HMR WebSocket. We must not destroy sockets for non-/ws paths here —
+    // vite's upgrade listener (registered when we call
+    // `createServer({ server: { hmr: { server: httpServer, path: VITE_HMR_PATH } } })`)
+    // needs the socket to answer `/__vite_hmr` upgrades. For any path neither
+    // we nor vite handles, the socket simply times out client-side; the
+    // production server (no vite) destroys nothing in this branch and the
+    // only /ws traffic is the only thing that gets upgraded.
+    if (url.pathname !== "/ws" && url.pathname !== VITE_HMR_PATH) {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
+    if (url.pathname === "/ws") {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    }
+    // /__vite_hmr upgrades are claimed by vite's own listener registered on
+    // the same httpServer; do not run wss.handleUpgrade for them.
   });
 
   // --------------------------------------------------------------------------
