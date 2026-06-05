@@ -10,7 +10,6 @@
 ### Fixed
 
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).
-- Fixed invalid `models.json` syntax during config migration to report the file path instead of a raw JSON parse stack trace ([#5418](https://github.com/earendil-works/pi/issues/5418)).
 
 ## [0.78.1] - 2026-06-04
 
