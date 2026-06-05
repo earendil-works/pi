@@ -30,13 +30,13 @@
   - **依赖**: 无
   - **前置阅读**: `extensions/satellite/satellite-server.ts:681-738`
 
-- [ ] 1.3 **Align `list_dir` schema to native pi `ls` (path optional, default ".")**
+- [x] 1.3 **Align `list_dir` schema to native pi `ls` (path optional, default ".")**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: In `TOOL_SCHEMAS.list_dir` (line 382) and the discriminated union at line 711-715, change `path: z.string()` to `path: z.string().optional().default(".")`. Add description: "List directory entries. Path defaults to current directory."
   - **验证**: `bun -e "import('./extensions/satellite/satellite-server.ts').then(m => console.log(m.TOOL_SCHEMAS.list_dir.parse({})))" 2>&1 | grep -q '\.'` (or unit test verifying default)
   - **依赖**: 1.2
 
-- [ ] 1.4 **Enhance sub-operation descriptions with "when to use" guidance**
+- [x] 1.4 **Enhance sub-operation descriptions with "when to use" guidance**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Update `description` in `createMcpServer()` (line 684) to include for each op: (a) one-line "Use this when..." summary, (b) contrast with bash equivalent. Example for `read_file`: "PREFER over bash `cat <path>`. Reads with offset/limit and truncation. Use this for any file read operation."
   - **验证**: `grep -A 1 "read_file:" extensions/satellite/satellite-server.ts | grep -i "PREFER\|use this"`
@@ -50,7 +50,7 @@
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "detectIntent"` reports 9 fail
   - **依赖**: 无
 
-- [ ] 2.2 **Implement `detectIntent` function**
+- [x] 2.2 **Implement `detectIntent` function**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Add pure function `detectIntent(command: string): "read_file"|"edit_file"|"write_file"|"find_files"|"grep_files"|null`. Patterns (in order, first match wins):
     - `read_file`: `^cat\s+[^\s|;<>&]+$` (no pipe, no redirect, no stdin)
@@ -62,7 +62,7 @@
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "detectIntent"` reports 9 pass
   - **依赖**: 2.1
 
-- [ ] 2.3 **Write failing test for guardrail retry counter**
+- [x] 2.3 **Write failing test for guardrail retry counter**
   - **文件**: `extensions/satellite/satellite-server.test.ts` (extend)
   - **内容**: bun:test cases: (a) first call returns guidance error, (b) second call returns guidance error, (c) third call returns hard error, (d) different intent category resets counter, (e) success resets all counters.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "guardrailRetry"` reports 5 fail
@@ -102,19 +102,19 @@
 
 ## 4. New Sub-Operations: `find_files`, `grep_files`, `transfer_file`
 
-- [ ] 4.1 **Add `find_files` schema + handler**
+- [x] 4.1 **Add `find_files` schema + handler**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Schema: `{ pattern: z.string(), path: z.string().optional().default("."), limit: z.number().optional().default(500) }`. Handler: `which fd` first; if missing return `isError: true` with install instruction. Otherwise `spawn("fd", ["--glob", "--hidden", "--no-require-git", "--max-depth", "10", pattern, path])`. Apply `truncateHead` to output.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "find_files"` — case (a) fd missing returns isError, (b) fd present returns file list (mock or skip if fd not in CI).
   - **依赖**: 1.2
 
-- [ ] 4.2 **Add `grep_files` schema + handler**
+- [x] 4.2 **Add `grep_files` schema + handler**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Schema: `{ pattern: z.string(), path: z.string().optional().default("."), glob: z.string().optional(), limit: z.number().optional().default(500) }`. Handler: `which rg` first; if missing return isError. Otherwise `spawn("rg", [pattern, path, "--no-heading", "--line-number", "--max-depth", "10", ...(glob ? ["--glob", glob] : [])])`. Apply `truncateHead`.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "grep_files"`
   - **依赖**: 1.2
 
-- [ ] 4.3 **Add `transfer_file` schema + handler (proxies via `/transfer` endpoint)**
+- [x] 4.3 **Add `transfer_file` schema + handler (proxies via `/transfer` endpoint)**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Schema: `{ direction: z.enum(["upload", "download"]), local_path: z.string(), remote_path: z.string() }`. Handler: For `upload`, `readFile(args.remote_path)` → return content as text in MCP response (this is allowed because upload is a "give me the bytes to write locally" operation and the file content is the response, not the request). For `download`, accept `content: z.string()` arg → `writeFile(args.remote_path, content)`. NO LLM context tokens are used for the agent's instruction; the response body is the file content. The description MUST clarify: "upload returns the remote file content (you write it locally); download requires you to also pass `content=<file bytes>` field".
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "transfer_file"` — case (a) direction="push" returns isError, (b) upload happy path (mock readFile), (c) download happy path (mock writeFile).
@@ -154,7 +154,7 @@
   - **验证**: `grep -A 2 "Remote Paths" extensions/personal-assistant/tools.ts && grep "loadMcpConfig" extensions/personal-assistant/tools.ts`
   - **依赖**: 无
 
-- [ ] 6.2 **Document `remotePathPattern` field in `extensions/satellite/README.md`**
+- [x] 6.2 **Document `remotePathPattern` field in `extensions/satellite/README.md`**
   - **文件**: `extensions/satellite/README.md` (Create)
   - **内容**: Add section showing how to configure `/TJPROJ\d+/` pattern in mcp.json. Include example block.
   - **验证**: `ls extensions/satellite/README.md && grep remotePathPattern extensions/satellite/README.md`
