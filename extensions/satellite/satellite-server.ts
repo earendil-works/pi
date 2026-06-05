@@ -840,8 +840,8 @@ async function runRg(
 ): Promise<{ output: string; truncated: boolean; rgMissing: boolean; limitReached: boolean }> {
   return new Promise((resolve) => {
     const args: string[] = ["--no-heading", "--line-number", "--color=never", "--hidden"];
-    if (ignoreCase) args.push("-i");
-    if (literal) args.push("-F");
+    if (ignoreCase) args.push("--ignore-case");
+    if (literal) args.push("--fixed-strings");
     if (glob) args.push("--glob", glob);
     if (context > 0) args.push("-C", String(context));
     args.push("--", pattern, searchPath);
@@ -867,7 +867,7 @@ async function runRg(
         if (!line) continue;
         if (lines.length >= limit) {
           killedDueToLimit = true;
-          if (!proc.killed) proc.kill();
+          stop();
           return;
         }
         lines.push(truncateLine(line));
