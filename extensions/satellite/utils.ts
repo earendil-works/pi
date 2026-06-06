@@ -32,22 +32,35 @@ import { tmpdir } from "node:os";
  * syscall still happens once per distinct input form, but the common case
  * (agent repeats the same path verbatim) is free.
  *
+ * Bounded by REALPATH_CACHE_MAX (LRU eviction) so a long-running daemon
+ * that processes N×10⁵ unique paths over its lifetime doesn't grow the
+ * cache without bound.
+ *
  * NOT invalidated on symlink changes. Symlink creation mid-session is rare
  * in HPC workflows; if it matters, callers can call clearRealpathCache().
- * Memory is bounded by HPC file count (worst case ~100MB at 1KB/entry).
  */
+const REALPATH_CACHE_MAX = 10_000;
 const realpathCache = new Map<string, string>();
 
 export async function cachedRealpath(p: string): Promise<string> {
   const cached = realpathCache.get(p);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    // Touch for LRU semantics: re-inserting moves the entry to the
+    // end of the Map's iteration order. Combined with the size cap
+    // below, the first-inserted (least recently used) entry is
+    // evicted first.
+    realpathCache.delete(p);
+    realpathCache.set(p, cached);
+    return cached;
+  }
   const real = await realpath(p).catch(() => resolve(p));
   realpathCache.set(p, real);
+  if (realpathCache.size > REALPATH_CACHE_MAX) {
+    // Evict the oldest entry (first iterated by Map).
+    const oldest = realpathCache.keys().next().value;
+    if (oldest !== undefined) realpathCache.delete(oldest);
+  }
   return real;
-}
-
-export function clearRealpathCache(): void {
-  realpathCache.clear();
 }
 
 /**

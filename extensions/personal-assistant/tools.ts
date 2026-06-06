@@ -429,10 +429,22 @@ export function maybeAnnotateNonVisionImage(event: {
 // Net effect: LLM never sees file bytes — just metadata like
 // "Uploaded 12345 bytes: /local → /remote". Mirrors how SFTP/SCP work.
 
-async function readFileForTransfer(localPath: string): Promise<{ ok: true; content: string; bytes: number } | { ok: false; error: string }> {
+/**
+ * Maximum bytes we'll inject into a single transfer_file call.
+ * 100MB is well above any legitimate code/data file a user would
+ * realistically push to a remote HPC scratch dir; anything larger is
+ * either a mistake (targeting the wrong file) or an attempt to OOM
+ * the agent process by stuffing the bytes into the LLM context.
+ */
+const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
+
+export async function readFileForTransfer(localPath: string): Promise<{ ok: true; content: string; bytes: number } | { ok: false; error: string }> {
 	try {
 		const stat = statSync(localPath);
 		if (!stat.isFile()) return { ok: false, error: `not a regular file: ${localPath}` };
+		if (stat.size > MAX_TRANSFER_BYTES) {
+			return { ok: false, error: `file too large: ${stat.size} bytes (max ${MAX_TRANSFER_BYTES} bytes / ${MAX_TRANSFER_BYTES / 1024 / 1024}MB)` };
+		}
 		const content = readFileSync(localPath, "utf-8");
 		return { ok: true, content, bytes: Buffer.byteLength(content, "utf-8") };
 	} catch (err) {
