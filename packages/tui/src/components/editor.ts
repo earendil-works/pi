@@ -625,10 +625,18 @@ export class Editor implements Component, Focusable {
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
-					this.cancelAutocomplete();
-					if (this.onChange) this.onChange(this.getText());
+
+					if (this.autocompletePrefix.startsWith("/")) {
+						this.cancelAutocomplete();
+						// Fall through to submit (same behavior as Enter/select.confirm)
+					} else {
+						this.cancelAutocomplete();
+						if (this.onChange) this.onChange(this.getText());
+						return;
+					}
+				} else {
+					return;
 				}
-				return;
 			}
 
 			if (kb.matches(data, "tui.select.confirm")) {
