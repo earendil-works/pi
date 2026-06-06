@@ -541,6 +541,12 @@ async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: s
       const lineEnding = detectLineEnding(content);
       if (lineEnding !== "\n") content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
+      // First pass: locate every edit's position in the ORIGINAL content.
+      // This lets us detect overlap between edits (which would silently
+      // corrupt the file if applied left-to-right) before mutating anything.
+      // Mirrors the local pi edit tool's `applyEditsToNormalizedContent`.
+      type LocatedEdit = { editIndex: number; matchIndex: number; matchLength: number; edit: { oldText: string; newText: string } };
+      const located: LocatedEdit[] = [];
       for (let i = 0; i < args.edits.length; i++) {
         const edit = args.edits[i];
 
@@ -562,7 +568,32 @@ async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: s
           return { content: textContent(`Error: Edit ${i + 1} oldText and newText are identical`), isError: true };
         }
 
-        content = content.slice(0, pos) + edit.newText + content.slice(pos + edit.oldText.length);
+        located.push({ editIndex: i, matchIndex: pos, matchLength: edit.oldText.length, edit });
+      }
+
+      // Second pass: sort by position and check for overlap. Two edits
+      // overlap if edit[i]'s range extends past edit[i+1]'s start.
+      located.sort((a, b) => a.matchIndex - b.matchIndex);
+      for (let i = 1; i < located.length; i++) {
+        const prev = located[i - 1];
+        const cur = located[i];
+        if (prev.matchIndex + prev.matchLength > cur.matchIndex) {
+          return {
+            content: textContent(
+              `Error: edits[${prev.editIndex}] and edits[${cur.editIndex}] overlap in ${args.path}. Merge them into one edit or target disjoint regions.`,
+            ),
+            isError: true,
+          };
+        }
+      }
+
+      // Third pass: apply in REVERSE order so earlier matchIndex values
+      // stay valid as we splice. (Edit i is at matchIndex[i]; editing
+      // right-to-left means edits at higher indices don't shift edits
+      // at lower indices.)
+      for (let i = located.length - 1; i >= 0; i--) {
+        const { matchIndex, matchLength, edit } = located[i];
+        content = content.slice(0, matchIndex) + edit.newText + content.slice(matchIndex + matchLength);
       }
 
       // Restore original line endings and BOM.
