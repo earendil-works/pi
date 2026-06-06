@@ -52,6 +52,11 @@ interface McpServerConfig {
 	token: string;
 	enabled?: boolean;
 	remotePathPattern?: string;
+	// Whitelist for the LOCAL path the agent may read in transfer_file(to_remote).
+	// The remote path is already scope-checked by the server. Without this,
+	// a buggy or malicious model could ask the agent to read ~/.ssh/id_rsa
+	// and ship its bytes over the MCP wire to the remote server.
+	localPathPattern?: string;
 }
 
 function getAgentDir(): string {
@@ -278,6 +283,29 @@ function extractPathArgs(input: Record<string, unknown>): Array<string | undefin
 }
 
 /**
+ * Paths whose read or write would touch the LOCAL filesystem via
+ * transfer_file. These need the localPathPattern guard — otherwise a
+ * buggy or malicious model can ask the agent to read ~/.ssh/id_rsa
+ * and ship its bytes to the remote server.
+ *
+ * `file1` is the local side; `file2` is the local side too (for
+ * transfer_file's quirky naming where file1 is the local read/write
+ * target and file2 is the other side). The hook translates these to
+ * local_path/remote_path before the MCP round-trip, but at the time
+ * validateSatelliteCall runs (in the agent process, before the call
+ * hook), the input is still in the user-facing {file1, file2} shape.
+ */
+function extractLocalPathArgs(input: Record<string, unknown>): Array<string | undefined> {
+	if ((input as Record<string, unknown>).tool !== "transfer_file") return [];
+	const out: Array<string | undefined> = [];
+	for (const k of ["file1", "local_path"]) {
+		const v = (input as Record<string, unknown>)[k];
+		if (typeof v === "string") out.push(v);
+	}
+	return out;
+}
+
+/**
  * Main entry point for the `tool_call` hook. Returns `{block, reason}` to
  * stop the call, or undefined to let it through.
  */
@@ -295,8 +323,22 @@ export function validateSatelliteCall(
 
 	// 2. Path scope — only enforced if the satellite server has one set.
 	const satelliteCfg = mcpConfig["satellite"];
-	const pathErr = validatePathScope(satelliteCfg?.remotePathPattern, extractPathArgs(input));
-	if (pathErr) return { block: true, reason: pathErr };
+	const remoteErr = validatePathScope(satelliteCfg?.remotePathPattern, extractPathArgs(input));
+	if (remoteErr) return { block: true, reason: remoteErr };
+
+	// 2b. Local path scope for transfer_file (SSRF/credential-exfil guard).
+	// Defaults to undefined → no enforcement. Users opt in by setting
+	// mcp.json satellite.localPathPattern.
+	const localPaths = extractLocalPathArgs(input);
+	if (localPaths.length > 0) {
+		const localErr = validatePathScope(satelliteCfg?.localPathPattern, localPaths);
+		if (localErr) {
+			return {
+				block: true,
+				reason: localErr.replace("outside the allowed scope", "outside the allowed local scope"),
+			};
+		}
+	}
 
 	// 3. Bash intent substitution — guidance, with a per-turn budget.
 	const intentErr = checkBashIntent(input, turnId);

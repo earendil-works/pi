@@ -209,3 +209,116 @@ describe("clearBashIntentBudget", () => {
 		expect(r?.reason).not.toContain("Blocked");
 	});
 });
+
+describe("validateSatelliteCall — localPathPattern (transfer_file SSRF guard)", () => {
+	// Without a localPathPattern in mcp.json, ANY local path is accepted
+	// for transfer_file(to_remote). This is the credential-exfil path:
+	// a malicious model can ask the agent to read ~/.ssh/id_rsa and ship
+	// its bytes over the MCP wire. With localPathPattern set, paths
+	// matching the pattern are accepted and others are blocked.
+
+	const guardedConfig = {
+		satellite: {
+			url: "http://localhost:29001/mcp",
+			token: "test",
+			remotePathPattern: "/TJPROJ\\d+",
+			// Whitelist: only files under ~/projects and /tmp may be sent to remote.
+			localPathPattern: "(/home/[^/]+/projects/.*|/tmp/.*)",
+		},
+	};
+
+	it("local path inside the pattern → no block", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_remote",
+				file1: "/home/alice/projects/foo/data.txt",
+				file2: "/TJPROJ13/data.txt",
+			},
+			guardedConfig,
+			"t-loc-1",
+		);
+		expect(r).toBeUndefined();
+	});
+
+	it("local /tmp path inside the pattern → no block", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_remote",
+				file1: "/tmp/build/output.bin",
+				file2: "/TJPROJ13/output.bin",
+			},
+			guardedConfig,
+			"t-loc-2",
+		);
+		expect(r).toBeUndefined();
+	});
+
+	it("local path outside the pattern (e.g. ~/.ssh) → block (credential exfil prevention)", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_remote",
+				file1: "/home/alice/.ssh/id_rsa",
+				file2: "/TJPROJ13/key",
+			},
+			guardedConfig,
+			"t-loc-3",
+		);
+		expect(r?.block).toBe(true);
+		expect(r?.reason).toContain("outside the allowed local scope");
+	});
+
+	it("local /etc path outside the pattern → block", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_remote",
+				file1: "/etc/shadow",
+				file2: "/TJPROJ13/x",
+			},
+			guardedConfig,
+			"t-loc-4",
+		);
+		expect(r?.block).toBe(true);
+	});
+
+	it("no localPathPattern set → no block (back-compat for users who don't opt in)", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_remote",
+				file1: "/home/alice/.ssh/id_rsa",
+				file2: "/TJPROJ13/key",
+			},
+			mcpConfig, // original config without localPathPattern
+			"t-loc-5",
+		);
+		expect(r).toBeUndefined();
+	});
+
+	it("local path scope applies to to_local too (we don't want to receive untrusted downloads into ~/.ssh)", () => {
+		// For to_local, the local_path is the destination. Allowing the
+		// agent to write into ~/.ssh/authorized_keys would be a write
+		// path-constraint violation, not just a read one. Check the
+		// destination pattern too.
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "transfer_file",
+				direction: "to_local",
+				file1: "/home/alice/.ssh/authorized_keys",
+				file2: "/TJPROJ13/key",
+			},
+			guardedConfig,
+			"t-loc-6",
+		);
+		expect(r?.block).toBe(true);
+	});
+});
