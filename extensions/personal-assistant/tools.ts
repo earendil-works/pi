@@ -991,6 +991,10 @@ export function registerTools(pi: ExtensionAPI): void {
 			}
 
 			const maxLength = params.max_length ?? 8000;
+			// Cap redirect hops. Without this an attacker can chain
+			// redirects to a private IP — the initial URL passes our
+			// SSRF check, but the redirected URL doesn't.
+			const MAX_REDIRECTS = 5;
 
 			try {
 				const controller = new AbortController();
@@ -999,18 +1003,47 @@ export function registerTools(pi: ExtensionAPI): void {
 					? AbortSignal.any([signal, controller.signal])
 					: controller.signal;
 
-				let response: Response;
-				try {
-					response = await fetch(params.url, {
+				// Manual redirect loop. We re-validate hostname on every
+				// hop — `redirect: "follow"` would have validated only
+				// the initial URL.
+				let currentUrl = params.url;
+				let response: Response | undefined;
+				for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+					const hopParsed = new URL(currentUrl);
+					if (isPrivateIP(hopParsed.hostname)) {
+						return {
+							content: [{ type: "text", text: `Error: redirect to private IP '${hopParsed.hostname}' blocked (SSRF)` }],
+							details: { error: "ssrf_blocked", hostname: hopParsed.hostname, hop },
+						};
+					}
+					response = await fetch(currentUrl, {
 						headers: {
 							"User-Agent": "pi-personal-assistant/1.0",
 							Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
 						},
 						signal: combinedSignal,
-						redirect: "follow",
+						redirect: "manual",
 					});
-				} finally {
-					clearTimeout(timeoutId);
+					if (response.status >= 300 && response.status < 400) {
+						const location = response.headers.get("location");
+						if (!location) {
+							// 3xx without Location is a server bug; bail.
+							return {
+								content: [{ type: "text", text: `Error: HTTP ${response.status} with no Location header` }],
+								details: { error: "bad_redirect", status: response.status },
+							};
+						}
+						currentUrl = new URL(location, currentUrl).toString();
+						continue;
+					}
+					break; // non-redirect — final response
+				}
+				clearTimeout(timeoutId);
+				if (!response) {
+					return {
+						content: [{ type: "text", text: `Error: too many redirects (>${MAX_REDIRECTS})` }],
+						details: { error: "too_many_redirects" },
+					};
 				}
 
 				if (!response.ok) {
