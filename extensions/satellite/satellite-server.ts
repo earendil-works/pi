@@ -305,25 +305,44 @@ function generateDiff(edits: Array<{ oldText: string; newText: string }>): strin
 // Image MIME Detection
 // ============================================================================
 //
-// Detects common image formats by extension and returns the corresponding
-// MIME type. Mirrors the supported types in the local pi `read` tool
-// (jpg/png/gif/webp). No resize — HPC may lack `sharp`; images are returned
-// at original size. If an image exceeds MAX_IMAGE_BYTES, the handler returns
-// a hint to use `transfer_file` for inspection.
-
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-};
+// Detects common image formats by magic-byte sniffing and returns the
+// corresponding MIME type. Mirrors the local pi `read` tool behavior in
+// packages/coding-agent/src/utils/mime.ts. Sniffing (not extension) is
+// critical: a file named .png that contains anything other than PNG
+// magic bytes (89 50 4E 47) would be mis-typed and either corrupt the
+// LLM's image view or — worse — feed it SVG-with-script content as
+// "image/png". No resize — HPC may lack `sharp`; images are returned at
+// original size. If an image exceeds MAX_IMAGE_BYTES, the handler
+// returns a hint to use `transfer_file` for inspection.
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
 
-function detectImageMime(filePath: string): string | undefined {
-  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
-  return IMAGE_MIME_BY_EXT[ext];
+/**
+ * Sniff a Buffer for image magic bytes. Returns MIME type or undefined.
+ * Supports the same set as local pi: jpeg, png, gif, webp.
+ */
+function sniffImageMime(buf: Buffer): string | undefined {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (buf.length >= 6 && (buf.slice(0, 6).toString("ascii") === "GIF87a" || buf.slice(0, 6).toString("ascii") === "GIF89a")) {
+    return "image/gif";
+  }
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && // "RIFF"
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50 // "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return undefined;
 }
 
 // ============================================================================
@@ -338,29 +357,34 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
       throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
     }
 
-    // Image fast path: detect MIME, read as binary, return as image content.
-    const mimeType = detectImageMime(args.path);
+    // Image fast path: read first 16 bytes and sniff the magic.
+    // We can't determine "is image" from the path alone — a file named
+    // .png may contain anything. Sniff the buffer instead.
+    const probe = await readFile(safePath);
+    const mimeType = sniffImageMime(probe.subarray(0, 16));
     if (mimeType) {
-      const buffer = await readFile(safePath);
-      if (buffer.byteLength > MAX_IMAGE_BYTES) {
-        log(`read_file ${args.path} → ok image skipped ${Date.now() - t0}ms (${buffer.byteLength} bytes > ${MAX_IMAGE_BYTES})`, String(sessionId));
+      // `probe` is already the full file contents (we read it above to
+      // sniff magic bytes). Reuse it instead of doing a second read.
+      if (probe.byteLength > MAX_IMAGE_BYTES) {
+        log(`read_file ${args.path} → ok image skipped ${Date.now() - t0}ms (${probe.byteLength} bytes > ${MAX_IMAGE_BYTES})`, String(sessionId));
         return {
           content: [{
             type: "text" as const,
-            text: `Image too large to inline (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB > ${MAX_IMAGE_BYTES / 1024 / 1024}MB). Use bash: file ${args.path}; or transfer_file to local then view.`,
+            text: `Image too large to inline (${(probe.byteLength / 1024 / 1024).toFixed(1)}MB > ${MAX_IMAGE_BYTES / 1024 / 1024}MB). Use bash: file ${args.path}; or transfer_file to local then view.`,
           }],
         };
       }
-      log(`read_file ${args.path} → ok image ${Date.now() - t0}ms (${buffer.byteLength} bytes ${mimeType})`, String(sessionId));
+      log(`read_file ${args.path} → ok image ${Date.now() - t0}ms (${probe.byteLength} bytes ${mimeType})`, String(sessionId));
       return {
         content: [
-          { type: "text" as const, text: `Read image file [${mimeType}, ${(buffer.byteLength / 1024).toFixed(1)}KB]` },
-          { type: "image" as const, data: buffer.toString("base64"), mimeType },
+          { type: "text" as const, text: `Read image file [${mimeType}, ${(probe.byteLength / 1024).toFixed(1)}KB]` },
+          { type: "image" as const, data: probe.toString("base64"), mimeType },
         ],
       };
     }
 
-    let content = await readFile(safePath, "utf-8");
+    // Not an image — interpret the bytes as UTF-8 text.
+    let content = probe.toString("utf-8");
 
     if (content.charCodeAt(0) === 0xFEFF) {
       content = content.slice(1);
