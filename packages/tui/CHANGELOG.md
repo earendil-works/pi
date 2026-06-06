@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.78.1] - 2026-06-04
+
+### Fixed
+
+- Fixed overlay focus restoration so non-capturing overlays remain interactive after UI rerenders and explicit focus release ([#5235](https://github.com/earendil-works/pi/pull/5235) by [@nicobailon](https://github.com/nicobailon)).
+- Fixed tab width accounting in column slicing and overlay compositing so tab-containing output cannot exceed the terminal width ([#5218](https://github.com/earendil-works/pi/issues/5218)).
+
 ## [0.78.0] - 2026-05-29
 
 ### Fixed

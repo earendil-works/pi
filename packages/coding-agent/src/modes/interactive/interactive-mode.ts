@@ -85,6 +85,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
+import { hasProjectTrustInputs, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -120,6 +121,7 @@ import { SettingsSelectorComponent } from "./components/settings-selector.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
+import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import {
@@ -1508,6 +1510,7 @@ export class InteractiveMode {
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
+			mode: "tui",
 			abortHandler: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			},
@@ -1654,6 +1657,7 @@ export class InteractiveMode {
 		// Create a context for shortcut handlers
 		const createContext = (): ExtensionContext => ({
 			ui: this.createExtensionUIContext(),
+			mode: "tui",
 			hasUI: true,
 			cwd: this.sessionManager.getCwd(),
 			sessionManager: this.sessionManager,
@@ -2562,6 +2566,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/trust") {
+				this.showTrustSelector();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/login") {
 				this.showOAuthSelector("login");
 				this.editor.setText("");
@@ -3104,6 +3113,7 @@ export class InteractiveMode {
 						this.chatContainer.addChild(component);
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
+							this.chatContainer.addChild(new Spacer(1));
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
@@ -3223,6 +3233,7 @@ export class InteractiveMode {
 			updateFooter: true,
 			populateHistory: true,
 		});
+		this.renderProjectTrustWarningIfNeeded();
 
 		// Show compaction info if session was compacted
 		const allEntries = this.sessionManager.getEntries();
@@ -3231,6 +3242,26 @@ export class InteractiveMode {
 			const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 			this.showStatus(`Session compacted ${times}`);
 		}
+	}
+
+	private renderProjectTrustWarningIfNeeded(): void {
+		if (this.settingsManager.isProjectTrusted() || !hasProjectTrustInputs(this.sessionManager.getCwd())) {
+			return;
+		}
+
+		if (this.chatContainer.children.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+		}
+		this.chatContainer.addChild(
+			new Text(
+				theme.fg(
+					"warning",
+					"This project is not trusted. Project instructions (AGENTS.md/CLAUDE.md), .pi resources, and project packages are ignored. Use /trust to save a trust decision, then restart pi.",
+				),
+				1,
+				0,
+			),
+		);
 	}
 
 	async getUserInput(): Promise<string> {
@@ -4130,6 +4161,31 @@ export class InteractiveMode {
 		} catch {
 			// Ignore auth lookup failures for warning-only checks.
 		}
+	}
+
+	private showTrustSelector(): void {
+		const cwd = this.sessionManager.getCwd();
+		const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
+		const savedDecision = trustStore.get(cwd);
+		this.showSelector((done) => {
+			const selector = new TrustSelectorComponent({
+				cwd,
+				savedDecision,
+				projectTrusted: this.settingsManager.isProjectTrusted(),
+				onSelect: (trusted) => {
+					trustStore.set(cwd, trusted);
+					done();
+					this.showStatus(
+						`Saved trust decision: ${trusted ? "trusted" : "untrusted"}. Restart pi for this to take effect.`,
+					);
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector };
+		});
 	}
 
 	private showModelSelector(initialSearchInput?: string): void {

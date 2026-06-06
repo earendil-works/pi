@@ -452,7 +452,13 @@ interface PackageJson {
 	};
 }
 
-const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+let pkg: PackageJson = {};
+try {
+	pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+} catch (e: unknown) {
+	const err = e as NodeJS.ErrnoException;
+	if (err.code !== "ENOENT") throw e;
+}
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";

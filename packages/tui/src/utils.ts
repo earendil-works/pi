@@ -162,6 +162,10 @@ function finalizeTruncatedResult(
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
+	if (segment === "\t") {
+		return 3;
+	}
+
 	// Zero-width clusters
 	if (zeroWidthRegex.test(segment)) {
 		return 0;

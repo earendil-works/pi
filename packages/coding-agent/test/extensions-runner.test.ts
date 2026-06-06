@@ -9,7 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.ts";
+import type {
+	ExtensionActions,
+	ExtensionContextActions,
+	ExtensionUIContext,
+	ProviderConfig,
+} from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -440,6 +445,38 @@ describe("ExtensionRunner", () => {
 
 			controller.abort();
 			expect(ctx.signal?.aborted).toBe(true);
+		});
+
+		it("exposes print mode and hasUI false by default", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("print");
+			expect(ctx.hasUI).toBe(false);
+		});
+
+		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, "rpc");
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("rpc");
+			expect(ctx.hasUI).toBe(true);
+		});
+
+		it("exposes tui mode with hasUI true when a TUI UI context is provided", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, "tui");
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("tui");
+			expect(ctx.hasUI).toBe(true);
 		});
 	});
 

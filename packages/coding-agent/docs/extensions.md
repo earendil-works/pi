@@ -109,7 +109,7 @@ pi -e ./my-extension.ts
 
 > **Security:** Extensions run with your full system permissions and can execute arbitrary code. Only install from sources you trust.
 
-Extensions are auto-discovered from:
+Extensions are auto-discovered from trusted locations. Project-local `.pi/extensions` entries load only after the project is trusted.
 
 | Location | Scope |
 |----------|-------|
@@ -860,9 +860,13 @@ All handlers receive `ctx: ExtensionContext`.
 
 UI methods for user interaction. See [Custom UI](#custom-ui) for full details.
 
+### ctx.mode
+
+Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "tui"` to guard terminal-only features such as `custom()`, component factories, terminal input, and direct TUI rendering.
+
 ### ctx.hasUI
 
-`false` in print mode (`-p`) and JSON mode. `true` in interactive and RPC mode. In RPC mode, dialog methods (`select`, `confirm`, `input`, `editor`) work via the extension UI sub-protocol, and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) emit requests to the client. Some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
+`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
 
 ### ctx.cwd
 
@@ -977,6 +981,19 @@ pi.on("before_agent_start", (event, ctx) => {
 ## ExtensionCommandContext
 
 Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods. These are only available in commands because they can deadlock if called from event handlers.
+
+### ctx.getSystemPromptOptions()
+
+Returns the base inputs Pi currently uses to build the system prompt.
+
+```typescript
+const options = ctx.getSystemPromptOptions();
+const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
+```
+
+This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+
+This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 
 ### ctx.waitForIdle()
 
@@ -2371,7 +2388,7 @@ const result = await ctx.ui.custom<string | null>(
 );
 ```
 
-For advanced positioning (anchors, margins, percentages, responsive visibility), pass `overlayOptions`. Use `onHandle` to control visibility programmatically:
+For advanced positioning (anchors, margins, percentages, responsive visibility), pass `overlayOptions`. Use `onHandle` to control focus or visibility programmatically:
 
 ```typescript
 const result = await ctx.ui.custom<string | null>(
@@ -2379,12 +2396,19 @@ const result = await ctx.ui.custom<string | null>(
   {
     overlay: true,
     overlayOptions: { anchor: "top-right", width: "50%", margin: 2 },
-    onHandle: (handle) => { /* handle.setHidden(true/false) */ }
+    onHandle: (handle) => {
+      handle.focus(); // focus this overlay and bring it to the visual front
+      // handle.unfocus({ target: editorComponent }); // release input to a specific component
+      // handle.setHidden(true/false); // toggle visibility
+      // handle.hide(); // permanently remove
+    }
   }
 );
 ```
 
-See [tui.md](tui.md) for the full `OverlayOptions` API and [overlay-qa-tests.ts](../examples/extensions/overlay-qa-tests.ts) for examples.
+A focused visible overlay can reclaim input after temporary non-overlay custom UI closes. If you intentionally want another component to keep input while the overlay stays visible, call `handle.unfocus({ target })`. Passing `{ target: null }` releases the overlay without focusing another component.
+
+See [tui.md](tui.md) for the full `OverlayOptions` and `OverlayHandle` API and [overlay-qa-tests.ts](../examples/extensions/overlay-qa-tests.ts) for examples.
 
 ### Custom Editor
 
@@ -2509,14 +2533,14 @@ const highlighted = highlightCode(code, lang, theme);
 
 ## Mode Behavior
 
-| Mode | UI Methods | Notes |
-|------|-----------|-------|
-| Interactive | Full TUI | Normal operation |
-| RPC (`--mode rpc`) | JSON protocol | Host handles UI, see [rpc.md](rpc.md) |
-| JSON (`--mode json`) | No-op | Event stream to stdout, see [json.md](json.md) |
-| Print (`-p`) | No-op | Extensions run but can't prompt |
+| Mode | `ctx.mode` | `ctx.hasUI` | Notes |
+|------|------------|-------------|-------|
+| Interactive | `"tui"` | `true` | Full TUI with terminal rendering |
+| RPC (`--mode rpc`) | `"rpc"` | `true` | Dialogs and notifications via JSON protocol; `custom()` returns `undefined`. See [rpc.md](rpc.md) |
+| JSON (`--mode json`) | `"json"` | `false` | Event stream to stdout; UI methods are no-ops |
+| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt |
 
-In non-interactive modes, check `ctx.hasUI` before using UI methods.
+Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes.
 
 ## Examples Reference
 
@@ -2582,6 +2606,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `ssh.ts` | SSH remote execution | `registerFlag`, `on("user_bash")`, `on("before_agent_start")`, tool operations |
 | `interactive-shell.ts` | Persistent shell session | `on("user_bash")` |
 | `sandbox/` | Sandboxed tool execution | Tool operations |
+| `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
 | `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
 | **Games** |||
 | `snake.ts` | Snake game | `registerCommand`, `ui.custom`, keyboard handling |

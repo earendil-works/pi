@@ -20,6 +20,10 @@
           "path": "providers.md"
         },
         {
+          "title": "Containerization",
+          "path": "containerization.md"
+        },
+        {
           "title": "Settings",
           "path": "settings.md"
         },

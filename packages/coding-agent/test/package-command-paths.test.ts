@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 
 describe("package commands", () => {
@@ -85,6 +86,103 @@ describe("package commands", () => {
 		expect(removedSettings.packages ?? []).toHaveLength(0);
 	});
 
+	it("skips untrusted project package settings", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("No packages installed.");
+			expect(stdout).not.toContain("Project packages:");
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("uses remembered project trust for list", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		new ProjectTrustStore(agentDir).set(projectDir, true);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("Project packages:");
+			expect(stdout).toContain("npm:@project/pkg");
+			expect(stdout).not.toContain("No packages installed.");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("overrides remembered trust for list with --no-approve", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		new ProjectTrustStore(agentDir).set(projectDir, true);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list", "--no-approve"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("No packages installed.");
+			expect(stdout).not.toContain("Project packages:");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("approves project trust for list with --approve", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(main(["list", "--approve"])).resolves.toBeUndefined();
+
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).toContain("Project packages:");
+			expect(stdout).toContain("npm:@project/pkg");
+			expect(stdout).not.toContain("No packages installed.");
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("blocks local package changes when project is untrusted", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(main(["install", "-l", "./local-package"])).resolves.toBeUndefined();
+
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Project is not trusted. Use --approve to modify local package config.");
+			expect(process.exitCode).toBe(1);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("allows local package install to initialize fresh project settings", async () => {
+		await main(["install", "-l", packageDir]);
+
+		const settingsPath = join(projectDir, ".pi", "settings.json");
+		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
+		expect(settings.packages?.length).toBe(1);
+		const stored = settings.packages?.[0] ?? "";
+		expect(realpathSync(join(projectDir, ".pi", stored))).toBe(realpathSync(packageDir));
+		expect(process.exitCode).toBeUndefined();
+	});
+
 	it("shows install subcommand help", async () => {
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -111,7 +209,7 @@ describe("package commands", () => {
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --unknown for "install".');
-			expect(stderr).toContain('Use "pi --help" or "pi install <source> [-l]".');
+			expect(stderr).toContain('Use "pi --help" or "pi install <source> [-l] [--approve|--no-approve]".');
 			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();

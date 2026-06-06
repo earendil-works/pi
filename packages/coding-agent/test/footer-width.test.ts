@@ -4,6 +4,7 @@ import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 type AssistantUsage = {
 	input: number;
@@ -122,5 +123,22 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("shows the latest cache hit rate when cache usage is present", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 50,
+				cacheWrite: 50,
+				cost: { total: 0.001 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1]);
+		expect(statsLine).toContain("CH25.0%");
 	});
 });

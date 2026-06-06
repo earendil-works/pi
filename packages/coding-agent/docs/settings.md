@@ -9,6 +9,16 @@ Pi uses JSON settings files with project settings overriding global settings.
 
 Edit directly or use `/settings` for common options.
 
+## Project Trust
+
+On interactive startup, pi asks before trusting a project folder that contains project-local inputs and has no saved decision in `~/.pi/agent/trust.json`. Trusting a project allows pi to read project instructions (`AGENTS.md`/`CLAUDE.md`), load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+
+Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without a saved trust decision, they ignore project-local inputs unless `--approve`/`-a` is passed. Use `--no-approve`/`-na` to ignore project-local inputs for one run even when the project is trusted.
+
+`pi config` assumes project trust for that command so you can view and change project resource settings before starting a session. It does not save a trust decision; starting a session in that folder still prompts. Pass `--no-approve` to hide project-local inputs in `pi config`.
+
+Use `/trust` in interactive mode to save a project trust decision for future sessions. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
+
 ## All Settings
 
 ### Model & Thinking

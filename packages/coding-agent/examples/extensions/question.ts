@@ -41,7 +41,7 @@ export default function question(pi: ExtensionAPI) {
 		parameters: QuestionParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				return {
 					content: [{ type: "text", text: "Error: UI not available (running in non-interactive mode)" }],
 					details: {

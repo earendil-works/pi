@@ -47,7 +47,7 @@ function getPiMascot(theme: Theme): string[] {
 export default function (pi: ExtensionAPI) {
 	// Set custom header immediately on load (if UI is available)
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.hasUI) {
+		if (ctx.mode === "tui") {
 			ctx.ui.setHeader((_tui, theme) => {
 				return {
 					render(_width: number): string[] {

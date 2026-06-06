@@ -12,7 +12,8 @@
 				"packages/coding-agent/examples/extensions/with-deps",
 				"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 				"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-				"packages/coding-agent/examples/extensions/sandbox"
+				"packages/coding-agent/examples/extensions/sandbox",
+				"packages/coding-agent/examples/extensions/gondolin"
 			],
 			"devDependencies": {
 				"@anthropic-ai/sandbox-runtime": "0.0.26",
@@ -720,6 +721,78 @@
 			],
 			"engines": {
 				"node": ">=14.21.3"
+			}
+		},
+		"node_modules/@cto.af/wtf8": {
+			"version": "0.0.5",
+			"resolved": "https://registry.npmjs.org/@cto.af/wtf8/-/wtf8-0.0.5.tgz",
+			"integrity": "sha512-LfUFi+Vv4eDzj+XAtR89e3wwjXA/NZjUSwU5NhwbBrLecxPaBYFy3exCuc1j+D4UZeOVdqlsl8G7LmOt18V0tg==",
+			"license": "MIT",
+			"engines": {
+				"node": ">=20"
+			}
+		},
+		"node_modules/@earendil-works/gondolin": {
+			"version": "0.12.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/gondolin/-/gondolin-0.12.0.tgz",
+			"integrity": "sha512-BXbvzQKb5QmxY5NtthRDONJTu7+IDKbzqWGrJyyNXMP7N681Tx0Q9TK8pK1ba8nUvYQTipNJyGZOsJfYiZll1A==",
+			"license": "Apache-2.0",
+			"dependencies": {
+				"cbor2": "^2.3.0",
+				"node-forge": "^1.3.3",
+				"ssh2": "^1.17.0",
+				"undici": "^6.21.0"
+			},
+			"bin": {
+				"gondolin": "dist/bin/gondolin.js"
+			},
+			"engines": {
+				"node": ">=23.6.0"
+			},
+			"optionalDependencies": {
+				"@earendil-works/gondolin-krun-runner-darwin-arm64": "0.12.0",
+				"@earendil-works/gondolin-krun-runner-linux-x64": "0.12.0"
+			}
+		},
+		"node_modules/@earendil-works/gondolin-krun-runner-darwin-arm64": {
+			"version": "0.12.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/gondolin-krun-runner-darwin-arm64/-/gondolin-krun-runner-darwin-arm64-0.12.0.tgz",
+			"integrity": "sha512-ftDlusht4PcT7Y3TuPrZIKrCXy3isiBTVMvlXYK0pcud2uXY6uwFTGeunYgP+8ND/60ddb+MImqbfmkcK8B84A==",
+			"cpu": [
+				"arm64"
+			],
+			"license": "Apache-2.0",
+			"optional": true,
+			"os": [
+				"darwin"
+			],
+			"bin": {
+				"gondolin-krun-runner": "bin/gondolin-krun-runner"
+			}
+		},
+		"node_modules/@earendil-works/gondolin-krun-runner-linux-x64": {
+			"version": "0.12.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/gondolin-krun-runner-linux-x64/-/gondolin-krun-runner-linux-x64-0.12.0.tgz",
+			"integrity": "sha512-RRYsgwe2r5ApKmFNy469QgwnyjAHpAs9XANdWpTd9ol4iUYOY3sX7e0xIooAKxd+ktxGI4N/xRWicwGen3D/Ow==",
+			"cpu": [
+				"x64"
+			],
+			"license": "Apache-2.0",
+			"optional": true,
+			"os": [
+				"linux"
+			],
+			"bin": {
+				"gondolin-krun-runner": "bin/gondolin-krun-runner"
+			}
+		},
+		"node_modules/@earendil-works/gondolin/node_modules/undici": {
+			"version": "6.26.0",
+			"resolved": "https://registry.npmjs.org/undici/-/undici-6.26.0.tgz",
+			"integrity": "sha512-4yqz8a3n5HmGTlsbADNtr/dJlhkh/55Rq798G6ibiULcXbDtaLpTl1pvdqcbFfeoj3iSi52lePFM7h9H21cw/A==",
+			"license": "MIT",
+			"engines": {
+				"node": ">=18.17"
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
@@ -2572,6 +2645,15 @@
 				"url": "https://github.com/chalk/ansi-styles?sponsor=1"
 			}
 		},
+		"node_modules/asn1": {
+			"version": "0.2.6",
+			"resolved": "https://registry.npmjs.org/asn1/-/asn1-0.2.6.tgz",
+			"integrity": "sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==",
+			"license": "MIT",
+			"dependencies": {
+				"safer-buffer": "~2.1.0"
+			}
+		},
 		"node_modules/assertion-error": {
 			"version": "2.0.1",
 			"resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
@@ -2622,6 +2704,15 @@
 				}
 			],
 			"license": "MIT"
+		},
+		"node_modules/bcrypt-pbkdf": {
+			"version": "1.0.2",
+			"resolved": "https://registry.npmjs.org/bcrypt-pbkdf/-/bcrypt-pbkdf-1.0.2.tgz",
+			"integrity": "sha512-qeFIXtP4MSoi6NLqO12WfqARWWuCKi2Rn/9hJLEmtB5yTNr9DqFWkJRCf2qShWzPeAMRnOgCrq0sg/KLv5ES9w==",
+			"license": "BSD-3-Clause",
+			"dependencies": {
+				"tweetnacl": "^0.14.3"
+			}
 		},
 		"node_modules/bignumber.js": {
 			"version": "9.3.1",
@@ -2706,6 +2797,15 @@
 			"integrity": "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA==",
 			"license": "BSD-3-Clause"
 		},
+		"node_modules/buildcheck": {
+			"version": "0.0.7",
+			"resolved": "https://registry.npmjs.org/buildcheck/-/buildcheck-0.0.7.tgz",
+			"integrity": "sha512-lHblz4ahamxpTmnsk+MNTRWsjYKv965MwOrSJyeD588rR3Jcu7swE+0wN5F+PbL5cjgu/9ObkhfzEPuofEMwLA==",
+			"optional": true,
+			"engines": {
+				"node": ">=10.0.0"
+			}
+		},
 		"node_modules/cac": {
 			"version": "6.7.14",
 			"resolved": "https://registry.npmjs.org/cac/-/cac-6.7.14.tgz",
@@ -2729,6 +2829,18 @@
 			},
 			"engines": {
 				"node": "^18.12.0 || >= 20.9.0"
+			}
+		},
+		"node_modules/cbor2": {
+			"version": "2.3.0",
+			"resolved": "https://registry.npmjs.org/cbor2/-/cbor2-2.3.0.tgz",
+			"integrity": "sha512-76WB3hq8BoaGkMkBVJ27fW5LJU+qqDLEpgRNCG/SYKhODWXpVPOTD4UcUto3IEzYLA52nsvbhb0wabhHDn3qXg==",
+			"license": "MIT",
+			"dependencies": {
+				"@cto.af/wtf8": "0.0.5"
+			},
+			"engines": {
+				"node": ">=20"
 			}
 		},
 		"node_modules/chai": {
@@ -2804,6 +2916,20 @@
 			"license": "MIT",
 			"engines": {
 				"node": ">=18"
+			}
+		},
+		"node_modules/cpu-features": {
+			"version": "0.0.10",
+			"resolved": "https://registry.npmjs.org/cpu-features/-/cpu-features-0.0.10.tgz",
+			"integrity": "sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA==",
+			"hasInstallScript": true,
+			"optional": true,
+			"dependencies": {
+				"buildcheck": "~0.0.6",
+				"nan": "^2.19.0"
+			},
+			"engines": {
+				"node": ">=10.0.0"
 			}
 		},
 		"node_modules/cross-spawn": {
@@ -3943,6 +4069,13 @@
 			"integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
 			"license": "MIT"
 		},
+		"node_modules/nan": {
+			"version": "2.27.0",
+			"resolved": "https://registry.npmjs.org/nan/-/nan-2.27.0.tgz",
+			"integrity": "sha512-hC+0LidcL3XE4rp1C4H54KujgXKzbfyTngZTwBByQxsOxCEKZT0MPQ4hOKUH2jU1OYstqdDH4onyHPDzcV0XdQ==",
+			"license": "MIT",
+			"optional": true
+		},
 		"node_modules/nanoid": {
 			"version": "3.3.12",
 			"resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.12.tgz",
@@ -4032,6 +4165,15 @@
 			"funding": {
 				"type": "opencollective",
 				"url": "https://opencollective.com/node-fetch"
+			}
+		},
+		"node_modules/node-forge": {
+			"version": "1.4.0",
+			"resolved": "https://registry.npmjs.org/node-forge/-/node-forge-1.4.0.tgz",
+			"integrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
+			"license": "(BSD-3-Clause OR GPL-2.0)",
+			"engines": {
+				"node": ">= 6.13.0"
 			}
 		},
 		"node_modules/npm-run-path": {
@@ -4200,6 +4342,10 @@
 		},
 		"node_modules/pi-extension-custom-provider-gitlab-duo": {
 			"resolved": "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
+			"link": true
+		},
+		"node_modules/pi-extension-gondolin": {
+			"resolved": "packages/coding-agent/examples/extensions/gondolin",
 			"link": true
 		},
 		"node_modules/pi-extension-sandbox": {
@@ -4544,6 +4690,12 @@
 			],
 			"license": "MIT"
 		},
+		"node_modules/safer-buffer": {
+			"version": "2.1.2",
+			"resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+			"integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+			"license": "MIT"
+		},
 		"node_modules/semver": {
 			"version": "7.8.0",
 			"resolved": "https://registry.npmjs.org/semver/-/semver-7.8.0.tgz",
@@ -4694,6 +4846,23 @@
 			"license": "BSD-3-Clause",
 			"engines": {
 				"node": ">=0.10.0"
+			}
+		},
+		"node_modules/ssh2": {
+			"version": "1.17.0",
+			"resolved": "https://registry.npmjs.org/ssh2/-/ssh2-1.17.0.tgz",
+			"integrity": "sha512-wPldCk3asibAjQ/kziWQQt1Wh3PgDFpC0XpwclzKcdT1vql6KeYxf5LIt4nlFkUeR8WuphYMKqUA56X4rjbfgQ==",
+			"hasInstallScript": true,
+			"dependencies": {
+				"asn1": "^0.2.6",
+				"bcrypt-pbkdf": "^1.0.2"
+			},
+			"engines": {
+				"node": ">=10.16.0"
+			},
+			"optionalDependencies": {
+				"cpu-features": "~0.0.10",
+				"nan": "^2.23.0"
 			}
 		},
 		"node_modules/stackback": {
@@ -5115,6 +5284,12 @@
 			"engines": {
 				"node": "*"
 			}
+		},
+		"node_modules/tweetnacl": {
+			"version": "0.14.5",
+			"resolved": "https://registry.npmjs.org/tweetnacl/-/tweetnacl-0.14.5.tgz",
+			"integrity": "sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==",
+			"license": "Unlicense"
 		},
 		"node_modules/typebox": {
 			"version": "1.1.38",
@@ -5995,10 +6170,10 @@
 		},
 		"packages/agent": {
 			"name": "@earendil-works/pi-agent-core",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.78.0",
+				"@earendil-works/pi-ai": "^0.78.1",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -6008,30 +6183,6 @@
 				"@vitest/coverage-v8": "3.2.4",
 				"typescript": "5.9.3",
 				"vitest": "3.2.4"
-			},
-			"engines": {
-				"node": ">=22.19.0"
-			}
-		},
-		"packages/agent/node_modules/@earendil-works/pi-ai": {
-			"version": "0.77.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.77.0.tgz",
-			"integrity": "sha512-H21BrQDPf3ydaeBmS5maNDHxUGFMiKBF/n3WnE+OTWloIZSayeL+/NVEgG3aKQw8fZL6HAMYAGpUIVJgFuKtnw==",
-			"license": "MIT",
-			"dependencies": {
-				"@anthropic-ai/sdk": "0.91.1",
-				"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-				"@google/genai": "1.52.0",
-				"@mistralai/mistralai": "2.2.1",
-				"@smithy/node-http-handler": "4.7.3",
-				"http-proxy-agent": "7.0.2",
-				"https-proxy-agent": "7.0.6",
-				"openai": "6.26.0",
-				"partial-json": "0.1.7",
-				"typebox": "1.1.38"
-			},
-			"bin": {
-				"pi-ai": "dist/cli.js"
 			},
 			"engines": {
 				"node": ">=22.19.0"
@@ -6056,7 +6207,7 @@
 		},
 		"packages/ai": {
 			"name": "@earendil-works/pi-ai",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -6101,12 +6252,12 @@
 		},
 		"packages/coding-agent": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.78.0",
-				"@earendil-works/pi-ai": "^0.78.0",
-				"@earendil-works/pi-tui": "^0.78.0",
+				"@earendil-works/pi-agent-core": "^0.78.1",
+				"@earendil-works/pi-ai": "^0.78.1",
+				"@earendil-works/pi-tui": "^0.78.1",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -6145,25 +6296,32 @@
 		},
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic": {
 			"name": "pi-extension-custom-provider-anthropic",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.52.0"
 			}
 		},
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo": {
 			"name": "pi-extension-custom-provider-gitlab-duo",
-			"version": "0.78.0"
+			"version": "0.78.1"
+		},
+		"packages/coding-agent/examples/extensions/gondolin": {
+			"name": "pi-extension-gondolin",
+			"version": "0.78.1",
+			"dependencies": {
+				"@earendil-works/gondolin": "0.12.0"
+			}
 		},
 		"packages/coding-agent/examples/extensions/sandbox": {
 			"name": "pi-extension-sandbox",
-			"version": "1.8.0",
+			"version": "1.8.1",
 			"dependencies": {
 				"@anthropic-ai/sandbox-runtime": "0.0.26"
 			}
 		},
 		"packages/coding-agent/examples/extensions/with-deps": {
 			"name": "pi-extension-with-deps",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"dependencies": {
 				"ms": "2.1.3"
 			},
@@ -6199,7 +6357,7 @@
 		},
 		"packages/tui": {
 			"name": "@earendil-works/pi-tui",
-			"version": "0.78.0",
+			"version": "0.78.1",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",

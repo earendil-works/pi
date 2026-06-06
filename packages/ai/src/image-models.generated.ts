@@ -125,6 +125,21 @@ export const IMAGE_MODELS = {
 				cacheWrite: 0,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
+		"microsoft/mai-image-2.5": {
+			id: "microsoft/mai-image-2.5",
+			name: "Microsoft: MAI-Image-2.5",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image"],
+			cost: {
+				input: 5,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-5-image": {
 			id: "openai/gpt-5-image",
 			name: "OpenAI: GPT-5 Image",

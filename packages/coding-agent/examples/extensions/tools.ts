@@ -67,6 +67,11 @@ export default function toolsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("tools", {
 		description: "Enable/disable tools",
 		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/tools requires TUI mode", "error");
+				return;
+			}
+
 			// Refresh tool list
 			allTools = pi.getAllTools();
 

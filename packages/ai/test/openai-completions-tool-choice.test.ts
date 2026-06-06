@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/models.ts";
 import { convertMessages } from "../src/providers/openai-completions.ts";
-import { streamSimple } from "../src/stream.ts";
+import { stream, streamSimple } from "../src/stream.ts";
 import type { AssistantMessage, Model, Tool, ToolResultMessage } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -817,7 +817,7 @@ describe("openai-completions tool_choice", () => {
 		expect(writeCall).not.toHaveProperty("partialArgs");
 	});
 
-	it("uses system messages for OpenRouter reasoning model instructions", async () => {
+	it("uses system messages for non-OpenAI/Anthropic OpenRouter reasoning model instructions", async () => {
 		const model = getModel("openrouter", "deepseek/deepseek-v4-pro")!;
 		let payload: unknown;
 
@@ -837,6 +837,33 @@ describe("openai-completions tool_choice", () => {
 
 		const params = payload as { messages?: Array<{ role?: string }> };
 		expect(params.messages?.[0]?.role).toBe("system");
+	});
+
+	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+		for (const model of [
+			getModel("openrouter", "openai/gpt-5.2-codex"),
+			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+		]) {
+			expect(model).toBeDefined();
+			let payload: unknown;
+
+			await streamSimple(
+				model!,
+				{
+					systemPrompt: "Follow instructions.",
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = payload as { messages?: Array<{ role?: string }> };
+			expect(params.messages?.[0]?.role).toBe("developer");
+		}
 	});
 
 	it("keeps developer messages for OpenAI reasoning model instructions", async () => {
@@ -860,6 +887,14 @@ describe("openai-completions tool_choice", () => {
 
 		const params = payload as { messages?: Array<{ role?: string }> };
 		expect(params.messages?.[0]?.role).toBe("developer");
+	});
+
+	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
+		for (const modelId of ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2.6:free"] as const) {
+			const model = getModel("openrouter", modelId)!;
+			expect(model.compat?.supportsDeveloperRole).toBe(false);
+			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
+		}
 	});
 
 	it("stores Xiaomi MiMo reasoning replay compat in built-in metadata", () => {
@@ -1259,5 +1294,96 @@ describe("openai-completions tool_choice", () => {
 		};
 		expect(params.reasoning).toEqual({ effort: "high" });
 		expect(params.reasoning_effort).toBeUndefined();
+	});
+
+	it("uses Ant Ling compatibility metadata", async () => {
+		const model = getModel("ant-ling", "Ring-2.6-1T")!;
+		let payload: unknown;
+
+		expect(model.compat).toMatchObject({
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+			maxTokensField: "max_tokens",
+			thinkingFormat: "ant-ling",
+			supportsLongCacheRetention: false,
+		});
+		expect(model.compat?.supportsStrictMode).toBeUndefined();
+		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBeUndefined();
+
+		await streamSimple(
+			model,
+			{
+				systemPrompt: "Follow instructions.",
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				maxTokens: 123,
+				reasoning: "high",
+				cacheRetention: "long",
+				sessionId: "ant-ling-session",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			max_tokens?: number;
+			max_completion_tokens?: number;
+			messages?: Array<{ role?: string }>;
+			reasoning?: { effort?: string };
+			reasoning_effort?: string;
+			store?: boolean;
+			prompt_cache_key?: string;
+			prompt_cache_retention?: string;
+		};
+		expect(params.max_tokens).toBe(123);
+		expect(params.max_completion_tokens).toBeUndefined();
+		expect(params.messages?.[0]?.role).toBe("system");
+		expect(params.reasoning).toEqual({ effort: "high" });
+		expect(params.reasoning_effort).toBeUndefined();
+		expect(params.store).toBeUndefined();
+		expect(params.prompt_cache_key).toBeUndefined();
+		expect(params.prompt_cache_retention).toBeUndefined();
+	});
+
+	it("omits Ant Ling reasoning for unmapped direct reasoning efforts and non-reasoning models", async () => {
+		const ring = getModel("ant-ling", "Ring-2.6-1T")!;
+		let payload: unknown;
+
+		await stream(
+			ring,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				reasoningEffort: "medium",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
+
+		const ling = getModel("ant-ling", "Ling-2.6-flash")!;
+		await streamSimple(
+			ling,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				reasoning: "high",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
 	});
 });

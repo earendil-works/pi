@@ -293,6 +293,28 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("project approval flags", () => {
+		test("parses --approve", () => {
+			const result = parseArgs(["--approve"]);
+			expect(result.projectTrustOverride).toBe(true);
+		});
+
+		test("parses -a shorthand", () => {
+			const result = parseArgs(["-a"]);
+			expect(result.projectTrustOverride).toBe(true);
+		});
+
+		test("parses --no-approve", () => {
+			const result = parseArgs(["--no-approve"]);
+			expect(result.projectTrustOverride).toBe(false);
+		});
+
+		test("parses -na shorthand", () => {
+			const result = parseArgs(["-na"]);
+			expect(result.projectTrustOverride).toBe(false);
+		});
+	});
+
 	describe("--verbose flag", () => {
 		test("parses --verbose flag", () => {
 			const result = parseArgs(["--verbose"]);

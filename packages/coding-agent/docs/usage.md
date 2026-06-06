@@ -96,8 +96,8 @@ See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
 Pi loads `AGENTS.md` or `CLAUDE.md` at startup from:
 
 - `~/.pi/agent/AGENTS.md` for global instructions
-- parent directories, walking up from the current working directory
-- the current directory
+- parent directories, walking up from the current working directory when the project is trusted
+- the current directory when the project is trusted
 
 Use context files for project conventions, commands, safety rules, and preferences. Disable loading with `--no-context-files` or `-nc`.
 
@@ -109,6 +109,16 @@ Replace the default system prompt with:
 - `~/.pi/agent/SYSTEM.md` globally
 
 Append to the default prompt without replacing it with `APPEND_SYSTEM.md` in either location.
+
+### Project Trust
+
+On interactive startup, pi asks before trusting a project folder that contains project-local inputs and has no saved decision in `~/.pi/agent/trust.json`. Trusting a project allows pi to read project instructions (`AGENTS.md`/`CLAUDE.md`), load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+
+Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without a saved trust decision, they ignore project-local inputs unless `--approve`/`-a` is passed. Use `--no-approve`/`-na` to ignore project-local inputs for one run even when the project is trusted.
+
+`pi config` assumes project trust for that command so you can view and change project resource settings before starting a session. It does not save a trust decision; starting a session in that folder still prompts. Pass `--no-approve` to hide project-local inputs in `pi config`.
+
+Use `/trust` in interactive mode to save a project trust decision for future sessions. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
 ## Exporting and Sharing Sessions
 
@@ -138,7 +148,7 @@ pi list                      # List installed packages
 pi config                    # Enable/disable package resources
 ```
 
-These commands manage pi packages, not the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall).
+These commands manage pi packages, not the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). Project package commands accept `--approve`/`--no-approve` to trust or ignore project-local package settings for one command.
 
 See [Pi Packages](packages.md) for package sources and security notes.
 
@@ -219,6 +229,8 @@ pi --no-extensions -e ./my-extension.ts
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
 | `--verbose` | Force verbose startup |
+| `-a`, `--approve` | Trust project-local files for this run |
+| `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
@@ -275,7 +287,7 @@ pi --exclude-tools ask_question
 | `PI_PACKAGE_DIR` | Override package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
-| `PI_TELEMETRY` | Override install/update telemetry: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
+| `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |
 

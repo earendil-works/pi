@@ -99,8 +99,10 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	}
 
 	const envMap: Record<string, string> = {
+		"ant-ling": "ANT_LING_API_KEY",
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
+		nvidia: "NVIDIA_API_KEY",
 		deepseek: "DEEPSEEK_API_KEY",
 		google: "GEMINI_API_KEY",
 		"google-vertex": "GOOGLE_CLOUD_API_KEY",
@@ -110,6 +112,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		openrouter: "OPENROUTER_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
 		zai: "ZAI_API_KEY",
+		"zai-coding-cn": "ZAI_CODING_CN_API_KEY",
 		mistral: "MISTRAL_API_KEY",
 		minimax: "MINIMAX_API_KEY",
 		"minimax-cn": "MINIMAX_CN_API_KEY",

@@ -115,7 +115,7 @@ const buildSummaryPrompt = (conversationText: string): string =>
 	].join("\n");
 
 const showSummaryUi = async (summary: string, ctx: ExtensionCommandContext) => {
-	if (!ctx.hasUI) {
+	if (ctx.mode !== "tui") {
 		return;
 	}
 

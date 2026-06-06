@@ -145,14 +145,23 @@ const result = await ctx.ui.custom<string | null>(
       // Responsive: hide on narrow terminals
       visible: (termWidth, termHeight) => termWidth >= 80,
     },
-    // Get handle for programmatic visibility control
+    // Get handle for programmatic focus and visibility control
     onHandle: (handle) => {
+      // handle.focus() - focus this overlay and bring it to the visual front
+      // handle.unfocus() - release input to normal fallback
+      // handle.unfocus({ target }) - release input to a specific component or null
       // handle.setHidden(true/false) - toggle visibility
       // handle.hide() - permanently remove
     },
   }
 );
 ```
+
+### Overlay Focus
+
+A focused visible overlay keeps input ownership across temporary non-overlay UI. If an overlay opens another `ctx.ui.custom()` component without `{ overlay: true }`, that replacement UI receives input while it is active; when it closes, the focused overlay can reclaim input.
+
+Use `handle.unfocus()` when a visible overlay should stop owning input and let TUI fall back to another visible capturing overlay or the previous focus target. Use `handle.unfocus({ target })` when a specific component should receive input while the overlay stays visible. Passing `{ target: null }` intentionally leaves no focused component until focus is set again.
 
 ### Overlay Lifecycle
 

@@ -31,7 +31,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("qna", {
 		description: "Extract questions from last assistant message into editor",
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("qna requires interactive mode", "error");
 				return;
 			}

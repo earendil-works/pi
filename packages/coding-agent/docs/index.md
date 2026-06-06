@@ -41,6 +41,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Quickstart](quickstart.md) - install, authenticate, and run a first session.
 - [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
+- [Containerization](containerization.md) - sandbox pi with OpenShell, Gondolin, or Docker.
 - [Settings](settings.md) - global and project settings.
 - [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
 - [Sessions](sessions.md) - session management, branching, and tree navigation.

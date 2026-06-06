@@ -132,10 +132,22 @@ async function startDeviceFlow(domain: string): Promise<DeviceCodeResponse> {
 		throw new Error("Invalid device code response fields");
 	}
 
+	// The verification URI is opened in the user's browser and to prevent `open` from
+	// opening an executable or similar, we force it to be a URL.
+	let parsedUri: URL;
+	try {
+		parsedUri = new URL(verificationUri);
+	} catch {
+		throw new Error("Untrusted verification_uri in device code response");
+	}
+	if (parsedUri.protocol !== "https:" && parsedUri.protocol !== "http:") {
+		throw new Error("Untrusted verification_uri in device code response");
+	}
+
 	return {
 		device_code: deviceCode,
 		user_code: userCode,
-		verification_uri: verificationUri,
+		verification_uri: parsedUri.href,
 		interval,
 		expires_in: expiresIn,
 	};

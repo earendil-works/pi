@@ -1,6 +1,6 @@
 import { getOAuthProviders, type OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import { exec } from "child_process";
+import { openBrowser } from "../../../utils/open-browser.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -101,7 +101,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		this.openUrl(url);
+		openBrowser(url);
 		this.tui.requestRender();
 	}
 
@@ -120,17 +120,8 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
 
-		this.openUrl(info.verificationUri);
+		openBrowser(info.verificationUri);
 		this.tui.requestRender();
-	}
-
-	private openUrl(url: string): void {
-		const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-		try {
-			exec(`${openCmd} "${url}"`, () => {});
-		} catch {
-			// Ignore browser launch failures. The URL remains visible for manual opening/copying.
-		}
 	}
 
 	/**
