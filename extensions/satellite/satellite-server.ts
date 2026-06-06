@@ -29,7 +29,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { readdir, readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { join, dirname, resolve, basename } from "node:path";
-import { appendFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
 import { REMOTE_EXEC_INPUT_SCHEMA } from "./schema.ts";
@@ -103,6 +103,7 @@ function scrubSecrets(s: string): string {
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[PRIVATE_KEY]")
     .replace(/\/\.ssh\/id_[a-z0-9_]+/gi, "/.ssh/id_[REDACTED]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]")
+    .replace(/Basic\s+[A-Za-z0-9+/=]+/g, "Basic [REDACTED]")  // base64 user:pass
     .replace(/(?<![\w.])([A-Z][A-Z0-9_]{2,})=([^\s,;&|]+)/g, "$1=[REDACTED]")
     .replace(/(password|passwd|token|secret|api[_-]?key)\s*[:=]\s*([^\s,;&|]+)/gi, "$1=[REDACTED]");
 }
@@ -120,6 +121,12 @@ function log(msg: string, sessionId?: string): void {
     }
     appendFileSync(LOG_FILE, line + "\n");
     logBytes += Buffer.byteLength(line, "utf-8") + 1;
+    // Make sure the log file isn't world-readable. appendFileSync with
+    // no mode arg uses the process umask (typically 0022 on Linux,
+    // giving 0644 — other users on the host can `tail -f` it). After
+    // each write, tighten the mode on the file itself. Cost is one
+    // syscall per log line; negligible compared to the I/O.
+    try { chmodSync(LOG_FILE, 0o600); } catch { /* ignore — non-fatal */ }
   } catch { /* ignore */ }
 }
 
@@ -1172,10 +1179,20 @@ function metricsText(): string {
 // ============================================================================
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  // Restrict CORS to localhost — the satellite is meant to be reached
+  // by the local pi agent on the same machine, not by a browser on
+  // the network. Wildcard was overly permissive; now only same-origin
+  // requests can read responses.
+  "Access-Control-Allow-Origin": "http://localhost http://127.0.0.1",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id",
 };
+
+// Cap request body size. Without this, a client could POST a 10GB JSON
+// body (Bun's req.json() buffers the entire thing). 10MB is far above
+// any legitimate MCP request — even a 1MB base64 image is the realistic
+// upper bound.
+const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
 
 log(`Satellite MCP Server v${VERSION} starting on port ${PORT}`);
 
@@ -1210,6 +1227,15 @@ const httpServer = (globalThis as any).Bun.serve({
       const sessionId = req.headers.get("mcp-session-id");
 
       if (req.method === "POST") {
+        // Reject oversized bodies before buffering them.
+        const contentLength = Number(req.headers.get("content-length") ?? 0);
+        if (contentLength > MAX_REQUEST_BYTES) {
+          return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: `Request body too large (${contentLength} > ${MAX_REQUEST_BYTES} bytes)` },
+            id: null,
+          }), { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
         const body = await req.json().catch(() => null);
         if (!body) {
           return new Response(JSON.stringify({
