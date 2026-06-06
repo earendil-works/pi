@@ -95,15 +95,25 @@ export function buildRemotePathsPrompt(
 // SSRF Protection
 // ============================================================================
 
-function isPrivateIP(hostname: string): boolean {
-	if (/^127\./.test(hostname)) return true;
-	if (/^10\./.test(hostname)) return true;
-	if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return true;
-	if (/^192\.168\./.test(hostname)) return true;
-	if (/^0\./.test(hostname)) return true;
+export function isPrivateIP(hostname: string): boolean {
+	// IPv4 private/reserved ranges
+	if (/^127\./.test(hostname)) return true;                    // loopback
+	if (/^10\./.test(hostname)) return true;                     // class A private
+	if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return true;  // class B private
+	if (/^192\.168\./.test(hostname)) return true;               // class C private
+	if (/^169\.254\./.test(hostname)) return true;               // link-local (incl. cloud metadata 169.254.169.254)
+	if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hostname)) return true;  // CGN
+	if (/^0\./.test(hostname)) return true;                      // 0.0.0.0/8
+
+	// IPv6
+	if (hostname === "::1" || hostname === "[::1]") return true;            // loopback
+	if (hostname === "0:0:0:0:0:0:0:1") return true;                        // alt loopback
+	if (/^f[cd][0-9a-f]{2}:/i.test(hostname)) return true;                  // fc00::/7 unique local
+	if (/^fe[89ab][0-9a-f]?:/i.test(hostname)) return true;                 // fe80::/10 link-local
+
+	// Hostname forms
 	if (hostname === "localhost") return true;
-	if (hostname === "::1" || hostname === "[::1]") return true;
-	if (hostname === "0:0:0:0:0:0:0:1") return true;
+
 	return false;
 }
 
