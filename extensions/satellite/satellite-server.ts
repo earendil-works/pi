@@ -961,7 +961,10 @@ export async function handleGrepFiles(
   const t0 = Date.now();
   const searchPath = args.path || ".";
   const glob = args.glob;
-  const limit = args.limit || 500;
+  // Local pi uses Math.max(1, limit ?? DEFAULT_LIMIT) so a `limit: 0`
+  // means "give me 1 result" (helpful for "is this in scope?" checks),
+  // not "give me 500". Mirror that.
+  const limit = Math.max(1, args.limit ?? 500);
   const ignoreCase = args.ignoreCase ?? false;
   const literal = args.literal ?? false;
   const context = args.context ?? 0;
@@ -1107,7 +1110,19 @@ function touchSession(sid: string): void {
 
 function checkAuth(req: Request): boolean {
   const auth = req.headers.get("Authorization");
-  return auth === `Bearer ${TOKEN}`;
+  if (!auth) return false;
+  // Constant-time string comparison. Without this, a remote attacker
+  // could in principle measure response-time differences to brute-force
+  // the token one character at a time. Risk is low (token is on a
+  // private network, model usually can't reach this endpoint), but
+  // 4 lines of code is cheap insurance.
+  const expected = `Bearer ${TOKEN}`;
+  if (auth.length !== expected.length) return false;
+  const a = new TextEncoder().encode(auth);
+  const b = new TextEncoder().encode(expected);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 // ============================================================================
