@@ -1,5 +1,6 @@
 import type { ExtensionAPI, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve as resolvePath, basename, dirname } from "node:path";
@@ -361,6 +362,58 @@ export function clearBashIntentBudget(turnId: string): void {
 	for (const k of Array.from(bashIntentBudget.keys())) {
 		if (k.startsWith(`${turnId}:`)) bashIntentBudget.delete(k);
 	}
+}
+
+// ============================================================================
+// Current model tracking (for non-vision image annotation)
+// ============================================================================
+//
+// The local pi read tool warns the model when it sends back image
+// content to a non-vision model (it can't see the image, so the bytes
+// are wasted in its context). The satellite's read_file returns image
+// content via MCP, so we need to annotate on the client side instead.
+// We track the active model via the model_select event so the
+// tool_result hook can attach the right hint.
+
+let currentModel: Model<any> | undefined;
+
+export function setCurrentModel(model: Model<any> | undefined): void {
+	currentModel = model;
+}
+
+function getNonVisionImageNote(): string | undefined {
+	if (!currentModel) return undefined;
+	const inputs = (currentModel as { input?: string[] }).input ?? [];
+	if (Array.isArray(inputs) && inputs.includes("image")) return undefined;
+	return "[Current model does not support images. The image will be omitted from this request.]";
+}
+
+/**
+ * If the tool_result from satellite_remote_exec(read_file) is an image
+ * and the current model can't see images, replace the content with a
+ * metadata note so the model knows the image was there but it can't
+ * view it (and the bytes don't get needlessly serialized into its
+ * context). Mirrors the local pi `read` tool's `getNonVisionImageNote`.
+ */
+export function maybeAnnotateNonVisionImage(event: {
+	toolName: string;
+	input: Record<string, unknown>;
+	content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+}): { content: Array<{ type: "text"; text: string }> } | undefined {
+	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
+	if (event.input.tool !== "read_file") return undefined;
+	const hasImage = event.content.some((c) => c.type === "image");
+	if (!hasImage) return undefined;
+	const note = getNonVisionImageNote();
+	if (!note) return undefined;
+	// Keep the text metadata but drop the base64 image bytes.
+	const textOnly = event.content
+		.filter((c) => c.type === "text")
+		.map((c) => c.text ?? "")
+		.join("\n");
+	return {
+		content: [{ type: "text" as const, text: textOnly ? `${textOnly}\n${note}` : note }],
+	};
 }
 
 // ============================================================================
@@ -765,13 +818,20 @@ export function registerTools(pi: ExtensionAPI): void {
 		return interceptTransferCall(event);
 	});
 
+	pi.on("model_select", (event: { model: Model<any> }) => {
+		setCurrentModel(event.model);
+	});
+
 	pi.on("tool_result", async (event: {
 		toolName: string;
 		input: Record<string, unknown>;
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
 	}) => {
-		// Transfer file response interception (writes file1, replaces content for to_local)
+		// 1. Non-vision image annotation (read_file image → model that can't see)
+		const imageNote = maybeAnnotateNonVisionImage(event);
+		if (imageNote) return imageNote;
+		// 2. Transfer file response interception (writes file1, replaces content for to_local)
 		return interceptTransferResult(event);
 	});
 
