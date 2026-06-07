@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { runMigrations } from "../src/migrations.ts";
 
+vi.mock("../src/core/keybindings.ts", () => ({
+	migrateKeybindingsConfig: (config: Record<string, unknown>) => ({ config, migrated: false }),
+}));
+
 describe("config value env var syntax migration", () => {
 	const tempDirs: string[] = [];
 
@@ -134,5 +138,23 @@ describe("config value env var syntax migration", () => {
 		expect(logMessage).toContain(
 			'models.json.providers["custom-provider"].modelOverrides["model-b"].headers["x-override-key"]: OVERRIDE_API_KEY -> $OVERRIDE_API_KEY',
 		);
+	});
+
+	it("reports models.json parse errors with the file path during config value migration", () => {
+		const agentDir = createAgentDir();
+		const modelsJsonPath = path.join(agentDir, "models.json");
+		fs.writeFileSync(modelsJsonPath, '{ "providers": { "custom-provider": }', "utf-8");
+
+		let thrown: unknown;
+		try {
+			withAgentDir(agentDir, () => runMigrations(agentDir));
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		const message = thrown instanceof Error ? thrown.message : String(thrown);
+		expect(message).toContain("Failed to parse models.json:");
+		expect(message).toContain(`File: ${modelsJsonPath}`);
 	});
 });
