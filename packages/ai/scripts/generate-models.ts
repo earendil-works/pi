@@ -444,6 +444,63 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	}
 }
 
+async function fetchRequestyModels(): Promise<Model<"openai-completions">[]> {
+	const apiKey = process.env.REQUESTY_API_KEY;
+	if (!apiKey) {
+		console.log("REQUESTY_API_KEY not set, skipping Requesty model fetch");
+		return [];
+	}
+	try {
+		console.log("Fetching models from Requesty API...");
+		const response = await fetch("https://router.requesty.ai/v1/models", {
+			headers: { Authorization: `Bearer ${apiKey}` },
+		});
+		const data = await response.json();
+
+		const models: Model<"openai-completions">[] = [];
+
+		for (const model of data.data) {
+			if (!model.supports_tool_calling) continue;
+			// Skip policy models — they are user-specific dynamic routing policies
+			if (model.id.startsWith("policy/")) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (model.supports_vision) {
+				input.push("image");
+			}
+
+			const inputCost = (model.input_price ?? 0) * 1_000_000;
+			const outputCost = (model.output_price ?? 0) * 1_000_000;
+			const cacheReadCost = (model.cached_price ?? 0) * 1_000_000;
+			const cacheWriteCost = (model.caching_price ?? 0) * 1_000_000;
+
+			models.push({
+				id: model.id,
+				name: model.id,
+				api: "openai-completions",
+				baseUrl: "https://router.requesty.ai/v1",
+				provider: "requesty",
+				reasoning: model.supports_reasoning ?? false,
+				input,
+				cost: {
+					input: inputCost,
+					output: outputCost,
+					cacheRead: cacheReadCost,
+					cacheWrite: cacheWriteCost,
+				},
+				contextWindow: model.context_window || 128000,
+				maxTokens: model.max_output_tokens || 4096,
+			});
+		}
+
+		console.log(`Fetched ${models.length} tool-capable models from Requesty`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Requesty models:", error);
+		return [];
+	}
+}
+
 async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from Vercel AI Gateway API...");
@@ -1305,10 +1362,11 @@ async function generateModels() {
 	// AI Gateway: OpenAI-compatible catalog with tool-capable models
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
+	const requestyModels = await fetchRequestyModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...requestyModels, ...aiGatewayModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

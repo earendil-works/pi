@@ -1085,6 +1085,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
+	const isRequesty = provider === "requesty" || baseUrl.includes("router.requesty.ai");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -1114,11 +1115,17 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
-	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+	const isRequestyDeveloperRoleModel =
+		isRequesty && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
+	const cacheControlFormat =
+		(provider === "openrouter" || isRequesty) && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		supportsDeveloperRole:
+			isOpenRouterDeveloperRoleModel ||
+			isRequestyDeveloperRoleModel ||
+			(!isNonStandard && !isOpenRouter && !isRequesty),
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,

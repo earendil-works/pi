@@ -7,6 +7,7 @@ const NVIDIA_NIM_HOST = "integrate.api.nvidia.com";
 const CLOUDFLARE_API_HOST = "api.cloudflare.com";
 const CLOUDFLARE_AI_GATEWAY_HOST = "gateway.ai.cloudflare.com";
 const OPENCODE_HOST = "opencode.ai";
+const REQUESTY_HOST = "router.requesty.ai";
 
 function matchesHost(baseUrl: string, expectedHost: string): boolean {
 	try {
@@ -22,6 +23,10 @@ function isOpenRouterModel(model: Model<Api>): boolean {
 
 function isNvidiaNimModel(model: Model<Api>): boolean {
 	return model.provider === "nvidia" || matchesHost(model.baseUrl, NVIDIA_NIM_HOST);
+}
+
+function isRequestyModel(model: Model<Api>): boolean {
+	return model.provider === "requesty" || matchesHost(model.baseUrl, REQUESTY_HOST);
 }
 
 function isCloudflareModel(model: Model<Api>): boolean {
@@ -52,6 +57,13 @@ function getDefaultAttributionHeaders(
 	if (isNvidiaNimModel(model)) {
 		return {
 			"X-BILLING-INVOKE-ORIGIN": "Pi",
+		};
+	}
+
+	if (isRequestyModel(model)) {
+		return {
+			"HTTP-Referer": "https://pi.dev",
+			"X-Title": "pi",
 		};
 	}
 
