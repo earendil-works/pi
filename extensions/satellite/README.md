@@ -12,6 +12,103 @@ cd extensions/satellite
 
 Server runs on port 29001. Health check: `curl http://localhost:29001/health`
 
+## Client Setup: SSH Tunnel
+
+The server runs on the HPC login node, but the MCP client (`pi` or
+`opencode`) usually runs on your laptop where the login node's
+`29001` is not directly reachable. A local SSH tunnel bridges the
+gap: your laptop's `localhost:29001` becomes a forwarder to the
+server's `localhost:29001` over SSH.
+
+### One-time setup: systemd user service
+
+Create `~/.config/systemd/user/satellite-tunnel.service`:
+
+```ini
+[Unit]
+Description=SSH tunnel to HPC login for satellite MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -N -L 29001:localhost:29001 login -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=255
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now satellite-tunnel.service
+```
+
+The tunnel auto-starts on login and auto-restarts on crash.
+Replace `login` with whatever SSH alias you use for the HPC
+login node (must be in `~/.ssh/config`).
+
+### Verify
+
+```bash
+systemctl --user status satellite-tunnel.service   # service state
+curl -sS http://localhost:29001/health              # server reachable
+journalctl --user -u satellite-tunnel.service -f    # live logs
+```
+
+### Daily commands
+
+| Task | Command |
+|------|---------|
+| Check tunnel | `systemctl --user status satellite-tunnel.service` |
+| Restart tunnel | `systemctl --user restart satellite-tunnel.service` |
+| Stop tunnel | `systemctl --user stop satellite-tunnel.service` |
+| Tail logs | `journalctl --user -u satellite-tunnel.service -f` |
+| Inspect | `curl -sS http://localhost:29001/metrics` |
+
+### Multiple MCP clients share one tunnel
+
+Both `pi` and `opencode` point to `http://localhost:29001/mcp` and
+share the same tunnel — no per-client plugin needed.
+
+- `~/.pi/agent/mcp.json` (for `pi`):
+  ```json
+  {
+    "satellite": {
+      "url": "http://localhost:29001/mcp",
+      "token": "<your-token>",
+      "remotePathPattern": "/TJPROJ\\d+"
+    }
+  }
+  ```
+- `~/.config/opencode/opencode.json` (for `opencode`):
+  ```json
+  {
+    "mcp": {
+      "satellite": {
+        "type": "remote",
+        "url": "http://localhost:29001/mcp",
+        "headers": { "Authorization": "Bearer <your-token>" }
+      }
+    }
+  }
+  ```
+
+### Troubleshooting
+
+- **"Connection refused" on `localhost:29001`** — tunnel not up.
+  Check `systemctl --user status` and `journalctl --user -u
+  satellite-tunnel.service -n 50`.
+- **Tunnel keeps restarting** — likely SSH auth failure. Verify
+  `ssh login` works in an interactive shell.
+- **Direct port (e.g. `10.1.x.x:29001`) is unreachable** — by
+  design. HPC internal IPs are not routable from outside; the
+  tunnel is the only path.
+
 ## MCP Configuration
 
 In `~/.pi/agent/mcp.json`:
@@ -111,7 +208,7 @@ to avoid burning LLM context on the file bytes:
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" \
      --data-binary @/tmp/big.sh \
-     "http://172.30.0.4:29001/transfer?path=/hpc/big.sh"
+     "http://localhost:29001/transfer?path=/hpc/big.sh"
 ```
 
 ## Client-side guardrails (in `extensions/personal-assistant`)
