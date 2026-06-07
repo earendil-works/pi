@@ -445,15 +445,15 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 }
 
 async function fetchRequestyModels(): Promise<Model<"openai-completions">[]> {
-	const apiKey = process.env.REQUESTY_API_KEY;
-	if (!apiKey) {
-		console.log("REQUESTY_API_KEY not set, skipping Requesty model fetch");
-		return [];
-	}
 	try {
 		console.log("Fetching models from Requesty API...");
+		// The models catalog is public, so the API key is optional. Use it when
+		// present, but fall back to an unauthenticated request so the generated
+		// "requesty" provider key stays in sync with the KnownProvider union,
+		// including in CI where REQUESTY_API_KEY is unset.
+		const apiKey = process.env.REQUESTY_API_KEY;
 		const response = await fetch("https://router.requesty.ai/v1/models", {
-			headers: { Authorization: `Bearer ${apiKey}` },
+			headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
 		});
 		const data = await response.json();
 
