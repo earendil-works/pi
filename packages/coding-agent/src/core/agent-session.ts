@@ -966,7 +966,11 @@ export class AgentSession {
 		}
 
 		if (await this._checkCompaction(msg)) {
-			return true;
+			// Only continue if there are actually queued messages (e.g. from extension
+			// agent_end handlers). If compaction completed on an idle assistant turn,
+			// continuing would fail with "Cannot continue from message role: assistant"
+			// because the last message is still an assistant message with no pending work.
+			return this.agent.hasQueuedMessages();
 		}
 
 		// The agent loop drains both queues before emitting agent_end. Any messages
