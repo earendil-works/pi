@@ -151,3 +151,5 @@ agent → remote_exec(tool=bash, command="cat /TJPROJ1/x.txt")
 - System prompt injection via `before_agent_start` hook in `personal-assistant/tools.ts`
 - transfer HTTP endpoints re-use existing `checkAuth` middleware
 - `which fd`/`which rg` rely on PATH
+
+<!-- archived-with: 2026-06-07-satellite-tool-optimize | status: final -->
