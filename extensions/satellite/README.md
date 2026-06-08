@@ -334,6 +334,30 @@ The deploy script:
 - **Old `xargs`/`satellite-server` processes lingering** — the new kill loop handles this, but if pids leak, run `ssh login 'pkill -9 -f satellite-server; sleep 2'` manually.
 - **Agent keeps calling `bash(cat ...)` even after warnings** — the per-turn budget for the bash-intent guard is 2 guidance errors, then a hard block on the 3rd. The block clears at `turn_end`. If the budget is the issue, it resets each turn.
 
+## Debugging History
+
+### 2026-06-08 — SSH 错账号触发 HPC 内部暴力破解告警(90 次/30min)
+
+**Symptom**:用户公司 IT 推送"入侵监控-内网暴力破解"告警,主机 `172.30.0.4 (tjlogin004.hpc)` 在 30 min 内被来源 IP `172.25.199.35`(本机公司出口 IP)用账号 `qjh` 暴力破解 90 次。
+
+**根因**:`scripts/satellite-tunnel.sh` 调试期间,`resolve_login()` 解析 `~/.ssh/config` 时**没有 `User` 字段就静默 fallback 到 `$(whoami)`**。在 systemd service 下 `whoami` 返回 `qjh`(本机用户名),但 HPC 那边只有 `qujiahao9430_test` 这个账号,key auth 必然失败。脚本"失败就 sleep 5s 再试"循环产生高频撞 sshd 行为,触发 HPC 内网 brute-force 监控规则。
+
+**Fix**(已合入,见 `6c21cc06`):
+1. 脚本改用 `ssh -G login` 同时解析 `hostname` + `user`,`User` 为空时 `fatal` 退出(不再 fallback)
+2. 加 `-l "${SSH_USER}" "${LOGIN_ALIAS}"` 让 SSH config 完整生效
+3. 加 `-o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=...` 锁死只用 `id_rsa`
+4. 连续 3 次 auth fail → sleep 30 min(避免再触发监控)
+5. 所有 fallback / 异常路径加显式 `[USER_RESOLVE]` / `[AUTH_FAIL]` / `[PROBE_FAIL]` 日志标签
+
+**教训**:
+- **不要在 systemd service 下用 `$(whoami)` 当 SSH user 的 fallback**。service 的 UID 经常跟真实登录用户不一致,fallback 出来的 user 几乎肯定是错的。
+- **静默 fallback = 静默踩雷**。任何"找不到 X 就用 Y"的逻辑,必须有显眼日志。
+- **debug 期脚本直接跑 production server 也会产生告警**。下次开发 tunnel 类工具,先在控制环境验证(本地 localhost 模拟),再上线。
+
+**长期预防**(给 IT):
+- 跟 HPC 那边申请把 `172.25.199.35` 加 sshd 白名单(或 `AllowUsers`),failed auth 不计入 brute-force 计数
+- 这条告警一次性 ack,记录为 2026-06-08 debug 期间 false positive
+
 ## Requirements
 
 - `fd` for `find_files` (install: `apt install fd-find`)
