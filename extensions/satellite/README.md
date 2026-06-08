@@ -358,6 +358,34 @@ The deploy script:
 - 跟 HPC 那边申请把 `172.25.199.35` 加 sshd 白名单(或 `AllowUsers`),failed auth 不计入 brute-force 计数
 - 这条告警一次性 ack,记录为 2026-06-08 debug 期间 false positive
 
+### 2026-06-08 — `transfer_file` 损坏 binary 文件(zip/png/任何非 utf-8 字节)
+
+**Symptom**:用户用 `pi --print` 跑 `transfer_file(remote_to_local)` 从 HPC 拉一个 5861 字节的 zip 到 `/tmp/`,落地文件是 10142 字节(膨胀),`xxd` 显示里面有 `efbfbd`(U+FFFD replacement character),`unzip` 报"missing N bytes in zipfile"。Model 独立诊断出根因:server 把 zip 当 UTF-8 文本读,非法字节被替换。
+
+**根因**:`handleTransferFile` (server) 用 `readFile(safeRemote, "utf-8")` 读文件,`writeFile(safeRemote, content, "utf-8")` 写文件。Node 的 utf-8 解码器对无效序列静默替换为 U+FFFD。`extensions/personal-assistant/tools.ts` 的 `readFileForTransfer` / `writeFileForTransfer` 同样问题。文字文件(pure ASCII 或有效 UTF-8)看不出问题,任何带 `0x5c` 后跟非 ASCII 字节的二进制文件(基本就是所有 zip/png/jpg)必坏。
+
+**Fix**(已合入,见 `8c4457bc`):
+- Server `remote_to_local`: `readFile(safeRemote)` 取 Buffer,`bytes.toString("base64")` 后返回 `echo + "B64:" + b64`
+- Server `local_to_remote`: 检测 `args.content` 的 `B64:` 前缀,base64-decode 后 `writeFile` 写原始字节(legacy utf-8 text 没前缀也能工作)
+- Client `readFileForTransfer`: 永远返回 base64
+- Client `writeFileForTransfer`: 接收 `Buffer`,`writeFileSync` 不指定编码写原始字节
+- Client `interceptTransferCall` (local_to_remote): 注入 `B64:` + b64
+- Client `interceptTransferResult` (remote_to_local): 检测 `B64:` 前缀,base64-decode 后写 Buffer
+
+**B64: 前缀方案的考虑**:
+- 简单:4 字节 tag,清楚区分 binary vs text
+- 不破坏 wire format:text body 仍然有效,只是会被识别为 legacy utf-8
+- 不需要重写协议 / 不需要新 content type / 跟现有 `textContent` envelope 兼容
+- 33% 大小开销,对于 HPC 文件传输可接受
+- 真正的干净做法应该是用 MCP 的 `BlobResource` content type,但那需要拆 `remote_exec` 工具或者改 schema 走 discriminated union,**远远** 比这个 fix 复杂
+
+**教训**:
+- **永远别用 `"utf-8"` 编码读 / 写用户文件**。默认 `readFile` / `writeFile` 是 binary,传 encoding 参数会引入 silent corruption
+- **binary 字节要 base64**(或 hex)在 JSON 字符串 round-trip 中幸存
+- **fix 完了必须 end-to-end 验证**:单元测试过 ≠ 真实场景对。这次是 `pi --print` 拉到真文件后 `xxd` + `md5sum` 才暴露问题
+
+**部署注意**:server 是编译后的 native binary(`bun build --compile`),source 改了要 `./deploy.sh`(完整 build + upload),**不能**用 `--restart-only`,否则新代码不上线,旧 binary 还在跑。我这次 debug 时第一次用了 `--restart-only`,fix 完全没生效,排查了一会儿才发现 binary 还是 `Jun 7 16:14` 的旧版。
+
 ## Requirements
 
 - `fd` for `find_files` (install: `apt install fd-find`)
