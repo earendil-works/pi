@@ -112,7 +112,7 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/expected "local_to_remote" or "remote_to_local"/);
 		expect(result?.reason).toMatch(/"to_remote"/);
 		// Input must NOT have been mutated.
 		expect(event.input.direction).toBe("to_remote");
@@ -126,7 +126,7 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/expected "local_to_remote" or "remote_to_local"/);
 		expect(result?.reason).toMatch(/"to_local"/);
 	});
 
@@ -144,11 +144,10 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block, `direction=${wrong} should be blocked`).toBe(true);
-		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/expected "local_to_remote" or "remote_to_local"/);
 		// The error must explicitly echo the rejected value so the model knows what it sent.
 		expect(result?.reason).toContain(wrong);
 		// The error must also mention that these aliases are NOT accepted.
-		expect(result?.reason).toMatch(/NOT accepted/);
 		// Input must NOT have been mutated.
 		expect(event.input.direction).toBe(wrong);
 	});
@@ -162,7 +161,7 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/expected "local_to_remote" or "remote_to_local"/);
 	});
 
 	it.each(["", null, 0, 123, true, false, [], {}])(
@@ -186,9 +185,12 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/must be named "local_path" and "remote_path"/);
+		expect(result?.reason).toMatch(/use "local_path" and "remote_path"/);
 		expect(result?.reason).toMatch(/file1/);
-		expect(result?.reason).toMatch(/NOT accepted/);
+		// (The verbose "NOT accepted" hint was removed when we shortened
+		//  the error message — the pre-emptive teaching of canonical names
+		//  now lives in buildTransferFileCanonicalPrompt, injected into
+		//  the system prompt at session start.)
 		// Input must NOT have been mutated.
 		expect(event.input.file1).toBe("/x");
 		expect(event.input.local_path).toBeUndefined();

@@ -92,6 +92,47 @@ export function buildRemotePathsPrompt(
 	return sections.join("\n\n");
 }
 
+/**
+ * Build a system prompt injection that explicitly teaches the model the
+ * canonical enum + field names for satellite_remote_exec's
+ * `tool: "transfer_file"` sub-op.
+ *
+ * Why this exists: the model's training data is heavily biased toward
+ * S3 / curl / rsync / scp vocabulary ("download", "upload", "get",
+ * "put", "pull", "push", "send", "fetch", "retrieve") and the legacy
+ * "to_remote" / "to_local" / "file1" / "file2" names from a much
+ * earlier version of the personal-assistant API. Even when the
+ * server's tools/list schema advertises the canonical names, the
+ * model reaches for training-data conventions first and the strict
+ * gate's error message alone isn't enough to retrain it on a single
+ * mistake. Pre-emptive teaching at session start is the lever that
+ * actually works — once the model has the canonical names in its
+ * system prompt context, it uses them on first try.
+ */
+export function buildTransferFileCanonicalPrompt(
+	configs: Array<{ name: string }>,
+): string {
+	const hasSatellite = configs.some((c) => c.name === "satellite");
+	if (!hasSatellite) return "";
+	return [
+		"",
+		"",
+		"## Transfer File (use these EXACT values)",
+		"",
+		"For satellite_remote_exec with `tool: \"transfer_file\"`:",
+		"",
+		"  - `direction: \"local_to_remote\"` — your machine → HPC (uploading)",
+		"  - `direction: \"remote_to_local\"` — HPC → your machine (downloading)",
+		"",
+		"Path fields: `local_path` (the path on your machine) and",
+		"`remote_path` (the path on HPC).",
+		"",
+		"**Do NOT use** any of: `\"to_remote\"`, `\"to_local\"`, `\"download\"`,",
+		"`\"upload\"`, `\"get\"`, `\"put\"`, `\"pull\"`, `\"push\"`, `\"send\"`,",
+		"`\"fetch\"`, `\"retrieve\"`, `\"file1\"`, `\"file2\"` — they are rejected.",
+	].join("\n");
+}
+
 // ============================================================================
 // SSRF Protection
 // ============================================================================
@@ -531,17 +572,18 @@ export async function interceptTransferCall(
 	);
 
 	// Gate 1: direction must be exactly the canonical enum.
+	//
+	// The error message is intentionally SHORT. The pre-emptive
+	// teaching of canonical names happens in buildTransferFileCanonicalPrompt
+	// (injected into the system prompt at session start). A long
+	// error message here only adds noise; the model already knows
+	// what's allowed, it just needs the two values spelled out.
 	const direction = event.input.direction;
 	if (direction !== "local_to_remote" && direction !== "remote_to_local") {
 		return {
 			block: true,
 			reason:
-				`transfer_file direction must be exactly "local_to_remote" or "remote_to_local" ` +
-				`(the canonical enum from the satellite server's tools/list schema). ` +
-				`Got: ${JSON.stringify(direction)}. ` +
-				`Do NOT use legacy names ("to_remote", "to_local") or API conventions ` +
-				`("download", "upload", "get", "put", "pull", "push", "send", "fetch", "retrieve") — ` +
-				`they are NOT accepted; use one of the two canonical values.`,
+				`transfer_file direction: expected "local_to_remote" or "remote_to_local". Got: ${JSON.stringify(direction)}.`,
 		};
 	}
 
@@ -553,10 +595,7 @@ export async function interceptTransferCall(
 		return {
 			block: true,
 			reason:
-				`transfer_file path fields must be named "local_path" and "remote_path" ` +
-				`(the canonical names from the satellite server's tools/list schema). ` +
-				`Got legacy field(s): ${legacyFields.join(", ")}. ` +
-				`Do NOT use "file1" or "file2" — they are NOT accepted; use the canonical names.`,
+				`transfer_file path fields: use "local_path" and "remote_path" (canonical). Got legacy field(s): ${legacyFields.join(", ")}.`,
 		};
 	}
 
@@ -806,6 +845,11 @@ export function registerTools(pi: ExtensionAPI): void {
 			remotePathPattern: config.remotePathPattern,
 		}));
 		const remotePathsPrompt = buildRemotePathsPrompt(satelliteConfigs);
+		// Layer A': Pre-emptively teach the model the canonical transfer_file
+		// direction + field names. The model's training data biases it toward
+		// "download" / "upload" / "file1" / etc. — without this, the model
+		// will guess wrong on first try and learn slowly from rejections.
+		const transferFilePrompt = buildTransferFileCanonicalPrompt(satelliteConfigs);
 
 		const planningSection = [
 			"",
@@ -826,12 +870,11 @@ export function registerTools(pi: ExtensionAPI): void {
 
 		return {
 			systemPrompt:
-			systemPrompt:
-				event.systemPrompt + planningSection + (remotePathsPrompt ? "
-
-" + remotePathsPrompt : ""),
-			};
-		});		};
+				event.systemPrompt +
+				planningSection +
+				(remotePathsPrompt ? "\n\n" + remotePathsPrompt : "") +
+				(transferFilePrompt ? "\n\n" + transferFilePrompt : ""),
+		};
 	});
 
 	// ============================================================================
