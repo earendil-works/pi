@@ -36,6 +36,8 @@ interface ModelsDevModel {
 	};
 	provider?: {
 		npm?: string;
+		shape?: string;
+		api?: string;
 	};
 }
 
@@ -538,6 +540,14 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		// OpenCode Zen Grok Build reasons by default but rejects explicit reasoningEffort.
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null, medium: null });
 	}
+	if (model.api === "amazon-bedrock-mantle-openai-responses" && model.id.includes("gpt-5")) {
+		// Bedrock Mantle serves OpenAI GPT-5.x via the Responses API; mirror the OpenAI
+		// gpt-5.5 thinking levels (off via "none", xhigh supported, no minimal effort).
+		mergeThinkingLevelMap(model, { off: "none", xhigh: "xhigh" });
+		if (model.id.includes("gpt-5.5")) {
+			mergeThinkingLevelMap(model, { minimal: null });
+		}
+	}
 	if (model.provider === "ant-ling" && model.reasoning) {
 		// Ring reasons by default. Only high/xhigh have documented explicit effort controls.
 		mergeThinkingLevelMap(model, ANT_LING_RING_THINKING_LEVEL_MAP);
@@ -565,6 +575,20 @@ function getBedrockBaseUrl(modelId: string): string {
 	return modelId.startsWith("eu.")
 		? "https://bedrock-runtime.eu-central-1.amazonaws.com"
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
+}
+
+// Amazon Bedrock Mantle (OpenAI-compatible Responses API) is currently offered in
+// us-east-2 only. Pinning the region here keeps the SigV4 token scope aligned with
+// the endpoint regardless of the caller's AWS_REGION.
+function getBedrockMantleBaseUrl(): string {
+	return "https://bedrock-mantle.us-east-2.api.aws/openai/v1";
+}
+
+function isBedrockMantleOpenAIResponsesModel(model: ModelsDevModel): boolean {
+	const api = model.provider?.api ?? "";
+	// Only the OpenAI-compatible Responses surface lives at `/openai/v1`. Other Mantle
+	// `shape: responses` models (e.g. gpt-oss at `/v1`) use a different API we don't speak.
+	return model.provider?.shape === "responses" && api.includes("bedrock-mantle") && api.includes("/openai/");
 }
 
 function normalizeNvidiaModelId(modelId: string): string {
@@ -735,6 +759,38 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				if (id.startsWith("mistral.mistral-7b-instruct-v0")) {
 					// These models doesn't support system messages
+					continue;
+				}
+
+				// Bedrock Mantle models speak the OpenAI Responses API on a separate
+				// endpoint, so emit them under the dedicated provider instead of the
+				// Converse stream path.
+				if (isBedrockMantleOpenAIResponsesModel(m)) {
+					models.push({
+						id,
+						name: m.name || id,
+						api: "amazon-bedrock-mantle-openai-responses" as const,
+						provider: "amazon-bedrock-mantle-openai-responses" as const,
+						baseUrl: getBedrockMantleBaseUrl(),
+						reasoning: m.reasoning === true,
+						input: (m.modalities?.input?.includes("image")
+							? ["text", "image"]
+							: ["text"]) as ("text" | "image")[],
+						cost: {
+							input: m.cost?.input || 0,
+							output: m.cost?.output || 0,
+							cacheRead: m.cost?.cache_read || 0,
+							cacheWrite: m.cost?.cache_write || 0,
+						},
+						contextWindow: m.limit?.context || 4096,
+						maxTokens: m.limit?.output || 4096,
+					});
+					continue;
+				}
+
+				// Skip other Mantle `shape: responses` surfaces (e.g. gpt-oss at `/v1`):
+				// they are not Converse models and are not OpenAI Responses-compatible.
+				if (m.provider?.shape === "responses") {
 					continue;
 				}
 

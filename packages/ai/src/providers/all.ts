@@ -3,6 +3,7 @@ import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { Api, KnownProvider, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
+import { amazonBedrockMantleOpenAIResponsesProvider } from "./amazon-bedrock-mantle-openai-responses.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
 import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
@@ -70,6 +71,7 @@ export function getBuiltinModels<TProvider extends KnownProvider>(
 export function builtinProviders(): Provider[] {
 	return [
 		amazonBedrockProvider(),
+		amazonBedrockMantleOpenAIResponsesProvider(),
 		antLingProvider(),
 		anthropicProvider(),
 		azureOpenAIResponsesProvider(),
