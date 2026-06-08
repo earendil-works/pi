@@ -256,6 +256,12 @@ function buildParams(
 		input: messages,
 		stream: true,
 		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
+		// Reasoning is replayed statelessly via reasoning.encrypted_content (set below),
+		// so server-side storage must be off. With store left at its default, Azure runs
+		// stateful and tries to resolve replayed rs_* reasoning item ids against its store;
+		// on a replayed transcript those ids are usually absent, yielding an intermittent
+		// 400 "Item with id 'rs_...' not found". Matches openai-responses / openai-codex-responses.
+		store: false,
 	};
 
 	if (options?.maxTokens) {
