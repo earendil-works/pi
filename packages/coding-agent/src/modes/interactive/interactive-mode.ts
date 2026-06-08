@@ -5625,7 +5625,7 @@ export class InteractiveMode {
 			providerName,
 		);
 
-		if (providerId === "amazon-bedrock") {
+		if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle-openai-responses") {
 			dialog.showDetails([
 				theme.fg("text", "You can also use an AWS profile, IAM keys, or role-based credentials."),
 				theme.fg("muted", "See:"),
