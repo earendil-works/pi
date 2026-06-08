@@ -284,14 +284,37 @@ All 18 unit tests live in
 - `GET /health` — JSON `{ status, version, sessions }`
 - `GET /metrics` — Prometheus text format: per-tool counters, recent
   latency (rolling avg of last 200 calls), uptime, active sessions
-- `/tmp/satellite.log` — log file with per-session correlation
-  (`session=<id8>` prefix) and secret scrubbing (PEM, .ssh/id_*,
-  `Bearer …`, `KEY=VAL`, `password=…` / `token=…` assignments).
-  Auto-rotates past 50 MB.
+- `$REMOTE_DIR/logs/satellite.log` — main log file with per-session
+  correlation (`session=<id8>` prefix) and secret scrubbing (PEM,
+  `.ssh/id_*`, `Bearer …`, `KEY=VAL`, `password=…` / `token=…`
+  assignments). Auto-rotates past 50 MB. Mode `0o600`. Path
+  configurable via `SATELLITE_LOG_FILE` (default `$REMOTE_DIR/logs/satellite.log`).
+- `$REMOTE_DIR/logs/satellite-bash-<ts>-<hex>.log` — per-bash spill
+  logs (only written when a bash sub-op's stdout exceeds the in-memory
+  512 KB cap; the model can `read_file` these to fetch the full
+  output). Path configurable via `SATELLITE_BASH_LOG_DIR`.
 
 ## Deployment to HPC
 
 `./deploy.sh` builds, uploads, and restarts the server on the remote HPC login node (default: `login`, port `29001`).
+
+### Remote layout
+
+All server state is colocated under the project's satellite directory on the HPC login node, so the deploy is self-contained and there are no scattered files in `~` or `/tmp`:
+
+```
+$REMOTE_DIR=/TJPROJ13/GB_MICRO/USER/qujiahao/workspace/project-code/satellite
+$REMOTE_DIR/satellite-server          (binary, executed by the MCP client)
+$REMOTE_DIR/satellite-server.prev     (rollback, auto-saved on each deploy)
+$REMOTE_DIR/satellite.env             (env dump from interactive login)
+$REMOTE_DIR/logs/satellite.log        (main log, 50MB rotating, 0o600)
+$REMOTE_DIR/logs/satellite-bash-*.log (per-bash spill, only on overflow)
+$REMOTE_DIR/logs/satellite-stdout.log (nohup stdout/stderr capture)
+```
+
+The PID file stays in `/tmp/satellite.pid` (OS convention for ephemeral runtime state — small, frequently rewritten, lives with the rest of `/tmp`).
+
+Both log paths are env-configurable (`SATELLITE_LOG_FILE`, `SATELLITE_BASH_LOG_DIR`); the defaults baked into `start.sh` and `deploy.sh` are the project-colocated paths above. `extensions/satellite/satellite-server.ts:88` and `extensions/satellite/utils.ts:11` are the only two places that read these env vars.
 
 ### One-time setup: capture the HPC env
 
@@ -299,8 +322,9 @@ The server runs as a `nohup`'d process, so it does not source your shell rc file
 
 ```bash
 ssh login
-env -0 > ~/satellite.env   # MUST use -0: NUL separators preserve
-                           # multi-line BASH_FUNC_*() entries
+env -0 > /TJPROJ13/GB_MICRO/USER/qujiahao/workspace/project-code/satellite/satellite.env
+                                                                     # MUST use -0: NUL separators preserve
+                                                                     # multi-line BASH_FUNC_*() entries
 exit
 ```
 
@@ -312,25 +336,25 @@ Re-run this whenever you change modules, switch conda envs, or update `PATH` on 
 ./deploy.sh                  # full cycle: build + scp + restart
 ./deploy.sh --restart-only   # skip build + scp, just restart the existing
                              # binary (use after editing deploy.sh or after
-                             # updating ~/satellite.env on the remote)
-./deploy.sh --rollback       # restore ~/satellite-server.prev (auto-saved
+                             # updating $REMOTE_DIR/satellite.env on the remote)
+./deploy.sh --rollback       # restore $REMOTE_DIR/satellite-server.prev (auto-saved
                              # on each deploy), then restart
 ```
 
 The deploy script:
 
 1. Builds `satellite-server` binary locally (skipped with `--restart-only`).
-2. Backs up the existing remote binary to `~/satellite-server.prev` for rollback.
-3. `scp`'s the binary to `/tmp` on the remote, then `rm` + `mv` into `~/satellite-server`. The HPC filesystem blocks in-place overwrites, hence the rm-then-mv dance.
+2. Backs up the existing remote binary to `$REMOTE_DIR/satellite-server.prev` for rollback.
+3. `scp`'s the binary to `/tmp` on the remote, then `rm` + `mv` into `$REMOTE_DIR/satellite-server`. The HPC filesystem blocks in-place overwrites, hence the rm-then-mv dance.
 4. Kills all old `satellite-server` processes (including any `xargs` wrappers from prior failed deploys).
-5. Launches the binary inside a subshell that sources `~/satellite.env`, then `exec`s the binary via `env SATELLITE_TOKEN=... SATELLITE_PORT=...`. The subshell is replaced by the binary, so the process tree stays clean.
+5. Launches the binary inside a subshell that sources `$REMOTE_DIR/satellite.env`, then `exec`s the binary via `env SATELLITE_TOKEN=... SATELLITE_PORT=... SATELLITE_LOG_FILE=... SATELLITE_BASH_LOG_DIR=...`. The subshell is replaced by the binary, so the process tree stays clean.
 
 ### Troubleshooting
 
-- **Health check fails after deploy** — check `/tmp/satellite-stdout.log` on the remote for the server's stderr.
-- **bash sub-op can't find `python3` / `modulecmd`** — re-dump `~/satellite.env` from an interactive session, then `./deploy.sh --restart-only`.
-- **`module` function not available in `bash` sub-op** — expected. `bash -c` does not decode `BASH_FUNC_*` env vars. Capture already-loaded paths instead (your interactive `module load` will have updated `PATH` in `~/satellite.env`).
-- **scp fails with "dest open ... Failure"** — home filesystem is full. The deploy already uploads to `/tmp` first, so this should be rare. Free up space with `ssh login 'du -sh ~/* | sort -h | tail'`.
+- **Health check fails after deploy** — check `$REMOTE_DIR/logs/satellite-stdout.log` on the remote for the server's stderr.
+- **bash sub-op can't find `python3` / `modulecmd`** — re-dump `$REMOTE_DIR/satellite.env` from an interactive session, then `./deploy.sh --restart-only`.
+- **`module` function not available in `bash` sub-op** — expected. `bash -c` does not decode `BASH_FUNC_*` env vars. Capture already-loaded paths instead (your interactive `module load` will have updated `PATH` in `$REMOTE_DIR/satellite.env`).
+- **scp fails with "dest open ... Failure"** — `$REMOTE_DIR` filesystem is full. The deploy already uploads to `/tmp` first, so this should be rare. Free up space with `ssh login 'du -sh $REMOTE_DIR/* | sort -h | tail'`.
 - **Old `xargs`/`satellite-server` processes lingering** — the new kill loop handles this, but if pids leak, run `ssh login 'pkill -9 -f satellite-server; sleep 2'` manually.
 - **Agent keeps calling `bash(cat ...)` even after warnings** — the per-turn budget for the bash-intent guard is 2 guidance errors, then a hard block on the 3rd. The block clears at `turn_end`. If the budget is the issue, it resets each turn.
 
@@ -385,6 +409,36 @@ The deploy script:
 - **fix 完了必须 end-to-end 验证**:单元测试过 ≠ 真实场景对。这次是 `pi --print` 拉到真文件后 `xxd` + `md5sum` 才暴露问题
 
 **部署注意**:server 是编译后的 native binary(`bun build --compile`),source 改了要 `./deploy.sh`(完整 build + upload),**不能**用 `--restart-only`,否则新代码不上线,旧 binary 还在跑。我这次 debug 时第一次用了 `--restart-only`,fix 完全没生效,排查了一会儿才发现 binary 还是 `Jun 7 16:14` 的旧版。
+
+### 2026-06-08 — Server 部署从 `~/` + `/tmp/` 迁到 `$REMOTE_DIR/satellite/`
+
+**Symptom**:`/tmp/satellite.log`、`/tmp/satellite-bash-*.log`、`/tmp/satellite-stdout.log`、`~/satellite.env`、`~/satellite-server` 散落在 `/tmp` 和 home,不容易一次性查全,且 `/tmp` 是 OS 临时区,可能被清理(`/tmp/satellite-bash-*.log` 30+ 个累计 1.5 MB,落了好几天不主动清)。
+
+**Fix**:
+- `extensions/satellite/satellite-server.ts:88` — `LOG_FILE` 改 `process.env.SATELLITE_LOG_FILE ?? "/tmp/satellite.log"`,启动时 `mkdirSync(dirname(LOG_FILE), { recursive: true })`
+- `extensions/satellite/utils.ts:11` — `BASH_LOG_DIR = process.env.SATELLITE_BASH_LOG_DIR ?? "/tmp"`,启动时 `mkdir` 初始化,`tempPath` 用 `join(BASH_LOG_DIR, ...)`
+- `extensions/satellite/start.sh` — 默认 `LOG_FILE` / `BASH_LOG_DIR` 走 `$SCRIPT_DIR/logs/`,传 env vars 给 binary,stdout 也在 logs 下
+- `extensions/satellite/deploy.sh` — 加 `REMOTE_DIR` 常量(`/TJPROJ13/GB_MICRO/USER/qujiahao/workspace/project-code/satellite`),所有路径换新,启动时 `env SATELLITE_LOG_FILE=... SATELLITE_BASH_LOG_DIR=...`;**修了一个 bug**:之前的 `mv ~/satellite.env` 用了双引号外的 `$HOME`,会被 local shell 展开成 `/home/qjh`(本机用户),改成显式 `REMOTE_HOME=$(ssh login 'echo $HOME')`
+- `deploy.sh` 在每次 deploy 时检测老的 `~/satellite.env`,自动迁到新位置(idempotent)
+- 老的 `/tmp/satellite*.log` 和 `~/satellite-server` 旧 binary 全删
+
+**新结构** (在 `$REMOTE_DIR` 下):
+```
+$REMOTE_DIR/satellite-server          (binary)
+$REMOTE_DIR/satellite-server.prev     (rollback,首次 deploy 后才有)
+$REMOTE_DIR/satellite.env             (env)
+$REMOTE_DIR/logs/satellite.log        (main log)
+$REMOTE_DIR/logs/satellite-bash-*.log (per-bash spill)
+$REMOTE_DIR/logs/satellite-stdout.log (stdout/stderr)
+```
+
+PID 文件留在 `/tmp/satellite.pid`(OS 习惯,频繁写,小文件,放临时区合理)。
+
+**教训**:
+- **部署配置应该 colocate**(同一项目目录下),不要散落在 home + /tmp。一次性 `ls -la $REMOTE_DIR/` 就能看全所有 server 状态,排查时不用 `ls /tmp` + `ls ~` + `journalctl` 三处凑
+- **写 deploy script 时,local shell 的 `$HOME` 不等于 remote shell 的 `$HOME`**,双引号包 ssh 参数会展开成本地变量。**显式 `ssh login 'echo $HOME'` 解析**(就像 deploy.sh 之前对 `REMOTE_HOME` 做的)
+- **日志路径要 env-configurable**。硬编码 `/tmp/...` 后面想搬就麻烦
+- **可执行文件用 `bun build --compile` 编出来的 binary 是 self-contained**,运行时只需要 token + port + log path,不需要 source / node_modules;所以 server 可以扔到任何有写权限的目录
 
 ## Requirements
 

@@ -15,9 +15,22 @@
  * from here so the public surface is small.
  */
 
-import { realpath } from "node:fs/promises";
+import { realpath, mkdir } from "node:fs/promises";
 import { resolve, join, dirname, basename } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+
+/**
+ * Directory for per-bash spilled logs (only written when a bash sub-op's
+ * stdout exceeds the in-memory cap and needs to be persisted to disk so
+ * the model can fetch it later). Default /tmp; deploy.sh overrides via
+ * SATELLITE_BASH_LOG_DIR=... to keep all satellite logs colocated.
+ */
+const BASH_LOG_DIR = process.env.SATELLITE_BASH_LOG_DIR ?? "/tmp";
+try {
+  await mkdir(BASH_LOG_DIR, { recursive: true });
+} catch {
+  /* ignore — best-effort spill target */
+}
 import { open } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -232,7 +245,7 @@ export class OutputAccumulator {
       !this.tempPath &&
       (this.totalRawBytes > MAX_BYTES || this.totalDecodedBytes > MAX_BYTES || this.totalLines > MAX_LINES)
     ) {
-      this.tempPath = `/tmp/satellite-bash-${Date.now()}-${randomBytes(4).toString("hex")}.log`;
+      this.tempPath = join(BASH_LOG_DIR, `satellite-bash-${Date.now()}-${randomBytes(4).toString("hex")}.log`);
       void this.flushToTempFile();
     }
   }

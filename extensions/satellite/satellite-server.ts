@@ -85,18 +85,19 @@ if (!TOKEN) {
 // Logging
 // ============================================================================
 
-const LOG_FILE = "/tmp/satellite.log";
+const LOG_FILE = process.env.SATELLITE_LOG_FILE ?? "/tmp/satellite.log";
 const LOG_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
-try { mkdirSync("/tmp", { recursive: true }); } catch { /* ignore */ }
+try { mkdirSync(dirname(LOG_FILE), { recursive: true }); } catch { /* ignore */ }
 
 let logBytes = 0;
 
 /**
  * Mask obvious secrets (private keys, bearer tokens, KEY=VAL env pairs,
  * password=...) in log output. The remote server's stdout/stderr gets
- * captured to /tmp/satellite-stdout.log, so any literal the user echoes
- * via bash(cat ~/.ssh/id_rsa) would otherwise land in the log on disk.
+ * captured to SATELLITE_STDOUT_LOG (default /tmp/satellite-stdout.log,
+ * set by deploy.sh), so any literal the user echoes via
+ * bash(cat ~/.ssh/id_rsa) would otherwise land in the log on disk.
  */
 function scrubSecrets(s: string): string {
   return s

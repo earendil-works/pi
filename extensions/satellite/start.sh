@@ -5,8 +5,15 @@
 #   ./start.sh [TOKEN] [PORT]
 #
 # Environment variables:
-#   SATELLITE_TOKEN - Bearer token for authentication (required)
-#   SATELLITE_PORT  - HTTP port (default: 29001)
+#   SATELLITE_TOKEN              - Bearer token for authentication (required)
+#   SATELLITE_PORT               - HTTP port (default: 29001)
+#   SATELLITE_LOG_FILE           - main server log path
+#                                  (default: $SCRIPT_DIR/logs/satellite.log)
+#   SATELLITE_BASH_LOG_DIR       - directory for per-bash spill logs
+#                                  (default: $SCRIPT_DIR/logs)
+#
+# All satellite state (binary, env, logs) is colocated under SCRIPT_DIR.
+# PID file stays in /tmp (OS convention for ephemeral runtime state).
 
 set -e
 
@@ -17,7 +24,9 @@ BINARY="${SCRIPT_DIR}/satellite-server"
 TOKEN="${1:-${SATELLITE_TOKEN:-}}"
 PORT="${2:-${SATELLITE_PORT:-29001}}"
 PID_FILE="/tmp/satellite.pid"
-LOG_FILE="/tmp/satellite.log"
+LOGS_DIR="${SCRIPT_DIR}/logs"
+LOG_FILE="${SATELLITE_LOG_FILE:-${LOGS_DIR}/satellite.log}"
+BASH_LOG_DIR="${SATELLITE_BASH_LOG_DIR:-$LOGS_DIR}"
 
 if [ -z "$TOKEN" ]; then
   echo "Error: SATELLITE_TOKEN is required"
@@ -30,6 +39,8 @@ if [ ! -f "$BINARY" ]; then
   echo "Run: bun build --compile satellite-server.ts --outfile satellite-server"
   exit 1
 fi
+
+mkdir -p "$LOGS_DIR"
 
 # Kill existing process if running
 if [ -f "$PID_FILE" ]; then
@@ -44,11 +55,17 @@ fi
 
 # Start new process
 echo "Starting satellite-server on port $PORT..."
-SATELLITE_TOKEN="$TOKEN" SATELLITE_PORT="$PORT" nohup "$BINARY" > "$LOG_FILE" 2>&1 &
+SATELLITE_TOKEN="$TOKEN" \
+SATELLITE_PORT="$PORT" \
+SATELLITE_LOG_FILE="$LOG_FILE" \
+SATELLITE_BASH_LOG_DIR="$BASH_LOG_DIR" \
+  nohup "$BINARY" > "${LOGS_DIR}/satellite-stdout.log" 2>&1 &
 echo $! > "$PID_FILE"
 
 echo "Satellite MCP Server started"
 echo "  PID: $(cat "$PID_FILE")"
 echo "  Port: $PORT"
 echo "  Log: $LOG_FILE"
+echo "  Bash spill dir: $BASH_LOG_DIR"
+echo "  Stdout/stderr: ${LOGS_DIR}/satellite-stdout.log"
 echo "  Health: http://localhost:$PORT/health"
