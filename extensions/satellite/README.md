@@ -20,37 +20,67 @@ The server runs on the HPC login node, but the MCP client (`pi` or
 gap: your laptop's `localhost:29001` becomes a forwarder to the
 server's `localhost:29001` over SSH.
 
-### One-time setup: systemd user service
+### Why not just `ssh -L` in a one-liner?
 
-Create `~/.config/systemd/user/satellite-tunnel.service`:
+A bare `ssh -N -L ...` service fails badly in three situations:
+
+1. **Network change** (home → office wifi swap) — the persistent
+   SSH connection dies, systemd's default `StartLimitBurst=5/10s`
+   gives up after 5 fast restarts, service gets stuck in `failed`.
+2. **Long outage** (vacation, plane) — naive `while true; sleep 15`
+   hammers sshd with 5760 failed attempts over 24h, triggers the
+   HPC's internal brute-force monitor.
+3. **Auth misconfiguration** (e.g. wrong username after a
+   `~/.ssh/config` change) — silent fallbacks retry the wrong
+   credential and produce false-positive brute-force alerts.
+
+The shipped `scripts/satellite-tunnel.sh` handles all three:
+TCP-probes with exponential backoff (60s → 15min cap), 3-strike
+auth-fail throttle (30min sleep), and greppable `[USER_RESOLVE]`
+/ `[AUTH_FAIL]` / `[PROBE_FAIL]` log tags for any anomaly.
+
+### One-time setup
+
+**1. Install the script** (canonical copy lives in this repo):
+
+```bash
+cp extensions/satellite/scripts/satellite-tunnel.sh ~/.local/bin/
+chmod +x ~/.local/bin/satellite-tunnel.sh
+```
+
+**2. Create the systemd service** at `~/.config/systemd/user/satellite-tunnel.service`:
 
 ```ini
 [Unit]
-Description=SSH tunnel to HPC login for satellite MCP
+Description=SSH tunnel to HPC login for satellite MCP (probe + backoff)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ssh -N -L 29001:localhost:29001 login -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes
+ExecStart=/home/<you>/.local/bin/satellite-tunnel.sh
 Restart=always
-RestartSec=5
-RestartPreventExitStatus=255
+RestartSec=10
 
 [Install]
 WantedBy=default.target
 ```
 
-Then enable it:
+Replace `/home/<you>/.local/bin/satellite-tunnel.sh` with the
+absolute path to the script.
+
+**3. Enable and start:**
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now satellite-tunnel.service
 ```
 
-The tunnel auto-starts on login and auto-restarts on crash.
-Replace `login` with whatever SSH alias you use for the HPC
-login node (must be in `~/.ssh/config`).
+The tunnel auto-starts on login and auto-recovers from network
+outages. The script's `~/.ssh/config` must have a `Host login`
+entry with `HostName` and `User` (the script uses `ssh -G login`
+to resolve both — if either is missing, it logs a `[USER_RESOLVE]`
+warning instead of silently guessing).
 
 ### Verify
 
@@ -68,7 +98,17 @@ journalctl --user -u satellite-tunnel.service -f    # live logs
 | Restart tunnel | `systemctl --user restart satellite-tunnel.service` |
 | Stop tunnel | `systemctl --user stop satellite-tunnel.service` |
 | Tail logs | `journalctl --user -u satellite-tunnel.service -f` |
+| Search for auth issues | `journalctl --user -u satellite-tunnel.service \| grep AUTH_FAIL` |
 | Inspect | `curl -sS http://localhost:29001/metrics` |
+
+### Log tag reference
+
+| Tag | Meaning | When it fires |
+|-----|---------|---------------|
+| `[USER_RESOLVE]` | SSH alias / user resolution fallback | `~/.ssh/config` has no `User` for `login`, or `ssh -G` failed |
+| `[AUTH_GUARD]` | Auth-config sanity warning | Resolved user equals local username, or `whoami` fallback used |
+| `[AUTH_FAIL]` | SSH publickey auth rejected | Server says "Permission denied" or "Too many authentication failures" |
+| `[PROBE_FAIL]` | TCP probe to `login:22` failed | Network unreachable, host down, or DNS broken |
 
 ### Multiple MCP clients share one tunnel
 
@@ -103,8 +143,17 @@ share the same tunnel — no per-client plugin needed.
 - **"Connection refused" on `localhost:29001`** — tunnel not up.
   Check `systemctl --user status` and `journalctl --user -u
   satellite-tunnel.service -n 50`.
-- **Tunnel keeps restarting** — likely SSH auth failure. Verify
-  `ssh login` works in an interactive shell.
+- **`[USER_RESOLVE]` warning fires on startup** — your
+  `~/.ssh/config` is missing `User <account>` for the `login`
+  Host block. Add it.
+- **`[AUTH_FAIL]` keeps firing** — wrong username, wrong key,
+  or server's `authorized_keys` for your account is missing. Try
+  `ssh -v login` from a regular shell to diagnose.
+- **Tunnel stuck in `failed` after a long outage** — should
+  not happen with the new script (loop runs forever, systemd
+  sees one long-lived process). If it does, `systemctl --user
+  reset-failed satellite-tunnel.service && systemctl --user start
+  satellite-tunnel.service`.
 - **Direct port (e.g. `10.1.x.x:29001`) is unreachable** — by
   design. HPC internal IPs are not routable from outside; the
   tunnel is the only path.
