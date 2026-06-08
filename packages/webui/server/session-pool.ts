@@ -276,6 +276,18 @@ export class SessionPool extends EventEmitter {
 		});
 
 		proc.on("exit", (code, signal) => {
+			// If pi exited mid-turn (crash / SIGKILL / OOM), the "idle" event
+			// was never emitted by the agent_end path. Emit it here so the
+			// client transitions the Stop button → Send and the user isn't
+			// stuck with a non-functional Stop button that points at a dead
+			// process (clicking it would send abort to nothing).
+			if (state.isResponding) {
+				state.isResponding = false;
+				this.emit("event", {
+					sessionId,
+					event: { type: "session_status_changed", status: "idle" },
+				} as PiEvent);
+			}
 			this.sessions.delete(sessionId);
 			this.emit("exit", { sessionId, code, signal });
 		});

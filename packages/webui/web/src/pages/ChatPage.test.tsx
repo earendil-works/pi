@@ -117,6 +117,40 @@ describe("ChatPage", () => {
         expect(screen.getByText("Hello back!")).toBeInTheDocument();
       });
     });
+
+    // Regression: if message_update arrives as the FIRST event of a turn
+    // (no prior message_start, and pi RPC doesn't include message.id),
+    // the event was dropped because both e.message.id and streamingMsgId.current
+    // were null. The assistant's first streaming reply was invisible until
+    // the next polling cycle or manual refresh.
+    it("renders message_update when it arrives before message_start (no message.id)", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Simulate message_update as the FIRST event of the turn:
+      // no prior message_start, no message.id on the event
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_update",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Streaming reply..." }],
+            },
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Streaming reply...")).toBeInTheDocument();
+      });
+    });
   });
 
   describe("WebSocket subscription", () => {

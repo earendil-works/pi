@@ -351,6 +351,80 @@ describe("SessionPool", () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// (o) proc exit while isResponding emits session_status_changed("idle")
+	//
+	// Bug 2: if pi exits mid-turn (crash/kill), proc.on("exit") deletes the
+	// session without emitting "idle". The client never transitions from
+	// "running" to "idle" — the Stop button stays visible.
+	// -------------------------------------------------------------------------
+	it("(o) proc exit while isResponding emits session_status_changed(idle)", async () => {
+		const { proc } = makeMockProc();
+		// Do NOT mock "exit" to auto-fire (we control the timing)
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") return proc;
+			return proc;
+		});
+
+		const eventSpy = vi.fn();
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		pool.on("event", eventSpy);
+
+		await pool.spawnIfNeeded("s1");
+
+		// Simulate the prompt() path: isResponding is set to true
+		const state = (pool as unknown as { sessions: Map<string, { isResponding: boolean }> }).sessions.get("s1");
+		state!.isResponding = true;
+
+		// Simulate pi process exiting while isResponding is true
+		const exitCalls = proc.on.mock.calls.filter((c) => c[0] === "exit");
+		expect(exitCalls.length).toBeGreaterThan(0);
+		const exitHandler = exitCalls[0][1];
+		exitHandler(1, null);
+
+		// Must emit session_status_changed("idle") so the client transitions
+		expect(eventSpy).toHaveBeenCalledWith({
+			sessionId: "s1",
+			event: { type: "session_status_changed", status: "idle" },
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// (p) proc exit when NOT isResponding does NOT emit idle (already emitted)
+	// -------------------------------------------------------------------------
+	it("(p) proc exit when not isResponding does not duplicate idle emission", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") return proc;
+			return proc;
+		});
+
+		const eventSpy = vi.fn();
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		pool.on("event", eventSpy);
+
+		await pool.spawnIfNeeded("s1");
+
+		// isResponding is false (natural end: agent_end already fired and cleared it)
+		const state = (pool as unknown as { sessions: Map<string, { isResponding: boolean }> }).sessions.get("s1");
+		state!.isResponding = false;
+
+		// Simulate pi process exiting after natural completion
+		const exitCalls = proc.on.mock.calls.filter((c) => c[0] === "exit");
+		const exitHandler = exitCalls[0][1];
+		exitHandler(0, null);
+
+		// Must NOT emit session_status_changed("idle") — already emitted by agent_end
+		const idleCalls = eventSpy.mock.calls.filter(
+			(call) =>
+				call[0] &&
+				(call[0] as { event?: { type: string; status?: string } }).event?.type ===
+					"session_status_changed" &&
+				(call[0] as { event?: { type: string; status?: string } }).event?.status === "idle",
+		);
+		expect(idleCalls).toHaveLength(0);
+	});
+
+	// -------------------------------------------------------------------------
 	// (n) kill is a no-op for unknown session
 	// -------------------------------------------------------------------------
 	it("(n) kill on unknown session does not throw", async () => {

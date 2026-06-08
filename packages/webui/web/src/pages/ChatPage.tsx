@@ -178,9 +178,13 @@ export default function ChatPage() {
         });
       } else if (e.type === "message_update" && e.message?.role === "assistant") {
         // message_update may come WITHOUT a prior message_start (depends on
-        // pi's RPC implementation). Use streamingMsgId to track.
-        const msgId = e.message.id || streamingMsgId.current;
-        if (!msgId) return;
+        // pi's RPC implementation) AND pi RPC events don't include message.id.
+        // In that case neither e.message.id nor streamingMsgId.current is set
+        // — generate a tracking id and continue so the assistant's first
+        // streaming reply is rendered, not silently dropped until the next
+        // polling cycle. The next message_start for the same logical turn
+        // will reconcile its id via streamingMsgId.
+        const msgId = e.message.id || streamingMsgId.current || crypto.randomUUID();
         streamingMsgId.current = msgId;
         const parts = buildParts(e.message.content);
         setMessages(prev => {
