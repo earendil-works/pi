@@ -113,6 +113,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Google Gemini
 - Google Vertex
 - Amazon Bedrock
+- Amazon Bedrock Mantle
 - Mistral
 - Groq
 - Cerebras

@@ -211,6 +211,22 @@ export AWS_BEDROCK_SKIP_AUTH=1
 export AWS_BEDROCK_FORCE_HTTP1=1
 ```
 
+### Amazon Bedrock Mantle
+
+Amazon Bedrock Mantle exposes select models through an OpenAI-compatible Responses API. It reuses the same AWS credentials as Amazon Bedrock; a short-lived bearer token is minted from your credentials automatically (or pass a long-lived `AWS_BEARER_TOKEN_BEDROCK`).
+
+```bash
+# Any Amazon Bedrock credential source works (profile, IAM keys, bearer token,
+# ECS task roles, IRSA).
+export AWS_PROFILE=your-profile
+```
+
+Models are pinned to the region where they are offered (currently `us-east-2`), so `AWS_REGION` is not required.
+
+```bash
+pi --provider amazon-bedrock-mantle-openai-responses --model openai.gpt-5.5
+```
+
 ### Cloudflare AI Gateway
 
 `CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug can be set as environment variables or in the API key credential's `env` object in `auth.json`.

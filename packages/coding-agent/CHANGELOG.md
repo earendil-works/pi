@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Amazon Bedrock Mantle as a selectable built-in provider (`amazon-bedrock-mantle-openai-responses`) with GPT-5.4 and GPT-5.5, reusing Amazon Bedrock AWS credentials. See [Providers](docs/providers.md) ([#5509](https://github.com/earendil-works/pi/pull/5509) by [@unexge](https://github.com/unexge)).
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed
