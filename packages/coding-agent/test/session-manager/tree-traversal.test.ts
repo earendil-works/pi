@@ -162,6 +162,43 @@ describe("SessionManager append and tree traversal", () => {
 			expect(path).toHaveLength(2);
 			expect(path.map((e) => e.id)).toEqual([id1, id2]);
 		});
+
+		it("builds long branches without front-inserting into arrays", () => {
+			const session = SessionManager.inMemory();
+			const ids: string[] = [];
+			const branchLength = 1000;
+
+			for (let i = 0; i < branchLength; i++) {
+				ids.push(session.appendMessage(userMsg(`message-${i}`)));
+			}
+
+			const originalUnshift = Array.prototype.unshift;
+			let branch: ReturnType<typeof session.getBranch> | undefined;
+			let error: unknown;
+
+			Object.defineProperty(Array.prototype, "unshift", {
+				configurable: true,
+				writable: true,
+				value: () => {
+					throw new Error("getBranch must not use Array.prototype.unshift");
+				},
+			});
+
+			try {
+				branch = session.getBranch();
+			} catch (caught) {
+				error = caught;
+			} finally {
+				Object.defineProperty(Array.prototype, "unshift", {
+					configurable: true,
+					writable: true,
+					value: originalUnshift,
+				});
+			}
+
+			expect(error).toBeUndefined();
+			expect(branch?.map((e) => e.id)).toEqual(ids);
+		});
 	});
 
 	describe("getTree", () => {
