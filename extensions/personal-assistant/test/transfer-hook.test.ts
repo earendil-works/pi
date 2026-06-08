@@ -8,57 +8,61 @@ import {
 } from "../tools.ts";
 import { REMOTE_EXEC_INPUT_SCHEMA } from "../../satellite/schema.ts";
 
-describe("interceptTransferCall (to_remote — inject content)", () => {
+describe("interceptTransferCall (strict canonical gate)", () => {
 	let tmpDir: string;
 	beforeEach(() => {
 		tmpDir = mkdtempSync(join(tmpdir(), "transfer-test-"));
 	});
 	afterEach(() => {
-		if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+		if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	it("reads file1 and injects content into event.input", async () => {
-		const file1 = join(tmpDir, "local.txt");
-		writeFileSync(file1, "hello world", "utf-8");
-		const event: { toolName: string; input: Record<string, unknown> } = {
-			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_remote", file1, file2: "/hpc/remote.txt" },
-		};
-		const result = await interceptTransferCall(event);
-		expect(result).toBeUndefined();
-		expect(event.input.content).toBe("hello world");
-	});
+	// --- Acceptance: only canonical direction + canonical field names ---
 
-	it("returns block:true when file1 does not exist", async () => {
+	it("accepts canonical local_to_remote and injects content from local_path", async () => {
+		const localPath = join(tmpDir, "local.txt");
+		writeFileSync(localPath, "hello world", "utf-8");
 		const event: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "satellite_remote_exec",
 			input: {
 				tool: "transfer_file",
-				direction: "to_remote",
-				file1: join(tmpDir, "missing.txt"),
-				file2: "/hpc/remote.txt",
+				direction: "local_to_remote",
+				local_path: localPath,
+				remote_path: "/hpc/remote.txt",
 			},
 		};
 		const result = await interceptTransferCall(event);
-		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/cannot read/);
+		expect(result).toBeUndefined();
+		expect(event.input.content).toBe("hello world");
+		expect(event.input.direction).toBe("local_to_remote");
+		expect(event.input.local_path).toBe(localPath);
+		expect(event.input.remote_path).toBe("/hpc/remote.txt");
 	});
+
+	it("accepts canonical remote_to_local and passes through unchanged (file write is the AFTER hook)", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: {
+				tool: "transfer_file",
+				direction: "remote_to_local",
+				local_path: "/tmp/dest.txt",
+				remote_path: "/hpc/src.txt",
+			},
+		};
+		const result = await interceptTransferCall(event);
+		expect(result).toBeUndefined();
+		expect(event.input.content).toBeUndefined();
+		expect(event.input.direction).toBe("remote_to_local");
+		expect(event.input.local_path).toBe("/tmp/dest.txt");
+		expect(event.input.remote_path).toBe("/hpc/src.txt");
+	});
+
+	// --- Tool / sub-tool scoping (unchanged) ---
 
 	it("ignores non-satellite tools", async () => {
 		const event: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "some_other_tool",
-			input: { tool: "transfer_file", direction: "to_remote", file1: "/x", file2: "/y" },
-		};
-		expect(await interceptTransferCall(event)).toBeUndefined();
-		expect(event.input.content).toBeUndefined();
-	});
-
-	it("ignores to_local direction (handled in afterToolCall)", async () => {
-		const file1 = join(tmpDir, "x.txt");
-		writeFileSync(file1, "abc", "utf-8");
-		const event: { toolName: string; input: Record<string, unknown> } = {
-			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file1, file2: "/hpc/r.txt" },
+			input: { tool: "transfer_file", direction: "local_to_remote", local_path: "/x", remote_path: "/y" },
 		};
 		expect(await interceptTransferCall(event)).toBeUndefined();
 		expect(event.input.content).toBeUndefined();
@@ -72,201 +76,208 @@ describe("interceptTransferCall (to_remote — inject content)", () => {
 		expect(await interceptTransferCall(event)).toBeUndefined();
 	});
 
-	it("blocks to_local with missing file1 (silent pass-through was a partial-injection bug)", async () => {
+	// --- Rejection: legacy direction names ---
+
+	it("rejects legacy direction 'to_remote' (the old pre-canonical API)", async () => {
 		const event: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file2: "/hpc/r.txt" },
+			input: { tool: "transfer_file", direction: "to_remote", local_path: "/x", remote_path: "/y" },
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/missing/);
-		// And the input must NOT have been mutated.
-		expect(event.input.direction).toBe("to_local");
+		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/"to_remote"/);
+		// Input must NOT have been mutated.
+		expect(event.input.direction).toBe("to_remote");
+		expect(event.input.content).toBeUndefined();
+	});
+
+	it("rejects legacy direction 'to_local' (the old pre-canonical API)", async () => {
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "to_local", local_path: "/x", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		expect(result?.reason).toMatch(/"to_local"/);
+	});
+
+	// --- Rejection: S3 / curl / rsync / scp vocabulary (the actual reason this gate exists) ---
+
+	it.each([
+		"download", "upload", "get", "put", "pull", "push",
+		"send", "fetch", "retrieve",
+		// case-mismatch (canonical is case-sensitive)
+		"Download", "UPLOAD", "Local_To_Remote", "REMOTE_TO_LOCAL",
+	])("rejects API-convention direction %s with canonical names in error", async (wrong) => {
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: wrong, local_path: "/x", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block, `direction=${wrong} should be blocked`).toBe(true);
+		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+		// The error must explicitly echo the rejected value so the model knows what it sent.
+		expect(result?.reason).toContain(wrong);
+		// The error must also mention that these aliases are NOT accepted.
+		expect(result?.reason).toMatch(/NOT accepted/);
+		// Input must NOT have been mutated.
+		expect(event.input.direction).toBe(wrong);
+	});
+
+	// --- Rejection: missing / malformed direction ---
+
+	it("rejects missing direction field", async () => {
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", local_path: "/x", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/must be exactly "local_to_remote" or "remote_to_local"/);
+	});
+
+	it.each(["", null, 0, 123, true, false, [], {}])(
+		"rejects malformed direction %s",
+		async (bad) => {
+			const event = {
+				toolName: "satellite_remote_exec",
+				input: { tool: "transfer_file", direction: bad, local_path: "/x", remote_path: "/y" },
+			};
+			const result = await interceptTransferCall(event);
+			expect(result?.block, `direction=${JSON.stringify(bad)} should be blocked`).toBe(true);
+		},
+	);
+
+	// --- Rejection: legacy field names ---
+
+	it("rejects legacy field name 'file1'", async () => {
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "local_to_remote", file1: "/x", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/must be named "local_path" and "remote_path"/);
+		expect(result?.reason).toMatch(/file1/);
+		expect(result?.reason).toMatch(/NOT accepted/);
+		// Input must NOT have been mutated.
+		expect(event.input.file1).toBe("/x");
 		expect(event.input.local_path).toBeUndefined();
 	});
 
-	it("blocks unknown direction (Zod error at server was opaque)", async () => {
+	it("rejects legacy field name 'file2'", async () => {
 		const event: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "garbage", file1: "/x", file2: "/y" },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: "/x", file2: "/y" },
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/unknown direction/);
-		// Input must NOT have been mutated to "local_to_remote" or similar.
-		expect(event.input.direction).toBe("garbage");
+		expect(result?.reason).toMatch(/file2/);
 	});
 
-	it("blocks missing direction field (not 'to_remote' or 'to_local')", async () => {
-		const event: { toolName: string; input: Record<string, unknown> } = {
+	it("rejects both file1 and file2 (lists both in error)", async () => {
+		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", file1: "/x", file2: "/y" },
+			input: { tool: "transfer_file", direction: "local_to_remote", file1: "/x", file2: "/y" },
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/unknown direction/);
+		expect(result?.reason).toMatch(/file1/);
+		expect(result?.reason).toMatch(/file2/);
 	});
 
-	// e2e: the post-hook payload must validate against the server's actual
-	// input schema. We import the schema (not duplicate it) so this test
-	// catches field-name drift between client hook and server.
-	it("post-hook payload (to_remote) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
-		const file1 = join(tmpDir, "local.txt");
-		writeFileSync(file1, "hello world", "utf-8");
-		const event: { toolName: string; input: Record<string, unknown> } = {
+	// --- Rejection: missing required canonical fields ---
+
+	it("rejects local_to_remote with missing local_path", async () => {
+		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_remote", file1, file2: "/hpc/remote.txt" },
+			input: { tool: "transfer_file", direction: "local_to_remote", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/requires "local_path"/);
+	});
+
+	it("rejects remote_to_local with missing local_path", async () => {
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "remote_to_local", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/requires "local_path"/);
+	});
+
+	it("rejects local_to_remote when local file cannot be read", async () => {
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "local_to_remote", local_path: "/nonexistent/path/abc", remote_path: "/y" },
+		};
+		const result = await interceptTransferCall(event);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/cannot read/);
+	});
+
+	// --- e2e: post-hook payload must validate against the server's schema ---
+
+	it("post-hook payload (local_to_remote) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
+		const localPath = join(tmpDir, "local.txt");
+		writeFileSync(localPath, "hello", "utf-8");
+		const event = {
+			toolName: "satellite_remote_exec",
+			input: { tool: "transfer_file", direction: "local_to_remote", local_path: localPath, remote_path: "/hpc/remote.txt" },
 		};
 		await interceptTransferCall(event);
 		const result = REMOTE_EXEC_INPUT_SCHEMA.safeParse(event.input);
 		if (!result.success) {
-			throw new Error(`Hook left invalid payload on the wire: ${result.error.message}`);
+			throw new Error(`Hook left invalid payload: ${result.error.message}`);
 		}
 		expect(result.success).toBe(true);
 	});
 
-	it("post-hook payload (to_local) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
-		const event: { toolName: string; input: Record<string, unknown> } = {
+	it("post-hook payload (remote_to_local) validates against REMOTE_EXEC_INPUT_SCHEMA", async () => {
+		const event = {
 			toolName: "satellite_remote_exec",
-			input: {
-				tool: "transfer_file",
-				direction: "to_local",
-				file1: "/local/out.txt",
-				file2: "/hpc/remote.txt",
-			},
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: "/local/out.txt", remote_path: "/hpc/remote.txt" },
 		};
 		await interceptTransferCall(event);
 		const result = REMOTE_EXEC_INPUT_SCHEMA.safeParse(event.input);
 		if (!result.success) {
-			throw new Error(`Hook left invalid payload on the wire: ${result.error.message}`);
+			throw new Error(`Hook left invalid payload: ${result.error.message}`);
 		}
 		expect(result.success).toBe(true);
 	});
-});
 
-describe("interceptTransferCall direction aliases (model uses S3/curl/rsync vocab)", () => {
-	// Models trained on S3 / curl / rsync / scp commonly reach for
-	// "download" / "upload" / "get" / "put" / etc. when the server's
-	// canonical enum is "remote_to_local" / "local_to_remote". Without
-	// the alias table, the call gets a Zod error and the model starts
-	// guessing. The hook must translate silently.
+	// --- The user's reported failure shape: must be rejected (teaches model) ---
 
-	let tmpDir: string;
-	beforeEach(() => {
-		tmpDir = mkdtempSync(join(tmpdir(), "transfer-alias-"));
-	});
-	afterEach(() => {
-		if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	it.each([
-		["download", "remote_to_local"],
-		["DOWNLOAD", "remote_to_local"],
-		["Download", "remote_to_local"],
-		["get", "remote_to_local"],
-		["pull", "remote_to_local"],
-		["fetch", "remote_to_local"],
-		["retrieve", "remote_to_local"],
-		["upload", "local_to_remote"],
-		["UPLOAD", "local_to_remote"],
-		["send", "local_to_remote"],
-		["push", "local_to_remote"],
-		["put", "local_to_remote"],
-	] as const)("translates alias %s → %s", async (alias, expectedCanonical) => {
-		const file1 = join(tmpDir, "x.txt");
-		if (expectedCanonical === "local_to_remote") {
-			writeFileSync(file1, "data", "utf-8");
-		}
-		const event: { toolName: string; input: Record<string, unknown> } = {
+	it("rejects the user's reported bad shape (direction: 'download' + canonical paths)", async () => {
+		const event = {
 			toolName: "satellite_remote_exec",
 			input: {
 				tool: "transfer_file",
-				direction: alias,
-				local_path: file1,
-				remote_path: "/hpc/y.txt",
-			},
-		};
-		const result = await interceptTransferCall(event);
-		expect(result).toBeUndefined();
-		// Hook must have normalized to the canonical direction.
-		expect(event.input.direction).toBe(expectedCanonical);
-		// local_path / remote_path must round-trip correctly.
-		expect(event.input.local_path).toBe(file1);
-		expect(event.input.remote_path).toBe("/hpc/y.txt");
-		// For local_to_remote, content must be injected; for download, it must NOT.
-		if (expectedCanonical === "local_to_remote") {
-			expect(event.input.content).toBe("data");
-		} else {
-			expect(event.input.content).toBeUndefined();
-		}
-		// legacy file1/file2 must be cleaned up regardless of which field name the model used.
-		expect(event.input.file1).toBeUndefined();
-		expect(event.input.file2).toBeUndefined();
-	});
-
-	it("accepts local_path/remote_path (canonical) directly without going through file1/file2", async () => {
-		const event: { toolName: string; input: Record<string, unknown> } = {
-			toolName: "satellite_remote_exec",
-			input: {
-				tool: "transfer_file",
-				direction: "remote_to_local",
-				local_path: "/tmp/dest.txt",
-				remote_path: "/hpc/src.txt",
-			},
-		};
-		const result = await interceptTransferCall(event);
-		expect(result).toBeUndefined();
-		expect(event.input.direction).toBe("remote_to_local");
-		expect(event.input.local_path).toBe("/tmp/dest.txt");
-		expect(event.input.remote_path).toBe("/hpc/src.txt");
-	});
-
-	it("aliases + canonical path names combined work (model's actual reported shape)", async () => {
-		const file1 = join(tmpDir, "miq.zip");
-		writeFileSync(file1, "zipbytes", "utf-8");
-		const event: { toolName: string; input: Record<string, unknown> } = {
-			toolName: "satellite_remote_exec",
-			input: {
-				tool: "transfer_file",
-				direction: "download", // alias
-				remote_path: "/TJPROJ13/.../miq.zip", // canonical
-				local_path: file1, // canonical
-			},
-		};
-		const result = await interceptTransferCall(event);
-		expect(result).toBeUndefined();
-		expect(event.input.direction).toBe("remote_to_local");
-		expect(event.input.local_path).toBe(file1);
-		expect(event.input.remote_path).toBe("/TJPROJ13/.../miq.zip");
-		expect(event.input.content).toBeUndefined(); // download, no content
-	});
-
-	it("truly unknown direction (e.g. 'sideways') still blocks with a helpful error", async () => {
-		const event: { toolName: string; input: Record<string, unknown> } = {
-			toolName: "satellite_remote_exec",
-			input: {
-				tool: "transfer_file",
-				direction: "sideways",
-				local_path: "/tmp/x",
-				remote_path: "/hpc/y",
+				direction: "download",
+				remote_path: "/TJPROJ13/.../miq.zip",
+				local_path: "/tmp/SYH-202606042100-miq.zip",
 			},
 		};
 		const result = await interceptTransferCall(event);
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toMatch(/unknown direction/);
-		expect(result?.reason).toMatch(/upload|download/); // aliases mentioned in error
-		// Input must NOT have been mutated.
-		expect(event.input.direction).toBe("sideways");
-		expect(event.input.local_path).toBe("/tmp/x");
+		expect(result?.reason).toMatch(/"download"/);
+		expect(result?.reason).toMatch(/local_to_remote.*remote_to_local/);
+		// The path fields were canonical; the only problem was direction.
 	});
 });
 
-describe("interceptTransferResult (to_local — write local_path, replace content)", () => {
-	// interceptTransferResult receives the SAME event.input that was passed
-	// to interceptTransferCall. That hook translates to_local →
-	// remote_to_local and renames file1/file2 → local_path/remote_path.
-	// So the result hook must read the post-translation shape, not the
-	// pre-translation one. (Bugs here: see the hotfix commit message.)
+describe("interceptTransferResult (remote_to_local — write local_path, replace content)", () => {
+	// interceptTransferResult receives the same event.input that was passed
+	// to interceptTransferCall. The call hook is a strict canonical gate
+	// (see the describe above), so by the time we get here the input is
+	// always in canonical shape (direction: "remote_to_local" or
+	// "local_to_remote", path fields: local_path / remote_path). The
+	// result hook must read this canonical shape, not the pre-canonical
+	// one. (Bugs here: see the hotfix commit message.)
 
 	let tmpDir: string;
 	beforeEach(() => {
@@ -324,7 +335,7 @@ describe("interceptTransferResult (to_local — write local_path, replace conten
 		expect(await interceptTransferResult(event)).toBeUndefined();
 	});
 
-	it("ignores to_remote direction (handled in beforeToolCall, never reaches here)", async () => {
+	it("ignores local_to_remote direction (handled in beforeToolCall, never reaches here)", async () => {
 		const event = {
 			toolName: "satellite_remote_exec",
 			input: { tool: "transfer_file", direction: "local_to_remote", local_path: "/x", remote_path: "/y" },
@@ -334,18 +345,18 @@ describe("interceptTransferResult (to_local — write local_path, replace conten
 		expect(await interceptTransferResult(event)).toBeUndefined();
 	});
 
-	// True end-to-end: run call hook → MCP schema validation → result hook.
-	// The 10 single-side tests above could pass even if the result hook
-	// read stale field names (which was the previous bug). This test
-	// catches that class of regression by exercising the actual sequence.
-	it("e2e: call hook translates → result hook writes file (to_local flow)", async () => {
-		const file1 = join(tmpDir, "downloaded.txt");
-		const file2 = "/hpc/remote/data.json";
+	// True end-to-end: call hook (canonical) → MCP schema validation → result hook.
+	// The single-side tests above could pass even if the result hook
+	// read stale field names. This test catches that class of regression
+	// by exercising the actual sequence with canonical names.
+	it("e2e: call hook accepts canonical → result hook writes file (remote_to_local flow)", async () => {
+		const localPath = join(tmpDir, "downloaded.txt");
+		const remotePath = "/hpc/remote/data.json";
 
-		// 1. Agent calls with the user's view of the world.
+		// 1. Agent calls with canonical names. The strict gate accepts.
 		const callEvent: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "transfer_file", direction: "to_local", file1, file2 },
+			input: { tool: "transfer_file", direction: "remote_to_local", local_path: localPath, remote_path: remotePath },
 		};
 		const callResult = await interceptTransferCall(callEvent);
 		expect(callResult).toBeUndefined();
@@ -355,8 +366,8 @@ describe("interceptTransferResult (to_local — write local_path, replace conten
 		expect(wireCheck.success).toBe(true);
 
 		// 3. Simulate server response: echo + content. The runner fires
-		//    tool_result with the SAME event object (input still mutated).
-		const echo = `direction=remote_to_local, local=${file1}, remote=${file2}\n`;
+		//    tool_result with the same event object (input still in canonical form).
+		const echo = `direction=remote_to_local, local=${localPath}, remote=${remotePath}\n`;
 		const resultEvent = {
 			toolName: "satellite_remote_exec" as const,
 			input: callEvent.input,
@@ -367,9 +378,9 @@ describe("interceptTransferResult (to_local — write local_path, replace conten
 
 		// 4. Verify both: the file was written AND the user sees metadata.
 		expect(resultResult).toBeDefined();
-		expect(readFileSync(file1, "utf-8")).toBe('{"key": "value"}');
+		expect(readFileSync(localPath, "utf-8")).toBe('{"key": "value"}');
 		expect(resultResult!.content[0].text).toMatch(
-			new RegExp(`Downloaded \\d+ bytes: ${file2.replace(/\//g, "\\/")} → ${file1.replace(/\//g, "\\/")}`),
+			new RegExp(`Downloaded \\d+ bytes: ${remotePath.replace(/\//g, "\\/")} → ${localPath.replace(/\//g, "\\/")}`),
 		);
 	});
 });

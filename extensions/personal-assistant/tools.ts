@@ -470,47 +470,30 @@ async function writeFileForTransfer(localPath: string, content: string): Promise
 }
 
 /**
- * Aliases the model is likely to use for transfer_file direction, mapped
- * to the canonical names the server's tools/list schema advertises.
+ * `before_tool_call` hook for transfer_file.
  *
- * Why this exists: the published schema enum is `["local_to_remote",
- * "remote_to_local"]` but the model has been trained on the much more
- * common S3/curl/rsync vocabulary of "upload"/"download"/"push"/"pull"/
- * "get"/"send"/etc. When the model picks a familiar name, the server
- * rejects it with a Zod "must be one of the allowed values" error and
- * the model starts guessing. By accepting these aliases in the hook,
- * the call succeeds and the model learns that common names work too.
- */
-const TRANSFER_DIRECTION_ALIASES: Record<string, "local_to_remote" | "remote_to_local"> = {
-	// canonical (no-op)
-	local_to_remote: "local_to_remote",
-	remote_to_local: "remote_to_local",
-	// legacy user-facing API
-	to_remote: "local_to_remote",
-	to_local: "remote_to_local",
-	// common API conventions (S3 / curl / rsync / scp vocabulary)
-	upload: "local_to_remote",
-	send: "local_to_remote",
-	push: "local_to_remote",
-	put: "local_to_remote",
-	download: "remote_to_local",
-	get: "remote_to_local",
-	pull: "remote_to_local",
-	fetch: "remote_to_local",
-	retrieve: "remote_to_local",
-};
-
-function normalizeTransferDirection(raw: unknown): "local_to_remote" | "remote_to_local" | undefined {
-	return TRANSFER_DIRECTION_ALIASES[String(raw ?? "").toLowerCase().trim()];
-}
-
-/**
- * `before_tool_call` hook for transfer_file. Mutates event.input in place to:
- *   - inject `content` for local→remote
- *   - translate direction (any common alias) → canonical
- *   - translate field names (file1/file2 → local_path/remote_path)
- *     so the post-hook payload validates against the server's
- *     REMOTE_EXEC_INPUT_SCHEMA (see extensions/satellite/schema.ts).
+ * Strict canonical gate. Only the two names published by the satellite
+ * server's tools/list schema (REMOTE_EXEC_INPUT_SCHEMA) are accepted:
+ *
+ *   - direction: "local_to_remote" or "remote_to_local"
+ *   - path fields: "local_path" and "remote_path"
+ *
+ * Anything else is REJECTED with an explicit error listing the canonical
+ * values, the same pattern as the bash-intent guard for cat/ls/find/
+ * grep/sed — the model learns the canonical API from the rejection
+ * message instead of getting silent translations and never fixing the
+ * mistake. Aliases like "download" / "upload" / "get" / "put" / "pull"
+ * / "push" / "send" / "fetch" / "retrieve" (S3 / curl / rsync / scp
+ * vocabulary) and the legacy names "to_remote" / "to_local" / "file1"
+ * / "file2" are all explicitly rejected with the canonical name in
+ * the error message.
+ *
+ * For the canonical local_to_remote case, the hook reads the local
+ * file, injects its bytes into `content` so the server gets them via
+ * the MCP transport (not through LLM context), and lets the call
+ * through. For remote_to_local, the hook only validates and lets
+ * through; the file write happens in `interceptTransferResult` (the
+ * after-tool-call hook).
  *
  * Returns `{block, reason}` to surface errors.
  */
@@ -520,28 +503,57 @@ export async function interceptTransferCall(
 	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
 	if (event.input.tool !== "transfer_file") return undefined;
 
-	const rawDirection = event.input.direction;
-	const direction = normalizeTransferDirection(rawDirection);
-
-	// [DEBUG] Remove after confirming the hook is firing and its mutation
-	// reaches the server. See CLAUDE.md / Debugging History for the
-	// 2026-06-08 incident that motivated this trace.
+	// [DEBUG] Remove after confirming the hook is firing and its gate is
+	// effective. See CLAUDE.md / Debugging History for the 2026-06-08
+	// incident that motivated this trace.
 	console.error(
-		`[transfer_hook] fired rawDirection=${String(rawDirection)} normalized=${direction ?? "<unknown>"} ` +
-			`local_path=${String(event.input.local_path ?? event.input.file1 ?? "")} ` +
-			`remote_path=${String(event.input.remote_path ?? event.input.file2 ?? "")}`,
+		`[transfer_hook] fired direction=${String(event.input.direction)} ` +
+			`local_path=${String(event.input.local_path)} ` +
+			`remote_path=${String(event.input.remote_path)} ` +
+			`has_file1=${"file1" in event.input} ` +
+			`has_file2=${"file2" in event.input}`,
 	);
 
-	// Accept both the legacy file1/file2 names AND the canonical
-	// local_path/remote_path. The model mixes them up when guessing.
-	const localPath = String(event.input.local_path ?? event.input.file1 ?? "");
-	const remotePath = String(event.input.remote_path ?? event.input.file2 ?? "");
+	// Gate 1: direction must be exactly the canonical enum.
+	const direction = event.input.direction;
+	if (direction !== "local_to_remote" && direction !== "remote_to_local") {
+		return {
+			block: true,
+			reason:
+				`transfer_file direction must be exactly "local_to_remote" or "remote_to_local" ` +
+				`(the canonical enum from the satellite server's tools/list schema). ` +
+				`Got: ${JSON.stringify(direction)}. ` +
+				`Do NOT use legacy names ("to_remote", "to_local") or API conventions ` +
+				`("download", "upload", "get", "put", "pull", "push", "send", "fetch", "retrieve") — ` +
+				`they are NOT accepted; use one of the two canonical values.`,
+		};
+	}
+
+	// Gate 2: path fields must be exactly the canonical names.
+	const legacyFields: string[] = [];
+	if ("file1" in event.input) legacyFields.push("file1");
+	if ("file2" in event.input) legacyFields.push("file2");
+	if (legacyFields.length > 0) {
+		return {
+			block: true,
+			reason:
+				`transfer_file path fields must be named "local_path" and "remote_path" ` +
+				`(the canonical names from the satellite server's tools/list schema). ` +
+				`Got legacy field(s): ${legacyFields.join(", ")}. ` +
+				`Do NOT use "file1" or "file2" — they are NOT accepted; use the canonical names.`,
+		};
+	}
+
+	const localPath = String(event.input.local_path ?? "");
+	const remotePath = String(event.input.remote_path ?? "");
 
 	if (direction === "local_to_remote") {
 		if (!localPath) {
 			return {
 				block: true,
-				reason: "transfer_file(local_to_remote) failed: missing local_path (or legacy file1) — the path to read locally",
+				reason:
+					`transfer_file(local_to_remote) requires "local_path" ` +
+					`(the path on your machine to read and upload to HPC).`,
 			};
 		}
 		const result = await readFileForTransfer(localPath);
@@ -552,37 +564,21 @@ export async function interceptTransferCall(
 			};
 		}
 		event.input.content = result.content;
-		event.input.local_path = localPath;
-		event.input.remote_path = remotePath;
-		event.input.direction = "local_to_remote";
-		delete event.input.file1;
-		delete event.input.file2;
+		// local_path / remote_path / direction are already canonical, no rename needed.
 		return undefined;
 	}
 
-	if (direction === "remote_to_local") {
-		if (!localPath) {
-			return {
-				block: true,
-				reason: "transfer_file(remote_to_local) failed: missing local_path (or legacy file1) — the local destination path",
-			};
-		}
-		event.input.local_path = localPath;
-		event.input.remote_path = remotePath;
-		event.input.direction = "remote_to_local";
-		delete event.input.file1;
-		delete event.input.file2;
-		return undefined;
+	// direction === "remote_to_local"
+	if (!localPath) {
+		return {
+			block: true,
+			reason:
+				`transfer_file(remote_to_local) requires "local_path" ` +
+				`(the local destination path to write the downloaded file to).`,
+		};
 	}
-
-	// Unknown / missing direction. Block with an explicit error.
-	return {
-		block: true,
-		reason:
-			`transfer_file failed: unknown direction '${String(rawDirection)}'. ` +
-			`Accepted: "local_to_remote" (also: to_remote, upload, send, push, put) or ` +
-			`"remote_to_local" (also: to_local, download, get, pull, fetch, retrieve).`,
-	};
+	// All canonical; the after-tool-call hook handles the file write.
+	return undefined;
 }
 
 /**
