@@ -5627,6 +5627,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "minimax",
 			baseUrl: "https://api.minimax.io/anthropic",
+			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -5680,6 +5681,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "minimax-cn",
 			baseUrl: "https://api.minimaxi.com/anthropic",
+			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {

@@ -100,4 +100,11 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
 	});
+
+	it("sends adaptive thinking payload for the built-in MiniMax-M3 model", async () => {
+		const payload = await capturePayload(getModel("minimax", "MiniMax-M3"), { reasoning: "medium" });
+
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "medium" });
+	});
 });
