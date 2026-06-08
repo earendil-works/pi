@@ -283,10 +283,15 @@ function checkBashIntent(input: Record<string, unknown>, turnId: string): string
 /**
  * Pull all path-like fields out of a satellite_remote_exec input. Used
  * by the path-scope check.
+ *
+ * `local_path` is intentionally EXCLUDED: it is the LOCAL side of a
+ * transfer_file call, and must only be matched against `localPathPattern`,
+ * not against the remote scope. The local check runs separately in
+ * validateSatelliteCall (see `extractLocalPathArgs`).
  */
 function extractPathArgs(input: Record<string, unknown>): Array<string | undefined> {
 	const out: Array<string | undefined> = [];
-	for (const k of ["path", "cwd", "local_path", "remote_path"]) {
+	for (const k of ["path", "cwd", "remote_path"]) {
 		const v = (input as Record<string, unknown>)[k];
 		if (typeof v === "string") out.push(v);
 	}
@@ -481,6 +486,10 @@ export async function interceptTransferCall(
 	if (event.input.tool !== "transfer_file") return undefined;
 
 	const direction = event.input.direction;
+	// [DEBUG] Remove after confirming the hook is firing and its mutation
+	// reaches the server. See CLAUDE.md / Debugging History for the
+	// 2026-06-08 incident that motivated this trace.
+	console.error(`[transfer_hook] fired direction=${direction} file1=${String(event.input.file1)} file2=${String(event.input.file2)}`);
 	const file1 = String(event.input.file1 ?? "");
 	const file2 = String(event.input.file2 ?? "");
 
@@ -525,9 +534,17 @@ export async function interceptTransferCall(
 	// Unknown / missing direction. Block with an explicit error instead
 	// of silently letting it reach the server (which would then reject
 	// with a Zod error the model can't easily interpret).
+	//
+	// Error message intentionally uses the CANONICAL names that the
+	// server's tools/list schema advertises. Earlier we said
+	// "to_remote"/"to_local" here, which taught the model the legacy
+	// user-facing API and made it stop matching what the server actually
+	// accepts. If the model wants to translate, the hook does it for
+	// it — but the error should always point to the canonical names so
+	// the model learns the right vocabulary from failures.
 	return {
 		block: true,
-		reason: `transfer_file failed: unknown direction '${String(direction)}' (expected 'to_remote' or 'to_local')`,
+		reason: `transfer_file failed: unknown direction '${String(direction)}' (expected 'local_to_remote' or 'remote_to_local')`,
 	};
 }
 
