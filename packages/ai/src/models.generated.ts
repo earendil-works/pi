@@ -43,6 +43,7 @@ import { ZAI_CODING_CN_MODELS } from "./providers/zai-coding-cn.models.ts";
 
 export const MODELS: {
 	readonly "amazon-bedrock": typeof AMAZON_BEDROCK_MODELS;
+	readonly "amazon-bedrock-mantle-openai-responses": typeof AMAZON_BEDROCK_MANTLE_OPENAI_RESPONSES_MODELS;
 	readonly "ant-ling": typeof ANT_LING_MODELS;
 	readonly "anthropic": typeof ANTHROPIC_MODELS;
 	readonly "azure-openai-responses": typeof AZURE_OPENAI_RESPONSES_MODELS;

@@ -1,4 +1,5 @@
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+import type { AmazonBedrockMantleOpenAIResponsesOptions } from "./api/amazon-bedrock-mantle-openai-responses.ts";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
@@ -19,6 +20,7 @@ export type KnownApi =
 	| "mistral-conversations"
 	| "openai-responses"
 	| "azure-openai-responses"
+	| "amazon-bedrock-mantle-openai-responses"
 	| "openai-codex-responses"
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
@@ -246,6 +248,7 @@ export interface ApiOptionsMap {
 	"openai-responses": OpenAIResponsesOptions;
 	"openai-codex-responses": OpenAICodexResponsesOptions;
 	"azure-openai-responses": AzureOpenAIResponsesOptions;
+	"amazon-bedrock-mantle-openai-responses": AmazonBedrockMantleOpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-vertex": GoogleVertexOptions;
 	"mistral-conversations": MistralOptions;
