@@ -150,6 +150,27 @@ describe("ChatPage", () => {
       await waitFor(() => {
         expect(screen.getByText("Streaming reply...")).toBeInTheDocument();
       });
+
+      // Subsequent message_end for the same turn must hit the SAME bubble
+      // (via streamingMsgId.current), not create a duplicate. The text
+      // "Streaming reply..." was rendered by the first message_update; if
+      // a duplicate bubble were created, the same text would appear twice.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Streaming reply..." }],
+            },
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByText("Streaming reply...")).toHaveLength(1);
+      });
     });
   });
 

@@ -182,8 +182,9 @@ export default function ChatPage() {
         // In that case neither e.message.id nor streamingMsgId.current is set
         // — generate a tracking id and continue so the assistant's first
         // streaming reply is rendered, not silently dropped until the next
-        // polling cycle. The next message_start for the same logical turn
-        // will reconcile its id via streamingMsgId.
+        // polling cycle. The next event for the same turn (message_start or
+        // message_end) will fall through to the same streamingMsgId.current
+        // and update the existing bubble instead of creating a duplicate.
         const msgId = e.message.id || streamingMsgId.current || crypto.randomUUID();
         streamingMsgId.current = msgId;
         const parts = buildParts(e.message.content);
