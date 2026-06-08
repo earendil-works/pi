@@ -5,7 +5,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Editor, type EditorTheme, Key, matchesKey, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 interface OptionWithDesc {
@@ -139,7 +139,7 @@ export default function question(pi: ExtensionAPI) {
 						if (cachedLines) return cachedLines;
 
 						const lines: string[] = [];
-						const add = (s: string) => lines.push(truncateToWidth(s, width));
+						const add = (s: string) => lines.push(...wrapTextWithAnsi(s, width));
 
 						add(theme.fg("accent", "─".repeat(width)));
 						add(theme.fg("text", ` ${params.question}`));
