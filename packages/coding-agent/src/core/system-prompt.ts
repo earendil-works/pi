@@ -43,7 +43,8 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const year = now.getFullYear();
 	const month = String(now.getMonth() + 1).padStart(2, "0");
 	const day = String(now.getDate()).padStart(2, "0");
-	const date = `${year}-${month}-${day}`;
+	const dayOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][now.getDay()];
+	const date = `${year}-${month}-${day} (${dayOfWeek})`;
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
