@@ -1530,6 +1530,33 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle OpenAI Responses (openai.gpt-5.5)", () => {
+		const llm = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		// Bedrock Mantle engages GPT-5.x reasoning but does not surface reasoning summary
+		// text, so there are no thinking deltas to assert. Reasoning is exercised via the
+		// multi-turn test below instead.
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			await multiTurn(llm, { reasoningEffort: "high" });
+		});
+
+		it("should handle image input", { retry: 3 }, async () => {
+			await handleImage(llm);
+		});
+	});
+
 	// Check if ollama is installed and local LLM tests are enabled
 	let ollamaInstalled = false;
 	if (!process.env.PI_NO_LOCAL_LLM) {

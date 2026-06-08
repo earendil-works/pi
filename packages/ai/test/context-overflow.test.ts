@@ -256,6 +256,17 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle", () => {
+		it("openai.gpt-5.5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
+			const result = await testContextOverflow(model, "");
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 180000);
+	});
+
 	// =============================================================================
 	// xAI
 	// Expected pattern: "maximum prompt length is X but the request contains Y"

@@ -417,6 +417,18 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle Provider (openai.gpt-5.5)", () => {
+		const llm = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
 	// =========================================================================
 	// OAuth-based providers (credentials from ~/.pi/agent/oauth.json)
 	// =========================================================================

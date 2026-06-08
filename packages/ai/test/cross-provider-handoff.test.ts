@@ -78,6 +78,12 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		model: "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		label: "bedrock-claude-sonnet-4-5",
 	},
+	// Amazon Bedrock Mantle (OpenAI Responses)
+	{
+		provider: "amazon-bedrock-mantle-openai-responses",
+		model: "openai.gpt-5.5",
+		label: "bedrock-mantle-gpt-5.5",
+	},
 	// xAI
 	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
 	// Cerebras

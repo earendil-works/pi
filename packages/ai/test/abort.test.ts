@@ -300,4 +300,20 @@ describe("AI Providers Abort Tests", () => {
 			await testAbortThenNewMessage(llm);
 		});
 	});
+
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle Provider Abort", () => {
+		const llm = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { reasoningEffort: "medium" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm);
+		});
+
+		it("should handle abort then new message", { retry: 3 }, async () => {
+			await testAbortThenNewMessage(llm);
+		});
+	});
 });

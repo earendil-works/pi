@@ -577,9 +577,9 @@ function getBedrockBaseUrl(modelId: string): string {
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
 }
 
-// Amazon Bedrock Mantle (OpenAI-compatible Responses API) is currently offered in
-// us-east-2 only. Pinning the region here keeps the SigV4 token scope aligned with
-// the endpoint regardless of the caller's AWS_REGION.
+// Bedrock Mantle (OpenAI-compatible Responses API) is currently offered in
+// us-east-2 only. Pinning the region here keeps the bearer-token scope aligned
+// with the endpoint regardless of the caller's AWS_REGION.
 function getBedrockMantleBaseUrl(): string {
 	return "https://bedrock-mantle.us-east-2.api.aws/openai/v1";
 }

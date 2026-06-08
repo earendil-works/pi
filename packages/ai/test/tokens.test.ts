@@ -56,6 +56,7 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 		llm.api === "mistral-conversations" ||
 		llm.api === "openai-responses" ||
 		llm.api === "azure-openai-responses" ||
+		llm.api === "amazon-bedrock-mantle-openai-responses" ||
 		llm.api === "openai-codex-responses" ||
 		llm.provider === "zai" ||
 		llm.provider === "amazon-bedrock" ||
@@ -325,6 +326,14 @@ describe("Token Statistics on Abort", () => {
 
 	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Provider", () => {
 		const llm = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle Provider", () => {
+		const llm = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);

@@ -768,6 +768,25 @@ describe("totalTokens field", () => {
 		);
 	});
 
+	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Mantle", () => {
+		it(
+			"openai.gpt-5.5 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
+
+				console.log(`\nAmazon Bedrock Mantle / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm);
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
 	// =========================================================================
 	// OpenAI Codex (OAuth)
 	// =========================================================================

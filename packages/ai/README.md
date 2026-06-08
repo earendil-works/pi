@@ -79,6 +79,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
 - **Amazon Bedrock**
+- **Amazon Bedrock Mantle** (OpenAI-compatible Responses API)
 - **OpenCode Zen**
 - **OpenCode Go**
 - **Fireworks** (uses OpenAI- and Anthropic-compatible APIs)
@@ -411,8 +412,9 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
+| Amazon Bedrock Mantle | AWS credentials via the standard chain (`AWS_PROFILE`, `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, ECS/IRSA roles) or a long-lived `AWS_BEARER_TOKEN_BEDROCK`. A short-lived bearer token is minted automatically from the credential chain. The built-in GPT-5.4/GPT-5.5 models are pinned to `us-east-2`. |
 
-Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens). Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location.
+Amazon Bedrock and Amazon Bedrock Mantle resolve ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens). Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location.
 
 ## Tools
 
@@ -1050,6 +1052,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | `openai-responses` | `OpenAIResponsesOptions` |
 | `openai-codex-responses` | `OpenAICodexResponsesOptions` |
 | `azure-openai-responses` | `AzureOpenAIResponsesOptions` |
+| `amazon-bedrock-mantle-openai-responses` | `AmazonBedrockMantleOpenAIResponsesOptions` |
 | `google-generative-ai` | `GoogleOptions` |
 | `google-vertex` | `GoogleVertexOptions` |
 | `mistral-conversations` | `MistralOptions` |
@@ -1282,6 +1285,7 @@ const response = await models.complete(model, {
 Browser compatibility notes:
 
 - Amazon Bedrock (`bedrock-converse-stream`) is not supported in browser environments. It can still appear in model lists; calls fail at runtime.
+- Amazon Bedrock Mantle (`amazon-bedrock-mantle-openai-responses`) is not supported in browser environments. It can still appear in model lists; calls fail at runtime.
 - OAuth login flows are Node-only. They are lazy-loaded behind bundler-opaque imports, so registering an OAuth-capable provider does not pull Node-only code into a browser bundle — only actually logging in would.
 - Use a server-side proxy or backend service if you need Bedrock or OAuth-based auth from a web app.
 
