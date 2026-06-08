@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -33,6 +33,7 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai";
+import { getAgentDir } from "../config.ts";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -79,6 +80,7 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { FileCheckpointStore, type RestoreSummary } from "./file-checkpoint-store.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -312,6 +314,9 @@ export class AgentSession {
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
 
+	// File checkpoint store for rewind-with-file-restore (undefined when base tools are overridden)
+	private _fileCheckpoints?: FileCheckpointStore;
+
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
@@ -337,6 +342,24 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+
+		// File checkpoints only apply to the built-in edit/write tools. When an
+		// embedder overrides the base tool set, those tools are not wrapped, so
+		// the store is left undefined and rewind falls back to conversation-only.
+		if (!this._baseToolsOverride) {
+			this._fileCheckpoints = new FileCheckpointStore({
+				sessionId: this.sessionManager.getSessionId(),
+				cwd: this._cwd,
+				checkpointsRoot: join(getAgentDir(), "checkpoints"),
+				appendCustomEntry: (type, data) => this.sessionManager.appendCustomEntry(type, data),
+				getEntries: () => this.sessionManager.getEntries(),
+				getBranch: (fromId) => this.sessionManager.getBranch(fromId),
+				isStreaming: () => this.isStreaming,
+			});
+			// Re-drive any restore that was interrupted by a crash (idempotent).
+			// Best-effort: a recovery failure must not block session startup.
+			void this._fileCheckpoints.recoverIncompleteRestore().catch(() => {});
+		}
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -502,6 +525,11 @@ export class AgentSession {
 		// Notify all listeners
 		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
 
+		// Turn finished: persist this turn's file checkpoint manifest (no-op if nothing changed).
+		if (event.type === "agent_end") {
+			this._fileCheckpoints?.flushPending();
+		}
+
 		// Handle session persistence
 		if (event.type === "message_end") {
 			// Check if this is a custom message from extensions
@@ -520,6 +548,12 @@ export class AgentSession {
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
 				this.sessionManager.appendMessage(event.message);
+				// A new user message starts a new file-checkpoint turn. The just-
+				// appended entry is now the leaf and becomes this turn's checkpoint id.
+				if (event.message.role === "user") {
+					const turnId = this.sessionManager.getLeafId();
+					this._fileCheckpoints?.beginTurn(turnId);
+				}
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -2390,6 +2424,8 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					edit: this._fileCheckpoints ? { operations: this._fileCheckpoints.wrapEditOperations() } : undefined,
+					write: this._fileCheckpoints ? { operations: this._fileCheckpoints.wrapWriteOperations() } : undefined,
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -2877,6 +2913,22 @@ export class AgentSession {
 		} finally {
 			this._branchSummaryAbortController = undefined;
 		}
+	}
+
+	/** Whether file checkpoints are available (built-in edit/write tools in use). */
+	get supportsFileRestore(): boolean {
+		return this._fileCheckpoints !== undefined;
+	}
+
+	/**
+	 * Restore files on disk to their state before `targetId`, rolling back every
+	 * turn from the current leaf down to the target. Call this BEFORE navigateTree
+	 * so the abandoned branch is still reachable; pass the pre-navigation leaf id.
+	 * Returns null if file restore is unavailable. Throws while the agent is running.
+	 */
+	async restoreFilesTo(targetId: string, fromLeafId: string): Promise<RestoreSummary | null> {
+		if (!this._fileCheckpoints) return null;
+		return this._fileCheckpoints.restoreTo(targetId, fromLeafId);
 	}
 
 	/**

@@ -72,6 +72,7 @@ import type {
 	ExtensionWidgetOptions,
 	ProjectTrustContext,
 } from "../../core/extensions/index.ts";
+import type { RestoreSummary } from "../../core/file-checkpoint-store.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -4406,6 +4407,19 @@ export class InteractiveMode {
 		}
 	}
 
+	/** One-line summary of a file restore for the status bar. */
+	private formatRestoreSummary(summary: RestoreSummary): string {
+		const parts: string[] = [];
+		const changed = summary.restored.length + summary.deleted.length;
+		if (changed > 0) parts.push(`${changed} file${changed === 1 ? "" : "s"} restored`);
+		if (summary.deleted.length > 0) parts.push(`${summary.deleted.length} deleted`);
+		if (summary.skippedExternal.length > 0) {
+			parts.push(`${summary.skippedExternal.length} skipped (changed outside pi)`);
+		}
+		if (parts.length === 0) return "files already at this point";
+		return parts.join(", ");
+	}
+
 	private showTreeSelector(initialSelectedId?: string): void {
 		const tree = this.sessionManager.getTree();
 		const realLeafId = this.sessionManager.getLeafId();
@@ -4466,6 +4480,21 @@ export class InteractiveMode {
 						}
 					}
 
+					// Ask whether to also restore files on disk to this point.
+					let restoreFiles = false;
+					if (this.session.supportsFileRestore) {
+						const restoreChoice = await this.showExtensionSelector("Restore files to this point?", [
+							"Conversation + files",
+							"Conversation only",
+						]);
+						if (restoreChoice === undefined) {
+							// User pressed escape - re-show tree selector with same selection
+							this.showTreeSelector(entryId);
+							return;
+						}
+						restoreFiles = restoreChoice === "Conversation + files";
+					}
+
 					// Set up escape handler and loader if summarizing
 					let summaryLoader: Loader | undefined;
 					const originalOnEscape = this.defaultEditor.onEscape;
@@ -4502,13 +4531,30 @@ export class InteractiveMode {
 							return;
 						}
 
+						// Restore files on disk if requested. Uses the pre-navigation leaf
+						// (realLeafId) so the abandoned branch is still reachable.
+						let restoreStatus = "";
+						if (restoreFiles) {
+							if (!realLeafId) {
+								// No prior leaf to roll back from; tell the user instead of silently skipping.
+								restoreStatus = " · could not restore files (no prior state)";
+							} else {
+								try {
+									const summary = await this.session.restoreFilesTo(entryId, realLeafId);
+									restoreStatus = summary ? ` · ${this.formatRestoreSummary(summary)}` : "";
+								} catch (restoreError) {
+									this.showError(restoreError instanceof Error ? restoreError.message : String(restoreError));
+								}
+							}
+						}
+
 						// Update UI
 						this.chatContainer.clear();
 						this.renderInitialMessages();
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);
 						}
-						this.showStatus("Navigated to selected point");
+						this.showStatus(`Navigated to selected point${restoreStatus}`);
 						void this.flushCompactionQueue({ willRetry: false });
 					} catch (error) {
 						this.showError(error instanceof Error ? error.message : String(error));

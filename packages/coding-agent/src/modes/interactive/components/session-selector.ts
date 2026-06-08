@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as os from "node:os";
+import { join } from "node:path";
 import {
 	type Component,
 	Container,
@@ -13,6 +14,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { getAgentDir } from "../../../config.ts";
+import { deleteSessionCheckpoints } from "../../../core/file-checkpoint-store.ts";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
@@ -818,9 +821,17 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 		// Handle session deletion
 		this.sessionList.onDeleteSession = async (sessionPath: string) => {
+			// Capture the session id before the lists are filtered below.
+			const deletedSessionId = (this.currentSessions ?? this.allSessions ?? []).find(
+				(s) => s.path === sessionPath,
+			)?.id;
 			const result = await deleteSessionFile(sessionPath);
 
 			if (result.ok) {
+				// Remove the session's checkpoint blobs so they don't linger on disk.
+				if (deletedSessionId) {
+					deleteSessionCheckpoints(deletedSessionId, join(getAgentDir(), "checkpoints"));
+				}
 				if (this.currentSessions) {
 					this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
 				}
