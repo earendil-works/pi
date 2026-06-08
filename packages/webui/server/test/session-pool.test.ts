@@ -351,6 +351,64 @@ describe("SessionPool", () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// (m2) stdout data that spans multiple chunks is reassembled before
+	// JSON.parse — Node's `data` event does NOT guarantee line-aligned chunks,
+	// so a single JSON line from pi can arrive in 2+ pieces. The previous
+	// implementation split each chunk independently and silently dropped
+	// any line whose JSON failed to parse, which dropped the streaming
+	// events the webui needs to render the assistant's reply in real time
+	// (the page stayed blank until the 3-second polling fallback caught up).
+	// -------------------------------------------------------------------------
+	it("(m2) stdout data spanning multiple chunks reassembles into one event", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const eventSpy = vi.fn();
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		pool.on("event", eventSpy);
+
+		await pool.spawnIfNeeded("s1");
+
+		// Build a realistic, multi-KB JSON line like pi emits for a streaming
+		// assistant message (with thinking + text). 8 KB comfortably exceeds a
+		// single Node pipe chunk, so it's almost guaranteed to be split.
+		const bigLine =
+			JSON.stringify({
+				type: "message_update",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "x".repeat(4000) },
+						{ type: "text", text: "y".repeat(2000) },
+					],
+				},
+			}) + "\n";
+		expect(bigLine.length).toBeGreaterThan(4096);
+
+		// Split at an arbitrary point in the middle of the JSON.
+		const splitAt = 1234;
+		const chunk1 = Buffer.from(bigLine.slice(0, splitAt));
+		const chunk2 = Buffer.from(bigLine.slice(splitAt));
+
+		const dataCalls = proc.stdout.on.mock.calls.filter((c) => c[0] === "data");
+		expect(dataCalls.length).toBeGreaterThan(0);
+		const dataHandler = dataCalls[0][1];
+
+		// Feed the two chunks as Node would deliver them. Must reassemble into
+		// exactly one emitted event.
+		dataHandler(chunk1);
+		dataHandler(chunk2);
+
+		const updateCalls = eventSpy.mock.calls.filter(
+			(call) => (call[0] as { event?: { type?: string } }).event?.type === "message_update",
+		);
+		expect(updateCalls).toHaveLength(1);
+	});
+
+	// -------------------------------------------------------------------------
 	// (o) proc exit while isResponding emits session_status_changed("idle")
 	//
 	// Bug 2: if pi exits mid-turn (crash/kill), proc.on("exit") deletes the

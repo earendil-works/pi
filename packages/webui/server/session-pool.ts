@@ -238,44 +238,73 @@ export class SessionPool extends EventEmitter {
 
 		const state: SessionState = { proc, subscribers: new Set(), titlesSeen: new Set(), isResponding: false };
 
-		// Handle stdout JSON-line output
-		proc.stdout?.on("data", (chunk: Buffer | string) => {
-			const lines = chunk.toString().split("\n").filter((l) => l.trim());
-			for (const line of lines) {
-				try {
-					const event = JSON.parse(line);
-					// Track session name from session_info_changed events
-					if (typeof event === "object" && event !== null && (event as any).type === "session_info_changed") {
-						const name = (event as any).name;
-						if (typeof name === "string") {
-							this.sessionNames.set(sessionId, name);
-						}
+		// Handle stdout JSON-line output.
+		//
+		// BUFFER ACROSS CHUNKS: Node's `data` event does NOT guarantee
+		// line-aligned chunks. A single JSON line from pi can arrive in 2+
+		// pieces. Without buffering, each half fails JSON.parse and the
+		// event is silently dropped (the catch below would swallow it), so
+		// the webui never sees the streaming update and the user has to wait
+		// for the 3-second polling fallback (or switch chats) to see the
+		// response. See test (m2) for the reproducer.
+		let stdoutBuffer = "";
+		const handleStdoutLine = (line: string) => {
+			try {
+				const event = JSON.parse(line);
+				// Track session name from session_info_changed events
+				if (typeof event === "object" && event !== null && (event as any).type === "session_info_changed") {
+					const name = (event as any).name;
+					if (typeof name === "string") {
+						this.sessionNames.set(sessionId, name);
 					}
-					// Emit session_status_changed("idle") when the agent finishes
-					// a turn (after all message_end, turn_end, agent_end). This
-					// is the source of truth for "the model is done" — the
-					// webui uses it to clear its "thinking" indicator.
-					if (typeof event === "object" && event !== null) {
-						const t = (event as any).type;
-						if (t === "agent_end" && state.isResponding) {
-							state.isResponding = false;
-							this.emit("event", {
-								sessionId,
-								event: { type: "session_status_changed", status: "idle" },
-							} as PiEvent);
-						}
-					}
-					// Emit on the pool for external listeners (e.g. WS handler)
-					// The WS handler is responsible for forwarding to subscribers
-					// with the proper {type:"session_event",sessionId,event} wrapper
-					this.emit("event", { sessionId, event } as PiEvent);
-				} catch {
-					// Ignore non-JSON output
 				}
+				// Emit session_status_changed("idle") when the agent finishes
+				// a turn (after all message_end, turn_end, agent_end). This
+				// is the source of truth for "the model is done" — the
+				// webui uses it to clear its "thinking" indicator.
+				if (typeof event === "object" && event !== null) {
+					const t = (event as any).type;
+					if (t === "agent_end" && state.isResponding) {
+						state.isResponding = false;
+						this.emit("event", {
+							sessionId,
+							event: { type: "session_status_changed", status: "idle" },
+						} as PiEvent);
+					}
+				}
+				// Emit on the pool for external listeners (e.g. WS handler)
+				// The WS handler is responsible for forwarding to subscribers
+				// with the proper {type:"session_event",sessionId,event} wrapper
+				this.emit("event", { sessionId, event } as PiEvent);
+			} catch {
+				// Ignore non-JSON output
+			}
+		};
+		proc.stdout?.on("data", (chunk: Buffer | string) => {
+			stdoutBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+			let newlineIndex: number;
+			while ((newlineIndex = stdoutBuffer.indexOf("\n")) !== -1) {
+				const line = stdoutBuffer.slice(0, newlineIndex);
+				stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+				if (line) handleStdoutLine(line);
 			}
 		});
+		// Drain any trailing buffered content (e.g. proc closed mid-line
+		// without a final newline, or a non-utf8 chunk that left bytes in
+		// the buffer).
+		const drainStdout = () => {
+			if (!stdoutBuffer) return;
+			const line = stdoutBuffer;
+			stdoutBuffer = "";
+			if (line) handleStdoutLine(line);
+		};
+		// stdout's "end" event fires when pi closes the pipe cleanly. Also
+		// drain on proc "exit" as a safety net for stdio streams that never
+		// emit "end" (e.g. crash / SIGKILL).
+		proc.stdout?.on("end", drainStdout);
 
 		proc.on("exit", (code, signal) => {
+			drainStdout();
 			// If pi exited mid-turn (crash / SIGKILL / OOM), the "idle" event
 			// was never emitted by the agent_end path. Emit it here so the
 			// client transitions the Stop button → Send and the user isn't
