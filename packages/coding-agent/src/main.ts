@@ -634,6 +634,9 @@ async function resolveProjectTrusted(options: {
 	if (options.trustOverride !== undefined) {
 		return options.trustOverride;
 	}
+	if (options.settingsManagerForPrompt.getGlobalSettings().alwaysTrust) {
+		return true;
+	}
 	if (!hasProjectTrustInputs(options.cwd)) {
 		return true;
 	}
@@ -817,12 +820,18 @@ export async function main(args: string[], options?: MainOptions) {
 		const isInitialRuntime = sessionStartEvent === undefined;
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
+		const alwaysTrust = startupSettingsManager.getGlobalSettings().alwaysTrust === true;
 		const hasTrustInputs = hasProjectTrustInputs(cwd);
 		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustInputs;
-		const projectTrusted = shouldResolveProjectTrust
-			? false
-			: (cachedProjectTrust ?? parsed.projectTrustOverride ?? (!hasTrustInputs || trustStore.get(cwd) === true));
+			!alwaysTrust &&
+			parsed.projectTrustOverride === undefined &&
+			cachedProjectTrust === undefined &&
+			hasTrustInputs;
+		const projectTrusted = alwaysTrust
+			? true
+			: shouldResolveProjectTrust
+				? false
+				: (cachedProjectTrust ?? parsed.projectTrustOverride ?? (!hasTrustInputs || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		const services = await createAgentSessionServices({
 			cwd,

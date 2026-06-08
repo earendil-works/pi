@@ -19,7 +19,15 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
+Set `alwaysTrust` to `true` in global settings to skip all trust gating and automatically trust every project. When enabled, pi will not prompt for trust, and all project-local inputs (instructions, settings, resources, packages, extensions) are loaded without restriction.
+
 ## All Settings
+
+### Project Trust
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `alwaysTrust` | boolean | `false` | Skip all trust gating — permanently trust every project |
 
 ### Model & Thinking
 

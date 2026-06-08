@@ -76,6 +76,7 @@ export type PackageSource =
 
 export interface Settings {
 	lastChangelogVersion?: string;
+	alwaysTrust?: boolean; // Skip all trust gating prompts — permanently trust every project
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -435,6 +436,9 @@ export class SettingsManager {
 	}
 
 	isProjectTrusted(): boolean {
+		if (this.settings.alwaysTrust) {
+			return true;
+		}
 		return this.projectTrusted;
 	}
 

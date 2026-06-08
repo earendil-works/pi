@@ -26,6 +26,8 @@ Declining trust skips those project-local inputs. Before trust is resolved, pi o
 
 Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without a saved trust decision, they ignore project-local inputs unless `--approve`/`-a` is passed. Use `--no-approve`/`-na` to ignore project-local inputs for one run even when the project is trusted.
 
+Setting `alwaysTrust` to `true` in global settings disables all trust gating — every project is treated as trusted without prompting. This is equivalent to permanently passing `--approve`.
+
 ## No Built-in Sandbox
 
 Pi does not include a built-in sandbox. Built-in tools can read files, write files, edit files, and run shell commands with the permissions of the pi process. Extensions are TypeScript modules that run with the same permissions. Package installs, shell commands, language servers, test commands, and other developer tools behave as ordinary local processes.

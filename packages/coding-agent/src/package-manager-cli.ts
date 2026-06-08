@@ -429,6 +429,10 @@ function resolveProjectTrusted(cwd: string, agentDir: string, trustOverride: boo
 	if (trustOverride !== undefined) {
 		return trustOverride;
 	}
+	const globalSettings = SettingsManager.create(cwd, agentDir).getGlobalSettings();
+	if (globalSettings.alwaysTrust) {
+		return true;
+	}
 	return !hasProjectTrustInputs(cwd) || new ProjectTrustStore(agentDir).get(cwd) === true;
 }
 
