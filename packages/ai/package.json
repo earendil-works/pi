@@ -53,6 +53,7 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
+		"@aws/bedrock-token-generator": "1.1.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
 		"@google/genai": "1.52.0",
 		"@mistralai/mistralai": "2.2.6",

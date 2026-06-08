@@ -10,6 +10,7 @@
  * ModelManager migration.
  */
 
+export * from "./api/amazon-bedrock-mantle-openai-responses.lazy.ts";
 export * from "./api/anthropic-messages.lazy.ts";
 export * from "./api/azure-openai-responses.lazy.ts";
 export * from "./api/bedrock-converse-stream.lazy.ts";
@@ -27,6 +28,7 @@ export * from "./index.ts";
 export * from "./legacy-api-aliases.ts";
 export * from "./providers/images/register-builtins.ts";
 
+import { amazonBedrockMantleOpenAIResponsesApi } from "./api/amazon-bedrock-mantle-openai-responses.lazy.ts";
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
 import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts";
@@ -175,6 +177,7 @@ const BUILTIN_APIS: [Api, ProviderStreams][] = [
 	["openai-responses", openAIResponsesApi()],
 	["openai-codex-responses", openAICodexResponsesApi()],
 	["azure-openai-responses", azureOpenAIResponsesApi()],
+	["amazon-bedrock-mantle-openai-responses", amazonBedrockMantleOpenAIResponsesApi()],
 	["google-generative-ai", googleGenerativeAIApi()],
 	["google-vertex", googleVertexApi()],
 	["mistral-conversations", mistralConversationsApi()],

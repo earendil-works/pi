@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Amazon Bedrock Mantle as an OpenAI Responses-compatible API (`amazon-bedrock-mantle-openai-responses`), authenticating with short-lived Bedrock bearer tokens minted from the AWS credential chain via `@aws/bedrock-token-generator` ([#5509](https://github.com/earendil-works/pi/pull/5509) by [@unexge](https://github.com/unexge)).
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed
