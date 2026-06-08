@@ -225,6 +225,7 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 }
 
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
+const BEDROCK_MANTLE_PROVIDER_ID = "amazon-bedrock-mantle-openai-responses";
 
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
 
@@ -4727,7 +4728,10 @@ export class InteractiveMode {
 
 					if (providerOption.authType === "oauth") {
 						await this.showLoginDialog(providerOption.id, providerOption.name);
-					} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+					} else if (
+						providerOption.id === BEDROCK_PROVIDER_ID ||
+						providerOption.id === BEDROCK_MANTLE_PROVIDER_ID
+					) {
 						this.showBedrockSetupDialog(providerOption.id, providerOption.name);
 					} else {
 						await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
