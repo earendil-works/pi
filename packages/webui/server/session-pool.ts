@@ -289,14 +289,13 @@ export class SessionPool extends EventEmitter {
 				if (line) handleStdoutLine(line);
 			}
 		});
-		// Drain any trailing buffered content (e.g. proc closed mid-line
-		// without a final newline, or a non-utf8 chunk that left bytes in
-		// the buffer).
+		// Drain any trailing buffered content (e.g. proc closed without a
+		// final newline).
 		const drainStdout = () => {
 			if (!stdoutBuffer) return;
 			const line = stdoutBuffer;
 			stdoutBuffer = "";
-			if (line) handleStdoutLine(line);
+			handleStdoutLine(line);
 		};
 		// stdout's "end" event fires when pi closes the pipe cleanly. Also
 		// drain on proc "exit" as a safety net for stdio streams that never
