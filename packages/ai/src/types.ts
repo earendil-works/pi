@@ -36,6 +36,7 @@ export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
 	| "amazon-bedrock"
+	| "amazon-bedrock-mantle-openai-responses"
 	| "ant-ling"
 	| "anthropic"
 	| "google"

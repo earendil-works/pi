@@ -1,27 +1,14 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { complete, stream } from "../src/compat.ts";
-import type { Context, Model, Tool } from "../src/types.ts";
+import { complete, getModel, stream } from "../src/compat.ts";
+import type { Context, Tool } from "../src/types.ts";
 import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
-// Amazon Bedrock Mantle exposes the OpenAI Responses API. The target model
-// (openai.gpt-5.5) is available in us-east-2 only, so the base URL pins the
-// region; the API mints a short-lived bearer token scoped to that host.
-const REGION = "us-east-2";
-
-const gpt55: Model<"amazon-bedrock-mantle-openai-responses"> = {
-	id: "openai.gpt-5.5",
-	name: "GPT-5.5",
-	api: "amazon-bedrock-mantle-openai-responses",
-	provider: "amazon-bedrock-mantle-openai-responses",
-	baseUrl: `https://bedrock-mantle.${REGION}.api.aws/openai/v1`,
-	reasoning: true,
-	input: ["text", "image"],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 400000,
-	maxTokens: 128000,
-};
+// Amazon Bedrock Mantle exposes the OpenAI Responses API. The registered model
+// pins the us-east-2 endpoint (gpt-5.5 is available there only); the API mints
+// a short-lived bearer token scoped to that region.
+const gpt55 = getModel("amazon-bedrock-mantle-openai-responses", "openai.gpt-5.5");
 
 const calculatorSchema = Type.Object({
 	a: Type.Number({ description: "First number" }),

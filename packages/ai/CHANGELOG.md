@@ -10,6 +10,7 @@
 
 - Added provider-neutral `toolChoice` support to simple stream requests.
 - Added China-specific ZAI Coding Plan models, including GLM-4.6V vision support, and API-equivalent usage cost estimates for models with published PAYG prices ([#8220](https://github.com/earendil-works/pi/issues/8220)).
+- Added Amazon Bedrock Mantle as a built-in OpenAI Responses-compatible provider (`amazon-bedrock-mantle-openai-responses`) with GPT-5.4, GPT-5.5, and GPT-5.6 Sol, Terra, and Luna models, including `max` thinking level support for GPT-5.6, authenticating through the official `openai` SDK's Bedrock provider (`openai/providers/bedrock/aws`) with AWS SigV4 request signing or a Bedrock bearer token ([#6216](https://github.com/earendil-works/pi/pull/6216) by [@unexge](https://github.com/unexge)).
 
 ### Fixed
 
