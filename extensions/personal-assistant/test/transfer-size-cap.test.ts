@@ -15,14 +15,19 @@ describe("readFileForTransfer — size cap", () => {
 		if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
 	});
 
-	it("small file → ok", async () => {
+	it("small file → ok (content is base64-encoded binary)", async () => {
 		const f = join(tmpDir, "small.txt");
 		writeFileSync(f, "hello");
 		const r = await impl(f);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
-			expect(r.content).toBe("hello");
+			// content is now always base64-encoded (so binary files survive
+			// the JSON string round-trip). bytes reports the actual file
+			// byte count, not the base64 length.
+			expect(r.content).toBe("aGVsbG8=");
 			expect(r.bytes).toBe(5);
+			// Decoding the base64 gives the original bytes back.
+			expect(Buffer.from(r.content, "base64").toString("utf-8")).toBe("hello");
 		}
 	});
 

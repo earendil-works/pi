@@ -443,26 +443,42 @@ export function maybeAnnotateNonVisionImage(event: {
  */
 const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 
-export async function readFileForTransfer(localPath: string): Promise<{ ok: true; content: string; bytes: number } | { ok: false; error: string }> {
+/**
+ * Marker for binary content on the wire (in `content` for local_to_remote,
+ * in the response body for remote_to_local). Must match the server's
+ * `B64_MARKER` in `extensions/satellite/satellite-server.ts`.
+ */
+const B64_MARKER = "B64:";
+
+export async function readFileForTransfer(localPath: string): Promise<
+	{ ok: true; content: string; bytes: number } | { ok: false; error: string }
+> {
 	try {
 		const stat = statSync(localPath);
 		if (!stat.isFile()) return { ok: false, error: `not a regular file: ${localPath}` };
 		if (stat.size > MAX_TRANSFER_BYTES) {
 			return { ok: false, error: `file too large: ${stat.size} bytes (max ${MAX_TRANSFER_BYTES} bytes / ${MAX_TRANSFER_BYTES / 1024 / 1024}MB)` };
 		}
-		const content = readFileSync(localPath, "utf-8");
-		return { ok: true, content, bytes: Buffer.byteLength(content, "utf-8") };
+		// Read as Buffer (binary), then base64-encode so the JSON string
+		// round-trip is lossless. Without this, Node's utf-8 decoder
+		// replaces invalid byte sequences with U+FFFD and corrupts
+		// anything that isn't valid UTF-8 (zip, png, jpg, ...).
+		const buf = readFileSync(localPath);
+		return { ok: true, content: buf.toString("base64"), bytes: buf.length };
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: msg };
 	}
 }
 
-async function writeFileForTransfer(localPath: string, content: string): Promise<{ ok: true; bytes: number } | { ok: false; error: string }> {
+async function writeFileForTransfer(
+	localPath: string,
+	data: Buffer,
+): Promise<{ ok: true; bytes: number } | { ok: false; error: string }> {
 	try {
 		mkdirSync(dirname(localPath), { recursive: true });
-		writeFileSync(localPath, content, "utf-8");
-		return { ok: true, bytes: Buffer.byteLength(content, "utf-8") };
+		writeFileSync(localPath, data);
+		return { ok: true, bytes: data.length };
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: msg };
@@ -563,7 +579,7 @@ export async function interceptTransferCall(
 				reason: `transfer_file(local_to_remote) failed: cannot read '${localPath}': ${result.error}`,
 			};
 		}
-		event.input.content = result.content;
+		event.input.content = B64_MARKER + result.content;
 		// local_path / remote_path / direction are already canonical, no rename needed.
 		return undefined;
 	}
@@ -606,13 +622,24 @@ export async function interceptTransferResult(
 	const remotePath = String(event.input.remote_path ?? "");
 	if (!localPath) return undefined;
 
-	// Server returned: textContent(echo + content) where echo is
-	// "direction=..., local=..., remote=...\n" — we want the part after echo.
+	// Server returned: textContent(echo + B64:base64data) where echo is
+	// "direction=..., local=..., remote=...\n" — we want the part after
+	// echo. The B64: prefix is the server's signal that the body is
+	// base64-encoded (binary-safe). Without it, the body is treated as
+	// legacy utf-8 text.
 	const raw = event.content[0]?.text ?? "";
 	const echoEnd = raw.indexOf("\n");
-	const bytes = raw.slice(echoEnd + 1);
+	const body = raw.slice(echoEnd + 1);
 
-	const result = await writeFileForTransfer(localPath, bytes);
+	let data: Buffer;
+	if (body.startsWith(B64_MARKER)) {
+		data = Buffer.from(body.slice(B64_MARKER.length), "base64");
+	} else {
+		// Legacy: text content (no B64 prefix). Decode as utf-8.
+		data = Buffer.from(body, "utf-8");
+	}
+
+	const result = await writeFileForTransfer(localPath, data);
 	if (!result.ok) {
 		return {
 			content: [{ type: "text", text: `transfer_file(to_local) failed: cannot write '${localPath}': ${result.error}` }],

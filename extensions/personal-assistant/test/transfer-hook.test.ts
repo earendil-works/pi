@@ -19,7 +19,7 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 
 	// --- Acceptance: only canonical direction + canonical field names ---
 
-	it("accepts canonical local_to_remote and injects content from local_path", async () => {
+	it("accepts canonical local_to_remote and injects B64:base64 of the local file's bytes", async () => {
 		const localPath = join(tmpDir, "local.txt");
 		writeFileSync(localPath, "hello world", "utf-8");
 		const event: { toolName: string; input: Record<string, unknown> } = {
@@ -33,10 +33,37 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		};
 		const result = await interceptTransferCall(event);
 		expect(result).toBeUndefined();
-		expect(event.input.content).toBe("hello world");
+		// Content must be the file's BYTES base64-encoded with the B64: marker
+		// (so binary files survive the JSON string round-trip).
+		const expectedB64 = Buffer.from("hello world", "utf-8").toString("base64");
+		expect(event.input.content).toBe(`B64:${expectedB64}`);
 		expect(event.input.direction).toBe("local_to_remote");
 		expect(event.input.local_path).toBe(localPath);
 		expect(event.input.remote_path).toBe("/hpc/remote.txt");
+	});
+
+	it("accepts canonical local_to_remote with BINARY content (round-trip base64)", async () => {
+		const localPath = join(tmpDir, "binary.bin");
+		// Bytes that would be corrupted by utf-8 decoding (invalid UTF-8 sequences).
+		const raw = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xbc, 0x5c, 0xc8, 0x5c, 0xff, 0xfe, 0x00, 0x80, 0x81, 0x82, 0x83, 0x84]);
+		writeFileSync(localPath, raw);
+		const event: { toolName: string; input: Record<string, unknown> } = {
+			toolName: "satellite_remote_exec",
+			input: {
+				tool: "transfer_file",
+				direction: "local_to_remote",
+				local_path: localPath,
+				remote_path: "/hpc/binary.bin",
+			},
+		};
+		const result = await interceptTransferCall(event);
+		expect(result).toBeUndefined();
+		const expectedB64 = raw.toString("base64");
+		expect(event.input.content).toBe(`B64:${expectedB64}`);
+		// Decoding the base64 back gives the original bytes byte-for-byte.
+		const content = event.input.content as string;
+		const decoded = Buffer.from(content.slice("B64:".length), "base64");
+		expect(decoded.equals(raw)).toBe(true);
 	});
 
 	it("accepts canonical remote_to_local and passes through unchanged (file write is the AFTER hook)", async () => {

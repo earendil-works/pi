@@ -441,16 +441,34 @@ async function handleWriteFile(args: { path: string; content: string }, sessionI
   }
 }
 
+/**
+ * Marker for binary content in the `content` field (local_to_remote) and
+ * in the response body (remote_to_local). The hook on the personal-
+ * assistant side uses the same prefix, so a round trip stays in binary.
+ *
+ * Why a prefix and not a real MCP content type: the satellite server
+ * publishes a single flat `remote_exec` tool with discriminated-union
+ * sub-ops; a separate `text` / `blob` content type per sub-op would
+ * require either splitting the tool (breaking the schema) or smuggling
+ * a content-type through the existing `textContent` envelope. The
+ * prefix is a 4-byte tag that's enough to disambiguate and keeps the
+ * wire format stable.
+ */
+const B64_MARKER = "B64:";
+
 export async function handleTransferFile(args: { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
   // direction semantics:
-  //   remote_to_local: server reads remote_path and returns content.
-  //     Client (personal-assistant) hook captures the result, writes to
-  //     local_path, and replaces the content with a metadata message so
-  //     bytes never enter LLM context.
-  //   local_to_remote: client hook reads local_path and injects `content`
-  //     into the MCP call before it leaves the agent process. Bytes flow
-  //     over the MCP transport, not through the LLM.
+  //   remote_to_local: server reads remote_path and returns content (as
+  //     a base64-encoded string with a "B64:" prefix, so binary files
+  //     survive the JSON string round-trip). Client (personal-assistant)
+  //     hook captures the result, decodes + writes to local_path, and
+  //     replaces the content with a metadata message so bytes never
+  //     enter LLM context.
+  //   local_to_remote: client hook reads local_path, base64-encodes,
+  //     and injects the bytes (also with a "B64:" prefix) into the MCP
+  //     call's `content` field. Server detects the prefix, decodes, and
+  //     writes raw bytes to remote_path.
   const echo = `direction=${args.direction}, local=${args.local_path}, remote=${args.remote_path}\n`;
 
   try {
@@ -459,9 +477,14 @@ export async function handleTransferFile(args: { direction: "remote_to_local" | 
       if (isParentTraversal(safeRemote)) {
         throw new Error(`Path '${args.remote_path}' resolves to '${safeRemote}' with parent-traversal segments`);
       }
-      const content = await readFile(safeRemote, "utf-8");
-      log(`transfer_file remote_to_local ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`, String(sessionId));
-      return { content: textContent(echo + content) };
+      // Read as Buffer (binary), then base64-encode so the JSON string
+      // round-trip is lossless. Without this, Node's utf-8 decoder
+      // replaces invalid byte sequences with U+FFFD and corrupts
+      // anything that isn't valid UTF-8 (zip, png, jpg, ...).
+      const bytes = await readFile(safeRemote);
+      const b64 = bytes.toString("base64");
+      log(`transfer_file remote_to_local ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes.length} bytes)`, String(sessionId));
+      return { content: textContent(echo + B64_MARKER + b64) };
     } else if (args.direction === "local_to_remote") {
       if (args.content === undefined) {
         return { content: textContent(echo + "Error: local_to_remote requires content field. The client (personal-assistant) should inject this from the local file before the MCP call."), isError: true };
@@ -470,13 +493,19 @@ export async function handleTransferFile(args: { direction: "remote_to_local" | 
       if (isParentTraversal(safeRemote)) {
         throw new Error(`Path '${args.remote_path}' resolves to '${safeRemote}' with parent-traversal segments`);
       }
-      const content = args.content;
+      // Decode the body: prefer the B64 prefix (binary), fall back to
+      // legacy utf-8 text (in case any other client sends raw text).
+      let bytes: Buffer;
+      if (args.content.startsWith(B64_MARKER)) {
+        bytes = Buffer.from(args.content.slice(B64_MARKER.length), "base64");
+      } else {
+        bytes = Buffer.from(args.content, "utf-8");
+      }
       return await withFileQueue(safeRemote, async () => {
         await mkdir(dirname(safeRemote), { recursive: true });
-        await writeFile(safeRemote, content, "utf-8");
-        const bytes = Buffer.byteLength(content, "utf-8");
-        log(`transfer_file local_to_remote ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`, String(sessionId));
-        return { content: textContent(echo + `Successfully wrote ${bytes} bytes to ${args.remote_path}`) };
+        await writeFile(safeRemote, bytes);
+        log(`transfer_file local_to_remote ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes.length} bytes)`, String(sessionId));
+        return { content: textContent(echo + `Successfully wrote ${bytes.length} bytes to ${args.remote_path}`) };
       });
     } else {
       return { content: textContent(echo + `Error: unknown direction '${args.direction}'. Use 'remote_to_local' or 'local_to_remote'.`), isError: true };
