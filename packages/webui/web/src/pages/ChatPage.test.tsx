@@ -366,4 +366,106 @@ describe("ChatPage", () => {
       });
     });
   });
+
+  describe("message_start with stale empty assistant bubbles", () => {
+    // Regression: a session that's been around for a while accumulates
+    // empty assistant bubbles from past aborted turns (rate-limit errors,
+    // user-cancelled, etc). When the user sends a new message and the
+    // first message_start event fires, the previous implementation
+    // reused the FIRST empty bubble it found via findIndex — typically
+    // hundreds of messages old. The new assistant got placed at the
+    // empty bubble's old position in the list, BEFORE the user message
+    // that triggered it. groupTurns then concatenated it with the
+    // surrounding old messages, and the user saw the new reply buried
+    // inside a giant garbled bubble in the middle of the conversation,
+    // with nothing visible below their own message.
+    it("appends a fresh assistant bubble even when old empty assistant bubbles are in state", async () => {
+      // Initial fetch includes an old empty assistant bubble (from a
+      // past aborted turn) sandwiched between two user messages.
+      await renderChatPage("test-session-1", {
+        messages: [
+          { id: "u-old", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "old prompt" }], timestamp: "2026-01-01T00:00:00.000Z" },
+          { id: "a-stale", sessionId: "test-session-1", role: "assistant", parts: [], timestamp: "2026-01-01T00:00:01.000Z" },
+          { id: "u-old2", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "another old prompt" }], timestamp: "2026-01-01T00:00:02.000Z" },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // User sends a new prompt. handleSubmit adds the optimistic
+      // user message at the end of state. Then the server's
+      // message_start fires before any new content arrives.
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: "new prompt" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      // Optimistic user message appears.
+      await waitFor(() => {
+        expect(screen.getByText("new prompt")).toBeInTheDocument();
+      });
+
+      // Fire message_start for the new assistant turn. With the
+      // pre-fix code, the new assistant bubble would be grafted into
+      // the stale empty's slot, so the DOM would render it in the
+      // middle of the chat, FAR above the optimistic user message
+      // ("new prompt"). With the fix, the new assistant bubble is
+      // appended at the end of state, so the DOM renders it right
+      // after the optimistic user bubble.
+      const handler = capturedHandlers.get("session_event")!;
+      act(() => {
+        handler({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_start",
+            message: { role: "assistant", content: [{ type: "text", text: "fresh hello" }] },
+          },
+        });
+      });
+
+      // The new assistant text "fresh hello" is rendered.
+      await waitFor(() => {
+        expect(screen.getByText("fresh hello")).toBeInTheDocument();
+      });
+
+      // Inspect the DOM order of message bubbles. The new user
+      // message and its response must be ADJACENT and in the right
+      // order (user, then assistant). If the new assistant got
+      // grafted into the stale empty's slot, it would appear
+      // somewhere in the middle of the chat, with the new user
+      // message stranded at the bottom with no response below it.
+      // Wait for the user bubble to actually render (not just be in React state).
+      await waitFor(() => {
+        const all = Array.from(document.querySelectorAll('*'));
+        return all.some(el => (el.textContent || '').includes("new prompt"));
+      });
+      // The msg container is the ChatMessages component's outer div,
+      // a direct child of the .flex-1.overflow-y-auto wrapper. It has
+      // the message bubbles as direct children.
+      const overflowWrapper = document.querySelector('.flex-1.overflow-y-auto');
+      if (!overflowWrapper) throw new Error("overflow wrapper not found");
+      const msgContainer = overflowWrapper.children[0] as HTMLElement;
+      const bubbles = Array.from(msgContainer.children).map(c => c.textContent?.slice(0, 200) || "");
+
+      // Find the index of the optimistic user bubble and the new
+      // assistant bubble.
+      const userIdx = bubbles.findIndex(t => t.includes("new prompt"));
+      const asstIdx = bubbles.findIndex(t => t.includes("fresh hello"));
+      const staleIdx = bubbles.findIndex(t => t.includes("another old prompt") && t.length < 200); // may be empty bubble
+
+      // The new assistant bubble (containing "fresh hello") must be
+      // the LAST bubble, and must be immediately after the new user
+      // bubble ("new prompt"). Pre-fix: asstIdx would be < userIdx
+      // (assistant stuck in the stale empty's slot, user stranded at end).
+      expect(userIdx).toBeGreaterThan(-1);
+      expect(asstIdx).toBeGreaterThan(-1);
+      expect(asstIdx).toBeGreaterThan(userIdx);
+      expect(asstIdx).toBe(bubbles.length - 1);
+      // Stale empty bubble still in its old position (it was never
+      // the right target to reuse, and now it just shows "(empty turn)").
+      if (staleIdx >= 0) {
+        expect(staleIdx).toBeLessThan(userIdx);
+      }
+    });
+  });
 });

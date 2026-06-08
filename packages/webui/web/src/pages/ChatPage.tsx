@@ -165,15 +165,17 @@ export default function ChatPage() {
             updated[idx] = { ...updated[idx], parts, model: e.message.model, provider: e.message.provider };
             return updated;
           }
-          // Avoid duplicating: if there's already an empty assistant bubble
-          // waiting (e.g. from a previous turn that didn't get cleaned up),
-          // reuse it.
-          const emptyIdx = prev.findIndex(m => m.role === "assistant" && m.parts.length === 0);
-          if (emptyIdx >= 0) {
-            const updated = [...prev];
-            updated[emptyIdx] = { ...updated[emptyIdx], id: realId, parts, model: e.message.model, provider: e.message.provider };
-            return updated;
-          }
+          // Avoid duplicating: only reuse an empty assistant bubble if it was
+          // the MOST RECENT one — an old empty bubble from a past aborted
+          // turn (still in state because the user reloaded the page) is
+          // NOT the right target. findIndex returns the FIRST match, which
+          // can be hundreds of messages old; using it inserts the new
+          // assistant far above the current user message that triggered it,
+          // and the resulting out-of-order state renders as a garbled
+          // multi-message bubble via ChatMessages' turn-grouping. Always
+          // appending is the safe behavior: a stale empty bubble in the
+          // old position will still show "(empty turn)" but it won't
+          // silently eat the new reply.
           return [...prev, { id: realId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), model: e.message.model, provider: e.message.provider }];
         });
       } else if (e.type === "message_update" && e.message?.role === "assistant") {
