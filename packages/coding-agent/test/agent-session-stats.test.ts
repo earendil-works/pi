@@ -140,4 +140,28 @@ describe("AgentSession.getSessionStats", () => {
 			session.dispose();
 		}
 	});
+
+	it("ignores zero-usage messages when checking for post-compaction context usage", () => {
+		const { session, sessionManager } = createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("first", 1));
+			sessionManager.appendMessage(createAssistantMessage("response1", 180_000, 2));
+			const keptUserId = sessionManager.appendMessage(createUserMessage("second", 3));
+			sessionManager.appendMessage(createAssistantMessage("response2", 195_000, 4));
+			sessionManager.appendCompaction("summary", keptUserId, 195_000);
+			sessionManager.appendMessage(createUserMessage("third", 5));
+			sessionManager.appendMessage(createAssistantMessage("response3", 25_000, 6));
+			sessionManager.appendMessage(createUserMessage("continue", 7));
+			sessionManager.appendMessage(createAssistantMessage("partial", 0, 8));
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.contextUsage).toBeDefined();
+			expect(stats.contextUsage?.tokens).not.toBeNull();
+			expect(stats.contextUsage?.tokens ?? 0).toBeGreaterThan(25_000);
+		} finally {
+			session.dispose();
+		}
+	});
 });

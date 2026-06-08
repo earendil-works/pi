@@ -218,9 +218,40 @@ describe("getLastAssistantUsage", () => {
 		expect(usage!.input).toBe(100);
 	});
 
+	it("should skip all-zero assistant usage", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("Hello")),
+			createMessageEntry(createAssistantMessage("Hi", createMockUsage(100, 50))),
+			createMessageEntry(createUserMessage("continue")),
+			createMessageEntry(createAssistantMessage("Partial", createMockUsage(0, 0))),
+		];
+
+		const usage = getLastAssistantUsage(entries);
+		expect(usage).not.toBeNull();
+		expect(usage!.input).toBe(100);
+	});
+
 	it("should return undefined if no assistant messages", () => {
 		const entries: SessionEntry[] = [createMessageEntry(createUserMessage("Hello"))];
 		expect(getLastAssistantUsage(entries)).toBeUndefined();
+	});
+});
+
+describe("estimateContextTokens", () => {
+	it("uses the last non-zero assistant usage as the context anchor", () => {
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("continue"),
+			createAssistantMessage("Partial thinking", createMockUsage(0, 0)),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.usageTokens).toBe(150);
+		expect(estimate.lastUsageIndex).toBe(1);
+		expect(estimate.trailingTokens).toBeGreaterThan(0);
+		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
 });
 
