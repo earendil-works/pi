@@ -390,8 +390,23 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
       };
     }
 
-    // Not an image — interpret the bytes as UTF-8 text.
-    let content = probe.toString("utf-8");
+    // Not an image — interpret the bytes as UTF-8 text. Use a strict
+    // decoder so binary files (zip, pdf, sqlite, pcap, etc.) — which
+    // are NOT valid utf-8 — get a clear refusal instead of silently-
+    // corrupted text with U+FFFD replacement chars (the prior bug
+    // behind 2026-06-08's transfer_file incident, also applicable to
+    // read_file/edit_file/write_file). Use transfer_file to download.
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(probe);
+    } catch {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Refusing to read ${args.path} as text: appears to be a binary file (${probe.byteLength} bytes, not valid utf-8). Use transfer_file(remote_to_local) to download it.`,
+        }],
+      };
+    }
 
     if (content.charCodeAt(0) === 0xFEFF) {
       content = content.slice(1);
@@ -428,6 +443,20 @@ async function handleWriteFile(args: { path: string; content: string }, sessionI
       throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
     }
     return await withFileQueue(safePath, async () => {
+      // Reject lone surrogates in args.content up front. Without this,
+      // Buffer.from(content, "utf-8") would silently replace them with
+      // U+FFFD on write. TextEncoder.encode throws on lone surrogates
+      // (which is exactly what we want to catch).
+      try {
+        new TextEncoder().encode(args.content);
+      } catch {
+        return {
+          content: textContent(
+            `Refusing to write ${args.path}: content contains invalid UTF-16 (lone surrogate). Encode the content properly before sending.`,
+          ),
+          isError: true,
+        };
+      }
       await mkdir(dirname(safePath), { recursive: true });
       await writeFile(safePath, args.content, "utf-8");
       const bytes = Buffer.byteLength(args.content, "utf-8");
@@ -591,7 +620,20 @@ async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: s
       throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
     }
     return await withFileQueue(safePath, async () => {
-      let content = await readFile(safePath, "utf-8");
+      // Strict utf-8 decode — same reasoning as read_file. Refuse to
+      // silently corrupt binary files (zip, pdf, etc.) with U+FFFD.
+      const rawBytes = await readFile(safePath);
+      let content: string;
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
+      } catch {
+        return {
+          content: textContent(
+            `Refusing to edit ${args.path}: appears to be a binary file (${rawBytes.byteLength} bytes, not valid utf-8). edit_file is for text files.`,
+          ),
+          isError: true,
+        };
+      }
 
       // Strip BOM before matching (model never includes BOM in oldText).
       const hasBOM = content.charCodeAt(0) === 0xFEFF;
