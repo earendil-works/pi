@@ -22,7 +22,7 @@ describe("Anthropic adaptive thinking model metadata", () => {
 
 		expect(flaggedModels).toEqual(expect.arrayContaining([...EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS].sort()));
 		expect(flaggedModels).toEqual(
-			flaggedModels.filter((modelId) => /(opus[-.]4[-.][678]|sonnet[-.]4[-.]6)/.test(modelId)),
+			flaggedModels.filter((modelId) => /(claude[-.]fable|opus[-.]4[-.][678]|sonnet[-.]4[-.]6)/.test(modelId)),
 		);
 	});
 });
