@@ -124,19 +124,19 @@
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AppShell.test.tsx 2>&1 | tail -3`,已有测试应继续 PASS(若 AppShell.test 存在)
   - **依赖**: 3.4
 
-- [ ] 3.6 **写 `ChatPage` 占位插入 + 替换测试**
+- [x] 3.6 **写 `ChatPage` 占位插入 + 替换测试**
   - **文件**: `packages/webui/web/src/pages/ChatPage.test.tsx` (Modify — 追加 describe block)
   - **内容**: 3 测试: 收到 `extension_ui_request` event → ChatPage 渲染的 messages 列表末尾出现 `<AskUserQuestionPending>` 占位(以 question 文本内容匹配) / 收到 `tool_execution_end` event 携带 toolName="ask_user_question" 的 result → 占位被替换为完整 ToolCall 组件(含 result 文本 "User selected: ...")/ 收到 `tool_execution_end` 但 toolName 不匹配 → 占位保留不变
   - **验证**: 初始 RED
   - **依赖**: 3.5
 
-- [ ] 3.7 **实现 `ChatPage` 占位插入 + 替换**
+- [x] 3.7 **实现 `ChatPage` 占位插入 + 替换**
   - **文件**: `packages/webui/web/src/pages/ChatPage.tsx` (Modify — 加 useEffect)
   - **内容**: 加 `useEffect` 通过 `ws.subscribe("session_event", handler)` 监听事件;handler: (a) `event.type === "extension_ui_request" && (method === "select" || method === "input")` → 在 messages 数组末尾 push 一个临时 entry `{kind: "pending_question", id, question, options, multiSelect}`,UI render `AskUserQuestionPending` 组件;(b) `event.type === "tool_execution_end" && event.toolName === "ask_user_question"` → 找到对应 id 的 pending entry,把它替换为完整 tool call entry `{kind: "tool", name: "ask_user_question", args, result}`
   - **验证**: `cd packages/webui/web && npx vitest run src/pages/ChatPage.test.tsx 2>&1 | tail -3`,新加 3 个测试全 PASS
   - **依赖**: 3.6
 
-- [ ] 3.8 **实现 `AskUserQuestionPending` 组件**
+- [x] 3.8 **实现 `AskUserQuestionPending` 组件**
   - **文件**: `packages/webui/web/src/components/AskUserQuestionPending.tsx` (Create)
   - **内容**: 简单展示组件:`<div data-pending-question-id={id} className="px-4 py-2 italic text-gray-500">⏳ Waiting for user to answer: {question}</div>`;按 ChatPage 的 ToolCall 渲染约定放在 messages 末尾
   - **验证**: 视觉检查 — `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | tail -3`,无回归
