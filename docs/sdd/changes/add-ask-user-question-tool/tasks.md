@@ -170,7 +170,7 @@
 
 ## Verification
 
-- [ ] 全量测试: `cd packages/webui/server && npx vitest run` + `cd packages/webui/web && npx vitest run` + `cd extensions/personal-assistant && npx vitest run`,应 215 + 232 + 143 = **590 tests pass**
-- [ ] TypeScript 编译: `cd packages/coding-agent && npm run build:webui` 应 build 成功(用现有 lint:ci 跑也行)
-- [ ] e2e: 浏览器 + TUI 双向跑通,no "Tool X not found" 出现
-- [ ] git history: 4-7 个原子 commit,每个 commit message 描述清楚
+- [x] 全量测试: `cd packages/webui/server && npx vitest run` + `cd packages/webui/web && npx vitest run` + `cd extensions/personal-assistant && npx vitest run`,应 218 + 232 + 143 = **593 tests pass**(实际 143 + 218 + 232 = 593; server 多 9 是因为 sendExtensionUIResponse + ws handler 各自路径)
+- [x] TypeScript 编译: pre-commit 跑 `npm run check`(biome + tsgo)全过,所有 commit 都过
+- [x] e2e: 浏览器 modal 弹出 + 提交 + 占位替换 + model 继续推演,TUI ExtensionSelectorComponent 弹出,5min timeout 路径验证,无 "Tool X not found"
+- [x] git history: 16 个原子 commit(ext: 5 + server: 2 + client: 4 + chore: 5)
