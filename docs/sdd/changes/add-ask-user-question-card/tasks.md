@@ -18,29 +18,9 @@
 
 ## 1. 删除旧组件 + revert
 
-- [ ] 1.1 **删除 AskUserQuestionModal 组件 + 测试**
-  - **文件**:
-    - `packages/webui/web/src/components/AskUserQuestionModal.tsx` (Delete)
-    - `packages/webui/web/src/components/AskUserQuestionModal.test.tsx` (Delete)
-  - **内容**: `git rm` 两个文件
-  - **验证**: `cd packages/webui/web && npx vitest run 2>&1 | tail -3`,应无 missing import 报错,test count 从 232 → 226 (减 6)
-  - **依赖**: 无
-
-- [ ] 1.2 **删除 AskUserQuestionProvider 组件 + 测试**
-  - **文件**:
-    - `packages/webui/web/src/components/AskUserQuestionProvider.tsx` (Delete)
-    - `packages/webui/web/src/components/AskUserQuestionProvider.test.tsx` (Delete)
-  - **内容**: `git rm` 两个文件
-  - **验证**: `cd packages/webui/web && npx vitest run 2>&1 | tail -3`,test count 232 → 222 (减 10)
-  - **依赖**: 1.1
-
-- [ ] 1.3 **删除 AskUserQuestionPending 组件 + 恢复 AppShell**
-  - **文件**:
-    - `packages/webui/web/src/components/AskUserQuestionPending.tsx` (Delete)
-    - `packages/webui/web/src/components/AppShell.tsx` (Modify)
-  - **内容**: `git rm` Pending;AppShell 内去掉 `import { AskUserQuestionProvider } from "./AskUserQuestionProvider"` + 把 `<main>` children 从 `<AskUserQuestionProvider>` 包裹恢复为原始 `{children}`
-  - **验证**: `cd packages/webui/web && npx vitest run src/components/AppShell.test.tsx 2>&1 | tail -3`,12 tests pass(无 regression)
-  - **依赖**: 1.2
+- [x] 1.1 **删除 AskUserQuestionModal 组件 + 测试** (merged with 1.2, 1.3)
+- [x] 1.2 **删除 AskUserQuestionProvider 组件 + 测试** (atomic with 1.1)
+- [x] 1.3 **删除 AskUserQuestionPending 组件 + 恢复 AppShell** (commit d6e72e27)
 
 ## 2. 新建 AskUserQuestionCard 组件
 
