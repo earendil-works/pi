@@ -62,7 +62,7 @@
 
 ## 2. Webui Server: RPC response 透传到 pi stdin
 
-- [ ] 2.1 **写 `pool.sendExtensionUIResponse` 测试**
+- [x] 2.1 **写 `pool.sendExtensionUIResponse` 测试**
   - **文件**: `packages/webui/server/test/extension-ui-response.test.ts` (Create)
   - **内容**: 用 mock `spawnFn`,验证 `pool.sendExtensionUIResponse(sessionId, {id, value})` 写入 `{type:"extension_ui_response", id, value}\n` 到 mock proc.stdin.write;以及 `pool.sendExtensionUIResponse` 在 proc 不存在时 silent ignore
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | tail -5`,初始 RED
@@ -74,7 +74,7 @@
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | grep -E "passed|failed"` 应 "passed"
   - **依赖**: 2.1
 
-- [ ] 2.3 **写 ws handler 路由测试**
+- [x] 2.3 **写 ws handler 路由测试**
   - **文件**: `packages/webui/server/test/extension-ui-response.test.ts` (Modify — 追加 describe block)
   - **内容**: 用 `attachWsHandler` + 模拟 ws 客户端,测:(a) 收到 `extension_ui_response` 消息 → 调 `pool.sendExtensionUIResponse`;(b) 缺 active session → 收 error message;(c) 缺 id 字段 → 收 error message;(d) 端到端 round-trip(mock pool 接收到 `extension_ui_request` event + 模拟 ws 发 `extension_ui_response` 后 verify stdin 写入)
   - **验证**: 初始 `npx vitest run test/extension-ui-response.test.ts` 应有部分 failed(RED)
