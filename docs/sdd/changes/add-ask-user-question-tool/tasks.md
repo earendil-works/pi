@@ -142,7 +142,7 @@
   - **验证**: 视觉检查 — `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | tail -3`,无回归
   - **依赖**: 3.7
 
-- [ ] 3.9 **回归全量 client 测试**
+- [x] 3.9 **回归全量 client 测试**
   - **文件**: —
   - **内容**: 跑全部 client 测试,确认无回归
   - **验证**: `cd packages/webui/web && npx vitest run 2>&1 | tail -3`,应 `Test Files 24 passed (24)` + `Tests 232 passed (232)`(原 219 + 新 13:6 modal + 4 provider + 3 chat page)
