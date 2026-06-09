@@ -5,6 +5,7 @@ import { IconRow } from './sidebar/IconRow';
 import { SearchBox } from './sidebar/SearchBox';
 import { ConversationList } from './sidebar/ConversationList';
 import { NewChatButton } from './sidebar/NewChatButton';
+import { AskUserQuestionProvider } from './AskUserQuestionProvider';
 
 export interface AppShellProps {
   version: string;
@@ -49,7 +50,7 @@ export function AppShell({
         <NewChatButton onClick={onNewChat} loading={isCreatingChat} />
       </aside>
       <main className="flex-1 overflow-auto flex flex-col">
-        {children}
+        <AskUserQuestionProvider>{children}</AskUserQuestionProvider>
       </main>
     </div>
   );
