@@ -18,7 +18,12 @@ export function normalizeOptions(input: unknown): NormalizedOption[] {
 	// Validate and normalize each item
 	const result: NormalizedOption[] = [];
 	for (const item of options) {
-		if (item == null || typeof item !== 'object') continue;
+		if (item == null) continue;
+		if (typeof item === 'string') {
+			result.push({ label: item });
+			continue;
+		}
+		if (typeof item !== 'object') continue;
 		const obj = item as Record<string, unknown>;
 		if (typeof obj.label !== 'string') continue;
 		result.push({

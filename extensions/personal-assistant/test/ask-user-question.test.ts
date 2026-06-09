@@ -38,6 +38,28 @@ describe("normalizeOptions", () => {
 	it("returns [] for undefined", () => {
 		expect(normalizeOptions(undefined)).toEqual([]);
 	});
+
+	it("handles flat string array (model-hallucinated format)", () => {
+		const input = ["红色", "蓝色", "绿色"];
+		expect(normalizeOptions(input)).toEqual([
+			{ label: "红色" },
+			{ label: "蓝色" },
+			{ label: "绿色" },
+		]);
+	});
+
+	it("handles mixed string + object array", () => {
+		const input = ["红色", { label: "蓝色", description: "calm" }];
+		expect(normalizeOptions(input)).toEqual([
+			{ label: "红色" },
+			{ label: "蓝色", description: "calm" },
+		]);
+	});
+
+	it("handles string array inside {item: ...} wrapper", () => {
+		const input = { item: ["红色", "蓝色"] };
+		expect(normalizeOptions(input)).toEqual([{ label: "红色" }, { label: "蓝色" }]);
+	});
 });
 
 describe("formatOptionForSelect", () => {

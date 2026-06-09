@@ -23,10 +23,31 @@ function buildParts(content: any): Part[] {
 }
 
 function normalizeOptions(options: unknown): Array<{ label: string; description?: string }> {
-  if (!Array.isArray(options)) return [];
-  return options.filter((o): o is { label: string; description?: string } =>
-    o && typeof o === 'object' && typeof o.label === 'string'
-  );
+  if (options == null) return [];
+
+  let unwrapped: unknown = options;
+  while (unwrapped != null && typeof unwrapped === 'object' && !Array.isArray(unwrapped) && 'item' in unwrapped) {
+    unwrapped = (unwrapped as { item: unknown }).item;
+  }
+
+  if (!Array.isArray(unwrapped)) return [];
+
+  const result: Array<{ label: string; description?: string }> = [];
+  for (const item of unwrapped) {
+    if (item == null) continue;
+    if (typeof item === 'string') {
+      result.push({ label: item });
+      continue;
+    }
+    if (typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.label !== 'string') continue;
+    result.push({
+      label: obj.label,
+      description: typeof obj.description === 'string' ? obj.description : undefined,
+    });
+  }
+  return result;
 }
 
 export default function ChatPage() {
