@@ -18,7 +18,7 @@
 
 ## 1. Extension 核心: 注册 tool + normalize + execute
 
-- [ ] 1.1 **写 `normalizeOptions` 单元测试**
+- [x] 1.1 **写 `normalizeOptions` 单元测试**
   - **文件**: `extensions/personal-assistant/test/ask-user-question.test.ts` (Create)
   - **内容**: 测试 5 种 options 形态解析: 标准 `[{label,description}]` / `{item:[...]}` / `{item:{item:[...]}}` / `{item:{item:{item:[...]}}}` / `[]` 空 / `null` / 缺 description 字段
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "normalizeOptions" 2>&1 | grep -E "passed|failed"`,应输出 "failed"(RED,因为还没实现)
