@@ -4,7 +4,7 @@ change: add-ask-user-question-tool
 created_at: 2026-06-09
 base_ref: 5d250571083272dbfc85b7f660295b402a1407d1
 tasks_total: 24
-tasks_done: 11
+tasks_done: 12
 isolation: branch
 verify_result: null
 last_review_sha: null

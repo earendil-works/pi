@@ -86,7 +86,7 @@
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | tail -3`,应全 PASS
   - **依赖**: 2.3
 
-- [ ] 2.5 **回归全量 server 测试**
+- [x] 2.5 **回归全量 server 测试**
   - **文件**: —
   - **内容**: 跑全部 server 测试,确认无回归
   - **验证**: `cd packages/webui/server && npx vitest run 2>&1 | tail -3`,应 `Test Files 16 passed (16)` + `Tests 215 passed (215)`(原 209 + 新 6)
