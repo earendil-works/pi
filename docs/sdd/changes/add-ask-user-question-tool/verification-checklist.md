@@ -1,7 +1,7 @@
 # Verification Checklist: add-ask-user-question-tool
 
 > 生成时间: 2026-06-09 | 审查者必须逐项验证并附可追溯证据
-> 状态: [ ] 待验证 | [x] 通过 | [!] 失败（必须修复或记录偏差）
+> 状态格式: (空格) 待验证 | (x) 通过 | (!) 失败
 
 ## 场景验证 (Scenarios)
 
