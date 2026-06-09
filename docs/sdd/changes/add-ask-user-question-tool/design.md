@@ -328,7 +328,9 @@ ws.subscribe("session_event", (msg) => {
     queue.current.get(msg.sessionId)?.push(modal);
     updatePendingCounts();
     setActiveModalFromQueue();
-    // 同时通知 ChatPage 插占位
+    // Provider 不通知 ChatPage — ChatPage 自己独立订阅 session_event
+    // 处理占位插入(见 ChatPage.tsx 的 useEffect)。这是单一职责:Provider
+    // 只管 modal 弹窗,ChatPage 只管 messages 渲染,两者并行处理同一事件。
   }
 });
 ```
