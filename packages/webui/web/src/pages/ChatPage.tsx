@@ -264,27 +264,58 @@ export default function ChatPage() {
           setIsThinking(true);
         }
       } else if (e.type === "extension_ui_request") {
-        const options = normalizeOptions(e.options);
-        if (options.length < 2) return;
-        const card: CardState = {
-          id: e.id,
-          question: e.question,
-          options,
-          multiSelect: options.length > 5,
-          status: "active",
-          sessionId: id,
-        };
-        setCardStates(prev => new Map(prev).set(e.id, card));
-        // Ensure there's an assistant message with a matching toolCall part
-        // so the card is rendered by ToolGroup. In the real server flow the
-        // message events arrive before extension_ui_request; in tests they
-        // may not, so we create a synthetic message if none exists yet.
-        setMessages(prev => {
-          const hasMessage = prev.some(m =>
-            m.parts.some(p => (p as any).type === "toolCall" && (p as any).id === e.id)
+        // Source options + multiSelect from the matching toolCall args, not
+        // from the request event. For method="input" (multi-select), the
+        // event has no options field — only the tool call args do.
+        // The event's title/placeholder are still useful as display fallback.
+        let options: Array<{ label: string; description?: string }> = [];
+        let multiSelect = false;
+        let question = (e as any).question ?? (e as any).title ?? "";
+        // Find the tool call in current messages, via setMessages(prev => ...)
+        // so we read the latest state, not the closure-captured value.
+        setMessages(prevMsgs => {
+          for (const m of prevMsgs) {
+            const tc = m.parts.find(
+              p => p.type === "toolCall" && (p as any).id === e.id,
+            ) as { args?: Record<string, unknown> } | undefined;
+            if (tc) {
+              const args = (tc.args ?? {}) as Record<string, unknown>;
+              question = question || (args.question as string) || "";
+              options = normalizeOptions(args.options);
+              multiSelect = args.multiSelect === true;
+              break;
+            }
+          }
+          // Fallback: read options from event (for method="select")
+          if (options.length < 2) {
+            options = normalizeOptions((e as any).options);
+          }
+          // Fallback: if e.method is "input", it's multi
+          if ((e as any).method === "input") multiSelect = true;
+
+          if (options.length < 2) {
+            // Can't render a card with < 2 options — but still need to ensure
+            // a toolCall part exists so the (failed) toolCall is visible.
+          } else {
+            const card: CardState = {
+              id: e.id,
+              question,
+              options,
+              multiSelect,
+              status: "active",
+              sessionId: id,
+            };
+            setCardStates(cardPrev => new Map(cardPrev).set(e.id, card));
+          }
+          // Ensure there's an assistant message with a matching toolCall part
+          // so the card is rendered by ToolGroup. In the real server flow the
+          // message events arrive before extension_ui_request; in tests they
+          // may not, so we create a synthetic message if none exists yet.
+          const hasMessage = prevMsgs.some(m =>
+            m.parts.some(p => (p as any).type === "toolCall" && (p as any).id === e.id),
           );
-          if (hasMessage) return prev;
-          return [...prev, {
+          if (hasMessage) return prevMsgs;
+          return [...prevMsgs, {
             id: crypto.randomUUID(),
             sessionId: id!,
             role: "assistant" as const,

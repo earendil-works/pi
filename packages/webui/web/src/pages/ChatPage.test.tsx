@@ -542,6 +542,182 @@ describe("ChatPage", () => {
       expect(sentArg.id).toBe("tc-1");
       expect(sentArg.value).toBe("苹果");
     });
+
+    // Regression: real pi server flow for multi-select sends a toolCall
+    // (with options + multiSelect=true in args) followed by an
+    // extension_ui_request with method="input" — that event has NO
+    // `options` field. The card must source options + multiSelect from
+    // the tool call args, not the event.
+    it("multi-select: sources options + multiSelect from toolCall args (input method has no options)", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Step 1: message_end with the toolCall part carrying options +
+      // multiSelect=true in args. This is what arrives BEFORE
+      // extension_ui_request in the real server flow.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              id: "m-1",
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "tc-multi",
+                  name: "ask_user_question",
+                  arguments: {
+                    question: "周末想做啥?",
+                    options: [
+                      { label: "打游戏" },
+                      { label: "看电影" },
+                      { label: "运动" },
+                      { label: "看书" },
+                    ],
+                    multiSelect: true,
+                  },
+                },
+              ],
+            },
+          },
+        });
+      });
+
+      // Step 2: extension_ui_request for the same toolCall id with
+      // method="input" — no `options` field, only title + placeholder.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "tc-multi",
+            method: "input",
+            title: "周末想做啥?",
+            placeholder: "打游戏 | 看电影 | 运动 | 看书 (comma-separated)",
+            timeout: 300000,
+          },
+        });
+      });
+
+      // Card must render with the 4 options from the toolCall args,
+      // numbered 1-4 (multi-select mode).
+      await waitFor(() => {
+        expect(screen.getByText("周末想做啥?")).toBeInTheDocument();
+      });
+      expect(screen.getByText(/1\..*打游戏/)).toBeInTheDocument();
+      expect(screen.getByText(/2\..*看电影/)).toBeInTheDocument();
+      expect(screen.getByText(/3\..*运动/)).toBeInTheDocument();
+      expect(screen.getByText(/4\..*看书/)).toBeInTheDocument();
+
+      // The input box for multi-select must be present
+      const input = screen.getByPlaceholderText("输入选项编号,逗号分隔");
+      expect(input).toBeInTheDocument();
+    });
+
+    // Regression: a multi-turn conversation can have multiple ask_user_question
+    // cards in different states. Each card must be tracked by its own
+    // toolCallId in cardStates — one card's lifecycle must not affect another's.
+    it("multiple consecutive ask_user_question cards each get their own state", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Turn 1: toolCall + extension_ui_request (single-select)
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              id: "m-1", role: "assistant",
+              content: [{
+                type: "toolCall", id: "tc-1", name: "ask_user_question",
+                arguments: { question: "Q1?", options: [{ label: "A" }, { label: "B" }] },
+              }],
+            },
+          },
+        });
+      });
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request", id: "tc-1", method: "select",
+            title: "Q1?", options: ["A", "B"],
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Q1?")).toBeInTheDocument();
+      });
+
+      // Turn 2: another toolCall + extension_ui_request (multi-select)
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              id: "m-2", role: "assistant",
+              content: [{
+                type: "toolCall", id: "tc-2", name: "ask_user_question",
+                arguments: { question: "Q2?", options: [{ label: "X" }, { label: "Y" }, { label: "Z" }], multiSelect: true },
+              }],
+            },
+          },
+        });
+      });
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request", id: "tc-2", method: "input",
+            title: "Q2?", placeholder: "X | Y | Z",
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Q2?")).toBeInTheDocument();
+      });
+
+      // Both cards visible at once
+      expect(screen.getByText("Q1?")).toBeInTheDocument();
+      expect(screen.getByText("Q2?")).toBeInTheDocument();
+      // Multi-select card has its input box
+      expect(screen.getByPlaceholderText("输入选项编号,逗号分隔")).toBeInTheDocument();
+
+      // Turn 1 disabled: tool_execution_end for tc-1
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "tool_execution_end", toolCallId: "tc-1",
+            toolName: "ask_user_question", result: "User selected: A",
+            isError: false,
+          },
+        });
+      });
+
+      // Q1 shows "你的选择: A" result text
+      await waitFor(() => {
+        expect(screen.getByText(/你的选择:.*A/)).toBeInTheDocument();
+      });
+      // Q2 still active (no result text)
+      expect(screen.queryByText(/你的选择:.*Y/)).toBeNull();
+    });
   });
 
   describe("message_start with stale empty assistant bubbles", () => {
