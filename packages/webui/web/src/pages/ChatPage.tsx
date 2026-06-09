@@ -8,6 +8,7 @@ import { ModelSelector } from "../components/topbar/ModelSelector";
 import { InputArea } from "../components/input/InputArea";
 import ChatMessages from "../components/ChatMessages";
 import { ThinkingIndicator } from "../components/ThinkingIndicator";
+import AskUserQuestionPending from "../components/AskUserQuestionPending";
 
 function buildParts(content: any): Part[] {
   if (!Array.isArray(content)) return [];
@@ -38,6 +39,10 @@ export default function ChatPage() {
   //   - session_status_changed: idle → set false; running → set true
   //   - id change: set false (new session, not yet responding)
   const [isThinking, setIsThinking] = useState<boolean>(false);
+  // Tracks pending ask_user_question placeholders keyed by request id.
+  // Populated on extension_ui_request (select/input), cleared on
+  // tool_execution_end with toolName=ask_user_question.
+  const [pendingQuestions, setPendingQuestions] = useState<Map<string, { id: string; question: string }>>(new Map());
   const [title, setTitle] = useState<string>("");
   const [messageCount, setMessageCount] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -233,6 +238,16 @@ export default function ChatPage() {
         } else if (e.status === "running") {
           setIsThinking(true);
         }
+      } else if (e.type === "extension_ui_request" && (e.method === "select" || e.method === "input")) {
+        // Show pending question placeholder while waiting for user to answer.
+        setPendingQuestions((prev) => new Map(prev).set(e.id, { id: e.id, question: e.title ?? e.message ?? "" }));
+      } else if (e.type === "tool_execution_end" && e.toolName === "ask_user_question") {
+        // User answered or the tool finished — remove the placeholder.
+        setPendingQuestions((prev) => {
+          const next = new Map(prev);
+          next.delete(e.toolCallId ?? e.id);
+          return next;
+        });
       }
     });
     return () => { unsubOpen(); unsub(); };
@@ -399,6 +414,13 @@ export default function ChatPage() {
       </div>
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
+        {pendingQuestions.size > 0 && (
+          <div className="border-b border-stone-200">
+            {Array.from(pendingQuestions.values()).map((p) => (
+              <AskUserQuestionPending key={p.id} id={p.id} question={p.question} />
+            ))}
+          </div>
+        )}
         <ChatMessages messages={messages} />
         {isThinking && <ThinkingIndicator />}
         <div ref={messagesEndRef} />
