@@ -150,19 +150,19 @@
 
 ## 4. 端到端 e2e 验证
 
-- [ ] 4.1 **手动 e2e 验证(浏览器)**
+- [x] 4.1 **手动 e2e 验证(浏览器)**
   - **文件**: —
   - **内容**: Ctrl-C 重跑 dev webui server;在浏览器开 http://127.0.0.1:8742/session/<test session id>;输入 "Should I use [remote] tag in this file? Use ask_user_question to ask me.";确认 (a) 聊天页末尾出现"⏳ 等待用户回答"占位;(b) modal 弹出含 2-4 个 options;(c) 点选某项后占位被替换为 tool call + result "User selected: ...";(d) model 继续推演(用 pi 实际跑,看 session jsonl)
   - **验证**: 截图证明 (a)/(b)/(c)/(d) 都发生;session jsonl 不再出现 "Tool ask_user_question not found"
   - **依赖**: 3.9
 
-- [ ] 4.2 **手动 e2e 验证(TUI 模式)**
+- [x] 4.2 **手动 e2e 验证(TUI 模式)**
   - **文件**: —
   - **内容**: `pi --mode interactive` 启动(用相同的 personal-assistant extension 目录);输入同样的 prompt;确认 (a) TUI 弹 ExtensionSelectorComponent 含 options;(b) ↑↓ + Enter 选完后返回 "User selected: ..."
   - **验证**: 截图/终端输出
   - **依赖**: 4.1
 
-- [ ] 4.3 **手动 e2e 验证(5 分钟 timeout)**
+- [x] 4.3 **手动 e2e 验证(5 分钟 timeout)**
   - **文件**: —
   - **内容**: 触发一次 ask_user_question,不回答,等 5 分钟(或临时把 TIMEOUT_MS 改成 10 秒 for testing);确认 (a) modal 自动关闭 / TUI 选择器消失;(b) 占位被替换为 "User did not respond within 5 minutes..." tool result;(c) model 继续推演
   - **验证**: 把 `ask_user_question.ts` 里的 `TIMEOUT_MS` 临时改成 `10*1000`,重启 dev webui 跑一遍,然后改回 `5*60*1000`
