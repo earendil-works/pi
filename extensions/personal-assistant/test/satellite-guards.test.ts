@@ -192,6 +192,52 @@ describe("validateSatelliteCall — bash intent", () => {
 		);
 		expect(r).toBeUndefined();
 	});
+
+	it("bash where 'find' appears only as path component (e.g. smart-sample-find) → not intercepted", () => {
+		// Regression: command containing the substring `find` inside a
+		// path or identifier (followed by whitespace/newline) used to
+		// falsely match \bfind\s+ and trigger find_files guidance.
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "bash",
+				command:
+					'PROJ=/home/qujiahao9430_test/workspace/project-code/smart-sample-find\n' +
+					'if [ ! -d "$PROJ" ]; then\n' +
+					' mkdir -p "$PROJ/src/smart_sample_find" "$PROJ/tests"; fi\n' +
+					'echo "exit=$?"',
+			},
+			mcpConfig,
+			"t-intent",
+		);
+		expect(r).toBeUndefined();
+	});
+
+	it("bash where 'grep' appears only as path component → not intercepted", () => {
+		// Mirror of the find test: 'grep' as a path suffix followed by
+		// whitespace used to falsely match \bgrep\s+ and trigger grep_files.
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{
+				tool: "bash",
+				command: 'PROJ=/opt/sample-grep\nif [ -d "$PROJ" ]; then ls "$PROJ"; fi',
+			},
+			mcpConfig,
+			"t-intent",
+		);
+		expect(r).toBeUndefined();
+	});
+
+	it("bash find after && (compound command) → still suggests find_files", () => {
+		const r = validateSatelliteCall(
+			"satellite_remote_exec",
+			{ tool: "bash", command: "cd /tmp && find . -name '*.log'" },
+			mcpConfig,
+			"t-intent",
+		);
+		expect(r?.block).toBe(true);
+		expect(r?.reason).toContain("find_files");
+	});
 });
 
 describe("clearBashIntentBudget", () => {

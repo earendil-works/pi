@@ -278,8 +278,8 @@ function detectBashIntent(command: string): BashIntent | null {
 	if (/^sed\s+-i\b/.test(command)) return "edit_file";
 	if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
 	if (/^(ls|ll|dir)\b/.test(command)) return "list_dir";
-	if (/\bfind\s+/.test(command)) return "find_files";
-	if (/\bgrep\s+/.test(command)) return "grep_files";
+	if (/(?<![/_\-a-zA-Z0-9])find\s+/.test(command)) return "find_files";
+	if (/(?<![/_\-a-zA-Z0-9])grep\s+/.test(command)) return "grep_files";
 	return null;
 }
 
