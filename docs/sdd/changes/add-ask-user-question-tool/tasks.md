@@ -118,7 +118,7 @@
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AskUserQuestionProvider.test.tsx 2>&1 | grep "passed"`,全 4 PASS
   - **依赖**: 3.3
 
-- [ ] 3.5 **挂 `<AskUserQuestionProvider>` 到 AppShell**
+- [x] 3.5 **挂 `<AskUserQuestionProvider>` 到 AppShell**
   - **文件**: `packages/webui/web/src/components/AppShell.tsx` (Modify — 1 处包裹)
   - **内容**: 找到 return 语句的顶层容器 div,把它的 children 包在 `<AskUserQuestionProvider>` 里(只包 children,不改外层结构);确保 ws.subscribe 在 Provider 挂载时已 connect
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AppShell.test.tsx 2>&1 | tail -3`,已有测试应继续 PASS(若 AppShell.test 存在)
