@@ -102,7 +102,10 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		const result = await tool.execute(
+			"test-call",
 			{ question: "Pick one", options: [{ label: "Option 1" }, { label: "Option 2" }, { label: "Option 3" }, { label: "Option 4" }] },
+			undefined,
+			undefined,
 			ctx,
 		);
 
@@ -127,11 +130,14 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		const result = await tool.execute(
+			"test-call",
 			{
 				question: "Pick several",
 				options: [{ label: "A" }, { label: "B" }],
 				multiSelect: true,
 			},
+			undefined,
+			undefined,
 			ctx,
 		);
 
@@ -152,7 +158,10 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		const result = await tool.execute(
+			"test-call",
 			{ question: "Pick one", options: [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }] },
+			undefined,
+			undefined,
 			ctx,
 		);
 
@@ -174,7 +183,10 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		const result = await tool.execute(
+			"test-call",
 			{ question: "Pick one", options: [{ label: "Only One" }] },
+			undefined,
+			undefined,
 			ctx,
 		);
 
@@ -198,10 +210,13 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		const result = await tool.execute(
+			"test-call",
 			{
 				question: "Pick one",
 				options: [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }, { label: "E" }],
 			},
+			undefined,
+			undefined,
 			ctx,
 		);
 
@@ -225,7 +240,7 @@ describe("registerAskUserQuestion", () => {
 		} as any;
 
 		// @ts-ignore — intentionally passing invalid args
-		const result = await tool.execute({ options: [{ label: "A" }, { label: "B" }] }, ctx);
+		const result = await tool.execute("test-call", { options: [{ label: "A" }, { label: "B" }] }, undefined, undefined, ctx);
 
 		expect(calls.selectArgs).toHaveLength(0); // no ui call
 		expect(result.isError).toBe(true);

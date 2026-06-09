@@ -43,7 +43,13 @@ const parameters = Type.Object({
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function registerAskUserQuestion(pi: any): void {
-	async function execute(params: any, ctx: any) {
+	async function execute(
+		_toolCallId: string,
+		params: any,
+		_signal: AbortSignal | undefined,
+		_onUpdate: any,
+		ctx: any,
+	) {
 		const errorResult = (text: string) => ({
 			content: [{ type: "text", text }],
 			isError: true,
