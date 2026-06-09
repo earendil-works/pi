@@ -7,6 +7,7 @@ import {
 	type AssistantMessage,
 	type Context,
 	EventStream,
+	type SimpleStreamOptions,
 	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
@@ -23,6 +24,28 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+const PROMPT_TOO_LONG_PATTERNS = [
+	"prompt too long",
+	"context_length_exceeded",
+	"context length",
+	"maximum context",
+	"context window",
+	"input tokens exceed",
+	"messages resulted in",
+	"reduce the length of the messages",
+	"configured limit",
+	"too many tokens",
+	"too large for the model",
+	"maximum context length",
+	"exceed_context",
+	"exceeds the available context size",
+];
+
+function isPromptTooLongError(error: unknown): boolean {
+	const text = String(error instanceof Error ? error.message : error).toLowerCase();
+	return PROMPT_TOO_LONG_PATTERNS.some((needle) => text.includes(needle));
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -163,6 +186,8 @@ async function runLoop(
 	let currentContext = initialContext;
 	let config = initialConfig;
 	let firstTurn = true;
+	let turnCount = 0;
+	let hasAttemptedReactiveCompact = false;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -177,6 +202,7 @@ async function runLoop(
 			} else {
 				firstTurn = false;
 			}
+			turnCount++;
 
 			// Process pending messages (inject before next assistant response)
 			if (pendingMessages.length > 0) {
@@ -189,8 +215,41 @@ async function runLoop(
 				pendingMessages = [];
 			}
 
-			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+			// Stream assistant response (with reactive compaction on prompt-too-long)
+			let message: AssistantMessage | undefined;
+			let reactiveCompactError: Error | undefined;
+			try {
+				message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn, turnCount - 1);
+			} catch (error) {
+				if (
+					!hasAttemptedReactiveCompact &&
+					config.onPromptTooLong &&
+					!signal?.aborted &&
+					isPromptTooLongError(error)
+				) {
+					hasAttemptedReactiveCompact = true;
+					try {
+						const compacted = await config.onPromptTooLong(currentContext, error as Error);
+						if (compacted) {
+							currentContext = compacted;
+							// Will retry below
+						} else {
+							reactiveCompactError = error as Error;
+						}
+					} catch {
+						// onPromptTooLong failed — propagate the original prompt-too-long error
+						reactiveCompactError = error as Error;
+					}
+				} else {
+					reactiveCompactError = error as Error;
+				}
+			}
+			if (reactiveCompactError) {
+				throw reactiveCompactError;
+			}
+			if (!message) {
+				continue; // Retry with compacted context
+			}
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -278,6 +337,7 @@ async function streamAssistantResponse(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFn?: StreamFn,
+	iteration?: number,
 ): Promise<AssistantMessage> {
 	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
@@ -285,14 +345,48 @@ async function streamAssistantResponse(
 		messages = await config.transformContext(messages, signal);
 	}
 
+	// Apply beforeModel hook if configured (can modify context, stream options, or stop)
+	// streamContext is used for the LLM call; original context is used for storing the response.
+	let streamContext = context;
+	let streamOptions: Partial<SimpleStreamOptions> = {};
+	if (config.beforeModel) {
+		const result = await config.beforeModel(
+			{
+				context: { ...context, messages, tools: context.tools?.slice() },
+				config,
+				model: config.model,
+				iteration: iteration ?? 0,
+			},
+			signal,
+		);
+		if (result?.stop) {
+			// Push a synthetic stop message to the original conversation history
+			const stopMessage = {
+				role: "assistant",
+				content: [],
+				stopReason: "end_turn",
+				timestamp: Date.now(),
+			} as unknown as AssistantMessage;
+			context.messages.push(stopMessage);
+			return stopMessage;
+		}
+		if (result?.context) {
+			streamContext = result.context;
+			messages = streamContext.messages;
+		}
+		if (result?.options) {
+			streamOptions = result.options;
+		}
+	}
+
 	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
 
-	// Build LLM context
+	// Build LLM context (uses streamContext for systemPrompt/tools, llmMessages for messages)
 	const llmContext: Context = {
-		systemPrompt: context.systemPrompt,
+		systemPrompt: streamContext.systemPrompt,
 		messages: llmMessages,
-		tools: context.tools,
+		tools: streamContext.tools,
 	};
 
 	const streamFunction = streamFn || streamSimple;
@@ -303,6 +397,7 @@ async function streamAssistantResponse(
 
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
+		...streamOptions,
 		apiKey: resolvedApiKey,
 		signal,
 	});

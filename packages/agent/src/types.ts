@@ -132,6 +132,28 @@ export interface AgentLoopTurnUpdate {
 
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
+/** Context passed to `beforeModel` before each LLM call. */
+export interface BeforeModelContext {
+	/** Current agent context (messages, tools, systemPrompt). */
+	context: AgentContext;
+	/** Current loop configuration. */
+	config: AgentLoopConfig;
+	/** Model that will be used for this request. */
+	model: Model<any>;
+	/** Number of assistant turns completed so far in this run. */
+	iteration: number;
+}
+
+/** Result returned from `beforeModel`. */
+export interface BeforeModelResult {
+	/** Replacement context (messages, tools, systemPrompt). Merges field-by-field. */
+	context?: AgentContext;
+	/** Additional stream options to merge into the request. */
+	options?: Partial<SimpleStreamOptions>;
+	/** If set, prevents the LLM call and ends the current turn. */
+	stop?: { reason: string };
+}
+
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
@@ -274,6 +296,45 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * Called before each LLM request, after `transformContext` but before `convertToLlm`.
+	 *
+	 * Use this to modify the context (messages, tools, systemPrompt), stream options,
+	 * or to block the request entirely based on runtime state.
+	 *
+	 * Return a `BeforeModelResult` to override parts of the request context.
+	 * Return undefined to keep the current context unchanged.
+	 *
+	 * **Important:**
+	 * - Context modifications (messages, tools, systemPrompt) apply only to this LLM call.
+	 *   The original context is used for storing the assistant response. This is the same
+	 *   behavior as `transformContext`.
+	 * - Do not call `config.beforeModel` recursively — it will cause infinite recursion.
+	 * - Do not modify `config` callbacks (beforeToolCall, afterToolCall, etc.) via the
+	 *   returned context; only modify messages, tools, and systemPrompt.
+	 *
+	 * Contract: must not throw or reject. Throwing interrupts the low-level agent loop without producing a normal event sequence.
+	 */
+	beforeModel?: (context: BeforeModelContext, signal?: AbortSignal) => Promise<BeforeModelResult | undefined>;
+
+	/**
+	 * Called when the LLM request fails with a prompt-too-long / context-length-exceeded error.
+	 *
+	 * Return a new `AgentContext` with compacted messages to retry the request in the same run.
+	 * Return undefined to propagate the error normally.
+	 *
+	 * **Important:**
+	 * - The callback is invoked at most once per run — a second prompt-too-long error after
+	 *   a failed reactive compact always propagates.
+	 * - If the callback itself throws, the original prompt-too-long error is propagated
+	 *   (not the callback's error).
+	 * - The callback should honor the `signal` parameter if it performs long-running work.
+	 *   The signal is checked before calling the callback, but not during execution.
+	 *
+	 * Contract: must not throw or reject. Throwing interrupts the low-level agent loop without producing a normal event sequence.
+	 */
+	onPromptTooLong?: (context: AgentContext, error: Error) => Promise<AgentContext | undefined>;
 }
 
 /**
