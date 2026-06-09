@@ -36,7 +36,7 @@
   - **验证**: 同 1.2,grep 计数应 +2(加 2 个 formatOptionForSelect 子测试)
   - **依赖**: 1.2
 
-- [ ] 1.4 **实现 `formatOptionForSelect`**
+- [x] 1.4 **实现 `formatOptionForSelect`**
   - **文件**: `extensions/personal-assistant/ask_user_question.ts` (Modify — 追加)
   - **内容**: `description ? "${label} — ${description}" : label`
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "formatOptionForSelect" 2>&1 | grep "✓" | wc -l` 应 = 2
@@ -48,7 +48,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "execute" 2>&1 | grep "failed"` 应有 failed(RED)
   - **依赖**: 1.4
 
-- [ ] 1.6 **实现 `registerAskUserQuestion`**
+- [x] 1.6 **实现 `registerAskUserQuestion`**
   - **文件**: `extensions/personal-assistant/ask_user_question.ts` (Modify — 追加)
   - **内容**: `pi.registerTool({name: "ask_user_question", label: "Ask User Question", description: ..., promptSnippet: ..., parameters: Type.Object({question: Type.Optional(Type.String()), header: Type.Optional(Type.String()), options: Type.Any(), multiSelect: Type.Optional(Type.Boolean())}), execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => { ... }})`;execute 内 normalize → 校验 2-4 options → multiSelect 时 `ctx.ui.input(title, "${labels.join(' | ')} (comma-separated)", {timeout: 300000})`;否则 `ctx.ui.select(title, labels, {timeout: 300000})`;cancel/timeout 返回 `User cancelled the question` 或 `User did not respond within 5 minutes`
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts 2>&1 | tail -5`,应 `Test Files 1 passed (1)` + `Tests 19 passed (19)`(11 normalizeOptions + 2 formatOption + 6 execute)
