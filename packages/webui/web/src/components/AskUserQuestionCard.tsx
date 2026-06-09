@@ -64,7 +64,7 @@ export function AskUserQuestionCard(props: AskUserQuestionCardProps) {
             >
               <div className="font-medium">{opt.label}</div>
               {opt.description && (
-                <div className="text-sm text-gray-400">{opt.description}</div>
+                <div className="text-sm text-gray-400 overflow-hidden break-words">{opt.description}</div>
               )}
             </button>
           ) : (
@@ -76,7 +76,7 @@ export function AskUserQuestionCard(props: AskUserQuestionCardProps) {
                 {multiSelect && isActive ? `${idx + 1}. ${opt.label}` : opt.label}
               </div>
               {opt.description && (
-                <div className="text-sm text-gray-400">{opt.description}</div>
+                <div className="text-sm text-gray-400 overflow-hidden break-words">{opt.description}</div>
               )}
             </div>
           ),

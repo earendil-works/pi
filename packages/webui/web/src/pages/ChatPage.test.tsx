@@ -393,9 +393,6 @@ describe("ChatPage", () => {
         });
       });
 
-      // The card renders the question text. This assertion fails (RED)
-      // until tasks 3.2+3.3 implement the extension_ui_request handler
-      // in ChatPage.
       await waitFor(() => {
         expect(screen.getByText("Your favorite color?")).toBeInTheDocument();
       });

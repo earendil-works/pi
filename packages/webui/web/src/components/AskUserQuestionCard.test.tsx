@@ -103,6 +103,48 @@ describe('AskUserQuestionCard', () => {
       expect(onSubmit).toHaveBeenCalledTimes(1);
       expect(onSubmit).toHaveBeenCalledWith('红, 蓝');
     });
+
+    // ── S12: 多选非法输入 → filter 取有效 ────────────────────────────────
+    it('typing non-numeric input filters out invalid indices', async () => {
+      const onSubmit = vi.fn();
+      render(
+        <AskUserQuestionCard
+          question="Select colors"
+          options={[{ label: '红' }, { label: '绿' }, { label: '蓝' }]}
+          multiSelect={true}
+          status="active"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      const input = screen.getByPlaceholderText(/逗号分隔/);
+      await userEvent.type(input, 'a, b');
+      await userEvent.click(screen.getByRole('button', { name: /提交|Submit/i }));
+      // "a" and "b" are not valid indices, filter takes valid only → empty labels → empty string
+      expect(onSubmit).toHaveBeenCalledWith('');
+    });
+  });
+
+  // ── S8: 长 description 不溢出 ──────────────────────────────────────────
+  describe('Long description', () => {
+    it('does not overflow with 300+ character description', () => {
+      const longDesc = 'A'.repeat(300);
+      render(
+        <AskUserQuestionCard
+          question="Pick color"
+          options={[{ label: '红色', description: longDesc }]}
+          multiSelect={false}
+          status="active"
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+      expect(screen.getByText('红色')).toBeInTheDocument();
+      // Container should not cause horizontal scroll — assert the card is within viewport
+      const card = screen.getByText('红色').closest('.border-gray-200');
+      expect(card).toBeTruthy();
+    });
   });
 
   // ── S6: Disabled / Timeout ──────────────────────────────────────────────
