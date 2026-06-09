@@ -68,7 +68,7 @@
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | tail -5`,初始 RED
   - **依赖**: 1.7
 
-- [ ] 2.2 **实现 `pool.sendExtensionUIResponse`**
+- [x] 2.2 **实现 `pool.sendExtensionUIResponse`**
   - **文件**: `packages/webui/server/session-pool.ts` (Modify — 在 `abort()` 之后新增 method)
   - **内容**: `sendExtensionUIResponse(sessionId: string, response: {id: string; value?: string; confirmed?: boolean; cancelled?: true}): void { const state = this.sessions.get(sessionId); if (!state || !state.proc) return; const msg = JSON.stringify({ type: "extension_ui_response", ...response }) + "\n"; state.proc.stdin?.write(msg); }`
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | grep -E "passed|failed"` 应 "passed"
@@ -80,7 +80,7 @@
   - **验证**: 初始 `npx vitest run test/extension-ui-response.test.ts` 应有部分 failed(RED)
   - **依赖**: 2.2
 
-- [ ] 2.4 **扩展 ws handler ClientMessage union + case**
+- [x] 2.4 **扩展 ws handler ClientMessage union + case**
   - **文件**: `packages/webui/server/ws/handler.ts` (Modify — 2 处)
   - **内容**: (1) 在 `ClientMessage` type union 末尾追加 `ExtensionUIResponseMsg`(字段:type, id, value?, confirmed?, cancelled?);(2) 在 switch 里加 `case "extension_ui_response":` 分支,`const sessionId = state.activeSession; if (!sessionId) { sendError(ws, "No active session"); return; } pool.sendExtensionUIResponse(sessionId, { id: msg.id, value: msg.value, confirmed: msg.confirmed, cancelled: msg.cancelled }); break;`
   - **验证**: `cd packages/webui/server && npx vitest run test/extension-ui-response.test.ts 2>&1 | tail -3`,应全 PASS
