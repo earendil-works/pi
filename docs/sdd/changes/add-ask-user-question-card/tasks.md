@@ -24,87 +24,14 @@
 
 ## 2. 新建 AskUserQuestionCard 组件
 
-- [ ] 2.1 **写 AskUserQuestionCard 单元测试(RED)**
-  - **文件**: `packages/webui/web/src/components/AskUserQuestionCard.test.tsx` (Create)
-  - **内容**: 6 个 it:
-    1. 渲染 question + options(label+description 两行)
-    2. 单选: click option → onSubmit(label) called
-    3. 多选: 渲染 numbered list (1. label / 2. label) + input box placeholder "输入选项编号,逗号分隔" + Submit 按钮
-    4. 多选: type "1,3" → Submit → onSubmit called with joined labels "label1, label2"
-    5. status=disabled: options grayed/not clickable + result text "你的选择: label" 显示
-    6. status=timeout: options grayed + "已超时" 显示
-  - **验证**: 初始 `npx vitest run ...` 应 RED(import 失败 — 组件未创建)
-  - **依赖**: 1.3
-
-- [ ] 2.2 **实现 AskUserQuestionCard 组件**
-  - **文件**: `packages/webui/web/src/components/AskUserQuestionCard.tsx` (Create)
-  - **Props**:
-    ```ts
-    interface AskUserQuestionCardProps {
-      question: string;
-      options: Array<{ label: string; description?: string }>;
-      multiSelect: boolean;
-      status: 'active' | 'disabled' | 'timeout';
-      selected?: string;
-      onSubmit: (value: string) => void;
-      onCancel: () => void;
-    }
-    ```
-  - **渲染逻辑**:
-    - `active` + single-select: options as clickable cards/buttons,点选 → onSubmit(label)
-    - `active` + multi-select: numbered list + `<input>` box "输入选项编号,逗号分隔" + Submit button,Submit → parse 编号取 label → onSubmit(labels.join(", "))
-    - `disabled`: options grayed + 静态文本 "你的选择: {selected}"
-    - `timeout`: options grayed + 静态文本 "已超时"
-    - Cancel 按钮(小字,在 card footer)
-    - 样式: Tailwind border/rounded/bg,跟 ToolGroup 风格一致(border-gray-200, rounded, bg-white)
-  - **验证**: `cd packages/webui/web && npx vitest run src/components/AskUserQuestionCard.test.tsx 2>&1 | tail -3`,6 tests GREEN
-  - **依赖**: 2.1
+- [x] 2.1 **写 AskUserQuestionCard 单元测试(RED)** (commit 6afaef13)
+- [x] 2.2 **实现 AskUserQuestionCard 组件** (commit 6afaef13)
 
 ## 3. ChatPage 集成卡片
 
-- [ ] 3.1 **写 ChatPage card integration 测试(RED)**
-  - **文件**: `packages/webui/web/src/pages/ChatPage.test.tsx` (Modify — 重写 "Ask user question placeholder" describe block 为 "Ask user question card")
-  - **内容**: 3 个 it:
-    1. 收到 `extension_ui_request` → 卡片渲染在助手消息 bubble 内(找 toolCall part 后面的 card element with question text)
-    2. 收到 `tool_execution_end` with toolName="ask_user_question" → 卡片 status 变 disabled + 显示 toolResult content 作为 selected text
-    3. 收到 `tool_execution_end` with 不同 toolName → 卡片保持 active
-  - **验证**: 初始 RED(因为 ChatPage 未改)
-  - **依赖**: 2.2
-
-- [ ] 3.2 **实现 Card 渲染在 MessageParts 层**
-  - **文件**:
-    - `packages/webui/web/src/components/message/MessageParts.tsx` (Modify — add cardStates prop + card rendering in ToolGroup)
-    - `packages/webui/web/src/components/ChatMessages.tsx` (Modify — add cardStates prop, pass to MessageBubble)
-    - `packages/webui/web/src/components/message/MessageBubble.tsx` (Modify — accept cardStates, pass to MessageParts)
-  - **内容**:
-    - `MessageParts.tsx`: 加 `import AskUserQuestionCard from "../AskUserQuestionCard"` + 加 `cardStates?: Map<string, CardState>` prop + 在 ToolGroup 的 parts.map 循环中,如果 part.type === "toolCall" && part.name === "ask_user_question" && cardStates.has(part.id),渲染 `<AskUserQuestionCard>` 在该 toolCall 后面
-    - `ChatMessages.tsx`: 接口加 `cardStates?: Map<string, CardState>`,传给 MessageBubble
-    - `MessageBubble.tsx`: 接口加 `cardStates`,传给 MessageParts
-    - CardState 类型定义(放在 `AskUserQuestionCard.tsx` 或 lib/api.ts):
-      ```ts
-      export interface CardState {
-        id: string;
-        question: string;
-        options: Array<{ label: string; description?: string }>;
-        multiSelect: boolean;
-        status: 'active' | 'disabled' | 'timeout';
-        selected?: string;
-        sessionId: string;
-      }
-      ```
-  - **验证**: `cd packages/webui/web && npx vitest run 2>&1 | tail -3`,全 GREEN,无 regression
-  - **依赖**: 3.1
-
-- [ ] 3.3 **实现 ChatPage cardStates 管理**
-  - **文件**: `packages/webui/web/src/pages/ChatPage.tsx` (Modify)
-  - **内容**:
-    1. 删掉 `AskUserQuestionPending` import + `pendingQuestions` state + pendingQuestionsStrip JSX
-    2. 新增 `cardStates` state(Map<toolCallId, CardState>)
-    3. 在现有 ws.subscribe handler 中(已合并到同一个 subscribe),`extension_ui_request` → 从 `event.options` 提取(复制 normalizeOptions 逻辑到 `../../extensions/personal-assistant/ask_user_question.ts` — 不,用内联复制 40 行 normalize 函数);设定 cardStates[id] = {status: 'active', ...}
-    4. `tool_execution_end` with toolName=ask_user_question → 更新对应 card 到 disabled/timeout(status 从 result text 判断:含 "cancelled"/"timeout" 则 timeout)
-    5. 传 `cardStates` 给 `<ChatMessages>`
-  - **验证**: `cd packages/webui/web && npx vitest run src/pages/ChatPage.test.tsx 2>&1 | tail -3`,3 个新 card test GREEN + 原有 13 tests 无 regression
-  - **依赖**: 3.2
+- [x] 3.1 **写 ChatPage card integration 测试(RED)** (commit 33ceb860)
+- [x] 3.2 **实现 Card 渲染在 MessageParts 层** (commit 33ceb860)
+- [x] 3.3 **实现 ChatPage cardStates 管理** (commit 33ceb860)
 
 ## 4. 回归验证
 
