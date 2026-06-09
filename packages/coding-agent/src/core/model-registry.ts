@@ -519,7 +519,7 @@ export class ModelRegistry {
 		for (const customModel of customModels) {
 			const existingIndex = merged.findIndex((m) => m.provider === customModel.provider && m.id === customModel.id);
 			if (existingIndex >= 0) {
-				merged[existingIndex] = customModel;
+				merged[existingIndex] = { ...customModel, cost: customModel.cost ?? merged[existingIndex].cost };
 			} else {
 				merged.push(customModel);
 			}
@@ -663,7 +663,6 @@ export class ModelRegistry {
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
-				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 				models.push({
 					id: modelDef.id,
 					name: modelDef.name ?? modelDef.id,
@@ -673,7 +672,7 @@ export class ModelRegistry {
 					reasoning: modelDef.reasoning ?? false,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: (modelDef.input ?? ["text"]) as ("text" | "image")[],
-					cost: modelDef.cost ?? defaultCost,
+					cost: modelDef.cost,
 					contextWindow: modelDef.contextWindow ?? 128000,
 					maxTokens: modelDef.maxTokens ?? 16384,
 					headers: undefined,
