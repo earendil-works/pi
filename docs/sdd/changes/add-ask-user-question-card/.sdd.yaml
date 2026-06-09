@@ -1,11 +1,11 @@
-phase: write_plan
+phase: develop
 workflow: full
 change: add-ask-user-question-card
 created_at: 2026-06-09
 base_ref: 1651e45540d28bebfacbc2199846a284d3c99de9
 tasks_total: 0
 tasks_done: 0
-isolation: null
+isolation: branch
 verify_result: null
 last_review_sha: null
 archived: false
