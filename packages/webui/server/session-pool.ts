@@ -475,6 +475,21 @@ export class SessionPool extends EventEmitter {
 	}
 
 	/**
+	 * Write an extension_ui_response message to a session's pi process stdin.
+	 * Used to forward user choices from webui modal back to the extension.
+	 * Silent no-op if session/proc is missing.
+	 */
+	sendExtensionUIResponse(
+		sessionId: string,
+		response: { id: string; value?: string; confirmed?: boolean; cancelled?: true },
+	): void {
+		const state = this.sessions.get(sessionId);
+		if (!state || !state.proc) return;
+		const msg = JSON.stringify({ type: "extension_ui_response", ...response }) + "\n";
+		state.proc.stdin?.write(msg);
+	}
+
+	/**
 	 * Set the model for a session. If the session's pi process is already
 	 * running, send a `set_model` RPC; if not, the next prompt will use
 	 * the in-memory model (the JSONL model_change will be appended by

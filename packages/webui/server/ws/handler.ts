@@ -48,7 +48,15 @@ interface SwitchSessionMsg {
   sessionId: string;
 }
 
-type ClientMessage = SubscribeMsg | UnsubscribeMsg | PromptMsg | AbortMsg | SwitchSessionMsg;
+interface ExtensionUIResponseMsg {
+  type: "extension_ui_response";
+  id: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: true;
+}
+
+type ClientMessage = SubscribeMsg | UnsubscribeMsg | PromptMsg | AbortMsg | SwitchSessionMsg | ExtensionUIResponseMsg;
 
 // --- Client state ------------------------------------------------------------
 
@@ -287,6 +295,26 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           state.activeSession = sessionId;
           pool.subscribe(sessionId, ws as unknown as WSClient);
           ws.send(JSON.stringify({ type: "subscribed", sessionId }));
+          break;
+        }
+
+        case "extension_ui_response": {
+          const state = clients.get(ws)!;
+          const sessionId = state.activeSession;
+          if (!sessionId) {
+            sendError(ws, "No active session");
+            return;
+          }
+          if (typeof msg.id !== "string" || !msg.id) {
+            sendError(ws, "id is required");
+            return;
+          }
+          pool.sendExtensionUIResponse(sessionId, {
+            id: msg.id,
+            value: msg.value,
+            confirmed: msg.confirmed,
+            cancelled: msg.cancelled,
+          });
           break;
         }
 
