@@ -171,6 +171,10 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			let hasFinishReason = false;
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
+			// #5114: reasoning_details (an encrypted signature keyed by an upcoming
+			// tool call id) can stream BEFORE the tool_calls chunk. Buffer such
+			// orphans by id and attach them once the matching tool call appears.
+			const pendingReasoningById = new Map<string, string>();
 			const blocks = output.content as StreamingBlock[];
 			const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
 			const finishBlock = (block: StreamingBlock) => {
@@ -260,6 +264,13 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				}
 				if (toolCall.id) {
 					toolCallBlocksById.set(toolCall.id, block);
+					// Attach any reasoning signature that streamed in before this
+					// tool call existed (#5114).
+					const pending = pendingReasoningById.get(toolCall.id);
+					if (pending && !block.thoughtSignature) {
+						block.thoughtSignature = pending;
+						pendingReasoningById.delete(toolCall.id);
+					}
 				}
 				return block;
 			};
@@ -374,11 +385,16 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 					if (reasoningDetails && Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
 							if (detail.type === "reasoning.encrypted" && detail.id && detail.data) {
+								const signature = JSON.stringify(detail);
 								const matchingToolCall = output.content.find(
 									(b) => b.type === "toolCall" && b.id === detail.id,
 								) as ToolCall | undefined;
 								if (matchingToolCall) {
-									matchingToolCall.thoughtSignature = JSON.stringify(detail);
+									matchingToolCall.thoughtSignature = signature;
+								} else {
+									// The tool call has not streamed yet; buffer the
+									// signature so ensureToolCallBlock can attach it (#5114).
+									pendingReasoningById.set(detail.id, signature);
 								}
 							}
 						}
