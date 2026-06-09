@@ -451,7 +451,7 @@ export default function ChatPage() {
   }, []);
 
   const handleCardSubmit = (toolCallId: string, value: string) => {
-    ws?.send(JSON.stringify({ type: "extension_ui_response", id: toolCallId, value }));
+    ws?.send({ type: "extension_ui_response", id: toolCallId, value });
     setCardStates(prev => {
       const next = new Map(prev);
       const card = next.get(toolCallId);
@@ -463,7 +463,7 @@ export default function ChatPage() {
   };
 
   const handleCardCancel = (toolCallId: string) => {
-    ws?.send(JSON.stringify({ type: "extension_ui_response", id: toolCallId, value: "" }));
+    ws?.send({ type: "extension_ui_response", id: toolCallId, value: "" });
     setCardStates(prev => {
       const next = new Map(prev);
       const card = next.get(toolCallId);

@@ -491,6 +491,57 @@ describe("ChatPage", () => {
       // Card must remain active — no disabled-state text visible.
       expect(screen.queryByText(/你的选择:/)).toBeNull();
     });
+
+    // Regression: clicking a single-select option used to call
+    //   ws.send(JSON.stringify({ type: "extension_ui_response", id, value }))
+    // but WebSocketClient.send() also stringifies its argument, producing
+    // a JSON-encoded string on the wire. The server's switch on msg.type
+    // found undefined, dropped the message, and pi's ctx.ui.select() never
+    // resolved — model blocked, user stuck.
+    it("clicking a single-select option sends a plain object to ws.send (not a pre-stringified string)", async () => {
+      const mocks = await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "tc-1",
+            question: "你最喜欢哪种水果?",
+            options: [{ label: "苹果" }, { label: "香蕉" }],
+            multiSelect: false,
+          },
+        });
+      });
+
+      // Wait for the card to render with clickable options
+      await waitFor(() => {
+        expect(screen.getByText("你最喜欢哪种水果?")).toBeInTheDocument();
+      });
+
+      const sendSpy = mocks.ws.send as ReturnType<typeof vi.fn>;
+      sendSpy.mockClear();
+
+      // Click the first option
+      const optionButton = screen.getByRole("button", { name: /苹果/ });
+      fireEvent.click(optionButton);
+
+      // Verify ws.send received a plain object (NOT a pre-stringified string)
+      expect(sendSpy).toHaveBeenCalled();
+      const sentArg = sendSpy.mock.calls[0][0];
+      // If pre-stringified, sentArg is a string. If correct, it's a plain object.
+      expect(typeof sentArg).toBe("object");
+      expect(sentArg).not.toBe(null);
+      expect(sentArg.type).toBe("extension_ui_response");
+      expect(sentArg.id).toBe("tc-1");
+      expect(sentArg.value).toBe("苹果");
+    });
   });
 
   describe("message_start with stale empty assistant bubbles", () => {
