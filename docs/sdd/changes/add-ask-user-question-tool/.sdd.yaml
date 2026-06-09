@@ -1,4 +1,4 @@
-phase: develop
+phase: review
 workflow: full
 change: add-ask-user-question-tool
 created_at: 2026-06-09
@@ -6,6 +6,6 @@ base_ref: 5d250571083272dbfc85b7f660295b402a1407d1
 tasks_total: 24
 tasks_done: 24
 isolation: branch
-verify_result: null
+verify_result: pending
 last_review_sha: null
 archived: false

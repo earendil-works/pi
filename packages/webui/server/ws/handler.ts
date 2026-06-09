@@ -52,6 +52,10 @@ interface ExtensionUIResponseMsg {
   type: "extension_ui_response";
   id: string;
   value?: string;
+  /**
+   * Reserved for future `ctx.ui.confirm()` callers. Not used by
+   * `ask_user_question` — kept for forward compatibility.
+   */
   confirmed?: boolean;
   cancelled?: true;
 }
