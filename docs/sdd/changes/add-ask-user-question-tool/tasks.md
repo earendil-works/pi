@@ -94,7 +94,7 @@
 
 ## 3. Webui Client: 弹 modal + 聊天占位
 
-- [ ] 3.1 **写 `AskUserQuestionModal` 组件测试**
+- [x] 3.1 **写 `AskUserQuestionModal` 组件测试**
   - **文件**: `packages/webui/web/src/components/AskUserQuestionModal.test.tsx` (Create)
   - **内容**: 6 测试: 渲染 question + options(每项 label+description 两行)/ 单选点 option 触发 onSubmit(label) / multiSelect 勾 2 个 + 提交触发 onSubmit("label1, label2") / 点 Cancel 触发 onCancel / Esc 键触发 onCancel / 模态关闭时(返回 null)不渲染
   - **验证**: 初始 `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | tail -3`,应有 failed
@@ -106,7 +106,7 @@
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | grep "passed"`,全 6 个 PASS
   - **依赖**: 3.1
 
-- [ ] 3.3 **写 `AskUserQuestionProvider` 组件测试**
+- [x] 3.3 **写 `AskUserQuestionProvider` 组件测试**
   - **文件**: `packages/webui/web/src/components/AskUserQuestionProvider.test.tsx` (Create)
   - **内容**: 4 测试: 收到 session_event 含 `extension_ui_request` method=select → 弹 modal 显示对应 question+options / 多 modal 排队:同时 push 2 个 request,只显示 stack 顶部,提交后自动显示下一个 + 顶部 pending count 数字正确 / 收到 method=input 也能弹(用 input() 路径)/ 收到非 session_event 消息不弹
   - **验证**: 初始 RED
