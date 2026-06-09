@@ -3,8 +3,19 @@ import type { Message } from "../../lib/api";
 import { MessageHeader } from "./MessageHeader";
 import { MessageParts } from "./MessageParts";
 import { MessageFooter } from "./MessageFooter";
+import type { CardState } from "../AskUserQuestionCard";
 
-export function MessageBubble({ message }: { message: Message }): JSX.Element | null {
+export function MessageBubble({
+  message,
+  cardStates,
+  onCardSubmit,
+  onCardCancel,
+}: {
+  message: Message;
+  cardStates?: Map<string, CardState>;
+  onCardSubmit?: (id: string, value: string) => void;
+  onCardCancel?: (id: string) => void;
+}): JSX.Element | null {
   if (message.role === "user") {
     const textParts = message.parts.filter((p) => p.type === "text");
     const imageParts = message.parts.filter((p) => p.type === "image");
@@ -43,7 +54,12 @@ export function MessageBubble({ message }: { message: Message }): JSX.Element | 
     return (
       <div className="px-4 py-3">
         <MessageHeader name="pi" timestamp={message.timestamp} model={message.model} provider={message.provider} />
-        <MessageParts parts={message.parts} />
+        <MessageParts
+          parts={message.parts}
+          cardStates={cardStates}
+          onCardSubmit={onCardSubmit}
+          onCardCancel={onCardCancel}
+        />
         <MessageFooter usage={message.usage} />
       </div>
     );

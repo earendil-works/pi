@@ -7,6 +7,8 @@ import type {
   TextPart, ThinkingPart, ToolCallPart, ToolResultPart, ImagePart, Part
 } from "../../lib/api";
 import { Markdown } from "../Markdown";
+import { AskUserQuestionCard } from "../AskUserQuestionCard";
+import type { CardState } from "../AskUserQuestionCard";
 
 // Helper: pick icon for tool name
 function toolIcon(name: string) {
@@ -179,7 +181,17 @@ function summarizeToolGroup(parts: Part[]): { total: number; text: string } {
   return { total, text: segments.join(", ") };
 }
 
-function ToolGroup({ parts }: { parts: Part[] }) {
+function ToolGroup({
+  parts,
+  cardStates,
+  onCardSubmit,
+  onCardCancel,
+}: {
+  parts: Part[];
+  cardStates?: Map<string, CardState>;
+  onCardSubmit?: (id: string, value: string) => void;
+  onCardCancel?: (id: string) => void;
+}) {
   const summary = summarizeToolGroup(parts);
   const [open, setOpen] = useState(summary.total <= COLLAPSE_THRESHOLD);
   const tooMany = summary.total > COLLAPSE_THRESHOLD;
@@ -215,6 +227,26 @@ function ToolGroup({ parts }: { parts: Part[] }) {
       {parts.map((part, i) => {
         switch (part.type) {
           case "toolCall":
+            // ask_user_question cards are rendered from CardState data,
+            // not as raw ToolCallItem. If the card state exists, show the
+            // interactive card; otherwise fall back to the generic tool item.
+            if (part.name === "ask_user_question") {
+              const cardState = cardStates?.get(part.id);
+              if (cardState) {
+                return (
+                  <AskUserQuestionCard
+                    key={`card-${part.id}`}
+                    question={cardState.question}
+                    options={cardState.options}
+                    multiSelect={cardState.multiSelect}
+                    status={cardState.status}
+                    selected={cardState.selected}
+                    onSubmit={(value) => onCardSubmit?.(part.id, value)}
+                    onCancel={() => onCardCancel?.(part.id)}
+                  />
+                );
+              }
+            }
             return <ToolCallItem key={`tc-${i}`} part={part} />;
           case "toolResult":
             return <ToolResultItem key={`tr-${i}`} part={part} />;
@@ -233,7 +265,17 @@ function ToolGroup({ parts }: { parts: Part[] }) {
 // → toolCall → toolResult → ... → final text. Consecutive tool-related
 // parts (toolCall + toolResult + image) are wrapped in a single bordered
 // box via ToolGroup for visual cohesion.
-export function MessageParts({ parts }: { parts: Part[] }) {
+export function MessageParts({
+  parts,
+  cardStates,
+  onCardSubmit,
+  onCardCancel,
+}: {
+  parts: Part[];
+  cardStates?: Map<string, CardState>;
+  onCardSubmit?: (id: string, value: string) => void;
+  onCardCancel?: (id: string) => void;
+}) {
   if (parts.length === 0) {
     return <div className="text-xs text-gray-400 italic">(empty turn)</div>;
   }
@@ -274,7 +316,15 @@ export function MessageParts({ parts }: { parts: Part[] }) {
     <div className="flex flex-col gap-2">
       {chunks.map((chunk, i) => {
         if (chunk.kind === "tools") {
-          return <ToolGroup key={`tg-${i}`} parts={chunk.parts} />;
+          return (
+            <ToolGroup
+              key={`tg-${i}`}
+              parts={chunk.parts}
+              cardStates={cardStates}
+              onCardSubmit={onCardSubmit}
+              onCardCancel={onCardCancel}
+            />
+          );
         }
         const p = chunk.part;
         if (p.type === "thinking") {

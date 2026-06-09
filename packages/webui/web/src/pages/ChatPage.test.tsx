@@ -367,6 +367,135 @@ describe("ChatPage", () => {
     });
   });
 
+  describe("Card integration: extension_ui_request + tool_execution_end", () => {
+    it("receives extension_ui_request and renders card in assistant message bubble", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Simulate the server sending extension_ui_request through the
+      // session_event channel. After 3.2+3.3, ChatPage's handler will
+      // create a card and render it in an assistant message bubble.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "abc",
+            question: "Your favorite color?",
+            options: [{ label: "红色" }, { label: "蓝色" }],
+            multiSelect: false,
+          },
+        });
+      });
+
+      // The card renders the question text. This assertion fails (RED)
+      // until tasks 3.2+3.3 implement the extension_ui_request handler
+      // in ChatPage.
+      await waitFor(() => {
+        expect(screen.getByText("Your favorite color?")).toBeInTheDocument();
+      });
+    });
+
+    it("receives tool_execution_end with ask_user_question disables the card", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Step 1: extension_ui_request arrives — card should appear
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "abc",
+            question: "Your favorite color?",
+            options: [{ label: "红色" }, { label: "蓝色" }],
+            multiSelect: false,
+          },
+        });
+      });
+
+      // Step 2: tool_execution_end with ask_user_question tool —
+      // the matching card should be disabled and show the user's selection.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "tool_execution_end",
+            toolCallId: "tc-1",
+            toolName: "ask_user_question",
+            result: "User selected: 红色",
+            isError: false,
+          },
+        });
+      });
+
+      // The card should now be disabled and show the result text.
+      // This fails (RED) until 3.2+3.3 implement the handlers.
+      await waitFor(() => {
+        expect(screen.getByText(/你的选择:\s*红色/)).toBeInTheDocument();
+      });
+    });
+
+    it("receives tool_execution_end with different toolName keeps card active", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Step 1: extension_ui_request arrives — card should appear
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "abc",
+            question: "Your favorite color?",
+            options: [{ label: "红色" }, { label: "蓝色" }],
+            multiSelect: false,
+          },
+        });
+      });
+
+      // Verify card appears first (this assertion fails RED until 3.2+3.3,
+      // preventing a false-positive pass where both handlers are missing).
+      await waitFor(() => {
+        expect(screen.getByText("Your favorite color?")).toBeInTheDocument();
+      });
+
+      // Step 2: tool_execution_end with a DIFFERENT toolName (bash) —
+      // the card should stay active because only ask_user_question
+      // triggers card state changes.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "tool_execution_end",
+            toolCallId: "tc-2",
+            toolName: "bash",
+            result: { exitCode: 0, stdout: "done" },
+            isError: false,
+          },
+        });
+      });
+
+      // Card must remain active — no disabled-state text visible.
+      expect(screen.queryByText(/你的选择:/)).toBeNull();
+    });
+  });
+
   describe("message_start with stale empty assistant bubbles", () => {
     // Regression: a session that's been around for a while accumulates
     // empty assistant bubbles from past aborted turns (rate-limit errors,

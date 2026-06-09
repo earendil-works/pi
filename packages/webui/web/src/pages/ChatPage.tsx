@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ws, api } from "../lib/api";
 import type { Message, InputImage, Part } from "../lib/api";
+import type { CardState } from "../components/AskUserQuestionCard";
 import { Title } from "../components/topbar/Title";
 import { Actions } from "../components/topbar/Actions";
 import { ModelSelector } from "../components/topbar/ModelSelector";
@@ -19,6 +20,13 @@ function buildParts(content: any): Part[] {
     if (c.type === "image") return { type: "image", mediaType: c.mediaType, data: c.data };
     return { type: "text", text: "?" };
   });
+}
+
+function normalizeOptions(options: unknown): Array<{ label: string; description?: string }> {
+  if (!Array.isArray(options)) return [];
+  return options.filter((o): o is { label: string; description?: string } =>
+    o && typeof o === 'object' && typeof o.label === 'string'
+  );
 }
 
 export default function ChatPage() {
@@ -40,6 +48,7 @@ export default function ChatPage() {
   const [isThinking, setIsThinking] = useState<boolean>(false);
   const [title, setTitle] = useState<string>("");
   const [messageCount, setMessageCount] = useState<number>(0);
+  const [cardStates, setCardStates] = useState<Map<string, CardState>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgId = useRef<string | null>(null);
 
@@ -233,6 +242,52 @@ export default function ChatPage() {
         } else if (e.status === "running") {
           setIsThinking(true);
         }
+      } else if (e.type === "extension_ui_request") {
+        const options = normalizeOptions(e.options);
+        if (options.length < 2) return;
+        const card: CardState = {
+          id: e.id,
+          question: e.question,
+          options,
+          multiSelect: options.length > 5,
+          status: "active",
+          sessionId: id,
+        };
+        setCardStates(prev => new Map(prev).set(e.id, card));
+        // Ensure there's an assistant message with a matching toolCall part
+        // so the card is rendered by ToolGroup. In the real server flow the
+        // message events arrive before extension_ui_request; in tests they
+        // may not, so we create a synthetic message if none exists yet.
+        setMessages(prev => {
+          const hasMessage = prev.some(m =>
+            m.parts.some(p => (p as any).type === "toolCall" && (p as any).id === e.id)
+          );
+          if (hasMessage) return prev;
+          return [...prev, {
+            id: crypto.randomUUID(),
+            sessionId: id!,
+            role: "assistant" as const,
+            parts: [{ type: "toolCall" as const, id: e.id, name: "ask_user_question", args: {} }],
+            timestamp: new Date().toISOString(),
+          }];
+        });
+      } else if (e.type === "tool_execution_end" && e.toolName === "ask_user_question") {
+        setCardStates(prev => {
+          const next = new Map(prev);
+          for (const [cardId, card] of next) {
+            if (card.sessionId === id && card.status === "active") {
+              const content = e.result || "";
+              const isTimeout = content.includes("cancelled") || content.includes("timeout") || content.includes("timed out");
+              next.set(cardId, {
+                ...card,
+                status: isTimeout ? "timeout" : "disabled",
+                selected: isTimeout ? undefined : content.replace("User selected: ", ""),
+              });
+              break;
+            }
+          }
+          return next;
+        });
       }
     });
     return () => { unsubOpen(); unsub(); };
@@ -374,6 +429,30 @@ export default function ChatPage() {
     ws.send({ type: "abort" });
   }, []);
 
+  const handleCardSubmit = (toolCallId: string, value: string) => {
+    ws?.send(JSON.stringify({ type: "extension_ui_response", id: toolCallId, value }));
+    setCardStates(prev => {
+      const next = new Map(prev);
+      const card = next.get(toolCallId);
+      if (card) {
+        next.set(toolCallId, { ...card, status: "disabled", selected: value });
+      }
+      return next;
+    });
+  };
+
+  const handleCardCancel = (toolCallId: string) => {
+    ws?.send(JSON.stringify({ type: "extension_ui_response", id: toolCallId, value: "" }));
+    setCardStates(prev => {
+      const next = new Map(prev);
+      const card = next.get(toolCallId);
+      if (card) {
+        next.set(toolCallId, { ...card, status: "timeout" });
+      }
+      return next;
+    });
+  };
+
   if (!id) return <div className="flex items-center justify-center h-full"><p>Session not found</p></div>;
 
   return (
@@ -399,7 +478,12 @@ export default function ChatPage() {
       </div>
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
-        <ChatMessages messages={messages} />
+        <ChatMessages
+          messages={messages}
+          cardStates={cardStates}
+          onCardSubmit={handleCardSubmit}
+          onCardCancel={handleCardCancel}
+        />
         {isThinking && <ThinkingIndicator />}
         <div ref={messagesEndRef} />
       </div>

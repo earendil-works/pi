@@ -1,8 +1,12 @@
 import type { Message, Part } from "../lib/api";
 import { MessageBubble } from "./message/MessageBubble";
+import type { CardState } from "./AskUserQuestionCard";
 
 interface ChatMessagesProps {
   messages: Message[];
+  cardStates?: Map<string, CardState>;
+  onCardSubmit?: (id: string, value: string) => void;
+  onCardCancel?: (id: string) => void;
 }
 
 /**
@@ -92,7 +96,7 @@ function groupTurns(messages: Message[]): Message[] {
   return out;
 }
 
-export default function ChatMessages({ messages }: ChatMessagesProps) {
+export default function ChatMessages({ messages, cardStates, onCardSubmit, onCardCancel }: ChatMessagesProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-stone-400">
@@ -107,7 +111,13 @@ export default function ChatMessages({ messages }: ChatMessagesProps) {
   return (
     <div className="flex flex-col">
       {turns.map((message) => (
-        <MessageBubble key={message.id} message={message} />
+        <MessageBubble
+          key={message.id}
+          message={message}
+          cardStates={cardStates}
+          onCardSubmit={onCardSubmit}
+          onCardCancel={onCardCancel}
+        />
       ))}
     </div>
   );
