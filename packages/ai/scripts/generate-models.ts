@@ -186,6 +186,11 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.4-nano",
 	"gpt-5.5",
 ]);
+const ANTHROPIC_ALWAYS_ADAPTIVE_MODEL_IDS = new Set([
+	"claude-fable-5",
+	"claude-mythos-5",
+	"claude-mythos-preview",
+]);
 
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
 	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
@@ -224,8 +229,7 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 }
 
 function isAnthropicAlwaysAdaptiveThinkingModel(modelId: string): boolean {
-	const id = modelId.toLowerCase();
-	return id.includes("fable-5") || id.includes("mythos-5") || id.includes("mythos-preview");
+	return ANTHROPIC_ALWAYS_ADAPTIVE_MODEL_IDS.has(modelId.toLowerCase());
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
@@ -1329,10 +1333,21 @@ async function generateModels() {
 	const aiGatewayModels = await fetchAiGatewayModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
-		(model) =>
-			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
-	);
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter((model) => {
+		if ((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark") {
+			return false;
+		}
+		if ((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "north-mini-code-free") {
+			return false;
+		}
+		if (model.provider !== "anthropic" && model.id.includes("claude-fable-5")) {
+			return false;
+		}
+		if (model.provider === "openrouter" && model.id === "~anthropic/claude-fable-latest") {
+			return false;
+		}
+		return true;
+	});
 
 	// Fix incorrect cache pricing for Claude Opus 4.5 from models.dev
 	// models.dev has 3x the correct pricing (1.5/18.75 instead of 0.5/6.25)
@@ -1395,9 +1410,17 @@ async function generateModels() {
 			candidate.cost.output = 1.9;
 			candidate.cost.cacheRead = 0.119;
 		}
-
+		if (candidate.provider === "openrouter" && candidate.id === "minimax/minimax-m2.5") {
+			candidate.cost.output = 1.15;
+			candidate.cost.cacheRead = 0;
+		}
+		if (candidate.provider === "openrouter" && candidate.id === "minimax/minimax-m2.7") {
+			candidate.cost.input = 0.27899999999999997;
+			candidate.cost.output = 1.2;
+			candidate.cost.cacheRead = 0;
+			candidate.maxTokens = 196608;
+		}
 	}
-
 
 	// Add missing EU Opus 4.6 profile
 	if (!allModels.some((m) => m.provider === "amazon-bedrock" && m.id === "eu.anthropic.claude-opus-4-6-v1")) {
@@ -1501,27 +1524,6 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 64000,
-		});
-	}
-
-	// Fallback for generated catalogs that do not include Claude Fable 5 yet.
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-fable-5")) {
-		allModels.push({
-			id: "claude-fable-5",
-			name: "Claude Fable 5",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 10,
-				output: 50,
-				cacheRead: 1,
-				cacheWrite: 12.5,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
 		});
 	}
 
