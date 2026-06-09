@@ -7,6 +7,7 @@ import {
 	findNodePackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
+	getSourceCheckoutSelfUpdateCommand,
 	getUpdateInstruction,
 } from "../src/config.ts";
 
@@ -122,6 +123,23 @@ function createBunGlobalInstall(): { packageDir: string } {
 	return { packageDir };
 }
 
+function createSourceCheckout(packageDirRelative = join("packages", "coding-agent")): {
+	repoRoot: string;
+	packageDir: string;
+} {
+	const repoRoot = mkdtempSync(join(tmpdir(), "pi-source-"));
+	const packageDir = join(repoRoot, packageDirRelative);
+	mkdirSync(join(repoRoot, ".git"), { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ scripts: { build: "echo build" } }));
+	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }));
+	tempDir = repoRoot;
+	process.env.PI_PACKAGE_DIR = packageDir;
+	setExecPath(join(packageDir, "dist", "cli.js"));
+	process.argv[1] = join(packageDir, "dist", "cli.js");
+	return { repoRoot, packageDir };
+}
+
 function createFakePnpmScript(root: string): string {
 	if (process.platform === "win32") {
 		return `@echo off\r\nif "%1"=="root" if "%2"=="-g" echo ${root}\r\n`;
@@ -179,6 +197,54 @@ describe("detectInstallMethod", () => {
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
 			"Update @earendil-works/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
 		);
+	});
+
+	test("self-updates source checkouts by rebasing, installing, and building", () => {
+		const { repoRoot } = createSourceCheckout();
+
+		const command = getSourceCheckoutSelfUpdateCommand("@earendil-works/pi-coding-agent");
+
+		expect(detectInstallMethod()).toBe("unknown");
+		expect(command).toEqual({
+			command: "git",
+			args: ["-C", repoRoot, "pull", "--rebase"],
+			display: `git -C ${repoRoot} pull --rebase && npm --prefix ${repoRoot} ci --ignore-scripts --include=dev && npm --prefix ${repoRoot} run build && git -C ${repoRoot} checkout -- packages/ai/src/models.generated.ts packages/ai/src/image-models.generated.ts`,
+			steps: [
+				{
+					command: "git",
+					args: ["-C", repoRoot, "pull", "--rebase"],
+					display: `git -C ${repoRoot} pull --rebase`,
+				},
+				{
+					command: "npm",
+					args: ["--prefix", repoRoot, "ci", "--ignore-scripts", "--include=dev"],
+					display: `npm --prefix ${repoRoot} ci --ignore-scripts --include=dev`,
+				},
+				{
+					command: "npm",
+					args: ["--prefix", repoRoot, "run", "build"],
+					display: `npm --prefix ${repoRoot} run build`,
+				},
+				{
+					command: "git",
+					args: [
+						"-C",
+						repoRoot,
+						"checkout",
+						"--",
+						"packages/ai/src/models.generated.ts",
+						"packages/ai/src/image-models.generated.ts",
+					],
+					display: `git -C ${repoRoot} checkout -- packages/ai/src/models.generated.ts packages/ai/src/image-models.generated.ts`,
+				},
+			],
+		});
+	});
+
+	test("does not treat node_modules packages as source checkouts", () => {
+		createSourceCheckout(join("node_modules", "@earendil-works", "pi-coding-agent"));
+
+		expect(getSourceCheckoutSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
 	});
 
 	test("self-updates npm installs from custom prefixes", () => {

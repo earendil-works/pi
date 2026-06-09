@@ -67,6 +67,16 @@ function makeSelfUpdateCommand(
 	};
 }
 
+function makeSelfUpdateCommandSequence(steps: SelfUpdateCommandStep[]): SelfUpdateCommand | undefined {
+	const [firstStep] = steps;
+	if (!firstStep) return undefined;
+	return {
+		...firstStep,
+		display: steps.map((step) => step.display).join(" && "),
+		steps,
+	};
+}
+
 function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateCommandStep {
 	return {
 		command,
@@ -293,6 +303,67 @@ function getEntrypointPackageDir(): string | undefined {
 		dir = dirname(dir);
 	}
 	return undefined;
+}
+
+interface PackageJsonShape {
+	name?: unknown;
+	scripts?: unknown;
+}
+
+function readPackageJson(path: string): PackageJsonShape | undefined {
+	try {
+		return JSON.parse(readFileSync(path, "utf-8")) as PackageJsonShape;
+	} catch {
+		return undefined;
+	}
+}
+
+function hasBuildScript(packageJson: PackageJsonShape | undefined): boolean {
+	const scripts = packageJson?.scripts;
+	return typeof scripts === "object" && scripts !== null && typeof (scripts as { build?: unknown }).build === "string";
+}
+
+function pathContainsNodeModules(path: string): boolean {
+	return resolve(path)
+		.split(/[\\/]+/)
+		.some((part) => part.toLowerCase() === "node_modules");
+}
+
+function findSourceCheckoutRoot(packageDir: string): string | undefined {
+	if (pathContainsNodeModules(packageDir)) return undefined;
+	let dir = resolve(packageDir);
+	while (dir !== dirname(dir)) {
+		if (existsSync(join(dir, ".git")) && hasBuildScript(readPackageJson(join(dir, "package.json")))) {
+			return dir;
+		}
+		dir = dirname(dir);
+	}
+	return undefined;
+}
+
+export function getSourceCheckoutSelfUpdateCommand(packageName = PACKAGE_NAME): SelfUpdateCommand | undefined {
+	if (isBunBinary) return undefined;
+
+	const packageDir = getPackageDir();
+	const packageJson = readPackageJson(join(packageDir, "package.json"));
+	if (packageJson?.name !== packageName) return undefined;
+
+	const sourceRoot = findSourceCheckoutRoot(packageDir);
+	if (!sourceRoot) return undefined;
+
+	return makeSelfUpdateCommandSequence([
+		makeSelfUpdateCommandStep("git", ["-C", sourceRoot, "pull", "--rebase"]),
+		makeSelfUpdateCommandStep("npm", ["--prefix", sourceRoot, "ci", "--ignore-scripts", "--include=dev"]),
+		makeSelfUpdateCommandStep("npm", ["--prefix", sourceRoot, "run", "build"]),
+		makeSelfUpdateCommandStep("git", [
+			"-C",
+			sourceRoot,
+			"checkout",
+			"--",
+			"packages/ai/src/models.generated.ts",
+			"packages/ai/src/image-models.generated.ts",
+		]),
+	]);
 }
 
 function isSelfUpdatePathWritable(): boolean {

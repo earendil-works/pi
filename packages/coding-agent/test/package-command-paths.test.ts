@@ -556,7 +556,83 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		}
 	});
 
+	it("updates source checkout self installs without checking the api", async () => {
+		const repoRoot = join(tempDir, "source-checkout");
+		const selfPackageDir = join(repoRoot, "packages", "coding-agent");
+		const fakeBinDir = join(tempDir, "fake-bin");
+		const recordPath = join(tempDir, "source-self-update.json");
+		const recorderPath = join(tempDir, "record-command.cjs");
+		mkdirSync(join(repoRoot, ".git"), { recursive: true });
+		mkdirSync(selfPackageDir, { recursive: true });
+		mkdirSync(fakeBinDir, { recursive: true });
+		writeFileSync(join(repoRoot, "package.json"), JSON.stringify({ scripts: { build: "echo build" } }, null, 2));
+		writeFileSync(join(selfPackageDir, "package.json"), JSON.stringify({ name: PACKAGE_NAME }, null, 2));
+		writeFileSync(
+			recorderPath,
+			`const fs=require("node:fs");
+const recordPath=${JSON.stringify(recordPath)};
+const command=process.argv[2];
+const args=process.argv.slice(3);
+const records=fs.existsSync(recordPath)?JSON.parse(fs.readFileSync(recordPath,"utf-8")):[];
+records.push({command,args});
+fs.writeFileSync(recordPath,JSON.stringify(records));
+`,
+		);
+		for (const commandName of ["git", "npm"]) {
+			const commandPath = join(fakeBinDir, process.platform === "win32" ? `${commandName}.cmd` : commandName);
+			if (process.platform === "win32") {
+				writeFileSync(commandPath, `@echo off\r\n"${originalExecPath}" "${recorderPath}" ${commandName} %*\r\n`);
+			} else {
+				writeFileSync(
+					commandPath,
+					`#!/bin/sh\nexec ${JSON.stringify(originalExecPath)} ${JSON.stringify(recorderPath)} ${commandName} "$@"\n`,
+				);
+				chmodSync(commandPath, 0o755);
+			}
+		}
+		process.env.PATH = `${fakeBinDir}${delimiter}${originalPath ?? ""}`;
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(main(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBeUndefined();
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(fetchMock).not.toHaveBeenCalled();
+			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as { command: string; args: string[] }[];
+			expect(recordedCalls).toEqual([
+				{ command: "git", args: ["-C", repoRoot, "pull", "--rebase"] },
+				{ command: "npm", args: ["--prefix", repoRoot, "ci", "--ignore-scripts", "--include=dev"] },
+				{ command: "npm", args: ["--prefix", repoRoot, "run", "build"] },
+				{
+					command: "git",
+					args: [
+						"-C",
+						repoRoot,
+						"checkout",
+						"--",
+						"packages/ai/src/models.generated.ts",
+						"packages/ai/src/image-models.generated.ts",
+					],
+				},
+			]);
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
 	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
+		process.env.PI_PACKAGE_DIR = join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));

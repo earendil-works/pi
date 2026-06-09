@@ -22,6 +22,7 @@ import {
 	getPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
+	getSourceCheckoutSelfUpdateCommand,
 	PACKAGE_NAME,
 	type SelfUpdateCommand,
 	type SelfUpdatePackageTarget,
@@ -1030,6 +1031,21 @@ export async function handlePackageCommand(
 						process.exitCode = 1;
 						return true;
 					}
+					const sourceCheckoutSelfUpdateCommand = getSourceCheckoutSelfUpdateCommand(PACKAGE_NAME);
+					if (sourceCheckoutSelfUpdateCommand) {
+						try {
+							await runSelfUpdate(sourceCheckoutSelfUpdateCommand);
+						} catch (error: unknown) {
+							const message = error instanceof Error ? error.message : "Unknown package command error";
+							console.error(chalk.red(`Error: ${message}`));
+							printSelfUpdateFallback(sourceCheckoutSelfUpdateCommand);
+							process.exitCode = 1;
+							return true;
+						}
+						console.log(chalk.green(`Updated ${APP_NAME}`));
+						return true;
+					}
+
 					const selfUpdatePlan = await getSelfUpdatePlan(options.force);
 					if (!selfUpdatePlan.shouldRun) {
 						return true;
