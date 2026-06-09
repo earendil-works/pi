@@ -100,7 +100,7 @@
   - **验证**: 初始 `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | tail -3`,应有 failed
   - **依赖**: 2.5
 
-- [ ] 3.2 **实现 `AskUserQuestionModal` 组件**
+- [x] 3.2 **实现 `AskUserQuestionModal` 组件**
   - **文件**: `packages/webui/web/src/components/AskUserQuestionModal.tsx` (Create)
   - **内容**: 仿 `NewSessionModal.tsx` 模板: backdrop (z-50, bg-black/50) + modal card (max-w-md, bg-white, rounded, shadow-xl);header 显示 question (text-base, font-semibold);body 列出 options(multiSelect 时每个 option 前面是 `<input type="checkbox">`,single 时是单选按钮),label + description 两行(label 粗体,description 灰色小字);footer "Cancel" + "Submit" 按钮(submit 多选时按勾选顺序拼接 `, `)
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AskUserQuestionModal.test.tsx 2>&1 | grep "passed"`,全 6 个 PASS
@@ -112,7 +112,7 @@
   - **验证**: 初始 RED
   - **依赖**: 3.2
 
-- [ ] 3.4 **实现 `AskUserQuestionProvider`**
+- [x] 3.4 **实现 `AskUserQuestionProvider`**
   - **文件**: `packages/webui/web/src/components/AskUserQuestionProvider.tsx` (Create)
   - **内容**: React Context Provider,**职责限定为 modal 弹窗**(不通知 ChatPage 插占位 — ChatPage 独立订阅 `session_event` 处理占位,见 3.7);内部用 `useRef<Map<string, ModalState[]>>(new Map())` 维护每 session 队列 + `useState<ModalState | null>` 当前显示 modal + `useState<Map<string, number>>` pending count;`useEffect` 通过 `ws.subscribe("session_event", handler)` 订阅事件,handler 检查 `event.type === "extension_ui_request" && (method === "select" || method === "input")` 时 push 到 queue + 调 `setActiveModalFromQueue()`;modal `onSubmit` 调 `ws.send({type: "extension_ui_response", id, value: <chosen label(s)>})` 然后弹下一个;modal `onCancel` 同样发 `extension_ui_response` 但带 `cancelled: true`;顶部条 `<PendingCountBar>` 显示 "⏳ 还有 N 个未答" (用 absolute positioned div,按 session 聚合 count)
   - **验证**: `cd packages/webui/web && npx vitest run src/components/AskUserQuestionProvider.test.tsx 2>&1 | grep "passed"`,全 4 PASS
