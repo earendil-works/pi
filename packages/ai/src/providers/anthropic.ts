@@ -6,7 +6,7 @@ import type {
 	MessageParam,
 	RawMessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/messages.js";
-import { calculateCost } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
 	Api,
@@ -744,14 +744,15 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
-	if (!options?.reasoning) {
+	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
+	if (!clampedReasoning || clampedReasoning === "off") {
 		return streamAnthropic(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
 	}
 
 	// For models with adaptive thinking: use an effort level.
 	// For older models: use budget-based thinking.
 	if (model.compat?.forceAdaptiveThinking === true) {
-		const effort = mapThinkingLevelToEffort(model, options.reasoning);
+		const effort = mapThinkingLevelToEffort(model, clampedReasoning);
 		return streamAnthropic(model, context, {
 			...base,
 			thinkingEnabled: true,
@@ -764,8 +765,8 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 	const adjusted = adjustMaxTokensForThinking(
 		base.maxTokens,
 		model.maxTokens,
-		options.reasoning,
-		options.thinkingBudgets,
+		clampedReasoning,
+		options?.thinkingBudgets,
 	);
 
 	return streamAnthropic(model, context, {
@@ -972,7 +973,7 @@ function buildParams(
 					display,
 				};
 			}
-		} else if (options?.thinkingEnabled === false) {
+		} else if (options?.thinkingEnabled === false && model.thinkingLevelMap?.off !== null) {
 			params.thinking = { type: "disabled" };
 		}
 	}

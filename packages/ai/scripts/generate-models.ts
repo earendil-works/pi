@@ -299,7 +299,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.api === "anthropic-messages" || model.api === "bedrock-converse-stream") &&
 		model.id.includes("fable-5")
 	) {
-		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
+		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh" });
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });

@@ -357,7 +357,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 11,
@@ -497,7 +497,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
@@ -1389,7 +1389,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
@@ -1878,7 +1878,7 @@ export const MODELS = {
 			baseUrl: "https://api.anthropic.com",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
@@ -3073,7 +3073,7 @@ export const MODELS = {
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
@@ -7882,7 +7882,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
@@ -14075,7 +14075,7 @@ export const MODELS = {
 			baseUrl: "https://ai-gateway.vercel.sh",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"xhigh"},
+			thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 			input: ["text", "image"],
 			cost: {
 				input: 10,
