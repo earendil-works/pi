@@ -24,7 +24,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "normalizeOptions" 2>&1 | grep -E "passed|failed"`,应输出 "failed"(RED,因为还没实现)
   - **依赖**: 无
 
-- [ ] 1.2 **实现 `normalizeOptions`**
+- [x] 1.2 **实现 `normalizeOptions`**
   - **文件**: `extensions/personal-assistant/ask_user_question.ts` (Create) — 暂不 export 全部,只 export `normalizeOptions`
   - **内容**: 递归 unwrap `.item` 包装,直到拿到 array;每项校验 `label` 是 string,`description` 可选 string;返回 `NormalizedOption[]`
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "normalizeOptions" 2>&1 | grep -E "✓|×" | wc -l`,应 ≥ 8(8 个 normalizeOptions 子测试全 GREEN)
