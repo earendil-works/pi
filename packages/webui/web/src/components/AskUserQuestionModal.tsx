@@ -52,6 +52,11 @@ export default function AskUserQuestionModal({
     }
   }
 
+  /**
+   * Single-select auto-submits on option click (toggleOption → onSubmit).
+   * This Submit button exists as a keyboard-accessibility fallback for
+   * multi-select mode and for users who tab to the button without selecting.
+   */
   function handleSubmit() {
     const labels = options.map((o) => o.label);
     if (multiSelect) {
@@ -124,7 +129,7 @@ export default function AskUserQuestionModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!multiSelect && selected.size === 0 && options.length > 0}
+            disabled={selected.size === 0}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             Submit

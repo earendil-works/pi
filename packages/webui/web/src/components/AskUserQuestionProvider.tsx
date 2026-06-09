@@ -102,7 +102,10 @@ export function AskUserQuestionProvider({ children }: { children: ReactNode }) {
     ws.send({ type: "extension_ui_response", id: activeModal.id, value });
     isModalVisibleRef.current = false;
     setActiveModal(null);
-    refreshActive();
+    // Defer queue advance so ws.send() completes first, avoiding a race
+    // where the server processes the cancel and immediately issues the next
+    // ctx.ui.select() before the stdin write for this cancel is flushed.
+    queueMicrotask(() => refreshActive());
   }
 
   function handleCancel() {
@@ -110,10 +113,17 @@ export function AskUserQuestionProvider({ children }: { children: ReactNode }) {
     ws.send({ type: "extension_ui_response", id: activeModal.id, cancelled: true });
     isModalVisibleRef.current = false;
     setActiveModal(null);
-    refreshActive();
+    // Defer queue advance so ws.send() completes first, avoiding a race
+    // where the server processes the cancel and immediately issues the next
+    // ctx.ui.select() before the stdin write for this cancel is flushed.
+    queueMicrotask(() => refreshActive());
   }
 
   const totalPending = Array.from(pendingCounts.values()).reduce((a, b) => a + b, 0);
+
+  /** English pending banner text — exported for test stability */
+  const PENDING_BANNER_TEXT = (n: number) =>
+    `⏳ ${n} pending question${n !== 1 ? "s" : ""}`;
 
   return (
     <>
@@ -133,7 +143,7 @@ export function AskUserQuestionProvider({ children }: { children: ReactNode }) {
           className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-3 py-1 bg-yellow-100 border border-yellow-300 rounded-full text-xs text-yellow-800 shadow"
           data-testid="ask-user-question-pending"
         >
-          ⏳ 还有 {totalPending} 个未答
+          {PENDING_BANNER_TEXT(totalPending)}
         </div>
       )}
     </>
