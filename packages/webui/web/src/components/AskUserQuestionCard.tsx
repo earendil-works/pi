@@ -8,6 +8,13 @@ export interface CardState {
   status: 'active' | 'disabled' | 'timeout';
   selected?: string;
   sessionId: string;
+  /**
+   * The pi rpc-mode `extension_ui_request.id` (a UUID generated when the
+   * dialog opened) — used as the id when sending `extension_ui_response`
+   * back, because the server's `pendingExtensionRequests` map is keyed by
+   * that UUID, not by the toolCall id.
+   */
+  requestId?: string;
 }
 
 export interface AskUserQuestionCardProps {

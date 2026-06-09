@@ -63,6 +63,14 @@ async function renderChatPage(
   return mocks;
 }
 
+function lastWsSend(mock: ReturnType<typeof createWsMock>, type: string): any | undefined {
+  for (let i = mock.send.mock.calls.length - 1; i >= 0; i--) {
+    const call = mock.send.mock.calls[i];
+    if (call && call[0] && (call[0] as any).type === type) return call[0];
+  }
+  return undefined;
+}
+
 describe("ChatPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -637,7 +645,11 @@ describe("ChatPage", () => {
       const handler = capturedHandlers.get("session_event");
       expect(handler).toBeDefined();
 
-      // Turn 1: toolCall + extension_ui_request (single-select)
+      // Turn 1: toolCall + extension_ui_request (single-select).
+      // Note: extension_ui_request uses a random UUID, NOT the toolCall id.
+      // The webui matches by recency (most recent unmatched ask_user_question
+      // toolCall), since the rpc-mode generates a fresh UUID for the dialog
+      // (packages/coding-agent/src/modes/rpc/rpc-mode.ts:98, 254).
       act(() => {
         handler!({
           sessionId: "test-session-1",
@@ -657,7 +669,7 @@ describe("ChatPage", () => {
         handler!({
           sessionId: "test-session-1",
           event: {
-            type: "extension_ui_request", id: "tc-1", method: "select",
+            type: "extension_ui_request", id: "uuid-1", method: "select",
             title: "Q1?", options: ["A", "B"],
           },
         });
@@ -687,7 +699,7 @@ describe("ChatPage", () => {
         handler!({
           sessionId: "test-session-1",
           event: {
-            type: "extension_ui_request", id: "tc-2", method: "input",
+            type: "extension_ui_request", id: "uuid-2", method: "input",
             title: "Q2?", placeholder: "X | Y | Z",
           },
         });
@@ -721,6 +733,84 @@ describe("ChatPage", () => {
       });
       // Q2 still active (no result text)
       expect(screen.queryByText(/你的选择:.*Y/)).toBeNull();
+    });
+
+    // Regression: pi rpc-mode generates a fresh `crypto.randomUUID()` for
+    // `extension_ui_request.id` (rpc-mode.ts:98, 254). The toolCall in the
+    // message content has its own id (e.g. `call_00_...`). The webui's
+    // match-by-id code (pre-fix) tried to find a toolCall whose id === e.id,
+    // which never matches in the real protocol — so the multi-select card
+    // (method="input" has no options in the event payload) failed to render
+    // and the model hung waiting for a user response that could never be
+    // submitted. The fix: match by recency, picking the most recent
+    // ask_user_question toolCall in any assistant message.
+    it("multi-select card renders when extension_ui_request id is a UUID unrelated to toolCall id", async () => {
+      const mocks = await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Real toolCall message arrives first (matches the production flow).
+      // The toolCall id is a `call_00_...` style; the extension_ui_request
+      // id is a fresh UUID with no relationship to the toolCall id.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              id: "m-1", role: "assistant",
+              content: [{
+                type: "toolCall", id: "call_00_real_id", name: "ask_user_question",
+                arguments: {
+                  question: "Pick fruits",
+                  options: ["Apple", "Banana", "Cherry"],
+                  multiSelect: true,
+                },
+              }],
+            },
+          },
+        });
+      });
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "a-completely-different-uuid",
+            method: "input",
+            title: "Pick fruits",
+            placeholder: "Apple | Banana | Cherry (comma-separated)",
+          },
+        });
+      });
+
+      // The card must render (pre-fix this hung because the id-based lookup
+      // couldn't find the toolCall).
+      await waitFor(() => {
+        expect(screen.getByText("Pick fruits")).toBeInTheDocument();
+      });
+      // Multi-select input box + submit button must be present.
+      const input = screen.getByPlaceholderText("输入选项编号,逗号分隔");
+      expect(input).toBeInTheDocument();
+      const submit = screen.getByRole("button", { name: "提交" });
+      expect(submit).toBeInTheDocument();
+
+      // User types "1, 3" and submits. The submit handler must echo back
+      // to the request id (the UUID), not the toolCall id — that's what
+      // the server's pendingExtensionRequests map is keyed by.
+      fireEvent.change(input, { target: { value: "1, 3" } });
+      fireEvent.click(submit);
+
+      // The captured ws.send should have been called with
+      //   { type: "extension_ui_response", id: <UUID>, value: "Apple, Cherry" }
+      const responseCall = lastWsSend(mocks.ws, "extension_ui_response");
+      expect(responseCall).toBeDefined();
+      expect(responseCall.id).toBe("a-completely-different-uuid");
+      expect(responseCall.value).toBe("Apple, Cherry");
     });
 
     // Regression: the server emits many extension_ui_request events for

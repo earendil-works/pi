@@ -278,70 +278,136 @@ export default function ChatPage() {
         let question = (e as any).question ?? (e as any).title ?? "";
         // Find the tool call in current messages, via setMessages(prev => ...)
         // so we read the latest state, not the closure-captured value.
+        //
+        // CRITICAL: The pi rpc-mode generates a fresh `crypto.randomUUID()` for
+        // `extension_ui_request.id` (see packages/coding-agent/src/modes/rpc/
+        // rpc-mode.ts:98, 254). This UUID has NO relationship to the toolCall
+        // id (e.g. `call_00_...`) recorded in the message content. Matching
+        // `e.id` to a toolCall.id would never find the right call. The correct
+        // match is by recency: walk the messages in reverse and pick the most
+        // recent `ask_user_question` toolCall in any assistant message that
+        // does NOT already have a cardState.
         setMessages(prevMsgs => {
-          for (const m of prevMsgs) {
-            const tc = m.parts.find(
-              p => p.type === "toolCall" && (p as any).id === e.id,
-            ) as { args?: Record<string, unknown> } | undefined;
-            if (tc) {
-              const args = (tc.args ?? {}) as Record<string, unknown>;
+          let matchedToolCallId: string | null = null;
+          for (let i = prevMsgs.length - 1; i >= 0; i--) {
+            const m = prevMsgs[i];
+            if (m.role !== "assistant") continue;
+            for (let j = m.parts.length - 1; j >= 0; j--) {
+              const p = m.parts[j];
+              if (p.type !== "toolCall") continue;
+              if (p.name !== "ask_user_question") continue;
+              const tcId = (p as any).id as string;
+              // Found the most recent unmatched ask_user_question toolCall.
+              const args = ((p as any).args ?? {}) as Record<string, unknown>;
               question = question || (args.question as string) || "";
               options = normalizeOptions(args.options);
               multiSelect = args.multiSelect === true;
+              matchedToolCallId = tcId;
               break;
             }
+            if (matchedToolCallId) break;
           }
-          // Fallback: read options from event (for method="select")
+          // Fallback: read options from event (for method="select" which does
+          // include options in the request event payload).
           if (options.length < 2) {
             options = normalizeOptions((e as any).options);
           }
-          // Fallback: if e.method is "input", it's multi
+          // Fallback: if e.method is "input", it's multi-select.
           if ((e as any).method === "input") multiSelect = true;
 
-          if (options.length < 2) {
-            // Can't render a card with < 2 options — but still need to ensure
-            // a toolCall part exists so the (failed) toolCall is visible.
-          } else {
+          if (options.length >= 2) {
+            // Key the cardState by the toolCall id when we matched one
+            // (so ToolGroup can look it up via part.id). When no toolCall
+            // matched (e.g. extension_ui_request raced ahead of message_end,
+            // or the test doesn't pre-populate messages), key by the request
+            // UUID and rely on the synthetic message below.
+            const cardKey = matchedToolCallId ?? e.id;
             const card: CardState = {
-              id: e.id,
+              id: cardKey,
               question,
               options,
               multiSelect,
               status: "active",
-              sessionId: id,
+              sessionId: id!,
             };
-            setCardStates(cardPrev => new Map(cardPrev).set(e.id, card));
+            (card as any).requestId = e.id;
+            setCardStates(cardPrev => {
+              // Skip if there's already a card for this key — protects
+              // against re-entry (e.g. an earlier request event arriving
+              // after a later one due to WS event ordering, or the model
+              // looping on the same call). Replacing the card mid-flight
+              // would clobber the user's in-progress input.
+              if (cardPrev.has(cardKey)) return cardPrev;
+              const next = new Map(cardPrev);
+              next.set(cardKey, card);
+              return next;
+            });
           }
           // Ensure there's an assistant message with a matching toolCall part
           // so the card is rendered by ToolGroup. In the real server flow the
           // message events arrive before extension_ui_request; in tests they
           // may not, so we create a synthetic message if none exists yet.
+          // Use matchedToolCallId (if we found one) so the synthetic part
+          // carries the same id the card is keyed by.
+          if (matchedToolCallId) return prevMsgs;
+          const syntheticId = e.id;
           const hasMessage = prevMsgs.some(m =>
-            m.parts.some(p => (p as any).type === "toolCall" && (p as any).id === e.id),
+            m.parts.some(p => (p as any).type === "toolCall" && (p as any).id === syntheticId),
           );
           if (hasMessage) return prevMsgs;
+          // Populate the synthetic part's args from the event so the card can
+          // render even when the real toolCall message hasn't arrived (tests,
+          // edge case where extension_ui_request races ahead of message_end).
+          // In production this path is rare because the server emits the
+          // message_end before the extension_ui_request.
+          const syntheticArgs: Record<string, unknown> = {};
+          if (typeof (e as any).question === "string") syntheticArgs.question = (e as any).question;
+          if (typeof (e as any).title === "string" && !syntheticArgs.question) syntheticArgs.question = (e as any).title;
+          if (Array.isArray((e as any).options)) {
+            // method="select" carries the options in the event
+            const evOpts = (e as any).options;
+            if (evOpts.length > 0 && typeof evOpts[0] === "object") {
+              syntheticArgs.options = evOpts;
+            } else {
+              syntheticArgs.options = evOpts.map((o: unknown) => ({ label: String(o) }));
+            }
+          }
+          if ((e as any).method === "input") syntheticArgs.multiSelect = true;
           return [...prevMsgs, {
             id: crypto.randomUUID(),
             sessionId: id!,
             role: "assistant" as const,
-            parts: [{ type: "toolCall" as const, id: e.id, name: "ask_user_question", args: {} }],
+            parts: [{ type: "toolCall" as const, id: syntheticId, name: "ask_user_question", args: syntheticArgs }],
             timestamp: new Date().toISOString(),
           }];
         });
       } else if (e.type === "tool_execution_end" && e.toolName === "ask_user_question") {
         setCardStates(prev => {
           const next = new Map(prev);
-          for (const [cardId, card] of next) {
-            if (card.sessionId === id && card.status === "active") {
-              const content = e.result || "";
-              const isTimeout = content.includes("cancelled") || content.includes("timeout") || content.includes("timed out");
-              next.set(cardId, {
-                ...card,
-                status: isTimeout ? "timeout" : "disabled",
-                selected: isTimeout ? undefined : content.replace("User selected: ", ""),
-              });
-              break;
+          // Match by toolCallId when the event provides it — that's the
+          // authoritative toolCall that just finished. Fall back to the first
+          // active card in this session if not provided.
+          const tcId = (e as any).toolCallId;
+          let targetId: string | null = null;
+          if (typeof tcId === "string" && next.has(tcId)) {
+            targetId = tcId;
+          } else {
+            for (const [cardId, card] of next) {
+              if (card.sessionId === id && card.status === "active") {
+                targetId = cardId;
+                break;
+              }
             }
+          }
+          if (targetId) {
+            const card = next.get(targetId)!;
+            const content = e.result || "";
+            const isTimeout = content.includes("cancelled") || content.includes("timeout") || content.includes("timed out");
+            next.set(targetId, {
+              ...card,
+              status: isTimeout ? "timeout" : "disabled",
+              selected: isTimeout ? undefined : content.replace("User selected: ", ""),
+            });
           }
           return next;
         });
@@ -487,11 +553,17 @@ export default function ChatPage() {
   }, []);
 
   const handleCardSubmit = (toolCallId: string, value: string) => {
-    ws?.send({ type: "extension_ui_response", id: toolCallId, value });
+    // The card stores the original `extension_ui_request.id` (a random UUID
+    // generated by pi rpc-mode) as `requestId`. The server's
+    // pendingExtensionRequests map is keyed by that UUID, so we must echo it
+    // back here — not the toolCallId. See packages/coding-agent/src/modes/
+    // rpc/rpc-mode.ts:98 for where the UUID is generated.
     setCardStates(prev => {
       const next = new Map(prev);
       const card = next.get(toolCallId);
       if (card) {
+        const requestId = (card as any).requestId ?? toolCallId;
+        ws?.send({ type: "extension_ui_response", id: requestId, value });
         next.set(toolCallId, { ...card, status: "disabled", selected: value });
       }
       return next;
@@ -499,11 +571,12 @@ export default function ChatPage() {
   };
 
   const handleCardCancel = (toolCallId: string) => {
-    ws?.send({ type: "extension_ui_response", id: toolCallId, value: "" });
     setCardStates(prev => {
       const next = new Map(prev);
       const card = next.get(toolCallId);
       if (card) {
+        const requestId = (card as any).requestId ?? toolCallId;
+        ws?.send({ type: "extension_ui_response", id: requestId, value: "" });
         next.set(toolCallId, { ...card, status: "timeout" });
       }
       return next;
