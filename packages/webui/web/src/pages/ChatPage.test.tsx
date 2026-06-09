@@ -386,6 +386,7 @@ describe("ChatPage", () => {
           event: {
             type: "extension_ui_request",
             id: "abc",
+            method: "select",
             question: "Your favorite color?",
             options: [{ label: "红色" }, { label: "蓝色" }],
             multiSelect: false,
@@ -414,6 +415,7 @@ describe("ChatPage", () => {
           event: {
             type: "extension_ui_request",
             id: "abc",
+            method: "select",
             question: "Your favorite color?",
             options: [{ label: "红色" }, { label: "蓝色" }],
             multiSelect: false,
@@ -459,6 +461,7 @@ describe("ChatPage", () => {
           event: {
             type: "extension_ui_request",
             id: "abc",
+            method: "select",
             question: "Your favorite color?",
             options: [{ label: "红色" }, { label: "蓝色" }],
             multiSelect: false,
@@ -513,6 +516,7 @@ describe("ChatPage", () => {
           event: {
             type: "extension_ui_request",
             id: "tc-1",
+            method: "select",
             question: "你最喜欢哪种水果?",
             options: [{ label: "苹果" }, { label: "香蕉" }],
             multiSelect: false,
@@ -717,6 +721,54 @@ describe("ChatPage", () => {
       });
       // Q2 still active (no result text)
       expect(screen.queryByText(/你的选择:.*Y/)).toBeNull();
+    });
+
+    // Regression: the server emits many extension_ui_request events for
+    // methods other than select/input (setTitle, setStatus, set_editor_text,
+    // setWidget, notify). These should be ignored — the card logic must
+    // only fire for select/input. Otherwise each fire-and-forget event
+    // creates a phantom synthetic ask_user_question toolCall in state.
+    it("ignores extension_ui_request with method other than select/input (no synthetic message)", async () => {
+      await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Emit 4 fire-and-forget events that must all be ignored
+      for (const ev of [
+        { type: "extension_ui_request", id: "st-1", method: "setTitle", title: "X" },
+        { type: "extension_ui_request", id: "st-2", method: "setStatus", statusKey: "k", statusText: "t" },
+        { type: "extension_ui_request", id: "st-3", method: "set_editor_text", text: "x" },
+        { type: "extension_ui_request", id: "st-4", method: "notify", message: "y" },
+      ]) {
+        act(() => {
+          handler!({ sessionId: "test-session-1", event: ev });
+        });
+      }
+
+      // No "ask_user_question" tool call button should appear in the UI
+      // from any of these events.
+      expect(screen.queryByRole("button", { name: /ask_user_question/ })).toBeNull();
+
+      // Now emit a real select event — the card should appear normally.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "tc-real",
+            method: "select",
+            title: "Q?",
+            options: ["A", "B"],
+          },
+        });
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Q?")).toBeInTheDocument();
+      });
     });
   });
 

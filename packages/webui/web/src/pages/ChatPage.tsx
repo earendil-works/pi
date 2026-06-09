@@ -264,6 +264,11 @@ export default function ChatPage() {
           setIsThinking(true);
         }
       } else if (e.type === "extension_ui_request") {
+        // Filter: only handle "select" and "input" methods (the ones that
+        // produce a card). Other methods (setTitle, setStatus, setWidget,
+        // set_editor_text, notify) are fire-and-forget and don't need a card.
+        const m = (e as any).method;
+        if (m !== "select" && m !== "input") return;
         // Source options + multiSelect from the matching toolCall args, not
         // from the request event. For method="input" (multi-select), the
         // event has no options field — only the tool call args do.
