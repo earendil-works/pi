@@ -54,7 +54,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts 2>&1 | tail -5`,应 `Test Files 1 passed (1)` + `Tests 19 passed (19)`(11 normalizeOptions + 2 formatOption + 6 execute)
   - **依赖**: 1.5
 
-- [ ] 1.7 **挂上 extension entry**
+- [x] 1.7 **挂上 extension entry**
   - **文件**: `extensions/personal-assistant/index.ts` (Modify — 加 1 import + 1 调用)
   - **内容**: `import { registerAskUserQuestion } from "./ask_user_question.ts";`;在 `export default function (pi) { ... }` 内 `registerAskUserQuestion(pi);`
   - **验证**: `cd extensions/personal-assistant && npx vitest run 2>&1 | tail -3`,应 `Test Files 7 passed (7)` + `Tests 143 passed (143)`(原 124 + 新 19)
