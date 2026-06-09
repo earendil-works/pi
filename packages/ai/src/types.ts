@@ -473,6 +473,11 @@ export interface AnthropicMessagesCompat {
 	 * Default: false.
 	 */
 	forceAdaptiveThinking?: boolean;
+	/**
+	 * Whether adaptive thinking applies when `thinking` is omitted and
+	 * `thinking.type: "disabled"` is rejected. Default: false.
+	 */
+	alwaysAdaptiveThinking?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
 }

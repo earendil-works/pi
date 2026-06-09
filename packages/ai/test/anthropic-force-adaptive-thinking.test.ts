@@ -100,4 +100,18 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
 	});
+
+	it("omits disabled thinking for always-adaptive models when reasoning is unset", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"));
+
+		expect(payload.thinking).toBeUndefined();
+		expect(payload.output_config).toBeUndefined();
+	});
+
+	it("maps Fable 5 xhigh reasoning to adaptive xhigh effort", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), { reasoning: "xhigh" });
+
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "xhigh" });
+	});
 });

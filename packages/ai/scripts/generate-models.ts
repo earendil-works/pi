@@ -223,8 +223,14 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 	return model.api === "google-generative-ai" || model.api === "google-vertex";
 }
 
+function isAnthropicAlwaysAdaptiveThinkingModel(modelId: string): boolean {
+	const id = modelId.toLowerCase();
+	return id.includes("fable-5") || id.includes("mythos-5") || id.includes("mythos-preview");
+}
+
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		isAnthropicAlwaysAdaptiveThinkingModel(modelId) ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -238,7 +244,13 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
+	return (
+		isAnthropicAlwaysAdaptiveThinkingModel(id) ||
+		id.includes("opus-4-7") ||
+		id.includes("opus-4.7") ||
+		id.includes("opus-4-8") ||
+		id.includes("opus-4.8")
+	);
 }
 
 function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {
@@ -287,6 +299,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		mergeThinkingLevelMap(model, { xhigh: "max" });
 	}
 	if (
+		isAnthropicAlwaysAdaptiveThinkingModel(model.id) ||
 		model.id.includes("opus-4-7") ||
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
@@ -296,6 +309,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
+	}
+	if (model.api === "anthropic-messages" && isAnthropicAlwaysAdaptiveThinkingModel(model.id)) {
+		mergeThinkingLevelMap(model, { off: null });
+		mergeAnthropicMessagesCompat(model, { alwaysAdaptiveThinking: true });
 	}
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
@@ -1484,6 +1501,48 @@ async function generateModels() {
 			},
 			contextWindow: 1000000,
 			maxTokens: 64000,
+		});
+	}
+
+	// Fallback for generated catalogs that do not include Claude Fable 5 yet.
+	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-fable-5")) {
+		allModels.push({
+			id: "claude-fable-5",
+			name: "Claude Fable 5",
+			api: "anthropic-messages",
+			baseUrl: "https://api.anthropic.com",
+			provider: "anthropic",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 10,
+				output: 50,
+				cacheRead: 1,
+				cacheWrite: 12.5,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
+	// Fallback for generated catalogs that do not include Claude Mythos 5 yet.
+	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-mythos-5")) {
+		allModels.push({
+			id: "claude-mythos-5",
+			name: "Claude Mythos 5",
+			api: "anthropic-messages",
+			baseUrl: "https://api.anthropic.com",
+			provider: "anthropic",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 10,
+				output: 50,
+				cacheRead: 1,
+				cacheWrite: 12.5,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
 		});
 	}
 

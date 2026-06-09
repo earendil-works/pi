@@ -177,6 +177,7 @@ function getAnthropicCompat(
 			model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic),
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
+		alwaysAdaptiveThinking: model.compat?.alwaysAdaptiveThinking ?? false,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 	};
 }
@@ -216,9 +217,10 @@ export interface AnthropicOptions extends StreamOptions {
 	 *   signature still travels back for multi-turn continuity. Use for faster
 	 *   time-to-first-text-token when your UI does not surface thinking.
 	 *
-	 * Note: Anthropic's API default for Claude Opus 4.7 and Claude Mythos Preview
-	 * is "omitted". We default to "summarized" here to keep behavior consistent
-	 * with older Claude 4 models. Set this explicitly to "omitted" to opt in.
+	 * Note: Anthropic's API default for Claude Fable 5, Claude Mythos 5,
+	 * Claude Opus 4.8, Claude Opus 4.7, and Claude Mythos Preview is "omitted".
+	 * We default to "summarized" here to keep behavior consistent with older
+	 * Claude 4 models. Set this explicitly to "omitted" to opt in.
 	 * Default: "summarized" when thinking is enabled.
 	 */
 	thinkingDisplay?: AnthropicThinkingDisplay;
@@ -745,7 +747,10 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 
 	const base = buildBaseOptions(model, options, apiKey);
 	if (!options?.reasoning) {
-		return streamAnthropic(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+		return streamAnthropic(model, context, {
+			...base,
+			...(getAnthropicCompat(model).alwaysAdaptiveThinking ? {} : { thinkingEnabled: false }),
+		} satisfies AnthropicOptions);
 	}
 
 	// For models with adaptive thinking: use an effort level.
@@ -932,8 +937,13 @@ function buildParams(
 		];
 	}
 
-	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.
-	if (options?.temperature !== undefined && !options?.thinkingEnabled && compat.supportsTemperature) {
+	// Temperature is incompatible with active thinking and unsupported on Claude Opus 4.7+.
+	if (
+		options?.temperature !== undefined &&
+		!options?.thinkingEnabled &&
+		!compat.alwaysAdaptiveThinking &&
+		compat.supportsTemperature
+	) {
 		params.temperature = options.temperature;
 	}
 
@@ -949,8 +959,8 @@ function buildParams(
 	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.
 	if (model.reasoning) {
 		if (options?.thinkingEnabled) {
-			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
-			// older Claude 4 models (whose API default is also "summarized").
+			// Default to "summarized" so Fable 5, Mythos 5, Opus 4.8,
+			// Opus 4.7, and Mythos Preview behave like older Claude 4 models.
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
 			if (model.compat?.forceAdaptiveThinking === true) {
 				// Adaptive thinking: Claude decides when and how much to think.
@@ -972,7 +982,7 @@ function buildParams(
 					display,
 				};
 			}
-		} else if (options?.thinkingEnabled === false) {
+		} else if (options?.thinkingEnabled === false && !compat.alwaysAdaptiveThinking) {
 			params.thinking = { type: "disabled" };
 		}
 	}
@@ -1072,11 +1082,17 @@ function convertMessages(
 						});
 						continue;
 					}
-					if (block.thinking.trim().length === 0) continue;
+					const thinkingSignature = block.thinkingSignature;
+					const hasThinkingText = block.thinking.trim().length > 0;
+					const hasThinkingSignature =
+						typeof thinkingSignature === "string" && thinkingSignature.trim().length > 0;
+					if (!hasThinkingText && !hasThinkingSignature) {
+						continue;
+					}
 					// If thinking signature is missing/empty (e.g., from aborted stream),
 					// convert to plain text for Anthropic. Some compatible providers emit
 					// and accept empty signatures, so let marked models preserve the block.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+					if (!hasThinkingSignature) {
 						blocks.push(
 							allowEmptySignature
 								? {
@@ -1093,7 +1109,7 @@ function convertMessages(
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
+							signature: thinkingSignature,
 						});
 					}
 				} else if (block.type === "toolCall") {

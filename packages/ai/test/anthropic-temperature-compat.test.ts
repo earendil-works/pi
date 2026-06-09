@@ -78,6 +78,12 @@ describe("Anthropic temperature compatibility", () => {
 		expect(payload.temperature).toBeUndefined();
 	});
 
+	it("omits temperature for always-adaptive Claude Fable 5", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), { temperature: 0 });
+
+		expect(payload.temperature).toBeUndefined();
+	});
+
 	it("omits default temperature for Claude Opus 4.7", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"), { temperature: 1 });
 
