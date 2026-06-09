@@ -453,6 +453,90 @@ describe("ChatPage", () => {
       });
     });
 
+    // Regression: the real pi agent runtime returns the tool's return value
+    // as the `result` field of `tool_execution_end`. ask_user_question returns
+    // `{content: [{type:"text", text:"..."}], details: {...}}` — NOT a string.
+    // The previous code did `e.result.includes(...)` directly, which threw
+    // `TypeError: content.includes is not a function` and unmounted the whole
+    // ChatPage (visible as the page going blank right after submit). The
+    // page was effectively unrendered until a manual reload, which the user
+    // perceived as "the page refreshes itself after click submit".
+    it("tool_execution_end with object-shape result (real protocol) does not crash the page", async () => {
+      const mocks = await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+
+      // Step 1: real-protocol extension_ui_request (UUID id, no options in
+      // event payload for method="input"). The card should render.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "message_end",
+            message: {
+              id: "m-1", role: "assistant",
+              content: [{
+                type: "toolCall", id: "tc-real", name: "ask_user_question",
+                arguments: {
+                  question: "Fruits?",
+                  options: ["Apple", "Banana", "Cherry"],
+                  multiSelect: true,
+                },
+              }],
+            },
+          },
+        });
+      });
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "extension_ui_request",
+            id: "uuid-real",
+            method: "input",
+            title: "Fruits?",
+            placeholder: "Apple | Banana | Cherry (comma-separated)",
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Fruits?")).toBeInTheDocument();
+      });
+
+      // Step 2: real-protocol tool_execution_end with result as the
+      // canonical `{content: [{type:"text", text:"..."}], details: ...}`
+      // object. The OLD code crashed with
+      // "content.includes is not a function" here.
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: {
+            type: "tool_execution_end",
+            toolCallId: "tc-real",
+            toolName: "ask_user_question",
+            result: {
+              content: [{ type: "text", text: "User selected: Apple, Cherry (multi-select)" }],
+              details: { selected: ["Apple", "Cherry"], multiSelect: true },
+            },
+            isError: false,
+          },
+        });
+      });
+
+      // The page must still be rendered (the bug unmounted the whole ChatPage).
+      // The card must show the result text — extracted from result.content[0].text.
+      await waitFor(() => {
+        expect(screen.getByText(/你的选择:.*Apple, Cherry/)).toBeInTheDocument();
+      });
+      // Sanity: the input box is gone (card is now disabled, not interactive).
+      expect(screen.queryByPlaceholderText("输入选项编号,逗号分隔")).toBeNull();
+    });
+
     it("receives tool_execution_end with different toolName keeps card active", async () => {
       await renderChatPage("test-session-1");
       await waitFor(() => {

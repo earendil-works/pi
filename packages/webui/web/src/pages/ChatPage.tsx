@@ -401,12 +401,27 @@ export default function ChatPage() {
           }
           if (targetId) {
             const card = next.get(targetId)!;
-            const content = e.result || "";
-            const isTimeout = content.includes("cancelled") || content.includes("timeout") || content.includes("timed out");
+            // Extract the human-readable result text. The pi agent tool
+            // runtime returns `{content: [{type:"text", text:"..."}],
+            // details: {...}}` — the OLD code assumed `e.result` was a
+            // string, which crashed with "content.includes is not a function"
+            // and unmounted the entire ChatPage (visible as the page going
+            // blank right after submit). Handle both the canonical
+            // content-array shape and the legacy string shape so we don't
+            // break older test fixtures either.
+            const result = (e as any).result;
+            let text = "";
+            if (typeof result === "string") {
+              text = result;
+            } else if (result && typeof result === "object") {
+              const first = Array.isArray(result.content) ? result.content[0] : undefined;
+              if (first && typeof first.text === "string") text = first.text;
+            }
+            const isTimeout = text.includes("cancelled") || text.includes("timeout") || text.includes("timed out");
             next.set(targetId, {
               ...card,
               status: isTimeout ? "timeout" : "disabled",
-              selected: isTimeout ? undefined : content.replace("User selected: ", ""),
+              selected: isTimeout ? undefined : text.replace("User selected: ", ""),
             });
           }
           return next;
