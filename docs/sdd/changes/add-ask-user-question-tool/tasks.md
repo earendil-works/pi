@@ -30,7 +30,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "normalizeOptions" 2>&1 | grep -E "✓|×" | wc -l`,应 ≥ 8(8 个 normalizeOptions 子测试全 GREEN)
   - **依赖**: 1.1
 
-- [ ] 1.3 **写 `formatOptionForSelect` 单元测试**
+- [x] 1.3 **写 `formatOptionForSelect` 单元测试**
   - **文件**: `extensions/personal-assistant/test/ask-user-question.test.ts` (Modify — 追加)
   - **内容**: 测试仅 label / label+description 两种输入
   - **验证**: 同 1.2,grep 计数应 +2(加 2 个 formatOptionForSelect 子测试)
@@ -42,7 +42,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "formatOptionForSelect" 2>&1 | grep "✓" | wc -l` 应 = 2
   - **依赖**: 1.3
 
-- [ ] 1.5 **写 `registerAskUserQuestion` + execute 测试 (mock pi)**
+- [x] 1.5 **写 `registerAskUserQuestion` + execute 测试 (mock pi)**
   - **文件**: `extensions/personal-assistant/test/ask-user-question.test.ts` (Modify — 追加)
   - **内容**: 测 tool registration(name="ask_user_question" 调一次 pi.registerTool);execute 的 8 个场景: 单选 happy / multi happy / cancel / options=1 / options=5 / options=4 合法 / multiSelect+1option / 缺 question / 嵌套畸形
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/ask-user-question.test.ts -t "execute" 2>&1 | grep "failed"` 应有 failed(RED)
