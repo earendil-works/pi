@@ -477,64 +477,13 @@ export function registerCron(pi: ExtensionAPI): void {
 		},
 	});
 
-	// Check overdue jobs on session start
-	pi.on("session_start", async (_event, ctx) => {
-		const jobs = loadJobs();
-		const now = new Date();
-		const overdueJobs: CronJob[] = [];
-
-		for (const job of jobs) {
-			if (isOverdue(job, now)) {
-				overdueJobs.push(job);
-			}
-		}
-
-		if (overdueJobs.length === 0) {
-			return;
-		}
-
-		// Update last_run timestamps and set status to ok
-		const updatedJobs = jobs.map((job) => {
-			if (overdueJobs.some((o) => o.id === job.id)) {
-				return { ...job, last_run: now.toISOString(), last_run_status: "ok" as const };
-			}
-			return job;
-		});
-		saveJobs(updatedJobs);
-
-		// Notify about overdue jobs
-		const jobList = overdueJobs
-			.map((j) => `- ${j.name}: ${j.prompt}`)
-			.join("\n");
-
-		const message = `Scheduled tasks due:\n${jobList}`;
-
-		if (ctx.hasUI) {
-			ctx.ui.notify(message, "info");
-		}
-
-		// Send prompts for each overdue job
-		const failedJobIds: string[] = [];
-		for (const job of overdueJobs) {
-			try {
-				await pi.sendUserMessage(`[Scheduled task: ${job.name}] ${job.prompt}`, {
-					deliverAs: "followUp",
-				});
-			} catch {
-				failedJobIds.push(job.id);
-			}
-		}
-
-		// Update status to error for jobs that failed
-		if (failedJobIds.length > 0) {
-			const allJobs = loadJobs();
-			const reSavedJobs = allJobs.map((job) => {
-				if (failedJobIds.includes(job.id)) {
-					return { ...job, last_run_status: "error" as const };
-				}
-				return job;
-			});
-			saveJobs(reSavedJobs);
-		}
-	});
+	// NOTE: A previous implementation called pi.sendUserMessage on every
+	// session_start for each overdue job. That made every new pi session
+	// re-trigger any overdue "every N seconds" cron job, creating duplicate
+	// TUI sessions in the webui sidebar and unnecessary LLM calls. The
+	// correct design is: cron is time-driven (a separate background
+	// scheduler, planned in change "add-cron-time-scheduler" that mirrors
+	// nanobot's CronService). For now, session_start is intentionally a
+	// no-op for cron — use the webui cron UI's "Trigger Now" button to
+	// run a job manually.
 }

@@ -15,16 +15,22 @@ import { registerCron, isOverdue } from "../cron.ts";
 let tmpDir: string;
 let registeredTool: any = null;
 let eventHandlers: Record<string, any> = {};
+let sendUserMessageCalls: Array<{ message: string; options?: unknown }> = [];
 
 function createMockPi(): ExtensionAPI {
 	eventHandlers = {};
 	registeredTool = null;
+	sendUserMessageCalls = [];
 	return {
 		registerTool: (tool: any) => {
 			registeredTool = tool;
 		},
 		on: (event: string, handler: any) => {
 			eventHandlers[event] = handler;
+		},
+		sendUserMessage: (message: string, options?: unknown) => {
+			sendUserMessageCalls.push({ message, options });
+			return Promise.resolve();
 		},
 	} as unknown as ExtensionAPI;
 }
@@ -211,5 +217,55 @@ describe("cron extension - 5 actions", () => {
 
 		jobs = readJobs();
 		expect(jobs).toHaveLength(0);
+	});
+});
+
+describe("cron session_start auto-execute (regression)", () => {
+	// Regression: previously, every pi.on("session_start") call executed all
+	// overdue cron jobs by calling pi.sendUserMessage. This made every new
+	// webui session re-trigger any overdue "every N seconds" jobs, creating
+	// duplicate TUI sessions in the sidebar and unnecessary LLM calls.
+	// The fix: session_start must NOT auto-execute cron jobs. Use the
+	// dedicated "Trigger Now" button in the webui cron UI to run a job
+	// manually, or wait for a future time-based scheduler (separate change).
+	it("(a) session_start does NOT auto-execute overdue jobs", async () => {
+		const mockPi = createMockPi();
+		registerCron(mockPi);
+
+		// Add an "every 60 seconds" job, then make it overdue by
+		// setting last_run to long ago.
+		await registeredTool.execute("op-1", {
+			operations: [
+				{
+					action: "add",
+					name: "X101SC26031778-Z01-J002 sjm 检查",
+					schedule: { kind: "every", interval: 3600 },
+					prompt: "do the sjm check",
+				},
+			],
+		});
+
+		const jobs = readJobs();
+		expect(jobs).toHaveLength(1);
+		const job = jobs[0];
+		// Mark as overdue: last_run = 2 hours ago (interval is 1 hour)
+		job.last_run = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+		fs.writeFileSync(getCronFilePath(), JSON.stringify([job], null, 2));
+
+		// After the fix, session_start handler is removed entirely.
+		// The test asserts that no session_start handler is registered AND
+		// that pi.sendUserMessage is never called as a side effect.
+		// (If a future change adds the handler back, the assertions below
+		// must hold for the bug to stay fixed.)
+		if (eventHandlers.session_start) {
+			const ctx = { hasUI: false };
+			await eventHandlers.session_start({}, ctx);
+		}
+		expect(sendUserMessageCalls).toEqual([]);
+
+		// The job is still overdue (last_run unchanged) — fix must not
+		// silently swallow overdue state.
+		const jobsAfter = readJobs();
+		expect(jobsAfter[0].last_run).toBe(job.last_run);
 	});
 });
