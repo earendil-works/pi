@@ -165,7 +165,7 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "defaultThinkingEnabled">> {
 	// Auto-detect session affinity and cache control support from provider
 	const isFireworks = model.provider === "fireworks";
 	const isCloudflareAiGatewayAnthropic =
@@ -745,7 +745,10 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 
 	const base = buildBaseOptions(model, options, apiKey);
 	if (!options?.reasoning) {
-		return streamAnthropic(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+		// Some models (e.g. MiniMax-M3) return an empty response unless thinking
+		// is enabled, so honor a per-model default when the caller picked no level.
+		const thinkingEnabled = model.compat?.defaultThinkingEnabled === true;
+		return streamAnthropic(model, context, { ...base, thinkingEnabled } satisfies AnthropicOptions);
 	}
 
 	// For models with adaptive thinking: use an effort level.

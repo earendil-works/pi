@@ -298,6 +298,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
 	}
+	if (model.api === "anthropic-messages" && model.id.toLowerCase().includes("minimax-m3")) {
+		// MiniMax-M3 returns an empty response unless thinking is enabled.
+		mergeAnthropicMessagesCompat(model, { defaultThinkingEnabled: true });
+	}
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}

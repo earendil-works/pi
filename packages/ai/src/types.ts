@@ -473,6 +473,14 @@ export interface AnthropicMessagesCompat {
 	 * Default: false.
 	 */
 	forceAdaptiveThinking?: boolean;
+	/**
+	 * Whether to enable thinking by default when the caller requests no
+	 * reasoning level. Models like MiniMax-M3 return an empty response unless
+	 * thinking is enabled, so they set this in generated metadata. An explicit
+	 * reasoning level (or `reasoning: "off"`) still takes precedence.
+	 * Default: false.
+	 */
+	defaultThinkingEnabled?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
 }

@@ -5715,6 +5715,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "minimax",
 			baseUrl: "https://api.minimax.io/anthropic",
+			compat: {"defaultThinkingEnabled":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -5768,6 +5769,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "minimax-cn",
 			baseUrl: "https://api.minimaxi.com/anthropic",
+			compat: {"defaultThinkingEnabled":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -8695,6 +8697,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "opencode-go",
 			baseUrl: "https://opencode.ai/zen/go",
+			compat: {"defaultThinkingEnabled":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -14753,6 +14756,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "vercel-ai-gateway",
 			baseUrl: "https://ai-gateway.vercel.sh",
+			compat: {"defaultThinkingEnabled":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
