@@ -23,6 +23,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
+import { AUTHENTICATED_SENTINEL } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -81,7 +82,8 @@ export interface BedrockOptions extends StreamOptions {
 	/** Bearer token for Bedrock API key authentication.
 	 * When set, bypasses SigV4 signing and sends Authorization: Bearer <token> instead.
 	 * Requires `bedrock:CallWithBearerToken` IAM permission on the token's identity.
-	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
+	 * Set via this option, the AWS_BEARER_TOKEN_BEDROCK env var, or the resolved `apiKey`
+	 * (in that precedence order); a gateway token configured as `apiKey` is used as a fallback.
 	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
 	bearerToken?: string;
 }
@@ -138,7 +140,14 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		}
 
 		// Resolve bearer token for Bedrock API key auth.
-		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
+		// Precedence: explicit `bearerToken` option > AWS_BEARER_TOKEN_BEDROCK env var >
+		// resolved `apiKey`. The last source lets a gateway token configured via models.json
+		// `apiKey` (e.g. an OpenAI-style AI gateway fronting Bedrock) authenticate without
+		// also exporting AWS_BEARER_TOKEN_BEDROCK. The "<authenticated>" sentinel that
+		// getEnvApiKey() returns for SigV4/profile/role credentials is not a real token and
+		// must never be promoted to a bearer token, or it would break working SigV4 setups.
+		const apiKeyBearer = options.apiKey && options.apiKey !== AUTHENTICATED_SENTINEL ? options.apiKey : undefined;
+		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || apiKeyBearer || undefined;
 		const useBearerToken = bearerToken !== undefined && process.env.AWS_BEDROCK_SKIP_AUTH !== "1";
 
 		// in Node.js/Bun environment only

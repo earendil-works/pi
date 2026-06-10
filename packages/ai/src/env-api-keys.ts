@@ -3,6 +3,13 @@ let _existsSync: typeof import("node:fs").existsSync | null = null;
 let _homedir: typeof import("node:os").homedir | null = null;
 let _join: typeof import("node:path").join | null = null;
 
+/**
+ * Sentinel returned by getEnvApiKey() for providers that authenticate without a
+ * caller-supplied API key string (AWS SigV4 credentials, Vertex AI ADC). It signals
+ * "credentials are present" but is NOT a usable token and must never be sent as one.
+ */
+export const AUTHENTICATED_SENTINEL = "<authenticated>";
+
 type DynamicImport = (specifier: string) => Promise<unknown>;
 
 const dynamicImport: DynamicImport = (specifier) => import(specifier);
@@ -179,7 +186,7 @@ export function getEnvApiKey(provider: string): string | undefined {
 		const hasLocation = !!(process.env.GOOGLE_CLOUD_LOCATION || getProcEnv("GOOGLE_CLOUD_LOCATION"));
 
 		if (hasCredentials && hasProject && hasLocation) {
-			return "<authenticated>";
+			return AUTHENTICATED_SENTINEL;
 		}
 	}
 
@@ -205,7 +212,7 @@ export function getEnvApiKey(provider: string): string | undefined {
 			getProcEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI") ||
 			getProcEnv("AWS_WEB_IDENTITY_TOKEN_FILE")
 		) {
-			return "<authenticated>";
+			return AUTHENTICATED_SENTINEL;
 		}
 	}
 
