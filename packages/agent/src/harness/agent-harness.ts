@@ -680,6 +680,30 @@ export class AgentHarness<
 		if (this.phase === "idle") throw new AgentHarnessError("invalid_state", "Cannot steer while idle");
 		this.steerQueue.push(createUserMessage(text, options?.images));
 		await this.emitQueueUpdate();
+		const resources = this.getResources();
+		let systemPrompt = "You are a helpful assistant.";
+		if (typeof this.systemPrompt === "string") {
+			systemPrompt = this.systemPrompt;
+		} else if (this.systemPrompt) {
+			const activeTools = this.activeToolNames
+				.map((name) => this.tools.get(name))
+				.filter((tool): tool is TTool => tool !== undefined);
+			systemPrompt = await this.systemPrompt({
+				env: this.env,
+				session: this.session,
+				model: this.model,
+				thinkingLevel: this.thinkingLevel,
+				activeTools,
+				resources,
+			});
+		}
+		await this.emitHook({
+			type: "before_agent_start",
+			prompt: text,
+			images: options?.images,
+			systemPrompt,
+			resources,
+		});
 	}
 
 	async followUp(text: string, options?: { images?: ImageContent[] }): Promise<void> {
