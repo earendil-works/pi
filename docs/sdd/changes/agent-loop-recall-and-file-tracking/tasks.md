@@ -17,26 +17,26 @@
 
 ## 1. Steer 入口触发 before_agent_start
 
-- [ ] 1.1 **steer() 触发 before_agent_start 失败测试 (S1)**
+- [x] 1.1 **steer() 触发 before_agent_start 失败测试 (S1)**
   - **文件**: `packages/agent/test/harness/agent-harness.test.ts` (Modify)
   - **内容**: 新增 it "steer() 触发 before_agent_start 钩子":stub 扩展 handler 订阅 `before_agent_start`,调用 `harness.steer("test new topic")`,断言 handler 被调用且 `event.prompt === "test new topic"`
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*before_agent_start"` 期望 FAIL
   - **依赖**: 无
   - **前置阅读**: `packages/agent/src/harness/agent-harness.ts:679-684`
 
-- [ ] 1.2 **实现 steer() 触发 before_agent_start**
+- [x] 1.2 **实现 steer() 触发 before_agent_start**
   - **文件**: `packages/agent/src/harness/agent-harness.ts` (Modify)
   - **内容**: 在 `steer()` 内 `await this.emitHook({ type: "before_agent_start", prompt: text, ... })`,放在 `this.steerQueue.push(...)` 之前
   - **验证**: 重跑 1.1 vitest,期望 PASS
   - **依赖**: 1.1
 
-- [ ] 1.3 **steer 无扩展监听不抛错测试 (S6)**
+- [x] 1.3 **steer 无扩展监听不抛错测试 (S6)**
   - **文件**: `packages/agent/test/harness/agent-harness.test.ts` (Modify)
   - **内容**: 新增 it "steer() 在无 before_agent_start 监听时不抛错"
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*no.*listener"` 期望 PASS
   - **依赖**: 1.2
 
-- [ ] 1.4 **steer 不影响 in-flight LLM call 测试 (S2)**
+- [x] 1.4 **steer 不影响 in-flight LLM call 测试 (S2)**
   - **文件**: `packages/agent/test/harness/agent-harness.test.ts` (Modify)
   - **内容**: 新增 it "steer() 不中断当前 streaming LLM call"
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*in.flight"` 期望 PASS
@@ -165,6 +165,6 @@
 
 ## Verification
 
-- [ ] 全量测试: `cd packages/agent && npx vitest run` + `cd packages/coding-agent && npx vitest run test/compaction` + `cd extensions/personal-assistant && npx vitest run`
-- [ ] Lint: `cd /home/qjh/workspace/personal/pi && npx biome check --write packages/agent/src/harness/agent-harness.ts packages/agent/src/harness/compaction/ packages/coding-agent/src/core/compaction/ extensions/satellite/ extensions/personal-assistant/`
-- [ ] 类型检查: `cd /home/qjh/workspace/personal/pi && npm run check` (在 monorepo 根)
+- [x] 全量测试: packages/agent (181 PASS) + packages/coding-agent (test/compaction: N/A, mirror verified) + extensions/personal-assistant (156 PASS)
+- [x] Lint: biome check (npm run check 0 errors after each commit)
+- [x] 类型检查: tsgo --noEmit 0 errors (npm run check after each commit)
