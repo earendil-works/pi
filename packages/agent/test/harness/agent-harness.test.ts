@@ -175,6 +175,83 @@ describe("AgentHarness", () => {
 		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ prompt: "test new topic" }));
 	});
 
+	it("steer() does not throw when no before_agent_start listener is registered", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([() => fauxAssistantMessage("first"), () => fauxAssistantMessage("second")]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		// Deliberately do NOT register any before_agent_start handler.
+
+		let steerResult: Promise<void> | undefined;
+		harness.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "assistant" && !steerResult) {
+				steerResult = harness.steer("test new topic");
+			}
+		});
+
+		await harness.prompt("hello");
+		await expect(steerResult).resolves.not.toThrow();
+	});
+
+	it("steer() does not interrupt the in-flight LLM call", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		const userCounts: number[] = [];
+		registration.setResponses([
+			async (context) => {
+				userCounts.push(context.messages.filter((message) => message.role === "user").length);
+				await firstResponseReleased;
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				userCounts.push(context.messages.filter((message) => message.role === "user").length);
+				return fauxAssistantMessage("second");
+			},
+		]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const steerQueueLengths: number[] = [];
+		harness.subscribe((event) => {
+			if (event.type === "queue_update") {
+				steerQueueLengths.push(event.steer.length);
+			}
+		});
+
+		const promptPromise = harness.prompt("hello");
+		// Yield long enough for: prompt -> runAgentLoop -> streamFunction ->
+		// microtask -> response factory runs synchronously up to its first await.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		// First LLM call is in-flight (awaiting firstResponseReleased) and only saw
+		// the original user message.
+		expect(userCounts).toEqual([1]);
+		expect(steerQueueLengths).toEqual([]);
+		// Call steer() while the first LLM call is still in-flight. steer() must
+		// queue the message without aborting or otherwise interrupting the call.
+		await harness.steer("interrupting");
+		// In-flight LLM call was NOT aborted: still one user message, still in-flight.
+		expect(userCounts).toEqual([1]);
+		// steer() pushed the message into the queue and emitted queue_update.
+		expect(steerQueueLengths).toEqual([1]);
+		// Release the deferred; the first LLM call completes naturally, then the second kicks off.
+		releaseFirstResponse?.();
+		await promptPromise;
+		// Second LLM call saw the original user message plus the queued steer.
+		expect(userCounts).toEqual([1, 2]);
+		// The queued steer was drained before the second LLM call.
+		expect(steerQueueLengths).toEqual([1, 0]);
+	});
+
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {
 		const registration = registerFauxProvider();
 		registrations.push(registration);
