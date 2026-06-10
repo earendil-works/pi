@@ -1221,7 +1221,7 @@ export class SettingsManager {
 
 const MCP_CONFIG_FILE = "mcp.json";
 
-export function loadMcpConfig(): Record<string, { command: string; args?: string[]; env?: Record<string, string> }> {
+export function loadMcpConfig(): Record<string, { url: string; token: string; enabled?: boolean }> {
 	const configPath = join(getAgentDir(), MCP_CONFIG_FILE);
 	if (!existsSync(configPath)) return {};
 	try {
