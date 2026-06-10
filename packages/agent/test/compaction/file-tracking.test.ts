@@ -177,3 +177,62 @@ describe("extractFileOpsFromMessage — satellite_remote_exec", () => {
 		expect(fileOps.read.size).toBe(0);
 	});
 });
+
+describe("extractFileOpsFromMessage — read/write/edit (regression)", () => {
+	it("read tool call → fileOps.read", () => {
+		const fileOps = createFileOps();
+		const message = {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call-r",
+					name: "read",
+					arguments: { path: "src/foo.ts" },
+				},
+			],
+		} as unknown as AgentMessage;
+		extractFileOpsFromMessage(message, fileOps);
+		expect(fileOps.read.has("src/foo.ts")).toBe(true);
+		expect(fileOps.written.size).toBe(0);
+		expect(fileOps.edited.size).toBe(0);
+	});
+
+	it("write tool call → fileOps.written", () => {
+		const fileOps = createFileOps();
+		const message = {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call-w",
+					name: "write",
+					arguments: { path: "src/foo.ts", content: "..." },
+				},
+			],
+		} as unknown as AgentMessage;
+		extractFileOpsFromMessage(message, fileOps);
+		expect(fileOps.written.has("src/foo.ts")).toBe(true);
+		expect(fileOps.read.size).toBe(0);
+		expect(fileOps.edited.size).toBe(0);
+	});
+
+	it("edit tool call → fileOps.edited", () => {
+		const fileOps = createFileOps();
+		const message = {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call-e",
+					name: "edit",
+					arguments: { path: "src/foo.ts", edits: [{ oldText: "a", newText: "b" }] },
+				},
+			],
+		} as unknown as AgentMessage;
+		extractFileOpsFromMessage(message, fileOps);
+		expect(fileOps.edited.has("src/foo.ts")).toBe(true);
+		expect(fileOps.read.size).toBe(0);
+		expect(fileOps.written.size).toBe(0);
+	});
+});
