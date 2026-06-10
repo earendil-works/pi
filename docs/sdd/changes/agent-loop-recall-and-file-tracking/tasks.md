@@ -98,7 +98,7 @@
   - **验证**: 重跑 3.1 vitest,期望 PASS
   - **依赖**: 3.1
 
-- [ ] 3.3 **personal-assistant 联动: BashIntent type + getBashGuidance 字符串**
+- [x] 3.3 **personal-assistant 联动: BashIntent type + getBashGuidance 字符串** (covered by 3.2)
   - **文件**: `extensions/personal-assistant/tools.ts:273,286-302` (Modify)
   - **内容**:
     - `BashIntent` type 改名为 `read`/`edit`/`write`/`list`/`find`/`grep`
@@ -106,7 +106,7 @@
   - **验证**: `cd extensions/personal-assistant && npx tsc --noEmit` 期望 0 错误
   - **依赖**: 3.2
 
-- [ ] 3.4 **现有 satellite-guards.test.ts 联动改测试断言**
+- [x] 3.4 **现有 satellite-guards.test.ts 联动改测试断言** (covered by 3.2)
   - **文件**: `extensions/personal-assistant/test/satellite-guards.test.ts` (Modify)
   - **内容**: 所有 `tool: "list_dir"` → `tool: "list"`, `tool: "grep_files"` → `tool: "grep"`, `tool: "read_file"` → `tool: "read"` 等(line 18, 25, 38, 52, 179, 248 等)
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/satellite-guards.test.ts` 全部 PASS
