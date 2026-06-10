@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Fixed subscription login URL wrapping so terminal click detection does not see inserted spaces.
 - Fixed inherited Amazon Bedrock inference profile ARN region resolution to prefer the ARN's embedded region over `AWS_REGION` ([#5527](https://github.com/earendil-works/pi/pull/5527) by [@AJM10565](https://github.com/AJM10565)).
 - Fixed inherited IME hardware cursor positioning while slash-command autocomplete is visible ([#5283](https://github.com/earendil-works/pi/pull/5283) by [@smoosex](https://github.com/smoosex)).
 - Fixed inherited z.ai thinking-off requests to send the provider's `thinking: { type: "disabled" }` compatibility parameter ([#5330](https://github.com/earendil-works/pi/issues/5330)).

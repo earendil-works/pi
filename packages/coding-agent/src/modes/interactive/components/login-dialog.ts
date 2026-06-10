@@ -98,7 +98,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 0, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
 		const hyperlink = `\x1b]8;;${url}\x07${clickHint}\x1b]8;;\x07`;
@@ -120,7 +120,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${info.verificationUri}\x07${info.verificationUri}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 0, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
 		const hyperlink = `\x1b]8;;${info.verificationUri}\x07${clickHint}\x1b]8;;\x07`;

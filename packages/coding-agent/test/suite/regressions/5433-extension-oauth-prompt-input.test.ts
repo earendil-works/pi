@@ -18,8 +18,8 @@ function createDialog(): LoginDialogComponent {
 	);
 }
 
-function renderDialog(dialog: LoginDialogComponent): string[] {
-	return stripAnsi(dialog.render(120).join("\n"))
+function renderDialog(dialog: LoginDialogComponent, width = 120): string[] {
+	return stripAnsi(dialog.render(width).join("\n"))
 		.split("\n")
 		.map((line) => line.trimEnd());
 }
@@ -68,6 +68,25 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(output).toContain("https://example.invalid/login");
 		expect(output).toContain("Authorize the extension");
 		expect(output).toContain("First prompt:");
+	});
+
+	test("wraps auth URLs without inserting spaces", () => {
+		const dialog = createDialog();
+		const url =
+			"https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload";
+
+		dialog.showAuth(url);
+
+		const lines = renderDialog(dialog, 80);
+		const urlStart = lines.findIndex((line) => line.startsWith("https://"));
+		expect(urlStart).toBeGreaterThanOrEqual(0);
+
+		const urlLines = lines.slice(
+			urlStart,
+			lines.findIndex((line, index) => index > urlStart && line.includes("click to open")),
+		);
+		expect(urlLines.length).toBeGreaterThan(1);
+		expect(urlLines.join("")).toBe(url);
 	});
 
 	test("keeps previous manual input stable when a later prompt is active", async () => {
