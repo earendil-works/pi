@@ -58,7 +58,11 @@ function getCacheControl(
 	if (retention === "none") {
 		return { retention };
 	}
-	const ttl = retention === "long" && getAnthropicCompat(model).supportsLongCacheRetention ? "1h" : undefined;
+	const compat = getAnthropicCompat(model);
+	if (compat.supportsPromptCaching === false) {
+		return { retention };
+	}
+	const ttl = retention === "long" && compat.supportsLongCacheRetention ? "1h" : undefined;
 	return {
 		retention,
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
@@ -171,6 +175,7 @@ function getAnthropicCompat(
 	const isCloudflareAiGatewayAnthropic =
 		model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic");
 	return {
+		supportsPromptCaching: model.compat?.supportsPromptCaching ?? true,
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? !isFireworks,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? !isFireworks,
 		sendSessionAffinityHeaders:

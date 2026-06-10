@@ -19,6 +19,7 @@ import type { MistralOptions } from "./mistral.ts";
 import type { OpenAICodexResponsesOptions } from "./openai-codex-responses.ts";
 import type { OpenAICompletionsOptions } from "./openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./openai-responses.ts";
+import type { PalantirOptions } from "./palantir.ts";
 
 interface LazyProviderModule<
 	TApi extends Api,
@@ -73,6 +74,11 @@ interface OpenAIResponsesProviderModule {
 	streamSimpleOpenAIResponses: StreamFunction<"openai-responses", SimpleStreamOptions>;
 }
 
+interface PalantirProviderModule {
+	streamPalantir: StreamFunction<"palantir-proxy", PalantirOptions>;
+	streamSimplePalantir: StreamFunction<"palantir-proxy", SimpleStreamOptions>;
+}
+
 interface BedrockProviderModule {
 	streamBedrock: (
 		model: Model<"bedrock-converse-stream">,
@@ -114,6 +120,9 @@ let openAICompletionsProviderModulePromise:
 	| undefined;
 let openAIResponsesProviderModulePromise:
 	| Promise<LazyProviderModule<"openai-responses", OpenAIResponsesOptions, SimpleStreamOptions>>
+	| undefined;
+let palantirProviderModulePromise:
+	| Promise<LazyProviderModule<"palantir-proxy", PalantirOptions, SimpleStreamOptions>>
 	| undefined;
 let bedrockProviderModuleOverride:
 	| LazyProviderModule<"bedrock-converse-stream", BedrockOptions, SimpleStreamOptions>
@@ -307,6 +316,19 @@ function loadOpenAIResponsesProviderModule(): Promise<
 	return openAIResponsesProviderModulePromise;
 }
 
+function loadPalantirProviderModule(): Promise<
+	LazyProviderModule<"palantir-proxy", PalantirOptions, SimpleStreamOptions>
+> {
+	palantirProviderModulePromise ||= import("./palantir.ts").then((module) => {
+		const provider = module as PalantirProviderModule;
+		return {
+			stream: provider.streamPalantir,
+			streamSimple: provider.streamSimplePalantir,
+		};
+	});
+	return palantirProviderModulePromise;
+}
+
 function loadBedrockProviderModule(): Promise<
 	LazyProviderModule<"bedrock-converse-stream", BedrockOptions, SimpleStreamOptions>
 > {
@@ -339,6 +361,8 @@ export const streamOpenAICompletions = createLazyStream(loadOpenAICompletionsPro
 export const streamSimpleOpenAICompletions = createLazySimpleStream(loadOpenAICompletionsProviderModule);
 export const streamOpenAIResponses = createLazyStream(loadOpenAIResponsesProviderModule);
 export const streamSimpleOpenAIResponses = createLazySimpleStream(loadOpenAIResponsesProviderModule);
+export const streamPalantir = createLazyStream(loadPalantirProviderModule);
+export const streamSimplePalantir = createLazySimpleStream(loadPalantirProviderModule);
 const streamBedrockLazy = createLazyStream(loadBedrockProviderModule);
 const streamSimpleBedrockLazy = createLazySimpleStream(loadBedrockProviderModule);
 
@@ -389,6 +413,12 @@ export function registerBuiltInApiProviders(): void {
 		api: "google-vertex",
 		stream: streamGoogleVertex,
 		streamSimple: streamSimpleGoogleVertex,
+	});
+
+	registerApiProvider({
+		api: "palantir-proxy",
+		stream: streamPalantir,
+		streamSimple: streamSimplePalantir,
 	});
 
 	registerApiProvider({

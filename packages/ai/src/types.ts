@@ -12,7 +12,8 @@ export type KnownApi =
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
-	| "google-vertex";
+	| "google-vertex"
+	| "palantir-proxy";
 
 export type Api = KnownApi | (string & {});
 
@@ -55,7 +56,8 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	| "palantir";
 export type Provider = KnownProvider | string;
 
 export type KnownImagesProvider = "openrouter";
@@ -432,6 +434,12 @@ export interface OpenAIResponsesCompat {
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
 	/**
+	 * Whether the provider accepts the prompt caching headers and cache_control blocks.
+	 * When false, cache_control properties will not be added to the request payload.
+	 * Default: true
+	 */
+	supportsPromptCaching?: boolean;
+	/**
 	 * Whether the provider accepts per-tool `eager_input_streaming`.
 	 * When false, the Anthropic provider omits `tools[].eager_input_streaming`
 	 * and sends the legacy `fine-grained-tool-streaming-2025-05-14` beta header
@@ -592,8 +600,8 @@ export interface Model<TApi extends Api> {
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses"
 			? OpenAIResponsesCompat
-			: TApi extends "anthropic-messages"
-				? AnthropicMessagesCompat
+			: TApi extends "anthropic-messages" | "palantir-proxy"
+				? Partial<AnthropicMessagesCompat & OpenAICompletionsCompat>
 				: never;
 }
 

@@ -220,7 +220,7 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 }
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
-	return model.api === "google-generative-ai" || model.api === "google-vertex";
+	return model.api === "google-generative-ai" || model.api === "google-vertex" || (model.provider === "palantir" && model.family === "google");
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
@@ -259,6 +259,15 @@ function isGemma4Model(modelId: string): boolean {
 }
 
 function applyThinkingLevelMetadata(model: Model<any>): void {
+	if (model.provider === "palantir") {
+		// Specific mapping for Reasoning edge cases
+		if (model.id.includes("o1") || model.id.includes("o3") || model.id.includes("gpt-5")) {
+			// Do not pass a temperature parameter (it will throw a 400 error)
+			// handled dynamically by openai stream options logic, but mark reasoning appropriately.
+			mergeThinkingLevelMap(model, { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh" });
+		}
+	}
+
 	if (
 		(model.api === "openai-responses" || model.api === "azure-openai-responses") &&
 		model.id.startsWith("gpt-5")
@@ -798,6 +807,71 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			{ provider: "zai", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
 			{ provider: "zai-coding-cn", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
 		] as const;
+
+		// Process Palantir Proxy models
+		const palantirModels = [
+			// Anthropic
+			{ id: "ri.language-model-service..language-model.anthropic-claude-3-5-haiku", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-3-haiku", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-1-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-5-haiku", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-5-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-5-sonnet", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-6-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-6-sonnet", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-7-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-8-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-opus", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+			{ id: "ri.language-model-service..language-model.anthropic-claude-4-sonnet", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "anthropic" },
+
+			// Google
+			{ id: "ri.language-model-service..language-model.gemini-2-5-flash", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-2-5-flash-lite", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-2-5-pro", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-3-1-flash-lite", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-3-1-pro", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-3-5-flash", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+			{ id: "ri.language-model-service..language-model.gemini-3-flash", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "google" },
+
+			// OpenAI
+			{ id: "ri.language-model-service..language-model.gpt-4-1", reasoning: false, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-4-1-mini", reasoning: false, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-4-1-nano", reasoning: false, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-4-o", reasoning: false, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-1", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-2", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-4", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-4-mini", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-4-nano", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-5", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-mini", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.gpt-5-nano", reasoning: true, input: ["text", "image"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.text-embedding-3-large_azure", reasoning: false, input: ["text"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.text-embedding-3-small_azure", reasoning: false, input: ["text"] as ("text" | "image")[], family: "openai" },
+			{ id: "ri.language-model-service..language-model.text-embedding-ada-002_azure", reasoning: false, input: ["text"] as ("text" | "image")[], family: "openai" },
+		];
+
+		for (const pm of palantirModels) {
+			let proxyPath = "openai/v1";
+			if (pm.family === "anthropic") proxyPath = "anthropic";
+			else if (pm.family === "google") proxyPath = "google/v1";
+			else if (pm.family === "xai") proxyPath = "xai/v1";
+			
+			models.push({
+				id: pm.id,
+				name: pm.id.split(".").pop() || pm.id,
+				api: "palantir-proxy" as const,
+				provider: "palantir",
+				baseUrl: `[PALANTIR_BASE_URL]/api/v2/llm/proxy/${proxyPath}`,
+				reasoning: pm.reasoning,
+				input: pm.input,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 8192,
+				...(pm.family === "anthropic" ? { compat: { supportsEagerToolInputStreaming: false, supportsCacheControlOnTools: false, supportsPromptCaching: false } } : {}),
+			});
+		}
 
 		if (data["zai-coding-plan"]?.models) {
 			for (const { provider, baseUrl } of zaiCodingPlanVariants) {
