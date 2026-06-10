@@ -42,32 +42,32 @@
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*in.flight"` 期望 PASS
   - **依赖**: 1.3
 
-- [ ] 1.5 **steer 覆盖 pendingMemorySearch 测试 (S10)**
+- [x] 1.5 **steer 覆盖 pendingMemorySearch 测试 (S10)**
   - **文件**: `packages/agent/test/harness/agent-harness.test.ts` (Modify)
   - **内容**: 新增 it "连续两次 steer 覆盖前一个 pending search"
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*overwrite"` 期望 PASS
   - **依赖**: 1.4
 
-- [ ] 1.6 **连续 5+ 次 steer 队列测试 (S13)**
+- [x] 1.6 **连续 5+ 次 steer 队列测试 (S13)**
   - **文件**: `packages/agent/test/harness/agent-harness.test.ts` (Modify)
   - **内容**: 新增 it "5 次连续 steer 全部入队"
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts -t "steer.*multiple"` 期望 PASS
   - **依赖**: 1.5
 
-- [ ] 1.7 **steer 修改整体回归**
+- [x] 1.7 **steer 修改整体回归**
   - **验证**: `cd packages/agent && npx vitest run test/harness/agent-harness.test.ts` 全部 PASS
   - **依赖**: 1.6
 
 ## 2. extractFileOpsFromMessage 加 grep/find/list case (本地)
 
-- [ ] 2.1 **本地 grep/find/ls 跟踪失败测试**
+- [x] 2.1 **本地 grep/find/ls 跟踪失败测试**
   - **文件**: `packages/agent/test/compaction/file-tracking.test.ts` (Create)
   - **内容**: describe "extractFileOpsFromMessage grep/find/ls",3 个 it case:grep 提取 args.path 到 fileOps.read,find 同,ls 同;缺省 path 不抛错
   - **验证**: `cd packages/agent && npx vitest run test/compaction/file-tracking.test.ts -t "grep|find|ls"` 期望 FAIL
   - **依赖**: 无
   - **前置阅读**: `packages/agent/src/harness/compaction/utils.ts:24-51` + `packages/coding-agent/src/core/compaction/utils.ts:29-56` (两份)
 
-- [ ] 2.2 **实现 grep/find/ls case**
+- [x] 2.2 **实现 grep/find/ls case**
   - **文件**: `packages/agent/src/harness/compaction/utils.ts:24-51` + `packages/coding-agent/src/core/compaction/utils.ts:29-56` (Modify 2 处)
   - **内容**: switch 块添加:
     ```ts
@@ -82,14 +82,14 @@
 
 ## 3. Satellite 子工具改名 (read/write/edit/list/find/grep,transfer_file 不动)
 
-- [ ] 3.1 **schema + TOOL_HANDLERS 改名失败测试**
+- [x] 3.1 **schema + TOOL_HANDLERS 改名失败测试**
   - **文件**: `extensions/satellite/test/satellite-schema.test.ts` (Create)
   - **内容**: 测 REMOTE_EXEC_INPUT_SCHEMA 的 tool enum 包含 "read"/"write"/"edit"/"list"/"find"/"grep"(不包含 "_file"/"_dir"/"_files" 后缀);TOOL_HANDLERS key 与新名一致
   - **验证**: `cd extensions/satellite && npx vitest run test/satellite-schema.test.ts` 期望 FAIL
   - **依赖**: 无
   - **前置阅读**: `extensions/satellite/schema.ts:18-28` + `extensions/satellite/satellite-server.ts:1082-1111` + `extensions/satellite/satellite-server.ts:1118-1155` (description 文本)
 
-- [ ] 3.2 **改 schema.ts enum + TOOL_HANDLERS key + description 文本**
+- [x] 3.2 **改 schema.ts enum + TOOL_HANDLERS key + description 文本**
   - **文件**: `extensions/satellite/schema.ts` (Modify) + `extensions/satellite/satellite-server.ts:1082-1111` (Modify) + `extensions/satellite/satellite-server.ts:1118-1155` (Modify description)
   - **内容**:
     - schema.ts z.enum: `read_file`→`read`, `write_file`→`write`, `edit_file`→`edit`, `list_dir`→`list`, `find_files`→`find`, `grep_files`→`grep`, `transfer_file` 不动
@@ -114,13 +114,13 @@
 
 ## 4. extractFileOpsFromMessage 加 satellite_remote_exec case
 
-- [ ] 4.1 **satellite_remote_exec 跟踪失败测试**
+- [x] 4.1 **satellite_remote_exec 跟踪失败测试**
   - **文件**: `packages/agent/test/compaction/file-tracking.test.ts` (Modify)
   - **内容**: 新增 describe "extractFileOpsFromMessage satellite_remote_exec",3 个 it case:内部 tool=grep / find / ls 分别加到 fileOps.read;其他 tool (read/write/edit/bash/transfer_file) 不动
   - **验证**: `cd packages/agent && npx vitest run test/compaction/file-tracking.test.ts -t "satellite"` 期望 FAIL
   - **依赖**: 2.2
 
-- [ ] 4.2 **实现 satellite_remote_exec case**
+- [x] 4.2 **实现 satellite_remote_exec case**
   - **文件**: `packages/agent/src/harness/compaction/utils.ts:24-51` + `packages/coding-agent/src/core/compaction/utils.ts:29-56` (Modify 2 处)
   - **内容**: switch 块添加:
     ```ts
@@ -135,7 +135,7 @@
 
 ## 5. read/write/edit 回归测试
 
-- [ ] 5.1 **read/write/edit 行为不变回归**
+- [x] 5.1 **read/write/edit 行为不变回归**
   - **文件**: `packages/agent/test/compaction/file-tracking.test.ts` (Modify)
   - **内容**: describe "read/write/edit 现有行为",3 个 it case 验证
   - **验证**: `cd packages/agent && npx vitest run test/compaction/file-tracking.test.ts` 全部 PASS
@@ -143,19 +143,19 @@
 
 ## 6. 本地 bash intent guardrail (跨本地/Satellite 共享)
 
-- [ ] 6.1 **local-bash-guards 失败测试**
+- [x] 6.1 **local-bash-guards 失败测试**
   - **文件**: `extensions/personal-assistant/test/local-bash-guards.test.ts` (Create)
   - **内容**: describe "checkBashIntentCommon local",5 个 it case:local bash cat→suggest read;ls→suggest list;find→suggest find;grep→suggest grep;local 和 satellite budget 独立
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/local-bash-guards.test.ts` 期望 FAIL
   - **依赖**: 3.4
 
-- [ ] 6.2 **提取 checkBashIntentCommon 函数**
+- [x] 6.2 **提取 checkBashIntentCommon 函数**
   - **文件**: `extensions/personal-assistant/tools.ts:305-322` (Modify)
   - **内容**: 提取 `checkBashIntent(command, turnId, prefix: "local" | "satellite")` 函数,内部用 `${turnId}:${prefix}:${intent}` 作 budget key
   - **验证**: 重跑 6.1 vitest,期望 PASS
   - **依赖**: 6.1
 
-- [ ] 6.3 **validateSatelliteCall 调新函数 + 新增本地 tool_call 钩子**
+- [x] 6.3 **validateSatelliteCall 调新函数 + 新增本地 tool_call 钩子**
   - **文件**: `extensions/personal-assistant/tools.ts:308-322` (Modify 调用) + `extensions/personal-assistant/tools.ts:943-951` (Modify 拆分钩子)
   - **内容**:
     - 原 `checkBashIntent` 改为调 `checkBashIntentCommon(..., "satellite")`
