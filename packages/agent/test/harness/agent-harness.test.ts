@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxToolCall, getModel, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
@@ -148,6 +148,31 @@ describe("AgentHarness", () => {
 		});
 		expect(requestText).toEqual(["hello", "hook"]);
 		expect(persistedText).toEqual(["hello", "hook"]);
+	});
+
+	it("steer() triggers before_agent_start hook", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([() => fauxAssistantMessage("first"), () => fauxAssistantMessage("second")]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const handler = vi.fn().mockReturnValue(undefined);
+		harness.on("before_agent_start", handler);
+
+		let queued = false;
+		harness.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "assistant" && !queued) {
+				queued = true;
+				void harness.steer("test new topic");
+			}
+		});
+
+		await harness.prompt("hello");
+
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ prompt: "test new topic" }));
 	});
 
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {
