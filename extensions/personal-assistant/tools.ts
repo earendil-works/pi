@@ -301,24 +301,33 @@ function getBashGuidance(intent: BashIntent, command: string): string {
 	}
 }
 
-// Per-turn budget for bash-intent guidance. First 2 are guidance errors
-// (model can retry with the right tool), 3rd is a hard block.
+// Per-turn budget for bash-intent guidance. First2 are guidance errors
+// (model can retry with the right tool),3rd is a hard block.
+// `prefix` separates local vs satellite counters so they don't interfere.
 const bashIntentBudget = new Map<string, number>();
 
-function checkBashIntent(input: Record<string, unknown>, turnId: string): string | null {
-	const subTool = (input as Record<string, unknown>).tool;
-	if (subTool !== "bash") return null;
-	const command = String((input as Record<string, unknown>).command ?? "");
+export function checkBashIntentCommon(
+	command: string,
+	turnId: string,
+	prefix: "local" | "satellite",
+): string | undefined {
 	const intent = detectBashIntent(command);
-	if (!intent) return null;
+	if (!intent) return undefined;
 
-	const key = `${turnId}:${intent}`;
-	const count = bashIntentBudget.get(key) ?? 0;
-	if (count >= 2) {
-		return `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`;
+	const key = `${turnId}:${prefix}:${intent}`;
+	const count = bashIntentBudget.get(key) ??0;
+	if (count >=2) {
+		return `Blocked: you have tried bash with similar intent3 times. Use tool=${intent} instead.`;
 	}
-	bashIntentBudget.set(key, count + 1);
+	bashIntentBudget.set(key, count +1);
 	return getBashGuidance(intent, command);
+}
+
+function checkBashIntent(input: Record<string, unknown>, turnId: string): string | undefined {
+	const subTool = (input as Record<string, unknown>).tool;
+	if (subTool !== "bash") return undefined;
+	const command = String((input as Record<string, unknown>).command ?? "");
+	return checkBashIntentCommon(command, turnId, "satellite");
 }
 
 /**
@@ -941,13 +950,24 @@ export function registerTools(pi: ExtensionAPI): void {
 	// ============================================================================
 
 	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {
-		const mcpConfig = loadMcpConfig();
 		const turnId = String((event as any).turnIndex ?? "global");
-		// 1. Validation (schema shape, path scope, bash intent)
-		const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
-		if (validation) return validation;
-		// 2. Transfer file interception (mutates event.input.content for to_remote)
-		return interceptTransferCall(event);
+
+		// 1. Local bash: 共享卫星的 bash intent guardrail
+		if (event.toolName === "bash") {
+			const command = String((event.input as Record<string, unknown>).command ?? "");
+			const guidance = checkBashIntentCommon(command, turnId, "local");
+			return guidance ? { block: true, reason: guidance } : undefined;
+		}
+
+		// 2. Satellite: 走 validateSatelliteCall + transfer interception
+		if (event.toolName === SATELLITE_TOOL_NAME) {
+			const mcpConfig = loadMcpConfig();
+			const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
+			if (validation) return validation;
+			return interceptTransferCall(event);
+		}
+
+		return undefined;
 	});
 
 	pi.on("model_select", (event: { model: Model<any> }) => {
