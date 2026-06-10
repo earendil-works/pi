@@ -18,12 +18,12 @@ import { z } from "zod/v3";
 export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
   tool: z.enum([
     "bash",
-    "read_file",
-    "write_file",
-    "edit_file",
-    "list_dir",
-    "find_files",
-    "grep_files",
+    "read",
+    "write",
+    "edit",
+    "list",
+    "find",
+    "grep",
     "transfer_file",
   ]),
   command: z.string().optional(),
