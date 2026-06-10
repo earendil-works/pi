@@ -51,6 +51,11 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 			case "edit":
 				fileOps.edited.add(path);
 				break;
+			case "grep":
+			case "find":
+			case "ls":
+				fileOps.read.add(path);
+				break;
 		}
 	}
 }
