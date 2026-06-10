@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Component } from "../src/tui.ts";
 import { TUI } from "../src/tui.ts";
+import { visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class StaticOverlay implements Component {
@@ -121,6 +122,37 @@ describe("TUI overlay options", () => {
 			// Should not crash
 			const viewport = terminal.getViewport();
 			assert.ok(viewport.length > 0);
+			tui.stop();
+		});
+
+		it("should keep overlay columns stable when base wide characters cross the overlay boundary", async () => {
+			class WideBoundaryContent implements Component {
+				render(): string[] {
+					return ["가나다라마바사아자차", "abcdefghijklmnopqrstuvwxyz"];
+				}
+				invalidate(): void {}
+			}
+
+			const terminal = new VirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const overlay = new StaticOverlay(["|BOX|", "|BOX|"]);
+
+			tui.addChild(new WideBoundaryContent());
+			tui.showOverlay(overlay, { anchor: "top-left", col: 5, width: 5 });
+			tui.start();
+			await renderAndFlush(tui, terminal);
+
+			const viewport = terminal.getViewport();
+			for (const row of [0, 1]) {
+				const line = viewport[row] ?? "";
+				const markerIndex = line.indexOf("|BOX|");
+				assert.notStrictEqual(markerIndex, -1, `Expected overlay marker on row ${row}, got: ${line}`);
+				assert.strictEqual(
+					visibleWidth(line.slice(0, markerIndex)),
+					5,
+					`Expected overlay at column 5 on row ${row}`,
+				);
+			}
 			tui.stop();
 		});
 

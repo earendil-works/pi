@@ -1057,7 +1057,7 @@ export class TUI extends Container {
 
 		// Single pass through baseLine extracts both before and after segments
 		const afterStart = startCol + overlayWidth;
-		const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
+		const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true, true);
 
 		// Extract overlay with width tracking (strict=true to exclude wide chars at boundary)
 		const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);

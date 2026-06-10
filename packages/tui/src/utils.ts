@@ -1120,6 +1120,7 @@ export function extractSegments(
 	afterStart: number,
 	afterLen: number,
 	strictAfter = false,
+	strictBefore = false,
 ): { before: string; beforeWidth: number; after: string; afterWidth: number } {
 	let before = "",
 		beforeWidth = 0,
@@ -1157,12 +1158,15 @@ export function extractSegments(
 			const w = graphemeWidth(segment);
 
 			if (currentCol < beforeEnd) {
-				if (pendingAnsiBefore) {
-					before += pendingAnsiBefore;
-					pendingAnsiBefore = "";
+				const fits = !strictBefore || currentCol + w <= beforeEnd;
+				if (fits) {
+					if (pendingAnsiBefore) {
+						before += pendingAnsiBefore;
+						pendingAnsiBefore = "";
+					}
+					before += segment;
+					beforeWidth += w;
 				}
-				before += segment;
-				beforeWidth += w;
 			} else if (currentCol >= afterStart && currentCol < afterEnd) {
 				const fits = !strictAfter || currentCol + w <= afterEnd;
 				if (fits) {
