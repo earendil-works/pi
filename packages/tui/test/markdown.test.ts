@@ -149,6 +149,37 @@ describe("Markdown component", () => {
 			assert.ok(plainLines.some((line) => line.includes("2. Second ordered")));
 		});
 
+		it("should render blank lines between loose list items", () => {
+			const markdown = new Markdown(
+				`1. Lorem ipsum dolor sit amet.
+
+   Ut enim ad minim veniam.
+
+2. Duis aute irure dolor.
+
+   Excepteur sint occaecat cupidatat.
+
+3. Beep boop`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [
+				"1. Lorem ipsum dolor sit amet.",
+				"",
+				"   Ut enim ad minim veniam.",
+				"",
+				"2. Duis aute irure dolor.",
+				"",
+				"   Excepteur sint occaecat cupidatat.",
+				"",
+				"3. Beep boop",
+			]);
+		});
+
 		it("should render task list markers", () => {
 			const markdown = new Markdown("- [ ] beep\n- [x] boop", 0, 0, defaultMarkdownTheme);
 

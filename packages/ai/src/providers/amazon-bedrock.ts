@@ -291,6 +291,13 @@ const BEDROCK_ERROR_PREFIXES: Record<string, string> = {
 };
 
 /**
+ * Some models reject the account/profile's configured Bedrock data retention mode
+ * (e.g. "data retention mode 'default' is not available for this model"). Point
+ * users at the AWS docs explaining how to configure a supported mode.
+ */
+const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html";
+
+/**
  * Format a Bedrock error with a human-readable prefix.
  * AWS SDK exceptions (both from `client.send()` and from stream event items)
  * extend BedrockRuntimeServiceException. We map the `.name` to a stable
@@ -299,11 +306,14 @@ const BEDROCK_ERROR_PREFIXES: Record<string, string> = {
  */
 function formatBedrockError(error: unknown): string {
 	const message = error instanceof Error ? error.message : JSON.stringify(error);
+	const dataRetentionHint = /data retention mode/i.test(message)
+		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
+		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}`;
+		return `${prefix}: ${message}${dataRetentionHint}`;
 	}
-	return message;
+	return `${message}${dataRetentionHint}`;
 }
 
 /**

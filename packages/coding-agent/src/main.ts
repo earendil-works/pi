@@ -363,6 +363,7 @@ function buildSessionOptions(
 		const resolved = resolveCliModel({
 			cliProvider: parsed.provider,
 			cliModel: parsed.model,
+			cliThinking: parsed.thinking,
 			modelRegistry,
 		});
 		if (resolved.warning) {
