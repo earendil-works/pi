@@ -1,5 +1,6 @@
 import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import { isCtrlVPasteInterceptingTerminal, isEmptyBracketedPaste } from "../../../utils/terminal-env.ts";
 
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
@@ -36,6 +37,18 @@ export class CustomEditor extends Editor {
 		// Check for paste image keybinding
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();
+			return;
+		}
+
+		// app.clipboard.pasteImage is bound to Ctrl+V on all platforms, but some
+		// terminals (Windows Terminal including WSL, Hyper, conhost) intercept
+		// Ctrl+V as a text paste, so that keypress never reaches the keybinding
+		// check above. When the clipboard holds an image rather than text, those
+		// terminals emit an empty bracketed paste with no payload. Treat that as a
+		// request to paste an image from the clipboard so Ctrl+V pastes images like
+		// it does in other terminals.
+		if (this.onPasteImage && isCtrlVPasteInterceptingTerminal() && isEmptyBracketedPaste(data)) {
+			this.onPasteImage();
 			return;
 		}
 

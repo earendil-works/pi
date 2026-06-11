@@ -5,6 +5,11 @@
 ### Added
 
 - Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json`.
+- Added Ctrl+V clipboard image paste in Windows Terminal (including WSL). Windows Terminal intercepts Ctrl+V as a text paste and emits an empty bracketed paste when the clipboard holds an image; pi now detects that and reads the image from the clipboard, so Ctrl+V pastes images as it does in other terminals.
+
+### Changed
+
+- Changed clipboard image paste to bind to Ctrl+V on all platforms (previously Alt+V on Windows), relying on the Windows Terminal empty-bracketed-paste heuristic for terminals that intercept Ctrl+V.
 
 ## [0.79.1] - 2026-06-09
 
