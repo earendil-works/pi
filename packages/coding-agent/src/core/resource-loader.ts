@@ -65,7 +65,7 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 		if (existsSync(filePath)) {
 			try {
 				return {
-					path: filePath,
+					path: canonicalizePath(filePath),
 					content: readFileSync(filePath, "utf-8"),
 				};
 			} catch (error) {
