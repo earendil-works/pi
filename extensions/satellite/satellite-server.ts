@@ -782,20 +782,6 @@ const TOOL_HANDLERS: Record<string, (
     abortSignal,
     progressCtx,
   ),
-  find: (args, abortSignal, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid, abortSignal),
-  grep: (args, abortSignal, _p, sid) => handleGrepFiles(
-    args as {
-      pattern: string;
-      path?: string;
-      glob?: string;
-      limit?: number;
-      ignoreCase?: boolean;
-      literal?: boolean;
-      context?: number;
-    },
-    sid,
-    abortSignal,
-  ),
   transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sid),
 };
 

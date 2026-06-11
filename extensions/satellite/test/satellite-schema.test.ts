@@ -171,23 +171,14 @@ describe("handleGrepFiles, runRg, checkRgAvailable, truncateLine, GREP_MAX_LINE_
 });
 
 describe("TOOL_HANDLERS — keys match new short names", () => {
-	it("declares short-name keys (read/write/edit/bash/find/grep/transfer_file)", () => {
+	it("declares short-name keys (read/write/edit/bash/transfer_file) — no find/grep", () => {
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  read:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  write:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  edit:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  bash:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  find:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  grep:\s/m);
+		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  find:\s/m);
+		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  grep:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  transfer_file:\s/m);
-	});
-
-	it("does NOT declare long-name keys (read_file/write_file/edit_file/list_dir/find_files/grep_files)", () => {
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  read_file:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  write_file:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  edit_file:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  list_dir:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  find_files:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  grep_files:\s/m);
 	});
 
 	it("keeps bash and transfer_file keys (unchanged names)", () => {

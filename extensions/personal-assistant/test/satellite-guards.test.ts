@@ -136,36 +136,6 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r?.reason).toContain("Prefer read over");
 	});
 
-	it("bash ls → not intercepted (list removed from BashIntent)", () => {
-		const r = validateSatelliteCall(
-			"satellite_remote_exec",
-			{ tool: "bash", command: "ls -la /tmp" },
-			mcpConfig,
-			"t-intent",
-		);
-		expect(r).toBeUndefined();
-	});
-
-	it("bash find → not intercepted (find removed from BashIntent)", () => {
-		const r = validateSatelliteCall(
-			"satellite_remote_exec",
-			{ tool: "bash", command: "find /tmp -name '*.txt'" },
-			mcpConfig,
-			"t-intent",
-		);
-		expect(r).toBeUndefined();
-	});
-
-	it("bash grep → not intercepted (grep removed from BashIntent)", () => {
-		const r = validateSatelliteCall(
-			"satellite_remote_exec",
-			{ tool: "bash", command: "grep -r foo /tmp" },
-			mcpConfig,
-			"t-intent",
-		);
-		expect(r).toBeUndefined();
-	});
-
 	it("bash with pipeline → not intercepted (legitimate shell use)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
@@ -196,10 +166,11 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r).toBeUndefined();
 	});
 
-	it("bash where 'find' appears only as path component (e.g. smart-sample-find) → not intercepted", () => {
-		// Regression: command containing the substring `find` inside a
-		// path or identifier (followed by whitespace/newline) used to
-		// falsely match \bfind\s+ and trigger find guidance.
+	it("bash where 'find' appears only as path component — no longer intercepted (BashIntent no longer has find)", () => {
+		// With find removed from BashIntent, find anywhere in a bash
+		// command is no longer intercepted. This test verifies the
+		// path-component edge case still passes correctly — but the
+		// guardrail no longer distinguishes path vs command use.
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{
@@ -216,9 +187,11 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r).toBeUndefined();
 	});
 
-	it("bash where 'grep' appears only as path component → not intercepted", () => {
-		// Mirror of the find test: 'grep' as a path suffix followed by
-		// whitespace used to falsely match \bgrep\s+ and trigger grep guidance.
+	it("bash where 'grep' appears only as path component — no longer intercepted (BashIntent no longer has grep)", () => {
+		// With grep removed from BashIntent, grep anywhere in a bash
+		// command is no longer intercepted. This test verifies the
+		// path-component edge case still passes correctly — but the
+		// guardrail no longer distinguishes path vs command use.
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{
@@ -239,6 +212,18 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r).toBeUndefined();
+	});
+
+	it("bash ls/find/grep → no block (sentinel for trimmed guardrail)", () => {
+		for (let i = 0; i < 100; i++) {
+			const r = validateSatelliteCall(
+				"satellite_remote_exec",
+				{ tool: "bash", command: "ls /tmp" },
+				mcpConfig,
+				"t-sentinel",
+			);
+			expect(r).toBeUndefined();
+		}
 	});
 });
 

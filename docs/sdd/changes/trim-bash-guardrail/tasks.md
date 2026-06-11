@@ -42,7 +42,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleGrepFiles\|runRg\|checkRgAvailable\|truncateLine\|GREP_MAX_LINE_LENGTH" extensions/satellite/satellite-server.ts` — outputs 0 matches
   - **依赖**: 1.3
 
-- [ ] 1.5 **Remove `list`/`find`/`grep` entries from `TOOL_HANDLERS`**
+- [x] 1.5 **Remove `list`/`find`/`grep` entries from `TOOL_HANDLERS`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Delete the 3 lines: `list: (args, _s, _p, sid) => handleListDir(...)`, `find: (args, ...) => handleFindFiles(...)`, `grep: (args, ...) => handleGrepFiles(...)`. Keep `read`/`write`/`edit`/`bash`/`transfer_file` entries.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -E "^  (list|find|grep):" extensions/satellite/satellite-server.ts` — outputs 0 matches
@@ -110,13 +110,13 @@
 
 ## 3. Tests
 
-- [ ] 3.1 **Delete `local-bash-guards.test.ts`**
+- [x] 3.1 **Delete `local-bash-guards.test.ts`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/test/local-bash-guards.test.ts` (Delete)
   - **内容**: Remove the entire file. Reason: local guardrail is being deleted in Task 2.5; this test file's `checkBashIntentCommon` tests with `prefix: "local"` are no longer applicable.
   - **验证**: `cd /home/qjh/workspace/personal/pi && test -f extensions/personal-assistant/test/local-bash-guards.test.ts && echo "still exists" || echo "deleted"` — outputs `deleted`
   - **依赖**: 2.5 (must come after local guardrail deletion)
 
-- [ ] 3.2 **Update `satellite-guards.test.ts` to remove list/find/grep cases and add sentinel**
+- [x] 3.2 **Update `satellite-guards.test.ts` to remove list/find/grep cases and add sentinel**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/test/satellite-guards.test.ts` (Modify)
   - **内容**: 
     1. Delete the 3 test cases: `it("bash ls → suggests list", ...)`, `it("bash find → suggests find", ...)`, `it("bash grep → suggests grep", ...)` (currently lines 133-164)
@@ -157,7 +157,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -A 5 "## \[Unreleased\]" extensions/satellite/CHANGELOG.md | grep "### Removed"` — outputs the new section
   - **依赖**: 1.5, 1.6
 
-- [ ] 4.3 **Add CHANGELOG entry for personal-assistant if a CHANGELOG exists**
+- [x] 4.3 **Add CHANGELOG entry for personal-assistant if a CHANGELOG exists** (SKIPPED — no CHANGELOG.md)
   - **文件**: Check `/home/qjh/workspace/personal/pi/extensions/personal-assistant/CHANGELOG.md` (Modify if exists)
   - **内容**: If the file exists, add to `## [Unreleased]` section: `### Removed\n- Local bash guardrail layer (in \`extensions/personal-assistant/tools.ts\`) — local pi's default active tools don't include \`ls/grep/find\`, so the guardrail was redirecting to non-existent tools.`
   - **验证**: `cd /home/qjh/workspace/personal/pi && test -f extensions/personal-assistant/CHANGELOG.md && grep -A 3 "## \[Unreleased\]" extensions/personal-assistant/CHANGELOG.md || echo "no CHANGELOG, skip"`
