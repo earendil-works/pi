@@ -218,38 +218,38 @@ The session message endpoint's response shape is changed from `{role, content: s
 
 ## Capability: satellite-remote-exec
 
-The pi agent can execute commands on a remote HPC server via the `satellite_remote_exec` MCP tool. The tool is a discriminated union of 8 sub-operations: `bash`, `read_file`, `write_file`, `edit_file`, `list_dir`, `transfer_file`, `find_files`, `grep_files`. Schemas are aligned with the native pi tools; bash is guarded against accidental file-tool substitution; file transfer uses HTTP body transport to keep bytes out of LLM context.
+The pi agent can execute commands on a remote HPC server via the `satellite_remote_exec` MCP tool. The tool is a discriminated union of 8 sub-operations: `bash`, `read`, `write`, `edit`, `list`, `transfer_file`, `find`, `grep`. Sub-tool names match the native pi tools (`read`/`write`/`edit`/`list`/`find`/`grep`). Bash is guarded against accidental file-tool substitution via a shared client-side guardrail; file transfer uses HTTP body transport to keep bytes out of LLM context.
 
 ### Requirements
 
 #### Requirement: Bash Guardrail Intent Detection
 
-The satellite server SHALL detect bash command intent that indicates use of a dedicated file operation tool, and SHALL return an `isError: true` response with guidance to use the dedicated tool instead.
+The satellite server SHALL detect bash command intent that indicates use of a dedicated file operation tool, and SHALL return an `isError: true` response with guidance to use the dedicated tool instead. This guardrail SHALL be shared between local `bash` and satellite `satellite_remote_exec` + `tool: "bash"`, using independent per-turn budgets keyed by `${turnId}:${prefix}:${intent}`.
 
-##### Scenario: bash cat guided to read_file
+##### Scenario: bash cat guided to read
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="cat /path/to/file")`
-- **WHEN** `detectIntent` returns `"read_file"`
-- **THEN** The server returns `isError: true` with content: "Prefer read_file over bash cat. Use tool=read_file, path='/path/to/file'"
+- **WHEN** `detectBashIntent` returns `"read"`
+- **THEN** The hook returns `{ block: true, reason: "Prefer read over bash cat. Use { tool:\"read\", path:'/path/to/file' }" }`
 
-##### Scenario: bash sed -i guided to edit_file
+##### Scenario: bash sed -i guided to edit
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="sed -i 's/x/y/' /path/to/file")`
-- **WHEN** `detectIntent` returns `"edit_file"`
-- **THEN** The server returns `isError: true` with content: "Prefer edit_file over bash sed -i. Use tool=edit_file, ..."
+- **WHEN** `detectBashIntent` returns `"edit"`
+- **THEN** The hook returns `{ block: true, reason: "Prefer edit over bash sed -i. Use { tool:\"edit\", path:'/path/to/file', edits:[{oldText,newText}] }" }`
 
-##### Scenario: bash echo/printf > guided to write_file
+##### Scenario: bash echo/printf > guided to write
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="echo 'x' > /path/to/file")`
-- **WHEN** `detectIntent` returns `"write_file"`
-- **THEN** The server returns `isError: true` with content: "Prefer write_file over bash echo redirect. Use tool=write_file, ..."
+- **WHEN** `detectBashIntent` returns `"write"`
+- **THEN** The hook returns `{ block: true, reason: "Prefer write over bash echo redirect. Use { tool:\"write\", path:'/path/to/file', content:'...' }" }`
 
-##### Scenario: bash find guided to find_files
+##### Scenario: bash find guided to find
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="find /path -name '*.ts'")`
-- **WHEN** `detectIntent` returns `"find_files"`
-- **THEN** The server returns `isError: true` with content: "Prefer find_files over bash find. Use tool=find_files, pattern='*.ts', path='/path'"
+- **WHEN** `detectBashIntent` returns `"find"`
+- **THEN** The hook returns `{ block: true, reason: "Prefer find over bash find. Use { tool:\"find\", pattern:'*.ts', path:'/path' }" }`
 
-##### Scenario: bash grep guided to grep_files
+##### Scenario: bash grep guided to grep
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="grep -r pattern /path")`
-- **WHEN** `detectIntent` returns `"grep_files"`
-- **THEN** The server returns `isError: true` with content: "Prefer grep_files over bash grep. Use tool=grep_files, pattern='pattern', path='/path'"
+- **WHEN** `detectBashIntent` returns `"grep"`
+- **THEN** The hook returns `{ block: true, reason: "Prefer grep over bash grep. Use { tool:\"grep\", pattern:'pattern', path:'/path' }" }`
 
 ##### Scenario: legitimate bash command passes through
 - **GIVEN** Agent calls `remote_exec(tool="bash", command="ls -la /path")`
@@ -271,14 +271,14 @@ The satellite server SHALL detect bash command intent that indicates use of a de
 The satellite server SHALL allow at most 2 consecutive intercepts per guardrail intent category per turn, and SHALL return a hard error on the 3rd violation.
 
 ##### Scenario: third violation hard-blocks
-- **GIVEN** Agent has been intercepted twice in the same turn for `cat` → `read_file` guidance
+- **GIVEN** Agent has been intercepted twice in the same turn for `cat` → `read` guidance
 - **WHEN** Agent calls `remote_exec(tool="bash", command="cat /path")` a third time
-- **THEN** The server returns `isError: true` with content: "Blocked: you have tried bash cat 3 times. Use tool=read_file instead."
+- **THEN** The hook returns `{ block: true, reason: "Blocked: you have tried bash with similar intent 3 times. Use tool=read instead." }`
 
 ##### Scenario: different intent category resets counter
-- **GIVEN** Agent has been intercepted once for `cat` → `read_file`
+- **GIVEN** Agent has been intercepted once for `cat` → `read`
 - **WHEN** Agent calls `remote_exec(tool="bash", command="sed -i 's/a/b/' /path")`
-- **THEN** The server returns guidance error for `sed` and the `cat` counter is not affected
+- **THEN** The hook returns guidance error for `sed` and the `read` counter is not affected
 
 #### Requirement: Bash Default Timeout
 
@@ -296,10 +296,10 @@ The satellite server SHALL apply a default timeout of 30 seconds to bash command
 
 #### Requirement: Sub-Operation Schema Alignment with Native Tools
 
-The satellite server's sub-operation schemas SHALL match native pi tool schemas in parameter name, type, optionality, and description.
+The satellite server's sub-operation schemas SHALL match native pi tool schemas in parameter name, type, optionality, and description. Sub-tool names SHALL match the local tool names: `read`/`write`/`edit`/`list`/`find`/`grep`.
 
-##### Scenario: list_dir path is optional with default "."
-- **GIVEN** Agent calls `remote_exec(tool="list_dir")` without `path`
+##### Scenario: list path is optional with default "."
+- **GIVEN** Agent calls `remote_exec(tool="list")` without `path`
 - **WHEN** The schema validator parses the input
 - **THEN** Validation succeeds and the handler uses `"."` as the default path
 
@@ -307,20 +307,20 @@ The satellite server's sub-operation schemas SHALL match native pi tool schemas 
 
 The satellite server SHALL provide a `transfer_file` sub-operation that moves file content between local and remote locations using HTTP body transport (no LLM context tokens for file content).
 
-##### Scenario: transfer_file upload direction
+##### Scenario: transfer_file remote_to_local direction
 - **GIVEN** Agent needs to read a remote file and write it locally
-- **WHEN** Agent calls `remote_exec(tool="transfer_file", direction="upload", local_path="/local/path", remote_path="/remote/path")`
-- **THEN** The server reads `/remote/path` and returns its content in the response (agent writes to `/local/path`)
+- **WHEN** Agent calls `remote_exec(tool="transfer_file", direction="remote_to_local", local_path="/local/path", remote_path="/remote/path")`
+- **THEN** The server reads `/remote/path` and returns its base64-encoded content
 
-##### Scenario: transfer_file download direction
+##### Scenario: transfer_file local_to_remote direction
 - **GIVEN** Agent needs to write a local file to remote
-- **WHEN** Agent calls `remote_exec(tool="transfer_file", direction="download", local_path="/local/path", remote_path="/remote/path", content=<bytes>)`
-- **THEN** The server writes the content to `/remote/path` and returns a success message
+- **WHEN** Agent calls `remote_exec(tool="transfer_file", direction="local_to_remote", local_path="/local/path", remote_path="/remote/path", content=<base64>)`
+- **THEN** The server writes the decoded content to `/remote/path` and returns a success message
 
 ##### Scenario: transfer_file invalid direction rejected
 - **GIVEN** Agent calls `remote_exec(tool="transfer_file", direction="push", ...)`
 - **WHEN** The schema validator parses the input
-- **THEN** Validation fails with `isError: true` and message: "direction must be 'upload' or 'download'"
+- **THEN** Validation fails with `isError: true`
 
 #### Requirement: HTTP Transfer Endpoints
 
@@ -348,26 +348,26 @@ The satellite server SHALL expose `POST /transfer?path=` and `GET /transfer?path
 
 #### Requirement: Remote File Search Sub-Operations
 
-The satellite server SHALL provide `find_files` and `grep_files` sub-operations that delegate to `fd` and `rg` respectively, with explicit error messages when these tools are not installed.
+The satellite server SHALL provide `find` and `grep` sub-operations that delegate to `fd` and `rg` respectively, with explicit error messages when these tools are not installed.
 
-##### Scenario: find_files with fd installed
+##### Scenario: find with fd installed
 - **GIVEN** `fd` is installed on the remote server
-- **WHEN** Agent calls `remote_exec(tool="find_files", pattern="*.ts", path="/remote/src/")`
+- **WHEN** Agent calls `remote_exec(tool="find", pattern="*.ts", path="/remote/src/")`
 - **THEN** The server executes `fd --glob --hidden --no-require-git --max-depth 10 '*.ts' /remote/src/` and returns the file list (truncated to `limit`, default 500)
 
-##### Scenario: find_files with fd missing
+##### Scenario: find with fd missing
 - **GIVEN** `fd` is NOT installed on the remote server
-- **WHEN** Agent calls `remote_exec(tool="find_files", pattern="*.ts", path="/remote/src/")`
+- **WHEN** Agent calls `remote_exec(tool="find", pattern="*.ts", path="/remote/src/")`
 - **THEN** The server returns `isError: true` with content: "fd not found on remote server. Install with: apt install fd-find"
 
-##### Scenario: grep_files with rg installed
+##### Scenario: grep with rg installed
 - **GIVEN** `rg` is installed on the remote server
-- **WHEN** Agent calls `remote_exec(tool="grep_files", pattern="function", path="/remote/src/")`
+- **WHEN** Agent calls `remote_exec(tool="grep", pattern="function", path="/remote/src/")`
 - **THEN** The server executes `rg` and returns matching lines (truncated to `limit`, default 500)
 
-##### Scenario: grep_files with rg missing
+##### Scenario: grep with rg missing
 - **GIVEN** `rg` is NOT installed on the remote server
-- **WHEN** Agent calls `remote_exec(tool="grep_files", pattern="function", path="/remote/src/")`
+- **WHEN** Agent calls `remote_exec(tool="grep", pattern="function", path="/remote/src/")`
 - **THEN** The server returns `isError: true` with content: "ripgrep not found. Install with: apt install ripgrep"
 
 #### Requirement: Layer A System Prompt Soft Guardrail
@@ -785,3 +785,176 @@ The webui client SHALL NOT queue multiple `extension_ui_request` events in a `Ma
 #### Requirement: Pending Count Indicator
 - **Reason**: 不再有跨卡片的"等待数量"概念,每张卡片独立显示状态
 - **Migration**: topbar 不再显示 "⏳ 还有 N 个未答问题"
+
+## Capability: agent-harness-steering
+
+### Requirements
+
+#### Requirement: Steer triggers before_agent_start
+
+The `steer()` method on `AgentHarness` SHALL emit the `before_agent_start` hook so that extensions listening on `before_agent_start` (e.g., memory recall) can react to the new user message as a fresh prompt topic. The hook SHALL fire after the message push and queue update, but before the next LLM turn begins.
+
+##### Scenario: Steer emits before_agent_start with steer text as prompt
+- **GIVEN** AgentHarness is in non-idle phase
+- **AND** a test extension is registered that subscribes to `before_agent_start`
+- **WHEN** user calls `harness.steer("看下 cron 模块性能")`
+- **THEN** the extension's `before_agent_start` handler is called
+- **AND** the event's `prompt` field equals `"看下 cron 模块性能"`
+- **AND** the event's `systemPrompt` is the current harness system prompt (unchanged)
+- **AND** the steer message is pushed to `steerQueue` for the next LLM turn to process
+
+##### Scenario: Steer does not block when no extension listens
+- **GIVEN** AgentHarness is in non-idle phase
+- **AND** no extension is registered for `before_agent_start`
+- **WHEN** user calls `harness.steer("any text")`
+- **THEN** the call returns without throwing
+- **AND** the steer message is in `steerQueue`
+
+##### Scenario: Steer overwrites pending memory search
+- **GIVEN** a previous `before_agent_start` already set `pendingMemorySearch = { promise: P1, ... }`
+- **AND** P1 has not yet been consumed
+- **WHEN** user calls `harness.steer("new topic")`
+- **THEN** `pendingMemorySearch` is set to a new `{ promise: P2, ... }`
+- **AND** P1's eventual resolution is silently discarded (its result is never injected into context)
+
+## Capability: compaction-file-tracking
+
+### Requirements
+
+#### Requirement: Compaction tracks grep/find/ls as read (本地)
+
+The `extractFileOpsFromMessage` function in both `packages/agent/src/harness/compaction/utils.ts` and `packages/coding-agent/src/core/compaction/utils.ts` SHALL recognize `grep`, `find`, and `ls` tool calls and add `args.path` to `fileOps.read`. If `args.path` is undefined, no path is added and no error is thrown.
+
+##### Scenario: Grep with explicit path
+- **GIVEN** assistant message with `toolCall({ name: "grep", arguments: { pattern: "TODO", path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Find with explicit path
+- **GIVEN** assistant message with `toolCall({ name: "find", arguments: { pattern: "*.ts", path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Ls with explicit path
+- **GIVEN** assistant message with `toolCall({ name: "ls", arguments: { path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Grep without path argument
+- **GIVEN** assistant message with `toolCall({ name: "grep", arguments: { pattern: "TODO" } })` (no path)
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** no path is added to `fileOps.read`
+- **AND** no error is thrown (path is optional)
+
+#### Requirement: Compaction tracks satellite_remote_exec sub-tool as read
+
+The `extractFileOpsFromMessage` function SHALL recognize `satellite_remote_exec` MCP tool calls and, when `args.tool` is `"grep"`, `"find"`, or `"ls"`, add `args.path` to `fileOps.read`. Other sub-tools (`read`, `write`, `edit`, `bash`, `transfer_file`) are not tracked by this capability.
+
+##### Scenario: Satellite grep
+- **GIVEN** assistant message with `toolCall({ name: "satellite_remote_exec", arguments: { tool: "grep", pattern: "TODO", path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Satellite find
+- **GIVEN** assistant message with `toolCall({ name: "satellite_remote_exec", arguments: { tool: "find", pattern: "*.ts", path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Satellite ls
+- **GIVEN** assistant message with `toolCall({ name: "satellite_remote_exec", arguments: { tool: "ls", path: "src" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src"`
+
+##### Scenario: Satellite read sub-tool not tracked
+- **GIVEN** assistant message with `toolCall({ name: "satellite_remote_exec", arguments: { tool: "read", path: "src/foo.ts" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` does not contain `"src/foo.ts"`
+- **AND** no error is thrown (out of scope for this capability)
+
+##### Scenario: Satellite bash sub-tool not tracked
+- **GIVEN** assistant message with `toolCall({ name: "satellite_remote_exec", arguments: { tool: "bash", command: "cat src/foo.ts" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** no file paths are added to any `fileOps` set
+- **AND** no error is thrown
+
+#### Requirement: read/write/edit tool tracking unchanged
+
+The `extractFileOpsFromMessage` function SHALL continue to track `read`, `write`, and `edit` tool calls exactly as before, without behavioral change.
+
+##### Scenario: read tool call tracks path
+- **GIVEN** assistant message with `toolCall({ name: "read", arguments: { path: "src/foo.ts" } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.read` contains `"src/foo.ts"`
+
+##### Scenario: write tool call tracks path
+- **GIVEN** assistant message with `toolCall({ name: "write", arguments: { path: "src/foo.ts", content: "..." } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.written` contains `"src/foo.ts"`
+
+##### Scenario: edit tool call tracks path
+- **GIVEN** assistant message with `toolCall({ name: "edit", arguments: { path: "src/foo.ts", edits: [...] } })`
+- **WHEN** `extractFileOpsFromMessage` processes this message
+- **THEN** `fileOps.edited` contains `"src/foo.ts"`
+
+## Capability: local-bash-guardrail
+
+### Requirements
+
+#### Requirement: Bash intent guardrail shared between local bash and satellite
+
+The `extensions/personal-assistant/tools.ts` SHALL detect bash commands that should have used a structured read/write/edit/list/find/grep tool and emit a guidance message (`block: true, reason: "...")` to nudge the LLM toward structured tools. The same detection logic SHALL be applied to both:
+
+1. Local `bash` tool calls (`event.toolName === "bash"`)
+2. Satellite `satellite_remote_exec` calls where `event.input.tool === "bash"`
+
+The two scopes SHALL use independent per-turn budgets keyed by `${turnId}:${prefix}:${intent}` where `prefix` is `"local"` or `"satellite"`. First two occurrences of the same intent on the same side emit guidance; the third occurrence emits a hard block.
+
+##### Scenario: Local bash cat → suggest read
+- **GIVEN** LLM calls local `bash({ command: "cat /etc/hostname" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer read over bash cat. Use { tool:\"read\", path:'/etc/hostname' } for offset/limit/truncation." }`
+
+##### Scenario: Local bash ls → suggest list
+- **GIVEN** LLM calls local `bash({ command: "ls -la /tmp" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer list over bash ls. Use { tool:\"list\", path:'/tmp' } for structured output." }`
+
+##### Scenario: Local bash find → suggest find
+- **GIVEN** LLM calls local `bash({ command: "find /tmp -name '*.txt'" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer find over bash find. Use { tool:\"find\", pattern:'<glob>', path:'/tmp' }." }`
+
+##### Scenario: Local bash grep → suggest grep
+- **GIVEN** LLM calls local `bash({ command: "grep -r foo /tmp" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer grep over bash grep. Use { tool:\"grep\", pattern:'<regex>', path:'/tmp' }." }`
+
+##### Scenario: Local bash sed -i → suggest edit
+- **GIVEN** LLM calls local `bash({ command: "sed -i 's/foo/bar/' file.txt" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer edit over bash sed -i. Use { tool:\"edit\", path:'file.txt', edits:[{oldText,newText}] }." }`
+
+##### Scenario: Local bash echo> → suggest write
+- **GIVEN** LLM calls local `bash({ command: "echo 'x' > file.txt" })`
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns `{ block: true, reason: "Prefer write over bash echo/printf. Use { tool:\"write\", path:'file.txt', content:'...' } for atomic writes." }`
+
+##### Scenario: Local bash unrelated command passes
+- **GIVEN** LLM calls local `bash({ command: "ps aux | head" })` (not cat/ls/find/grep/sed/echo>)
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns undefined (no block)
+
+##### Scenario: Local bash with pipelines not intercepted
+- **GIVEN** LLM calls local `bash({ command: "cat /etc/hostname | tr a-z A-Z" })` (contains pipe)
+- **WHEN** the `tool_call` event fires
+- **THEN** the hook returns undefined (pipelines are not safe matches)
+
+##### Scenario: Local and satellite budgets are independent
+- **GIVEN** the same turn uses local `bash: cat /a`, then satellite `remote_exec: bash: cat /a`
+- **WHEN** both `tool_call` events fire
+- **THEN** both get guidance messages (each side's budget is independent, neither side is at 3 yet)
+
+##### Scenario: Third local bash cat is hard-blocked
+- **GIVEN** the same turn calls local `bash: cat /a` twice (each guidance)
+- **WHEN** the same turn calls local `bash: cat /a` a third time
+- **THEN** the hook returns `{ block: true, reason: "Blocked: you have tried bash with similar intent 3 times. Use tool=read instead." }`
