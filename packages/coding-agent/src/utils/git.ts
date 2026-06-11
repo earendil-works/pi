@@ -163,6 +163,30 @@ function parseGenericGitUrl(url: string): GitSource | null {
 }
 
 /**
+ * Embed a token into an HTTPS clone URL for private-repo authentication.
+ *
+ * Only modifies `https://` URLs; SSH URLs are left unchanged because they
+ * rely on the configured SSH key. If the URL already contains credentials,
+ * it is returned as-is to avoid overwriting explicit configuration.
+ *
+ * @param repo - The clone URL (from GitSource.repo)
+ * @param token - A personal-access token or password, or undefined to skip
+ * @returns The URL with the token embedded, or the original URL unchanged
+ */
+export function applyGitHttpsToken(repo: string, token: string | undefined): string {
+	if (!token) return repo;
+	if (!/^https:\/\//i.test(repo)) return repo;
+	try {
+		const url = new URL(repo);
+		if (url.username || url.password) return repo;
+		url.username = token;
+		return url.toString();
+	} catch {
+		return repo;
+	}
+}
+
+/**
  * Parse git source into a GitSource.
  *
  * Rules:

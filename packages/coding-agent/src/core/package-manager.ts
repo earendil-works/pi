@@ -29,7 +29,7 @@ import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
-import { type GitSource, parseGitUrl } from "../utils/git.ts";
+import { applyGitHttpsToken, type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
@@ -42,6 +42,20 @@ function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+/**
+ * Return a git credential token for HTTPS clones, if one is configured.
+ *
+ * Checks PI_GIT_TOKEN first (pi-specific), then falls back to GITHUB_TOKEN
+ * (widely-used by CI environments). The token is embedded in the HTTPS clone
+ * URL so that both the initial clone and subsequent `git fetch` calls (which
+ * use the persisted remote URL) authenticate correctly.
+ *
+ * Only HTTPS URLs are affected — SSH remotes ignore this value entirely.
+ */
+function getGitToken(): string | undefined {
+	return process.env.PI_GIT_TOKEN || process.env.GITHUB_TOKEN || undefined;
 }
 
 export interface PathMetadata {
@@ -1777,7 +1791,8 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
 
-		await this.runCommand("git", ["clone", source.repo, targetDir]);
+		const cloneUrl = applyGitHttpsToken(source.repo, getGitToken());
+		await this.runCommand("git", ["clone", cloneUrl, targetDir]);
 		if (source.ref) {
 			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
 		}

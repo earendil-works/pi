@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseGitUrl } from "../src/utils/git.ts";
+import { applyGitHttpsToken, parseGitUrl } from "../src/utils/git.ts";
 
 describe("Git URL Parsing", () => {
 	describe("protocol URLs (accepted without git: prefix)", () => {
@@ -87,5 +87,37 @@ describe("Git URL Parsing", () => {
 		it("should reject user/repo shorthand", () => {
 			expect(parseGitUrl("user/repo")).toBeNull();
 		});
+	});
+});
+
+describe("applyGitHttpsToken", () => {
+	it("embeds token into an HTTPS URL", () => {
+		expect(applyGitHttpsToken("https://github.com/org/repo", "mytoken")).toBe("https://mytoken@github.com/org/repo");
+	});
+
+	it("leaves SSH SCP-like URLs unchanged", () => {
+		const url = "git@github.com:org/repo";
+		expect(applyGitHttpsToken(url, "mytoken")).toBe(url);
+	});
+
+	it("leaves ssh:// URLs unchanged", () => {
+		const url = "ssh://git@github.com/org/repo";
+		expect(applyGitHttpsToken(url, "mytoken")).toBe(url);
+	});
+
+	it("returns original URL when token is undefined", () => {
+		const url = "https://github.com/org/repo";
+		expect(applyGitHttpsToken(url, undefined)).toBe(url);
+	});
+
+	it("does not override existing credentials in URL", () => {
+		const url = "https://existinguser@github.com/org/repo";
+		expect(applyGitHttpsToken(url, "newtoken")).toBe(url);
+	});
+
+	it("handles HTTPS URL with path segments", () => {
+		expect(applyGitHttpsToken("https://example.com/org/nested/repo", "tok")).toBe(
+			"https://tok@example.com/org/nested/repo",
+		);
 	});
 });

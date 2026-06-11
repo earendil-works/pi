@@ -743,6 +743,102 @@ Content`,
 			);
 		});
 
+		it("should embed PI_GIT_TOKEN in HTTPS clone URL", async () => {
+			const previousToken = process.env.PI_GIT_TOKEN;
+			process.env.PI_GIT_TOKEN = "mytoken123";
+			try {
+				const source = "git:github.com/user/private-repo";
+				const targetDir = join(agentDir, "git", "github.com", "user", "private-repo");
+				const runCommandSpy = vi
+					.spyOn(packageManager as any, "runCommand")
+					.mockImplementation(async (...callArgs: unknown[]) => {
+						const [command, args] = callArgs as [string, string[]];
+						if (command === "git" && args[0] === "clone") {
+							mkdirSync(targetDir, { recursive: true });
+						}
+					});
+
+				await packageManager.install(source);
+
+				expect(runCommandSpy).toHaveBeenCalledWith("git", [
+					"clone",
+					"https://mytoken123@github.com/user/private-repo",
+					targetDir,
+				]);
+			} finally {
+				if (previousToken === undefined) {
+					delete process.env.PI_GIT_TOKEN;
+				} else {
+					process.env.PI_GIT_TOKEN = previousToken;
+				}
+			}
+		});
+
+		it("should embed GITHUB_TOKEN in HTTPS clone URL when PI_GIT_TOKEN is absent", async () => {
+			const previousPiToken = process.env.PI_GIT_TOKEN;
+			const previousGhToken = process.env.GITHUB_TOKEN;
+			delete process.env.PI_GIT_TOKEN;
+			process.env.GITHUB_TOKEN = "ghtoken456";
+			try {
+				const source = "git:github.com/user/private-repo";
+				const targetDir = join(agentDir, "git", "github.com", "user", "private-repo");
+				const runCommandSpy = vi
+					.spyOn(packageManager as any, "runCommand")
+					.mockImplementation(async (...callArgs: unknown[]) => {
+						const [command, args] = callArgs as [string, string[]];
+						if (command === "git" && args[0] === "clone") {
+							mkdirSync(targetDir, { recursive: true });
+						}
+					});
+
+				await packageManager.install(source);
+
+				expect(runCommandSpy).toHaveBeenCalledWith("git", [
+					"clone",
+					"https://ghtoken456@github.com/user/private-repo",
+					targetDir,
+				]);
+			} finally {
+				if (previousPiToken === undefined) {
+					delete process.env.PI_GIT_TOKEN;
+				} else {
+					process.env.PI_GIT_TOKEN = previousPiToken;
+				}
+				if (previousGhToken === undefined) {
+					delete process.env.GITHUB_TOKEN;
+				} else {
+					process.env.GITHUB_TOKEN = previousGhToken;
+				}
+			}
+		});
+
+		it("should not embed token in SSH clone URLs", async () => {
+			const previousToken = process.env.PI_GIT_TOKEN;
+			process.env.PI_GIT_TOKEN = "mytoken123";
+			try {
+				const source = "git:git@github.com:user/private-repo";
+				const targetDir = join(agentDir, "git", "github.com", "user", "private-repo");
+				const runCommandSpy = vi
+					.spyOn(packageManager as any, "runCommand")
+					.mockImplementation(async (...callArgs: unknown[]) => {
+						const [command, args] = callArgs as [string, string[]];
+						if (command === "git" && args[0] === "clone") {
+							mkdirSync(targetDir, { recursive: true });
+						}
+					});
+
+				await packageManager.install(source);
+
+				expect(runCommandSpy).toHaveBeenCalledWith("git", ["clone", "git@github.com:user/private-repo", targetDir]);
+			} finally {
+				if (previousToken === undefined) {
+					delete process.env.PI_GIT_TOKEN;
+				} else {
+					process.env.PI_GIT_TOKEN = previousToken;
+				}
+			}
+		});
+
 		it("should install git package dependencies with --omit=dev", async () => {
 			const source = "git:github.com/user/repo";
 			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
