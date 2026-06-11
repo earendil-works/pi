@@ -51,6 +51,17 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 			case "edit":
 				fileOps.edited.add(path);
 				break;
+			case "grep":
+			case "find":
+			case "ls":
+				fileOps.read.add(path);
+				break;
+			case "satellite_remote_exec":
+				// Satellite MCP aggregator: only sub-tools grep/find/ls touch the file system read-only.
+				if (args.tool === "grep" || args.tool === "find" || args.tool === "ls") {
+					fileOps.read.add(path);
+				}
+				break;
 		}
 	}
 }

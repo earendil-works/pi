@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "lib": ["ES2022", "DOM"],
+    "paths": {
+      "@earendil-works/pi-personal-assistant": ["../../extensions/personal-assistant/index.ts"],
+      "@earendil-works/pi-personal-assistant/*": ["../../extensions/personal-assistant/*"]
+    }
+  },
+  "include": ["server/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx", "../../extensions/personal-assistant/**/*.ts"]
+}

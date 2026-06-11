@@ -1,0 +1,11 @@
+phase: archive
+workflow: full
+change: add-ask-user-question-card
+created_at: 2026-06-09
+base_ref: 1651e45540d28bebfacbc2199846a284d3c99de9
+tasks_total: 13
+tasks_done: 13
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true

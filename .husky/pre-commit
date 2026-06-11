@@ -42,4 +42,5 @@ for file in $STAGED_FILES; do
   fi
 done
 
+
 echo "✅ All pre-commit checks passed!"

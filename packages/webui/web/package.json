@@ -1,0 +1,33 @@
+{
+  "name": "@pi-mono/webui-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "lucide-react": "0.460.0",
+    "marked": "15.0.12",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-router-dom": "7.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.18",
+    "@testing-library/jest-dom": "6.5.0",
+    "@testing-library/react": "16.1.0",
+    "@testing-library/user-event": "14.5.2",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "25.0.1",
+    "tailwindcss": "4.1.18",
+    "typescript": "5.9.3",
+    "vite": "7.0.0",
+    "vitest": "2.1.8"
+  }
+}

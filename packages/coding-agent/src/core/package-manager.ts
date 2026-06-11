@@ -24,6 +24,7 @@ function getEnv(): NodeJS.ProcessEnv {
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -2387,6 +2388,51 @@ export class DefaultPackageManager implements PackageManager {
 			userOverrides.themes,
 			globalBaseDir,
 		);
+
+		// Bundled resources from repo root
+		const repoExtDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../extensions");
+		const repoSKillsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../skills");
+		const repoPromptsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../prompts");
+		if (existsSync(repoExtDir)) {
+			const autoEntries = collectAutoExtensionEntries(repoExtDir);
+			const bundledMetadata: PathMetadata = {
+				source: "auto",
+				scope: "project",
+				origin: "top-level",
+				baseDir: repoExtDir,
+			};
+			addResources("extensions", autoEntries, bundledMetadata, projectOverrides.extensions, repoExtDir);
+		}
+		if (existsSync(repoSKillsDir)) {
+			const bundledSkillMetadata: PathMetadata = {
+				source: "auto",
+				scope: "project",
+				origin: "top-level",
+				baseDir: repoSKillsDir,
+			};
+			addResources(
+				"skills",
+				collectAutoSkillEntries(repoSKillsDir, "pi"),
+				bundledSkillMetadata,
+				projectOverrides.skills,
+				repoSKillsDir,
+			);
+		}
+		if (existsSync(repoPromptsDir)) {
+			const bundledPromptMetadata: PathMetadata = {
+				source: "auto",
+				scope: "project",
+				origin: "top-level",
+				baseDir: repoPromptsDir,
+			};
+			addResources(
+				"prompts",
+				collectAutoPromptEntries(repoPromptsDir),
+				bundledPromptMetadata,
+				projectOverrides.prompts,
+				repoPromptsDir,
+			);
+		}
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {

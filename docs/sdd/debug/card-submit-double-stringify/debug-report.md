@@ -1,0 +1,22 @@
+# Debug Report: card-submit-double-stringify
+
+- **日期**: 2026-06-09
+- **症状**: 点击 ask_user_question 卡片选项后,UI 显示 "你的选择: ..."(state 已更新),但模型不继续响应,永远卡住
+- **根因**: `packages/webui/web/src/pages/ChatPage.tsx:454` `handleCardSubmit` 和 `:466` `handleCardCancel` 在调用 `ws.send()` 前预序列化 `JSON.stringify(...)`;而 `WebSocketClient.send()`(`packages/webui/web/src/lib/api.ts:312`) 自身也会序列化其参数。双重序列化导致线上 payload 是 JSON 字符串字面量(包裹双引号),服务器 `JSON.parse` 得到 string,`switch(msg.type)` 找不到 `extension_ui_response` 分支,消息被静默丢弃,pi 的 `ctx.ui.select()` 永不 resolve
+- **因果链**:
+  - 卡片点击 → `onSubmit(label)` → `MessageParts.tsx:244 onCardSubmit(part.id, label)` → `ChatPage.tsx:453 handleCardSubmit` → 双重序列化 `ws?.send(JSON.stringify({...}))` → 服务器收到 `"{\"type\":\"extension_ui_response\",...}"` (string) → `case "extension_ui_response":` 不匹配 → 静默返回 → pi 的 `ctx.ui.select` 永久挂起 → 模型等待结果 → 整个 turn 卡住
+- **修复**: `packages/webui/web/src/pages/ChatPage.tsx:454,466` — 移除 `JSON.stringify(...)` 包裹,直接传对象
+- **防御层**:
+  - **API 边界 (WebSocketClient.send)**: 已设计为"接受 any,内部序列化";问题是 webui 多处调用者不一致(其他 4 处都正确传对象,只这 2 处传字符串)
+  - **业务逻辑 (handleCardSubmit/handleCardCancel)**: 不做协议层序列化,只构造 message 对象
+  - **测试覆盖**: 添加 RED 复现测试(ChatPage.test.tsx 中"clicking a single-select option sends a plain object..."),断言 `typeof sentArg === 'object'` 而非 `'string'`
+- **经验教训**:
+  - 测试覆盖盲点:之前 ChatPage 集成测试只验证 card 渲染和 disabled 状态,**从未断言"点击选项会向 ws 发送什么"** — 这是 TDD 盲区
+  - API 一致性原则: 当 `WebSocketClient.send` 已经做了 `JSON.stringify` 时,**所有调用方都必须传对象**。如果允许传字符串,应在 API 层做 `typeof === 'string'` 的检测,或者在 ESLint/biome 配置中禁止 `ws.send(JSON.stringify(...))` 模式
+  - 建议在 `WebSocketClient.send` 内部加 `console.warn` 当传入 string 时(开发模式),防止再次出现
+- **测试结果**:
+  - 复现测试 RED → GREEN
+  - 全量 web 231/231 (含 +1 复现测试)
+  - ext 146/146
+  - server 218/218 (parallel-flakiness 不相关,串行通过)
+  - `npm run check` clean

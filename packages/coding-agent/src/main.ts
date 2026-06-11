@@ -5,7 +5,10 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { spawn } from "node:child_process";
+import path from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
@@ -509,6 +512,28 @@ export async function main(args: string[], options?: MainOptions) {
 	const shouldTakeOverStdout = appMode !== "interactive" && !isPlainRuntimeMetadataCommand(parsed);
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
+	}
+
+	if (parsed.web) {
+		const port = parsed.port ?? "8741";
+		const maxSessions = parsed.maxSessions ?? "16";
+
+		// The webui server is shipped as a pre-built esbuild bundle at
+		// dist/webui/server.bundle.js (relative to this CLI's dist). The
+		// web frontend assets live at dist/webui/web/. Both are copied in
+		// by `copy-webui` during this package's build (see package.json
+		// scripts). No `tsx`, no global binary lookup, no monorepo path
+		// required at runtime.
+		const distDir = path.dirname(fileURLToPath(import.meta.url));
+		const webuiServerPath = path.join(distDir, "webui", "server.bundle.js");
+
+		const child = spawn(process.execPath, [webuiServerPath], {
+			stdio: "inherit",
+			cwd: process.cwd(),
+			env: { ...process.env, PI_WEB_PORT: port, PI_WEB_MAX_SESSIONS: maxSessions },
+		});
+		child.on("exit", (code) => process.exit(code ?? 0));
+		return;
 	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {

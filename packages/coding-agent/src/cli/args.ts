@@ -20,6 +20,7 @@ export interface Args {
 	resume?: boolean;
 	help?: boolean;
 	version?: boolean;
+	web?: boolean;
 	mode?: Mode;
 	name?: string;
 	noSession?: boolean;
@@ -27,6 +28,8 @@ export interface Args {
 	sessionId?: string;
 	fork?: string;
 	sessionDir?: string;
+	port?: string;
+	maxSessions?: string;
 	models?: string[];
 	tools?: string[];
 	excludeTools?: string[];
@@ -101,6 +104,12 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({ type: "error", message: "--name requires a value" });
 			}
+		} else if (arg === "--web") {
+			result.web = true;
+		} else if (arg === "--port" && i + 1 < args.length) {
+			result.port = args[++i];
+		} else if (arg === "--max-sessions" && i + 1 < args.length) {
+			result.maxSessions = args[++i];
 		} else if (arg === "--no-session") {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
@@ -274,6 +283,9 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --web                          Start WebUI server (default port 8741, max 16 sessions)
+  --port <port>                  Web server port (default 8741)
+  --max-sessions <n>             Max concurrent sessions (default 16)
   --help, -h                     Show this help
   --version, -v                  Show version number
 

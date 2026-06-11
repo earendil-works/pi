@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Sync codegraph index (tolerant to API drift)
+codegraph sync /home/qjh/workspace/personal/pi || true

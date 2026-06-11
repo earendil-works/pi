@@ -60,6 +60,56 @@ export interface WarningSettings {
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
+export interface PersonalAssistantAgentConfig {
+	provider?: string;
+	model?: string;
+	thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	max_tokens?: number;
+	temperature?: number;
+}
+
+export interface PersonalAssistantConfig {
+	agent?: PersonalAssistantAgentConfig;
+	subagent?: {
+		provider?: string;
+		model?: string;
+		max_iterations?: number;
+		max_parallel?: number;
+	};
+	memory?: {
+		enabled?: boolean;
+		query_rewrite?: { provider?: string; model?: string };
+		extraction?: { provider?: string; model?: string };
+		embedding?: { provider?: string; model?: string };
+		decay?: { base_decay?: number; archive_threshold?: number };
+		injection?: { max_count?: number };
+	};
+	search?: {
+		provider?: string;
+		api_key?: string;
+		max_results?: number;
+		timeout?: number;
+		base_url?: string;
+	};
+	persona?: {
+		soul_path?: string;
+		user_path?: string;
+	};
+	satellite?: {
+		ssh_user?: string;
+		ssh_host?: string;
+		remote_path?: string;
+	};
+	mcpServers?: Record<
+		string,
+		{
+			command: string;
+			args?: string[];
+			env?: Record<string, string>;
+		}
+	>;
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -119,6 +169,7 @@ export interface Settings {
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	personalAssistant?: PersonalAssistantConfig;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1183,5 +1234,21 @@ export class SettingsManager {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
 		this.save();
+	}
+}
+
+// ============================================================================
+// MCP Config Loader
+// ============================================================================
+
+const MCP_CONFIG_FILE = "mcp.json";
+
+export function loadMcpConfig(): Record<string, { url: string; token: string; enabled?: boolean }> {
+	const configPath = join(getAgentDir(), MCP_CONFIG_FILE);
+	if (!existsSync(configPath)) return {};
+	try {
+		return JSON.parse(readFileSync(configPath, "utf-8"));
+	} catch {
+		return {};
 	}
 }

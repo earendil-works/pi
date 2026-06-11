@@ -1,0 +1,10 @@
+phase: archive
+workflow: full
+change: pi-webui
+created_at: 2026-06-01
+base_ref: 817e5ed557d820fd5fe1aba907c3ecaf070f77ce
+tasks_total: 0
+tasks_done: 45
+isolation: branch
+verify_result: pass
+archived: true

@@ -1,0 +1,11 @@
+phase: archive
+workflow: quickfix
+change: fix-cron-session-start-auto-execute
+created_at: 2026-06-09
+base_ref: 93d8fe3c837592e4925328a8601f37e12b423e8a
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true
