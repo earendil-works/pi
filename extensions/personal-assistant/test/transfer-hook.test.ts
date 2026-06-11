@@ -95,10 +95,10 @@ describe("interceptTransferCall (strict canonical gate)", () => {
 		expect(event.input.content).toBeUndefined();
 	});
 
-	it("ignores non-transfer_file tools (e.g. read_file)", async () => {
+	it("ignores non-transfer_file tools (e.g. read)", async () => {
 		const event: { toolName: string; input: Record<string, unknown> } = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "read_file", path: "/x" },
+			input: { tool: "read", path: "/x" },
 		};
 		expect(await interceptTransferCall(event)).toBeUndefined();
 	});

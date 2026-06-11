@@ -140,63 +140,6 @@ const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
 
-// Remote exec tool input schema - discriminated union of all sub-operations
-export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
-  z.object({
-    tool: z.literal("bash"),
-    command: z.string(),
-    timeout: z.number().optional(),
-    cwd: z.string().optional(),
-  }),
-  z.object({
-    tool: z.literal("read_file"),
-    path: z.string(),
-    offset: z.number().optional(),
-    limit: z.number().optional(),
-  }),
-  z.object({
-    tool: z.literal("write_file"),
-    path: z.string(),
-    content: z.string(),
-  }),
-  z.object({
-    tool: z.literal("edit_file"),
-    path: z.string(),
-    edits: z.array(z.object({
-      oldText: z.string(),
-      newText: z.string(),
-    })),
-  }),
-  z.object({
-    tool: z.literal("list_dir"),
-    path: z.string().optional().default("."),
-    limit: z.number().optional().default(500),
-  }),
-  z.object({
-    tool: z.literal("find_files"),
-    pattern: z.string(),
-    path: z.string().optional().default("."),
-    limit: z.number().optional().default(1000),
-  }),
-  z.object({
-    tool: z.literal("grep_files"),
-    pattern: z.string(),
-    path: z.string().optional().default("."),
-    glob: z.string().optional(),
-    limit: z.number().optional().default(500),
-    ignoreCase: z.boolean().optional().default(false),
-    literal: z.boolean().optional().default(false),
-    context: z.number().optional().default(0),
-  }),
-  z.object({
-    tool: z.literal("transfer_file"),
-    direction: z.enum(["remote_to_local", "local_to_remote"]),
-    local_path: z.string(),
-    remote_path: z.string(),
-    content: z.string().optional(), // only used for "local_to_remote" direction
-  }),
-]);
-
 // REMOTE_EXEC_INPUT_SCHEMA is imported from ./schema.ts — kept separate so
 // the personal-assistant client can import it for e2e tests of the
 // transfer_file hook (validating against the real schema, not a copy).
@@ -630,7 +573,7 @@ async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: s
       } catch {
         return {
           content: textContent(
-            `Refusing to edit ${args.path}: appears to be a binary file (${rawBytes.byteLength} bytes, not valid utf-8). edit_file is for text files.`,
+            `Refusing to edit ${args.path}: appears to be a binary file (${rawBytes.byteLength} bytes, not valid utf-8). edit is for text files.`,
           ),
           isError: true,
         };
@@ -1085,17 +1028,17 @@ const TOOL_HANDLERS: Record<string, (
   progressCtx?: ProgressContext,
   turnId?: number | string,
 ) => Promise<ToolResult>> = {
-  read_file: (args, _s, _p, sid) => handleReadFile(args as { path: string; offset?: number; limit?: number }, sid),
-  write_file: (args, _s, _p, sid) => handleWriteFile(args as { path: string; content: string }, sid),
-  edit_file: (args, _s, _p, sid) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }, sid),
+  read: (args, _s, _p, sid) => handleReadFile(args as { path: string; offset?: number; limit?: number }, sid),
+  write: (args, _s, _p, sid) => handleWriteFile(args as { path: string; content: string }, sid),
+  edit: (args, _s, _p, sid) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }, sid),
   bash: (args, abortSignal, progressCtx) => handleBash(
     args as { command: string; timeout?: number; cwd?: string },
     abortSignal,
     progressCtx,
   ),
-  list_dir: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
-  find_files: (args, abortSignal, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid, abortSignal),
-  grep_files: (args, abortSignal, _p, sid) => handleGrepFiles(
+  list: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
+  find: (args, abortSignal, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid, abortSignal),
+  grep: (args, abortSignal, _p, sid) => handleGrepFiles(
     args as {
       pattern: string;
       path?: string;
@@ -1124,7 +1067,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "remote_exec",
     {
-      description: "Run file and shell operations on the remote HPC server.\n\n# Common tasks — fields are flat at the root\n\nRead    { tool:\"read_file\",  path:\"...\" }\nEdit    { tool:\"edit_file\",  path:\"...\", edits:[{oldText,newText}] }\nWrite   { tool:\"write_file\", path:\"...\", content:\"...\" }\n        Pass content directly as a string, do NOT wrap it in a Python script.\nList    { tool:\"list_dir\",   path:\"...\" }\nSearch  { tool:\"find_files\", pattern:\"...\", path:\"...\" }\n        { tool:\"grep_files\", pattern:\"...\", path:\"...\", glob?:\"...\" }\nShell   { tool:\"bash\",       command:\"...\" }\n        Use only for env, processes, scripts. Prefer the dedicated ops above.\n\n# Move a local file to remote (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"local_to_remote\",\n    local_path:\"<path on your machine>\",\n    remote_path:\"<path on HPC>\" }\n\n# Pull a remote file to local (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"remote_to_local\",\n    remote_path:\"<path on HPC>\",\n    local_path:\"<path on your machine>\" }\n\n# IMPORTANT — transfer_file canonical names\n\n  The ONLY accepted values for `direction` are EXACTLY the two strings\n  above: \"local_to_remote\" and \"remote_to_local\". Do NOT use\n  \"to_remote\", \"to_local\", \"download\", \"upload\", \"get\", \"put\",\n  \"pull\", \"push\", \"send\", \"fetch\", or \"retrieve\" — the personal-\n  assistant client has a strict gate that rejects any other value\n  before the call even reaches the server. The path fields are\n  exactly \"local_path\" and \"remote_path\" — do NOT use \"file1\" /\n  \"file2\".\n\n# Field reference\n\nSee the JSON schema for optional fields (offset, limit, timeout, glob, edits, etc.).",
+      description: "Run file and shell operations on the remote HPC server.\n\n# Common tasks — fields are flat at the root\n\nRead    { tool:\"read\",  path:\"...\" }\nEdit    { tool:\"edit\",  path:\"...\", edits:[{oldText,newText}] }\nWrite   { tool:\"write\", path:\"...\", content:\"...\" }\n        Pass content directly as a string, do NOT wrap it in a Python script.\nList    { tool:\"list\",   path:\"...\" }\nSearch  { tool:\"find\", pattern:\"...\", path:\"...\" }\n        { tool:\"grep\", pattern:\"...\", path:\"...\", glob?:\"...\" }\nShell   { tool:\"bash\",       command:\"...\" }\n        Use only for env, processes, scripts. Prefer the dedicated ops above.\n\n# Move a local file to remote (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"local_to_remote\",\n    local_path:\"<path on your machine>\",\n    remote_path:\"<path on HPC>\" }\n\n# Pull a remote file to local (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"remote_to_local\",\n    remote_path:\"<path on HPC>\",\n    local_path:\"<path on your machine>\" }\n\n# IMPORTANT — transfer_file canonical names\n\n  The ONLY accepted values for `direction` are EXACTLY the two strings\n  above: \"local_to_remote\" and \"remote_to_local\". Do NOT use\n  \"to_remote\", \"to_local\", \"download\", \"upload\", \"get\", \"put\",\n  \"pull\", \"push\", \"send\", \"fetch\", or \"retrieve\" — the personal-\n  assistant client has a strict gate that rejects any other value\n  before the call even reaches the server. The path fields are\n  exactly \"local_path\" and \"remote_path\" — do NOT use \"file1\" /\n  \"file2\".\n\n# Field reference\n\nSee the JSON schema for optional fields (offset, limit, timeout, glob, edits, etc.).",
       inputSchema: REMOTE_EXEC_INPUT_SCHEMA,
     },
     async (args, extra) => {

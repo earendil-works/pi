@@ -63,7 +63,7 @@ describe("validateSatelliteCall — path scope", () => {
 	it("in-scope path → no block", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
-			{ tool: "read_file", path: "/TJPROJ13/GB_MICRO/data.txt" },
+			{ tool: "read", path: "/TJPROJ13/GB_MICRO/data.txt" },
 			mcpConfig,
 			"t1",
 		);
@@ -73,7 +73,7 @@ describe("validateSatelliteCall — path scope", () => {
 	it("out-of-scope path → block with scope message", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
-			{ tool: "read_file", path: "/etc/passwd" },
+			{ tool: "read", path: "/etc/passwd" },
 			mcpConfig,
 			"t1",
 		);
@@ -88,7 +88,7 @@ describe("validateSatelliteCall — path scope", () => {
 		// Easiest: just give a literal /etc/../etc/passwd; realpath collapses to /etc/passwd.
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
-			{ tool: "read_file", path: "/etc/../etc/passwd" },
+			{ tool: "read", path: "/etc/../etc/passwd" },
 			mcpConfig,
 			"t1",
 		);
@@ -98,7 +98,7 @@ describe("validateSatelliteCall — path scope", () => {
 	it("no pattern in mcp.json → no block on any path", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
-			{ tool: "read_file", path: "/etc/passwd" },
+			{ tool: "read", path: "/etc/passwd" },
 			{ satellite: { url: "x", token: "x" } },
 			"t1",
 		);
@@ -119,7 +119,7 @@ describe("validateSatelliteCall — path scope", () => {
 describe("validateSatelliteCall — bash intent", () => {
 	beforeEach(() => clearBashIntentBudget("t-intent"));
 
-	it("bash cat → suggests read_file (guidance, not block-with-reason=block)", () => {
+	it("bash cat → suggests read (guidance, not block-with-reason=block)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "cat /etc/hostname" },
@@ -127,10 +127,10 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("read_file");
+		expect(r?.reason).toContain("Prefer read over");
 	});
 
-	it("bash ls → suggests list_dir", () => {
+	it("bash ls → suggests list", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "ls -la /tmp" },
@@ -138,10 +138,10 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("list_dir");
+		expect(r?.reason).toContain("Prefer list over");
 	});
 
-	it("bash find → suggests find_files", () => {
+	it("bash find → suggests find", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "find /tmp -name '*.txt'" },
@@ -149,10 +149,10 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("find_files");
+		expect(r?.reason).toContain("Prefer find over");
 	});
 
-	it("bash grep → suggests grep_files", () => {
+	it("bash grep → suggests grep", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "grep -r foo /tmp" },
@@ -160,7 +160,7 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("grep_files");
+		expect(r?.reason).toContain("Prefer grep over");
 	});
 
 	it("bash with pipeline → not intercepted (legitimate shell use)", () => {
@@ -196,7 +196,7 @@ describe("validateSatelliteCall — bash intent", () => {
 	it("bash where 'find' appears only as path component (e.g. smart-sample-find) → not intercepted", () => {
 		// Regression: command containing the substring `find` inside a
 		// path or identifier (followed by whitespace/newline) used to
-		// falsely match \bfind\s+ and trigger find_files guidance.
+		// falsely match \bfind\s+ and trigger find guidance.
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{
@@ -215,7 +215,7 @@ describe("validateSatelliteCall — bash intent", () => {
 
 	it("bash where 'grep' appears only as path component → not intercepted", () => {
 		// Mirror of the find test: 'grep' as a path suffix followed by
-		// whitespace used to falsely match \bgrep\s+ and trigger grep_files.
+		// whitespace used to falsely match \bgrep\s+ and trigger grep guidance.
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{
@@ -228,7 +228,7 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r).toBeUndefined();
 	});
 
-	it("bash find after && (compound command) → still suggests find_files", () => {
+	it("bash find after && (compound command) → still suggests find", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "cd /tmp && find . -name '*.log'" },
@@ -236,7 +236,7 @@ describe("validateSatelliteCall — bash intent", () => {
 			"t-intent",
 		);
 		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("find_files");
+		expect(r?.reason).toContain("Prefer find over");
 	});
 });
 
@@ -251,7 +251,7 @@ describe("clearBashIntentBudget", () => {
 		clearBashIntentBudget(t);
 		// Next call should be guidance, not blocked
 		const r = validateSatelliteCall("satellite_remote_exec", { tool: "bash", command: "cat /c" }, mcpConfig, t);
-		expect(r?.reason).toContain("Prefer read_file");
+		expect(r?.reason).toContain("Prefer read over");
 		expect(r?.reason).not.toContain("Blocked");
 	});
 });

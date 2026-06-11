@@ -9,7 +9,7 @@ describe("maybeAnnotateNonVisionImage", () => {
 	it("text-only result → no annotation", () => {
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "read_file", path: "/x.txt" },
+			input: { tool: "read", path: "/x.txt" },
 			content: [{ type: "text" as const, text: "hello" }],
 		};
 		expect(maybeAnnotateNonVisionImage(event)).toBeUndefined();
@@ -18,13 +18,13 @@ describe("maybeAnnotateNonVisionImage", () => {
 	it("non-satellite tool → no annotation", () => {
 		const event = {
 			toolName: "other",
-			input: { tool: "read_file", path: "/x" },
+			input: { tool: "read", path: "/x" },
 			content: [{ type: "image" as const, data: "base64", mimeType: "image/png" }],
 		};
 		expect(maybeAnnotateNonVisionImage(event)).toBeUndefined();
 	});
 
-	it("non-read_file sub-op → no annotation", () => {
+	it("non-read sub-op → no annotation", () => {
 		const event = {
 			toolName: "satellite_remote_exec",
 			input: { tool: "bash", command: "ls" },
@@ -37,7 +37,7 @@ describe("maybeAnnotateNonVisionImage", () => {
 		setCurrentModel({ input: ["text", "image"] } as any);
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "read_file", path: "/x.png" },
+			input: { tool: "read", path: "/x.png" },
 			content: [{ type: "image" as const, data: "base64", mimeType: "image/png" }],
 		};
 		expect(maybeAnnotateNonVisionImage(event)).toBeUndefined();
@@ -47,7 +47,7 @@ describe("maybeAnnotateNonVisionImage", () => {
 		setCurrentModel({ input: ["text"] } as any);
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "read_file", path: "/x.png" },
+			input: { tool: "read", path: "/x.png" },
 			content: [
 				{ type: "text" as const, text: "Read image file [image/png, 12.3KB]" },
 				{ type: "image" as const, data: "base64-encoded-bytes-here", mimeType: "image/png" },
@@ -68,7 +68,7 @@ describe("maybeAnnotateNonVisionImage", () => {
 	it("no model set yet (early in session) → no annotation (don't crash)", () => {
 		const event = {
 			toolName: "satellite_remote_exec",
-			input: { tool: "read_file", path: "/x.png" },
+			input: { tool: "read", path: "/x.png" },
 			content: [{ type: "image" as const, data: "x", mimeType: "image/png" }],
 		};
 		expect(maybeAnnotateNonVisionImage(event)).toBeUndefined();

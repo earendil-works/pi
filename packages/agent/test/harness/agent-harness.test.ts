@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxToolCall, getModel, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
@@ -148,6 +148,266 @@ describe("AgentHarness", () => {
 		});
 		expect(requestText).toEqual(["hello", "hook"]);
 		expect(persistedText).toEqual(["hello", "hook"]);
+	});
+
+	it("steer() triggers before_agent_start hook", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([() => fauxAssistantMessage("first"), () => fauxAssistantMessage("second")]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const handler = vi.fn().mockReturnValue(undefined);
+		harness.on("before_agent_start", handler);
+
+		let queued = false;
+		harness.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "assistant" && !queued) {
+				queued = true;
+				void harness.steer("test new topic");
+			}
+		});
+
+		await harness.prompt("hello");
+
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ prompt: "test new topic" }));
+	});
+
+	it("steer() does not throw when no before_agent_start listener is registered", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([() => fauxAssistantMessage("first"), () => fauxAssistantMessage("second")]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		// Deliberately do NOT register any before_agent_start handler.
+
+		let steerResult: Promise<void> | undefined;
+		harness.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "assistant" && !steerResult) {
+				steerResult = harness.steer("test new topic");
+			}
+		});
+
+		await harness.prompt("hello");
+		await expect(steerResult).resolves.not.toThrow();
+	});
+
+	it("steer() does not interrupt the in-flight LLM call", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		const userCounts: number[] = [];
+		registration.setResponses([
+			async (context) => {
+				userCounts.push(context.messages.filter((message) => message.role === "user").length);
+				await firstResponseReleased;
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				userCounts.push(context.messages.filter((message) => message.role === "user").length);
+				return fauxAssistantMessage("second");
+			},
+		]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const steerQueueLengths: number[] = [];
+		harness.subscribe((event) => {
+			if (event.type === "queue_update") {
+				steerQueueLengths.push(event.steer.length);
+			}
+		});
+
+		const promptPromise = harness.prompt("hello");
+		// Yield long enough for: prompt -> runAgentLoop -> streamFunction ->
+		// microtask -> response factory runs synchronously up to its first await.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		// First LLM call is in-flight (awaiting firstResponseReleased) and only saw
+		// the original user message.
+		expect(userCounts).toEqual([1]);
+		expect(steerQueueLengths).toEqual([]);
+		// Call steer() while the first LLM call is still in-flight. steer() must
+		// queue the message without aborting or otherwise interrupting the call.
+		await harness.steer("interrupting");
+		// In-flight LLM call was NOT aborted: still one user message, still in-flight.
+		expect(userCounts).toEqual([1]);
+		// steer() pushed the message into the queue and emitted queue_update.
+		expect(steerQueueLengths).toEqual([1]);
+		// Release the deferred; the first LLM call completes naturally, then the second kicks off.
+		releaseFirstResponse?.();
+		await promptPromise;
+		// Second LLM call saw the original user message plus the queued steer.
+		expect(userCounts).toEqual([1, 2]);
+		// The queued steer was drained before the second LLM call.
+		expect(steerQueueLengths).toEqual([1, 0]);
+	});
+
+	it("steer() overwrites a prior pending search", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		registration.setResponses([
+			async () => {
+				// Hold the first LLM call in flight so the harness stays in
+				// "turn" phase while the two steers run.
+				await firstResponseReleased;
+				return fauxAssistantMessage("first");
+			},
+			() => fauxAssistantMessage("second"),
+			() => fauxAssistantMessage("third"),
+		]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+
+		// Simulated memory extension: each before_agent_start event creates an
+		// in-flight search and stores it in pendingMemorySearch. A newer event
+		// invalidates the older in-flight result (P1 is silently dropped) — the
+		// reference is overwritten and the orphaned handler's eventual write is
+		// discarded via a generation guard.
+		let pendingMemorySearch: { topic: string } | undefined;
+		let activeGeneration = 0;
+		harness.on("before_agent_start", async (event) => {
+			const myGeneration = ++activeGeneration;
+			if (event.prompt === "topic A") {
+				// Simulate an in-flight memory search (e.g. remote vector lookup).
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			// Drop this result if a newer before_agent_start has been emitted.
+			if (myGeneration !== activeGeneration) return undefined;
+			pendingMemorySearch = { topic: event.prompt };
+			return undefined;
+		});
+
+		// Start the prompt and let it enter the LLM call (held by the deferred).
+		const promptPromise = harness.prompt("hello");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		// At this point the harness is in "turn" phase; the LLM call is in flight.
+
+		// First steer: handler is slow (50ms). Await the handler so the
+		// harness's emitHook blocks for the full 50ms.
+		const firstSteer = harness.steer("topic A");
+		// Yield briefly so the first handler enters its sleep before the
+		// second steer fires.
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		// Second steer: handler is fast and overwrites pendingMemorySearch.
+		await harness.steer("topic B");
+		// After second steer returns: pendingMemorySearch.topic === "B",
+		// P1 is still in flight (~45ms of sleep left).
+		// Wait for the first steer's handler to fully complete.
+		await firstSteer;
+		// P1's resolution was discarded (generation mismatch).
+
+		// Release the held first LLM call so prompt() can finish.
+		releaseFirstResponse?.();
+		await promptPromise;
+
+		// The pendingMemorySearch reflects the most recent steer; the first
+		// steer's result was silently dropped because the new event superseded it.
+		expect(pendingMemorySearch?.topic).toBe("topic B");
+	});
+
+	it("steer() called multiple times in a row queues all 5 and only the latest pendingMemorySearch is consumed", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		let releaseFirstResponse: (() => void) | undefined;
+		const firstResponseReleased = new Promise<void>((resolve) => {
+			releaseFirstResponse = resolve;
+		});
+		registration.setResponses([
+			async () => {
+				// Hold the first LLM call in flight so the harness stays in
+				// "turn" phase while the five steers run.
+				await firstResponseReleased;
+				return fauxAssistantMessage("first");
+			},
+			() => fauxAssistantMessage("second"),
+			() => fauxAssistantMessage("third"),
+			() => fauxAssistantMessage("fourth"),
+			() => fauxAssistantMessage("fifth"),
+			() => fauxAssistantMessage("sixth"),
+		]);
+		const harness = new AgentHarness({
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const steerQueueLengths: number[] = [];
+		harness.subscribe((event) => {
+			if (event.type === "queue_update") {
+				steerQueueLengths.push(event.steer.length);
+			}
+		});
+
+		// Simulated memory extension: each before_agent_start event creates an
+		// in-flight search stored in pendingMemorySearch. Newer steers invalidate
+		// older in-flight results (P1..P4 are silently dropped) — the reference is
+		// overwritten and the orphaned handlers' eventual writes are discarded
+		// via a generation guard. The "hello" prompt is not a steer and finishes
+		// synchronously so the LLM call can start immediately.
+		let pendingMemorySearch: { topic: string } | undefined;
+		let activeGeneration = 0;
+		harness.on("before_agent_start", async (event) => {
+			const myGeneration = ++activeGeneration;
+			if (event.prompt.startsWith("topic ")) {
+				// Simulate an in-flight memory search (e.g. remote vector lookup).
+				await new Promise((resolve) => setTimeout(resolve, 30));
+			}
+			// Drop this result if a newer before_agent_start has been emitted.
+			if (myGeneration !== activeGeneration) return undefined;
+			pendingMemorySearch = { topic: event.prompt };
+			return undefined;
+		});
+
+		// Start the prompt and let it enter the LLM call (held by the deferred).
+		const promptPromise = harness.prompt("hello");
+		// Yield long enough for: prompt -> executeTurn -> emitHook("hello") ->
+		// runAgentLoop -> runLoop -> LLM call (held by the deferred).
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		// First LLM call is in flight; the steer queue is still empty.
+		expect(steerQueueLengths).toEqual([]);
+
+		// Queue 5 steers in rapid succession. Their before_agent_start hooks
+		// overlap in time, so the generation guard keeps only the latest.
+		const steerPromises: Array<Promise<void>> = [];
+		for (let i = 1; i <= 5; i++) {
+			steerPromises.push(harness.steer(`topic ${i}`));
+		}
+		// Wait for all 5 hooks to complete (each one sleeps 30ms; the generation
+		// guard discards P1..P4 because P5 is still in flight by the time they
+		// resume).
+		await Promise.all(steerPromises);
+
+		// All 5 steers are in the queue (none drained yet — the first LLM call
+		// is still in flight).
+		expect(steerQueueLengths).toEqual([1, 2, 3, 4, 5]);
+
+		// Release the held first LLM call so prompt() can finish.
+		releaseFirstResponse?.();
+		await promptPromise;
+
+		// Full queue pattern: 5 steers added while in flight, then 5 drained
+		// one-at-a-time (default steeringMode is "one-at-a-time").
+		expect(steerQueueLengths).toEqual([1, 2, 3, 4, 5, 4, 3, 2, 1, 0]);
+		// Only the latest steer's pendingMemorySearch is consumed; the first
+		// four steers' results were silently dropped because newer events
+		// superseded them.
+		expect(pendingMemorySearch?.topic).toBe("topic 5");
 	});
 
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {

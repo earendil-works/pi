@@ -85,7 +85,7 @@ export function buildRemotePathsPrompt(
 	for (const config of configs) {
 		if (config.name === "satellite" && config.remotePathPattern) {
 			sections.push(
-				`## Remote Paths\n\nFiles matching pattern \`${config.remotePathPattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file). Do NOT use local bash/read/write/edit on these paths.`,
+				`## Remote Paths\n\nFiles matching pattern \`${config.remotePathPattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read, write, edit, list, find, grep, transfer_file). Do NOT use local bash/read/write/edit on these paths.`,
 			);
 		}
 	}
@@ -201,7 +201,7 @@ function validateSchemaShape(input: Record<string, unknown>): string | null {
 			`You sent: { ${sample}${Object.keys(input).length > 3 ? ", ..." : ""} }`,
 			"",
 			"Every satellite_remote_exec call must include a \"tool\" field set to one of:",
-			"  bash, read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file",
+			"  bash, read, write, edit, list, find, grep, transfer_file",
 		].join("\n");
 	}
 
@@ -220,8 +220,8 @@ function validateSchemaShape(input: Record<string, unknown>): string | null {
 				"Examples:",
 				'  WRONG: { tool: "bash", args: { command: "ls" } }',
 				'  RIGHT: { tool: "bash", command: "ls" }',
-				'  WRONG: { tool: "read_file", args: { path: "/tmp/x" } }',
-				'  RIGHT: { tool: "read_file", path: "/tmp/x" }',
+				'  WRONG: { tool: "read", args: { path: "/tmp/x" } }',
+				'  RIGHT: { tool: "read", path: "/tmp/x" }',
 			].join("\n");
 		}
 	}
@@ -270,55 +270,64 @@ function validatePathScope(
  * Conservative: only matches the well-known direct patterns (cat/ls/find/
  * grep/sed -i/echo>); pipelines and chains are left alone.
  */
-type BashIntent = "read_file" | "edit_file" | "write_file" | "list_dir" | "find_files" | "grep_files";
+type BashIntent = "read" | "edit" | "write" | "list" | "find" | "grep";
 
 function detectBashIntent(command: string): BashIntent | null {
 	if (/[|<]/.test(command)) return null;
-	if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read_file";
-	if (/^sed\s+-i\b/.test(command)) return "edit_file";
-	if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
-	if (/^(ls|ll|dir)\b/.test(command)) return "list_dir";
-	if (/(?<![/_\-a-zA-Z0-9])find\s+/.test(command)) return "find_files";
-	if (/(?<![/_\-a-zA-Z0-9])grep\s+/.test(command)) return "grep_files";
+	if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read";
+	if (/^sed\s+-i\b/.test(command)) return "edit";
+	if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write";
+	if (/^(ls|ll|dir)\b/.test(command)) return "list";
+	if (/(?<![/_\-a-zA-Z0-9])find\s+/.test(command)) return "find";
+	if (/(?<![/_\-a-zA-Z0-9])grep\s+/.test(command)) return "grep";
 	return null;
 }
 
 function getBashGuidance(intent: BashIntent, command: string): string {
 	const path = command.split(/\s+/).pop() || "<path>";
 	switch (intent) {
-		case "read_file":
-			return `Prefer read_file over bash cat. Use { tool:"read_file", path:'${path}' } for offset/limit/truncation.`;
-		case "edit_file":
-			return `Prefer edit_file over bash sed -i. Use { tool:"edit_file", path:'${path}', edits:[{oldText,newText}] }.`;
-		case "write_file":
-			return `Prefer write_file over bash echo/printf. Use { tool:"write_file", path:'${path}', content:'...' } for atomic writes.`;
-		case "list_dir":
-			return `Prefer list_dir over bash ls. Use { tool:"list_dir", path:'${path}' } for structured output.`;
-		case "find_files":
-			return `Prefer find_files over bash find. Use { tool:"find_files", pattern:'<glob>', path:'${path}' }.`;
-		case "grep_files":
-			return `Prefer grep_files over bash grep. Use { tool:"grep_files", pattern:'<regex>', path:'${path}' }.`;
+		case "read":
+			return `Prefer read over bash cat. Use { tool:"read", path:'${path}' } for offset/limit/truncation.`;
+		case "edit":
+			return `Prefer edit over bash sed -i. Use { tool:"edit", path:'${path}', edits:[{oldText,newText}] }.`;
+		case "write":
+			return `Prefer write over bash echo/printf. Use { tool:"write", path:'${path}', content:'...' } for atomic writes.`;
+		case "list":
+			return `Prefer list over bash ls. Use { tool:"list", path:'${path}' } for structured output.`;
+		case "find":
+			return `Prefer find over bash find. Use { tool:"find", pattern:'<glob>', path:'${path}' }.`;
+		case "grep":
+			return `Prefer grep over bash grep. Use { tool:"grep", pattern:'<regex>', path:'${path}' }.`;
 	}
 }
 
-// Per-turn budget for bash-intent guidance. First 2 are guidance errors
-// (model can retry with the right tool), 3rd is a hard block.
+// Per-turn budget for bash-intent guidance. First2 are guidance errors
+// (model can retry with the right tool),3rd is a hard block.
+// `prefix` separates local vs satellite counters so they don't interfere.
 const bashIntentBudget = new Map<string, number>();
 
-function checkBashIntent(input: Record<string, unknown>, turnId: string): string | null {
-	const subTool = (input as Record<string, unknown>).tool;
-	if (subTool !== "bash") return null;
-	const command = String((input as Record<string, unknown>).command ?? "");
+export function checkBashIntentCommon(
+	command: string,
+	turnId: string,
+	prefix: "local" | "satellite",
+): string | undefined {
 	const intent = detectBashIntent(command);
-	if (!intent) return null;
+	if (!intent) return undefined;
 
-	const key = `${turnId}:${intent}`;
-	const count = bashIntentBudget.get(key) ?? 0;
-	if (count >= 2) {
+	const key = `${turnId}:${prefix}:${intent}`;
+	const count = bashIntentBudget.get(key) ??0;
+	if (count >=2) {
 		return `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`;
 	}
-	bashIntentBudget.set(key, count + 1);
+	bashIntentBudget.set(key, count +1);
 	return getBashGuidance(intent, command);
+}
+
+function checkBashIntent(input: Record<string, unknown>, turnId: string): string | undefined {
+	const subTool = (input as Record<string, unknown>).tool;
+	if (subTool !== "bash") return undefined;
+	const command = String((input as Record<string, unknown>).command ?? "");
+	return checkBashIntentCommon(command, turnId, "satellite");
 }
 
 /**
@@ -416,7 +425,7 @@ export function clearBashIntentBudget(turnId: string): void {
 //
 // The local pi read tool warns the model when it sends back image
 // content to a non-vision model (it can't see the image, so the bytes
-// are wasted in its context). The satellite's read_file returns image
+// are wasted in its context). The satellite's read returns image
 // content via MCP, so we need to annotate on the client side instead.
 // We track the active model via the model_select event so the
 // tool_result hook can attach the right hint.
@@ -435,7 +444,7 @@ function getNonVisionImageNote(): string | undefined {
 }
 
 /**
- * If the tool_result from satellite_remote_exec(read_file) is an image
+ * If the tool_result from satellite_remote_exec(read) is an image
  * and the current model can't see images, replace the content with a
  * metadata note so the model knows the image was there but it can't
  * view it (and the bytes don't get needlessly serialized into its
@@ -447,7 +456,7 @@ export function maybeAnnotateNonVisionImage(event: {
 	content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 }): { content: Array<{ type: "text"; text: string }> } | undefined {
 	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
-	if (event.input.tool !== "read_file") return undefined;
+	if (event.input.tool !== "read") return undefined;
 	const hasImage = event.content.some((c) => c.type === "image");
 	if (!hasImage) return undefined;
 	const note = getNonVisionImageNote();
@@ -941,13 +950,24 @@ export function registerTools(pi: ExtensionAPI): void {
 	// ============================================================================
 
 	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {
-		const mcpConfig = loadMcpConfig();
 		const turnId = String((event as any).turnIndex ?? "global");
-		// 1. Validation (schema shape, path scope, bash intent)
-		const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
-		if (validation) return validation;
-		// 2. Transfer file interception (mutates event.input.content for to_remote)
-		return interceptTransferCall(event);
+
+		// 1. Local bash: 共享卫星的 bash intent guardrail
+		if (event.toolName === "bash") {
+			const command = String((event.input as Record<string, unknown>).command ?? "");
+			const guidance = checkBashIntentCommon(command, turnId, "local");
+			return guidance ? { block: true, reason: guidance } : undefined;
+		}
+
+		// 2. Satellite: 走 validateSatelliteCall + transfer interception
+		if (event.toolName === SATELLITE_TOOL_NAME) {
+			const mcpConfig = loadMcpConfig();
+			const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
+			if (validation) return validation;
+			return interceptTransferCall(event);
+		}
+
+		return undefined;
 	});
 
 	pi.on("model_select", (event: { model: Model<any> }) => {
@@ -960,7 +980,7 @@ export function registerTools(pi: ExtensionAPI): void {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
 	}) => {
-		// 1. Non-vision image annotation (read_file image → model that can't see)
+		// 1. Non-vision image annotation (read image → model that can't see)
 		const imageNote = maybeAnnotateNonVisionImage(event);
 		if (imageNote) return imageNote;
 		// 2. Transfer file response interception (writes file1, replaces content for to_local)
