@@ -68,13 +68,13 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "type BashIntent" extensions/personal-assistant/tools.ts` — outputs `type BashIntent = "read" | "edit" | "write";`
   - **依赖**: 无
 
-- [ ] 2.2 **Remove `ls/ll/dir`/`find`/`grep` regex lines from `detectBashIntent`**
+- [x] 2.2 **Remove `ls/ll/dir`/`find`/`grep` regex lines from `detectBashIntent`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: Delete the 3 lines: `if (/^(ls|ll|dir)\b/.test(command)) return "list";`, `if (/(?<![/_\-a-zA-Z0-9])find\s+/.test(command)) return "find";`, `if (/(?<![/_\-a-zA-Z0-9])grep\s+/.test(command)) return "grep";`. (Currently lines 280-282.) Also update the doc comment above the function (line 270-272) to remove `ls/`.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'return "list"\|return "find"\|return "grep"' extensions/personal-assistant/tools.ts` — outputs 0 matches
   - **依赖**: 2.1
 
-- [ ] 2.3 **Remove `list`/`find`/`grep` cases from `getBashGuidance`**
+- [x] 2.3 **Remove `list`/`find`/`grep` cases from `getBashGuidance`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: Delete the 3 `case "list":` / `case "find":` / `case "grep":` blocks. (Currently lines 295-300.) Update the switch to only handle `read`/`edit`/`write`.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'case "list"\|case "find"\|case "grep"' extensions/personal-assistant/tools.ts` — outputs 0 matches
