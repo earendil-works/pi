@@ -140,63 +140,6 @@ const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
 
-// Remote exec tool input schema - discriminated union of all sub-operations
-export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
-  z.object({
-    tool: z.literal("bash"),
-    command: z.string(),
-    timeout: z.number().optional(),
-    cwd: z.string().optional(),
-  }),
-  z.object({
-    tool: z.literal("read_file"),
-    path: z.string(),
-    offset: z.number().optional(),
-    limit: z.number().optional(),
-  }),
-  z.object({
-    tool: z.literal("write_file"),
-    path: z.string(),
-    content: z.string(),
-  }),
-  z.object({
-    tool: z.literal("edit_file"),
-    path: z.string(),
-    edits: z.array(z.object({
-      oldText: z.string(),
-      newText: z.string(),
-    })),
-  }),
-  z.object({
-    tool: z.literal("list_dir"),
-    path: z.string().optional().default("."),
-    limit: z.number().optional().default(500),
-  }),
-  z.object({
-    tool: z.literal("find_files"),
-    pattern: z.string(),
-    path: z.string().optional().default("."),
-    limit: z.number().optional().default(1000),
-  }),
-  z.object({
-    tool: z.literal("grep_files"),
-    pattern: z.string(),
-    path: z.string().optional().default("."),
-    glob: z.string().optional(),
-    limit: z.number().optional().default(500),
-    ignoreCase: z.boolean().optional().default(false),
-    literal: z.boolean().optional().default(false),
-    context: z.number().optional().default(0),
-  }),
-  z.object({
-    tool: z.literal("transfer_file"),
-    direction: z.enum(["remote_to_local", "local_to_remote"]),
-    local_path: z.string(),
-    remote_path: z.string(),
-    content: z.string().optional(), // only used for "local_to_remote" direction
-  }),
-]);
-
 // REMOTE_EXEC_INPUT_SCHEMA is imported from ./schema.ts — kept separate so
 // the personal-assistant client can import it for e2e tests of the
 // transfer_file hook (validating against the real schema, not a copy).
@@ -630,7 +573,7 @@ async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: s
       } catch {
         return {
           content: textContent(
-            `Refusing to edit ${args.path}: appears to be a binary file (${rawBytes.byteLength} bytes, not valid utf-8). edit_file is for text files.`,
+            `Refusing to edit ${args.path}: appears to be a binary file (${rawBytes.byteLength} bytes, not valid utf-8). edit is for text files.`,
           ),
           isError: true,
         };

@@ -317,7 +317,7 @@ export function checkBashIntentCommon(
 	const key = `${turnId}:${prefix}:${intent}`;
 	const count = bashIntentBudget.get(key) ??0;
 	if (count >=2) {
-		return `Blocked: you have tried bash with similar intent3 times. Use tool=${intent} instead.`;
+		return `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`;
 	}
 	bashIntentBudget.set(key, count +1);
 	return getBashGuidance(intent, command);
