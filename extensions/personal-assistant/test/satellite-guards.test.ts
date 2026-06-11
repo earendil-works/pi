@@ -130,37 +130,34 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r?.reason).toContain("Prefer read over");
 	});
 
-	it("bash ls → suggests list", () => {
+	it("bash ls → not intercepted (list removed from BashIntent)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "ls -la /tmp" },
 			mcpConfig,
 			"t-intent",
 		);
-		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("Prefer list over");
+		expect(r).toBeUndefined();
 	});
 
-	it("bash find → suggests find", () => {
+	it("bash find → not intercepted (find removed from BashIntent)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "find /tmp -name '*.txt'" },
 			mcpConfig,
 			"t-intent",
 		);
-		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("Prefer find over");
+		expect(r).toBeUndefined();
 	});
 
-	it("bash grep → suggests grep", () => {
+	it("bash grep → not intercepted (grep removed from BashIntent)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "grep -r foo /tmp" },
 			mcpConfig,
 			"t-intent",
 		);
-		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("Prefer grep over");
+		expect(r).toBeUndefined();
 	});
 
 	it("bash with pipeline → not intercepted (legitimate shell use)", () => {
@@ -228,15 +225,14 @@ describe("validateSatelliteCall — bash intent", () => {
 		expect(r).toBeUndefined();
 	});
 
-	it("bash find after && (compound command) → still suggests find", () => {
+	it("bash find after && (compound command) → not intercepted (find removed from BashIntent)", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",
 			{ tool: "bash", command: "cd /tmp && find . -name '*.log'" },
 			mcpConfig,
 			"t-intent",
 		);
-		expect(r?.block).toBe(true);
-		expect(r?.reason).toContain("Prefer find over");
+		expect(r).toBeUndefined();
 	});
 });
 

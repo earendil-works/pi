@@ -13,22 +13,19 @@ describe("checkBashIntentCommon — local bash", () => {
 		expect(r).toContain("Prefer read over bash cat");
 	});
 
-	it("bash ls → suggests list", () => {
+	it("bash ls → undefined (list removed from BashIntent)", () => {
 		const r = checkBashIntentCommon("ls -la /tmp", "t1", "local");
-		expect(r).toBeDefined();
-		expect(r).toContain("Prefer list over bash ls");
+		expect(r).toBeUndefined();
 	});
 
-	it("bash find → suggests find", () => {
+	it("bash find → undefined (find removed from BashIntent)", () => {
 		const r = checkBashIntentCommon("find /tmp -name '*.txt'", "t1", "local");
-		expect(r).toBeDefined();
-		expect(r).toContain("Prefer find over bash find");
+		expect(r).toBeUndefined();
 	});
 
-	it("bash grep → suggests grep", () => {
+	it("bash grep → undefined (grep removed from BashIntent)", () => {
 		const r = checkBashIntentCommon("grep -r foo /tmp", "t1", "local");
-		expect(r).toBeDefined();
-		expect(r).toContain("Prefer grep over bash grep");
+		expect(r).toBeUndefined();
 	});
 
 	it("bash sed -i → suggests edit", () => {

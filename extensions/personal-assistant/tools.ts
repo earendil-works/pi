@@ -173,7 +173,7 @@ export function isPrivateIP(hostname: string): boolean {
 //      "missing tool field" mistakes before they reach MCP.
 //   2. validatePathScope()    — reads mcp.json's `remotePathPattern` and
 //      rejects any path-arg outside that scope.
-//   3. validateBashIntent()  — detects bash(cat/ls/find/grep/sed/echo>)
+//   3. validateBashIntent()  — detects bash(cat/sed -i/echo>)
 //      and suggests the dedicated sub-op instead. First 2 are guidance
 //      errors, 3rd is a hard block (mirrors the per-turn budget on the
 //      server's old behavior, moved client-side for speed).
@@ -267,19 +267,16 @@ function validatePathScope(
 /**
  * Walk a bash command looking for tokens that should have used a dedicated
  * sub-op. Returns a guidance message, or null if the command is OK.
- * Conservative: only matches the well-known direct patterns (cat/ls/find/
- * grep/sed -i/echo>); pipelines and chains are left alone.
+ * Conservative: only matches the well-known direct patterns (cat/sed -i/echo>);
+ * pipelines and chains are left alone.
  */
-type BashIntent = "read" | "edit" | "write" | "list" | "find" | "grep";
+type BashIntent = "read" | "edit" | "write";
 
 function detectBashIntent(command: string): BashIntent | null {
 	if (/[|<]/.test(command)) return null;
 	if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read";
 	if (/^sed\s+-i\b/.test(command)) return "edit";
 	if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write";
-	if (/^(ls|ll|dir)\b/.test(command)) return "list";
-	if (/(?<![/_\-a-zA-Z0-9])find\s+/.test(command)) return "find";
-	if (/(?<![/_\-a-zA-Z0-9])grep\s+/.test(command)) return "grep";
 	return null;
 }
 
@@ -292,12 +289,6 @@ function getBashGuidance(intent: BashIntent, command: string): string {
 			return `Prefer edit over bash sed -i. Use { tool:"edit", path:'${path}', edits:[{oldText,newText}] }.`;
 		case "write":
 			return `Prefer write over bash echo/printf. Use { tool:"write", path:'${path}', content:'...' } for atomic writes.`;
-		case "list":
-			return `Prefer list over bash ls. Use { tool:"list", path:'${path}' } for structured output.`;
-		case "find":
-			return `Prefer find over bash find. Use { tool:"find", pattern:'<glob>', path:'${path}' }.`;
-		case "grep":
-			return `Prefer grep over bash grep. Use { tool:"grep", pattern:'<regex>', path:'${path}' }.`;
 	}
 }
 
