@@ -6,6 +6,10 @@
 
 - Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json`.
 
+### Fixed
+
+- Fixed clipboard image paste on WSL by binding image paste to Alt+V there, matching native Windows. Windows Terminal intercepts Ctrl+V as a text paste, so the Ctrl+V keypress never reached the app and image paste silently did nothing.
+
 ## [0.79.1] - 2026-06-09
 
 ### New Features
