@@ -414,8 +414,9 @@ export function validateSatelliteCall(
 }
 
 export function clearBashIntentBudget(turnId: string): void {
-	for (const k of Array.from(bashIntentBudget.keys())) {
-		if (k.startsWith(`${turnId}:`)) bashIntentBudget.delete(k);
+	const prefix = `${turnId}:`;
+	for (const k of bashIntentBudget.keys()) {
+		if (k.startsWith(prefix)) bashIntentBudget.delete(k);
 	}
 }
 
@@ -568,17 +569,6 @@ export async function interceptTransferCall(
 ): Promise<{ block: true; reason: string } | undefined> {
 	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
 	if (event.input.tool !== "transfer_file") return undefined;
-
-	// [DEBUG] Remove after confirming the hook is firing and its gate is
-	// effective. See CLAUDE.md / Debugging History for the 2026-06-08
-	// incident that motivated this trace.
-	console.error(
-		`[transfer_hook] fired direction=${String(event.input.direction)} ` +
-			`local_path=${String(event.input.local_path)} ` +
-			`remote_path=${String(event.input.remote_path)} ` +
-			`has_file1=${"file1" in event.input} ` +
-			`has_file2=${"file2" in event.input}`,
-	);
 
 	// Gate 1: direction must be exactly the canonical enum.
 	//
