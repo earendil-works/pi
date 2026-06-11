@@ -68,17 +68,23 @@ const DESCRIPTION = extractRemoteExecDescription();
 const TOOL_HANDLERS_BLOCK = extractToolHandlersBlock();
 
 describe("REMOTE_EXEC_INPUT_SCHEMA — sub-tool enum", () => {
-	it("enum includes short names (read/write/edit/list/find/grep/bash/transfer_file)", () => {
+	it("enum includes only the 5 approved short names (read/write/edit/bash/transfer_file)", () => {
 		const enumValues = extractEnumFromZodSchema(REMOTE_EXEC_INPUT_SCHEMA.shape.tool);
 
 		expect(enumValues).toContain("read");
 		expect(enumValues).toContain("write");
 		expect(enumValues).toContain("edit");
-		expect(enumValues).toContain("list");
-		expect(enumValues).toContain("find");
-		expect(enumValues).toContain("grep");
 		expect(enumValues).toContain("bash");
 		expect(enumValues).toContain("transfer_file");
+		expect(enumValues).toHaveLength(5);
+	});
+
+	it("enum does NOT include removed sub-tools (list/find/grep)", () => {
+		const enumValues = extractEnumFromZodSchema(REMOTE_EXEC_INPUT_SCHEMA.shape.tool);
+
+		expect(enumValues).not.toContain("list");
+		expect(enumValues).not.toContain("find");
+		expect(enumValues).not.toContain("grep");
 	});
 
 	it("enum does NOT include long names (read_file/write_file/edit_file/list_dir/find_files/grep_files)", () => {
