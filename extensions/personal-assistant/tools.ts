@@ -294,7 +294,7 @@ function getBashGuidance(intent: BashIntent, command: string): string {
 
 // Per-turn budget for bash-intent guidance. First2 are guidance errors
 // (model can retry with the right tool),3rd is a hard block.
-// `prefix` separates local vs satellite counters so they don't interfere.
+// Key format: `${turnId}:satellite:${intent}` — satellite-only budget since local guardrail was removed.
 const bashIntentBudget = new Map<string, number>();
 
 export function checkBashIntentCommon(
@@ -926,7 +926,7 @@ export function registerTools(pi: ExtensionAPI): void {
 	// cryptic MCP SDK error). Catches:
 	//   - nested "args" wrapper / missing "tool" field
 	//   - paths outside mcp.json's remotePathPattern
-	//   - bash(cat|ls|find|grep|sed -i|echo>) — substitute the dedicated sub-op
+	//   - bash(cat|sed -i|echo>) — substitute the dedicated sub-op (local guardrail removed)
 	// ============================================================================
 
 	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {

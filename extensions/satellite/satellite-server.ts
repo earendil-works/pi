@@ -13,7 +13,6 @@
  * - Read: offset/limit, BOM handling, head truncation
  * - Write: file mutation queue, abort signal
  * - Edit: multi-edit, fuzzy matching, BOM/line-ending handling, diff output
- * - List: entry limit, byte truncation, name/ format
  *
  * Usage:
  *   SATELLITE_TOKEN=your-secret SATELLITE_PORT=29001 ./satellite-server
