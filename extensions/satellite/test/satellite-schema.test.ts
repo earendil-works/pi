@@ -124,14 +124,25 @@ describe("createMcpServer description — sub-tool examples use new short names"
 	});
 });
 
+describe("handleListDir and MAX_LS_ENTRIES deleted", () => {
+	it("handleListDir function is deleted from source", () => {
+		expect(SOURCE).not.toContain("handleListDir");
+	});
+
+	it("MAX_LS_ENTRIES constant is deleted from source", () => {
+		expect(SOURCE).not.toContain("MAX_LS_ENTRIES");
+	});
+});
+
 describe("TOOL_HANDLERS — keys match new short names", () => {
-	it("declares short-name keys (read/write/edit/list/find/grep)", () => {
+	it("declares short-name keys (read/write/edit/bash/find/grep/transfer_file)", () => {
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  read:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  write:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  edit:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  list:\s/m);
+		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  bash:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  find:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  grep:\s/m);
+		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  transfer_file:\s/m);
 	});
 
 	it("does NOT declare long-name keys (read_file/write_file/edit_file/list_dir/find_files/grep_files)", () => {

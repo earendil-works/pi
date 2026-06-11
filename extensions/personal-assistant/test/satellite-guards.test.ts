@@ -21,6 +21,12 @@ describe("validateSatelliteCall — schema shape", () => {
 		expect(r?.reason).toContain("tool");
 	});
 
+	it("missing tool field — allowed tools list is the 5-tool set (no list/find/grep)", () => {
+		const r = validateSatelliteCall("satellite_remote_exec", { path: "/data" }, mcpConfig, "t1");
+		expect(r?.block).toBe(true);
+		expect(r?.reason).toContain("  bash, read, write, edit, transfer_file");
+	});
+
 	it("nested args wrapper with recognized fields → block with WRONG/Correct", () => {
 		const r = validateSatelliteCall(
 			"satellite_remote_exec",

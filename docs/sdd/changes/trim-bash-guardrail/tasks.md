@@ -24,7 +24,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && node -e "import('./extensions/satellite/schema.ts').then(m => { const e = m.REMOTE_EXEC_INPUT_SCHEMA.shape.tool.options; console.log(e); if (e.includes('list') || e.includes('find') || e.includes('grep')) process.exit(1); })"` — exits 0 and prints 5 values
   - **依赖**: 无
 
-- [ ] 1.2 **Delete `handleListDir` function and `MAX_LS_ENTRIES` constant**
+- [x] 1.2 **Delete `handleListDir` function and `MAX_LS_ENTRIES` constant**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Delete `async function handleListDir(...)` (currently lines 763-801) and the `const MAX_LS_ENTRIES = 500;` constant (line 139). Verify no other code uses `MAX_LS_ENTRIES` before deleting.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleListDir\|MAX_LS_ENTRIES" extensions/satellite/satellite-server.ts` — outputs 0 matches
@@ -96,7 +96,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'event.toolName === "bash"' extensions/personal-assistant/tools.ts` — outputs 0 matches
   - **依赖**: 2.4 (signature change must propagate first)
 
-- [ ] 2.6 **Update `validateSchemaShape` allowed values list**
+- [x] 2.6 **Update `validateSchemaShape` allowed values list**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: Edit the string `"  bash, read, write, edit, list, find, grep, transfer_file"` (line 204) to `"  bash, read, write, edit, transfer_file"`.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "bash, read, write, edit" extensions/personal-assistant/tools.ts` — outputs the new 5-tool list (no `list/find/grep`)

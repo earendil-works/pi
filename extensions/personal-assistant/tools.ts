@@ -201,7 +201,7 @@ function validateSchemaShape(input: Record<string, unknown>): string | null {
 			`You sent: { ${sample}${Object.keys(input).length > 3 ? ", ..." : ""} }`,
 			"",
 			"Every satellite_remote_exec call must include a \"tool\" field set to one of:",
-			"  bash, read, write, edit, list, find, grep, transfer_file",
+			"  bash, read, write, edit, transfer_file",
 		].join("\n");
 	}
 

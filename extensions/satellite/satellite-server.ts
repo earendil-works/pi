@@ -27,7 +27,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { readdir, readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { join, dirname, resolve, basename } from "node:path";
 import { appendFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -136,7 +136,6 @@ function log(msg: string, sessionId?: string): void {
 // ============================================================================
 
 const SHELL = "/bin/bash";
-const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
 
@@ -760,46 +759,6 @@ export async function handleBash(
   }
 }
 
-async function handleListDir(args: { path: string; limit?: number }, sessionId: number | string = 0) {
-  const t0 = Date.now();
-  try {
-    const safePath = await canonicalize(args.path);
-    if (isParentTraversal(safePath)) {
-      throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
-    }
-    const maxEntries = args.limit || MAX_LS_ENTRIES;
-    const dirEntries = await readdir(safePath, { withFileTypes: true });
-
-    dirEntries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-
-    const limited = dirEntries.slice(0, maxEntries);
-
-    const formatted: string[] = [];
-    for (const entry of limited) {
-      const suffix = entry.isDirectory() ? "/" : "";
-      formatted.push(entry.name + suffix);
-    }
-
-    let output = formatted.join("\n");
-
-    if (dirEntries.length > maxEntries) {
-      output += `\n\n[${dirEntries.length - maxEntries} entries limit reached. Use limit=${maxEntries * 2} for more]`;
-    }
-
-    const result = truncateHead(output, Number.MAX_SAFE_INTEGER, MAX_BYTES);
-    if (result.truncated) {
-      output = result.text;
-    }
-
-    log(`list_dir ${args.path} → ok ${Date.now() - t0}ms (${dirEntries.length} entries)`, String(sessionId));
-    return { content: textContent(output || "(empty directory)") };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    log(`list_dir ${args.path} → error ${Date.now() - t0}ms: ${msg}`, String(sessionId));
-    return { content: textContent(`Error: ${msg}`), isError: true };
-  }
-}
-
 // Run fd to search for files. Returns relative paths (mirroring local pi
 // find tool). Errors from fd are surfaced; missing-fd is detected from
 // spawn ENOENT in proc.on("error"). Honors abortSignal so agent Ctrl-C
@@ -1036,7 +995,6 @@ const TOOL_HANDLERS: Record<string, (
     abortSignal,
     progressCtx,
   ),
-  list: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
   find: (args, abortSignal, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid, abortSignal),
   grep: (args, abortSignal, _p, sid) => handleGrepFiles(
     args as {
