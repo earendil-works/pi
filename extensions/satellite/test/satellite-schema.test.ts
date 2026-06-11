@@ -100,13 +100,15 @@ describe("REMOTE_EXEC_INPUT_SCHEMA — sub-tool enum", () => {
 });
 
 describe("createMcpServer description — sub-tool examples use new short names", () => {
-	it("description advertises short tool names (read/write/edit/list/find/grep)", () => {
+	it("description advertises active short tool names (read/write/edit/bash/transfer_file) — no list/find/grep", () => {
 		expect(DESCRIPTION).toMatch(toolRef("read"));
 		expect(DESCRIPTION).toMatch(toolRef("write"));
 		expect(DESCRIPTION).toMatch(toolRef("edit"));
-		expect(DESCRIPTION).toMatch(toolRef("list"));
-		expect(DESCRIPTION).toMatch(toolRef("find"));
-		expect(DESCRIPTION).toMatch(toolRef("grep"));
+		expect(DESCRIPTION).toMatch(toolRef("bash"));
+		expect(DESCRIPTION).toMatch(toolRef("transfer_file"));
+		expect(DESCRIPTION).not.toMatch(toolRef("list"));
+		expect(DESCRIPTION).not.toMatch(toolRef("find"));
+		expect(DESCRIPTION).not.toMatch(toolRef("grep"));
 	});
 
 	it("description does NOT advertise long tool names", () => {

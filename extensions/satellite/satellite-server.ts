@@ -5,9 +5,8 @@
  * An MCP server that exposes remote file and shell tools via HTTP transport.
  * Deploys on the remote server as a persistent process.
  *
- * Exposes a single `remote_exec` tool that routes to 8 predefined tools:
- * read_file, write_file, edit_file, bash, list_dir, find_files, grep_files,
- * transfer_file.
+ * Exposes a single `remote_exec` tool that routes to 5 predefined tools:
+ * read_file, write_file, edit_file, bash, transfer_file.
  *
  * 1:1 feature parity with local pi tools:
  * - Bash: streaming output, process tree killing, abort signal, OutputAccumulator
@@ -798,7 +797,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "remote_exec",
     {
-      description: "Run file and shell operations on the remote HPC server.\n\n# Common tasks — fields are flat at the root\n\nRead    { tool:\"read\",  path:\"...\" }\nEdit    { tool:\"edit\",  path:\"...\", edits:[{oldText,newText}] }\nWrite   { tool:\"write\", path:\"...\", content:\"...\" }\n        Pass content directly as a string, do NOT wrap it in a Python script.\nList    { tool:\"list\",   path:\"...\" }\nSearch  { tool:\"find\", pattern:\"...\", path:\"...\" }\n        { tool:\"grep\", pattern:\"...\", path:\"...\", glob?:\"...\" }\nShell   { tool:\"bash\",       command:\"...\" }\n        Use only for env, processes, scripts. Prefer the dedicated ops above.\n\n# Move a local file to remote (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"local_to_remote\",\n    local_path:\"<path on your machine>\",\n    remote_path:\"<path on HPC>\" }\n\n# Pull a remote file to local (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"remote_to_local\",\n    remote_path:\"<path on HPC>\",\n    local_path:\"<path on your machine>\" }\n\n# IMPORTANT — transfer_file canonical names\n\n  The ONLY accepted values for `direction` are EXACTLY the two strings\n  above: \"local_to_remote\" and \"remote_to_local\". Do NOT use\n  \"to_remote\", \"to_local\", \"download\", \"upload\", \"get\", \"put\",\n  \"pull\", \"push\", \"send\", \"fetch\", or \"retrieve\" — the personal-\n  assistant client has a strict gate that rejects any other value\n  before the call even reaches the server. The path fields are\n  exactly \"local_path\" and \"remote_path\" — do NOT use \"file1\" /\n  \"file2\".\n\n# Field reference\n\nSee the JSON schema for optional fields (offset, limit, timeout, glob, edits, etc.).",
+      description: "Run file and shell operations on the remote HPC server.\n\n# Common tasks — fields are flat at the root\n\nRead    { tool:\"read\",  path:\"...\" }\nEdit    { tool:\"edit\",  path:\"...\", edits:[{oldText,newText}] }\nWrite   { tool:\"write\", path:\"...\", content:\"...\" }\n        Pass content directly as a string, do NOT wrap it in a Python script.\nShell   { tool:\"bash\",       command:\"...\" }\n        Use only for env, processes, scripts. Prefer the dedicated ops above.\n\n# Move a local file to remote (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"local_to_remote\",\n    local_path:\"<path on your machine>\",\n    remote_path:\"<path on HPC>\" }\n\n# Pull a remote file to local (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"remote_to_local\",\n    remote_path:\"<path on HPC>\",\n    local_path:\"<path on your machine>\" }\n\n# IMPORTANT — transfer_file canonical names\n\n  The ONLY accepted values for `direction` are EXACTLY the two strings\n  above: \"local_to_remote\" and \"remote_to_local\". Do NOT use\n  \"to_remote\", \"to_local\", \"download\", \"upload\", \"get\", \"put\",\n  \"pull\", \"push\", \"send\", \"fetch\", or \"retrieve\" — the personal-\n  assistant client has a strict gate that rejects any other value\n  before the call even reaches the server. The path fields are\n  exactly \"local_path\" and \"remote_path\" — do NOT use \"file1\" /\n  \"file2\".\n\n# Field reference\n\nSee the JSON schema for optional fields (offset, limit, timeout, glob, edits, etc.).",
       inputSchema: REMOTE_EXEC_INPUT_SCHEMA,
     },
     async (args, extra) => {

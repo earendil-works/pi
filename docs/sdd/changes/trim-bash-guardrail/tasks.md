@@ -48,13 +48,13 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -E "^  (list|find|grep):" extensions/satellite/satellite-server.ts` — outputs 0 matches
   - **依赖**: 1.2, 1.3, 1.4 (must be after all handlers are deleted)
 
-- [ ] 1.6 **Update `createMcpServer` description string to remove list/find/grep examples**
+- [x] 1.6 **Update `createMcpServer` description string to remove list/find/grep examples**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Edit the multi-line description string passed to `server.registerTool("remote_exec", { description: ..., ... })`. Remove the lines: `List    { tool:"list",   path:"..." }`, `Search  { tool:"find", pattern:"...", path:"..." }`, `        { tool:"grep", pattern:"...", path:"...", glob?: "..." }`. Update the `Prefer the dedicated ops above.` line to remove `ls/find/grep` mention if present.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "tool:\"list\"\|tool:\"find\"\|tool:\"grep\"" extensions/satellite/satellite-server.ts` — outputs 0 matches
   - **依赖**: 1.5
 
-- [ ] 1.7 **Update top-of-file comment to remove `list_dir`/`find_files`/`grep_files` mentions**
+- [x] 1.7 **Update top-of-file comment to remove `list_dir`/`find_files`/`grep_files` mentions**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Edit the `/** ... */` block at the top of the file (around line 9) that mentions `read_file, write_file, edit_file, bash, list_dir, find_files, grep_files`. Update to `read_file, write_file, edit_file, bash, transfer_file` (matching remaining sub-tools).
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "list_dir\|find_files\|grep_files" extensions/satellite/satellite-server.ts` — outputs 0 matches
@@ -177,7 +177,7 @@
   - **验证**: All tests pass; sentinel test present and green
   - **依赖**: 3.1, 3.2, 3.3 (all test changes)
 
-- [ ] 5.3 **Verify file deletion: `local-bash-guards.test.ts`**
+- [x] 5.3 **Verify file deletion: `local-bash-guards.test.ts`**
   - **文件**: N/A
   - **内容**: `cd /home/qjh/workspace/personal/pi && test ! -f extensions/personal-assistant/test/local-bash-guards.test.ts && echo OK`
   - **验证**: Outputs `OK`
