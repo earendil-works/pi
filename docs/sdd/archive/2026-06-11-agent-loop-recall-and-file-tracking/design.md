@@ -309,3 +309,5 @@ LLM 看到建议,重试调 read tool
 - `checkBashIntentCommon` 是模块内函数,不导出(只给 `checkBashIntent` 和新本地钩子用)
 - 现有 `validateSatelliteCall` 对外接口不变,只在内部用新 `checkBashIntentCommon`
 - `transfer_file` 子工具名不动(参数不同,短化无收益)
+
+<!-- archived-with: 2026-06-11-agent-loop-recall-and-file-tracking | status: final -->

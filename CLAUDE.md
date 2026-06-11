@@ -28,3 +28,13 @@ work in this repo; per-change principles are in `docs/sdd/archive/<change>/princ
 - **rpc-mode 协议 id ≠ toolCall id**: `extension_ui_request.id` 是 `crypto.randomUUID()`,跟 toolCall 的 `call_00_...` 无关。Client 必须按 recency 匹配最近的 ask_user_question toolCall,不能用 id 字段匹配
 - **server 回传 id 是 request UUID,不是 toolCall id**: server 的 `pendingExtensionRequests` map key by 请求 UUID,client 必须存 `requestId` 在 cardState 上,提交时 echo 这个 UUID
 - **`tool_execution_end.result` 是对象不是字符串**: pi agent runtime 把 tool 的 return value `{content:[{type:"text", text:"..."}], details:{...}}` 作为 result 字段。Client 必须先 extract `result.content[0].text`,不能直接调 `.includes` 等 string method — 否则 React 整个 ChatPage 子树会因为未捕获异常被卸载
+
+## agent-loop-recall-and-file-tracking 原则
+
+- Steer 入口必须与 prompt() 入口对扩展钩子系统等价,任何监听 `before_agent_start` 的扩展都能感知新主题
+- 文件操作跟踪优先覆盖高频简单模式(> mv cp rm sed -i),不追求 AST 完整性,接受 ~20% 边缘场景漏报
+- grep/find/ls 的输出通过反向 regex 提取文件路径,视作"读取"语义,不改文件状态
+- 不为路径提取引入新的运行时依赖(shell parser/AST 库),维持 pi 的零外部依赖原则
+- 被动注入 + 扩展钩子 + 阈值控制是记忆系统核心范式,本次修改不引入新机制(不主动 tool / 不滑动窗口)
+- 工具结果截断(50KB / 2000 行)已是 baseline,文件跟踪 regex 必须正确处理 truncated 边界,不假设完整输出
+- 边界 case 降级而非报错,任意文件跟踪失败不应阻塞压缩流程
