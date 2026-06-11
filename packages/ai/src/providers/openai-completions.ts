@@ -990,6 +990,31 @@ export function convertMessages(
 	return params;
 }
 
+/**
+ * Recursively cleans null values and ensures `required: []` for object schemas.
+ * TypeBox omits `required` when all fields are optional; some providers
+ * (Claude, OpenAI Responses API) treat the missing field as null and reject it.
+ */
+function sanitizeSchema(schema: Record<string, unknown>): Record<string, unknown> {
+	if (schema === null || typeof schema !== "object")
+		return schema;
+	if (Array.isArray(schema))
+		return schema.map((item: unknown) => (typeof item === "object" ? sanitizeSchema(item as Record<string, unknown>) : item));
+	const cleaned: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		const cleanedValue = value !== null && typeof value === "object" ? sanitizeSchema(value as Record<string, unknown>) : value;
+		if (cleanedValue === null) continue;
+		cleaned[key] = cleanedValue;
+	}
+	if (cleaned.type === "object" && !Array.isArray(cleaned.required)) {
+		cleaned.required = [];
+	}
+	if (cleaned.type === "array" && cleaned.items === undefined) {
+		cleaned.items = {};
+	}
+	return cleaned;
+}
+
 function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
@@ -999,7 +1024,7 @@ function convertTools(
 		function: {
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
+			parameters: sanitizeSchema(tool.parameters as Record<string, unknown>),
 			// Only include strict if provider supports it. Some reject unknown fields.
 			...(compat.supportsStrictMode !== false && { strict: false }),
 		},
