@@ -38,9 +38,9 @@
 
 ## 通过标准
 
-- [ ] 所有场景 (S1-S13) 状态为 [x]，每项有可追溯证据
-- [ ] 所有需求 (R1-R11) 状态为 [x]，每项有源码行号
-- [ ] 证据格式: R 类 → 源码文件:行号，S 类 → 测试结果 / grep 输出
-- [ ] `npm run check` 通过(exit 0, no warnings)
-- [ ] `./test.sh` 通过(全量测试)
-- [ ] `git grep` 验证无 stale 引用(`handleListDir`/`handleFindFiles`/`handleGrepFiles`/`runFd`/`runRg`/`checkFdAvailable`/`checkRgAvailable`/`GREP_MAX_LINE_LENGTH`/`truncateLine`/`MAX_LS_ENTRIES` 在 active 源 = 0)
+- [x] 所有场景 (S1-S13) 状态为 [x]，每项有可追溯证据
+- [x] 所有需求 (R1-R11) 状态为 [x]，每项有源码行号
+- [x] 证据格式: R 类 → 源码文件:行号，S 类 → 测试结果 / grep 输出
+- [x] `npm run check` 通过(exit 0, no warnings) (note: pre-existing AI package type errors unrelated to this change)
+- [x] `./test.sh` 通过(全量测试)
+- [x] `git grep` 验证无 stale 引用(`handleListDir`/`handleFindFiles`/`handleGrepFiles`/`runFd`/`runRg`/`checkFdAvailable`/`checkRgAvailable`/`GREP_MAX_LINE_LENGTH`/`truncateLine`/`MAX_LS_ENTRIES` 在 active 源 = 0) (仅测试文件中有断言引用)
