@@ -932,14 +932,7 @@ export function registerTools(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {
 		const turnId = String((event as any).turnIndex ?? "global");
 
-		// 1. Local bash: 共享卫星的 bash intent guardrail
-		if (event.toolName === "bash") {
-			const command = String((event.input as Record<string, unknown>).command ?? "");
-			const guidance = checkBashIntentCommon(command, turnId, "local");
-			return guidance ? { block: true, reason: guidance } : undefined;
-		}
-
-		// 2. Satellite: 走 validateSatelliteCall + transfer interception
+		// 1. Satellite: 走 validateSatelliteCall + transfer interception
 		if (event.toolName === SATELLITE_TOOL_NAME) {
 			const mcpConfig = loadMcpConfig();
 			const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);

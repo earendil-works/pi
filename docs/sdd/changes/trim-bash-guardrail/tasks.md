@@ -36,7 +36,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleFindFiles\|runFd\|checkFdAvailable" extensions/satellite/satellite-server.ts` — outputs 0 matches
   - **依赖**: 1.2
 
-- [ ] 1.4 **Delete `handleGrepFiles`, `runRg`, `checkRgAvailable`, `truncateLine`, `GREP_MAX_LINE_LENGTH`**
+- [x] 1.4 **Delete `handleGrepFiles`, `runRg`, `checkRgAvailable`, `truncateLine`, `GREP_MAX_LINE_LENGTH`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Delete `GREP_MAX_LINE_LENGTH` constant (line 897), `truncateLine` function (line 899), `runRg` function (line 908), `handleGrepFiles` function (line 970), any `checkRgAvailable` helper.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleGrepFiles\|runRg\|checkRgAvailable\|truncateLine\|GREP_MAX_LINE_LENGTH" extensions/satellite/satellite-server.ts` — outputs 0 matches
@@ -90,7 +90,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'checkBashIntentCommon(command' extensions/personal-assistant/tools.ts` — outputs 1 match without the 3rd argument
   - **依赖**: 2.1, 2.2, 2.3
 
-- [ ] 2.5 **Delete the local bash hook branch from `tool_call` handler**
+- [x] 2.5 **Delete the local bash hook branch from `tool_call` handler**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: Delete the entire `if (event.toolName === "bash") { ... }` block (currently lines 945-950) including the comment above it. Also update the preceding section comment (line 944) to remove "Local bash: 共享卫星的 bash intent guardrail".
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'event.toolName === "bash"' extensions/personal-assistant/tools.ts` — outputs 0 matches

@@ -148,6 +148,28 @@ describe("handleFindFiles, runFd, checkFdAvailable deleted", () => {
 	});
 });
 
+describe("handleGrepFiles, runRg, checkRgAvailable, truncateLine, GREP_MAX_LINE_LENGTH deleted", () => {
+	it("handleGrepFiles function definition is deleted from source", () => {
+		expect(SOURCE).not.toMatch(/export async function handleGrepFiles\(/);
+	});
+
+	it("runRg function definition is deleted from source", () => {
+		expect(SOURCE).not.toMatch(/async function runRg\(/);
+	});
+
+	it("checkRgAvailable is deleted from source", () => {
+		expect(SOURCE).not.toContain("checkRgAvailable");
+	});
+
+	it("truncateLine function is deleted from source", () => {
+		expect(SOURCE).not.toContain("truncateLine");
+	});
+
+	it("GREP_MAX_LINE_LENGTH constant is deleted from source", () => {
+		expect(SOURCE).not.toContain("GREP_MAX_LINE_LENGTH");
+	});
+});
+
 describe("TOOL_HANDLERS — keys match new short names", () => {
 	it("declares short-name keys (read/write/edit/bash/find/grep/transfer_file)", () => {
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  read:\s/m);
