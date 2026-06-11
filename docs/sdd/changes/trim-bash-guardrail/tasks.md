@@ -30,7 +30,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleListDir\|MAX_LS_ENTRIES" extensions/satellite/satellite-server.ts` — outputs 0 matches
   - **依赖**: 1.1
 
-- [ ] 1.3 **Delete `handleFindFiles`, `runFd`, and `checkFdAvailable`**
+- [x] 1.3 **Delete `handleFindFiles`, `runFd`, and `checkFdAvailable`**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/satellite-server.ts` (Modify)
   - **内容**: Delete `runFd` function (line ~807), `handleFindFiles` function (line ~870), and any `checkFdAvailable` helper. Use `grep -n "fd\|find_files" extensions/satellite/satellite-server.ts` first to find all related code.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "handleFindFiles\|runFd\|checkFdAvailable" extensions/satellite/satellite-server.ts` — outputs 0 matches
@@ -80,7 +80,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n 'case "list"\|case "find"\|case "grep"' extensions/personal-assistant/tools.ts` — outputs 0 matches
   - **依赖**: 2.1 (TypeScript will error if cases reference types not in BashIntent union)
 
-- [ ] 2.4 **Simplify `checkBashIntentCommon` signature and internal key**
+- [x] 2.4 **Simplify `checkBashIntentCommon` signature and internal key**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: 
     1. Change function signature from `(command: string, turnId: string, prefix: "local" | "satellite")` to `(command: string, turnId: string)`
@@ -102,7 +102,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "bash, read, write, edit" extensions/personal-assistant/tools.ts` — outputs the new 5-tool list (no `list/find/grep`)
   - **依赖**: 1.1 (schema must be updated first; otherwise client/server diverge)
 
-- [ ] 2.7 **Update top-of-section comment for client-side guardrails**
+- [x] 2.7 **Update top-of-section comment for client-side guardrails**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: Edit the comment at lines 170-180 that lists the 3 guardrail layers. Update layer 3 description to remove `ls/find/grep` mentions. The current text mentions `cat/ls/find/grep/sed/echo>`; update to `cat/sed -i/echo>`.
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "cat/ls" extensions/personal-assistant/tools.ts` — outputs 0 matches

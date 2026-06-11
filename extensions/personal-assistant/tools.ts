@@ -300,12 +300,11 @@ const bashIntentBudget = new Map<string, number>();
 export function checkBashIntentCommon(
 	command: string,
 	turnId: string,
-	prefix: "local" | "satellite",
 ): string | undefined {
 	const intent = detectBashIntent(command);
 	if (!intent) return undefined;
 
-	const key = `${turnId}:${prefix}:${intent}`;
+	const key = `${turnId}:satellite:${intent}`;
 	const count = bashIntentBudget.get(key) ??0;
 	if (count >=2) {
 		return `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`;
@@ -318,7 +317,7 @@ function checkBashIntent(input: Record<string, unknown>, turnId: string): string
 	const subTool = (input as Record<string, unknown>).tool;
 	if (subTool !== "bash") return undefined;
 	const command = String((input as Record<string, unknown>).command ?? "");
-	return checkBashIntentCommon(command, turnId, "satellite");
+	return checkBashIntentCommon(command, turnId);
 }
 
 /**
@@ -537,8 +536,8 @@ async function writeFileForTransfer(
  *   - path fields: "local_path" and "remote_path"
  *
  * Anything else is REJECTED with an explicit error listing the canonical
- * values, the same pattern as the bash-intent guard for cat/ls/find/
- * grep/sed — the model learns the canonical API from the rejection
+ * values, the same pattern as the bash-intent guard for cat/sed -i/echo>
+ * — the model learns the canonical API from the rejection
  * message instead of getting silent translations and never fixing the
  * mistake. Aliases like "download" / "upload" / "get" / "put" / "pull"
  * / "push" / "send" / "fetch" / "retrieve" (S3 / curl / rsync / scp

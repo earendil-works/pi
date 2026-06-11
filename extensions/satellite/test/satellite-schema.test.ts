@@ -134,6 +134,20 @@ describe("handleListDir and MAX_LS_ENTRIES deleted", () => {
 	});
 });
 
+describe("handleFindFiles, runFd, checkFdAvailable deleted", () => {
+	it("handleFindFiles function definition is deleted from source", () => {
+		expect(SOURCE).not.toMatch(/export async function handleFindFiles\(/);
+	});
+
+	it("runFd function definition is deleted from source", () => {
+		expect(SOURCE).not.toMatch(/async function runFd\(/);
+	});
+
+	it("checkFdAvailable function is deleted from source", () => {
+		expect(SOURCE).not.toContain("checkFdAvailable");
+	});
+});
+
 describe("TOOL_HANDLERS — keys match new short names", () => {
 	it("declares short-name keys (read/write/edit/bash/find/grep/transfer_file)", () => {
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  read:\s/m);
