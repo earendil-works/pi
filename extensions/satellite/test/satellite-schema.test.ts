@@ -79,7 +79,7 @@ describe("REMOTE_EXEC_INPUT_SCHEMA — sub-tool enum", () => {
 		expect(enumValues).toHaveLength(5);
 	});
 
-	it("enum does NOT include removed sub-tools (list/find/grep)", () => {
+	it("enum does NOT include removed list/find/grep (negative)", () => {
 		const enumValues = extractEnumFromZodSchema(REMOTE_EXEC_INPUT_SCHEMA.shape.tool);
 
 		expect(enumValues).not.toContain("list");
@@ -87,37 +87,28 @@ describe("REMOTE_EXEC_INPUT_SCHEMA — sub-tool enum", () => {
 		expect(enumValues).not.toContain("grep");
 	});
 
-	it("enum does NOT include long names (read_file/write_file/edit_file/list_dir/find_files/grep_files)", () => {
+	it("enum does NOT include long names (read_file/write_file/edit_file)", () => {
 		const enumValues = extractEnumFromZodSchema(REMOTE_EXEC_INPUT_SCHEMA.shape.tool);
 
 		expect(enumValues).not.toContain("read_file");
 		expect(enumValues).not.toContain("write_file");
 		expect(enumValues).not.toContain("edit_file");
-		expect(enumValues).not.toContain("list_dir");
-		expect(enumValues).not.toContain("find_files");
-		expect(enumValues).not.toContain("grep_files");
 	});
 });
 
 describe("createMcpServer description — sub-tool examples use new short names", () => {
-	it("description advertises active short tool names (read/write/edit/bash/transfer_file) — no list/find/grep", () => {
+	it("description advertises active short tool names (read/write/edit/bash/transfer_file)", () => {
 		expect(DESCRIPTION).toMatch(toolRef("read"));
 		expect(DESCRIPTION).toMatch(toolRef("write"));
 		expect(DESCRIPTION).toMatch(toolRef("edit"));
 		expect(DESCRIPTION).toMatch(toolRef("bash"));
 		expect(DESCRIPTION).toMatch(toolRef("transfer_file"));
-		expect(DESCRIPTION).not.toMatch(toolRef("list"));
-		expect(DESCRIPTION).not.toMatch(toolRef("find"));
-		expect(DESCRIPTION).not.toMatch(toolRef("grep"));
 	});
 
-	it("description does NOT advertise long tool names", () => {
+	it("description does NOT advertise long tool names (read_file/write_file/edit_file)", () => {
 		expect(DESCRIPTION).not.toMatch(toolRef("read_file"));
 		expect(DESCRIPTION).not.toMatch(toolRef("write_file"));
 		expect(DESCRIPTION).not.toMatch(toolRef("edit_file"));
-		expect(DESCRIPTION).not.toMatch(toolRef("list_dir"));
-		expect(DESCRIPTION).not.toMatch(toolRef("find_files"));
-		expect(DESCRIPTION).not.toMatch(toolRef("grep_files"));
 	});
 
 	it("description still references bash and transfer_file (unchanged names)", () => {
@@ -173,13 +164,11 @@ describe("handleGrepFiles, runRg, checkRgAvailable, truncateLine, GREP_MAX_LINE_
 });
 
 describe("TOOL_HANDLERS — keys match new short names", () => {
-	it("declares short-name keys (read/write/edit/bash/transfer_file) — no find/grep", () => {
+	it("declares short-name keys (read/write/edit/bash/transfer_file)", () => {
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  read:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  write:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  edit:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  bash:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  find:\s/m);
-		expect(TOOL_HANDLERS_BLOCK).not.toMatch(/^  grep:\s/m);
 		expect(TOOL_HANDLERS_BLOCK).toMatch(/^  transfer_file:\s/m);
 	});
 

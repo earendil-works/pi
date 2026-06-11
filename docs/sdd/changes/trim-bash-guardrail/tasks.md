@@ -126,7 +126,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && ./node_modules/.bin/vitest run extensions/personal-assistant/test/satellite-guards.test.ts` — all tests pass; the new sentinel test exists
   - **依赖**: 2.4, 2.5 (signature change must be in place)
 
-- [ ] 3.3 **Update `satellite-schema.test.ts` to drop list/find/grep assertions and add negative test**
+- [x] 3.3 **Update `satellite-schema.test.ts` to drop list/find/grep assertions and add negative test**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/test/satellite-schema.test.ts` (Modify)
   - **内容**: 
     1. In test `it("enum includes short names (read/write/edit/list/find/grep/bash/transfer_file)", ...)` (line 71), remove the 3 lines: `expect(enumValues).toContain("list");`, `expect(enumValues).toContain("find");`, `expect(enumValues).toContain("grep");`. Update test name to drop `list/find/grep`.
@@ -143,7 +143,7 @@
 
 ## 4. Documentation and CHANGELOG
 
-- [ ] 4.1 **Update `extensions/satellite/README.md` tool table and Requirements section**
+- [x] 4.1 **Update `extensions/satellite/README.md` tool table and Requirements section**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/README.md` (Modify)
   - **内容**: 
     1. In the tool table (around lines 188-198), delete the 3 rows: `list_dir`, `find_files`, `grep_files`. Keep `read_file`/`write_file`/`edit_file`/`bash`/`transfer_file` rows.
@@ -151,7 +151,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -n "list_dir\|find_files\|grep_files" extensions/satellite/README.md` — outputs 0 matches
   - **依赖**: 1.5, 1.6 (server changes must be in place)
 
-- [ ] 4.2 **Add `### Removed` section to satellite CHANGELOG**
+- [x] 4.2 **Add `### Removed` section to satellite CHANGELOG**
   - **文件**: `/home/qjh/workspace/personal/pi/extensions/satellite/CHANGELOG.md` (Modify)
   - **内容**: Find `## [Unreleased]` section (or create it if missing). Add `### Removed` subsection with: `- Satellite \`list\`/\`find\`/\`grep\` sub-tools removed. Use \`bash\` for directory listing, file search, and content search. Client and server must be upgraded together.`
   - **验证**: `cd /home/qjh/workspace/personal/pi && grep -A 5 "## \[Unreleased\]" extensions/satellite/CHANGELOG.md | grep "### Removed"` — outputs the new section

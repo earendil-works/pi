@@ -184,17 +184,14 @@ Example: `/TJPROJ\\d+` matches `/TJPROJ1/`, `/TJPROJ2/data/`, etc.
 
 ## Sub-Operations
 
-The `remote_exec` tool is a discriminated union of 8 sub-operations:
+The `remote_exec` tool is a discriminated union of 5 sub-operations:
 
 | Sub-op | Purpose | Prefer over |
 |--------|---------|-------------|
 | `read_file` | Read file contents with offset/limit | `bash(cat ...)` |
 | `write_file` | Create/overwrite file | `bash(echo > ...)` |
 | `edit_file` | Apply text edits with fuzzy matching | `bash(sed -i ...)` |
-| `list_dir` | List directory entries | `bash(ls ...)` |
 | `bash` | Execute shell command (use sparingly) | n/a |
-| `find_files` | Search files by glob (uses `fd`) | `bash(find ...)` |
-| `grep_files` | Search file contents (uses `rg`) | `bash(grep ...)` |
 | `transfer_file` | Move file between local/remote | n/a |
 
 ## Architecture: server = execute, client = guard
@@ -217,7 +214,7 @@ MCP is one wasted call per mistake.
 
 ## Sub-operations
 
-The `remote_exec` tool is a discriminated union of 8 sub-operations. The
+The `remote_exec` tool is a discriminated union of 5 sub-operations. The
 tool description is intentionally short — a 141-word "mode library" that
 shows the common tasks; exact field shapes come from the JSON schema.
 
@@ -226,10 +223,7 @@ shows the common tasks; exact field shapes come from the JSON schema.
 | `read_file` | Read file contents with offset/limit | `bash(cat ...)` |
 | `write_file` | Create/overwrite file | `bash(echo > ...)` |
 | `edit_file` | Apply text edits with fuzzy matching | `bash(sed -i ...)` |
-| `list_dir` | List directory entries | `bash(ls ...)` |
 | `bash` | Execute shell command (use sparingly) | n/a |
-| `find_files` | Search files by glob (uses `fd`) | `bash(find ...)` |
-| `grep_files` | Search file contents (uses `rg`) | `bash(grep ...)` |
 | `transfer_file` | Move file between local/remote | n/a |
 
 ### transfer_file directions
@@ -442,7 +436,5 @@ PID 文件留在 `/tmp/satellite.pid`(OS 习惯,频繁写,小文件,放临时区
 
 ## Requirements
 
-- `fd` for `find_files` (install: `apt install fd-find`)
-- `rg` for `grep_files` (install: `apt install ripgrep`)
 - Bun runtime (for build)
 - Node.js compatible HTTP client (MCP transport)
