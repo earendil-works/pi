@@ -551,6 +551,13 @@ export interface SessionStartEvent {
 	previousSessionFile?: string;
 }
 
+/** Fired when the current session display name changes. */
+export interface SessionInfoChangedEvent {
+	type: "session_info_changed";
+	/** Current session display name, or undefined when the title is cleared. */
+	name: string | undefined;
+}
+
 /** Fired before switching to another session (can be cancelled) */
 export interface SessionBeforeSwitchEvent {
 	type: "session_before_switch";
@@ -622,6 +629,7 @@ export interface SessionTreeEvent {
 
 export type SessionEvent =
 	| SessionStartEvent
+	| SessionInfoChangedEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionBeforeCompactEvent
@@ -1125,6 +1133,7 @@ export interface ExtensionAPI {
 	on(event: "project_trust", handler: ProjectTrustHandler): void;
 	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
+	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,

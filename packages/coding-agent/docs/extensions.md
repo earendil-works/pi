@@ -389,6 +389,17 @@ pi.on("session_start", async (event, ctx) => {
 });
 ```
 
+#### session_info_changed
+
+Fired when the current session display name changes through `/name` or `pi.setSessionName()`.
+For an initial name supplied at startup, read `ctx.sessionManager.getSessionName()` from `session_start`.
+
+```typescript
+pi.on("session_info_changed", (event) => {
+  console.log(`Session name: ${event.name ?? "unnamed"}`);
+});
+```
+
 #### session_before_switch
 
 Fired before starting a new session (`/new`) or switching sessions (`/resume`).
@@ -1382,6 +1393,7 @@ pi.on("session_start", async (_event, ctx) => {
 ### pi.setSessionName(name)
 
 Set the session display name (shown in session selector instead of first message).
+Emits `session_info_changed`.
 
 ```typescript
 pi.setSessionName("Refactor auth module");
