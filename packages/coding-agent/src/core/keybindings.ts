@@ -9,6 +9,7 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.ts";
+import { isWSL } from "../utils/wsl.ts";
 
 export interface AppKeybindings {
 	"app.interrupt": true;
@@ -104,7 +105,10 @@ export const KEYBINDINGS = {
 		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",
+		// On Windows Terminal (including WSL), Ctrl+V is intercepted by the terminal
+		// as a text paste, so the image-paste keypress never reaches the app. Alt+V
+		// (ESC v) passes through, so use it on Windows and WSL.
+		defaultKeys: process.platform === "win32" || isWSL() ? "alt+v" : "ctrl+v",
 		description: "Paste image from clipboard",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },

@@ -113,7 +113,7 @@ pi @README.md "Summarize this"
 pi @src/app.ts @src/app.test.ts "Review these together"
 ```
 
-Images can be pasted with Ctrl+V (Alt+V on Windows) or dragged into supported terminals.
+Images can be pasted with Ctrl+V (Alt+V on Windows and WSL) or dragged into supported terminals.
 
 ### Run shell commands
 
