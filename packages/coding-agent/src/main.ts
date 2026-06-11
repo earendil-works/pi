@@ -452,6 +452,7 @@ async function promptForMissingSessionCwd(
 
 export interface MainOptions {
 	extensionFactories?: ExtensionFactory[];
+	exitAfterPackageCommand?: boolean;
 }
 
 export async function main(args: string[], options?: MainOptions) {
@@ -467,6 +468,9 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handlePackageCommand(args, { extensionFactories: options?.extensionFactories })) {
+		if (options?.exitAfterPackageCommand) {
+			process.exit(process.exitCode ?? 0);
+		}
 		return;
 	}
 

@@ -6,6 +6,10 @@
 
 - Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json`.
 
+### Fixed
+
+- Fixed package CLI commands hanging after completion when project-trust extensions leave active handles open ([#5626](https://github.com/earendil-works/pi/issues/5626)).
+
 ## [0.79.1] - 2026-06-09
 
 ### New Features
