@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed Markdown source list marker preservation to include unordered markers, so standalone `+` user messages no longer render as `-` ([#5657](https://github.com/earendil-works/pi/issues/5657)).
 - Fixed slash-separated fuzzy queries so provider/model completions remain matchable after insertion.
 - Fixed WezTerm inline Kitty image rendering so reserved row clears do not erase all but the top strip of tool image previews ([#5618](https://github.com/earendil-works/pi/issues/5618)).
 
