@@ -6,14 +6,18 @@ Pi is a local coding agent. It runs with the permissions of the user account tha
 
 Project trust controls whether pi loads project-local settings, resources, packages, and extensions. It is not a sandbox and it does not restrict what the model can ask tools to do after you start working in a directory.
 
-Pi considers a project to have trust inputs when it finds any of these from the current working directory:
+Pi considers a project to have resources that require trust when it finds any of these from the current working directory:
 
-- `.pi/` in the current directory
-- `.agents/skills` in the current directory or an ancestor directory
+- `.pi/settings.json`
+- `.pi/extensions`, `.pi/skills`, `.pi/prompts`, or `.pi/themes`
+- `.pi/SYSTEM.md` or `.pi/APPEND_SYSTEM.md`
+- project `.agents/skills` in the current directory or an ancestor directory
 
-When an interactive session starts in a project with configs in `.pi` or `.agents/skills` and no saved decision for the current directory or a parent directory, pi follows `defaultProjectTrust` from global settings. The default value is `"ask"`, which asks whether to trust the project when UI is available. Saved decisions are stored by canonical directory in `~/.pi/agent/trust.json`, and the closest saved decision on the current or parent path applies before the global default.
+A bare `.pi` directory does not count as a project resource that requires trust.
 
-Trusting a project allows pi to load trust-gated project inputs, including:
+When an interactive session starts in a project with resources that require trust and no saved decision for the current directory or a parent directory, pi follows `defaultProjectTrust` from global settings. The default value is `"ask"`, which asks whether to trust the project when UI is available. Saved decisions are stored by canonical directory in `~/.pi/agent/trust.json`, and the closest saved decision on the current or parent path applies before the global default.
+
+Trusting a project allows pi to load project resources that require trust, including:
 
 - `.pi/settings.json`
 - `.pi` resources such as extensions, skills, prompt templates, themes, and system prompt files

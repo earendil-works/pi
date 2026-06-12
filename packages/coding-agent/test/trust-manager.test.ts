@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	getProjectTrustPath,
 	hasProjectConfigDir,
-	hasProjectTrustInputs,
+	hasTrustRequiringProjectResources,
 	ProjectTrustStore,
 } from "../src/core/trust-manager.ts";
 
@@ -88,24 +88,34 @@ describe("ProjectTrustStore", () => {
 		expect(readFileSync(trustPath, "utf-8")).toBe("{not json");
 	});
 
-	it("detects project trust inputs", () => {
+	it("detects project resources that require trust", () => {
 		expect(hasProjectConfigDir(cwd)).toBe(false);
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
 
 		mkdirSync(join(cwd, ".pi"), { recursive: true });
 		expect(hasProjectConfigDir(cwd)).toBe(true);
-		expect(hasProjectTrustInputs(cwd)).toBe(true);
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+
+		mkdirSync(join(cwd, ".pi", "agent"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+
+		writeFileSync(join(cwd, ".pi", "settings.json"), "{}");
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+		rmSync(join(cwd, ".pi", "settings.json"), { force: true });
+
+		mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 		rmSync(join(cwd, ".pi"), { recursive: true, force: true });
 
 		writeFileSync(join(cwd, "AGENTS.md"), "Project instructions");
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
 		rmSync(join(cwd, "AGENTS.md"), { force: true });
 
 		writeFileSync(join(cwd, "CLAUDE.md"), "Legacy project instructions");
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
 		rmSync(join(cwd, "CLAUDE.md"), { force: true });
 
 		mkdirSync(join(cwd, ".agents", "skills"), { recursive: true });
-		expect(hasProjectTrustInputs(cwd)).toBe(true);
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 	});
 });

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
@@ -24,6 +25,16 @@ export interface ProjectTrustOption {
 }
 
 type TrustFile = Record<string, boolean | null | undefined>;
+
+const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
+	"settings.json",
+	"extensions",
+	"skills",
+	"prompts",
+	"themes",
+	"SYSTEM.md",
+	"APPEND_SYSTEM.md",
+] as const;
 
 function normalizeCwd(cwd: string): string {
 	return canonicalizePath(resolvePath(cwd));
@@ -171,14 +182,25 @@ export function hasProjectConfigDir(cwd: string): boolean {
 	return existsSync(join(canonicalizePath(resolvePath(cwd)), CONFIG_DIR_NAME));
 }
 
-export function hasProjectTrustInputs(cwd: string): boolean {
+function hasProjectConfigTrustRequiringResources(cwd: string): boolean {
+	const configDir = join(canonicalizePath(resolvePath(cwd)), CONFIG_DIR_NAME);
+	return TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)));
+}
+
+function getUserAgentsSkillsDir(): string {
+	return canonicalizePath(join(process.env.HOME || homedir(), ".agents", "skills"));
+}
+
+export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	let currentDir = canonicalizePath(resolvePath(cwd));
-	if (hasProjectConfigDir(currentDir)) {
+	if (hasProjectConfigTrustRequiringResources(currentDir)) {
 		return true;
 	}
 
+	const userAgentsSkillsDir = getUserAgentsSkillsDir();
 	while (true) {
-		if (existsSync(join(currentDir, ".agents", "skills"))) {
+		const agentsSkillsDir = canonicalizePath(join(currentDir, ".agents", "skills"));
+		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
 			return true;
 		}
 
