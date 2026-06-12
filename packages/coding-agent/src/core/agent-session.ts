@@ -318,6 +318,22 @@ export class AgentSession {
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
+	// Context usage cache with version-based invalidation.
+	// Version increments on model/compaction/message changes.
+	private _contextUsageCacheVersion = 0;
+	private _contextUsageCache: { version: number; result: ContextUsage } | null = null;
+
+	// Cached cumulative lifetime token/cost stats for footer display.
+	// Updated incrementally on each assistant message; preserved across compaction.
+	private _lifetimeStatsCache = {
+		totalInput: 0,
+		totalOutput: 0,
+		totalCacheRead: 0,
+		totalCacheWrite: 0,
+		totalCost: 0,
+		latestCacheHitRate: undefined as number | undefined,
+	};
+
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
@@ -341,6 +357,9 @@ export class AgentSession {
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
+		// Rebuild lifetime stats from existing session entries so resumed sessions
+		// report correct cumulative totals (incremental updates then build on top).
+		this._rebuildLifetimeStatsCache();
 		this._installAgentToolHooks();
 
 		this._buildRuntime({
@@ -520,8 +539,24 @@ export class AgentSession {
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
 				this.sessionManager.appendMessage(event.message);
+				// Invalidate context usage cache: new messages change the session context.
+				this._contextUsageCacheVersion++;
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
+
+			// Incrementally update cached lifetime stats for assistant messages.
+			if (event.message.role === "assistant") {
+				const assistantMsg = event.message as AssistantMessage;
+				this._lifetimeStatsCache.totalInput += assistantMsg.usage.input;
+				this._lifetimeStatsCache.totalOutput += assistantMsg.usage.output;
+				this._lifetimeStatsCache.totalCacheRead += assistantMsg.usage.cacheRead;
+				this._lifetimeStatsCache.totalCacheWrite += assistantMsg.usage.cacheWrite;
+				this._lifetimeStatsCache.totalCost += assistantMsg.usage.cost.total;
+				const latestPromptTokens =
+					assistantMsg.usage.input + assistantMsg.usage.cacheRead + assistantMsg.usage.cacheWrite;
+				this._lifetimeStatsCache.latestCacheHitRate =
+					latestPromptTokens > 0 ? (assistantMsg.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+			}
 
 			// Track assistant message for auto-compaction (checked on agent_end)
 			if (event.message.role === "assistant") {
@@ -1450,6 +1485,9 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 
+		// Invalidate context usage cache: model change changes context window.
+		this._contextUsageCacheVersion++;
+
 		// Re-clamp thinking level for new model's capabilities
 		this.setThinkingLevel(thinkingLevel);
 
@@ -1541,6 +1579,7 @@ export class AgentSession {
 		const isChanging = effectiveLevel !== previousLevel;
 
 		this.agent.state.thinkingLevel = effectiveLevel;
+		this._contextUsageCacheVersion++;
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
@@ -1723,6 +1762,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._contextUsageCacheVersion++;
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -2003,6 +2043,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._contextUsageCacheVersion++;
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -2604,6 +2645,7 @@ export class AgentSession {
 			return result;
 		} finally {
 			this._bashAbortController = undefined;
+			this._contextUsageCacheVersion++;
 		}
 	}
 
@@ -2670,6 +2712,7 @@ export class AgentSession {
 		}
 
 		this._pendingBashMessages = [];
+		this._contextUsageCacheVersion++;
 	}
 
 	// =========================================================================
@@ -2868,6 +2911,7 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._contextUsageCacheVersion++;
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({
@@ -2966,6 +3010,11 @@ export class AgentSession {
 	}
 
 	getContextUsage(): ContextUsage | undefined {
+		// Return cached result if version hasn't changed.
+		if (this._contextUsageCache && this._contextUsageCache.version === this._contextUsageCacheVersion) {
+			return this._contextUsageCache.result;
+		}
+
 		const model = this.model;
 		if (!model) return undefined;
 
@@ -2977,6 +3026,7 @@ export class AgentSession {
 		// If no such assistant exists, context token count is unknown until the next LLM response.
 		const branchEntries = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
+		const compactionTimestamp = latestCompaction ? new Date(latestCompaction.timestamp).getTime() : undefined;
 
 		if (latestCompaction) {
 			// Check if there's a valid assistant usage after the compaction boundary
@@ -2997,18 +3047,80 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				return { tokens: null, contextWindow, percent: null };
+				const result = { tokens: null, contextWindow, percent: null };
+				this._contextUsageCache = { version: this._contextUsageCacheVersion, result };
+				return result;
 			}
 		}
 
-		const estimate = estimateContextTokens(this.messages);
+		const estimate = estimateContextTokens(this.messages, compactionTimestamp);
 		const percent = (estimate.tokens / contextWindow) * 100;
-
-		return {
+		const result = {
 			tokens: estimate.tokens,
 			contextWindow,
 			percent,
 		};
+		this._contextUsageCache = { version: this._contextUsageCacheVersion, result };
+		return result;
+	}
+
+	/**
+	 * Rebuild lifetime stats cache from all existing session entries.
+	 * Called once in the constructor for resumed/existing sessions so that
+	 * pre-existing assistant messages are counted in cumulative footer totals.
+	 * After this, incremental updates in _handleAgentEvent keep it current.
+	 */
+	private _rebuildLifetimeStatsCache(): void {
+		const entries = this.sessionManager.getEntries();
+		let totalInput = 0;
+		let totalOutput = 0;
+		let totalCacheRead = 0;
+		let totalCacheWrite = 0;
+		let totalCost = 0;
+		let lastAssistantUsage: { cacheRead: number; cacheWrite: number; input: number } | undefined;
+
+		for (const entry of entries) {
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const msg = entry.message as AssistantMessage;
+				totalInput += msg.usage.input;
+				totalOutput += msg.usage.output;
+				totalCacheRead += msg.usage.cacheRead;
+				totalCacheWrite += msg.usage.cacheWrite;
+				totalCost += msg.usage.cost.total;
+				lastAssistantUsage = { cacheRead: msg.usage.cacheRead, cacheWrite: msg.usage.cacheWrite, input: msg.usage.input };
+			}
+		}
+
+		const latestPromptTokens =
+			(lastAssistantUsage?.input ?? 0) +
+			(lastAssistantUsage?.cacheRead ?? 0) +
+			(lastAssistantUsage?.cacheWrite ?? 0);
+		const latestCacheHitRate =
+			latestPromptTokens > 0 ? (lastAssistantUsage!.cacheRead / latestPromptTokens) * 100 : undefined;
+
+		this._lifetimeStatsCache = {
+			totalInput,
+			totalOutput,
+			totalCacheRead,
+			totalCacheWrite,
+			totalCost,
+			latestCacheHitRate,
+		};
+	}
+
+	/**
+	 * Get cached cumulative lifetime token/cost stats for footer display.
+	 * Includes all assistant messages across the entire session lifetime.
+	 */
+	getLifetimeStats(): {
+		totalInput: number;
+		totalOutput: number;
+		totalCacheRead: number;
+		totalCacheWrite: number;
+		totalCost: number;
+		latestCacheHitRate: number | undefined;
+	} {
+		return this._lifetimeStatsCache;
 	}
 
 	/**

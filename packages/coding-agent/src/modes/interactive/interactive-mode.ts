@@ -3860,12 +3860,15 @@ export class InteractiveMode {
 			);
 		};
 
+		const promptQueuedMessage = (message: CompactionQueuedMessage) =>
+			this.session.prompt(message.text, { streamingBehavior: message.mode });
+
 		try {
 			if (options?.willRetry) {
 				// When retry is pending, queue messages for the retry turn
 				for (const message of queuedMessages) {
 					if (this.isExtensionCommand(message.text)) {
-						await this.session.prompt(message.text);
+						await promptQueuedMessage(message);
 					} else if (message.mode === "followUp") {
 						await this.session.followUp(message.text);
 					} else {
@@ -3881,7 +3884,7 @@ export class InteractiveMode {
 			if (firstPromptIndex === -1) {
 				// All extension commands - execute them all
 				for (const message of queuedMessages) {
-					await this.session.prompt(message.text);
+					await promptQueuedMessage(message);
 				}
 				return;
 			}
@@ -3892,18 +3895,18 @@ export class InteractiveMode {
 			const rest = queuedMessages.slice(firstPromptIndex + 1);
 
 			for (const message of preCommands) {
-				await this.session.prompt(message.text);
+				await promptQueuedMessage(message);
 			}
 
 			// Send first prompt (starts streaming)
-			const promptPromise = this.session.prompt(firstPrompt.text).catch((error) => {
+			const promptPromise = promptQueuedMessage(firstPrompt).catch((error) => {
 				restoreQueue(error);
 			});
 
 			// Queue remaining messages
 			for (const message of rest) {
 				if (this.isExtensionCommand(message.text)) {
-					await this.session.prompt(message.text);
+					await promptQueuedMessage(message);
 				} else if (message.mode === "followUp") {
 					await this.session.followUp(message.text);
 				} else {

@@ -415,7 +415,8 @@ describe("prepareCompaction with previous compaction", () => {
 		expect(preparation!.firstKeptEntryId).toBe(u2.id);
 		expect(preparation!.previousSummary).toBe("First summary");
 		expect(extractText(preparation!.messagesToSummarize)).not.toContain("First summary");
-		expect(preparation!.tokensBefore).toBe(estimateContextTokens(contextBefore.messages).tokens);
+		const compactionTimestamp = new Date(compaction1.timestamp).getTime();
+		expect(preparation!.tokensBefore).toBe(estimateContextTokens(contextBefore.messages, compactionTimestamp).tokens);
 
 		const compaction2: CompactionEntry = {
 			type: "compaction",
@@ -431,6 +432,24 @@ describe("prepareCompaction with previous compaction", () => {
 
 		expect(contextAfterText).toContain("user msg 2 - kept by compaction1");
 		expect(contextAfterText).toContain("user msg 3 - kept by compaction1");
+	});
+
+	it("should ignore pre-compaction assistant usage when calculating repeated compaction tokens", () => {
+		const u1 = createMessageEntry(createUserMessage("old user msg"));
+		const a1 = createMessageEntry(createAssistantMessage("old assistant msg"));
+		const u2 = createMessageEntry(createUserMessage("kept user msg"));
+		const a2 = createMessageEntry(createAssistantMessage("kept assistant msg", createMockUsage(500_000, 50_000)));
+		const compaction1 = createCompactionEntry("First summary", u2.id);
+		const u3 = createMessageEntry(createUserMessage("new user msg after compaction"));
+
+		const pathEntries = [u1, a1, u2, a2, compaction1, u3];
+		const contextBefore = buildSessionContext(pathEntries);
+		const preparation = prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS);
+		const compactionTimestamp = new Date(compaction1.timestamp).getTime();
+
+		expect(preparation).toBeDefined();
+		expect(preparation!.tokensBefore).toBe(estimateContextTokens(contextBefore.messages, compactionTimestamp).tokens);
+		expect(preparation!.tokensBefore).not.toBe(estimateContextTokens(contextBefore.messages).tokens);
 	});
 
 	it("should re-summarize previously kept messages when the recent window moves past them", () => {

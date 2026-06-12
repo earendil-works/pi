@@ -171,9 +171,16 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+function getLastAssistantUsageInfo(
+	messages: AgentMessage[],
+	afterTimestamp?: number,
+): { usage: Usage; index: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const usage = getAssistantUsage(messages[i]);
+		const msg = messages[i];
+		if (msg.role === "assistant" && afterTimestamp && msg.timestamp <= afterTimestamp) {
+			continue;
+		}
+		const usage = getAssistantUsage(msg);
 		if (usage) return { usage, index: i };
 	}
 	return undefined;
@@ -182,9 +189,10 @@ function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; in
 /**
  * Estimate context tokens from messages, using the last assistant usage when available.
  * If there are messages after the last usage, estimate their tokens with estimateTokens.
+ * @param afterTimestamp Optional timestamp to filter messages (e.g. compaction boundary).
  */
-export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+export function estimateContextTokens(messages: AgentMessage[], afterTimestamp?: number): ContextUsageEstimate {
+	const usageInfo = getLastAssistantUsageInfo(messages, afterTimestamp);
 
 	if (!usageInfo) {
 		let estimated = 0;
@@ -658,16 +666,18 @@ export function prepareCompaction(
 	}
 
 	let previousSummary: string | undefined;
+	let prevCompaction: CompactionEntry | undefined;
 	let boundaryStart = 0;
 	if (prevCompactionIndex >= 0) {
-		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
+		prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
 		previousSummary = prevCompaction.summary;
 		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
 		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
 	}
 	const boundaryEnd = pathEntries.length;
 
-	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
+	const compactionTimestamp = prevCompaction ? new Date(prevCompaction.timestamp).getTime() : undefined;
+	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages, compactionTimestamp).tokens;
 
 	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 

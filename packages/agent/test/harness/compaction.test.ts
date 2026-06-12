@@ -349,7 +349,24 @@ describe("harness compaction", () => {
 		expect(preparation).toBeDefined();
 		expect(preparation?.previousSummary).toBe("First summary");
 		expect(preparation?.firstKeptEntryId).toBeTruthy();
-		expect(preparation?.tokensBefore).toBe(estimateContextTokens(buildSessionContext(pathEntries).messages).tokens);
+		const compactionTimestamp = new Date(compaction1.timestamp).getTime();
+		expect(preparation?.tokensBefore).toBe(estimateContextTokens(buildSessionContext(pathEntries).messages, compactionTimestamp).tokens);
+	});
+
+	it("ignores pre-compaction assistant usage when calculating repeated compaction tokens", () => {
+		const u1 = createMessageEntry(createUserMessage("old user msg"));
+		const a1 = createMessageEntry(createAssistantMessage("old assistant msg"), u1.id);
+		const u2 = createMessageEntry(createUserMessage("kept user msg"), a1.id);
+		const a2 = createMessageEntry(createAssistantMessage("kept assistant msg", createMockUsage(500_000, 50_000)), u2.id);
+		const compaction1 = createCompactionEntry("First summary", u2.id, a2.id);
+		const u3 = createMessageEntry(createUserMessage("new user msg after compaction"), compaction1.id);
+		const pathEntries = [u1, a1, u2, a2, compaction1, u3];
+		const contextBefore = buildSessionContext(pathEntries);
+		const preparation = getOrThrow(prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS));
+		const compactionTimestamp = new Date(compaction1.timestamp).getTime();
+
+		expect(preparation?.tokensBefore).toBe(estimateContextTokens(contextBefore.messages, compactionTimestamp).tokens);
+		expect(preparation?.tokensBefore).not.toBe(estimateContextTokens(contextBefore.messages).tokens);
 	});
 
 	it("prepares split-turn compaction with prior file-operation details", () => {
