@@ -253,10 +253,15 @@ function migrateLegacyRegisterProviderHeaders(
 	if (!headers) return undefined;
 	let migratedHeaders: Record<string, string> | undefined;
 	for (const [key, value] of Object.entries(headers)) {
-		const migratedValue = migrateLegacyRegisterProviderConfigValue(providerName, `${field} header "${key}"`, value);
-		if (migratedValue === value) continue;
+		if (!isLegacyEnvVarNameConfigValue(value)) continue;
+		// Only migrate header values when the env var actually exists,
+		// to avoid false positives with literal uppercase values like "BEARER".
+		if (!(value in process.env)) continue;
+		warnDeprecation(
+			`registerProvider("${providerName}") ${field} header "${key}" value "${value}" is treated as a legacy environment variable reference. This will no longer be detected as an environment variable reference in a future release. Pass "$${value}" instead.`,
+		);
 		migratedHeaders ??= { ...headers };
-		migratedHeaders[key] = migratedValue;
+		migratedHeaders[key] = `$${value}`;
 	}
 	return migratedHeaders ?? headers;
 }

@@ -84,6 +84,18 @@ function migrateLegacyEnvVarString(value: string): string | undefined {
 	return isLegacyEnvVarNameConfigValue(value) ? `$${value}` : undefined;
 }
 
+/**
+ * Like migrateLegacyEnvVarString, but only migrates header values when the
+ * corresponding environment variable actually exists.  This prevents literal
+ * uppercase header values (e.g. "BEARER", "ACCEPT_JSON") from being
+ * incorrectly rewritten as environment-variable references.
+ */
+function migrateLegacyEnvVarHeaderString(value: string): string | undefined {
+	if (!isLegacyEnvVarNameConfigValue(value)) return undefined;
+	// Only migrate if the env var is actually set — avoids false positives
+	return value in process.env ? `$${value}` : undefined;
+}
+
 function migrateStringProperty(
 	record: Record<string, unknown>,
 	key: string,
@@ -105,7 +117,7 @@ function migrateHeadersConfig(headers: unknown, location: string, migrations: Co
 	let migrated = false;
 	for (const [key, value] of Object.entries(headerRecord)) {
 		if (typeof value !== "string") continue;
-		const migratedValue = migrateLegacyEnvVarString(value);
+		const migratedValue = migrateLegacyEnvVarHeaderString(value);
 		if (migratedValue === undefined) continue;
 		headerRecord[key] = migratedValue;
 		migrations.push({ location: `${location}[${JSON.stringify(key)}]`, from: value, to: migratedValue });
