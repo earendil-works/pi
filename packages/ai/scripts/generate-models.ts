@@ -2071,44 +2071,30 @@ async function generateModels() {
 	allModels.push(...vertexModels);
 
 	const anthropicVertexModels: Model<"anthropic-messages">[] = [
-		{
-			id: "claude-opus-4-6",
-			name: "Claude Opus 4.6 (Vertex)",
-			api: "anthropic-messages",
+		"claude-fable-5",
+		"claude-haiku-4-5",
+		"claude-opus-4-1",
+		"claude-opus-4-5",
+		"claude-opus-4-6",
+		"claude-opus-4-7",
+		"claude-opus-4-8",
+		"claude-sonnet-4-5",
+		"claude-sonnet-4-6",
+	].map((id) => {
+		const model = allModels.find(
+			(candidate): candidate is Model<"anthropic-messages"> =>
+				candidate.provider === "anthropic" && candidate.api === "anthropic-messages" && candidate.id === id,
+		);
+		if (!model) {
+			throw new Error(`Missing Anthropic source model for anthropic-vertex: ${id}`);
+		}
+		return {
+			...model,
+			name: `${model.name.replace(/ \(latest\)$/, "")} (Vertex)`,
 			provider: "anthropic-vertex",
 			baseUrl: ANTHROPIC_VERTEX_BASE_URL,
-			compat: { forceAdaptiveThinking: true },
-			reasoning: true,
-			thinkingLevelMap: { xhigh: "max" },
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		},
-		{
-			id: "claude-sonnet-4-6",
-			name: "Claude Sonnet 4.6 (Vertex)",
-			api: "anthropic-messages",
-			provider: "anthropic-vertex",
-			baseUrl: ANTHROPIC_VERTEX_BASE_URL,
-			compat: { forceAdaptiveThinking: true },
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 3,
-				output: 15,
-				cacheRead: 0.3,
-				cacheWrite: 3.75,
-			},
-			contextWindow: 1000000,
-			maxTokens: 64000,
-		},
-	];
+		};
+	});
 	allModels.push(...anthropicVertexModels);
 
 	// Azure Foundry deploys these with larger context windows than OpenAI's own API,

@@ -6,7 +6,7 @@ import { type Component, Container, type Focusable, TUI } from "../../tui/src/tu
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { formatModelStatus, InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
@@ -113,6 +113,17 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("formatModelStatus", () => {
+	test("includes provider and model id", () => {
+		expect(
+			formatModelStatus({
+				provider: "anthropic-vertex",
+				id: "claude-opus-4-6",
+			}),
+		).toBe("Model: anthropic-vertex/claude-opus-4-6");
 	});
 });
 
