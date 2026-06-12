@@ -1,3 +1,4 @@
+import type { Model } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
@@ -100,5 +101,42 @@ describe("issue #3217 scoped model ordering", () => {
 		});
 
 		expect(orderedIds).toEqual([modelTwo.id, modelOne.id, modelThree.id]);
+	});
+
+	it("shows supported thinking levels for the selected model", async () => {
+		const model: Model<"anthropic-messages"> = {
+			id: "claude-opus-4-6",
+			name: "Claude Opus 4.6 (Vertex)",
+			api: "anthropic-messages",
+			provider: "anthropic-vertex",
+			baseUrl: "https://{location}-aiplatform.googleapis.com/v1",
+			compat: { forceAdaptiveThinking: true },
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "max" },
+			input: ["text", "image"],
+			cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		};
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			model,
+			{ setDefaultModelAndProvider: () => {} } as never,
+			{
+				refresh: () => {},
+				getError: () => undefined,
+				getAvailable: async () => [model],
+				find: (provider: string, id: string) =>
+					provider === model.provider && id === model.id ? model : undefined,
+			} as never,
+			[],
+			() => {},
+			() => {},
+		);
+
+		await waitForAsyncRender();
+
+		const rendered = stripAnsi(selector.render(140).join("\n"));
+		expect(rendered).toContain("Thinking: off, minimal, low, medium, high, xhigh");
 	});
 });
