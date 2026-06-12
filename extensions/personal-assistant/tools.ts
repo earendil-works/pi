@@ -3,7 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, realpathSync } from "node:fs";
-import { join, resolve as resolvePath, basename, dirname } from "node:path";
+import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
 
 // ============================================================================
@@ -85,7 +85,7 @@ export function buildRemotePathsPrompt(
 	for (const config of configs) {
 		if (config.name === "satellite" && config.remotePathPattern) {
 			sections.push(
-				`## Remote Paths\n\nFiles matching pattern \`${config.remotePathPattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read, write, edit, list, find, grep, transfer_file). Do NOT use local bash/read/write/edit on these paths.`,
+				`## Remote Paths\n\nFiles matching pattern \`${config.remotePathPattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read, write, edit, bash, transfer_file). Do NOT use local bash/read/write/edit on these paths.`,
 			);
 		}
 	}
@@ -184,7 +184,6 @@ const SUB_OP_FIELD_NAMES = new Set([
 	"command", "timeout", "cwd",
 	"path", "offset", "limit",
 	"content", "edits",
-	"pattern", "glob",
 	"direction", "local_path", "remote_path",
 ]);
 

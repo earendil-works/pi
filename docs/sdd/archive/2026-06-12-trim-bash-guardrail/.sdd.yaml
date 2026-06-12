@@ -1,0 +1,11 @@
+phase: archive
+workflow: full
+change: trim-bash-guardrail
+created_at: 2026-06-11
+base_ref: 68c2c5fd4889ab0b72174ddec82af347347459f2
+tasks_total: 0
+tasks_done: 0
+isolation: branch
+verify_result: pass
+last_review_sha: 332d02bdae4ba24da968527a9f91580e6d7ed793
+archived: true

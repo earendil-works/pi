@@ -25,11 +25,10 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
-import { join, dirname, resolve, basename } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join, dirname, resolve } from "node:path";
 import { appendFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import { z } from "zod/v3";
 import { REMOTE_EXEC_INPUT_SCHEMA } from "./schema.ts";
 import {
   canonicalize,
@@ -186,10 +185,6 @@ async function withFileQueue<T>(path: string, fn: () => Promise<T>): Promise<T> 
   await current;
   return result!;
 }
-
-// ============================================================================
-// OutputAccumulator (streaming output management for bash)
-// ============================================================================
 
 // ============================================================================
 // Fuzzy Matching (for edit tool)

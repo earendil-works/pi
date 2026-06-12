@@ -265,7 +265,7 @@ assistant registers three guards:
 2. **Path scope** — reads `mcp.json`'s `remotePathPattern` and rejects
    any path-arg outside that scope (using `realpathSync` to catch
    symlink bypass and `..` traversal).
-3. **Bash intent** — detects `bash(cat|ls|find|grep|sed -i|echo>)` and
+3. **Bash intent** — detects `bash(cat|sed -i|echo>)` and
    suggests the dedicated sub-op, with a per-turn budget of 2 guidance
    errors then a hard block (mirrors the old server behavior, moved
    client-side for speed).
