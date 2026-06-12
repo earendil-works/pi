@@ -56,18 +56,14 @@ function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreE
 	}
 }
 
-export function getProjectTrustPath(cwd: string): string {
-	return normalizeCwd(cwd);
-}
-
 export function getProjectTrustParentPath(cwd: string): string | undefined {
-	const trustPath = getProjectTrustPath(cwd);
+	const trustPath = normalizeCwd(cwd);
 	const parentDir = dirname(trustPath);
 	return parentDir === trustPath ? undefined : parentDir;
 }
 
 export function getProjectTrustOptions(cwd: string, options?: { includeSessionOnly?: boolean }): ProjectTrustOption[] {
-	const trustPath = getProjectTrustPath(cwd);
+	const trustPath = normalizeCwd(cwd);
 	const trustOptions: ProjectTrustOption[] = [
 		{ label: "Trust", trusted: true, updates: [{ path: trustPath, decision: true }], savedPath: trustPath },
 	];
@@ -178,28 +174,25 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
-export function hasProjectConfigDir(cwd: string): boolean {
-	return existsSync(join(canonicalizePath(resolvePath(cwd)), CONFIG_DIR_NAME));
-}
-
-function hasProjectConfigTrustRequiringResources(cwd: string): boolean {
-	const configDir = join(canonicalizePath(resolvePath(cwd)), CONFIG_DIR_NAME);
-	return TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)));
-}
-
-function getUserAgentsSkillsDir(): string {
-	return canonicalizePath(join(process.env.HOME || homedir(), ".agents", "skills"));
-}
-
+/**
+ * Returns true when cwd has project-local resources that must be gated by
+ * project trust: trust-requiring entries under cwd/.pi, or .agents/skills in
+ * cwd or one of its ancestors. Returns false when no such project resources
+ * exist. The user/global ~/.agents/skills directory is always treated as a
+ * trusted user resource and is ignored here, even when cwd is $HOME.
+ */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
+	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
+	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
-	if (hasProjectConfigTrustRequiringResources(currentDir)) {
+
+	const configDir = join(currentDir, CONFIG_DIR_NAME);
+	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
 		return true;
 	}
 
-	const userAgentsSkillsDir = getUserAgentsSkillsDir();
 	while (true) {
-		const agentsSkillsDir = canonicalizePath(join(currentDir, ".agents", "skills"));
+		const agentsSkillsDir = join(currentDir, ".agents", "skills");
 		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
 			return true;
 		}
