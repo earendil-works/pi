@@ -1909,6 +1909,7 @@ async function generateModels() {
 	}
 
 	const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
+	const ANTHROPIC_VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com/v1";
 	const vertexModels: Model<"google-vertex">[] = [
 		{
 			id: "gemini-3-pro-preview",
@@ -2068,6 +2069,47 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...vertexModels);
+
+	const anthropicVertexModels: Model<"anthropic-messages">[] = [
+		{
+			id: "claude-opus-4-6",
+			name: "Claude Opus 4.6 (Vertex)",
+			api: "anthropic-messages",
+			provider: "anthropic-vertex",
+			baseUrl: ANTHROPIC_VERTEX_BASE_URL,
+			compat: { forceAdaptiveThinking: true },
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "max" },
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 25,
+				cacheRead: 0.5,
+				cacheWrite: 6.25,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		},
+		{
+			id: "claude-sonnet-4-6",
+			name: "Claude Sonnet 4.6 (Vertex)",
+			api: "anthropic-messages",
+			provider: "anthropic-vertex",
+			baseUrl: ANTHROPIC_VERTEX_BASE_URL,
+			compat: { forceAdaptiveThinking: true },
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 3,
+				output: 15,
+				cacheRead: 0.3,
+				cacheWrite: 3.75,
+			},
+			contextWindow: 1000000,
+			maxTokens: 64000,
+		},
+	];
+	allModels.push(...anthropicVertexModels);
 
 	// Azure Foundry deploys these with larger context windows than OpenAI's own API,
 	// which caps gpt-5.4/gpt-5.5 at 272k. See models-sold-directly-by-azure docs.

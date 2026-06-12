@@ -14,6 +14,10 @@
 			"types": "./dist/providers/anthropic.d.ts",
 			"import": "./dist/providers/anthropic.js"
 		},
+		"./anthropic-vertex": {
+			"types": "./dist/providers/anthropic-vertex.d.ts",
+			"import": "./dist/providers/anthropic-vertex.js"
+		},
 		"./azure-openai-responses": {
 			"types": "./dist/providers/azure-openai-responses.d.ts",
 			"import": "./dist/providers/azure-openai-responses.js"
@@ -69,9 +73,10 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-		"@smithy/node-http-handler": "4.7.3",
 		"@google/genai": "1.52.0",
 		"@mistralai/mistralai": "2.2.1",
+		"@smithy/node-http-handler": "4.7.3",
+		"google-auth-library": "9.15.1",
 		"http-proxy-agent": "7.0.2",
 		"https-proxy-agent": "7.0.6",
 		"openai": "6.26.0",

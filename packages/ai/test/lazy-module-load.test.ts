@@ -8,6 +8,7 @@ const aiEntryUrl = new URL("../src/index.ts", import.meta.url).href;
 
 const SDK_SPECIFIERS = [
 	"@anthropic-ai/sdk",
+	"google-auth-library",
 	"openai",
 	"@google/genai",
 	"@mistralai/mistralai",
@@ -95,5 +96,26 @@ describe("lazy provider module loading", () => {
 		`);
 
 		expect(result.loadedSpecifiers).toEqual(["@anthropic-ai/sdk"]);
+	});
+
+	it("loads Google auth and Anthropic SDKs when dispatching an anthropic-vertex model", () => {
+		const result = runProbe(`
+			const model = {
+				id: "claude-opus-4-6",
+				name: "Claude Opus 4.6",
+				api: "anthropic-messages",
+				provider: "anthropic-vertex",
+				baseUrl: "",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			};
+			const context = { messages: [{ role: "user", content: "hi" }] };
+			await mod.streamAnthropic(model, context, { project: "test-project", location: "global" }).result();
+		`);
+
+		expect(result.loadedSpecifiers).toEqual(["google-auth-library", "@anthropic-ai/sdk"]);
 	});
 });

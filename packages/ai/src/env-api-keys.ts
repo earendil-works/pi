@@ -1,4 +1,11 @@
 // NEVER convert to top-level imports - breaks browser/Vite builds
+import {
+	resolveAnthropicVertexLocation,
+	resolveAnthropicVertexProject,
+	resolveGoogleVertexLocation,
+	resolveGoogleVertexProject,
+} from "./vertex-shared.ts";
+
 let _existsSync: typeof import("node:fs").existsSync | null = null;
 let _homedir: typeof import("node:os").homedir | null = null;
 let _join: typeof import("node:path").join | null = null;
@@ -88,6 +95,34 @@ function hasVertexAdcCredentials(): boolean {
 	return cachedVertexAdcCredentialsExists;
 }
 
+function hasGoogleVertexAmbientAuth(): boolean {
+	const env = getVertexAmbientEnv();
+	return (
+		hasVertexAdcCredentials() &&
+		!!resolveGoogleVertexProject(undefined, env) &&
+		!!resolveGoogleVertexLocation(undefined, env)
+	);
+}
+
+function hasAnthropicVertexAmbientAuth(): boolean {
+	const env = getVertexAmbientEnv();
+	return (
+		hasVertexAdcCredentials() &&
+		!!resolveAnthropicVertexProject(undefined, env) &&
+		!!resolveAnthropicVertexLocation(undefined, env)
+	);
+}
+
+function getVertexAmbientEnv() {
+	return {
+		ANTHROPIC_VERTEX_PROJECT_ID: process.env.ANTHROPIC_VERTEX_PROJECT_ID || getProcEnv("ANTHROPIC_VERTEX_PROJECT_ID"),
+		CLOUD_ML_REGION: process.env.CLOUD_ML_REGION || getProcEnv("CLOUD_ML_REGION"),
+		GCLOUD_PROJECT: process.env.GCLOUD_PROJECT || getProcEnv("GCLOUD_PROJECT"),
+		GOOGLE_CLOUD_LOCATION: process.env.GOOGLE_CLOUD_LOCATION || getProcEnv("GOOGLE_CLOUD_LOCATION"),
+		GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || getProcEnv("GOOGLE_CLOUD_PROJECT"),
+	};
+}
+
 function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	if (provider === "github-copilot") {
 		return ["COPILOT_GITHUB_TOKEN"];
@@ -168,19 +203,12 @@ export function getEnvApiKey(provider: string): string | undefined {
 
 	// Vertex AI supports either an explicit API key or Application Default Credentials.
 	// Auth is configured via `gcloud auth application-default login`.
-	if (provider === "google-vertex") {
-		const hasCredentials = hasVertexAdcCredentials();
-		const hasProject = !!(
-			process.env.GOOGLE_CLOUD_PROJECT ||
-			process.env.GCLOUD_PROJECT ||
-			getProcEnv("GOOGLE_CLOUD_PROJECT") ||
-			getProcEnv("GCLOUD_PROJECT")
-		);
-		const hasLocation = !!(process.env.GOOGLE_CLOUD_LOCATION || getProcEnv("GOOGLE_CLOUD_LOCATION"));
+	if (provider === "google-vertex" && hasGoogleVertexAmbientAuth()) {
+		return "<authenticated>";
+	}
 
-		if (hasCredentials && hasProject && hasLocation) {
-			return "<authenticated>";
-		}
+	if (provider === "anthropic-vertex" && hasAnthropicVertexAmbientAuth()) {
+		return "<authenticated>";
 	}
 
 	if (provider === "amazon-bedrock") {

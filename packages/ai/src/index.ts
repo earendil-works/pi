@@ -9,6 +9,7 @@ export * from "./images-api-registry.ts";
 export * from "./models.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./providers/amazon-bedrock.ts";
 export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from "./providers/anthropic.ts";
+export type { AnthropicVertexOptions } from "./providers/anthropic-vertex.ts";
 export type { AzureOpenAIResponsesOptions } from "./providers/azure-openai-responses.ts";
 export * from "./providers/faux.ts";
 export type { GoogleOptions } from "./providers/google.ts";

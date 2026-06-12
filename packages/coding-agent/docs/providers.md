@@ -240,6 +240,28 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 
+### Anthropic Vertex
+
+Uses the same Vertex Application Default Credentials flow, but calls Claude models directly through Vertex:
+
+```bash
+gcloud auth application-default login
+export ANTHROPIC_VERTEX_PROJECT_ID=your-project
+export CLOUD_ML_REGION=global
+
+# also supported
+export GOOGLE_CLOUD_PROJECT=your-project
+export GOOGLE_CLOUD_LOCATION=global
+```
+
+`ANTHROPIC_VERTEX_PROJECT_ID`/`CLOUD_ML_REGION` are the native Anthropic Vertex variables. Pi also accepts the standard Google Vertex project/location variables. If both are set, the Anthropic-specific variables win.
+
+Use `--provider anthropic-vertex` to target Claude models hosted on Vertex:
+
+```bash
+pi --provider anthropic-vertex --model claude-opus-4-6 -p "Say exactly: ok"
+```
+
 ## Custom Providers
 
 **Via models.json:** Add Ollama, LM Studio, vLLM, or any provider that speaks a supported API (OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI). See [models.md](models.md).

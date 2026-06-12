@@ -24,6 +24,7 @@ import type {
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { resolveGoogleVertexLocation, resolveGoogleVertexProject } from "../vertex-shared.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
@@ -407,7 +408,7 @@ function isPlaceholderApiKey(apiKey: string): boolean {
 }
 
 function resolveProject(options?: GoogleVertexOptions): string {
-	const project = options?.project || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+	const project = resolveGoogleVertexProject(options);
 	if (!project) {
 		throw new Error(
 			"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.",
@@ -417,7 +418,7 @@ function resolveProject(options?: GoogleVertexOptions): string {
 }
 
 function resolveLocation(options?: GoogleVertexOptions): string {
-	const location = options?.location || process.env.GOOGLE_CLOUD_LOCATION;
+	const location = resolveGoogleVertexLocation(options);
 	if (!location) {
 		throw new Error("Vertex AI requires a location. Set GOOGLE_CLOUD_LOCATION or pass location in options.");
 	}

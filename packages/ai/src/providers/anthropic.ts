@@ -161,6 +161,10 @@ export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
+export type AnthropicMessagesClient = {
+	messages: Pick<Anthropic["messages"], "create">;
+};
+
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 
@@ -241,7 +245,7 @@ export interface AnthropicOptions extends StreamOptions {
 	 * construction entirely. Use this to inject alternative SDK clients such as
 	 * `AnthropicVertex` that shares the same messaging API.
 	 */
-	client?: Anthropic;
+	client?: AnthropicMessagesClient;
 }
 
 function mergeHeaders(...headerSources: (Record<string, string | null> | undefined)[]): Record<string, string | null> {
@@ -473,7 +477,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 		};
 
 		try {
-			let client: Anthropic;
+			let client: AnthropicMessagesClient;
 			let isOAuth: boolean;
 
 			if (options?.client) {
@@ -718,7 +722,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
  * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7+ and Fable 5 support "xhigh".
  */
-function mapThinkingLevelToEffort(
+export function mapThinkingLevelToAnthropicEffort(
 	model: Model<"anthropic-messages">,
 	level: SimpleStreamOptions["reasoning"],
 ): AnthropicEffort {
@@ -756,7 +760,7 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 	// For models with adaptive thinking: use an effort level.
 	// For older models: use budget-based thinking.
 	if (model.compat?.forceAdaptiveThinking === true) {
-		const effort = mapThinkingLevelToEffort(model, options.reasoning);
+		const effort = mapThinkingLevelToAnthropicEffort(model, options.reasoning);
 		return streamAnthropic(model, context, {
 			...base,
 			thinkingEnabled: true,

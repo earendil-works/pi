@@ -12,6 +12,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import type { BedrockOptions } from "./amazon-bedrock.ts";
 import type { AnthropicOptions } from "./anthropic.ts";
+import type { AnthropicVertexOptions } from "./anthropic-vertex.ts";
 import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses.ts";
 import type { GoogleOptions } from "./google.ts";
 import type { GoogleVertexOptions } from "./google-vertex.ts";
@@ -36,6 +37,11 @@ interface LazyProviderModule<
 interface AnthropicProviderModule {
 	streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions>;
 	streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleStreamOptions>;
+}
+
+interface AnthropicVertexProviderModule {
+	streamAnthropicVertex: StreamFunction<"anthropic-messages", AnthropicVertexOptions>;
+	streamSimpleAnthropicVertex: StreamFunction<"anthropic-messages", SimpleStreamOptions>;
 }
 
 interface AzureOpenAIResponsesProviderModule {
@@ -93,6 +99,9 @@ const importNodeOnlyProvider = (specifier: string): Promise<unknown> => {
 
 let anthropicProviderModulePromise:
 	| Promise<LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>>
+	| undefined;
+let anthropicVertexProviderModulePromise:
+	| Promise<LazyProviderModule<"anthropic-messages", AnthropicVertexOptions, SimpleStreamOptions>>
 	| undefined;
 let azureOpenAIResponsesProviderModulePromise:
 	| Promise<LazyProviderModule<"azure-openai-responses", AzureOpenAIResponsesOptions, SimpleStreamOptions>>
@@ -216,6 +225,19 @@ function loadAnthropicProviderModule(): Promise<
 	return anthropicProviderModulePromise;
 }
 
+function loadAnthropicVertexProviderModule(): Promise<
+	LazyProviderModule<"anthropic-messages", AnthropicVertexOptions, SimpleStreamOptions>
+> {
+	anthropicVertexProviderModulePromise ||= importNodeOnlyProvider("./anthropic-vertex.ts").then((module) => {
+		const provider = module as AnthropicVertexProviderModule;
+		return {
+			stream: provider.streamAnthropicVertex,
+			streamSimple: provider.streamSimpleAnthropicVertex,
+		};
+	});
+	return anthropicVertexProviderModulePromise;
+}
+
 function loadAzureOpenAIResponsesProviderModule(): Promise<
 	LazyProviderModule<"azure-openai-responses", AzureOpenAIResponsesOptions, SimpleStreamOptions>
 > {
@@ -323,8 +345,55 @@ function loadBedrockProviderModule(): Promise<
 	return bedrockProviderModulePromise;
 }
 
-export const streamAnthropic = createLazyStream(loadAnthropicProviderModule);
-export const streamSimpleAnthropic = createLazySimpleStream(loadAnthropicProviderModule);
+function selectAnthropicProviderModule(
+	model: Model<"anthropic-messages">,
+): Promise<LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>> {
+	if (model.provider === "anthropic-vertex") {
+		return loadAnthropicVertexProviderModule().then(
+			(module) => module as LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>,
+		);
+	}
+	return loadAnthropicProviderModule();
+}
+
+export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (model, context, options) => {
+	const outer = new AssistantMessageEventStream();
+
+	selectAnthropicProviderModule(model)
+		.then((module) => {
+			const inner = module.stream(model, context, options);
+			forwardStream(outer, inner);
+		})
+		.catch((error) => {
+			const message = createLazyLoadErrorMessage(model, error);
+			outer.push({ type: "error", reason: "error", error: message });
+			outer.end(message);
+		});
+
+	return outer;
+};
+
+export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
+	model,
+	context,
+	options,
+) => {
+	const outer = new AssistantMessageEventStream();
+
+	selectAnthropicProviderModule(model)
+		.then((module) => {
+			const inner = module.streamSimple(model, context, options);
+			forwardStream(outer, inner);
+		})
+		.catch((error) => {
+			const message = createLazyLoadErrorMessage(model, error);
+			outer.push({ type: "error", reason: "error", error: message });
+			outer.end(message);
+		});
+
+	return outer;
+};
+
 export const streamAzureOpenAIResponses = createLazyStream(loadAzureOpenAIResponsesProviderModule);
 export const streamSimpleAzureOpenAIResponses = createLazySimpleStream(loadAzureOpenAIResponsesProviderModule);
 export const streamGoogle = createLazyStream(loadGoogleProviderModule);
