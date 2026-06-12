@@ -437,7 +437,10 @@ Fired on compaction. See [compaction.md](compaction.md) for details.
 
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
-  const { preparation, branchEntries, customInstructions, signal } = event;
+  const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
+
+  // reason - "manual" (/compact), "threshold", or "overflow"
+  // willRetry - whether the aborted turn is retried after compaction (overflow recovery)
 
   // Cancel:
   return { cancel: true };
@@ -455,6 +458,8 @@ pi.on("session_before_compact", async (event, ctx) => {
 pi.on("session_compact", async (event, ctx) => {
   // event.compactionEntry - the saved compaction
   // event.fromExtension - whether extension provided it
+  // event.reason - "manual" (/compact), "threshold", or "overflow"
+  // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
 });
 ```
 
