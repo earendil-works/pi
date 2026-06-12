@@ -798,10 +798,12 @@ export class AgentSession {
 	 * Also rebuilds the system prompt to reflect the new tool set.
 	 * Changes take effect on the next agent turn.
 	 */
-	setActiveToolsByName(toolNames: string[]): void {
+	setActiveToolsByName(toolNames: string[] | undefined | null): void {
+		// Restore all tools when undefined/null is passed
+		const names = toolNames ?? Array.from(this._toolRegistry.keys());
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of toolNames) {
+		for (const name of names) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
 				tools.push(tool);

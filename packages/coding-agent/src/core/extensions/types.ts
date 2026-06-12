@@ -1251,8 +1251,8 @@ export interface ExtensionAPI {
 	/** Get all configured tools with parameter schema, prompt guidelines, and source metadata. */
 	getAllTools(): ToolInfo[];
 
-	/** Set the active tools by name. */
-	setActiveTools(toolNames: string[]): void;
+	/** Set the active tools by name. Pass undefined to restore all registered tools. */
+	setActiveTools(toolNames: string[] | undefined): void;
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
@@ -1468,7 +1468,7 @@ export type GetAllToolsHandler = () => ToolInfo[];
 
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
-export type SetActiveToolsHandler = (toolNames: string[]) => void;
+export type SetActiveToolsHandler = (toolNames: string[] | undefined) => void;
 
 export type RefreshToolsHandler = () => void;
 
