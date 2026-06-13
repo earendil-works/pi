@@ -10086,8 +10086,8 @@ export const MODELS = {
 				cacheRead: 0.06,
 				cacheWrite: 0,
 			},
-			contextWindow: 1048576,
-			maxTokens: 512000,
+			contextWindow: 524288,
+			maxTokens: 64000,
 		} satisfies Model<"openai-completions">,
 		"mistralai/codestral-2508": {
 			id: "mistralai/codestral-2508",

@@ -1394,6 +1394,13 @@ async function generateModels() {
 			candidate.cost.output = 1.9;
 			candidate.cost.cacheRead = 0.119;
 		}
+		if (candidate.provider === "openrouter" && candidate.id === "minimax/minimax-m3") {
+			// OpenRouter reports 1M context / 512K output, but the Minimax endpoint
+			// rejects requests above 524288 total tokens. Keep the generated metadata
+			// aligned with the provider-enforced limit so callers do not over-allocate output.
+			candidate.contextWindow = 524288;
+			candidate.maxTokens = 64000;
+		}
 
 	}
 
