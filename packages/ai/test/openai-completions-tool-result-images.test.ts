@@ -30,6 +30,8 @@ const compat: Required<OpenAICompletionsCompat> = {
 	requiresThinkingAsText: false,
 	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
+	chatTemplateKwargs: {},
+	chatTemplateThinking: {},
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	zaiToolStream: false,

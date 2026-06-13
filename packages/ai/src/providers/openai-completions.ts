@@ -563,6 +563,26 @@ function buildParams(
 			enable_thinking: !!options?.reasoningEffort,
 			preserve_thinking: true,
 		};
+	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
+		const thinking = compat.chatTemplateThinking;
+		const key = thinking?.key ?? "thinking";
+		const mode = thinking?.mode ?? "boolean";
+		const kwargs = compat.chatTemplateKwargs;
+		if (mode === "effort") {
+			if (options?.reasoningEffort) {
+				(params as any).chat_template_kwargs = {
+					...kwargs,
+					[key]: model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort,
+				};
+			} else if (kwargs && Object.keys(kwargs).length > 0) {
+				(params as any).chat_template_kwargs = { ...kwargs };
+			}
+		} else {
+			(params as any).chat_template_kwargs = {
+				...kwargs,
+				[key]: !!options?.reasoningEffort,
+			};
+		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		(params as any).thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
@@ -1139,6 +1159,8 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 						: isOpenRouter
 							? "openrouter"
 							: "openai",
+		chatTemplateKwargs: {},
+		chatTemplateThinking: {},
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		zaiToolStream: false,
@@ -1177,6 +1199,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 			model.compat.requiresReasoningContentOnAssistantMessages ??
 			detected.requiresReasoningContentOnAssistantMessages,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
+		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,
+		chatTemplateThinking: model.compat.chatTemplateThinking ?? detected.chatTemplateThinking,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,

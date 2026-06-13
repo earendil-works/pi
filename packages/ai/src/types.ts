@@ -392,7 +392,7 @@ export interface OpenAICompletionsCompat {
 	requiresThinkingAsText?: boolean;
 	/** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
 	requiresReasoningContentOnAssistantMessages?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking, "string-thinking" uses top-level thinking: string, and "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null. Default: "openai". */
+	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking, "string-thinking" uses top-level thinking: string, "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null, and "chat-template" uses configurable chat_template_kwargs via chatTemplateThinking and chatTemplateKwargs. Default: "openai". */
 	thinkingFormat?:
 		| "openai"
 		| "openrouter"
@@ -402,7 +402,20 @@ export interface OpenAICompletionsCompat {
 		| "qwen"
 		| "qwen-chat-template"
 		| "string-thinking"
-		| "ant-ling";
+		| "ant-ling"
+		| "chat-template";
+	/** Static key-value pairs merged into chat_template_kwargs when thinkingFormat is "chat-template". */
+	chatTemplateKwargs?: Record<string, unknown>;
+	/**
+	 * Configuration for the thinking toggle inside chat_template_kwargs.
+	 * Only used when thinkingFormat is "chat-template".
+	 */
+	chatTemplateThinking?: {
+		/** The kwarg key name. Default: "thinking". */
+		key?: string;
+		/** "boolean" sends true/false. "effort" sends the mapped thinking level string. Default: "boolean". */
+		mode?: "boolean" | "effort";
+	};
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */

@@ -495,6 +495,68 @@ describe("ModelRegistry", () => {
 			expect(compat?.supportsLongCacheRetention).toBe(false);
 		});
 
+		test("compat schema accepts chat-template thinkingFormat with chatTemplateKwargs and chatTemplateThinking", () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://example.com/v1",
+					apiKey: "DEMO_KEY",
+					api: "openai-completions",
+					compat: {
+						thinkingFormat: "chat-template",
+						chatTemplateKwargs: { enable_thinking: true, temperature: 0.6 },
+						chatTemplateThinking: { key: "thinking", mode: "effort" },
+					},
+					models: [
+						{
+							id: "demo-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const compat = registry.find("demo", "demo-model")?.compat as OpenAICompletionsCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.thinkingFormat).toBe("chat-template");
+			expect(compat?.chatTemplateKwargs).toEqual({ enable_thinking: true, temperature: 0.6 });
+			expect(compat?.chatTemplateThinking).toEqual({ key: "thinking", mode: "effort" });
+		});
+
+		test("compat schema accepts string-thinking and ant-ling thinkingFormat literals", () => {
+			for (const thinkingFormat of ["string-thinking", "ant-ling"] as const) {
+				writeRawModelsJson({
+					demo: {
+						baseUrl: "https://example.com/v1",
+						apiKey: "DEMO_KEY",
+						api: "openai-completions",
+						compat: { thinkingFormat },
+						models: [
+							{
+								id: "demo-model",
+								reasoning: true,
+								input: ["text"],
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+								contextWindow: 1000,
+								maxTokens: 100,
+							},
+						],
+					},
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const compat = registry.find("demo", "demo-model")?.compat as OpenAICompletionsCompat | undefined;
+
+				expect(registry.getError()).toBeUndefined();
+				expect(compat?.thinkingFormat).toBe(thinkingFormat);
+			}
+		});
+
 		test("model-level baseUrl overrides provider-level baseUrl for custom models", () => {
 			writeRawModelsJson({
 				"opencode-go": {

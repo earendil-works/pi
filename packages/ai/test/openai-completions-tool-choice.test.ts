@@ -1060,6 +1060,8 @@ describe("openai-completions tool_choice", () => {
 				requiresThinkingAsText: false,
 				requiresReasoningContentOnAssistantMessages: false,
 				thinkingFormat: "openai",
+				chatTemplateKwargs: {},
+				chatTemplateThinking: {},
 				openRouterRouting: {},
 				vercelGatewayRouting: {},
 				zaiToolStream: false,

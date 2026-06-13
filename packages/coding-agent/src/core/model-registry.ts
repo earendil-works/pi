@@ -117,7 +117,17 @@ const OpenAICompletionsCompatSchema = Type.Object({
 			Type.Literal("zai"),
 			Type.Literal("qwen"),
 			Type.Literal("qwen-chat-template"),
+			Type.Literal("string-thinking"),
+			Type.Literal("ant-ling"),
+			Type.Literal("chat-template"),
 		]),
+	),
+	chatTemplateKwargs: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+	chatTemplateThinking: Type.Optional(
+		Type.Object({
+			key: Type.Optional(Type.String()),
+			mode: Type.Optional(Type.Union([Type.Literal("boolean"), Type.Literal("effort")])),
+		}),
 	),
 	cacheControlFormat: Type.Optional(Type.Literal("anthropic")),
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
