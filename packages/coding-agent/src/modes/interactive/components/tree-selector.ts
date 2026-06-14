@@ -4,15 +4,17 @@ import {
 	type Focusable,
 	getKeybindings,
 	Input,
+	type Keybinding,
 	Spacer,
 	Text,
-	TruncatedText,
 	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { SessionTreeNode } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { keyHint, keyText } from "./keybinding-hints.ts";
+import { formatKeyText, keyHint } from "./keybinding-hints.ts";
 
 /** Gutter info: position (displayIndent where connector was) and whether to show │ */
 interface GutterInfo {
@@ -1075,6 +1077,98 @@ class SearchLine implements Component {
 	handleInput(_keyData: string): void {}
 }
 
+/** Component that renders tree help as semantic rows with chunk-aware wrapping */
+class TreeHelp implements Component {
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		const items = TREE_HELP_ITEMS.map(({ keys, label, labelFirst }) => {
+			const text = formatHelpKeys(keys);
+			if (!text) return label;
+			return labelFirst ? `${label} ${text}` : `${text} ${label}`;
+		});
+
+		const availableWidth = Math.max(1, width);
+		const indent = "  ";
+		const separator = " · ";
+		const lines: string[] = [];
+		let currentLine = "";
+
+		for (const item of items) {
+			const candidate = currentLine
+				? `${currentLine}${separator}${item}`
+				: visibleWidth(`${indent}${item}`) <= availableWidth
+					? `${indent}${item}`
+					: item;
+			if (!currentLine || visibleWidth(candidate) <= availableWidth) {
+				currentLine = candidate;
+				continue;
+			}
+
+			lines.push(...wrapTextWithAnsi(currentLine.trimEnd(), availableWidth));
+			currentLine = visibleWidth(`${indent}${item}`) <= availableWidth ? `${indent}${item}` : item;
+		}
+
+		if (currentLine) {
+			lines.push(...wrapTextWithAnsi(currentLine.trimEnd(), availableWidth));
+		}
+
+		return lines.map((line) => theme.fg("muted", line));
+	}
+}
+
+const TREE_HELP_ITEMS: Array<{ keys: Keybinding[]; label: string; labelFirst?: boolean }> = [
+	{ keys: ["tui.select.up", "tui.select.down"], label: "move" },
+	{ keys: ["tui.editor.cursorLeft", "tui.editor.cursorRight"], label: "page" },
+	{ keys: ["app.tree.foldOrUp", "app.tree.unfoldOrDown"], label: "branch" },
+	{ keys: ["app.tree.editLabel"], label: "label" },
+	{ keys: ["app.tree.toggleLabelTimestamp"], label: "label time" },
+	{
+		keys: [
+			"app.tree.filter.default",
+			"app.tree.filter.noTools",
+			"app.tree.filter.userOnly",
+			"app.tree.filter.labeledOnly",
+			"app.tree.filter.all",
+		],
+		label: "filters",
+		labelFirst: true,
+	},
+	{ keys: ["app.tree.filter.cycleForward", "app.tree.filter.cycleBackward"], label: "cycle", labelFirst: true },
+];
+
+function formatHelpKeys(keybindings: Keybinding[]): string {
+	const keys: string[] = [];
+	for (const keybinding of keybindings) {
+		const key = getKeybindings().getKeys(keybinding)[0];
+		if (key !== undefined) keys.push(key);
+	}
+	if (keys.length === 0) return "";
+
+	return formatKeyText(compactRawKeys(keys))
+		.replace(/\bpageUp\b/g, "pgup")
+		.replace(/\bpageDown\b/g, "pgdn")
+		.replace(/\bup\b/g, "↑")
+		.replace(/\bdown\b/g, "↓")
+		.replace(/\bleft\b/g, "←")
+		.replace(/\bright\b/g, "→");
+}
+
+function compactRawKeys(keys: string[]): string {
+	if (keys.length === 1) return keys[0]!;
+
+	const parts = keys.map((key) => {
+		const separatorIndex = key.lastIndexOf("+");
+		return separatorIndex === -1
+			? { prefix: "", suffix: key }
+			: { prefix: key.slice(0, separatorIndex + 1), suffix: key.slice(separatorIndex + 1) };
+	});
+	const prefix = parts[0]!.prefix;
+	return prefix && parts.every((part) => part.prefix === prefix)
+		? `${prefix}${parts.map((part) => part.suffix).join("/")}`
+		: keys.join("/");
+}
+
 /** Label input component shown when editing a label */
 class LabelInput implements Component, Focusable {
 	private input: Input;
@@ -1181,25 +1275,7 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Text(theme.bold("  Session Tree"), 1, 0));
-		const filterKeys = [
-			keyText("app.tree.filter.default"),
-			keyText("app.tree.filter.noTools"),
-			keyText("app.tree.filter.userOnly"),
-			keyText("app.tree.filter.labeledOnly"),
-			keyText("app.tree.filter.all"),
-		].join("/");
-		const cycleKeys = `${keyText("app.tree.filter.cycleForward")}/${keyText("app.tree.filter.cycleBackward")}`;
-		const branchKeys = `${keyText("app.tree.foldOrUp")}/${keyText("app.tree.unfoldOrDown")}`;
-		this.addChild(
-			new TruncatedText(
-				theme.fg(
-					"muted",
-					`  ↑/↓: move. ←/→: page. ${branchKeys}: fold/branch. ${keyText("app.tree.editLabel")}: label. ${filterKeys}: filters (${cycleKeys} cycle). ${keyText("app.tree.toggleLabelTimestamp")}: label time`,
-				),
-				0,
-				0,
-			),
-		);
+		this.addChild(new TreeHelp());
 		this.addChild(new SearchLine(this.treeList));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed `/tree` help rendering to show compact wrapped controls instead of truncating them on narrow terminals ([#5055](https://github.com/earendil-works/pi/issues/5055)).
 - Fixed SIGTERM/SIGHUP interactive shutdown to keep signal handlers installed until terminal cleanup completes, preventing `signal-exit` from re-sending the signal and leaving the terminal in raw/Kitty keyboard mode ([#5724](https://github.com/earendil-works/pi/issues/5724)).
 - Fixed extensions documentation to clarify that `pi.getActiveTools()` returns active tool names while `pi.getAllTools()` returns tool metadata ([#5729](https://github.com/earendil-works/pi/issues/5729)).
 - Fixed package commands such as `pi list`, `pi install`, and `pi update` to terminate after completing even if an extension leaves background handles open ([#5687](https://github.com/earendil-works/pi/issues/5687)).
