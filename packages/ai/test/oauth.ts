@@ -75,7 +75,12 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 			}
 		}
 
-		const result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
+		let result: Awaited<ReturnType<typeof getOAuthApiKey>> | null = null;
+		try {
+			result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
+		} catch {
+			return undefined;
+		}
 		if (!result) return undefined;
 
 		// Save refreshed credentials back to auth.json
