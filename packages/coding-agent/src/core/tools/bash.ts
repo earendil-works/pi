@@ -16,6 +16,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { attachProbeToDetails, InstrumentedToolError } from "../tool-instrumentation.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -369,6 +370,19 @@ export function createBashToolDefinition(
 
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
 
+			const buildProbe = (snapshot: Awaited<ReturnType<typeof finishOutput>>, exitCode: number | null) => ({
+				cwd,
+				exit_code: exitCode,
+				raw: {
+					lines: snapshot.truncation.totalLines,
+					bytes: snapshot.truncation.totalBytes,
+				},
+				file: {
+					path: null,
+					arg_path: null,
+				},
+			});
+
 			try {
 				let exitCode: number | null;
 				try {
@@ -381,23 +395,45 @@ export function createBashToolDefinition(
 					exitCode = result.exitCode;
 				} catch (err) {
 					const snapshot = await finishOutput();
-					const { text } = formatOutput(snapshot, "");
+					const { text, details } = formatOutput(snapshot, "");
+					const probe = buildProbe(snapshot, null);
 					if (err instanceof Error && err.message === "aborted") {
-						throw new Error(appendStatus(text, "Command aborted"));
+						throw new InstrumentedToolError(appendStatus(text, "Command aborted"), probe, {
+							content: text ? [{ type: "text", text }] : undefined,
+							details,
+						});
 					}
 					if (err instanceof Error && err.message.startsWith("timeout:")) {
 						const timeoutSecs = err.message.split(":")[1];
-						throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
+						throw new InstrumentedToolError(
+							appendStatus(text, `Command timed out after ${timeoutSecs} seconds`),
+							probe,
+							{
+								content: text ? [{ type: "text", text }] : undefined,
+								details,
+							},
+						);
 					}
 					throw err;
 				}
 
 				const snapshot = await finishOutput();
 				const { text: outputText, details } = formatOutput(snapshot);
+				const probe = buildProbe(snapshot, exitCode);
 				if (exitCode !== 0 && exitCode !== null) {
-					throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
+					throw new InstrumentedToolError(
+						appendStatus(outputText, `Command exited with code ${exitCode}`),
+						probe,
+						{
+							content: [{ type: "text", text: outputText }],
+							details,
+						},
+					);
 				}
-				return { content: [{ type: "text", text: outputText }], details };
+				return {
+					content: [{ type: "text", text: outputText }],
+					details: attachProbeToDetails(details, probe),
+				};
 			} finally {
 				clearUpdateTimer();
 			}
@@ -441,5 +477,5 @@ export function createBashToolDefinition(
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	return wrapToolDefinition(createBashToolDefinition(cwd, options));
+	return wrapToolDefinition(createBashToolDefinition(cwd, options), undefined, cwd);
 }

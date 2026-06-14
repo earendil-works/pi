@@ -1,11 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
+import { access as fsAccess, readFile as fsReadFile, stat as fsStat, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { renderDiff } from "../../modes/interactive/components/diff.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { attachProbeToDetails, countTextMetrics } from "../tool-instrumentation.ts";
 import {
 	applyEditsToNormalizedContent,
 	computeEditsDiff,
@@ -349,6 +350,17 @@ export function createEditToolDefinition(
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
+				const stat = await fsStat(absolutePath);
+				const probe = {
+					cwd,
+					raw: countTextMetrics(finalContent),
+					file: {
+						arg_path: path,
+						path: absolutePath,
+						total_lines: finalContent.split("\n").length,
+						total_bytes: stat.size,
+					},
+				};
 				return {
 					content: [
 						{
@@ -356,7 +368,10 @@ export function createEditToolDefinition(
 							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
 						},
 					],
-					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
+					details: attachProbeToDetails(
+						{ diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
+						probe,
+					),
 				};
 			});
 		},
@@ -433,5 +448,5 @@ export function createEditToolDefinition(
 }
 
 export function createEditTool(cwd: string, options?: EditToolOptions): AgentTool<typeof editSchema> {
-	return wrapToolDefinition(createEditToolDefinition(cwd, options));
+	return wrapToolDefinition(createEditToolDefinition(cwd, options), undefined, cwd);
 }

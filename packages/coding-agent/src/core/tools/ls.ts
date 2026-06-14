@@ -6,6 +6,7 @@ import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { attachProbeToDetails, countTextMetrics } from "../tool-instrumentation.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -122,6 +123,14 @@ export function createLsToolDefinition(
 				(async () => {
 					try {
 						const dirPath = resolveToCwd(path || ".", cwd);
+						const buildProbe = (rawOutput: string) => ({
+							cwd,
+							raw: countTextMetrics(rawOutput),
+							file: {
+								arg_path: path ?? ".",
+								path: dirPath,
+							},
+						});
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 
 						// Check if path exists.
@@ -173,7 +182,10 @@ export function createLsToolDefinition(
 						signal?.removeEventListener("abort", onAbort);
 
 						if (results.length === 0) {
-							resolve({ content: [{ type: "text", text: "(empty directory)" }], details: undefined });
+							resolve({
+								content: [{ type: "text", text: "(empty directory)" }],
+								details: attachProbeToDetails(undefined, buildProbe("")),
+							});
 							return;
 						}
 
@@ -198,7 +210,10 @@ export function createLsToolDefinition(
 
 						resolve({
 							content: [{ type: "text", text: output }],
-							details: Object.keys(details).length > 0 ? details : undefined,
+							details: attachProbeToDetails(
+								Object.keys(details).length > 0 ? details : undefined,
+								buildProbe(rawOutput),
+							),
 						});
 					} catch (e: any) {
 						signal?.removeEventListener("abort", onAbort);
@@ -221,5 +236,5 @@ export function createLsToolDefinition(
 }
 
 export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<typeof lsSchema> {
-	return wrapToolDefinition(createLsToolDefinition(cwd, options));
+	return wrapToolDefinition(createLsToolDefinition(cwd, options), undefined, cwd);
 }

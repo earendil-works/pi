@@ -89,6 +89,7 @@ import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { attachInstrumentation, takeStashedInstrumentation } from "./tool-instrumentation.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -424,28 +425,50 @@ export class AgentSession {
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_result")) {
-				return undefined;
+			let nextResult = result;
+			let nextIsError = isError;
+
+			if (runner.hasHandlers("tool_result")) {
+				const hookResult = await runner.emitToolResult({
+					type: "tool_result",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: args as Record<string, unknown>,
+					content: nextResult.content,
+					details: nextResult.details,
+					isError: nextIsError,
+				});
+
+				if (hookResult) {
+					nextResult = {
+						content: hookResult.content ?? nextResult.content,
+						details: hookResult.details ?? nextResult.details,
+						terminate: nextResult.terminate,
+					};
+					nextIsError = hookResult.isError ?? nextIsError;
+				}
 			}
 
-			const hookResult = await runner.emitToolResult({
-				type: "tool_result",
-				toolName: toolCall.name,
-				toolCallId: toolCall.id,
-				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
-			});
+			const stashedInstrumentation = takeStashedInstrumentation(toolCall.id);
+			if (stashedInstrumentation) {
+				nextResult = {
+					...nextResult,
+					details: attachInstrumentation(nextResult.details, stashedInstrumentation),
+				};
+			}
 
-			if (!hookResult) {
+			if (
+				nextResult.content === result.content &&
+				nextResult.details === result.details &&
+				nextIsError === isError
+			) {
 				return undefined;
 			}
 
 			return {
-				content: hookResult.content,
-				details: hookResult.details,
-				isError: hookResult.isError ?? isError,
+				content: nextResult.content,
+				details: nextResult.details,
+				isError: nextIsError,
 			};
 		};
 	}
@@ -2336,7 +2359,7 @@ export class AgentSession {
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
 		const runner = this._extensionRunner;
-		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner);
+		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner, this._cwd);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -2345,6 +2368,7 @@ export class AgentSession {
 					sourceInfo: createSyntheticSourceInfo(`<builtin:${definition.name}>`, { source: "builtin" }),
 				})),
 			runner,
+			this._cwd,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));

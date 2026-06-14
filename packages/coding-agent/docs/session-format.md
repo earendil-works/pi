@@ -95,7 +95,7 @@ interface ToolResultMessage {
   toolCallId: string;
   toolName: string;
   content: (TextContent | ImageContent)[];
-  details?: any;      // Tool-specific metadata
+  details?: any;      // Tool-specific metadata plus optional instrumentation
   isError: boolean;
   timestamp: number;
 }
@@ -115,6 +115,27 @@ interface Usage {
   };
 }
 ```
+
+`details.instrumentation` (when present) records per-tool-call execution metrics for analytics. It is not sent to the LLM. Schema (`v: 1`):
+
+```typescript
+interface ToolCallInstrumentationV1 {
+  v: 1;
+  timestamp_start: string;
+  timestamp_end: string;
+  cwd: string;
+  exit_code?: number | null;
+  raw: { lines: number; bytes: number };
+  file?: {
+    path: string | null;
+    arg_path?: string | null;
+    total_lines?: number;
+    total_bytes?: number;
+  };
+}
+```
+
+Post-hoc extraction: `node packages/coding-agent/scripts/extract-tool-metrics.ts <session.jsonl>`.
 
 ### Extended Message Types (from pi-coding-agent)
 

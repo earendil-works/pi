@@ -59,7 +59,8 @@ describe("Coding Agent Tools", () => {
 			expect(getTextOutput(result)).toBe(content);
 			// No truncation message since file fits within limits
 			expect(getTextOutput(result)).not.toContain("Use offset=");
-			expect(result.details).toBeUndefined();
+			expect(result.details?.instrumentation?.v).toBe(1);
+			expect(result.details?.probe).toBeUndefined();
 		});
 
 		it("should handle non-existent files", async () => {
@@ -211,7 +212,8 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("Successfully wrote");
 			expect(getTextOutput(result)).toContain(testFile);
-			expect(result.details).toBeUndefined();
+			expect(result.details?.instrumentation?.v).toBe(1);
+			expect(result.details?.instrumentation?.file?.path).toBe(testFile);
 		});
 
 		it("should create parent directories", async () => {
@@ -441,7 +443,8 @@ describe("Coding Agent Tools", () => {
 			const result = await bashTool.execute("test-call-8", { command: "echo 'test output'" });
 
 			expect(getTextOutput(result)).toContain("test output");
-			expect(result.details).toBeUndefined();
+			expect(result.details?.instrumentation?.v).toBe(1);
+			expect(result.details?.instrumentation?.exit_code).toBe(0);
 		});
 
 		it("should handle command errors", async () => {

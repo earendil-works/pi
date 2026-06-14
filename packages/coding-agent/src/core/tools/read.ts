@@ -12,6 +12,7 @@ import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { attachProbeToDetails, countTextMetrics } from "../tool-instrumentation.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -243,10 +244,14 @@ export function createReadToolDefinition(
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;
+							let probeRawText = "";
+							let probeTotalBytes = 0;
+							let probeTotalLines: number | undefined;
 							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
 							if (mimeType) {
 								// Read image as binary.
 								const buffer = await ops.readFile(absolutePath);
+								probeTotalBytes = buffer.length;
 								if (autoResizeImages) {
 									// Resize image if needed before sending it back to the model.
 									const resized = await resizeImage(buffer, mimeType);
@@ -295,6 +300,9 @@ export function createReadToolDefinition(
 								} else {
 									selectedContent = allLines.slice(startLine).join("\n");
 								}
+								probeRawText = selectedContent;
+								probeTotalBytes = Buffer.byteLength(textContent, "utf-8");
+								probeTotalLines = totalFileLines;
 								// Apply truncation, respecting both line and byte limits.
 								const truncation = truncateHead(selectedContent);
 								let outputText: string;
@@ -326,9 +334,20 @@ export function createReadToolDefinition(
 								content = [{ type: "text", text: outputText }];
 							}
 
+							const probe = {
+								cwd,
+								raw: countTextMetrics(probeRawText),
+								file: {
+									arg_path: path,
+									path: absolutePath,
+									total_bytes: probeTotalBytes,
+									...(probeTotalLines !== undefined ? { total_lines: probeTotalLines } : {}),
+								},
+							};
+
 							if (aborted) return;
 							signal?.removeEventListener("abort", onAbort);
-							resolve({ content, details });
+							resolve({ content, details: attachProbeToDetails(details, probe) });
 						} catch (error: any) {
 							signal?.removeEventListener("abort", onAbort);
 							if (!aborted) reject(error);
@@ -358,5 +377,5 @@ export function createReadToolDefinition(
 }
 
 export function createReadTool(cwd: string, options?: ReadToolOptions): AgentTool<typeof readSchema> {
-	return wrapToolDefinition(createReadToolDefinition(cwd, options));
+	return wrapToolDefinition(createReadToolDefinition(cwd, options), undefined, cwd);
 }

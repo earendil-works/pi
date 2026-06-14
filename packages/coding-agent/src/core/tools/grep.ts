@@ -9,6 +9,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { attachProbeToDetails, countTextMetrics } from "../tool-instrumentation.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -176,6 +177,14 @@ export function createGrepToolDefinition(
 						}
 
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
+						const buildProbe = (rawOutput: string) => ({
+							cwd,
+							raw: countTextMetrics(rawOutput),
+							file: {
+								arg_path: searchDir ?? ".",
+								path: searchPath,
+							},
+						});
 						const ops = customOps ?? defaultGrepOperations;
 						let isDirectory: boolean;
 						try {
@@ -308,7 +317,10 @@ export function createGrepToolDefinition(
 							}
 							if (matchCount === 0) {
 								settle(() =>
-									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
+									resolve({
+										content: [{ type: "text", text: "No matches found" }],
+										details: attachProbeToDetails(undefined, buildProbe("")),
+									}),
 								);
 								return;
 							}
@@ -357,7 +369,10 @@ export function createGrepToolDefinition(
 							settle(() =>
 								resolve({
 									content: [{ type: "text", text: output }],
-									details: Object.keys(details).length > 0 ? details : undefined,
+									details: attachProbeToDetails(
+										Object.keys(details).length > 0 ? details : undefined,
+										buildProbe(rawOutput),
+									),
 								}),
 							);
 						});
@@ -381,5 +396,5 @@ export function createGrepToolDefinition(
 }
 
 export function createGrepTool(cwd: string, options?: GrepToolOptions): AgentTool<typeof grepSchema> {
-	return wrapToolDefinition(createGrepToolDefinition(cwd, options));
+	return wrapToolDefinition(createGrepToolDefinition(cwd, options), undefined, cwd);
 }

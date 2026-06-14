@@ -8,6 +8,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { attachProbeToDetails, countTextMetrics } from "../tool-instrumentation.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -148,6 +149,14 @@ export function createFindToolDefinition(
 				(async () => {
 					try {
 						const searchPath = resolveToCwd(searchDir || ".", cwd);
+						const buildProbe = (rawOutput: string) => ({
+							cwd,
+							raw: countTextMetrics(rawOutput),
+							file: {
+								arg_path: searchDir ?? ".",
+								path: searchPath,
+							},
+						});
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
 
@@ -173,7 +182,7 @@ export function createFindToolDefinition(
 								settle(() =>
 									resolve({
 										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
+										details: attachProbeToDetails(undefined, buildProbe("")),
 									}),
 								);
 								return;
@@ -204,7 +213,10 @@ export function createFindToolDefinition(
 							settle(() =>
 								resolve({
 									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
+									details: attachProbeToDetails(
+										Object.keys(details).length > 0 ? details : undefined,
+										buildProbe(rawOutput),
+									),
 								}),
 							);
 							return;
@@ -291,7 +303,7 @@ export function createFindToolDefinition(
 								settle(() =>
 									resolve({
 										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
+										details: attachProbeToDetails(undefined, buildProbe("")),
 									}),
 								);
 								return;
@@ -334,7 +346,10 @@ export function createFindToolDefinition(
 							settle(() =>
 								resolve({
 									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
+									details: attachProbeToDetails(
+										Object.keys(details).length > 0 ? details : undefined,
+										buildProbe(rawOutput),
+									),
 								}),
 							);
 						});
@@ -363,5 +378,5 @@ export function createFindToolDefinition(
 }
 
 export function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema> {
-	return wrapToolDefinition(createFindToolDefinition(cwd, options));
+	return wrapToolDefinition(createFindToolDefinition(cwd, options), undefined, cwd);
 }
