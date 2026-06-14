@@ -27,8 +27,9 @@ export {
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
 } from "./openai-codex.ts";
-
 export * from "./types.ts";
+// xAI Grok
+export { loginXaiGrokDeviceCode, refreshXaiGrokToken, xaiGrokOAuthProvider } from "./xai-grok.ts";
 
 // ============================================================================
 // Provider Registry
@@ -38,11 +39,13 @@ import { anthropicOAuthProvider } from "./anthropic.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
+import { xaiGrokOAuthProvider } from "./xai-grok.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	xaiGrokOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(

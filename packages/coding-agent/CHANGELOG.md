@@ -5,6 +5,7 @@
 ### Added
 
 - Added first-run interactive theme detection from the terminal background.
+- Added inherited xAI Grok account subscription login support through `/login`.
 
 ### Fixed
 

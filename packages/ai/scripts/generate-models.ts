@@ -68,6 +68,12 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const XAI_GROK_CLI_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
+const XAI_GROK_STATIC_HEADERS = {
+	"X-XAI-Token-Auth": "xai-grok-cli",
+	"x-grok-client-version": "0.2.51",
+} as const;
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -1833,6 +1839,45 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...codexModels);
+
+	// Add Grok account subscription models.
+	const xaiGrokModels: Model<"openai-responses">[] = [
+		{
+			id: "grok-build",
+			name: "Grok Build",
+			api: "openai-responses",
+			provider: "xai-grok",
+			baseUrl: XAI_GROK_CLI_PROXY_BASE_URL,
+			headers: {
+				...XAI_GROK_STATIC_HEADERS,
+				"x-grok-model-override": "grok-build",
+			},
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 512000,
+			maxTokens: 30000,
+			compat: { sendSessionIdHeader: false, supportsLongCacheRetention: false },
+		},
+		{
+			id: "grok-composer-2.5-fast",
+			name: "Grok Composer 2.5 Fast",
+			api: "openai-responses",
+			provider: "xai-grok",
+			baseUrl: XAI_GROK_CLI_PROXY_BASE_URL,
+			headers: {
+				...XAI_GROK_STATIC_HEADERS,
+				"x-grok-model-override": "grok-composer-2.5-fast",
+			},
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 30000,
+			compat: { sendSessionIdHeader: false, supportsLongCacheRetention: false },
+		},
+	];
+	allModels.push(...xaiGrokModels);
 
 	// Add missing Grok models
 	const missingGrokModels: Model<"openai-completions">[] = [

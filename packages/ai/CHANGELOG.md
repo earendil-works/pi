@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added xAI Grok account subscription OAuth support with direct OIDC device-code login and refresh handling.
+
 ### Fixed
 
 - Fixed OpenCode/OpenCode Go completion models that reject `prompt_cache_retention` to omit long-retention cache fields when `cacheRetention` is `long` ([#5702](https://github.com/earendil-works/pi/issues/5702)).
