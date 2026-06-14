@@ -1317,6 +1317,25 @@ pi.registerTool({
 });
 ```
 
+### pi.setPromptGuidelines(guidelines)
+
+Set extension-level guideline bullets for the default system prompt. Those are grouped together with the tool-registered guidelines without belonging to a tool.
+
+```typescript
+pi.setPromptGuidelines([
+  "Prefer the repository's existing terminology over introducing new names.",
+  "When changing behavior, mention affected file paths clearly.",
+]);
+
+// Replace later from config or runtime state
+pi.setPromptGuidelines(["Use the remote workspace rules."]);
+
+// Clear this extension's extra guidelines
+pi.setPromptGuidelines([]);
+```
+
+This replaces the current extension-level guideline list for that extension. It does not affect tool-specific `promptGuidelines` declared on `pi.registerTool()`. Use sparingly, as this drops the cache.
+
 ### pi.sendMessage(message, options?)
 
 Inject a custom message into the session.

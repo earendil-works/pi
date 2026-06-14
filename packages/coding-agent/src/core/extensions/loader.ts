@@ -198,6 +198,12 @@ function createExtensionAPI(
 			runtime.refreshTools();
 		},
 
+		setPromptGuidelines(guidelines: string[]): void {
+			runtime.assertActive();
+			extension.promptGuidelines = [...guidelines];
+			runtime.refreshTools();
+		},
+
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			runtime.assertActive();
 			extension.commands.set(name, {
@@ -358,6 +364,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		handlers: new Map(),
 		tools: new Map(),
+		promptGuidelines: [],
 		messageRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),

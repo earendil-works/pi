@@ -909,6 +909,10 @@ export class AgentSession {
 			}
 		}
 
+		for (const extension of this._resourceLoader.getExtensions().extensions) {
+			promptGuidelines.push(...this._normalizePromptGuidelines(extension.promptGuidelines));
+		}
+
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =

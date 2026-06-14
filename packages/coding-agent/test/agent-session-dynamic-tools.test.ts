@@ -137,6 +137,62 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
+	it("updates extension-level prompt guidelines dynamically", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const guidelineStates: string[][] = [];
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.setPromptGuidelines(["Prefer the configured extension workflow."]);
+						guidelineStates.push(["Prefer the configured extension workflow."]);
+						pi.setPromptGuidelines([
+							"Prefer the configured extension workflow.",
+							"Mention extension-managed files explicitly.",
+						]);
+						guidelineStates.push([
+							"Prefer the configured extension workflow.",
+							"Mention extension-managed files explicitly.",
+						]);
+						pi.setPromptGuidelines([]);
+						guidelineStates.push([]);
+						pi.setPromptGuidelines(["Use the final extension guideline set."]);
+						guidelineStates.push(["Use the final extension guideline set."]);
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+
+		expect(guidelineStates).toEqual([
+			["Prefer the configured extension workflow."],
+			["Prefer the configured extension workflow.", "Mention extension-managed files explicitly."],
+			[],
+			["Use the final extension guideline set."],
+		]);
+		expect(session.systemPrompt).toContain("- Use the final extension guideline set.");
+		expect(session.systemPrompt).not.toContain("- Prefer the configured extension workflow.");
+		expect(session.systemPrompt).not.toContain("- Mention extension-managed files explicitly.");
+
+		session.dispose();
+	});
+
 	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
