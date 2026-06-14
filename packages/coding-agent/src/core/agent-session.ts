@@ -1339,10 +1339,11 @@ export class AgentSession {
 	 *
 	 * @param content User message content (string or content array)
 	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @param options.allowCommands Allow trusted extension-injected slash commands to run
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; allowCommands?: boolean },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -1364,9 +1365,10 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
-		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
+		// Use prompt() with expandPromptTemplates: false by default to skip command handling and template expansion.
+		// Extensions may opt into command handling for trusted internal control messages.
 		await this.prompt(text, {
-			expandPromptTemplates: false,
+			expandPromptTemplates: options?.allowCommands === true,
 			streamingBehavior: options?.deliverAs,
 			images,
 			source: "extension",
