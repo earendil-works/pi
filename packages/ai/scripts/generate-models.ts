@@ -154,6 +154,11 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"upstage/solar-10.7b-instruct",
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
+const ZAI_CN_STATIC_VLM_MODELS = [
+	{ id: "glm-4.6v", name: "GLM-4.6V" },
+	{ id: "glm-4.6v-flashx", name: "GLM-4.6V-FlashX" },
+	{ id: "glm-4.6v-flash", name: "GLM-4.6V-Flash" },
+] as const;
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
 	"github-copilot:claude-sonnet-4",
@@ -823,6 +828,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// Process zAi models
 		const zaiCodingPlanVariants = [
 			{ provider: "zai", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
+			{ provider: "zai-cn", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
 			{ provider: "zai-coding-cn", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
 		] as const;
 
@@ -857,6 +863,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					});
 				}
 			}
+		}
+
+		const zaiCnGeneratedModelIds = new Set(
+			models.filter((model) => model.provider === "zai-cn").map((model) => model.id),
+		);
+		for (const model of ZAI_CN_STATIC_VLM_MODELS) {
+			if (zaiCnGeneratedModelIds.has(model.id)) continue;
+			models.push({
+				id: model.id,
+				name: model.name,
+				api: "openai-completions",
+				provider: "zai-cn",
+				baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+				reasoning: true,
+				input: ["text", "image"],
+				cost: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+				},
+				compat: {
+					supportsDeveloperRole: false,
+					thinkingFormat: "zai",
+					zaiToolStream: true,
+				},
+				contextWindow: 131072,
+				maxTokens: 32768,
+			});
 		}
 
 		// Process Mistral models

@@ -4,6 +4,7 @@ import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 const originalCopilotGitHubToken = process.env.COPILOT_GITHUB_TOKEN;
 const originalGhToken = process.env.GH_TOKEN;
 const originalGitHubToken = process.env.GITHUB_TOKEN;
+const originalZaiCnApiKey = process.env.ZAI_CN_API_KEY;
 const originalZaiCodingCnApiKey = process.env.ZAI_CODING_CN_API_KEY;
 
 afterEach(() => {
@@ -23,6 +24,12 @@ afterEach(() => {
 		delete process.env.GITHUB_TOKEN;
 	} else {
 		process.env.GITHUB_TOKEN = originalGitHubToken;
+	}
+
+	if (originalZaiCnApiKey === undefined) {
+		delete process.env.ZAI_CN_API_KEY;
+	} else {
+		process.env.ZAI_CN_API_KEY = originalZaiCnApiKey;
 	}
 
 	if (originalZaiCodingCnApiKey === undefined) {
@@ -56,5 +63,12 @@ describe("environment API keys", () => {
 
 		expect(findEnvKeys("zai-coding-cn")).toEqual(["ZAI_CODING_CN_API_KEY"]);
 		expect(getEnvApiKey("zai-coding-cn")).toBe("zai-coding-cn-token");
+	});
+
+	it("resolves Zhipu AI (China) credentials from ZAI_CN_API_KEY", () => {
+		process.env.ZAI_CN_API_KEY = "zai-cn-token";
+
+		expect(findEnvKeys("zai-cn")).toEqual(["ZAI_CN_API_KEY"]);
+		expect(getEnvApiKey("zai-cn")).toBe("zai-cn-token");
 	});
 });

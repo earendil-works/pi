@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Zhipu AI (China) provider (`zai-cn`) for direct access to the BigModel general API endpoint at `https://open.bigmodel.cn/api/paas/v4`, including GLM-4.6V visual-language models and configuration via `ZAI_CN_API_KEY` ([#5726](https://github.com/earendil-works/pi/issues/5726)).
+
 ## [0.79.4] - 2026-06-15
 
 ### Fixed

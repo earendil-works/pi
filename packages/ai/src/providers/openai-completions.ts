@@ -1079,6 +1079,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 
 	const isZai =
 		provider === "zai" ||
+		provider === "zai-cn" ||
 		provider === "zai-coding-cn" ||
 		baseUrl.includes("api.z.ai") ||
 		baseUrl.includes("open.bigmodel.cn");
