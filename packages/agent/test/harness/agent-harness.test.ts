@@ -31,14 +31,6 @@ function textFromUserMessages(messages: Array<{ role: string; content: unknown }
 	});
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-	let resolve = () => {};
-	const promise = new Promise<void>((resolvePromise) => {
-		resolve = resolvePromise;
-	});
-	return { promise, resolve };
-}
-
 function getReasoning(options: unknown): unknown {
 	if (!options || typeof options !== "object" || !("reasoning" in options)) return undefined;
 	return options.reasoning;
@@ -379,7 +371,7 @@ describe("AgentHarness", () => {
 		const registration = registerFauxProvider();
 		registrations.push(registration);
 		registration.setResponses([() => fauxAssistantMessage("ok")]);
-		const barrier = deferred();
+		const barrier = Promise.withResolvers<void>();
 		const harness = new AgentHarness({
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),

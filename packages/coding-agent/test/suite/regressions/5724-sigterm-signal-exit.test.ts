@@ -24,17 +24,6 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown;
 
 class ProcessExitError extends Error {}
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-	let resolve: (() => void) | undefined;
-	const promise = new Promise<void>((res) => {
-		resolve = res;
-	});
-	return {
-		promise,
-		resolve: () => resolve?.(),
-	};
-}
-
 async function callShutdown(context: ShutdownThis, options?: { fromSignal?: boolean }): Promise<void> {
 	try {
 		await (interactiveModePrototype as InteractiveModePrototypeWithShutdown).shutdown.call(context, options);
@@ -54,7 +43,7 @@ describe("InteractiveMode SIGTERM shutdown with signal-exit (#5724)", () => {
 		}) as typeof process.exit);
 
 		const order: string[] = [];
-		const dispose = deferred();
+		const dispose = Promise.withResolvers<void>();
 		const context: ShutdownThis = {
 			isShuttingDown: false,
 			unregisterSignalHandlers: vi.fn(() => {

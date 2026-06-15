@@ -10,14 +10,6 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createDeferred(): { promise: Promise<void>; resolve: () => void } {
-	let resolve!: () => void;
-	const promise = new Promise<void>((promiseResolve) => {
-		resolve = promiseResolve;
-	});
-	return { promise, resolve };
-}
-
 async function resolvesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
 	return Promise.race([promise.then(() => true), delay(ms).then(() => false)]);
 }
@@ -176,9 +168,9 @@ describe("built-in edit and write tools", () => {
 	it("keeps write queue locked while an aborted write is still in flight", async () => {
 		const dir = await createTempDir();
 		const filePath = join(dir, "abort-write.txt");
-		const firstWriteStarted = createDeferred();
-		const finishFirstWrite = createDeferred();
-		const secondWriteStarted = createDeferred();
+		const firstWriteStarted = Promise.withResolvers<void>();
+		const finishFirstWrite = Promise.withResolvers<void>();
+		const secondWriteStarted = Promise.withResolvers<void>();
 		let firstWriteSettled = false;
 
 		const writeTool = createWriteTool(dir, {
@@ -222,9 +214,9 @@ describe("built-in edit and write tools", () => {
 		const dir = await createTempDir();
 		const filePath = join(dir, "abort-edit.txt");
 		await writeFile(filePath, "alpha\nbeta\n", "utf8");
-		const firstWriteStarted = createDeferred();
-		const finishFirstWrite = createDeferred();
-		const secondWriteStarted = createDeferred();
+		const firstWriteStarted = Promise.withResolvers<void>();
+		const finishFirstWrite = Promise.withResolvers<void>();
+		const secondWriteStarted = Promise.withResolvers<void>();
 		let firstWriteSettled = false;
 
 		const editTool = createEditTool(dir, {

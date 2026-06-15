@@ -59,17 +59,6 @@ function createAssistantToolUseMessage(content: ToolCallContent[]): AssistantMes
 	};
 }
 
-function createDeferred(): {
-	promise: Promise<void>;
-	resolve: () => void;
-} {
-	let resolve = () => {};
-	const promise = new Promise<void>((resolvePromise) => {
-		resolve = resolvePromise;
-	});
-	return { promise, resolve };
-}
-
 describe("Agent", () => {
 	it("should create an agent instance with default state", () => {
 		const agent = new Agent();
@@ -155,7 +144,7 @@ describe("Agent", () => {
 	});
 
 	it("should await async subscribers before prompt resolves", async () => {
-		const barrier = createDeferred();
+		const barrier = Promise.withResolvers<void>();
 		const agent = new Agent({
 			streamFn: () => {
 				const stream = new MockAssistantStream();
@@ -193,7 +182,7 @@ describe("Agent", () => {
 	});
 
 	it("waitForIdle should wait for async subscribers", async () => {
-		const barrier = createDeferred();
+		const barrier = Promise.withResolvers<void>();
 		const agent = new Agent({
 			streamFn: () => {
 				const stream = new MockAssistantStream();
@@ -332,9 +321,9 @@ describe("Agent", () => {
 
 	it("should ignore a settled parallel tool update while another tool is still running", async () => {
 		const toolSchema = Type.Object({});
-		const slowStarted = createDeferred();
-		const settledToolEnded = createDeferred();
-		const releaseSlow = createDeferred();
+		const slowStarted = Promise.withResolvers<void>();
+		const settledToolEnded = Promise.withResolvers<void>();
+		const releaseSlow = Promise.withResolvers<void>();
 		let settledToolUpdate: AgentToolUpdateCallback<{ status: string }> | undefined;
 		const events: AgentEvent[] = [];
 		const settledTool: AgentTool<typeof toolSchema, { status: string }> = {

@@ -7,31 +7,12 @@ import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SessionInfo } from "../src/core/session-manager.ts";
 import { SessionSelectorComponent } from "../src/modes/interactive/components/session-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-
-type Deferred<T> = {
-	promise: Promise<T>;
-	resolve: (value: T) => void;
-	reject: (err: unknown) => void;
-};
-
-function createDeferred<T>(): Deferred<T> {
-	let resolve: (value: T) => void = () => {};
-	let reject: (err: unknown) => void = () => {};
-	const promise = new Promise<T>((res, rej) => {
-		resolve = res;
-		reject = rej;
-	});
-	return { promise, resolve, reject };
-}
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 async function flushPromises(): Promise<void> {
 	await new Promise<void>((resolve) => {
 		setImmediate(resolve);
 	});
-}
-
-function stripAnsi(text: string): string {
-	return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function makeSession(overrides: Partial<SessionInfo> & { id: string }): SessionInfo {
@@ -186,7 +167,7 @@ describe("session selector path/delete interactions", () => {
 
 	it("does not switch scope back to All when All load resolves after toggling back to Current", async () => {
 		const currentSessions = [makeSession({ id: "current" })];
-		const allDeferred = createDeferred<SessionInfo[]>();
+		const allDeferred = Promise.withResolvers<SessionInfo[]>();
 		let allLoadCalls = 0;
 
 		const selector = new SessionSelectorComponent(
@@ -218,7 +199,7 @@ describe("session selector path/delete interactions", () => {
 
 	it("does not start redundant All loads when toggling scopes while All is already loading", async () => {
 		const currentSessions = [makeSession({ id: "current" })];
-		const allDeferred = createDeferred<SessionInfo[]>();
+		const allDeferred = Promise.withResolvers<SessionInfo[]>();
 		let allLoadCalls = 0;
 
 		const selector = new SessionSelectorComponent(

@@ -6,16 +6,16 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	private waiting: ((value: IteratorResult<T>) => void)[] = [];
 	private done = false;
 	private finalResultPromise: Promise<R>;
-	private resolveFinalResult!: (result: R) => void;
+	private resolveFinalResult: (result: R) => void;
 	private isComplete: (event: T) => boolean;
 	private extractResult: (event: T) => R;
 
 	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
 		this.isComplete = isComplete;
 		this.extractResult = extractResult;
-		this.finalResultPromise = new Promise((resolve) => {
-			this.resolveFinalResult = resolve;
-		});
+		const finalResult = Promise.withResolvers<R>();
+		this.finalResultPromise = finalResult.promise;
+		this.resolveFinalResult = finalResult.resolve;
 	}
 
 	push(event: T): void {
@@ -54,7 +54,9 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			} else if (this.done) {
 				return;
 			} else {
-				const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.push(resolve));
+				const waiter = Promise.withResolvers<IteratorResult<T>>();
+				this.waiting.push(waiter.resolve);
+				const result = await waiter.promise;
 				if (result.done) return;
 				yield result.value;
 			}
