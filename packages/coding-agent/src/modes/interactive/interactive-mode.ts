@@ -86,7 +86,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
-import { hasProjectConfigDir, hasProjectTrustInputs, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -126,6 +126,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import {
+	detectTerminalBackgroundTheme,
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
 	getEditorTheme,
@@ -428,6 +429,25 @@ export class InteractiveMode {
 		initTheme(this.settingsManager.getTheme(), true);
 	}
 
+	private async detectThemeIfUnset(): Promise<void> {
+		if (this.settingsManager.getTheme()) {
+			return;
+		}
+
+		const detection = await detectTerminalBackgroundTheme({ ui: this.ui, timeoutMs: 100 });
+		const result = setTheme(detection.theme, true);
+		if (!result.success) {
+			return;
+		}
+
+		if (detection.confidence === "high") {
+			this.settingsManager.setTheme(detection.theme);
+			await this.settingsManager.flush();
+		}
+		this.updateEditorBorderColor();
+		this.ui.requestRender();
+	}
+
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
 		if (!sourceInfo) {
 			return undefined;
@@ -629,8 +649,27 @@ export class InteractiveMode {
 			console.log(theme.fg("dim", `Model scope: ${modelList}${cycleHint}`));
 		}
 
-		// Add header container as first child
+		// Add header container as first child. Populate it after detectThemeIfUnset.
 		this.ui.addChild(this.headerContainer);
+
+		this.ui.addChild(this.chatContainer);
+		this.ui.addChild(this.pendingMessagesContainer);
+		this.ui.addChild(this.statusContainer);
+		this.renderWidgets(); // Initialize with default spacer
+		this.ui.addChild(this.widgetContainerAbove);
+		this.ui.addChild(this.editorContainer);
+		this.ui.addChild(this.widgetContainerBelow);
+		this.ui.addChild(this.footer);
+		this.ui.setFocus(this.editor);
+
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+
+		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
+		this.ui.start();
+		this.isInitialized = true;
+
+		await this.detectThemeIfUnset();
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
@@ -692,23 +731,7 @@ export class InteractiveMode {
 			this.builtInHeader = new Text("", 0, 0);
 			this.headerContainer.addChild(this.builtInHeader);
 		}
-
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
-		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
-		this.ui.setFocus(this.editor);
-
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-
-		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
-		this.ui.start();
-		this.isInitialized = true;
+		this.ui.requestRender();
 
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
@@ -3271,7 +3294,7 @@ export class InteractiveMode {
 	}
 
 	private renderProjectTrustWarningIfNeeded(): void {
-		if (this.settingsManager.isProjectTrusted() || !hasProjectTrustInputs(this.sessionManager.getCwd())) {
+		if (this.settingsManager.isProjectTrusted() || !hasTrustRequiringProjectResources(this.sessionManager.getCwd())) {
 			return;
 		}
 
@@ -3339,7 +3362,9 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
-		this.unregisterSignalHandlers();
+		// Keep signal handlers registered until terminal cleanup has completed.
+		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
+		// dispatch and re-sends the signal if only its own listeners remain.
 
 		if (options?.fromSignal) {
 			// Signal-triggered shutdown (SIGTERM/SIGHUP). Emit extension cleanup
@@ -4198,7 +4223,7 @@ export class InteractiveMode {
 		if (this.autoTrustOnReloadCwd !== cwd) {
 			return false;
 		}
-		if (!this.settingsManager.isProjectTrusted() || !hasProjectConfigDir(cwd)) {
+		if (!this.settingsManager.isProjectTrusted() || !hasTrustRequiringProjectResources(cwd)) {
 			return false;
 		}
 
@@ -5719,7 +5744,6 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
-		this.unregisterSignalHandlers();
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
@@ -5737,5 +5761,6 @@ export class InteractiveMode {
 			this.ui.stop();
 			this.isInitialized = false;
 		}
+		this.unregisterSignalHandlers();
 	}
 }

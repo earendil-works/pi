@@ -94,7 +94,7 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch {
 
 /**
  * Filter and sort items by fuzzy match quality (best matches first).
- * Supports space-separated tokens: all tokens must match.
+ * Supports whitespace- and slash-separated tokens: all tokens must match.
  */
 export function fuzzyFilter<T>(items: T[], query: string, getText: (item: T) => string): T[] {
 	if (!query.trim()) {
@@ -103,7 +103,7 @@ export function fuzzyFilter<T>(items: T[], query: string, getText: (item: T) => 
 
 	const tokens = query
 		.trim()
-		.split(/\s+/)
+		.split(/[\s/]+/)
 		.filter((t) => t.length > 0);
 
 	if (tokens.length === 0) {

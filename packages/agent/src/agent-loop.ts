@@ -631,6 +631,7 @@ async function executePreparedToolCall(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
+	let acceptingUpdates = true;
 
 	try {
 		const result = await prepared.tool.execute(
@@ -638,6 +639,7 @@ async function executePreparedToolCall(
 			prepared.args as never,
 			signal,
 			(partialResult) => {
+				if (!acceptingUpdates) return;
 				updateEvents.push(
 					Promise.resolve(
 						emit({
@@ -651,14 +653,18 @@ async function executePreparedToolCall(
 				);
 			},
 		);
+		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return { result, isError: false };
 	} catch (error) {
+		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
 		};
+	} finally {
+		acceptingUpdates = false;
 	}
 }
 

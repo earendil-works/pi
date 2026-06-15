@@ -10,45 +10,11 @@ There are two general options. You can either
 
 | Pattern | What is isolated | Best for | Notes |
 | --- | --- | --- | --- |
-| OpenShell | Whole `pi` process in a policy-controlled sandbox | Local or remote managed sandbox | Requires an OpenShell gateway |
 | Gondolin extension | Built-in tools and `!` commands | Local micro-VM isolation while keeping auth on host | See [`examples/extensions/gondolin/`](../examples/extensions/gondolin/). |
 | Plain Docker | Whole `pi` process in a local container | Simple local isolation | Provider API keys enter the container. |
+| OpenShell | Whole `pi` process in a policy-controlled sandbox | Local or remote managed sandbox | Requires an OpenShell gateway |
 
 Extensions run wherever the `pi` process runs. If you run host `pi` with a tool-routing extension, other custom extension tools still run on the host unless they also delegate their operations.
-
-## OpenShell
-
-Use [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) when you want a policy-controlled sandbox with filesystem, process, network, credential, and inference controls.
-OpenShell can run sandboxes through a local gateway backed by Docker, Podman, or a VM runtime, or through a remote Kubernetes gateway.
-
-Every sandbox requires an active gateway.
-Register and select one before creating a sandbox:
-
-```bash
-openshell gateway add <gateway-url> --name <name>
-openshell gateway select <name>
-```
-
-Launch `pi` inside an OpenShell sandbox:
-
-```bash
-openshell sandbox create --name pi-sandbox --from pi -- pi
-```
-
-In this pattern, the whole `pi` process runs inside the sandbox.
-Built-in tools, `!` commands, and extension tools execute inside the OpenShell boundary.
-
-If the gateway is remote, project files are not bind-mounted from the host, meaning writes in the sandbox are not reflected on your machine.
-Clone the repository inside the sandbox or use OpenShell file transfer commands:
-
-```bash
-openshell sandbox upload pi-sandbox ./repo /workspace
-openshell sandbox download pi-sandbox /workspace/repo ./repo-out
-```
-
-OpenShell providers can keep raw model API keys outside the sandbox.
-When inference routing is configured, code inside the sandbox can call `https://inference.local`, and the gateway injects the configured provider credentials upstream.
-Configure Pi to use the corresponding OpenAI-compatible or Anthropic-compatible endpoint if you want model traffic to use this route.
 
 ## Gondolin
 
@@ -109,3 +75,37 @@ docker run --rm -it \
 The `-v "$PWD:/workspace"` mounts your current directory into the container at /workspace such that reads and writes in `/workspace` inside Docker directly affect your host files, like in the Gondolin example.
 
 Use a named volume for `/root/.pi/agent` if you want container-local settings and sessions. Mounting your host `~/.pi/agent` exposes host auth and session files to the container.
+
+## OpenShell
+
+Use [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) when you want a policy-controlled sandbox with filesystem, process, network, credential, and inference controls.
+OpenShell can run sandboxes through a local gateway backed by Docker, Podman, or a VM runtime, or through a remote Kubernetes gateway.
+
+Every sandbox requires an active gateway.
+Register and select one before creating a sandbox:
+
+```bash
+openshell gateway add <gateway-url> --name <name>
+openshell gateway select <name>
+```
+
+Launch `pi` inside an OpenShell sandbox:
+
+```bash
+openshell sandbox create --name pi-sandbox --from pi -- pi
+```
+
+In this pattern, the whole `pi` process runs inside the sandbox.
+Built-in tools, `!` commands, and extension tools execute inside the OpenShell boundary.
+
+If the gateway is remote, project files are not bind-mounted from the host, meaning writes in the sandbox are not reflected on your machine.
+Clone the repository inside the sandbox or use OpenShell file transfer commands:
+
+```bash
+openshell sandbox upload pi-sandbox ./repo /workspace
+openshell sandbox download pi-sandbox /workspace/repo ./repo-out
+```
+
+OpenShell providers can keep raw model API keys outside the sandbox.
+When inference routing is configured, code inside the sandbox can call `https://inference.local`, and the gateway injects the configured provider credentials upstream.
+Configure Pi to use the corresponding OpenAI-compatible or Anthropic-compatible endpoint if you want model traffic to use this route.

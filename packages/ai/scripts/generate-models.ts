@@ -187,6 +187,23 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.5",
 ]);
 
+const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
+	"opencode:deepseek-v4-flash",
+	"opencode:deepseek-v4-pro",
+	"opencode:kimi-k2.5",
+	"opencode:kimi-k2.6",
+	"opencode:minimax-m2.7",
+	"opencode-go:kimi-k2.6",
+]);
+
+// Checked manually against the authenticated GitHub Copilot /models endpoint on 2026-06-15.
+// Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's catalog.
+const GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES = {
+	"claude-opus-4.7": { minimal: "low" },
+	"claude-opus-4.8": { minimal: "low" },
+	"claude-sonnet-4.6": { minimal: "low", xhigh: "max" },
+} satisfies Record<string, NonNullable<Model<Api>["thinkingLevelMap"]>>;
+
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
 	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
 }
@@ -349,6 +366,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		// Ring reasons by default. Only high/xhigh have documented explicit effort controls.
 		mergeThinkingLevelMap(model, ANT_LING_RING_THINKING_LEVEL_MAP);
 	}
+	if (model.provider === "github-copilot") {
+		const override = GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES[model.id];
+		if (override) {
+			mergeThinkingLevelMap(model, override);
+		}
+	}
 }
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
@@ -370,6 +393,10 @@ function getBedrockBaseUrl(modelId: string): string {
 
 function normalizeNvidiaModelId(modelId: string): string {
 	return modelId.toLowerCase().replaceAll("_", ".");
+}
+
+function roundCost(value: number): number {
+	return Number(value.toFixed(6));
 }
 
 async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
@@ -417,10 +444,10 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			}
 
 			// Convert pricing from $/token to $/million tokens
-			const inputCost = parseFloat(model.pricing?.prompt || "0") * 1_000_000;
-			const outputCost = parseFloat(model.pricing?.completion || "0") * 1_000_000;
-			const cacheReadCost = parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000;
-			const cacheWriteCost = parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000;
+			const inputCost = roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000);
+			const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
+			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
+			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
 			const normalizedModel: Model<any> = {
 				id: modelKey,
@@ -476,10 +503,10 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 				input.push("image");
 			}
 
-			const inputCost = toNumber(model.pricing?.input) * 1_000_000;
-			const outputCost = toNumber(model.pricing?.output) * 1_000_000;
-			const cacheReadCost = toNumber(model.pricing?.input_cache_read) * 1_000_000;
-			const cacheWriteCost = toNumber(model.pricing?.input_cache_write) * 1_000_000;
+			const inputCost = roundCost(toNumber(model.pricing?.input) * 1_000_000);
+			const outputCost = roundCost(toNumber(model.pricing?.output) * 1_000_000);
+			const cacheReadCost = roundCost(toNumber(model.pricing?.input_cache_read) * 1_000_000);
+			const cacheWriteCost = roundCost(toNumber(model.pricing?.input_cache_write) * 1_000_000);
 
 			models.push({
 				id: model.id,
@@ -1066,6 +1093,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 				if (api === "openai-completions") {
 					compat = { ...(compat ?? {}), maxTokensField: "max_tokens" };
+					if (
+						OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS.has(
+							`${variant.provider}:${modelId}`,
+						)
+					) {
+						compat = { ...compat, supportsLongCacheRetention: false };
+					}
 				}
 
 				models.push({

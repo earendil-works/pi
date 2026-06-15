@@ -344,6 +344,7 @@ describe("resolveCliModel", () => {
 		};
 		const registry = {
 			getAll: () => [...allModels, zaiModel, gatewayModel],
+			hasConfiguredAuth: () => true,
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
 
 		const result = resolveCliModel({
@@ -354,6 +355,46 @@ describe("resolveCliModel", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.model?.provider).toBe("zai");
 		expect(result.model?.id).toBe("glm-5");
+	});
+
+	test("prefers an authenticated exact raw model id over an unauthenticated inferred provider", () => {
+		const commandcodeModel: Model<"anthropic-messages"> = {
+			id: "xiaomi/mimo-v2.5-pro",
+			name: "Xiaomi MiMo via Commandcode",
+			api: "anthropic-messages",
+			provider: "commandcode",
+			baseUrl: "https://example.invalid",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const xiaomiModel: Model<"anthropic-messages"> = {
+			id: "mimo-v2.5-pro",
+			name: "Xiaomi MiMo",
+			api: "anthropic-messages",
+			provider: "xiaomi",
+			baseUrl: "https://api.xiaomimimo.com",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const registry = {
+			getAll: () => [...allModels, commandcodeModel, xiaomiModel],
+			hasConfiguredAuth: (model: Model<"anthropic-messages">) => model.provider === "commandcode",
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliModel: "xiaomi/mimo-v2.5-pro",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("commandcode");
+		expect(result.model?.id).toBe("xiaomi/mimo-v2.5-pro");
 	});
 
 	test("resolves provider-prefixed fuzzy patterns (openrouter/qwen -> openrouter model)", () => {
@@ -403,6 +444,7 @@ describe("resolveCliModel", () => {
 			expect(result.model?.provider).toBe("neuralwatt");
 			// The :high suffix must NOT leak into the model id sent to the API
 			expect(result.model?.id).toBe("zai-org/GLM-5.1-FP8");
+			expect(result.model?.reasoning).toBe(true);
 			expect(result.thinkingLevel).toBe("high");
 		});
 

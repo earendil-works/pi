@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.79.4] - 2026-06-15
+
+### Added
+
+- Added terminal background color query support for OSC 11 replies ([#5385](https://github.com/earendil-works/pi/pull/5385) by [@vegarsti](https://github.com/vegarsti)).
+
+### Fixed
+
+- Fixed overlay compositing over CJK wide characters so borders stay aligned when an overlay starts inside a full-width cell ([#5297](https://github.com/earendil-works/pi/issues/5297)).
+- Fixed WezTerm inline Kitty image rendering during full redraw fallbacks so image padding rows are reserved before the placement is drawn without regressing tall-image placement ([#5618](https://github.com/earendil-works/pi/issues/5618), [#4415](https://github.com/earendil-works/pi/issues/4415)).
+
+## [0.79.3] - 2026-06-13
+
+## [0.79.2] - 2026-06-12
+
+### Fixed
+
+- Fixed Markdown source list marker preservation to include unordered markers, so standalone `+` user messages no longer render as `-` ([#5657](https://github.com/earendil-works/pi/issues/5657)).
+- Fixed slash-separated fuzzy queries so provider/model completions remain matchable after insertion.
+- Fixed WezTerm inline Kitty image rendering so reserved row clears do not erase all but the top strip of tool image previews ([#5618](https://github.com/earendil-works/pi/issues/5618)).
+- Fixed editor wrapping for CJK text to break at character boundaries instead of leaving large trailing gaps ([#5585](https://github.com/earendil-works/pi/pull/5585) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed loose Markdown list rendering to preserve blank-line separation between list items ([#5562](https://github.com/earendil-works/pi/pull/5562) by [@Perlence](https://github.com/Perlence)).
+
 ## [0.79.1] - 2026-06-09
 
 ### Added

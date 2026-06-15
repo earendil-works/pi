@@ -1,13 +1,8 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-	getProjectTrustPath,
-	hasProjectConfigDir,
-	hasProjectTrustInputs,
-	ProjectTrustStore,
-} from "../src/core/trust-manager.ts";
+import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../src/core/trust-manager.ts";
 
 describe("ProjectTrustStore", () => {
 	let tempDir: string;
@@ -26,86 +21,47 @@ describe("ProjectTrustStore", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("stores decisions per cwd", () => {
-		const store = new ProjectTrustStore(agentDir);
-
-		expect(store.get(cwd)).toBeNull();
-		expect(store.getEntry(cwd)).toBeNull();
-		store.set(cwd, true);
-		expect(store.get(cwd)).toBe(true);
-		expect(store.getEntry(cwd)).toEqual({ path: getProjectTrustPath(cwd), decision: true });
-		store.set(cwd, false);
-		expect(store.get(cwd)).toBe(false);
-		expect(store.getEntry(cwd)).toEqual({ path: getProjectTrustPath(cwd), decision: false });
-		store.set(cwd, null);
-		expect(store.get(cwd)).toBeNull();
-		expect(store.getEntry(cwd)).toBeNull();
-	});
-
-	it("inherits the closest saved decision from parent directories", () => {
-		const store = new ProjectTrustStore(agentDir);
-		const parentDir = join(tempDir, "trusted-parent");
-		const childDir = join(parentDir, "project");
-		const grandchildDir = join(childDir, "nested");
-		mkdirSync(grandchildDir, { recursive: true });
-
-		store.set(parentDir, true);
-		expect(store.get(childDir)).toBe(true);
-		expect(store.getEntry(childDir)).toEqual({ path: getProjectTrustPath(parentDir), decision: true });
-		expect(store.get(grandchildDir)).toBe(true);
-		expect(store.getEntry(grandchildDir)).toEqual({ path: getProjectTrustPath(parentDir), decision: true });
-
-		store.set(childDir, false);
-		expect(store.get(grandchildDir)).toBe(false);
-		expect(store.getEntry(grandchildDir)).toEqual({ path: getProjectTrustPath(childDir), decision: false });
-	});
-
-	it("can clear a child override to inherit parent trust", () => {
+	it("stores decisions and inherits from parent directories", () => {
 		const store = new ProjectTrustStore(agentDir);
 		const parentDir = join(tempDir, "trusted-parent");
 		const childDir = join(parentDir, "project");
 		mkdirSync(childDir, { recursive: true });
 
+		expect(store.get(childDir)).toBeNull();
 		store.set(parentDir, true);
-		store.set(childDir, false);
-		expect(store.getEntry(childDir)).toEqual({ path: getProjectTrustPath(childDir), decision: false });
-
-		store.setMany([
-			{ path: parentDir, decision: true },
-			{ path: childDir, decision: null },
-		]);
 		expect(store.get(childDir)).toBe(true);
-		expect(store.getEntry(childDir)).toEqual({ path: getProjectTrustPath(parentDir), decision: true });
+		store.set(childDir, false);
+		expect(store.get(childDir)).toBe(false);
+		store.set(childDir, null);
+		expect(store.get(childDir)).toBe(true);
 	});
 
-	it("fails loudly without overwriting malformed trust stores", () => {
-		const trustPath = join(agentDir, "trust.json");
-		writeFileSync(trustPath, "{not json", "utf-8");
-		const store = new ProjectTrustStore(agentDir);
+	it("detects trust-requiring project resources", () => {
+		const originalHome = process.env.HOME;
+		process.env.HOME = tempDir;
+		try {
+			mkdirSync(join(tempDir, ".pi", "agent"), { recursive: true });
+			mkdirSync(join(tempDir, ".agents", "skills"), { recursive: true });
+			expect(hasTrustRequiringProjectResources(tempDir)).toBe(false);
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
 
-		expect(() => store.get(cwd)).toThrow(/Failed to read trust store/);
-		expect(() => store.set(cwd, true)).toThrow(/Failed to read trust store/);
-		expect(readFileSync(trustPath, "utf-8")).toBe("{not json");
-	});
+			writeFileSync(join(tempDir, ".pi", "settings.json"), "{}");
+			expect(hasTrustRequiringProjectResources(tempDir)).toBe(true);
+			rmSync(join(tempDir, ".pi", "settings.json"), { force: true });
 
-	it("detects project trust inputs", () => {
-		expect(hasProjectConfigDir(cwd)).toBe(false);
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(join(cwd, ".pi", "settings.json"), "{}");
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 
-		mkdirSync(join(cwd, ".pi"), { recursive: true });
-		expect(hasProjectConfigDir(cwd)).toBe(true);
-		expect(hasProjectTrustInputs(cwd)).toBe(true);
-		rmSync(join(cwd, ".pi"), { recursive: true, force: true });
-
-		writeFileSync(join(cwd, "AGENTS.md"), "Project instructions");
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
-		rmSync(join(cwd, "AGENTS.md"), { force: true });
-
-		writeFileSync(join(cwd, "CLAUDE.md"), "Legacy project instructions");
-		expect(hasProjectTrustInputs(cwd)).toBe(false);
-		rmSync(join(cwd, "CLAUDE.md"), { force: true });
-
-		mkdirSync(join(cwd, ".agents", "skills"), { recursive: true });
-		expect(hasProjectTrustInputs(cwd)).toBe(true);
+			rmSync(join(cwd, ".pi"), { recursive: true, force: true });
+			mkdirSync(join(cwd, ".agents", "skills"), { recursive: true });
+			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+		} finally {
+			if (originalHome === undefined) {
+				delete process.env.HOME;
+			} else {
+				process.env.HOME = originalHome;
+			}
+		}
 	});
 });

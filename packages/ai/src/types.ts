@@ -267,6 +267,8 @@ export interface Usage {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
+	/** Subset of `cacheWrite` written with 1h retention. Only Anthropic reports this split. */
+	cacheWrite1h?: number;
 	totalTokens: number;
 	cost: {
 		input: number;

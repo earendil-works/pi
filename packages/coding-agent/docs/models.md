@@ -161,12 +161,10 @@ The `apiKey` and `headers` fields support command execution, environment interpo
   "apiKey": "$$literal-dollar-prefix"
   "apiKey": "$!literal-bang-prefix"
   ```
-- **Literal value:** Used directly
+- **Literal value:** Used directly. Plain uppercase strings such as `MY_API_KEY` are literals; use `$MY_API_KEY` for environment variables.
   ```json
   "apiKey": "sk-..."
   ```
-
-Legacy uppercase env-var-like values such as `MY_API_KEY` are migrated to `$MY_API_KEY` on startup.
 
 For `models.json`, shell commands are resolved at request time. pi intentionally does not apply built-in TTL, stale reuse, or recovery logic for arbitrary commands. Different commands need different caching and failure strategies, and pi cannot infer the right one.
 

@@ -116,7 +116,6 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 
 		expect(order).toEqual(["dispose", "drainInput", "stop"]);
 		expect(context.isShuttingDown).toBe(true);
-		expect(context.unregisterSignalHandlers).toHaveBeenCalledTimes(1);
 	});
 
 	test("interactive quit stops the TUI before emitting session_shutdown", async () => {

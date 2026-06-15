@@ -890,11 +890,9 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
-		for (const modelId of ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2.6:free"] as const) {
-			const model = getModel("openrouter", modelId)!;
-			expect(model.compat?.supportsDeveloperRole).toBe(false);
-			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
-		}
+		const model = getModel("openrouter", "moonshotai/kimi-k2.6")!;
+		expect(model.compat?.supportsDeveloperRole).toBe(false);
+		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 	});
 
 	it("stores Xiaomi MiMo reasoning replay compat in built-in metadata", () => {

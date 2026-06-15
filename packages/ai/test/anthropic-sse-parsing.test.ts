@@ -166,6 +166,64 @@ describe("Anthropic raw SSE parsing", () => {
 		});
 	});
 
+	it("preserves refusal stop details from message_delta", async () => {
+		const model = getModel("anthropic", "claude-fable-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
+		};
+		const explanation =
+			"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, provide feedback, or request an exemption based on how you use Claude, visit our help center: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude.";
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_01XFUDYJgAACzvnptvVoYEL",
+						usage: {
+							input_tokens: 412,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					},
+				}),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: {
+						stop_reason: "refusal",
+						stop_details: {
+							type: "refusal",
+							category: "cyber",
+							explanation,
+						},
+					},
+					usage: {
+						input_tokens: 412,
+						output_tokens: 0,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{
+				event: "message_stop",
+				data: JSON.stringify({ type: "message_stop" }),
+			},
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe(explanation);
+	});
+
 	it("ignores unknown SSE events after message_stop", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const context: Context = {

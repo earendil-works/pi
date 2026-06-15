@@ -3,12 +3,10 @@
  */
 
 import chalk from "chalk";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
-import { isLegacyEnvVarNameConfigValue } from "./core/resolve-config-value.ts";
-import { stripJsonComments } from "./utils/json.ts";
 
 const MIGRATION_GUIDE_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
@@ -72,140 +70,6 @@ export function migrateAuthToAuthJson(): string[] {
 	}
 
 	return providers;
-}
-
-interface ConfigValueMigration {
-	location: string;
-	from: string;
-	to: string;
-}
-
-function migrateLegacyEnvVarString(value: string): string | undefined {
-	return isLegacyEnvVarNameConfigValue(value) ? `$${value}` : undefined;
-}
-
-function migrateStringProperty(
-	record: Record<string, unknown>,
-	key: string,
-	location: string,
-	migrations: ConfigValueMigration[],
-): boolean {
-	const value = record[key];
-	if (typeof value !== "string") return false;
-	const migrated = migrateLegacyEnvVarString(value);
-	if (migrated === undefined) return false;
-	record[key] = migrated;
-	migrations.push({ location, from: value, to: migrated });
-	return true;
-}
-
-function migrateHeadersConfig(headers: unknown, location: string, migrations: ConfigValueMigration[]): boolean {
-	if (typeof headers !== "object" || headers === null || Array.isArray(headers)) return false;
-	const headerRecord = headers as Record<string, unknown>;
-	let migrated = false;
-	for (const [key, value] of Object.entries(headerRecord)) {
-		if (typeof value !== "string") continue;
-		const migratedValue = migrateLegacyEnvVarString(value);
-		if (migratedValue === undefined) continue;
-		headerRecord[key] = migratedValue;
-		migrations.push({ location: `${location}[${JSON.stringify(key)}]`, from: value, to: migratedValue });
-		migrated = true;
-	}
-	return migrated;
-}
-
-function migrateAuthJsonConfigValues(agentDir: string): ConfigValueMigration[] {
-	const authPath = join(agentDir, "auth.json");
-	if (!existsSync(authPath)) return [];
-
-	try {
-		const parsed = JSON.parse(readFileSync(authPath, "utf-8")) as unknown;
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
-		const authData = parsed as Record<string, unknown>;
-
-		const migrations: ConfigValueMigration[] = [];
-		for (const [provider, credential] of Object.entries(authData)) {
-			if (typeof credential !== "object" || credential === null || Array.isArray(credential)) continue;
-			const credentialRecord = credential as Record<string, unknown>;
-			if (credentialRecord.type !== "api_key") continue;
-			migrateStringProperty(credentialRecord, "key", `auth.json[${JSON.stringify(provider)}].key`, migrations);
-		}
-
-		if (migrations.length === 0) return [];
-		writeFileSync(authPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf-8");
-		chmodSync(authPath, 0o600);
-		return migrations;
-	} catch {
-		return [];
-	}
-}
-
-function migrateModelsJsonConfigValues(agentDir: string): ConfigValueMigration[] {
-	const modelsPath = join(agentDir, "models.json");
-	if (!existsSync(modelsPath)) return [];
-
-	try {
-		const parsed = JSON.parse(stripJsonComments(readFileSync(modelsPath, "utf-8"))) as unknown;
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
-		const modelsData = parsed as Record<string, unknown>;
-		const providers = modelsData.providers;
-		if (typeof providers !== "object" || providers === null || Array.isArray(providers)) return [];
-
-		const migrations: ConfigValueMigration[] = [];
-		for (const [provider, providerConfig] of Object.entries(providers)) {
-			if (typeof providerConfig !== "object" || providerConfig === null || Array.isArray(providerConfig)) continue;
-			const providerRecord = providerConfig as Record<string, unknown>;
-			const providerLocation = `models.json.providers[${JSON.stringify(provider)}]`;
-			migrateStringProperty(providerRecord, "apiKey", `${providerLocation}.apiKey`, migrations);
-			migrateHeadersConfig(providerRecord.headers, `${providerLocation}.headers`, migrations);
-
-			if (Array.isArray(providerRecord.models)) {
-				for (let index = 0; index < providerRecord.models.length; index++) {
-					const modelConfig = providerRecord.models[index];
-					if (typeof modelConfig !== "object" || modelConfig === null || Array.isArray(modelConfig)) continue;
-					const modelRecord = modelConfig as Record<string, unknown>;
-					const modelKey = typeof modelRecord.id === "string" ? JSON.stringify(modelRecord.id) : String(index);
-					migrateHeadersConfig(modelRecord.headers, `${providerLocation}.models[${modelKey}].headers`, migrations);
-				}
-			}
-
-			const modelOverrides = providerRecord.modelOverrides;
-			if (typeof modelOverrides === "object" && modelOverrides !== null && !Array.isArray(modelOverrides)) {
-				for (const [modelId, modelOverride] of Object.entries(modelOverrides)) {
-					if (typeof modelOverride !== "object" || modelOverride === null || Array.isArray(modelOverride))
-						continue;
-					const modelOverrideRecord = modelOverride as Record<string, unknown>;
-					migrateHeadersConfig(
-						modelOverrideRecord.headers,
-						`${providerLocation}.modelOverrides[${JSON.stringify(modelId)}].headers`,
-						migrations,
-					);
-				}
-			}
-		}
-
-		if (migrations.length === 0) return [];
-		writeFileSync(modelsPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf-8");
-		return migrations;
-	} catch {
-		return [];
-	}
-}
-
-function migrateExplicitEnvVarConfigValues(): void {
-	const agentDir = getAgentDir();
-	const migrations = [...migrateAuthJsonConfigValues(agentDir), ...migrateModelsJsonConfigValues(agentDir)];
-	if (migrations.length === 0) return;
-
-	const details = migrations.map((migration) => `  - ${migration.location}: ${migration.from} -> ${migration.to}`);
-	console.log(
-		chalk.yellow(
-			[
-				"Warning: Migrated API key/header environment references to explicit $ENV_VAR syntax. Plain strings will be treated as literals.",
-				...details,
-			].join("\n"),
-		),
-	);
 }
 
 /**
@@ -443,7 +307,6 @@ export function runMigrations(cwd: string): {
 	deprecationWarnings: string[];
 } {
 	const migratedAuthProviders = migrateAuthToAuthJson();
-	migrateExplicitEnvVarConfigValues();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();
 	migrateKeybindingsConfigFile();

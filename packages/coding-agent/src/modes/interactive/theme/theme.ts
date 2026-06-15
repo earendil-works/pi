@@ -4,6 +4,7 @@ import {
 	type EditorTheme,
 	getCapabilities,
 	type MarkdownTheme,
+	type RgbColor,
 	type SelectListTheme,
 	type SettingsListTheme,
 } from "@earendil-works/pi-tui";
@@ -624,12 +625,6 @@ export function getThemeByName(name: string): Theme | undefined {
 
 export type TerminalTheme = "dark" | "light";
 
-export interface RgbColor {
-	r: number;
-	g: number;
-	b: number;
-}
-
 export interface TerminalThemeDetection {
 	theme: TerminalTheme;
 	source: "terminal background" | "COLORFGBG" | "fallback";
@@ -639,6 +634,15 @@ export interface TerminalThemeDetection {
 
 export interface TerminalThemeDetectionOptions {
 	env?: NodeJS.ProcessEnv;
+}
+
+export interface TerminalBackgroundThemeDetector {
+	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined>;
+}
+
+export interface TerminalBackgroundThemeDetectionOptions extends TerminalThemeDetectionOptions {
+	ui: TerminalBackgroundThemeDetector;
+	timeoutMs: number;
 }
 
 function getColorFgBgBackgroundIndex(colorfgbg: string): number | undefined {
@@ -668,50 +672,7 @@ export function getThemeForRgbColor(rgb: RgbColor): TerminalTheme {
 	return getRgbColorLuminance(rgb) >= 0.5 ? "light" : "dark";
 }
 
-function parseOscHexChannel(channel: string): number | undefined {
-	if (!/^[0-9a-f]+$/i.test(channel)) {
-		return undefined;
-	}
-	const max = 16 ** channel.length - 1;
-	if (max <= 0) {
-		return undefined;
-	}
-	return Math.round((parseInt(channel, 16) / max) * 255);
-}
-
-export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
-	const match = data.match(/^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i);
-	if (!match) {
-		return undefined;
-	}
-
-	const value = match[1].trim();
-	if (value.startsWith("#")) {
-		const hex = value.slice(1);
-		if (/^[0-9a-f]{6}$/i.test(hex)) {
-			return hexToRgb(value);
-		}
-		if (/^[0-9a-f]{12}$/i.test(hex)) {
-			const r = parseOscHexChannel(hex.slice(0, 4));
-			const g = parseOscHexChannel(hex.slice(4, 8));
-			const b = parseOscHexChannel(hex.slice(8, 12));
-			return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
-		}
-		return undefined;
-	}
-
-	const rgbValue = value.replace(/^rgba?:/i, "");
-	const [red, green, blue] = rgbValue.split("/");
-	if (red === undefined || green === undefined || blue === undefined) {
-		return undefined;
-	}
-	const r = parseOscHexChannel(red);
-	const g = parseOscHexChannel(green);
-	const b = parseOscHexChannel(blue);
-	return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
-}
-
-export function detectTerminalBackground(options: TerminalThemeDetectionOptions = {}): TerminalThemeDetection {
+export function detectTerminalBackgroundFromEnv(options: TerminalThemeDetectionOptions = {}): TerminalThemeDetection {
 	const env = options.env ?? process.env;
 	const colorfgbg = env.COLORFGBG || "";
 	const bg = getColorFgBgBackgroundIndex(colorfgbg);
@@ -732,8 +693,30 @@ export function detectTerminalBackground(options: TerminalThemeDetectionOptions 
 	};
 }
 
+export async function detectTerminalBackgroundTheme({
+	ui,
+	timeoutMs,
+	env,
+}: TerminalBackgroundThemeDetectionOptions): Promise<TerminalThemeDetection> {
+	try {
+		const rgb = await ui.queryTerminalBackgroundColor({ timeoutMs });
+		if (rgb) {
+			return {
+				theme: getThemeForRgbColor(rgb),
+				source: "terminal background",
+				detail: `OSC 11 background rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+				confidence: "high",
+			};
+		}
+	} catch {
+		// Fall back to environment-based detection when the terminal query fails.
+	}
+
+	return detectTerminalBackgroundFromEnv({ env });
+}
+
 export function getDefaultTheme(): string {
-	return detectTerminalBackground().theme;
+	return detectTerminalBackgroundFromEnv().theme;
 }
 
 // ============================================================================

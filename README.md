@@ -62,9 +62,9 @@ Pi does not include a built-in permission system for restricting filesystem, pro
 
 If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
 
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
 - **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
 - **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
+- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
 
 ## Contributing
 

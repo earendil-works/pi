@@ -16,8 +16,13 @@ describe("tab width accounting", () => {
 		const text = "out 192M\t.pi/skill-tests/results-ha";
 		const segments = extractSegments(text, 10, 13, 10, true);
 
-		assert.strictEqual(segments.before, "out 192M\t");
-		assert.strictEqual(segments.beforeWidth, 11);
+		assert.strictEqual(segments.before, "out 192M");
+		assert.strictEqual(segments.beforeWidth, 8);
 		assert.strictEqual(visibleWidth(segments.before), segments.beforeWidth);
+
+		const tabFits = extractSegments(text, 11, 13, 10, true);
+		assert.strictEqual(tabFits.before, "out 192M\t");
+		assert.strictEqual(tabFits.beforeWidth, 11);
+		assert.strictEqual(visibleWidth(tabFits.before), tabFits.beforeWidth);
 	});
 });

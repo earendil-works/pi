@@ -25,7 +25,6 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { getAgentDir } from "../config.ts";
-import { warnDeprecation } from "../utils/deprecation.ts";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
@@ -35,7 +34,6 @@ import {
 	getConfigValueEnvVarNames,
 	isCommandConfigValue,
 	isConfigValueConfigured,
-	isLegacyEnvVarNameConfigValue,
 	resolveConfigValueOrThrow,
 	resolveConfigValueUncached,
 	resolveHeadersOrThrow,
@@ -235,77 +233,6 @@ interface ProviderRequestConfig {
 	apiKey?: string;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
-}
-
-function migrateLegacyRegisterProviderConfigValue(providerName: string, field: string, value: string): string {
-	if (!isLegacyEnvVarNameConfigValue(value)) return value;
-	warnDeprecation(
-		`registerProvider("${providerName}") ${field} value "${value}" is treated as a legacy environment variable reference. This will no longer be detected as an environment variable reference in a future release. Pass "$${value}" instead.`,
-	);
-	return `$${value}`;
-}
-
-function migrateLegacyRegisterProviderHeaders(
-	providerName: string,
-	field: string,
-	headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-	if (!headers) return undefined;
-	let migratedHeaders: Record<string, string> | undefined;
-	for (const [key, value] of Object.entries(headers)) {
-		const migratedValue = migrateLegacyRegisterProviderConfigValue(providerName, `${field} header "${key}"`, value);
-		if (migratedValue === value) continue;
-		migratedHeaders ??= { ...headers };
-		migratedHeaders[key] = migratedValue;
-	}
-	return migratedHeaders ?? headers;
-}
-
-function migrateLegacyRegisterProviderConfigValues(
-	providerName: string,
-	config: ProviderConfigInput,
-): ProviderConfigInput {
-	let migratedConfig: ProviderConfigInput | undefined;
-
-	const setMigratedConfigValue = <TKey extends keyof ProviderConfigInput>(
-		key: TKey,
-		value: ProviderConfigInput[TKey],
-	) => {
-		migratedConfig ??= { ...config };
-		migratedConfig[key] = value;
-	};
-
-	if (config.apiKey) {
-		const apiKey = migrateLegacyRegisterProviderConfigValue(providerName, "apiKey", config.apiKey);
-		if (apiKey !== config.apiKey) {
-			setMigratedConfigValue("apiKey", apiKey);
-		}
-	}
-
-	const headers = migrateLegacyRegisterProviderHeaders(providerName, "headers", config.headers);
-	if (headers !== config.headers) {
-		setMigratedConfigValue("headers", headers);
-	}
-
-	if (config.models) {
-		let models: ProviderConfigInput["models"] | undefined;
-		for (let index = 0; index < config.models.length; index++) {
-			const model = config.models[index];
-			const modelHeaders = migrateLegacyRegisterProviderHeaders(
-				providerName,
-				`model "${model.id}" headers`,
-				model.headers,
-			);
-			if (modelHeaders === model.headers) continue;
-			models ??= [...config.models];
-			models[index] = { ...model, headers: modelHeaders };
-		}
-		if (models) {
-			setMigratedConfigValue("models", models);
-		}
-	}
-
-	return migratedConfig ?? config;
 }
 
 export type ResolvedRequestAuth =
@@ -869,10 +796,9 @@ export class ModelRegistry {
 	 * If provider has oauth: registers OAuth provider for /login support.
 	 */
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
-		const migratedConfig = migrateLegacyRegisterProviderConfigValues(providerName, config);
-		this.validateProviderConfig(providerName, migratedConfig);
-		this.applyProviderConfig(providerName, migratedConfig);
-		this.upsertRegisteredProvider(providerName, migratedConfig);
+		this.validateProviderConfig(providerName, config);
+		this.applyProviderConfig(providerName, config);
+		this.upsertRegisteredProvider(providerName, config);
 	}
 
 	/**

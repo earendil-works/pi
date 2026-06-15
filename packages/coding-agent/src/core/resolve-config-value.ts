@@ -10,7 +10,6 @@ import { getShellConfig } from "../utils/shell.ts";
 const commandResultCache = new Map<string, string | undefined>();
 const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_VAR_NAME_PREFIX_RE = /^[A-Za-z_][A-Za-z0-9_]*/;
-const LEGACY_ENV_VAR_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 
 type TemplatePart = { type: "literal"; value: string } | { type: "env"; name: string };
 
@@ -134,10 +133,6 @@ export function isCommandConfigValue(config: string): boolean {
 
 export function isConfigValueConfigured(config: string): boolean {
 	return getMissingConfigValueEnvVarNames(config).length === 0;
-}
-
-export function isLegacyEnvVarNameConfigValue(config: string): boolean {
-	return LEGACY_ENV_VAR_NAME_RE.test(config);
 }
 
 /**

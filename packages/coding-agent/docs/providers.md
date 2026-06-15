@@ -124,13 +124,13 @@ The `key` field supports command execution, environment interpolation, and liter
   { "type": "api_key", "key": "$$literal-dollar-prefix" }
   { "type": "api_key", "key": "$!literal-bang-prefix" }
   ```
-- **Literal value:** Used directly
+- **Literal value:** Used directly. Plain uppercase strings such as `MY_API_KEY` are literals; use `$MY_API_KEY` for environment variables.
   ```json
   { "type": "api_key", "key": "sk-ant-..." }
   { "type": "api_key", "key": "public" }
   ```
 
-Legacy uppercase env-var-like values such as `MY_API_KEY` are migrated to `$MY_API_KEY` on startup. OAuth credentials are also stored here after `/login` and managed automatically.
+OAuth credentials are also stored here after `/login` and managed automatically.
 
 ## Cloud Providers
 

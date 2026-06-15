@@ -354,7 +354,12 @@ export interface AgentToolResult<T> {
 	terminate?: boolean;
 }
 
-/** Callback used by tools to stream partial execution updates. */
+/**
+ * Callback used by tools to stream partial execution updates.
+ *
+ * The callback is scoped to the current `execute()` invocation. Calls made after
+ * the tool promise settles are ignored.
+ */
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
 /** Tool definition used by the agent runtime. */

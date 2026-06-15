@@ -1,7 +1,6 @@
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
 import {
 	getProjectTrustOptions,
-	getProjectTrustPath,
 	type ProjectTrustOption,
 	type ProjectTrustStoreEntry,
 } from "../../../core/trust-manager.ts";
@@ -19,12 +18,12 @@ export interface TrustSelectorOptions {
 	onCancel: () => void;
 }
 
-function formatDecision(cwd: string, decision: ProjectTrustStoreEntry | null): string {
+function formatDecision(trustPath: string | undefined, decision: ProjectTrustStoreEntry | null): string {
 	if (decision === null) {
 		return "none";
 	}
 	const label = decision.decision ? "trusted" : "untrusted";
-	if (decision.path !== getProjectTrustPath(cwd)) {
+	if (trustPath !== undefined && decision.path !== trustPath) {
 		return `${label} (inherited from ${decision.path})`;
 	}
 	return `${label} (${decision.path})`;
@@ -56,7 +55,14 @@ export class TrustSelectorComponent extends Container {
 		this.addChild(new Text(theme.fg("muted", options.cwd), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new Text(theme.fg("muted", `Saved decision: ${formatDecision(options.cwd, options.savedDecision)}`), 1, 0),
+			new Text(
+				theme.fg(
+					"muted",
+					`Saved decision: ${formatDecision(this.trustOptions[0]?.savedPath, options.savedDecision)}`,
+				),
+				1,
+				0,
+			),
 		);
 		this.addChild(
 			new Text(theme.fg("muted", `Current session: ${options.projectTrusted ? "trusted" : "untrusted"}`), 1, 0),

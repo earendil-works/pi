@@ -216,6 +216,12 @@ export default async function (pi: ExtensionAPI) {
 
 This pattern makes the fetched models available during normal startup and to `pi --list-models`.
 
+### Long-lived resources and shutdown
+
+Extension factories may run in invocations that never start a session. Do not start background resources such as processes, sockets, file watchers, or timers from the factory.
+
+Defer background resource startup until `session_start` or the command/tool/event that needs the resource. Register an idempotent `session_shutdown` handler to close any session-scoped resources you start.
+
 ### Extension Styles
 
 **Single file** - simplest, for small extensions:
@@ -471,7 +477,7 @@ pi.on("session_tree", async (event, ctx) => {
 
 #### session_shutdown
 
-Fired before an extension runtime is torn down.
+Fired before a started session runtime is torn down. Use this to clean up resources opened from `session_start` or other session-scoped hooks.
 
 ```typescript
 pi.on("session_shutdown", async (event, ctx) => {
@@ -1528,21 +1534,21 @@ const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
 
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 
-Manage active tools. This works for both built-in tools and dynamically registered tools.
+Manage active tools. This works for both built-in tools and dynamically registered tools. `pi.getActiveTools()` returns the active tool names as `string[]`; `pi.getAllTools()` returns metadata for all configured tools.
 
 ```typescript
-const active = pi.getActiveTools();
+const active = pi.getActiveTools(); // ["read", "bash", ...]
 const all = pi.getAllTools();
-// [{
+// all = [{
 //   name: "read",
 //   description: "Read file contents...",
 //   parameters: ...,
 //   promptGuidelines: ["Use read to examine files instead of cat or sed."],
 //   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "temporary", origin: "top-level" }
 // }, ...]
-const names = all.map(t => t.name);
 const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
+pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current tools and enable my_custom_tool
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 

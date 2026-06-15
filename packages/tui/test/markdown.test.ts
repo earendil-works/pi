@@ -112,9 +112,9 @@ describe("Markdown component", () => {
 			assert.deepStrictEqual(lines, ["1. alpha", "2. beta", "3. gamma"]);
 		});
 
-		it("should preserve source ordered list markers when configured", () => {
+		it("should preserve source list markers when configured", () => {
 			const markdown = new Markdown(
-				"  4. forth\n  3. third\n\n10) ten\n7) seven",
+				"  4. forth\n  3. third\n\n10) ten\n7) seven\n\n+ plus\n* star\n- minus\n+",
 				0,
 				0,
 				defaultMarkdownTheme,
@@ -126,7 +126,18 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["4. forth", "3. third", "", "10) ten", "7) seven"]);
+			assert.deepStrictEqual(lines, [
+				"4. forth",
+				"3. third",
+				"",
+				"10) ten",
+				"7) seven",
+				"",
+				"+ plus",
+				"* star",
+				"- minus",
+				"+",
+			]);
 		});
 
 		it("should render mixed ordered and unordered nested lists", () => {

@@ -8,29 +8,48 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
+import { isOsc11BackgroundColorResponse, parseOsc11BackgroundColor, type RgbColor } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
-function extractKittyImageIds(line: string): number[] {
+interface KittyImageHeader {
+	ids: number[];
+	rows: number;
+}
+
+function parseKittyImageHeader(line: string): KittyImageHeader | undefined {
 	const sequenceStart = line.indexOf(KITTY_SEQUENCE_PREFIX);
-	if (sequenceStart === -1) return [];
+	if (sequenceStart === -1) return undefined;
 
 	const paramsStart = sequenceStart + KITTY_SEQUENCE_PREFIX.length;
 	const paramsEnd = line.indexOf(";", paramsStart);
-	if (paramsEnd === -1) return [];
+	if (paramsEnd === -1) return undefined;
 
+	const ids: number[] = [];
+	let rows = 1;
 	const params = line.slice(paramsStart, paramsEnd);
 	for (const param of params.split(",")) {
 		const [key, value] = param.split("=", 2);
-		if (key !== "i" || value === undefined) continue;
-		const id = Number(value);
-		if (Number.isInteger(id) && id > 0 && id <= 0xffffffff) {
-			return [id];
+		if (value === undefined) continue;
+		const numberValue = Number(value);
+		if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > 0xffffffff) continue;
+		if (key === "i") {
+			ids.push(numberValue);
+		} else if (key === "r") {
+			rows = numberValue;
 		}
 	}
-	return [];
+	return { ids, rows };
+}
+
+function extractKittyImageIds(line: string): number[] {
+	return parseKittyImageHeader(line)?.ids ?? [];
+}
+
+function extractKittyImageRows(line: string): number {
+	return parseKittyImageHeader(line)?.rows ?? 1;
 }
 
 /**
@@ -64,6 +83,11 @@ export interface Component {
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 type InputListener = (data: string) => InputListenerResult;
+type PendingOsc11BackgroundQuery = {
+	settled: boolean;
+	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+	timer: NodeJS.Timeout | undefined;
+};
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -285,6 +309,8 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private pendingOsc11BackgroundReplies = 0;
+	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -702,6 +728,10 @@ export class TUI extends Container {
 	}
 
 	private handleInput(data: string): void {
+		if (this.consumeOsc11BackgroundResponse(data)) {
+			return;
+		}
+
 		if (this.inputListeners.size > 0) {
 			let current = data;
 			for (const listener of this.inputListeners) {
@@ -768,6 +798,30 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(data);
 			this.requestRender();
 		}
+	}
+
+	private consumeOsc11BackgroundResponse(data: string): boolean {
+		if (this.pendingOsc11BackgroundReplies <= 0) {
+			return false;
+		}
+
+		if (!isOsc11BackgroundColorResponse(data)) {
+			return false;
+		}
+
+		const rgb = parseOsc11BackgroundColor(data);
+		this.pendingOsc11BackgroundReplies -= 1;
+		const query = this.pendingOsc11BackgroundQueries.shift();
+		if (query && !query.settled) {
+			query.settled = true;
+			if (query.timer) {
+				clearTimeout(query.timer);
+				query.timer = undefined;
+			}
+			query.resolve?.(rgb);
+			query.resolve = undefined;
+		}
+		return true;
 	}
 
 	private consumeCellSizeResponse(data: string): boolean {
@@ -1021,14 +1075,41 @@ export class TUI extends Container {
 		return buffer;
 	}
 
-	private expandLastChangedForKittyImages(firstChanged: number, lastChanged: number): number {
-		let expandedLastChanged = lastChanged;
-		for (let i = firstChanged; i < this.previousLines.length; i++) {
-			if (extractKittyImageIds(this.previousLines[i]).length > 0) {
-				expandedLastChanged = Math.max(expandedLastChanged, i);
-			}
+	private getKittyImageReservedRows(lines: string[], index: number, maxIndex = lines.length - 1): number {
+		const rows = extractKittyImageRows(lines[index] ?? "");
+		if (rows <= 1) return 1;
+
+		const maxRows = Math.min(rows, maxIndex - index + 1, lines.length - index);
+		let reservedRows = 1;
+		while (reservedRows < maxRows) {
+			const line = lines[index + reservedRows] ?? "";
+			if (isImageLine(line) || visibleWidth(line) > 0) break;
+			reservedRows++;
 		}
-		return expandedLastChanged;
+		return reservedRows;
+	}
+
+	private expandChangedRangeForKittyImages(
+		firstChanged: number,
+		lastChanged: number,
+		newLines: string[],
+	): { firstChanged: number; lastChanged: number } {
+		let expandedFirstChanged = firstChanged;
+		let expandedLastChanged = lastChanged;
+		const expandForLines = (lines: string[]): void => {
+			for (let i = 0; i < lines.length; i++) {
+				if (extractKittyImageIds(lines[i]).length === 0) continue;
+				const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
+				if (i >= firstChanged || (i <= lastChanged && blockEnd >= firstChanged)) {
+					expandedFirstChanged = Math.min(expandedFirstChanged, i);
+					expandedLastChanged = Math.max(expandedLastChanged, blockEnd);
+				}
+			}
+		};
+
+		expandForLines(this.previousLines);
+		expandForLines(newLines);
+		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
 	}
 
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
@@ -1163,7 +1244,20 @@ export class TUI extends Container {
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
+				const line = newLines[i];
+				const isImage = isImageLine(line);
+				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
+				if (imageReservedRows > 1 && imageReservedRows <= height) {
+					for (let row = 1; row < imageReservedRows; row++) {
+						buffer += "\r\n";
+					}
+					buffer += `\x1b[${imageReservedRows - 1}A`;
+					buffer += line;
+					buffer += `\x1b[${imageReservedRows - 1}B`;
+					i += imageReservedRows - 1;
+					continue;
+				}
+				buffer += line;
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
@@ -1247,7 +1341,9 @@ export class TUI extends Container {
 			lastChanged = newLines.length - 1;
 		}
 		if (firstChanged !== -1) {
-			lastChanged = this.expandLastChangedForKittyImages(firstChanged, lastChanged);
+			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
+			firstChanged = expandedRange.firstChanged;
+			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
@@ -1350,9 +1446,31 @@ export class TUI extends Container {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			buffer += "\x1b[2K"; // Clear current line
 			const line = newLines[i];
 			const isImage = isImageLine(line);
+			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
+			if (imageReservedRows > 1) {
+				const imageStartScreenRow = i - viewportTop;
+				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
+					logRedraw(
+						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+					);
+					fullRender(true);
+					return;
+				}
+
+				buffer += "\x1b[2K";
+				for (let row = 1; row < imageReservedRows; row++) {
+					buffer += "\r\n\x1b[2K";
+				}
+				buffer += `\x1b[${imageReservedRows - 1}A`;
+				buffer += line;
+				buffer += `\x1b[${imageReservedRows - 1}B`;
+				i += imageReservedRows - 1;
+				continue;
+			}
+
+			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(os.homedir(), ".pi", "agent", "pi-crash.log");
@@ -1491,5 +1609,33 @@ export class TUI extends Container {
 		} else {
 			this.terminal.hideCursor();
 		}
+	}
+
+	/**
+	 * Query the terminal's default background color with OSC 11 (`ESC ] 11 ; ? BEL`).
+	 * @param timeoutMs Query timeout in milliseconds.
+	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
+	 */
+	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
+		return new Promise((resolve) => {
+			const query: PendingOsc11BackgroundQuery = {
+				settled: false,
+				resolve,
+				timer: undefined,
+			};
+
+			query.timer = setTimeout(() => {
+				if (query.settled) {
+					return;
+				}
+				query.settled = true;
+				query.timer = undefined;
+				query.resolve?.(undefined);
+				query.resolve = undefined;
+			}, timeoutMs);
+			this.pendingOsc11BackgroundQueries.push(query);
+			this.pendingOsc11BackgroundReplies += 1;
+			this.terminal.write("\x1b]11;?\x07");
+		});
 	}
 }

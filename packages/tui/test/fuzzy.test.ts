@@ -102,4 +102,11 @@ describe("fuzzyFilter", () => {
 		assert.ok(result.map((r) => r.name).includes("foo"));
 		assert.ok(result.map((r) => r.name).includes("foobar"));
 	});
+
+	it("matches slash-separated provider/model queries against reordered text", () => {
+		const item = { id: "gpt-5.5", provider: "openai-codex" };
+		const result = fuzzyFilter([item], "openai-codex/gpt-5.5", (model) => `${model.id} ${model.provider}`);
+
+		assert.deepStrictEqual(result, [item]);
+	});
 });
