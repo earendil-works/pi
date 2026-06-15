@@ -1,0 +1,11 @@
+phase: archive
+workflow: quickfix
+change: fix-todowrite-validator
+created_at: 2026-06-15
+base_ref: 7ba03d771397e8d5b9bdd2606be37a45afebbcc6
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true
