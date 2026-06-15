@@ -15,6 +15,19 @@ import crossSpawn from "cross-spawn";
 
 const EXIT_STDIO_GRACE_MS = 100;
 
+/**
+ * Opt-in diagnostic for the held-open-pipe case. Enable with PI_STDIO_DEBUG=1.
+ *
+ * When a child exits but a detached descendant keeps emitting on the inherited
+ * stdout/stderr pipe, we keep reading (re-arming the grace on each chunk) rather
+ * than truncate the tail. A descendant that writes continuously can therefore
+ * hold the wait open until the command's own timeout kills the tree. That is the
+ * right trade-off, but it is otherwise invisible: the command reads as a slow
+ * hang with no indication that the process itself had already exited. This flag
+ * surfaces the case so it can be diagnosed instead of guessed at.
+ */
+const STDIO_DEBUG = process.env.PI_STDIO_DEBUG === "1";
+
 export function spawnProcess(
 	command: string,
 	args: string[],
@@ -45,6 +58,9 @@ export function spawnProcessSync(
  * the grace timer is re-armed on every chunk, so an actively writing descendant keeps
  * us reading, while a quiet inherited handle (e.g. a Windows daemonized descendant
  * that never lets `close` fire) still releases us after the grace elapses.
+ *
+ * Set PI_STDIO_DEBUG=1 to log when a process exits but keeps emitting output past
+ * exit (see {@link STDIO_DEBUG}).
  */
 export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	return new Promise((resolve, reject) => {
@@ -54,6 +70,11 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		let postExitTimer: NodeJS.Timeout | undefined;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
+
+		// Diagnostics for the held-open-pipe case (only collected under PI_STDIO_DEBUG).
+		let exitedAt = 0;
+		let postExitChunks = 0;
+		let postExitBytes = 0;
 
 		const cleanup = () => {
 			if (postExitTimer) {
@@ -69,31 +90,45 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			child.stderr?.removeListener("data", onData);
 		};
 
-		const finalize = (code: number | null) => {
+		const finalize = (code: number | null, reason: "eof" | "idle-grace" | "close") => {
 			if (settled) return;
 			settled = true;
 			cleanup();
 			child.stdout?.destroy();
 			child.stderr?.destroy();
+			// Only the held-open case is worth a line: the process had already exited
+			// yet kept emitting, which is what can stretch a command to its timeout.
+			if (STDIO_DEBUG && exited && postExitChunks > 0) {
+				console.error(
+					`[stdio] pid ${child.pid ?? "?"} exited but held stdio open for ${Date.now() - exitedAt}ms past exit ` +
+						`(${postExitChunks} chunk(s), ${postExitBytes}B read after exit; resolved via ${reason})`,
+				);
+			}
 			resolve(code);
 		};
 
 		const maybeFinalizeAfterExit = () => {
 			if (!exited || settled) return;
 			if (stdoutEnded && stderrEnded) {
-				finalize(exitCode);
+				finalize(exitCode, "eof");
 			}
 		};
 
 		const armIdleTimer = () => {
 			if (postExitTimer) clearTimeout(postExitTimer);
-			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+			postExitTimer = setTimeout(() => finalize(exitCode, "idle-grace"), EXIT_STDIO_GRACE_MS);
 		};
 
-		const onData = () => {
+		const onData = (chunk: Buffer) => {
 			// Output is still arriving after exit; defer finalizing so we don't
 			// destroy the stream mid-write and truncate the tail.
-			if (exited && !settled) armIdleTimer();
+			if (exited && !settled) {
+				if (STDIO_DEBUG) {
+					postExitChunks += 1;
+					postExitBytes += chunk.length;
+				}
+				armIdleTimer();
+			}
 		};
 
 		const onStdoutEnd = () => {
@@ -116,6 +151,7 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		const onExit = (code: number | null) => {
 			exited = true;
 			exitCode = code;
+			if (STDIO_DEBUG) exitedAt = Date.now();
 			maybeFinalizeAfterExit();
 			if (!settled) {
 				armIdleTimer();
@@ -123,7 +159,7 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 		};
 
 		const onClose = (code: number | null) => {
-			finalize(code);
+			finalize(code, "close");
 		};
 
 		child.stdout?.once("end", onStdoutEnd);
