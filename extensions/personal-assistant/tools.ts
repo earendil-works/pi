@@ -710,7 +710,7 @@ function htmlToText(html: string): string {
 // Todowrite — Claude-style ephemeral planning tool
 // ============================================================================
 
-interface TodoItem {
+export interface TodoItem {
 	id: string;
 	content: string;
 	status: "pending" | "in_progress" | "completed" | "cancelled";
@@ -749,14 +749,17 @@ function renderTodos(): string {
 	return lines.join("\n");
 }
 
-function validateItems(items: { id: string; content: string; status: string }[]): string | null {
+export function validateItems(
+	items: { id: string; content: string; status: string }[],
+	prev: TodoItem[] = todoItems,
+): string | null {
 	if (items.length > 20) {
 		return "Error: Maximum 20 todos allowed.";
 	}
 
 	const inProgressCount = items.filter((t) => t.status === "in_progress").length;
-	if (inProgressCount > 1) {
-		return "Error: Only one task can be in_progress at a time.";
+	if (inProgressCount > MAX_IN_PROGRESS) {
+		return `Error: At most ${MAX_IN_PROGRESS} tasks can be in_progress at a time.`;
 	}
 
 	for (const item of items) {
@@ -767,9 +770,10 @@ function validateItems(items: { id: string; content: string; status: string }[])
 			return `Error: Item ${item.id}: Invalid status "${item.status}". Must be one of: ${VALID_STATUSES.join(", ")}.`;
 		}
 
-		const prev = todoItems.find((t) => t.id === item.id);
-		if (prev && !VALID_TRANSITIONS[prev.status].includes(item.status as TodoStatus)) {
-			return `Error: Item #${item.id}: Cannot transition from "${prev.status}" to "${item.status}". Allowed transitions: ${VALID_TRANSITIONS[prev.status].join(" → ")}.`;
+		const prevItem = prev.find((t) => t.id === item.id);
+		if (prevItem && prevItem.status === item.status) continue;
+		if (prevItem && !VALID_TRANSITIONS[prevItem.status].includes(item.status as TodoStatus)) {
+			return `Error: Item #${item.id}: Cannot transition from "${prevItem.status}" to "${item.status}". Allowed transitions: ${VALID_TRANSITIONS[prevItem.status].join(" → ")}.`;
 		}
 	}
 
@@ -850,8 +854,7 @@ export function registerTools(pi: ExtensionAPI): void {
 			"  2. Mark the current step as in_progress before working on it",
 			"  3. Mark steps as completed when done — update after EVERY step, do not batch completions",
 			"  4. Up to 3 items can be in_progress at a time (for parallel workflows)",
-			"  5. Use activeForm to describe what you're currently doing (e.g., 'Writing tests')",
-			"  6. Simple single-step tasks do not need a plan — use Todowrite only when it helps",
+			"  5. Simple single-step tasks do not need a plan — use Todowrite only when it helps",
 			"",
 			"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
 		].join("\n");
@@ -969,7 +972,7 @@ export function registerTools(pi: ExtensionAPI): void {
 		description:
 			"Plan and track progress for multi-step tasks. Each item has id, content, and status (pending/in_progress/completed/cancelled). " +
 			"Send the COMPLETE list of all items on every call (full replacement). " +
-			"Only one item can be in_progress at a time. Max 20 items.",
+			`Up to ${MAX_IN_PROGRESS} items can be in_progress at a time. Max 20 items.`,
 		promptSnippet: "Plan and track progress for multi-step tasks.",
 		parameters: TodowriteParams,
 
