@@ -193,6 +193,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						partial: output,
 					});
 				} else if (block.type === "toolCall") {
+					if (!block.id || !block.name) {
+						throw new Error(`Malformed tool call from provider: missing ${!block.id ? "id" : "name"}`);
+					}
 					block.arguments = parseStreamingJson(block.partialArgs);
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.
@@ -406,6 +409,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			output.content = output.content.filter((block) => block.type !== "toolCall" || (block.id && block.name));
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.
