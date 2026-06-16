@@ -1,9 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import express from "express";
 import { createServer } from "node:http";
+import * as fs from "node:fs/promises";
+import path from "node:path";
 
 describe("Memory REST API route skeleton", () => {
-	it("6 routes are registered and return 501", async () => {
+	it("remaining 5 placeholder routes return 501; GET /api/memory returns 200", async () => {
 		const { mountMemoryRoutes } = await import("../routes/memory");
 		const app = express();
 		app.use(express.json());
@@ -17,8 +19,13 @@ describe("Memory REST API route skeleton", () => {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const port = (server.address() as { port: number }).port;
 		try {
+			// GET /api/memory is implemented in task 2.2; nonexistent db → init
+			// creates a fresh empty index, so the endpoint returns 200 with [].
 			const r1 = await fetch(`http://127.0.0.1:${port}/api/memory`);
-			expect(r1.status).toBe(501);
+			expect(r1.status).toBe(200);
+			const body1 = await r1.json();
+			expect(Array.isArray(body1)).toBe(true);
+			expect(body1.length).toBe(0);
 			const r2 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`);
 			expect(r2.status).toBe(501);
 			const r3 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`, { method: "PATCH" });
@@ -32,5 +39,117 @@ describe("Memory REST API route skeleton", () => {
 		} finally {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
+	});
+});
+
+describe("(b) GET /api/memory list endpoint", () => {
+	let app: express.Express;
+	let server: ReturnType<typeof createServer>;
+	let port: number;
+	let tempDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join("/tmp", "pi-memory-list-test-"));
+		dbPath = path.join(tempDir, "test.db");
+		atomsDir = path.join(tempDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+		// init index + insert test atoms
+		const { MemoryIndex } = await import("@earendil-works/pi-personal-assistant");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		// active + archived + multiple types
+		idx.upsertAtom({
+			id: "a-1",
+			type: "preference",
+			title: "Use tabs not spaces",
+			summary: "tab policy",
+			tags: ["editor"],
+			importance: 0.8,
+			strength: 0.9,
+			access_count: 0,
+			last_access: "",
+			created_at: "2025-01-01T00:00:00Z",
+			updated_at: "2025-01-02T00:00:00Z",
+			version: 1,
+			archived: false,
+			content: "# tabs",
+			file_path: "",
+			content_hash: "",
+		});
+		idx.upsertAtom({
+			id: "a-2",
+			type: "workflow",
+			title: "Run tests first",
+			summary: "test policy",
+			tags: [],
+			importance: 0.5,
+			strength: 0.7,
+			access_count: 0,
+			last_access: "",
+			created_at: "2025-01-01T00:00:00Z",
+			updated_at: "2025-01-03T00:00:00Z",
+			version: 1,
+			archived: true,
+			content: "# tests",
+			file_path: "",
+			content_hash: "",
+		});
+		idx.upsertAtom({
+			id: "a-3",
+			type: "preference",
+			title: "Prefer dark mode",
+			summary: "ui preference",
+			tags: ["ui"],
+			importance: 0.3,
+			strength: 0.5,
+			access_count: 0,
+			last_access: "",
+			created_at: "2025-01-01T00:00:00Z",
+			updated_at: "2025-01-01T00:00:00Z",
+			version: 1,
+			archived: false,
+			content: "# dark",
+			file_path: "",
+			content_hash: "",
+		});
+		idx.close();
+		// mount
+		const { mountMemoryRoutes } = await import("../routes/memory");
+		app = express();
+		app.use(express.json());
+		mountMemoryRoutes(app, { dbPath, atomsDir, settings: {}, callLlm: async () => "" });
+		server = createServer(app);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		port = (server.address() as { port: number }).port;
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	it("default archived=active returns non-archived only", async () => {
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory`);
+		expect(res.status).toBe(200);
+		const atoms = await res.json();
+		expect(atoms.length).toBe(2);
+		expect(atoms.every((a: any) => !a.archived)).toBe(true);
+	});
+
+	it("?archived=all returns all atoms", async () => {
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory?archived=all`);
+		expect(res.status).toBe(200);
+		const atoms = await res.json();
+		expect(atoms.length).toBe(3);
+	});
+
+	it("?type=preference&archived=active filters by type and archived", async () => {
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory?type=preference&archived=active`);
+		expect(res.status).toBe(200);
+		const atoms = await res.json();
+		expect(atoms.length).toBe(2);
+		expect(atoms.every((a: any) => a.type === "preference" && !a.archived)).toBe(true);
 	});
 });
