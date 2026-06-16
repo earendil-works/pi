@@ -84,7 +84,7 @@ interface SearchResult {
   score: number;
 }
 
-interface QueryRewriteResult {
+export interface QueryRewriteResult {
   keywords: string[];
   target_types: string[];
   raw_query: string;
@@ -847,6 +847,35 @@ export async function rewriteQuery(
     // Fall through to simple extraction
   }
 
+  return simpleKeywordExtraction(query);
+}
+
+/**
+ * Server-friendly query rewriting. 复制 `rewriteQuery` 的 LLM 路径,
+ * 把 `ctx.modelRegistry` 调 LLM 替换成 `callLlm(prompt)` 回调。
+ * Server 端 routes/memory.ts 用此避免构造 `ExtensionContext.modelRegistry` stub。
+ *
+ * LLM 抛错或返回无法解析的 JSON 时,降级到 `simpleKeywordExtraction(query)`。
+ *
+ * @param callLlm  调用 LLM 的回调,接收 prompt 字符串,返回 assistant 文本。抛错表示失败。
+ * @param query    原始用户查询。
+ * @param config   Settings 配置(保留以备将来根据 config 选 prompt 变体;当前未使用)。
+ */
+export async function rewriteQueryWithCallLlm(
+  callLlm: (prompt: string) => Promise<string>,
+  query: string,
+  config: PersonalAssistantConfig,
+): Promise<QueryRewriteResult> {
+  try {
+    const prompt = buildRewritePrompt(query);
+    const llmRaw = await callLlm(prompt);
+    if (llmRaw) {
+      const parsed = parseRewriteJson(llmRaw);
+      if (parsed) return parsed;
+    }
+  } catch {
+    // LLM call threw or returned unparseable JSON — fall through to simple extraction.
+  }
   return simpleKeywordExtraction(query);
 }
 

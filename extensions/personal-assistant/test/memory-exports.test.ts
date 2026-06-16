@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../sqlite.ts";
-import { MemoryIndex, getAllAtoms, type MemoryAtom } from "../memory.ts";
+import { MemoryIndex, getAllAtoms, rewriteQueryWithCallLlm, type MemoryAtom, type PersonalAssistantConfig } from "../memory.ts";
 
 function makeAtom(overrides: Partial<MemoryAtom> = {}): MemoryAtom {
   const ts = "2025-01-01T00:00:00.000Z";
@@ -126,5 +126,41 @@ describe("MemoryIndex.invalidateEmbedding", () => {
     } finally {
       checkDb.close();
     }
+  });
+});
+
+describe("rewriteQueryWithCallLlm", () => {
+  const emptyConfig: PersonalAssistantConfig = {};
+
+  it("parses LLM response with keywords array", async () => {
+    const callLlm = vi
+      .fn()
+      .mockResolvedValue('{"keywords":["foo","bar"],"target_types":["knowledge"]}');
+
+    const result = await rewriteQueryWithCallLlm(
+      callLlm,
+      "anything",
+      emptyConfig,
+    );
+
+    expect(callLlm).toHaveBeenCalledTimes(1);
+    expect(result.keywords).toEqual(["foo", "bar"]);
+    expect(result.target_types).toEqual(["knowledge"]);
+  });
+
+  it("falls back to simpleKeywordExtraction when LLM throws", async () => {
+    const callLlm = vi.fn().mockRejectedValue(new Error("rate limit"));
+
+    const result = await rewriteQueryWithCallLlm(
+      callLlm,
+      "what database schema should I use",
+      emptyConfig,
+    );
+
+    // simpleKeywordExtraction drops stop words and words of length <= 2.
+    // "what" (stop) "database" (kept) "schema" (kept) "should" (stop) "use" (stop)
+    // "database" and "schema" are the only content tokens that survive.
+    expect(result.keywords).toContain("database");
+    expect(result.keywords).toContain("schema");
   });
 });
