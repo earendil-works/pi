@@ -1089,6 +1089,130 @@ export function getAllAtoms(index: MemoryIndex): MemoryAtom[] {
   return rows.map(rowToAtom);
 }
 
+/**
+ * Server-friendly search returning per-result score breakdown.
+ * 与 searchAtoms 区别: 返回每条结果的 fts_score / cosine_score / hybrid_score 三项分,
+ * 以及 embedding_available 标志(用于 webui 召回测试面板显示 "embedding unavailable" 灰底)。
+ */
+export async function searchAtomsWithScores(
+  index: MemoryIndex,
+  query: QueryRewriteResult,
+  topK: number,
+): Promise<{
+  results: Array<{
+    atom: MemoryAtom;
+    fts_score: number;
+    cosine_score: number;
+    hybrid_score: number;
+  }>;
+  embedding_available: boolean;
+}> {
+  type Scored = {
+    atom: MemoryAtom;
+    fts_score: number;
+    cosine_score: number;
+    hybrid_score: number;
+  };
+  const candidates: Scored[] = [];
+  let embedding_available = false;
+
+  if (query.keywords.length > 0) {
+    const ftsResults = index.searchByFts(query.keywords, query.target_types);
+
+    if (ftsResults.length > 0) {
+      // Try embedding search (same call as searchAtoms).
+      const embeddingResults = await searchEmbeddings(
+        index,
+        query.raw_query || query.keywords.join(" "),
+        ftsResults.map((r) => r.id),
+      );
+      embedding_available = embeddingResults.size > 0;
+
+      if (embeddingResults.size > 0) {
+        // Hybrid path — same formula as searchAtoms hybrid branch.
+        const maxFts = Math.max(...ftsResults.map((r) => Math.abs(r.score)));
+        const maxEmb = Math.max(...Array.from(embeddingResults.values()));
+        const ftsRange = maxFts > 0 ? maxFts : 1;
+        const embRange = maxEmb > 0 ? maxEmb : 1;
+
+        for (const fts of ftsResults) {
+          const atomData = index.getAtom(fts.id);
+          if (!atomData) continue;
+          const ftsNorm = Math.abs(fts.score) / ftsRange;
+          const cosScore = embeddingResults.get(fts.id) ?? 0;
+          const cosNorm = cosScore / embRange;
+          const hybrid =
+            (0.5 * ftsNorm + 0.5 * cosNorm) *
+            (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
+          candidates.push({
+            atom: atomData,
+            fts_score: ftsNorm,
+            cosine_score: cosScore,
+            hybrid_score: hybrid,
+          });
+        }
+      } else {
+        // FTS-only path — same formula as searchAtoms FTS-only branch.
+        const maxFts = Math.max(...ftsResults.map((r) => Math.abs(r.score)));
+        const ftsRange = maxFts > 0 ? maxFts : 1;
+        for (const fts of ftsResults) {
+          const atomData = index.getAtom(fts.id);
+          if (!atomData) continue;
+          const ftsNorm = Math.abs(fts.score) / ftsRange;
+          const score =
+            Math.abs(fts.score) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
+          candidates.push({
+            atom: atomData,
+            fts_score: ftsNorm,
+            cosine_score: 0,
+            hybrid_score: score,
+          });
+        }
+      }
+    }
+  } else {
+    // No keywords — rank by type filter + strength + importance
+    let atoms = index.getActiveAtoms();
+    if (query.target_types.length > 0) {
+      const typeSet = new Set(query.target_types);
+      atoms = atoms.filter((a) => typeSet.has(a.type));
+    }
+    for (const atom of atoms) {
+      candidates.push({
+        atom,
+        fts_score: 0,
+        cosine_score: 0,
+        hybrid_score: 0.5 + 0.3 * atom.strength + 0.2 * atom.importance,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.hybrid_score - a.hybrid_score);
+  const top = candidates.slice(0, topK);
+
+  // Update access stats
+  for (const r of top) {
+    index.updateAccess(r.atom.id);
+  }
+
+  // Load full atom data from files (summary, content, file_path)
+  const loaded = await Promise.all(
+    top.map(async (r) => {
+      if (r.atom.file_path) {
+        try {
+          return readAtomFromFile(r.atom.file_path, r.atom.content_hash || undefined) ?? r.atom;
+        } catch {
+          return r.atom;
+        }
+      }
+      return r.atom;
+    }),
+  );
+
+  const results: Scored[] = top.map((r, i) => ({ ...r, atom: loaded[i] }));
+  return { results, embedding_available };
+}
+
 async function getEmbedding(text: string, apiBase: string, model: string): Promise<number[] | null> {
   try {
     const resp = await fetch(`${apiBase}/embeddings`, {

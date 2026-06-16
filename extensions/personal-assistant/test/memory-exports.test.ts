@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../sqlite.ts";
-import { MemoryIndex, getAllAtoms, rewriteQueryWithCallLlm, type MemoryAtom, type PersonalAssistantConfig } from "../memory.ts";
+import {
+  MemoryIndex,
+  getAllAtoms,
+  rewriteQueryWithCallLlm,
+  searchAtomsWithScores,
+  type MemoryAtom,
+  type PersonalAssistantConfig,
+} from "../memory.ts";
 
 function makeAtom(overrides: Partial<MemoryAtom> = {}): MemoryAtom {
   const ts = "2025-01-01T00:00:00.000Z";
@@ -162,5 +169,82 @@ describe("rewriteQueryWithCallLlm", () => {
     // "database" and "schema" are the only content tokens that survive.
     expect(result.keywords).toContain("database");
     expect(result.keywords).toContain("schema");
+  });
+});
+
+describe("searchAtomsWithScores", () => {
+  let dir: string;
+  let index: MemoryIndex;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "memory-scores-test-"));
+    index = new MemoryIndex(join(dir, "test.db"));
+    await index.init();
+  });
+
+  afterEach(() => {
+    index.close();
+    rmSync(dir, { recursive: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("returns per-result fts/cosine/hybrid scores with embedding", async () => {
+    // Mock the embedding HTTP endpoint so searchEmbeddings() returns a real score.
+    // (User's settings.json has embedding.provider=local which targets
+    // http://localhost:11434/v1/embeddings; we stub the global fetch.)
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ embedding: new Array(8).fill(0.5) }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Setup: 3 atoms, 1 with stored embedding
+    const atom1 = makeAtom({ id: "a-1", title: "token alpha" });
+    const atom2 = makeAtom({ id: "a-2", title: "unrelated content" });
+    const atom3 = makeAtom({ id: "a-3", title: "another idea" });
+    index.upsertAtom(atom1);
+    index.upsertEmbedding("a-1", new Array(8).fill(0.5));
+    index.upsertAtom(atom2);
+    index.upsertAtom(atom3);
+
+    const result = await searchAtomsWithScores(
+      index,
+      { keywords: ["token"], target_types: [], raw_query: "token" },
+      5,
+    );
+
+    expect(result.embedding_available).toBe(true);
+    expect(result.results.length).toBeGreaterThanOrEqual(1);
+    expect(result.results[0].atom.id).toBe("a-1");
+    expect(result.results[0].fts_score).toBeGreaterThan(0);
+    expect(result.results[0].hybrid_score).toBeGreaterThan(0);
+  });
+
+  it("returns embedding_available=false and cosine_score=0 when no embeddings exist", async () => {
+    // Mock fetch to throw — simulates embedding service unavailable.
+    // searchEmbeddings() catches the error in getEmbedding() and returns null,
+    // which makes it return an empty Map, so we go to the FTS-only branch.
+    const fetchMock = vi.fn(async () => {
+      throw new Error("embedding service unavailable");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Setup: 2 atoms, no stored embeddings
+    const atom1 = makeAtom({ id: "a-1", title: "token alpha" });
+    const atom2 = makeAtom({ id: "a-2", title: "token beta" });
+    index.upsertAtom(atom1);
+    index.upsertAtom(atom2);
+    // No upsertEmbedding for either atom
+
+    const result = await searchAtomsWithScores(
+      index,
+      { keywords: ["token"], target_types: [], raw_query: "token" },
+      5,
+    );
+
+    expect(result.embedding_available).toBe(false);
+    expect(result.results.length).toBeGreaterThanOrEqual(1);
+    expect(result.results[0].cosine_score).toBe(0);
+    expect(result.results[0].hybrid_score).toBeGreaterThan(0);
   });
 });
