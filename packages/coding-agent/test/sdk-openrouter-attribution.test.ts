@@ -196,6 +196,13 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("provider-category");
 	});
 
+	it("adds default attribution headers for Vercel AI Gateway models", async () => {
+		const headers = await captureHeaders(createModel("vercel-ai-gateway", "https://ai-gateway.vercel.sh/v1"));
+
+		expect(headers?.["http-referer"]).toBe("https://pi.dev");
+		expect(headers?.["x-title"]).toBe("pi");
+	});
+
 	it("adds default attribution headers for direct NVIDIA NIM endpoints", async () => {
 		const headers = await captureHeaders(createModel("custom-nim", "https://integrate.api.nvidia.com/v1"));
 
