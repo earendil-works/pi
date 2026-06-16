@@ -186,12 +186,20 @@ describe("searchAtomsWithScores", () => {
     index.close();
     rmSync(dir, { recursive: true });
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
+
+  // Test-local config: explicit embedding.provider/model makes the test
+  // independent of ~/.pi/agent/settings.json on the dev machine or CI runner.
+  // searchAtomsWithScores forwards this to searchEmbeddings; before the
+  // 4th-arg refactor the helpers hard-loaded ~/.pi/agent/settings.json, which
+  // was the root cause of the level-1 review issues.
+  const testConfig: PersonalAssistantConfig = {
+    memory: { embedding: { provider: "local", model: "nomic-embed-text" } },
+  };
 
   it("returns per-result fts/cosine/hybrid scores with embedding", async () => {
     // Mock the embedding HTTP endpoint so searchEmbeddings() returns a real score.
-    // (User's settings.json has embedding.provider=local which targets
-    // http://localhost:11434/v1/embeddings; we stub the global fetch.)
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({ data: [{ embedding: new Array(8).fill(0.5) }] }),
@@ -211,6 +219,7 @@ describe("searchAtomsWithScores", () => {
       index,
       { keywords: ["token"], target_types: [], raw_query: "token" },
       5,
+      testConfig,
     );
 
     expect(result.embedding_available).toBe(true);
@@ -240,11 +249,50 @@ describe("searchAtomsWithScores", () => {
       index,
       { keywords: ["token"], target_types: [], raw_query: "token" },
       5,
+      testConfig,
     );
 
     expect(result.embedding_available).toBe(false);
     expect(result.results.length).toBeGreaterThanOrEqual(1);
     expect(result.results[0].cosine_score).toBe(0);
     expect(result.results[0].hybrid_score).toBeGreaterThan(0);
+  });
+
+  // Hermeticity guard for level-1 review fix #1:
+  // On CI there is no ~/.pi/agent/settings.json with embedding.provider=local.
+  // If searchEmbeddings (or its caller) still reaches into loadConfig() and
+  // returns an empty config, embedding_available drops to false even though
+  // the test passes a valid testConfig. This test stubs HOME to an empty
+  // tmp dir, so any fallback to ~/.pi/agent/settings.json yields {} and
+  // embedding_available must still be true thanks to the explicit config.
+  it("drives embedding config from the passed config, not ~/.pi/agent/settings.json", async () => {
+    // Force loadConfig() to see an empty HOME → ~/.pi/agent/settings.json
+    // does not exist, so any fallback path yields {} (no embedding config).
+    const emptyHome = mkdtempSync(join(tmpdir(), "memory-hermetic-home-"));
+    vi.stubEnv("HOME", emptyHome);
+    vi.stubEnv("USERPROFILE", emptyHome);
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ embedding: new Array(8).fill(0.5) }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const atom = makeAtom({ id: "a-1", title: "token alpha" });
+    index.upsertAtom(atom);
+    index.upsertEmbedding("a-1", new Array(8).fill(0.5));
+
+    const result = await searchAtomsWithScores(
+      index,
+      { keywords: ["token"], target_types: [], raw_query: "token" },
+      5,
+      testConfig,
+    );
+
+    expect(result.embedding_available).toBe(true);
+    expect(result.results[0].cosine_score).toBeGreaterThan(0);
+
+    // Clean up the hermetic HOME dir we created.
+    rmSync(emptyHome, { recursive: true });
   });
 });

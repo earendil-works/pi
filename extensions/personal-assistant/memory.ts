@@ -972,10 +972,15 @@ async function searchEmbeddings(
   index: MemoryIndex,
   queryText: string,
   candidateIds: string[],
+  config?: PersonalAssistantConfig,
 ): Promise<Map<string, number>> {
-  // Find embedding model config
-  const config = loadConfig();
-  const embConfig = config.memory?.embedding;
+  // Find embedding model config. Prefer the explicit override (server route
+  // or test) so the function does not depend on ~/.pi/agent/settings.json
+  // from whichever user happens to run it. Fall back to loadConfig() only
+  // when no override is supplied (preserves prior call sites that don't
+  // pass config, e.g. searchAtoms).
+  const effectiveConfig = config ?? loadConfig();
+  const embConfig = effectiveConfig.memory?.embedding;
   if (!embConfig?.provider || !embConfig?.model) return new Map();
 
   let embModel: { baseUrl: string; id: string } | null = null;
@@ -1098,6 +1103,7 @@ export async function searchAtomsWithScores(
   index: MemoryIndex,
   query: QueryRewriteResult,
   topK: number,
+  config?: PersonalAssistantConfig,
 ): Promise<{
   results: Array<{
     atom: MemoryAtom;
@@ -1120,11 +1126,14 @@ export async function searchAtomsWithScores(
     const ftsResults = index.searchByFts(query.keywords, query.target_types);
 
     if (ftsResults.length > 0) {
-      // Try embedding search (same call as searchAtoms).
+      // Try embedding search (same call as searchAtoms). Forward the
+      // optional config so server routes can drive embedding settings via
+      // deps.settings rather than the dev's ~/.pi/agent/settings.json.
       const embeddingResults = await searchEmbeddings(
         index,
         query.raw_query || query.keywords.join(" "),
         ftsResults.map((r) => r.id),
+        config,
       );
       embedding_available = embeddingResults.size > 0;
 
