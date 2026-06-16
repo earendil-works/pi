@@ -467,7 +467,15 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handlePackageCommand(args, { extensionFactories: options?.extensionFactories })) {
-		process.exit(process.exitCode ?? 0);
+		const exitCode = process.exitCode ?? 0;
+		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
+			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
+			// one-shot commands alive. On Windows, Node can assert after fetch() if process.exit(0)
+			// runs during teardown; let successful `pi update` drain naturally instead.
+			// https://github.com/nodejs/node/issues/56645
+			return;
+		}
+		process.exit(exitCode);
 		return;
 	}
 

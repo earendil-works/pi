@@ -557,8 +557,18 @@ function buildParams(
 	}
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
-		const zaiParams = params as typeof params & { thinking?: { type: "enabled" | "disabled" } };
+		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
+			thinking?: { type: "enabled" | "disabled" };
+			reasoning_effort?: string;
+		};
 		zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
+			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
+			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
+			if (typeof effort === "string") {
+				zaiParams.reasoning_effort = effort;
+			}
+		}
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
 		(params as any).enable_thinking = !!options?.reasoningEffort;
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
