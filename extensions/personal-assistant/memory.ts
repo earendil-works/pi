@@ -1041,6 +1041,16 @@ export async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult,
   return loaded;
 }
 
+export function getAllAtoms(index: MemoryIndex): MemoryAtom[] {
+  // Returns every atom in the index, including archived (no archived=0 filter).
+  // Used by webui list endpoint. Reuses the class's private rowToAtom mapper
+  // by binding it to the index instance.
+  const rows = index.getAllRows();
+  const rowToAtom = (index as unknown as { rowToAtom: (row: Record<string, unknown>) => MemoryAtom }).rowToAtom
+    .bind(index) as (row: Record<string, unknown>) => MemoryAtom;
+  return rows.map(rowToAtom);
+}
+
 async function getEmbedding(text: string, apiBase: string, model: string): Promise<number[] | null> {
   try {
     const resp = await fetch(`${apiBase}/embeddings`, {
