@@ -79,7 +79,7 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "first");
 		});
 
-		it("restores draft on Down arrow after browsing history", () => {
+		it("jumps to start before entering history from a non-empty draft", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.addToHistory("prompt");
@@ -87,12 +87,16 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[D");
 			editor.handleInput("\x1b[D");
 
-			editor.handleInput("\x1b[A"); // Up - shows "prompt"
+			editor.handleInput("\x1b[A"); // Up - jumps to start before history browsing
+			assert.strictEqual(editor.getText(), "draft");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+			editor.handleInput("\x1b[A"); // Up at start - shows "prompt"
 			assert.strictEqual(editor.getText(), "prompt");
 
 			editor.handleInput("\x1b[B"); // Down - restores draft
 			assert.strictEqual(editor.getText(), "draft");
-			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 		});
 
 		it("navigates forward through history with Down arrow", () => {
@@ -104,6 +108,7 @@ describe("Editor component", () => {
 			editor.setText("draft");
 
 			// Go to oldest
+			editor.handleInput("\x1b[A"); // start of draft
 			editor.handleInput("\x1b[A"); // third
 			editor.handleInput("\x1b[A"); // second
 			editor.handleInput("\x1b[A"); // first
