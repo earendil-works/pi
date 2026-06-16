@@ -126,12 +126,20 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 			};
 			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			const timing: { startTime: number; firstTokenTime?: number } = { startTime: Date.now() };
 			stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
 				serviceTier: options?.serviceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+				timing,
 			});
+
+			// Set timing on usage
+			output.usage.durationMs = Date.now() - timing.startTime;
+			if (timing.firstTokenTime) {
+				output.usage.timeToFirstTokenMs = timing.firstTokenTime - timing.startTime;
+			}
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");

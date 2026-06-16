@@ -277,6 +277,10 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** Total response duration in milliseconds (stream start to response.completed) */
+	durationMs?: number;
+	/** Time from stream start to first content token in milliseconds */
+	timeToFirstTokenMs?: number;
 }
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";

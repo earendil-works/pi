@@ -75,6 +75,14 @@ export interface OpenAIResponsesStreamOptions {
 	) => void;
 }
 
+/** Mutable timing context passed from caller to processResponsesStream */
+export interface TimingContext {
+	/** When stream started (set by caller) */
+	startTime: number;
+	/** When first content token arrived (set by processResponsesStream) */
+	firstTokenTime?: number;
+}
+
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 }
@@ -290,12 +298,13 @@ export async function processResponsesStream<TApi extends Api>(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<TApi>,
-	options?: OpenAIResponsesStreamOptions,
+	options?: OpenAIResponsesStreamOptions & { timing?: TimingContext },
 ): Promise<void> {
 	let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
 	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
+	const timing = options?.timing;
 
 	for await (const event of openaiStream) {
 		if (event.type === "response.created") {
@@ -361,6 +370,7 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.reasoning_text.delta") {
 			if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
+				if (timing && !timing.firstTokenTime) timing.firstTokenTime = Date.now();
 				currentBlock.thinking += event.delta;
 				stream.push({
 					type: "thinking_delta",
@@ -384,6 +394,7 @@ export async function processResponsesStream<TApi extends Api>(
 				}
 				const lastPart = currentItem.content[currentItem.content.length - 1];
 				if (lastPart?.type === "output_text") {
+					if (timing && !timing.firstTokenTime) timing.firstTokenTime = Date.now();
 					currentBlock.text += event.delta;
 					lastPart.text += event.delta;
 					stream.push({
