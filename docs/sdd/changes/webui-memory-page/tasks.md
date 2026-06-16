@@ -121,7 +121,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` 单测绿
   - **依赖**: 1.6
 
-- [ ] 2.2 **实现 `GET /api/memory`(list + filter)**
+- [x] 2.2 **实现 `GET /api/memory`(list + filter)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 2.1 里的 list 路由占位。逻辑:
     ```typescript
@@ -145,13 +145,13 @@
   - **验证**: 单测加 3 条:active 默认(archived=0 出现,archived=1 不出现)、`?archived=all` 全显示、`?type=preference&archived=active` 双重过滤
   - **依赖**: 2.1
 
-- [ ] 2.3 **实现 `GET /api/memory/:id`(读 .md 正文)**
+- [x] 2.3 **实现 `GET /api/memory/:id`(读 .md 正文)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 detail 路由占位。`getAtom(id)` → 不存在 404;`file_path` 存在时 `try { readAtomFromFile(file_path, content_hash) } catch { /* memory-error: file 丢失 / hash 错位 */ atom.content = "" }`;读出后 `atom.content = fromFile.content`;`res.json(atom)`
   - **验证**: 单测加 4 条:存在返回完整 atom、不存在 404、file 丢失返回 `content: ""`、file hash 错位返回 `content: ""`
   - **依赖**: 2.2
 
-- [ ] 2.4 **实现 `PATCH /api/memory/:id`(复用 writeAtomToFile + 清 embedding)**
+- [x] 2.4 **实现 `PATCH /api/memory/:id`(复用 writeAtomToFile + 清 embedding)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 PATCH 路由占位。逻辑:
     1. `getAtom(id)` 不存在 404
@@ -164,19 +164,19 @@
   - **验证**: 单测加 6 条:改 title、只改 metadata(不传 content,body 字节级保持)、改 content 触发 .md 重写 + hash 变 + 旧文件 unlink、importance 边界 0/1、type 改 → file_path 跟着变、不存在 id 404
   - **依赖**: 2.3
 
-- [ ] 2.5 **实现 `POST /api/memory/:id/archive`(toggle)**
+- [x] 2.5 **实现 `POST /api/memory/:id/archive`(toggle)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 archive 路由占位。`getAtom(id)` 不存在 404;`req.body.archived` true → `markArchived(id)`;false → `upsertAtom({ ...atom, archived: false, version: atom.version + 1, updated_at: nowISO() })`;`res.json({ ok: true, atom: idx.getAtom(id) })`
   - **验证**: 单测加 2 条:archive 已 active atom(archived=1)、restore archived atom(archived=0,version+1)
   - **依赖**: 2.4
 
-- [ ] 2.6 **实现 `POST /api/memory/search`(真实 pipeline)**
+- [x] 2.6 **实现 `POST /api/memory/search`(真实 pipeline)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 search 路由占位。`const rewritten = await rewriteQueryWithCallLlm(deps.callLlm, query, deps.settings); const { results, embedding_available } = await searchAtomsWithScores(idx, rewritten, topK ?? 10); res.json({ rewritten, embedding_available, results })`。注意:虽然 `callLlm` 已经传入,但 PATCH 一样在 `try/finally` 里 close
   - **验证**: 单测加 3 条:正常召回(callLlm 返回有效 JSON)、callLlm 抛错降级 `simpleKeyword` 仍 200、0 atom 返回 `{results: [], embedding_available: false}`
   - **依赖**: 2.5
 
-- [ ] 2.7 **实现 `GET /api/memory/stats`**
+- [x] 2.7 **实现 `GET /api/memory/stats`**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 替换 stats 路由占位。`getAllAtoms(idx)` → 累计 `byType` 计数 + `archivedCount`;`res.json({ total: all.length, archived: archivedCount, byType })`
   - **验证**: 单测加 2 条:空 DB 返回 `{total:0, archived:0, byType:{}}`、3 个不同 type 正确分类

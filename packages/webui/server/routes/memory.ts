@@ -75,7 +75,31 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	});
 	// /api/memory/stats must register BEFORE /api/memory/:id — Express matches in
 	// declaration order, otherwise :id swallows "stats" and returns 404.
-	app.get("/api/memory/stats", (_req, res) => res.status(501).json({ error: "not implemented" }));
+	// (2.7) GET /api/memory/stats — lightweight sqlite-only aggregate. Reads only
+	// the index (no .md bodies). byType is dynamic Record<string, number> (no
+	// fixed 7-type key set). archived counter is exposed alongside total so the
+	// UI can derive active = total - archived without a second query.
+	app.get("/api/memory/stats", async (_req, res) => {
+		try {
+			const idx = new MemoryIndex(deps.dbPath);
+			await idx.init();
+			try {
+				const all = getAllAtoms(idx);
+				const byType: Record<string, number> = {};
+				let archivedCount = 0;
+				for (const a of all) {
+					byType[a.type] = (byType[a.type] ?? 0) + 1;
+					if (a.archived) archivedCount++;
+				}
+				res.json({ total: all.length, archived: archivedCount, byType });
+			} finally {
+				idx.close();
+			}
+		} catch (err) {
+			console.error("[memory stats] error:", err);
+			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+		}
+	});
 	app.get("/api/memory/:id", async (req, res) => {
 		try {
 			const idx = new MemoryIndex(deps.dbPath);
