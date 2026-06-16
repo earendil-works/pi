@@ -580,11 +580,14 @@ export async function handlePackageCommand(
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const writesProjectPackageConfig = (options.command === "install" || options.command === "remove") && options.local;
+	const usesSavedProjectTrustOnly =
+		options.command === "update" ||
+		((options.command === "install" || options.command === "remove") && !options.local);
 	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
 		cwd,
 		agentDir,
 		projectTrustOverride: options.projectTrustOverride,
-		useSavedProjectTrustOnly: options.command === "update",
+		useSavedProjectTrustOnly: usesSavedProjectTrustOnly,
 		extensionFactories: runtimeOptions.extensionFactories,
 	});
 	reportProjectTrustWarnings(projectTrustWarnings);
