@@ -621,6 +621,48 @@ describe("Markdown component", () => {
 				`Expected table to end without a blank line: ${JSON.stringify(plainLines)}`,
 			);
 		});
+
+		it("should not split inline code containing pipe characters into extra columns", () => {
+			// Pipes inside backtick code spans must not be treated as column delimiters.
+			// The markdown parser (marked) splits table rows on | before resolving
+			// inline code spans, so `TFile | null` becomes two cells instead of one.
+			const markdown = new Markdown(
+				`| API | Returns |
+| --- | --- |
+| \`app.workspace.getActiveFile()\` | \`TFile | null\` |
+| \`app.workspace.getActiveViewOfType(T)\` | \`View | null\` |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			// Borders should stay intact: a 2-col table has 3 vertical borders per row.
+			const tableLines = plainLines.filter((line) => line.startsWith("│"));
+			assert.ok(tableLines.length > 0, "Expected table rows to render");
+			for (const line of tableLines) {
+				const borderCount = line.split("│").length - 1;
+				assert.strictEqual(borderCount, 3, `Expected 3 borders (2 cols), got ${borderCount}: "${line}"`);
+			}
+
+			// The full type expression must appear in the rendered output, not just the
+			// part before the pipe.
+			const allText = plainLines.join(" ");
+			assert.ok(
+				allText.includes("TFile | null"),
+				`Expected "TFile | null" in output, got: ${JSON.stringify(plainLines)}`,
+			);
+			assert.ok(
+				allText.includes("View | null"),
+				`Expected "View | null" in output, got: ${JSON.stringify(plainLines)}`,
+			);
+
+			// The inline code should be styled (yellow in defaultMarkdownTheme)
+			const joinedOutput = lines.join("\n");
+			assert.ok(joinedOutput.includes("\x1b[33m"), "Inline code in table cells should be styled (yellow)");
+		});
 	});
 
 	describe("Combined features", () => {

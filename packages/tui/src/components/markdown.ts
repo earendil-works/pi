@@ -5,7 +5,7 @@ import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
-class StrictStrikethroughTokenizer extends Tokenizer {
+class MarkdownTokenizer extends Tokenizer {
 	override del(src: string): Tokens.Del | undefined {
 		const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
 		if (!match) {
@@ -20,11 +20,149 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 			tokens: this.lexer.inlineTokens(text),
 		};
 	}
+
+	override table(src: string): Tokens.Table | undefined {
+		const cap = this.rules.block.table.exec(src);
+		if (!cap) {
+			return;
+		}
+		if (!this.rules.other.tableDelimiter.test(cap[2])) {
+			return;
+		}
+
+		const headers = this.splitCellsRespectingCodeSpans(cap[1]);
+		const aligns = cap[2].replace(this.rules.other.tableAlignChars, "").split("|");
+		const rows = cap[3]?.trim() ? cap[3].replace(this.rules.other.tableRowBlankLine, "").split("\n") : [];
+
+		if (headers.length !== aligns.length) {
+			return;
+		}
+
+		const item: Tokens.Table = {
+			type: "table",
+			raw: cap[0],
+			header: [],
+			align: [],
+			rows: [],
+		};
+
+		for (const align of aligns) {
+			if (this.rules.other.tableAlignRight.test(align)) {
+				item.align.push("right");
+			} else if (this.rules.other.tableAlignCenter.test(align)) {
+				item.align.push("center");
+			} else if (this.rules.other.tableAlignLeft.test(align)) {
+				item.align.push("left");
+			} else {
+				item.align.push(null);
+			}
+		}
+
+		for (let i = 0; i < headers.length; i++) {
+			item.header.push({
+				text: headers[i],
+				tokens: this.lexer.inline(headers[i]),
+				header: true,
+				align: item.align[i],
+			});
+		}
+
+		for (const row of rows) {
+			item.rows.push(
+				this.splitCellsRespectingCodeSpans(row, item.header.length).map((cell, i) => ({
+					text: cell,
+					tokens: this.lexer.inline(cell),
+					header: false,
+					align: item.align[i],
+				})),
+			);
+		}
+
+		return item;
+	}
+
+	/**
+	 * Split a table row into cells, treating `|` inside backtick code spans as
+	 * literal text rather than column delimiters. Also honors `\|` as an escaped
+	 * pipe, matching marked's default table behavior.
+	 */
+	private splitCellsRespectingCodeSpans(tableRow: string, count?: number): string[] {
+		const cells: string[] = [];
+		let current = "";
+		let i = 0;
+
+		while (i < tableRow.length) {
+			const ch = tableRow[i];
+
+			if (ch === "\\" && tableRow[i + 1] === "|") {
+				current += "|";
+				i += 2;
+				continue;
+			}
+
+			if (ch === "`") {
+				const start = i;
+				let openLen = 0;
+				while (i < tableRow.length && tableRow[i] === "`") {
+					openLen++;
+					i++;
+				}
+
+				while (i < tableRow.length) {
+					if (tableRow[i] === "`") {
+						let closeLen = 0;
+						while (i < tableRow.length && tableRow[i] === "`") {
+							closeLen++;
+							i++;
+						}
+						if (closeLen === openLen) {
+							break;
+						}
+					} else {
+						i++;
+					}
+				}
+
+				current += tableRow.slice(start, i);
+				continue;
+			}
+
+			if (ch === "|") {
+				cells.push(current.trim());
+				current = "";
+				i++;
+				continue;
+			}
+
+			current += ch;
+			i++;
+		}
+
+		cells.push(current.trim());
+
+		if (cells[0]?.trim() === "") {
+			cells.shift();
+		}
+		if (cells.length > 0 && cells.at(-1)?.trim() === "") {
+			cells.pop();
+		}
+
+		if (count !== undefined) {
+			while (cells.length < count) {
+				cells.push("");
+			}
+			if (cells.length > count) {
+				cells.length = count;
+			}
+		}
+
+		return cells;
+	}
 }
 
 const markdownParser = new Marked();
 markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
+	tokenizer: new MarkdownTokenizer(),
 });
 
 /**
