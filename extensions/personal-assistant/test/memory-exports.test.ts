@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import {
   getAllAtoms,
   rewriteQueryWithCallLlm,
   searchAtomsWithScores,
+  writeAtomToFile,
   type MemoryAtom,
   type PersonalAssistantConfig,
 } from "../memory.ts";
@@ -294,5 +295,72 @@ describe("searchAtomsWithScores", () => {
 
     // Clean up the hermetic HOME dir we created.
     rmSync(emptyHome, { recursive: true });
+  });
+});
+
+describe("writeAtomToFile", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memory-write-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true });
+  });
+
+  it("writes atom to <customBaseDir>/<type>/<slug>.md with valid frontmatter", () => {
+    const customBase = join(dir, "custom-atoms");
+    const atom = makeAtom({
+      id: "w-1",
+      type: "preference",
+      title: "Use tabs not spaces",
+    });
+    const result = writeAtomToFile(atom, customBase);
+    expect(result.filePath).toBe(join(customBase, "preference", "use-tabs-not-spaces.md"));
+    expect(existsSync(result.filePath)).toBe(true);
+    const content = readFileSync(result.filePath, "utf-8");
+    expect(content).toContain("---");
+    expect(content).toContain("title: Use tabs not spaces");
+    expect(content).toContain("type: preference");
+    // contentHash is sha256 hex (64 chars)
+    expect(result.contentHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("overwrites existing file via tmp+rename (no error on existing)", () => {
+    const customBase = join(dir, "custom-atoms");
+    // Title is kept the same so the slug — and therefore the file path —
+    // stays identical between the two writes. writeAtomToFile derives the
+    // path from slugify(title), so a PATCH that only changes summary /
+    // content / updated_at / version writes to the same path and exercises
+    // the tmp+rename overwrite branch.
+    const atom1 = makeAtom({
+      id: "w-2",
+      type: "knowledge",
+      title: "First version",
+      summary: "v1",
+      content: "body v1",
+    });
+    const result1 = writeAtomToFile(atom1, customBase);
+    expect(existsSync(result1.filePath)).toBe(true);
+    const beforeContent = readFileSync(result1.filePath, "utf-8");
+    expect(beforeContent).toContain("title: First version");
+    expect(beforeContent).toContain("summary: v1");
+
+    const atom2: MemoryAtom = {
+      ...atom1,
+      summary: "v2 updated",
+      content: "body v2",
+      updated_at: new Date().toISOString(),
+      version: atom1.version + 1,
+    };
+    expect(() => writeAtomToFile(atom2, customBase)).not.toThrow();
+    // Same slug → same path; tmp+rename overwrites in place.
+    expect(existsSync(result1.filePath)).toBe(true);
+    const afterContent = readFileSync(result1.filePath, "utf-8");
+    expect(afterContent).toContain("title: First version");
+    expect(afterContent).toContain("summary: v2 updated");
+    expect(afterContent).toContain("body v2");
+    expect(afterContent).not.toContain("summary: v1");
   });
 });
