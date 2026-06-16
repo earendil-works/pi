@@ -23,7 +23,7 @@ import type { Database, Statement } from "./sqlite.ts";
 // Types
 // ============================================================================
 
-type MemoryAtomType =
+export type MemoryAtomType =
   | "constraint"
   | "preference"
   | "workflow"
@@ -32,7 +32,7 @@ type MemoryAtomType =
   | "solution"
   | "insight";
 
-interface MemoryAtom {
+export interface MemoryAtom {
   id: string;
   type: MemoryAtomType;
   title: string;
@@ -131,8 +131,8 @@ const PI_DIR = join(homedir(), ".pi");
 const AGENT_DIR = join(PI_DIR, "agent");
 const SETTINGS_PATH = join(AGENT_DIR, "settings.json");
 const DATA_DIR = join(AGENT_DIR, "data");
-const MEMORY_DB_PATH = join(DATA_DIR, "memory.db");
-const ATOMS_DIR = join(DATA_DIR, "memory", "atoms");
+export const MEMORY_DB_PATH = join(DATA_DIR, "memory.db");
+export const ATOMS_DIR = join(DATA_DIR, "memory", "atoms");
 const REPORTS_DIR = join(DATA_DIR, "memory", "reports");
 
 const DEFAULT_BASE_DECAY = 0.05;
@@ -413,7 +413,7 @@ function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }
 // MemoryIndex — SQLite FTS5
 // ============================================================================
 
-class MemoryIndex {
+export class MemoryIndex {
   private db: Database | null = null;
   private dbPath: string;
 
@@ -654,7 +654,7 @@ class MemoryIndex {
 // Atom File Storage
 // ============================================================================
 
-function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom | null {
+export function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom | null {
   if (!existsSync(filePath)) return null;
 
   const raw = readFileSync(filePath, "utf-8");
@@ -725,7 +725,7 @@ function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom |
   };
 }
 
-function writeAtomToFile(atom: MemoryAtom, baseDir?: string): { filePath: string; contentHash: string } {
+export function writeAtomToFile(atom: MemoryAtom, baseDir?: string): { filePath: string; contentHash: string } {
   const dir = join(baseDir ?? ATOMS_DIR, atom.type);
   ensureDir(dir);
 
@@ -783,7 +783,7 @@ function simpleKeywordExtraction(query: string): QueryRewriteResult {
   };
 }
 
-async function rewriteQuery(
+export async function rewriteQuery(
   query: string,
   ctx: ExtensionContext,
   config: PersonalAssistantConfig,
@@ -967,7 +967,7 @@ async function searchEmbeddings(
   return result;
 }
 
-async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
+export async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
   const candidates: Array<{ atom: MemoryAtom; score: number }> = [];
 
   if (query.keywords.length > 0) {
