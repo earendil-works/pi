@@ -24,7 +24,7 @@ pkgs.buildNpmPackage {
   version = codingAgentPackage.version;
   src = import ./package-source.nix { inherit lib srcRoot; };
 
-  npmDepsHash = "sha256-y3wwz0orFrUPu4XRJnHRkO9x9s+GMtBP/2g7kN336vQ=";
+  npmDepsHash = "sha256-fVsU+TkX9XSDsb0/h53pug/oXwD8lle5blWlw6hbfDw=";
   npmFlags = [ "--ignore-scripts" ];
   npmRebuildFlags = [ "--ignore-scripts" ];
 

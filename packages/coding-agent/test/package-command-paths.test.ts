@@ -254,6 +254,54 @@ describe("package commands", () => {
 		}
 	});
 
+	it("does not ask extensions for project trust during global package removal", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(agentDir, "npm"), { recursive: true });
+		const fakeNpmPath = join(tempDir, "fake-remove-npm.cjs");
+		const recordPath = join(tempDir, "global-remove.json");
+		writeFileSync(
+			fakeNpmPath,
+			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-lean-ctx"], npmCommand: [originalExecPath, fakeNpmPath] }),
+		);
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		let projectTrustCalled = false;
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		try {
+			await expect(
+				main(["remove", "npm:pi-lean-ctx"], {
+					extensionFactories: [
+						(pi) => {
+							pi.on("project_trust", () => {
+								projectTrustCalled = true;
+								return { trusted: "yes" };
+							});
+						},
+					],
+				}),
+			).resolves.toBeUndefined();
+
+			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
+			const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")) as { packages?: string[] };
+			expect(projectTrustCalled).toBe(false);
+			expect(recordedArgs).toEqual([
+				"uninstall",
+				"pi-lean-ctx",
+				"--prefix",
+				join(agentDir, "npm"),
+				"--legacy-peer-deps",
+			]);
+			expect(settings.packages ?? []).toEqual([]);
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
 	it("uses saved project trust during update", async () => {
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");

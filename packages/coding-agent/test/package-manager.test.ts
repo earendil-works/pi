@@ -743,6 +743,52 @@ Content`,
 			);
 		});
 
+		it("should use legacy peer deps for npm package uninstalls", async () => {
+			mkdirSync(join(agentDir, "npm"), { recursive: true });
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.remove("npm:pi-lean-ctx");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"npm",
+				["uninstall", "pi-lean-ctx", "--prefix", join(agentDir, "npm"), "--legacy-peer-deps"],
+				undefined,
+			);
+		});
+
+		it("should use peer-relaxed pnpm args for npm package uninstalls", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["mise", "exec", "node@20", "--", "pnpm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+			mkdirSync(join(agentDir, "npm"), { recursive: true });
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.remove("npm:pi-lean-ctx");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"mise",
+				[
+					"exec",
+					"node@20",
+					"--",
+					"pnpm",
+					"uninstall",
+					"pi-lean-ctx",
+					"--prefix",
+					join(agentDir, "npm"),
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				],
+				undefined,
+			);
+		});
+
 		it("should install git package dependencies with --omit=dev", async () => {
 			const source = "git:github.com/user/repo";
 			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
@@ -1088,13 +1134,9 @@ Content`,
 		it("should emit progress events on install attempt", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
+			vi.spyOn(packageManager as any, "runCommand").mockRejectedValue(new Error("install failed"));
 
-			// Use public install method which emits progress events
-			try {
-				await packageManager.install("npm:nonexistent-package@1.0.0");
-			} catch {
-				// Expected to fail - package doesn't exist
-			}
+			await expect(packageManager.install("npm:nonexistent-package@1.0.0")).rejects.toThrow("install failed");
 
 			// Should have emitted start event before failure
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);

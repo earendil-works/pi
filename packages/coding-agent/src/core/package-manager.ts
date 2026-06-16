@@ -1757,6 +1757,25 @@ export class DefaultPackageManager implements PackageManager {
 		return ["install", ...specs, "--prefix", installRoot, "--legacy-peer-deps"];
 	}
 
+	private getNpmUninstallArgs(packageName: string, installRoot: string): string[] {
+		const packageManagerName = this.getPackageManagerName();
+		if (packageManagerName === "bun") {
+			return ["uninstall", packageName, "--cwd", installRoot];
+		}
+		if (packageManagerName === "pnpm") {
+			return [
+				"uninstall",
+				packageName,
+				"--prefix",
+				installRoot,
+				"--config.auto-install-peers=false",
+				"--config.strict-peer-dependencies=false",
+				"--config.strict-dep-builds=false",
+			];
+		}
+		return ["uninstall", packageName, "--prefix", installRoot, "--legacy-peer-deps"];
+	}
+
 	private async installNpm(source: NpmSource, scope: SourceScope, temporary: boolean): Promise<void> {
 		const installRoot = this.getNpmInstallRoot(scope, temporary);
 		this.ensureNpmProject(installRoot);
@@ -1768,11 +1787,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(installRoot)) {
 			return;
 		}
-		if (this.getPackageManagerName() === "bun") {
-			await this.runNpmCommand(["uninstall", source.name, "--cwd", installRoot]);
-			return;
-		}
-		await this.runNpmCommand(["uninstall", source.name, "--prefix", installRoot]);
+		await this.runNpmCommand(this.getNpmUninstallArgs(source.name, installRoot));
 	}
 
 	private async installGit(source: GitSource, scope: SourceScope): Promise<void> {
