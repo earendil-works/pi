@@ -22,25 +22,25 @@
 
 ## 1. 基础:personal-assistant 公共 API
 
-- [ ] 1.1 **导出 `MemoryIndex` / `MemoryAtom` / `MemoryAtomType` 类型与已有函数**
+- [x] 1.1 **导出 `MemoryIndex` / `MemoryAtom` / `MemoryAtomType` 类型与已有函数**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 把 `interface MemoryAtom`(line 35)、`type MemoryAtomType`(line 26)、`class MemoryIndex`(line 416)、`function writeAtomToFile`(line 728)、`function readAtomFromFile`(line 657)、`function searchAtoms`(line 970)、`function rewriteQuery`(line 786)、`const ATOMS_DIR`(line 135)、`const MEMORY_DB_PATH`(line 134) 全部加 `export` 关键字。**不改任何函数体/逻辑,只加 export 前缀**。改完跑 `tsgo --noEmit` 确认编译通过
   - **验证**: `cd /home/qjh/workspace/personal/pi && npx tsgo --noEmit -p packages/webui/tsconfig.json 2>&1 | head -20` 应无 TS 错误(此任务只加 export,不应有 type error)
   - **依赖**: 无
 
-- [ ] 1.2 **新增 `getAllAtoms(index)` standalone helper**
+- [x] 1.2 **新增 `getAllAtoms(index)` standalone helper**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 在 module scope(不是 class 内)新增 `function getAllAtoms(index: MemoryIndex): MemoryAtom[]`,等价于 `index.getAllRows()`(line 647)后通过 `(rowToAtom as any).call(index, row)` 转换(或新写一个 public `getAllAtoms` class 方法 + 一个 module-level wrapper `getAllAtoms(index) => index.getAllAtoms()`)。**关键:这是 module-level 函数(可独立 export 和 import),不是仅 class 方法**——因为 server 端 route 会写 `import { getAllAtoms } from "..."; getAllAtoms(idx)`,需要 free function。位置:紧跟 `searchAtoms` 之后(模块层,非类内)
   - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 跑 RED → 实现 → 跑 GREEN
   - **依赖**: 1.1
 
-- [ ] 1.3 **新增 `MemoryIndex.invalidateEmbedding(id)` 方法**
+- [x] 1.3 **新增 `MemoryIndex.invalidateEmbedding(id)` 方法**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 在 `class MemoryIndex` 上新增 public 方法 `invalidateEmbedding(id: string): void`,执行 `db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id)`,内部用 `this.ensureDb()` 拿 db 句柄。位置:紧跟 `upsertEmbedding`(line 516)之后。**不 export `db` 字段**——保持封装
   - **验证**: 同 1.2,新增 `invalidateEmbedding` 测试条目
   - **依赖**: 1.1
 
-- [ ] 1.4 **新增 `rewriteQueryWithCallLlm(callLlm, query, config)` helper**
+- [x] 1.4 **新增 `rewriteQueryWithCallLlm(callLlm, query, config)` helper**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 复制 `rewriteQuery`(line 786-840)的 LLM 路径,**把 `ctx.modelRegistry` 调 LLM 替换成 `callLlm(prompt)` 回调**;配置读取(`getMemoryConfig`)、prompt 构造(`buildRewritePrompt`)、JSON 解析(`parseRewriteJson`)、降级(`simpleKeywordExtraction`)全部复用。返回 `Promise<QueryRewriteResult>`。LLM 抛错时降级到 `simpleKeywordExtraction(query)`(line 771)。位置:紧跟 `rewriteQuery` 之后
   - **验证**: 同 1.2,新增 `rewriteQueryWithCallLlm` 测试条目(正常 LLM 返回 + 抛错降级两条)
@@ -63,7 +63,15 @@
   - **验证**: 同 1.2,新增 `searchAtomsWithScores` 测试条目(有 embedding + 无 embedding 两条)
   - **依赖**: 1.1
 
-- [ ] 1.6 **`extensions/personal-assistant/index.ts` re-export 新增 symbols**
+- [x] 1.5b **plumb config 到 `searchEmbeddings` + `searchAtomsWithScores` (review fix)**
+  - **文件**: `extensions/personal-assistant/memory.ts` (Modify), `extensions/personal-assistant/test/memory-exports.test.ts` (Modify)
+  - **内容**: 把 `searchEmbeddings` 改为 `async function searchEmbeddings(index: MemoryIndex, queryText: string, candidateIds: string[], config?: PersonalAssistantConfig)`,把 `const config = loadConfig()`(line 977)替换为 `const config = passedConfig ?? loadConfig()`。把 `searchAtomsWithScores` 改为 `async function searchAtomsWithScores(index: MemoryIndex, query: QueryRewriteResult, topK: number, config?: PersonalAssistantConfig)`,把传入的 config 转发给 `searchEmbeddings`。`searchAtoms` 调用 `searchEmbeddings` 处也补一个 undefined 即可(向后兼容)。这样:
+    - 测试 1 hermetic: 测试显式传 `config: { memory: { embedding: { provider: "local", model: "nomic-embed-text" } } }`,不再依赖 `~/.pi/agent/settings.json`
+    - Server 端 level 2 task 2.6: 调用 `searchAtomsWithScores(idx, rewritten, topK, deps.settings)`,server 决定走哪条 embedding 配置
+  - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 8 个测试都过;`HOME=/tmp/empty-home` 跑同一个命令也全过
+  - **依赖**: 1.5
+
+- [x] 1.6 **`extensions/personal-assistant/index.ts` re-export 新增 symbols**
   - **文件**: `extensions/personal-assistant/index.ts` (Modify)
   - **内容**: 在 `export { runMemoryExtraction };` 那一行(line 14)下方加:
     ```typescript
@@ -84,7 +92,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi/packages/webui && npx tsgo --noEmit 2>&1 | head -20` 应无 TS 错误;`grep -E "^export" extensions/personal-assistant/index.ts` 至少 8 行
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 1.5
 
-- [ ] 1.7 **个人助理新 helper 单测文件**
+- [x] 1.7 **个人助理新 helper 单测文件**
   - **文件**: `extensions/personal-assistant/test/memory-exports.test.ts` (Create)
   - **内容**: 覆盖以下 8 条单测(先 RED 后 GREEN,每个测试独立 `mkdtempSync` + `MemoryIndex(dbPath)` + `init()` + 收尾 `close()` + `rmSync`):
     1. `getAllAtoms` 返回含 archived 的全量
@@ -99,7 +107,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 8 个测试全绿
   - **依赖**: 1.2, 1.3, 1.4, 1.5
 
-- [ ] 1.8 **个人助理 + 根目录 `npm run check`**
+- [x] 1.8 **个人助理 + 根目录 `npm run check`**
   - **文件**: 无(纯命令)
   - **内容**: 跑 `cd /home/qjh/workspace/personal/pi && npm run check` 全过,无 biome / tsgo / shrinkwrap / browser-smoke / pinned-deps / ts-imports 报错
   - **验证**: 命令退出码 0
@@ -107,7 +115,7 @@
 
 ## 2. Server:memory REST 路由
 
-- [ ] 2.1 **`packages/webui/server/routes/memory.ts` 路由骨架**
+- [x] 2.1 **`packages/webui/server/routes/memory.ts` 路由骨架**
   - **文件**: `packages/webui/server/routes/memory.ts` (Create)
   - **内容**: 写 `mountMemoryRoutes(app, deps: { dbPath: string; atomsDir: string; settings: PersonalAssistantConfig; callLlm: (prompt: string) => Promise<string> })` 函数,先在函数体里 6 个 `app.get`/`app.patch`/`app.post` 占位返回 501(便于先建好路由表,后续子任务填实)。导入从 `@earendil-works/pi-personal-assistant` 拿 `MemoryIndex, MemoryAtom, writeAtomToFile, readAtomFromFile, getAllAtoms, rewriteQueryWithCallLlm, searchAtomsWithScores, ATOMS_DIR, MEMORY_DB_PATH`;从 `node:fs` 拿 `unlinkSync`;从 `node:os` 拿 `homedir`(不用,因 deps 传路径)。**TDD**:先写 `packages/webui/server/test/memory-routes.test.ts` 第一个测试"6 路由都返回 501 + route 路径正确",再实现
   - **验证**: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` 单测绿
