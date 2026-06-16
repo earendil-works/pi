@@ -82,7 +82,7 @@
     ```
     类型 export 和 value export 严格分开(TS 规则)
   - **验证**: `cd /home/qjh/workspace/personal/pi/packages/webui && npx tsgo --noEmit 2>&1 | head -20` 应无 TS 错误;`grep -E "^export" extensions/personal-assistant/index.ts` 至少 8 行
-  - **依赖**: 1.1-1.5
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 1.5
 
 - [ ] 1.7 **个人助理新 helper 单测文件**
   - **文件**: `extensions/personal-assistant/test/memory-exports.test.ts` (Create)
@@ -97,7 +97,7 @@
     8. `searchAtomsWithScores` 无 embedding(`embConfig.provider !== "local"` 或 `searchEmbeddings` 返回空 Map)时 `embedding_available: false`、纯 FTS 分支
     `callLlm` mock 用 `vi.fn().mockResolvedValue('{"keywords":["x"],"target_types":["preference"]}')` 和 `vi.fn().mockRejectedValue(new Error("LLM down"))`。ts-imports check 要求相对 import,所以 `import { ... } from "../memory.ts"`
   - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 8 个测试全绿
-  - **依赖**: 1.2-1.5
+  - **依赖**: 1.2, 1.3, 1.4, 1.5
 
 - [ ] 1.8 **个人助理 + 根目录 `npm run check`**
   - **文件**: 无(纯命令)

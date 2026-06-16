@@ -1,0 +1,11 @@
+phase: develop
+workflow: full
+change: webui-memory-page
+created_at: 2026-06-16
+base_ref: 5cb6242777cd58a9f67074209da877ba697bd62e
+tasks_total: 0
+tasks_done: 0
+isolation: null
+verify_result: null
+last_review_sha: null
+archived: false
