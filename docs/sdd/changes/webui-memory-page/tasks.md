@@ -14,6 +14,8 @@
   - `无` — no dependency
   - `1.1, 2.3` — comma-separated task IDs that must complete first
   - **Task ID format:** `<section>.<task>[letter]` where letter is single lowercase char
+- **Section 2 顺序约束**: 2.2-2.7 都改同一文件 `routes/memory.ts`,**为避免合并冲突(并行改同一文件)刻意串行**;并非逻辑依赖。如果实现者愿意,可以拆成每个任务一个独立 file patch,允许 2.6/2.7 并行,但 v1 简单起见串行
+- **Section 4 部分可并行**: 4.1/4.3/4.4 互不依赖(分别改 3 个不同的 tsx 文件),可与 4.2 并行;但本任务表保守按线性顺序列,实际跑 sdd-develop 时 sub-agent 调度决定
 - **TDD inside each task**: 写失败测试 → 跑确认 RED → 实现 → 跑确认 GREEN → commit
 - **测试运行**: 个人助理测试 `node ../../node_modules/vitest/dist/cli.js --run test/<file>.test.ts`(从 extension 包根);webui server 测试同命令从 `packages/webui`(已配 vitest.config)
 - **范围外**(明确不做):create/delete atom、编辑后立即重算 embedding、TUI↔webui WebSocket 实时同步、版本历史、bulk 操作、`$EDITOR` 集成、slug 冲突修复(已有 bug,v2)
@@ -26,9 +28,9 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && npx tsgo --noEmit -p packages/webui/tsconfig.json 2>&1 | head -20` 应无 TS 错误(此任务只加 export,不应有 type error)
   - **依赖**: 无
 
-- [ ] 1.2 **新增 `getAllAtoms(index)` helper**
+- [ ] 1.2 **新增 `getAllAtoms(index)` standalone helper**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
-  - **内容**: 在 `class MemoryIndex` 上新增 public 方法 `getAllAtoms(): MemoryAtom[]`,等价于现有 `getActiveAtoms()`(line 551)但**不过滤 archived**。可基于 `getAllRows()`(line 647) + `rowToAtom` 实现,或写一条新的 `SELECT * FROM memory_index` SQL。位置:紧跟 `getAtomsByType` 之后
+  - **内容**: 在 module scope(不是 class 内)新增 `function getAllAtoms(index: MemoryIndex): MemoryAtom[]`,等价于 `index.getAllRows()`(line 647)后通过 `(rowToAtom as any).call(index, row)` 转换(或新写一个 public `getAllAtoms` class 方法 + 一个 module-level wrapper `getAllAtoms(index) => index.getAllAtoms()`)。**关键:这是 module-level 函数(可独立 export 和 import),不是仅 class 方法**——因为 server 端 route 会写 `import { getAllAtoms } from "..."; getAllAtoms(idx)`,需要 free function。位置:紧跟 `searchAtoms` 之后(模块层,非类内)
   - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 跑 RED → 实现 → 跑 GREEN
   - **依赖**: 1.1
 
@@ -232,7 +234,7 @@
   - **文件**: `packages/webui/web/src/components/memory/MemoryTypeBadge.tsx` (Create)
   - **内容**: 7 种 type 各自颜色 chip:constraint=red,preference=blue,workflow=purple,knowledge=green,event=amber,solution=indigo,insight=pink。Props: `{type: MemoryAtomType}`。复用 webui 现有 `Badge`-ish 风格(`bg-{color}-100 text-{color}-800 rounded px-2 py-0.5 text-xs`)
   - **验证**: vitest 渲染 7 个 type 各 1 次,断言 className 含正确颜色
-  - **依赖**: 3.2
+  - **依赖**: 3.1
 
 - [ ] 4.2 **`MemoryList` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemoryList.tsx` (Create)
@@ -242,21 +244,21 @@
 
 - [ ] 4.3 **`MemorySearchTester` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemorySearchTester.tsx` (Create)
-  - **内容**: 折叠面板(`<details>` 即可,无需动画)。展开后:query input + Search 按钮、结果区显示 `keywords` chips + `target_types` chips + `embedding_available` 标签(不可用时显示"embedding unavailable"灰底)+ 结果列表,每条 hover 显示 `{fts: 0.8, cos: 0.6, hybrid: 0.71, str: 0.9, imp: 0.7}`,点击跳到 detail
+  - **内容**: 折叠面板(`<details>` 即可,无需动画)。展开后:query input + Search 按钮、结果区显示 `keywords` chips + `target_types` chips + `embedding_available` 标签(不可用时显示"embedding unavailable"灰底)+ 结果列表,每行 `MemoryTypeBadge` + title + hover 显示 `{fts: 0.8, cos: 0.6, hybrid: 0.71, str: 0.9, imp: 0.7}`,点击跳到 detail
   - **验证**: vitest + RTL 模拟 `api.memory.search` 返回 mock,断言结果渲染 + 分数 tooltip 出现
-  - **依赖**: 4.2
+  - **依赖**: 3.1, 4.1
 
 - [ ] 4.4 **`MemoryEditor` 组件(metadata + body)**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Create)
   - **内容**: Props: `{atom: MemoryAtom; onSave: (patch: Partial<MemoryAtom>) => Promise<void>; onArchive: () => void}`。上半 metadata form:title input、type select、importance slider(0-1,step 0.05)、tags chip input、summary textarea。下半 body editor:Edit/Preview tab(Edit 是 textarea 60vh + 内部滚动,Preview 用 webui 现有 `Markdown` 组件渲染)。所有字段改动汇聚成 `patch: Partial<MemoryAtom>`,传给父组件传入的 `onSave`。**注意:本任务不调 `useAutoSave`**,由父组件 `MemoryDetail` 决定 debounce 时机
   - **验证**: vitest + RTL 模拟 onSave,改 title 后断言 onSave 拿到 `{title: "new"}`、content 不在 patch 里
-  - **依赖**: 4.3
+  - **依赖**: 3.1, 4.1
 
 - [ ] 4.5 **`MemoryDetail` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemoryDetail.tsx` (Create)
   - **内容**: Props: `{id: string; onArchive: (id) => void; onListRefresh: () => void}`。内部 state: `atom` (DB 拿的)、`localAtom` (in-flight edit)、`error`。`useEffect` 拉 `api.memory.get(id)` + 3s 轮询。把 `localAtom` 传给 `useAutoSave(localAtom, (v) => api.memory.patch(id, v), 3000)`,header 显示状态条(Saving…/Saved Ns ago/error)+ Archive 按钮(直接调 `onArchive(id)`,不走 debounce)。header 旁边显示 Read-only metadata 行(strength/importance/access_count/created_at/updated_at/last_access/file_path),让用户看清 DB 状态
   - **验证**: vitest + RTL 模拟 api.memory.get/patch,改 title 后 3s 触发 patch;mock 失败时显示红色 error
-  - **依赖**: 4.4
+  - **依赖**: 3.1, 3.2, 4.4
 
 - [ ] 4.6 **`MemoryPage` 装配**
   - **文件**: `packages/webui/web/src/pages/MemoryPage.tsx` (Create)
