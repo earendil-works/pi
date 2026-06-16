@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createDatabase } from "../sqlite.ts";
 import { MemoryIndex, getAllAtoms, type MemoryAtom } from "../memory.ts";
 
 function makeAtom(overrides: Partial<MemoryAtom> = {}): MemoryAtom {
@@ -76,5 +77,54 @@ describe("getAllAtoms", () => {
 
   it("returns empty array when no atoms", () => {
     expect(getAllAtoms(index)).toEqual([]);
+  });
+});
+
+describe("MemoryIndex.invalidateEmbedding", () => {
+  let dir: string;
+  let index: MemoryIndex;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "memory-invalidate-test-"));
+    dbPath = join(dir, "test.db");
+    index = new MemoryIndex(dbPath);
+    await index.init();
+  });
+
+  afterEach(() => {
+    index.close();
+    rmSync(dir, { recursive: true });
+  });
+
+  it("removes the embedding row for the given atom id", async () => {
+    // Setup: insert an atom and an embedding for it
+    const atom = makeAtom({ id: "test-1", title: "Test 1" });
+    index.upsertAtom(atom);
+    index.upsertEmbedding("test-1", new Array(8).fill(0.1));
+
+    // Verify the embedding exists via a fresh connection
+    {
+      const checkDb = await createDatabase(dbPath);
+      const before = checkDb
+        .prepare("SELECT 1 FROM memory_embeddings WHERE id = ?")
+        .get("test-1");
+      expect(before).toBeDefined();
+      checkDb.close();
+    }
+
+    // Act: invalidate the embedding
+    index.invalidateEmbedding("test-1");
+
+    // Assert: no row for "test-1"
+    const checkDb = await createDatabase(dbPath);
+    try {
+      const after = checkDb
+        .prepare("SELECT 1 FROM memory_embeddings WHERE id = ?")
+        .get("test-1");
+      expect(after).toBeUndefined();
+    } finally {
+      checkDb.close();
+    }
   });
 });

@@ -521,6 +521,15 @@ export class MemoryIndex {
     `).run(id, JSON.stringify(embedding));
   }
 
+  /**
+   * 清除指定 atom 的 embedding 缓存。
+   * 编辑 body 后 server 端 PATCH 调此方法使下次 searchAtoms 触发重算。
+   */
+  invalidateEmbedding(id: string): void {
+    const db = this.ensureDb();
+    db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
+  }
+
   getEmbedding(id: string): number[] | null {
     const db = this.ensureDb();
     const row = db.prepare("SELECT embedding FROM memory_embeddings WHERE id = ?").get(id) as { embedding: string } | undefined;
