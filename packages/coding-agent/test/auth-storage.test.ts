@@ -134,6 +134,34 @@ describe("AuthStorage", () => {
 			}
 		});
 
+		test("apiKey env bag takes precedence over process.env", async () => {
+			const originalEnv = process.env.TEST_AUTH_SCOPED_API_KEY_12345;
+			process.env.TEST_AUTH_SCOPED_API_KEY_12345 = "process-env-value";
+
+			try {
+				writeAuthJson({
+					anthropic: {
+						type: "api_key",
+						key: "$TEST_AUTH_SCOPED_API_KEY_12345",
+						env: { TEST_AUTH_SCOPED_API_KEY_12345: "credential-env-value" },
+					},
+				});
+
+				authStorage = AuthStorage.create(authJsonPath);
+
+				expect(await authStorage.getApiKey("anthropic")).toBe("credential-env-value");
+				expect(authStorage.getProviderEnv("anthropic")).toEqual({
+					TEST_AUTH_SCOPED_API_KEY_12345: "credential-env-value",
+				});
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.TEST_AUTH_SCOPED_API_KEY_12345;
+				} else {
+					process.env.TEST_AUTH_SCOPED_API_KEY_12345 = originalEnv;
+				}
+			}
+		});
+
 		test("apiKey with braced env syntax resolves to env value", async () => {
 			const originalEnv = process.env.TEST_AUTH_BRACED_API_KEY_12345;
 			process.env.TEST_AUTH_BRACED_API_KEY_12345 = "braced-env-api-key-value";

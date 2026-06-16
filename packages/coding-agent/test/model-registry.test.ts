@@ -893,6 +893,38 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
+		test("stored API key env propagates to request auth and resolves headers", async () => {
+			authStorage.set("cloudflare-ai-gateway", {
+				type: "api_key",
+				key: "$CLOUDFLARE_API_KEY",
+				env: {
+					CLOUDFLARE_API_KEY: "stored-cf-token",
+					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+				},
+			});
+			writeRawModelsJson({
+				"cloudflare-ai-gateway": {
+					headers: { "x-account": "$CLOUDFLARE_ACCOUNT_ID" },
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.getAll().find((m) => m.provider === "cloudflare-ai-gateway");
+			expect(model).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(model!);
+
+			expect(auth).toEqual({
+				ok: true,
+				apiKey: "stored-cf-token",
+				headers: { "x-account": "stored-account" },
+				env: {
+					CLOUDFLARE_API_KEY: "stored-cf-token",
+					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+				},
+			});
+		});
+
 		test("registerProvider treats uppercase apiKey and headers as literals", async () => {
 			const envKeys = ["CUSTOM_NAME", "BEARER", "MODEL_TOKEN"];
 			const savedEnv: Record<string, string | undefined> = {};

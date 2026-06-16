@@ -24,7 +24,7 @@ function withEnvApiKey<TOptions extends StreamOptions>(
 	options: TOptions | undefined,
 ): TOptions | undefined {
 	if (hasExplicitApiKey(options?.apiKey)) return options;
-	const apiKey = getEnvApiKey(model.provider);
+	const apiKey = getEnvApiKey(model.provider, options?.env);
 	if (!apiKey) return options;
 	return { ...options, apiKey } as TOptions;
 }

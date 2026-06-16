@@ -85,8 +85,8 @@ function parseConfigValueReference(config: string): ConfigValueReference {
 	return { type: "template", parts: parseConfigValueTemplate(config) };
 }
 
-function resolveEnvConfigValue(name: string): string | undefined {
-	return process.env[name] || undefined;
+function resolveEnvConfigValue(name: string, env?: Record<string, string>): string | undefined {
+	return env?.[name] || process.env[name] || undefined;
 }
 
 function getTemplateEnvVarNames(parts: TemplatePart[]): string[] {
@@ -98,14 +98,14 @@ function getTemplateEnvVarNames(parts: TemplatePart[]): string[] {
 	return names;
 }
 
-function resolveTemplate(parts: TemplatePart[]): string | undefined {
+function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): string | undefined {
 	let resolved = "";
 	for (const part of parts) {
 		if (part.type === "literal") {
 			resolved += part.value;
 			continue;
 		}
-		const envValue = resolveEnvConfigValue(part.name);
+		const envValue = resolveEnvConfigValue(part.name, env);
 		if (envValue === undefined) return undefined;
 		resolved += envValue;
 	}
@@ -123,16 +123,16 @@ export function getConfigValueEnvVarNames(config: string): string[] {
 	return reference.type === "template" ? getTemplateEnvVarNames(reference.parts) : [];
 }
 
-export function getMissingConfigValueEnvVarNames(config: string): string[] {
-	return getConfigValueEnvVarNames(config).filter((name) => resolveEnvConfigValue(name) === undefined);
+export function getMissingConfigValueEnvVarNames(config: string, env?: Record<string, string>): string[] {
+	return getConfigValueEnvVarNames(config).filter((name) => resolveEnvConfigValue(name, env) === undefined);
 }
 
 export function isCommandConfigValue(config: string): boolean {
 	return parseConfigValueReference(config).type === "command";
 }
 
-export function isConfigValueConfigured(config: string): boolean {
-	return getMissingConfigValueEnvVarNames(config).length === 0;
+export function isConfigValueConfigured(config: string, env?: Record<string, string>): boolean {
+	return getMissingConfigValueEnvVarNames(config, env).length === 0;
 }
 
 /**
@@ -142,12 +142,12 @@ export function isConfigValueConfigured(config: string): boolean {
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
  * - Otherwise treats the value as a literal
  */
-export function resolveConfigValue(config: string): string | undefined {
+export function resolveConfigValue(config: string, env?: Record<string, string>): string | undefined {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		return executeCommand(reference.config);
 	}
-	return resolveTemplate(reference.parts);
+	return resolveTemplate(reference.parts, env);
 }
 
 function executeWithConfiguredShell(command: string): { executed: boolean; value: string | undefined } {
@@ -216,16 +216,16 @@ function executeCommand(commandConfig: string): string | undefined {
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveConfigValueUncached(config: string): string | undefined {
+export function resolveConfigValueUncached(config: string, env?: Record<string, string>): string | undefined {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		return executeCommandUncached(reference.config);
 	}
-	return resolveTemplate(reference.parts);
+	return resolveTemplate(reference.parts, env);
 }
 
-export function resolveConfigValueOrThrow(config: string, description: string): string {
-	const resolvedValue = resolveConfigValueUncached(config);
+export function resolveConfigValueOrThrow(config: string, description: string, env?: Record<string, string>): string {
+	const resolvedValue = resolveConfigValueUncached(config, env);
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
 	}
@@ -236,7 +236,7 @@ export function resolveConfigValueOrThrow(config: string, description: string): 
 	}
 
 	if (reference.type === "template") {
-		const missingEnvVars = getMissingConfigValueEnvVarNames(config);
+		const missingEnvVars = getMissingConfigValueEnvVarNames(config, env);
 		if (missingEnvVars.length === 1) {
 			throw new Error(`Failed to resolve ${description} from environment variable: ${missingEnvVars[0]}`);
 		}
@@ -251,11 +251,14 @@ export function resolveConfigValueOrThrow(config: string, description: string): 
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+export function resolveHeaders(
+	headers: Record<string, string> | undefined,
+	env?: Record<string, string>,
+): Record<string, string> | undefined {
 	if (!headers) return undefined;
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
-		const resolvedValue = resolveConfigValue(value);
+		const resolvedValue = resolveConfigValue(value, env);
 		if (resolvedValue) {
 			resolved[key] = resolvedValue;
 		}
@@ -266,11 +269,12 @@ export function resolveHeaders(headers: Record<string, string> | undefined): Rec
 export function resolveHeadersOrThrow(
 	headers: Record<string, string> | undefined,
 	description: string,
+	env?: Record<string, string>,
 ): Record<string, string> | undefined {
 	if (!headers) return undefined;
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
-		resolved[key] = resolveConfigValueOrThrow(value, `${description} header "${key}"`);
+		resolved[key] = resolveConfigValueOrThrow(value, `${description} header "${key}"`, env);
 	}
 	return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
