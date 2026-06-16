@@ -20,6 +20,14 @@
 - **THEN** 调 `PATCH /api/memory/:id` `{title: "new"}`；header 显示 `Saving…`
   → `Saved 1s ago`；list 中对应行同步刷新
 
+### 场景: metadata 改动不破坏 body
+- **GIVEN** atom 磁盘上 body 是 5KB markdown
+- **WHEN** PATCH 只传 `{title: "new title"}`，不传 `content`
+- **THEN** server 读 `currentBody`（从磁盘 readAtomFromFile 拿）→ 写新
+  frontmatter + 同一 body → 文件 hash 变（frontmatter `updated_at` 变了）、
+  file_path 变（slug 变了）；磁盘上 .md 文件的 body 部分字节级保持，
+  仅 frontmatter 行变了
+
 ### 场景: 编辑 body（content）触发 .md 重写
 - **GIVEN** body textarea 当前内容 hash 为 `H1`，文件路径 `P1`
 - **WHEN** user 改了 body 内容，3s 后触发保存
@@ -165,3 +173,13 @@
 - **WHEN** unmount
 - **THEN** cleanup 检测无 pending save，无 in-flight fetch，直接放行；如果有
   pending PATCH，await 但加 200ms 兜底超时（防止后端挂死时页面卡住）
+
+### 场景: 两个 atom 同 title 触发 slug 冲突
+- **GIVEN** DB 已有 atom A 和 atom B，两者 title 都是 "用 Rust 重写"，
+  `writeAtomToFile` 都写到 `atomsDir/knowledge/yong-rust-zhong-xie.md`（slug
+  相同），后写者覆盖前写者
+- **WHEN** user 在 UI 看到 B 的内容（最后写入的），点开 A 想编辑
+- **THEN** `GET /api/memory/A` 返回的 `content` 实际是 B 的 body（hash 错位
+  → `readAtomFromFile` 抛错 → server 标 `content: ""` + UI 显示
+  `<memory-error>`）
+- **NOTE** v1 不修这个已有 bug，记入"已知问题"，v2 加 id 兜底后缀

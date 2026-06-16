@@ -24,8 +24,19 @@ server 端把 `MemoryIndex` 升级为 public API。
   - client: `pages/MemoryPage.tsx` + `components/memory/{MemoryList, MemoryDetail, MemoryEditor, MemorySearchTester, MemoryTypeBadge}.tsx`
   - client API: `lib/api.ts` 新增 memory 命名空间
 - **修改 Capability**: 无（纯新增，不动现有 `chat-message-rendering` / `satellite-remote-exec` / `ask-user-question-tool`）
-- **修改源码模块**（为支持 export，不改行为）:
-  - `extensions/personal-assistant/memory.ts`：`class MemoryIndex` → `export class MemoryIndex`；`searchAtoms` / `rewriteQuery` / `writeAtomToFile` 改为 `export`
+- **修改源码模块**（为支持 export + 加几个 helper，不改行为）:
+  - `extensions/personal-assistant/memory.ts`：
+    - `class MemoryIndex` → `export class MemoryIndex`
+    - `interface MemoryAtom` / `type MemoryAtomType` → `export`
+    - `searchAtoms` / `rewriteQuery` / `writeAtomToFile` / `readAtomFromFile` → `export`
+    - `const ATOMS_DIR` / `const MEMORY_DB_PATH` → `export const`
+    - **新增** `function getAllAtoms(index)`（含 archived 的全量 list）
+    - **新增** `function rewriteQueryWithCallLlm(callLlm, query, config)`
+      （server 用，绕开 `ExtensionContext.modelRegistry` 依赖）
+    - **新增** `function searchAtomsWithScores(index, query, topK)` →
+      `{results: Array<{atom, fts_score, cosine_score, hybrid_score}>, embedding_available: boolean}`
+    - **新增** `method MemoryIndex.invalidateEmbedding(id)`（封装
+      `DELETE FROM memory_embeddings WHERE id = ?`，避免 export 私有 `db` 字段）
   - `extensions/personal-assistant/index.ts`：re-export 新加的 symbols
 
 ## 非目标
