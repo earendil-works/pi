@@ -73,9 +73,48 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
 		}
 	});
-	app.get("/api/memory/:id", (_req, res) => res.status(501).json({ error: "not implemented" }));
+	// /api/memory/stats must register BEFORE /api/memory/:id — Express matches in
+	// declaration order, otherwise :id swallows "stats" and returns 404.
+	app.get("/api/memory/stats", (_req, res) => res.status(501).json({ error: "not implemented" }));
+	app.get("/api/memory/:id", async (req, res) => {
+		try {
+			const idx = new MemoryIndex(deps.dbPath);
+			await idx.init();
+			try {
+				const id = req.params.id;
+				// MemoryIndex has no public getAtom; use getAllAtoms (mirrors getAllAtoms
+				// approach: getAllRows + rowToAtom), returns all atoms including archived.
+				const all = getAllAtoms(idx);
+				const existing = all.find((a) => a.id === id);
+				if (!existing) {
+					res.status(404).json({ error: `atom not found: ${id}` });
+					return;
+				}
+				// Read .md body. Missing file / hash mismatch → content = "" (no 500).
+				if (existing.file_path) {
+					try {
+						const fromFile = readAtomFromFile(existing.file_path, existing.content_hash || undefined);
+						if (fromFile) {
+							existing.content = fromFile.content;
+						} else {
+							existing.content = ""; // file missing
+						}
+					} catch {
+						existing.content = ""; // hash mismatch or other read error
+					}
+				} else {
+					existing.content = "";
+				}
+				res.json(existing);
+			} finally {
+				idx.close();
+			}
+		} catch (err) {
+			console.error("[memory get] error:", err);
+			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+		}
+	});
 	app.patch("/api/memory/:id", (_req, res) => res.status(501).json({ error: "not implemented" }));
 	app.post("/api/memory/:id/archive", (_req, res) => res.status(501).json({ error: "not implemented" }));
 	app.post("/api/memory/search", (_req, res) => res.status(501).json({ error: "not implemented" }));
-	app.get("/api/memory/stats", (_req, res) => res.status(501).json({ error: "not implemented" }));
 }
