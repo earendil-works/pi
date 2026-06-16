@@ -29,8 +29,10 @@ describe("Memory REST API route skeleton", () => {
 			// GET /api/memory/:id is implemented in task 2.3; unknown id → 404.
 			const r2 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`);
 			expect(r2.status).toBe(404);
+			// PATCH /api/memory/:id is implemented in task 2.4; unknown id → 404.
 			const r3 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`, { method: "PATCH" });
 			expect(r3.status).toBe(404);
+			// POST /api/memory/:id/archive is implemented in task 2.5; unknown id → 404.
 			const r4 = await fetch(`http://127.0.0.1:${port}/api/memory/abc/archive`, { method: "POST" });
 			expect(r4.status).toBe(404);
 			// POST /api/memory/search is implemented in task 2.6; nonexistent db +
@@ -254,6 +256,246 @@ describe("(c) GET /api/memory/:id detail endpoint", () => {
 		expect(res.status).toBe(200);
 		const atom = await res.json();
 		expect(atom.content).toBe(""); // hash mismatch → empty
+	});
+});
+
+describe("(d) PATCH /api/memory/:id update endpoint", () => {
+	let app: express.Express;
+	let server: ReturnType<typeof createServer>;
+	let port: number;
+	let tempDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join("/tmp", "pi-memory-patch-test-"));
+		dbPath = path.join(tempDir, "test.db");
+		atomsDir = path.join(tempDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function setupIndexAndServer(initialAtom: any) {
+		const { MemoryIndex, writeAtomToFile } = await import("@earendil-works/pi-personal-assistant");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const { filePath, contentHash } = writeAtomToFile(initialAtom, atomsDir);
+		idx.upsertAtom({ ...initialAtom, file_path: filePath, content_hash: contentHash });
+		idx.close();
+		const { mountMemoryRoutes } = await import("../routes/memory");
+		app = express();
+		app.use(express.json());
+		mountMemoryRoutes(app, { dbPath, atomsDir, settings: {}, callLlm: async () => "" });
+		server = createServer(app);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		port = (server.address() as { port: number }).port;
+	}
+
+	const baseAtom = {
+		id: "a-1",
+		type: "preference" as const,
+		title: "Old title",
+		summary: "summary",
+		tags: ["x"],
+		importance: 0.5,
+		strength: 0.7,
+		access_count: 0,
+		last_access: "",
+		created_at: "2025-01-01T00:00:00Z",
+		updated_at: "2025-01-01T00:00:00Z",
+		version: 1,
+		archived: false,
+		content: "# old body",
+		file_path: "",
+		content_hash: "",
+	};
+
+	it("updates title and bumps version", async () => {
+		await setupIndexAndServer(baseAtom);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "New title" }),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.title).toBe("New title");
+		expect(atom.version).toBe(2);
+		expect(atom.content).toBe("# old body"); // body 字节级保持 (currentBody 兜底)
+	});
+
+	it("metadata-only patch preserves body content byte-for-byte", async () => {
+		await setupIndexAndServer(baseAtom);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ summary: "new summary" }),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.summary).toBe("new summary");
+		expect(atom.content).toBe("# old body");
+		// title 没改 → path 仍是 preference/old-title.md, 文件内容含 # old body
+		const oldPath = path.join(atomsDir, "preference", "old-title.md");
+		const content = await fs.readFile(oldPath, "utf-8");
+		expect(content).toContain("# old body");
+	});
+
+	it("content change rewrites .md with new hash; same-path overwrite", async () => {
+		await setupIndexAndServer(baseAtom);
+		const samePath = path.join(atomsDir, "preference", "old-title.md");
+		// precondition: file exists with old body
+		const beforeContent = await fs.readFile(samePath, "utf-8");
+		expect(beforeContent).toContain("# old body");
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content: "# new body" }),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.content).toBe("# new body");
+		expect(atom.content_hash).not.toBe(baseAtom.content_hash); // baseAtom.content_hash=""
+		expect(atom.content_hash.length).toBe(64); // sha256 hex
+		// 同一 title → 同一 path, .md 重写
+		const afterContent = await fs.readFile(samePath, "utf-8");
+		expect(afterContent).toContain("# new body");
+	});
+
+	it("importance passes through caller-validated bounds [0, 1]", async () => {
+		await setupIndexAndServer(baseAtom);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ importance: 1.0 }),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.importance).toBe(1.0);
+		const res2 = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ importance: 0 }),
+		});
+		expect(res2.status).toBe(200);
+		const atom2 = await res2.json();
+		expect(atom2.importance).toBe(0);
+	});
+
+	it("type change moves file to new type directory and unlinks old", async () => {
+		await setupIndexAndServer(baseAtom);
+		const oldPath = path.join(atomsDir, "preference", "old-title.md");
+		expect(await fs.access(oldPath).then(() => true).catch(() => false)).toBe(true);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ type: "workflow" }),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.type).toBe("workflow");
+		// 新 path 在 workflow/ 目录下
+		expect(atom.file_path).toContain("/workflow/");
+		// 旧 path 已被 unlink
+		expect(await fs.access(oldPath).then(() => true).catch(() => false)).toBe(false);
+	});
+
+	it("returns 404 for nonexistent id", async () => {
+		await setupIndexAndServer(baseAtom);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/nonexistent`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "x" }),
+		});
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("(e) POST /api/memory/:id/archive endpoint", () => {
+	let app: express.Express;
+	let server: ReturnType<typeof createServer>;
+	let port: number;
+	let tempDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join("/tmp", "pi-memory-archive-test-"));
+		dbPath = path.join(tempDir, "test.db");
+		atomsDir = path.join(tempDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function setupAtom(atomOpts: any) {
+		const { MemoryIndex, writeAtomToFile } = await import("@earendil-works/pi-personal-assistant");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const { filePath, contentHash } = writeAtomToFile(atomOpts, atomsDir);
+		idx.upsertAtom({ ...atomOpts, file_path: filePath, content_hash: contentHash });
+		idx.close();
+		const { mountMemoryRoutes } = await import("../routes/memory");
+		app = express();
+		app.use(express.json());
+		mountMemoryRoutes(app, { dbPath, atomsDir, settings: {}, callLlm: async () => "" });
+		server = createServer(app);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		port = (server.address() as { port: number }).port;
+	}
+
+	const baseAtom = {
+		id: "a-1",
+		type: "preference" as const,
+		title: "Test",
+		summary: "",
+		tags: [],
+		importance: 0.5,
+		strength: 0.7,
+		access_count: 0,
+		last_access: "",
+		created_at: "2025-01-01T00:00:00Z",
+		updated_at: "2025-01-01T00:00:00Z",
+		version: 1,
+		archived: false,
+		content: "# test",
+		file_path: "",
+		content_hash: "",
+	};
+
+	it("archives an active atom (archived=true)", async () => {
+		await setupAtom(baseAtom);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1/archive`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ archived: true }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.ok).toBe(true);
+		expect(body.atom.archived).toBe(true);
+		expect(body.atom.version).toBe(2);
+	});
+
+	it("restores an archived atom (archived=false, version+1)", async () => {
+		await setupAtom({ ...baseAtom, archived: true });
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1/archive`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ archived: false }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.ok).toBe(true);
+		expect(body.atom.archived).toBe(false);
+		expect(body.atom.version).toBe(2);
 	});
 });
 

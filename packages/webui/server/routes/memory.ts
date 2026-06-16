@@ -114,6 +114,97 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
 		}
 	});
+	app.patch("/api/memory/:id", async (req, res) => {
+		try {
+			const idx = new MemoryIndex(deps.dbPath);
+			await idx.init();
+			try {
+				const id = req.params.id;
+				const all = getAllAtoms(idx);
+				const existing = all.find((a) => a.id === id);
+				if (!existing) {
+					res.status(404).json({ error: `atom not found: ${id}` });
+					return;
+				}
+				// 1. 读 currentBody (file 丢失 / hash 错位 → "")
+				let currentBody = "";
+				if (existing.file_path) {
+					try {
+						const fromFile = readAtomFromFile(existing.file_path, existing.content_hash);
+						if (fromFile) currentBody = fromFile.content;
+					} catch {
+						currentBody = "";
+					}
+				}
+				// 2. merge: req.body 覆盖; content 默认 currentBody; version + 1; updated_at = now
+				const body = (req.body ?? {}) as Partial<MemoryAtom>;
+				const merged: MemoryAtom = {
+					...existing,
+					...body,
+					content: body.content ?? currentBody,
+					version: existing.version + 1,
+					updated_at: new Date().toISOString(),
+					file_path: "", // 待写后填
+					content_hash: "", // 待写后填
+				};
+				// 3. 写 .md 文件 (原子写: tmp → rename)
+				const { filePath: newPath, contentHash: newHash } = writeAtomToFile(merged, deps.atomsDir);
+				// 4. 旧路径不同则 unlink (e.g. type 改变 → path 变 → 旧文件 unlink)
+				if (existing.file_path && existing.file_path !== newPath) {
+					try {
+						unlinkSync(existing.file_path);
+					} catch {
+						// 旧文件已丢失, 不阻断
+					}
+				}
+				// 5. 填 file_path / content_hash
+				merged.file_path = newPath;
+				merged.content_hash = newHash;
+				// 6. upsert 到 db + 清 embedding (v2 lazy recompute)
+				idx.upsertAtom(merged);
+				idx.invalidateEmbedding(merged.id);
+				res.json(merged);
+			} finally {
+				idx.close();
+			}
+		} catch (err) {
+			console.error("[memory patch] error:", err);
+			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+		}
+	});
+	app.post("/api/memory/:id/archive", async (req, res) => {
+		try {
+			const idx = new MemoryIndex(deps.dbPath);
+			await idx.init();
+			try {
+				const id = req.params.id;
+				const all = getAllAtoms(idx);
+				const existing = all.find((a) => a.id === id);
+				if (!existing) {
+					res.status(404).json({ error: `atom not found: ${id}` });
+					return;
+				}
+				const archived = (req.body as { archived?: boolean })?.archived ?? !existing.archived;
+				const updated: MemoryAtom = {
+					...existing,
+					archived,
+					version: existing.version + 1,
+					updated_at: new Date().toISOString(),
+				};
+				idx.upsertAtom(updated);
+				idx.invalidateEmbedding(id);
+				// 重新查询返回最新 (MemoryIndex 内部会刷新缓存)
+				const allAfter = getAllAtoms(idx);
+				const after = allAfter.find((a) => a.id === id)!;
+				res.json({ ok: true, atom: after });
+			} finally {
+				idx.close();
+			}
+		} catch (err) {
+			console.error("[memory archive] error:", err);
+			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+		}
+	});
 	// (2.6) POST /api/memory/search — real search pipeline. Per design Decisions 2
 	// & 4: rewriteQueryWithCallLlm + searchAtomsWithScores (no ExtensionContext
 	// stub). Forwards deps.settings to searchAtomsWithScores so the server's
