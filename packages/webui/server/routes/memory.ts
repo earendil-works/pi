@@ -114,7 +114,46 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
 		}
 	});
-	app.patch("/api/memory/:id", (_req, res) => res.status(501).json({ error: "not implemented" }));
-	app.post("/api/memory/:id/archive", (_req, res) => res.status(501).json({ error: "not implemented" }));
-	app.post("/api/memory/search", (_req, res) => res.status(501).json({ error: "not implemented" }));
+	// (2.6) POST /api/memory/search — real search pipeline. Per design Decisions 2
+	// & 4: rewriteQueryWithCallLlm + searchAtomsWithScores (no ExtensionContext
+	// stub). Forwards deps.settings to searchAtomsWithScores so the server's
+	// settings drive embedding config rather than the dev's
+	// ~/.pi/agent/settings.json (task 1.5b plumbing). callLlm throws are
+	// absorbed inside rewriteQueryWithCallLlm (falls back to
+	// simpleKeywordExtraction), so this endpoint never returns 500 because of
+	// a transient LLM failure.
+	app.post("/api/memory/search", async (req, res) => {
+		try {
+			const body = (req.body ?? {}) as { query?: string; topK?: number };
+			const query = body.query ?? "";
+			const topK = body.topK ?? 10;
+			if (!query) {
+				res.status(400).json({ error: "query required" });
+				return;
+			}
+			const idx = new MemoryIndex(deps.dbPath);
+			await idx.init();
+			try {
+				// 1. rewrite query via LLM (降级到 simpleKeywordExtraction on error)
+				const rewritten = await rewriteQueryWithCallLlm(
+					deps.callLlm,
+					query,
+					deps.settings,
+				);
+				// 2. search with scores
+				const { results, embedding_available } = await searchAtomsWithScores(
+					idx,
+					rewritten,
+					topK,
+					deps.settings,
+				);
+				res.json({ rewritten, embedding_available, results });
+			} finally {
+				idx.close();
+			}
+		} catch (err) {
+			console.error("[memory search] error:", err);
+			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+		}
+	});
 }

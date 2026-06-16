@@ -5,7 +5,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 
 describe("Memory REST API route skeleton", () => {
-	it("remaining 5 placeholder routes return 501; GET /api/memory returns 200", async () => {
+	it("remaining 1 placeholder route (stats) returns 501; GET list, GET :id, PATCH :id, POST :id/archive, POST search all implemented", async () => {
 		const { mountMemoryRoutes } = await import("../routes/memory");
 		const app = express();
 		app.use(express.json());
@@ -30,11 +30,17 @@ describe("Memory REST API route skeleton", () => {
 			const r2 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`);
 			expect(r2.status).toBe(404);
 			const r3 = await fetch(`http://127.0.0.1:${port}/api/memory/abc`, { method: "PATCH" });
-			expect(r3.status).toBe(501);
+			expect(r3.status).toBe(404);
 			const r4 = await fetch(`http://127.0.0.1:${port}/api/memory/abc/archive`, { method: "POST" });
-			expect(r4.status).toBe(501);
-			const r5 = await fetch(`http://127.0.0.1:${port}/api/memory/search`, { method: "POST" });
-			expect(r5.status).toBe(501);
+			expect(r4.status).toBe(404);
+			// POST /api/memory/search is implemented in task 2.6; nonexistent db +
+			// empty query → 400.
+			const r5 = await fetch(`http://127.0.0.1:${port}/api/memory/search`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+			expect(r5.status).toBe(400);
 			const r6 = await fetch(`http://127.0.0.1:${port}/api/memory/stats`);
 			expect(r6.status).toBe(501);
 		} finally {
@@ -248,5 +254,110 @@ describe("(c) GET /api/memory/:id detail endpoint", () => {
 		expect(res.status).toBe(200);
 		const atom = await res.json();
 		expect(atom.content).toBe(""); // hash mismatch → empty
+	});
+});
+
+describe("(f) POST /api/memory/search endpoint", () => {
+	let app: express.Express;
+	let server: ReturnType<typeof createServer>;
+	let port: number;
+	let tempDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join("/tmp", "pi-memory-search-test-"));
+		dbPath = path.join(tempDir, "test.db");
+		atomsDir = path.join(tempDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function setup(callLlm: (prompt: string) => Promise<string>, atoms: any[]) {
+		const { MemoryIndex, writeAtomToFile } = await import("@earendil-works/pi-personal-assistant");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		for (const atom of atoms) {
+			const { filePath, contentHash } = writeAtomToFile(atom, atomsDir);
+			idx.upsertAtom({ ...atom, file_path: filePath, content_hash: contentHash });
+		}
+		idx.close();
+		const { mountMemoryRoutes } = await import("../routes/memory");
+		app = express();
+		app.use(express.json());
+		mountMemoryRoutes(app, { dbPath, atomsDir, settings: {}, callLlm });
+		server = createServer(app);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		port = (server.address() as { port: number }).port;
+	}
+
+	it("normal LLM response returns parsed keywords and search results", async () => {
+		const callLlm = async () => JSON.stringify({
+			keywords: ["database", "schema"],
+			target_types: ["knowledge"],
+		});
+		const atoms = [
+			{ id: "a-1", type: "knowledge" as const, title: "Database schema", summary: "postgres tables",
+				tags: [], importance: 0.8, strength: 0.9, access_count: 0, last_access: "",
+				created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", version: 1, archived: false,
+				content: "# schema", file_path: "", content_hash: "" },
+			{ id: "a-2", type: "preference" as const, title: "Dark mode", summary: "ui",
+				tags: [], importance: 0.3, strength: 0.5, access_count: 0, last_access: "",
+				created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", version: 1, archived: false,
+				content: "# dark", file_path: "", content_hash: "" },
+		];
+		await setup(callLlm, atoms);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/search`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "tell me about database schema", topK: 5 }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.rewritten.keywords).toEqual(["database", "schema"]);
+		expect(body.rewritten.target_types).toEqual(["knowledge"]);
+		// embedding_available: false (no explicit settings.memory.embedding passed)
+		expect(body.embedding_available).toBe(false);
+		expect(body.results.length).toBeGreaterThanOrEqual(1);
+		expect(body.results[0].atom.id).toBe("a-1");
+	});
+
+	it("callLlm throws → falls back to simpleKeywordExtraction, still 200", async () => {
+		const callLlm = async () => { throw new Error("rate limit"); };
+		const atoms = [
+			{ id: "a-1", type: "knowledge" as const, title: "Database schema notes", summary: "",
+				tags: [], importance: 0.5, strength: 0.7, access_count: 0, last_access: "",
+				created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", version: 1, archived: false,
+				content: "# schema", file_path: "", content_hash: "" },
+		];
+		await setup(callLlm, atoms);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/search`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "database" }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		// simpleKeywordExtraction returns query tokens as keywords
+		expect(body.rewritten.keywords).toContain("database");
+		expect(body.results.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("empty atom db returns {results: [], embedding_available: false}", async () => {
+		const callLlm = async () => JSON.stringify({ keywords: ["x"], target_types: [] });
+		await setup(callLlm, []);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/search`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "anything" }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.results).toEqual([]);
+		expect(body.embedding_available).toBe(false);
 	});
 });
