@@ -127,15 +127,15 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
-		const hasConfiguredProfile = Boolean(config.profile);
+		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
 		const endpointRegion = getStandardBedrockEndpointRegion(model.baseUrl);
 		const useExplicitEndpoint = shouldUseExplicitBedrockEndpoint(
 			model.baseUrl,
 			configuredRegion,
-			hasConfiguredProfile,
+			hasAmbientConfiguredProfile,
 		);
 
-		// Only pin standard AWS Bedrock runtime endpoints when no region/profile is configured.
+		// Only pin standard AWS Bedrock runtime endpoints when no region or ambient AWS_PROFILE is configured.
 		// This preserves custom endpoints (VPC/proxy) from #3402 without forcing built-in
 		// catalog defaults such as us-east-1 to override AWS_REGION/AWS_PROFILE.
 		if (useExplicitEndpoint) {
@@ -160,7 +160,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.region = configuredRegion;
 			} else if (endpointRegion && useExplicitEndpoint) {
 				config.region = endpointRegion;
-			} else if (!hasConfiguredProfile) {
+			} else if (!hasAmbientConfiguredProfile) {
 				config.region = "us-east-1";
 			}
 
@@ -962,14 +962,14 @@ function getStandardBedrockEndpointRegion(baseUrl: string | undefined): string |
 function shouldUseExplicitBedrockEndpoint(
 	baseUrl: string,
 	configuredRegion: string | undefined,
-	hasConfiguredProfile: boolean,
+	hasAmbientConfiguredProfile: boolean,
 ): boolean {
 	const endpointRegion = getStandardBedrockEndpointRegion(baseUrl);
 	if (!endpointRegion) {
 		return true;
 	}
 
-	return !configuredRegion && !hasConfiguredProfile;
+	return !configuredRegion && !hasAmbientConfiguredProfile;
 }
 
 function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, options: BedrockOptions): boolean {
