@@ -79,6 +79,77 @@ export interface ApiError extends Error {
   status: number;
 }
 
+// ============================================================================
+// Memory API types
+// ============================================================================
+
+export type MemoryAtomType =
+  | "constraint"
+  | "preference"
+  | "workflow"
+  | "knowledge"
+  | "event"
+  | "solution"
+  | "insight";
+
+export interface MemoryAtom {
+  id: string;
+  type: MemoryAtomType;
+  title: string;
+  summary: string;
+  tags: string[];
+  importance: number;
+  strength: number;
+  access_count: number;
+  last_access: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  archived: boolean;
+  content: string;
+  file_path: string;
+  content_hash: string;
+}
+
+export interface MemoryAtomWithScores {
+  atom: MemoryAtom;
+  fts_score: number;
+  cosine_score: number;
+  hybrid_score: number;
+}
+
+export interface MemoryQueryRewriteResult {
+  keywords: string[];
+  target_types: string[];
+  raw_query: string;
+}
+
+export interface MemorySearchResult {
+  rewritten: MemoryQueryRewriteResult;
+  embedding_available: boolean;
+  results: MemoryAtomWithScores[];
+}
+
+export interface MemoryStats {
+  total: number;
+  archived: number;
+  byType: Record<string, number>;
+}
+
+export interface MemoryArchiveResult {
+  ok: true;
+  atom: MemoryAtom;
+}
+
+export interface MemoryListParams {
+  type?: string;
+  archived?: "active" | "archived" | "all";
+  tag?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
 // Helper to determine base URL
 function getBaseUrl(): string {
   if (typeof window !== "undefined" && window.location.host) {
@@ -219,6 +290,49 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ webui: { defaultModel: `${model.provider}/${model.model}` } }),
     });
+  },
+
+  memory: {
+    list(params?: MemoryListParams): Promise<MemoryAtom[]> {
+      const search = new URLSearchParams();
+      if (params?.type) search.set("type", params.type);
+      if (params?.archived) search.set("archived", params.archived);
+      if (params?.tag) search.set("tag", params.tag);
+      if (params?.q) search.set("q", params.q);
+      if (params?.limit !== undefined) search.set("limit", String(params.limit));
+      if (params?.offset !== undefined) search.set("offset", String(params.offset));
+      const query = search.toString();
+      return request<MemoryAtom[]>(`/api/memory${query ? `?${query}` : ""}`);
+    },
+
+    get(id: string): Promise<MemoryAtom> {
+      return request<MemoryAtom>(`/api/memory/${encodeURIComponent(id)}`);
+    },
+
+    patch(id: string, partial: Partial<MemoryAtom>): Promise<MemoryAtom> {
+      return request<MemoryAtom>(`/api/memory/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(partial),
+      });
+    },
+
+    archive(id: string, archived: boolean): Promise<MemoryArchiveResult> {
+      return request<MemoryArchiveResult>(
+        `/api/memory/${encodeURIComponent(id)}/archive`,
+        { method: "POST", body: JSON.stringify({ archived }) },
+      );
+    },
+
+    search(query: string, topK?: number): Promise<MemorySearchResult> {
+      return request<MemorySearchResult>("/api/memory/search", {
+        method: "POST",
+        body: JSON.stringify({ query, topK }),
+      });
+    },
+
+    stats(): Promise<MemoryStats> {
+      return request<MemoryStats>("/api/memory/stats");
+    },
   },
 };
 
