@@ -51,8 +51,17 @@ describe("MemoryList", () => {
   it("calls onArchive when archive button clicked", () => {
     const onArchive = vi.fn();
     render(<MemoryList atoms={ATOMS} onSelect={vi.fn()} onArchive={onArchive} filters={{ types: [], archived: "all", tag: "", q: "" }} onFilterChange={vi.fn()} onRefresh={vi.fn()} />);
-    const archiveBtn = screen.getAllByTitle("Archive")[0];
+    const archiveBtn = screen.getAllByText("Archive")[0];
     fireEvent.click(archiveBtn);
     expect(onArchive).toHaveBeenCalled();
+  });
+
+  it("renders Archive / Restore text on archive button", () => {
+    render(<MemoryList atoms={ATOMS} onSelect={vi.fn()} onArchive={vi.fn()} filters={{ types: [], archived: "all", tag: "", q: "" }} onFilterChange={vi.fn()} onRefresh={vi.fn()} />);
+    // 2 active atoms show "Archive", 1 archived atom shows "Restore" — verify
+    // both text labels render so users see what's clickable on the narrow pane.
+    const archiveBtns = screen.getAllByText(/archive/i);
+    expect(archiveBtns.length).toBeGreaterThan(0);
+    expect(screen.getByText("Restore")).toBeDefined();
   });
 });

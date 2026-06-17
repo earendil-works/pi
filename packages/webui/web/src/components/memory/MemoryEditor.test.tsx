@@ -106,4 +106,20 @@ describe("MemoryEditor", () => {
     render(<MemoryEditor atom={atom} onSave={vi.fn()} onArchive={vi.fn()} />);
     expect(screen.queryByTestId("memory-error")).toBeNull();
   });
+
+  it("renders 'bug' as an option in the type <select> (8th type)", () => {
+    // Production data has 1 atom with type='bug' (out-of-band from the
+    // documented 7-type set). Without this option the editor's <select>
+    // defaults to "constraint" on PATCH and silently changes the atom's
+    // type. See task 6.7 / review-fail MEDIUM.
+    const { container } = render(
+      <MemoryEditor atom={ATOM} onSave={vi.fn()} onArchive={vi.fn()} />,
+    );
+    const select = container.querySelector("select");
+    expect(select).not.toBeNull();
+    const optionTexts = Array.from(select!.children).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(optionTexts).toContain("bug");
+  });
 });

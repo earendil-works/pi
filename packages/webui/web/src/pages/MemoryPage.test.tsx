@@ -112,7 +112,7 @@ describe("MemoryPage", () => {
     await act(async () => {
       await vi.runOnlyPendingTimersAsync();
     });
-    const archiveBtns = screen.getAllByTitle("Archive");
+    const archiveBtns = screen.getAllByText("Archive");
     fireEvent.click(archiveBtns[0]!);
     await waitFor(() => expect(api.memory.archive).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("Atom 1")).toBeNull());
@@ -124,5 +124,46 @@ describe("MemoryPage", () => {
       await vi.runOnlyPendingTimersAsync();
     });
     expect(screen.getByText("Select an atom from the list")).toBeInTheDocument();
+  });
+
+  it("debounces filter input by 300ms before re-fetching", async () => {
+    // This test needs full fake timers (including setTimeout) because the
+    // debounce uses setTimeout. beforeEach only fakes setInterval/clearInterval
+    // so the other tests' waitFor() retries still fire on real time.
+    vi.useFakeTimers();
+    (api.memory.list as ReturnType<typeof vi.fn>).mockClear();
+    (api.memory.stats as ReturnType<typeof vi.fn>).mockClear();
+    render(<MemoryPage />);
+    // Let initial mount fetch resolve
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    const initialCallCount = (api.memory.list as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(initialCallCount).toBeGreaterThan(0);
+
+    // Change q filter via typing
+    const qInput = screen.getByPlaceholderText(/search title/i) as HTMLInputElement;
+    fireEvent.change(qInput, { target: { value: "hello" } });
+    // Flush React state updates from the input change before advancing timers.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 100ms in: not committed yet — debounce should keep call count flat
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect((api.memory.list as ReturnType<typeof vi.fn>).mock.calls.length).toBe(initialCallCount);
+
+    // 300ms+ in: committed — debounce should now trigger a new fetch.
+    // Advance timers, then flush the resulting React state update + effect.
+    await vi.advanceTimersByTimeAsync(250);
+    await act(async () => {
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect((api.memory.list as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
+      initialCallCount,
+    );
   });
 });

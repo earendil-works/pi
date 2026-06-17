@@ -19,7 +19,7 @@ interface MemoryListProps {
   onRefresh: () => void;
 }
 
-const TYPES: MemoryAtomType[] = ["constraint", "preference", "workflow", "knowledge", "event", "solution", "insight"];
+const TYPES: MemoryAtomType[] = ["constraint", "preference", "workflow", "knowledge", "event", "solution", "insight", "bug"];
 
 function timeAgo(iso: string): string {
   if (!iso) return "—";
@@ -134,10 +134,9 @@ export function MemoryList({ atoms, selectedId, onSelect, onArchive, filters, on
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onArchive(a.id); }}
-                  className="text-xs text-red-600 hover:underline"
-                  title={a.archived ? "Restore" : "Archive"}
+                  className="text-xs text-red-600 hover:underline px-1"
                 >
-                  {a.archived ? "↺" : "✕"}
+                  {a.archived ? "Restore" : "Archive"}
                 </button>
               </div>
               <div className="text-xs text-gray-500">

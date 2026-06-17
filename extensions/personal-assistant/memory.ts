@@ -30,7 +30,12 @@ export type MemoryAtomType =
   | "knowledge"
   | "event"
   | "solution"
-  | "insight";
+  | "insight"
+  // 8th type — production data has 1 atom with type='bug' (out-of-band from
+  // the documented 7-type set). Promoted to first-class so the editor's
+  // <select> doesn't silently change it to "constraint" on PATCH.
+  // See task 6.7 / review-fail MEDIUM.
+  | "bug";
 
 export interface MemoryAtom {
   id: string;

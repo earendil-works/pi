@@ -11,6 +11,11 @@ const CASES: Array<{ type: MemoryAtomType; bgClass: string; textClass: string }>
   { type: "event",      bgClass: "bg-amber-100", textClass: "text-amber-800" },
   { type: "solution",   bgClass: "bg-indigo-100", textClass: "text-indigo-800" },
   { type: "insight",    bgClass: "bg-pink-100", textClass: "text-pink-800" },
+  // 8th type — production data has 1 atom with type='bug' (out-of-band from
+  // the documented 7-type set). Without an entry here the badge would render
+  // nothing and the editor's <select> would silently default to "constraint"
+  // on PATCH. See task 6.7 / review-fail MEDIUM.
+  { type: "bug",        bgClass: "bg-yellow-100", textClass: "text-yellow-800" },
 ];
 
 describe("MemoryTypeBadge", () => {
