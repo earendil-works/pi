@@ -14,6 +14,7 @@ import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { hasFoundryCredentials, resolveFoundryTestModel } from "./foundry-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -540,6 +541,35 @@ describe("Generate E2E Tests", () => {
 
 		it("should handle image input", { retry: 3 }, async () => {
 			await handleImage(llm, azureOptions);
+		});
+	});
+
+	describe.skipIf(!hasFoundryCredentials())("Azure AI Foundry Provider", () => {
+		const modelId = resolveFoundryTestModel();
+		const llm = getModel(
+			"azure-foundry",
+			modelId as keyof typeof import("../src/models.generated.ts").MODELS["azure-foundry"],
+		);
+		const apiKey = process.env.ANTHROPIC_FOUNDRY_API_KEY ?? "<authenticated>";
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm, { apiKey });
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm, { apiKey });
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm, { apiKey });
+		});
+
+		it("should handle thinking", { retry: 3 }, async () => {
+			await handleThinking(llm, { apiKey });
+		});
+
+		it("should handle image input", { retry: 3 }, async () => {
+			await handleImage(llm, { apiKey });
 		});
 	});
 

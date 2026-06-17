@@ -39,6 +39,46 @@ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copi
 import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
+// Dynamic import wrapper for @azure/identity — loaded only on first azure-foundry Entra ID request.
+// Kept as a module-level reference to avoid repeated dynamic imports.
+const loadAzureIdentity = (): Promise<typeof import("@azure/identity")> =>
+	import("@azure/identity") as Promise<typeof import("@azure/identity")>;
+
+let _azureFoundryCredential: { getToken: (scope: string) => Promise<{ token: string } | null> } | undefined;
+
+async function getFoundryEntraToken(): Promise<string> {
+	if (!_azureFoundryCredential) {
+		const azureIdentity = await loadAzureIdentity();
+		_azureFoundryCredential = new azureIdentity.DefaultAzureCredential();
+	}
+	const result = await _azureFoundryCredential.getToken("https://ai.azure.com/.default");
+	if (!result?.token) {
+		throw new Error(
+			"Azure Foundry authentication failed. Set ANTHROPIC_FOUNDRY_API_KEY for API key auth, " +
+				"or configure Azure credentials (az login, service principal, or managed identity).",
+		);
+	}
+	return result.token;
+}
+
+function resolveFoundryBaseUrl(env?: ProviderEnv): string {
+	// Match the Python AnthropicFoundry reference (trailing slash preserved).
+	const baseUrl = getProviderEnvValue("ANTHROPIC_FOUNDRY_BASE_URL", env);
+	if (baseUrl) return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+	const resource = getProviderEnvValue("ANTHROPIC_FOUNDRY_RESOURCE", env);
+	if (resource) return `https://${resource}.services.ai.azure.com/anthropic/`;
+	throw new Error("Azure Foundry requires an endpoint. Set ANTHROPIC_FOUNDRY_RESOURCE or ANTHROPIC_FOUNDRY_BASE_URL.");
+}
+
+function isPlaceholderApiKey(apiKey: string): boolean {
+	return /^<[^>]+>$/.test(apiKey);
+}
+
+function isAzureEntraToken(token: string): boolean {
+	// Azure Entra ID tokens are JWTs — always start with "eyJ" (base64-encoded `{"`)
+	return token.startsWith("eyJ");
+}
+
 /**
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
@@ -488,6 +528,13 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					throw new Error(`No API key for provider: ${model.provider}`);
 				}
 
+				// Azure Foundry with Entra ID ambient credentials: resolve token before createClient.
+				// The sentinel "<authenticated>" is replaced with the actual Entra ID bearer token.
+				const resolvedApiKey =
+					model.provider === "azure-foundry" && isPlaceholderApiKey(apiKey)
+						? await getFoundryEntraToken()
+						: apiKey;
+
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
 					const hasImages = hasCopilotVisionInput(context.messages);
@@ -502,7 +549,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 
 				const created = createClient(
 					model,
-					apiKey,
+					resolvedApiKey,
 					options?.interleavedThinking ?? true,
 					shouldUseFineGrainedToolStreamingBeta(model, context),
 					options?.headers,
@@ -808,6 +855,33 @@ function createClient(
 	}
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
+	}
+
+	// Azure Foundry: Anthropic-compatible endpoint on Azure AI Foundry.
+	// API key auth uses x-api-key (apiKey field); Entra ID uses Bearer token (authToken field).
+	// Mirrors the Python AnthropicFoundry reference: api-key header is also set in API-key mode
+	// for backwards compatibility with Foundry deployments that expect it.
+	if (model.provider === "azure-foundry") {
+		const foundryBaseUrl = resolveFoundryBaseUrl(env);
+		const useBearer = isAzureEntraToken(apiKey);
+		const client = new Anthropic({
+			apiKey: useBearer ? null : apiKey,
+			authToken: useBearer ? apiKey : null,
+			baseURL: foundryBaseUrl,
+			dangerouslyAllowBrowser: true,
+			defaultHeaders: mergeHeaders(
+				{
+					accept: "application/json",
+					"anthropic-dangerous-direct-browser-access": "true",
+					...(useBearer ? {} : { "api-key": apiKey }),
+					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+				},
+				model.headers,
+				optionsHeaders,
+			),
+		});
+
+		return { client, isOAuthToken: false };
 	}
 
 	if (model.provider === "cloudflare-ai-gateway") {

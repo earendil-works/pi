@@ -2047,6 +2047,17 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
+	// azure-foundry: mirrors of all anthropic models using the same anthropic-messages API.
+	// The baseUrl is empty — resolved at runtime from ANTHROPIC_FOUNDRY_RESOURCE or ANTHROPIC_FOUNDRY_BASE_URL.
+	const azureFoundryModels: Model<Api>[] = allModels
+		.filter((model) => model.provider === "anthropic" && model.api === "anthropic-messages")
+		.map((model) => ({
+			...model,
+			provider: "azure-foundry",
+			baseUrl: "",
+		}));
+	allModels.push(...azureFoundryModels);
+
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);
 	}

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Azure AI Foundry provider support so Claude models hosted on Foundry resolve via the new `azure-foundry` provider, with `Azure AI Foundry` display name and `azure-foundry/claude-opus-4-8` as the default model.
+
 ### Fixed
 
 - Fixed `/model` autocomplete and model selection searches to match provider/model queries regardless of whether the provider or model token is typed first.

@@ -24,6 +24,7 @@ export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
+	| "azure-foundry"
 	| "google"
 	| "google-vertex"
 	| "openai"

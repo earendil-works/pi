@@ -75,6 +75,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"ant-ling": "ANT_LING_API_KEY",
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
+		"azure-foundry": "ANTHROPIC_FOUNDRY_API_KEY",
 		nvidia: "NVIDIA_API_KEY",
 		deepseek: "DEEPSEEK_API_KEY",
 		google: "GEMINI_API_KEY",
@@ -170,6 +171,30 @@ export function getEnvApiKey(provider: string, env?: ProviderEnv): string | unde
 			getProviderEnvValue("AWS_WEB_IDENTITY_TOKEN_FILE", env)
 		) {
 			return "<authenticated>";
+		}
+	}
+
+	// Azure Foundry supports Azure Entra ID (DefaultAzureCredential) when no API key is set.
+	// Requires ANTHROPIC_FOUNDRY_RESOURCE or ANTHROPIC_FOUNDRY_BASE_URL to be configured.
+	if (provider === "azure-foundry") {
+		const hasEndpoint =
+			getProviderEnvValue("ANTHROPIC_FOUNDRY_RESOURCE", env) ||
+			getProviderEnvValue("ANTHROPIC_FOUNDRY_BASE_URL", env);
+		if (hasEndpoint) {
+			// Service principal or workload identity env vars are set explicitly
+			const hasEntraEnvCreds =
+				(getProviderEnvValue("AZURE_CLIENT_ID", env) &&
+					getProviderEnvValue("AZURE_TENANT_ID", env) &&
+					(getProviderEnvValue("AZURE_CLIENT_SECRET", env) ||
+						getProviderEnvValue("AZURE_CLIENT_CERTIFICATE_PATH", env))) ||
+				getProviderEnvValue("AZURE_FEDERATED_TOKEN_FILE", env) ||
+				getProviderEnvValue("MSI_ENDPOINT", env) ||
+				getProviderEnvValue("IDENTITY_ENDPOINT", env);
+			// Azure CLI auth (az login) has no detectable env var, but DefaultAzureCredential
+			// will pick it up at request time. Return authenticated when endpoint is configured.
+			if (hasEntraEnvCreds || hasEndpoint) {
+				return "<authenticated>";
+			}
 		}
 	}
 

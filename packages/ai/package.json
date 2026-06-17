@@ -69,6 +69,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
+		"@azure/identity": "4.13.1",
 		"@smithy/node-http-handler": "4.7.3",
 		"@google/genai": "1.52.0",
 		"@mistralai/mistralai": "2.2.1",

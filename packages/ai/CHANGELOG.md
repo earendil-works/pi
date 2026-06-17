@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Azure AI Foundry as a first-class provider for Anthropic Claude models, including 25 generated `azure-foundry` model entries, `ANTHROPIC_FOUNDRY_RESOURCE` / `ANTHROPIC_FOUNDRY_BASE_URL` / `ANTHROPIC_FOUNDRY_API_KEY` environment configuration, x-api-key plus Microsoft Entra ID (`DefaultAzureCredential`) authentication via `@azure/identity`, and Python SDK parity for the Foundry `/anthropic/` base URL and `api-key` header.
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed
