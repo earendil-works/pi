@@ -26,7 +26,7 @@ export const isBunRuntime = !!process.versions.bun;
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "nix-profile" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -58,9 +58,22 @@ function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateC
 	};
 }
 
+function getNixStoreRoot(path: string | undefined): string | undefined {
+	if (!path) return undefined;
+	const normalizedPath = path.replace(/\\/g, "/");
+	const prefix = "/nix/store/";
+	if (!normalizedPath.startsWith(prefix)) return undefined;
+	const nextSlash = normalizedPath.indexOf("/", prefix.length);
+	return nextSlash === -1 ? normalizedPath : normalizedPath.slice(0, nextSlash);
+}
+
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
+	}
+
+	if (getNixStoreRoot(getPackageDir()) || getNixStoreRoot(process.argv[1])) {
+		return "nix-profile";
 	}
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
@@ -109,6 +122,8 @@ function getSelfUpdateCommandForMethod(
 	switch (method) {
 		case "bun-binary":
 			return undefined;
+		case "nix-profile":
+			return getNixProfileSelfUpdateCommand();
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
@@ -173,6 +188,61 @@ function getSelfUpdateCommandForMethod(
 	}
 }
 
+function getStringArray(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	if (value.every((entry): entry is string => typeof entry === "string")) {
+		return value;
+	}
+	return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getNixProfileElementNameForStorePath(storePath: string, profile?: string): string | undefined {
+	const output = readCommandOutput("nix", ["profile", "list", "--json", ...(profile ? ["--profile", profile] : [])]);
+	if (!output) return undefined;
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(output);
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.elements)) return undefined;
+
+	for (const [name, rawElement] of Object.entries(parsed.elements)) {
+		if (!isRecord(rawElement) || rawElement.active === false) continue;
+		const storePaths = getStringArray(rawElement.storePaths);
+		if (!storePaths) continue;
+		if (storePaths.some((candidate) => getNixStoreRoot(candidate) === storePath)) {
+			return name;
+		}
+	}
+	return undefined;
+}
+
+function getNixProfileSelfUpdateCommand(): SelfUpdateCommand | undefined {
+	const storePath = getNixStoreRoot(getPackageDir()) ?? getNixStoreRoot(process.argv[1]);
+	if (!storePath) return undefined;
+
+	const envProfile = process.env.NIX_PROFILE || undefined;
+	const profileCandidates = envProfile ? [envProfile, undefined] : [undefined];
+	for (const profile of profileCandidates) {
+		const elementName = getNixProfileElementNameForStorePath(storePath, profile);
+		if (!elementName) continue;
+		return makeSelfUpdateCommandStep("nix", [
+			"profile",
+			"upgrade",
+			...(profile ? ["--profile", profile] : []),
+			"--refresh",
+			elementName,
+		]);
+	}
+	return undefined;
+}
+
 function readCommandOutput(
 	command: string,
 	args: string[],
@@ -230,6 +300,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 			return roots;
 		}
 		case "bun-binary":
+		case "nix-profile":
 		case "unknown":
 			return [];
 	}
@@ -306,6 +377,9 @@ export function getSelfUpdateCommand(
 ): SelfUpdateCommand | undefined {
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
+	if (method === "nix-profile") {
+		return command;
+	}
 	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
 		return undefined;
 	}
@@ -320,6 +394,15 @@ export function getSelfUpdateUnavailableInstruction(
 	const method = detectInstallMethod();
 	if (method === "bun-binary") {
 		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
+	}
+	if (method === "nix-profile") {
+		const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
+		if (command) {
+			return `Run: ${command.display}`;
+		}
+		const storePath = getNixStoreRoot(getPackageDir()) ?? getNixStoreRoot(process.argv[1]);
+		const storePathDetail = storePath ? ` whose storePaths include ${storePath}` : "";
+		return `This installation is managed by Nix, but pi could not find its owning profile entry. Run nix profile list and update the entry${storePathDetail} with: nix profile upgrade <name>`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 	if (command) {

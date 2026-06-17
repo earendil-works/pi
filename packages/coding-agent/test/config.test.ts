@@ -12,6 +12,7 @@ import {
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPath = process.env.PATH;
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+const originalNixProfile = process.env.NIX_PROFILE;
 const originalArgv1 = process.argv[1];
 let tempDir: string | undefined;
 
@@ -35,6 +36,11 @@ afterEach(() => {
 		delete process.env.PI_PACKAGE_DIR;
 	} else {
 		process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+	}
+	if (originalNixProfile === undefined) {
+		delete process.env.NIX_PROFILE;
+	} else {
+		process.env.NIX_PROFILE = originalNixProfile;
 	}
 	if (originalArgv1 === undefined) {
 		process.argv.splice(1, 1);
@@ -119,6 +125,58 @@ function createBunGlobalInstall(): { packageDir: string } {
 	process.env.PI_PACKAGE_DIR = packageDir;
 	setExecPath(join(packageDir, "dist", "cli.js"));
 	return { packageDir };
+}
+
+function createNixProfileInstall(options: { elementName?: string; profile?: string; profileJson?: string } = {}): {
+	storePath: string;
+	packageDir: string;
+} {
+	const temp = mkdtempSync(join(tmpdir(), "pi-nix-"));
+	const binDir = join(temp, "bin");
+	const scriptPath = join(binDir, "fake-nix.cjs");
+	const storePath = "/nix/store/8xag94sg6h5hdrq566jqh0nl5y0q91d9-pi-0.79.4";
+	const packageDir = `${storePath}/lib/node_modules/@earendil-works/pi-coding-agent`;
+	const profileJson =
+		options.profileJson ??
+		JSON.stringify({
+			elements: {
+				[options.elementName ?? "pi"]: {
+					active: true,
+					priority: 5,
+					storePaths: [storePath],
+				},
+			},
+			version: 3,
+		});
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(
+		scriptPath,
+		`const args = process.argv.slice(2);
+if (args[0] === "profile" && args[1] === "list" && args.includes("--json")) {
+	console.log(${JSON.stringify(profileJson)});
+	process.exit(0);
+}
+process.exit(1);
+`,
+	);
+	const nixPath = join(binDir, process.platform === "win32" ? "nix.cmd" : "nix");
+	if (process.platform === "win32") {
+		writeFileSync(nixPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`);
+	} else {
+		const nodePath = process.execPath.replaceAll("'", "'\\''");
+		const escapedScriptPath = scriptPath.replaceAll("'", "'\\''");
+		writeFileSync(nixPath, `#!/bin/sh\nexec '${nodePath}' '${escapedScriptPath}' "$@"\n`);
+	}
+	chmodSync(nixPath, 0o755);
+	tempDir = temp;
+	process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+	if (options.profile) {
+		process.env.NIX_PROFILE = options.profile;
+	}
+	process.env.PI_PACKAGE_DIR = packageDir;
+	process.argv[1] = `${packageDir}/dist/cli.js`;
+	setExecPath("/nix/store/q70b7n0v0nzp8cy0-nodejs-24.11.1/bin/node");
+	return { storePath, packageDir };
 }
 
 function createFakePnpmScript(root: string): string {
@@ -266,6 +324,52 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("npm");
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
 			"Run: npm install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent",
+		);
+	});
+
+	test("self-updates Nix profile installs by upgrading the owning profile element", () => {
+		createNixProfileInstall();
+
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+
+		expect(detectInstallMethod()).toBe("nix-profile");
+		expect(command).toEqual({
+			command: "nix",
+			args: ["profile", "upgrade", "--refresh", "pi"],
+			display: "nix profile upgrade --refresh pi",
+		});
+	});
+
+	test("self-updates Nix installs from the active NIX_PROFILE", () => {
+		const profile = join(tmpdir(), "pi nix profile");
+		createNixProfileInstall({ elementName: "pi-flake", profile });
+
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, "@new-scope/pi");
+
+		expect(command).toEqual({
+			command: "nix",
+			args: ["profile", "upgrade", "--profile", profile, "--refresh", "pi-flake"],
+			display: `nix profile upgrade --profile "${profile}" --refresh pi-flake`,
+		});
+	});
+
+	test("does not self-update Nix store installs when no profile entry owns the store path", () => {
+		const { storePath } = createNixProfileInstall({
+			profileJson: JSON.stringify({
+				elements: {
+					other: {
+						active: true,
+						priority: 5,
+						storePaths: ["/nix/store/00000000000000000000000000000000-other"],
+					},
+				},
+				version: 3,
+			}),
+		});
+
+		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
+		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
+			`storePaths include ${storePath}`,
 		);
 	});
 
