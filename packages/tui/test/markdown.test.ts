@@ -1376,4 +1376,21 @@ bar`,
 			);
 		});
 	});
+
+	describe("Streaming code fences", () => {
+		it("does not render partial closing fences as code content", () => {
+			const markdown = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["```ts", "  const x = 1;", "```"]);
+		});
+
+		it("keeps line count stable when a closing fence completes", () => {
+			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
+
+			assert.strictEqual(partial.render(80).length, complete.render(80).length);
+		});
+	});
 });
