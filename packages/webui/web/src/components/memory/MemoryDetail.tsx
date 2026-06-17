@@ -79,7 +79,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
     };
   }, [id]);
 
-  const { status, error, savedValue } = useAutoSave(localAtom, {
+  const { status, error, savedValue, flush } = useAutoSave(localAtom, {
     delay: 3000,
     onSave: async (latest) => {
       if (!latest || !atom) return;
@@ -156,6 +156,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
           atom={localAtom}
           onSave={handleEditorSave}
           onArchive={() => onArchive(atom.id)}
+          onFlush={flush}
         />
       </div>
     </div>

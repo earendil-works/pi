@@ -5,6 +5,13 @@ interface MemoryEditorProps {
   atom: MemoryAtom;
   onSave: (patch: Partial<MemoryAtom>) => Promise<void>;
   onArchive: () => void;
+  /**
+   * Immediate flush — bypasses the 3s debounce. Wired to the "Save now" button
+   * so that clicking it actually persists right away. Per-keystroke saves still
+   * flow through `onSave` → parent → useAutoSave debounce; this prop is for
+   * the explicit-save path only.
+   */
+  onFlush?: () => Promise<void>;
 }
 
 const TYPES: MemoryAtomType[] = [
@@ -17,7 +24,7 @@ const TYPES: MemoryAtomType[] = [
   "insight",
 ];
 
-export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
+export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorProps) {
   // 本地编辑态 (parent 通过重新传 atom 触发 reset)
   const [title, setTitle] = useState(atom.title);
   const [type, setType] = useState<MemoryAtomType>(atom.type);
@@ -79,23 +86,10 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
     setSaving(true);
     setError(null);
     try {
-      // 只把改过的字段放进 patch (parent 合并到 localAtom)
-      const tags = tagsText
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const tagsSame =
-        tags.length === atom.tags.length && tags.every((t, i) => t === atom.tags[i]);
-      const patch: Partial<MemoryAtom> = {};
-      if (title !== atom.title) patch.title = title;
-      if (type !== atom.type) patch.type = type;
-      if (importance !== atom.importance) patch.importance = importance;
-      if (!tagsSame) patch.tags = tags;
-      if (summary !== atom.summary) patch.summary = summary;
-      if (content !== atom.content) patch.content = content;
-      if (Object.keys(patch).length > 0) {
-        await onSave(patch);
-      }
+      // Save now bypasses the 3s debounce — it flushes the parent's
+      // useAutoSave buffer directly. The patch itself was already pushed via
+      // onSave on each keystroke; flush just makes it land immediately.
+      await onFlush?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -168,6 +162,17 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
       </div>
       {/* body editor */}
       <div className="flex-1 flex flex-col min-h-0">
+        {atom.content === "" && atom.file_path && (
+          <div
+            data-testid="memory-error"
+            className="bg-red-50 border-b border-red-200 px-3 py-2 text-xs text-red-800"
+          >
+            <strong>file hash mismatch</strong> — another atom with the same
+            title overwrote this file. The original body is no longer
+            recoverable; restoring requires manual git/recovery of the
+            underlying markdown.
+          </div>
+        )}
         <div className="flex gap-1 border-b border-gray-200 px-3 py-1 text-xs">
           <button
             type="button"
