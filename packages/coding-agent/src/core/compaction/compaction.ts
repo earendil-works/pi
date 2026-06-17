@@ -243,6 +243,24 @@ function estimateTextAndImageContentChars(content: string | Array<{ type: string
 }
 
 /**
+ * Calculate a scaling factor to correct the chars/4 heuristic for code-heavy content.
+ * Compares actual token count (from LLM usage) against estimated count.
+ */
+function calculateTokenScale(
+	pathEntries: SessionEntry[],
+	boundaryStart: number,
+	boundaryEnd: number,
+	actualTokens: number,
+): number {
+	let estimatedTotalTokens = 0;
+	for (let i = boundaryStart; i < boundaryEnd; i++) {
+		const msg = getMessageFromEntry(pathEntries[i]);
+		if (msg) estimatedTotalTokens += estimateTokens(msg);
+	}
+	return estimatedTotalTokens > 0 ? actualTokens / estimatedTotalTokens : 1.0;
+}
+
+/**
  * Estimate token count for a message using chars/4 heuristic.
  * This is conservative (overestimates tokens).
  */
@@ -671,9 +689,14 @@ export function prepareCompaction(
 	}
 	const boundaryEnd = pathEntries.length;
 
-	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
+	// Get actual token count from LLM usage data for the range we're estimating
+	const sessionContext = buildSessionContext(pathEntries.slice(boundaryStart, boundaryEnd));
+	const tokensBefore = estimateContextTokens(sessionContext.messages).tokens;
 
-	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
+	// Calculate scaling factor to correct chars/4 heuristic for code-heavy content
+	const tokenScale = calculateTokenScale(pathEntries, boundaryStart, boundaryEnd, tokensBefore);
+
+	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens, tokenScale);
 
 	// Get UUID of first kept entry
 	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
