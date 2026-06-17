@@ -328,7 +328,7 @@
 
 ### CRITICAL
 
-- [ ] 6.1 **fix webui vitest config: inline `node:sqlite`/`bun:sqlite`/`@earendil-works/pi-personal-assistant`**
+- [x] 6.1 **fix webui vitest config: inline `node:sqlite`/`bun:sqlite`/`@earendil-works/pi-personal-assistant`**
   - **文件**: `packages/webui/vitest.config.ts` (Modify)
   - **内容**: 当前 `packages/webui` 的 vitest config 没 inline `node:sqlite` 和 `bun:sqlite`/`@earendil-works/pi-personal-assistant`,导致 server-side vitest 加载失败 (21 tests 全 fail "Failed to load url sqlite")。补:
     ```ts
@@ -337,13 +337,13 @@
   - **验证**: `cd packages/webui && npm test -- --run test/memory-routes.test.ts` 全过 (用项目的 `npm test` 不是绕过 tsx 直调)
   - **依赖**: 无
 
-- [ ] 6.2 **`<memory-error>` placeholder in MemoryEditor (slug collision 显式提示)**
+- [x] 6.2 **`<memory-error>` placeholder in MemoryEditor (slug collision 显式提示)**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Modify)
   - **内容**: 当 `atom.content === ""` AND `atom.file_path !== ""` 时,显示红底提示 banner:"file hash mismatch — another atom with the same title overwrote this file"。给用户的歧义 feedback, 不再让用户以为数据丢失。
   - **验证**: vitest + RTL 渲染 atom with `content=""` + `file_path="/tmp/x.md"`,断言 placeholder 出现;atom with `content="..."` 时不出现 placeholder
   - **依赖**: 无
 
-- [ ] 6.3 **Search response `fallback` flag + MemorySearchTester notice**
+- [x] 6.3 **Search response `fallback` flag + MemorySearchTester notice**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify) + `packages/webui/web/src/lib/api.ts` (Modify) + `packages/webui/web/src/components/memory/MemorySearchTester.tsx` (Modify)
   - **内容**: 
     1. `QueryRewriteResult` 加 `fallback?: boolean` 字段
@@ -358,7 +358,7 @@
 
 ### HIGH
 
-- [ ] 6.4 **"Save now" 按钮要么删要么真 save now**
+- [x] 6.4 **"Save now" 按钮要么删要么真 save now**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Modify) + `packages/webui/web/src/components/memory/MemoryDetail.tsx` (Modify)
   - **内容**: 当前 "Save now" 调用 onSave(patch) → setLocalAtom → useAutoSave debounce 重置 3s,**实际上 3s 后才 PATCH**,按钮 misleading。两种修法:
     - (A) 删除按钮 (auto-save 已 every keystroke 触发)
@@ -367,7 +367,7 @@
   - **验证**: vitest + RTL mock `onFlush`,点击 Save now 立即调一次 flush();断言 mock 被调
   - **依赖**: 无
 
-- [ ] 6.5 **`parseRewriteJson` 默认 `raw_query: query` (不是 "")**
+- [x] 6.5 **`parseRewriteJson` 默认 `raw_query: query` (不是 "")**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: `parseRewriteJson` 当前 `raw_query: parsed.raw_query ?? ""`,应改为 `raw_query: parsed.raw_query ?? query`。这样无论 LLM 成功 parse 还是降级,`raw_query` 都至少是用户原始输入。
   - **验证**: 跑 `node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 全过; 额外手测 `rewriteQueryWithCallLlm(callLlm, "amplicon", {})` 返回 `raw_query: "amplicon"`
@@ -375,7 +375,7 @@
 
 ### MEDIUM (lower priority — 可以下个 cycle)
 
-- [ ] 6.6 **Preview tab 用 `<Markdown>` 组件 (spec S24)**
-- [ ] 6.7 **`<details>` 折叠细节; "bug" type 处理; memoryList archive button 文字化**
-- [ ] 6.8 **debounce filter input 300ms (避免每个 keystroke 重 fetch)**
+- [x] 6.6 **Preview tab 用 `<Markdown>` 组件 (spec S24)**
+- [x] 6.7 **`<details>` 折叠细节; "bug" type 处理; memoryList archive button 文字化**
+- [x] 6.8 **debounce filter input 300ms (避免每个 keystroke 重 fetch)**
 
