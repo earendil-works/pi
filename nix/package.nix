@@ -9,6 +9,7 @@ let
     else
       nodejs;
   codingAgentPackage = builtins.fromJSON (builtins.readFile (srcRoot + "/packages/coding-agent/package.json"));
+  packageSource = import ./package-source.nix { inherit lib srcRoot; };
   runtimePackages = [
     pkgs.fd
     pkgs.git
@@ -22,9 +23,10 @@ in
 pkgs.buildNpmPackage {
   pname = "pi";
   version = codingAgentPackage.version;
-  src = import ./package-source.nix { inherit lib srcRoot; };
+  src = packageSource;
 
-  npmDepsHash = "sha256-fVsU+TkX9XSDsb0/h53pug/oXwD8lle5blWlw6hbfDw=";
+  npmDeps = pkgs.importNpmLock { npmRoot = packageSource; };
+  npmConfigHook = pkgs.importNpmLock.npmConfigHook;
   npmFlags = [ "--ignore-scripts" ];
   npmRebuildFlags = [ "--ignore-scripts" ];
 
