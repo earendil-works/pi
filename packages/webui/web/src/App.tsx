@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigat
 import ChatPage from "./pages/ChatPage";
 import CronPage from "./pages/CronPage";
 import EmptyChat from "./pages/EmptyChat";
+import { MemoryPage } from "./pages/MemoryPage";
 import { AppShell } from "./components/AppShell";
 import { api } from "./lib/api";
 import type { SessionInfo } from "./lib/api";
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="/" element={<EmptyChat />} />
           <Route path="/session/:id" element={<ChatPage />} />
           <Route path="/cron" element={<CronPage />} />
+          <Route path="/memory" element={<MemoryPage />} />
           <Route path="/sessions" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
