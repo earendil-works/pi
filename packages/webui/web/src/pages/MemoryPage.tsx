@@ -13,20 +13,35 @@ export function MemoryPage() {
     tag: "",
     q: "",
   });
+  // committedFilters lags filters by 300ms; used by the server fetch + 3s
+  // polling so every keystroke in the search/tag inputs does not re-fetch.
+  const [committedFilters, setCommittedFilters] = useState<MemoryListFilters>({
+    types: [],
+    archived: "active",
+    tag: "",
+    q: "",
+  });
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 3s polling fetch atoms + stats
+  // Commit filter changes after 300ms idle so we batch rapid keystrokes.
+  useEffect(() => {
+    const t = setTimeout(() => setCommittedFilters(filters), 300);
+    return () => clearTimeout(t);
+  }, [filters]);
+
+  // 3s polling fetch atoms + stats — uses committedFilters (debounced) to avoid
+  // racing responses from rapid filter changes.
   useEffect(() => {
     let alive = true;
     const fetchAll = async () => {
       try {
         const [list, s] = await Promise.all([
           api.memory.list({
-            archived: filters.archived,
-            type: filters.types.join(",") || undefined,
-            tag: filters.tag || undefined,
-            q: filters.q || undefined,
+            archived: committedFilters.archived,
+            type: committedFilters.types.join(",") || undefined,
+            tag: committedFilters.tag || undefined,
+            q: committedFilters.q || undefined,
           }),
           api.memory.stats(),
         ]);
@@ -42,8 +57,7 @@ export function MemoryPage() {
     void fetchAll();
     const interval = setInterval(() => void fetchAll(), 3000);
     return () => { alive = false; clearInterval(interval); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  }, [committedFilters]);
 
   const handleArchive = async (id: string) => {
     try {
