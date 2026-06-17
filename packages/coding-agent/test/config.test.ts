@@ -127,7 +127,9 @@ function createBunGlobalInstall(): { packageDir: string } {
 	return { packageDir };
 }
 
-function createNixProfileInstall(options: { elementName?: string; profile?: string; profileJson?: string } = {}): {
+function createNixProfileInstall(
+	options: { elementName?: string; originalUrl?: string; profile?: string; profileJson?: string } = {},
+): {
 	storePath: string;
 	packageDir: string;
 } {
@@ -142,6 +144,7 @@ function createNixProfileInstall(options: { elementName?: string; profile?: stri
 			elements: {
 				[options.elementName ?? "pi"]: {
 					active: true,
+					originalUrl: options.originalUrl ?? "github:earendil-works/pi",
 					priority: 5,
 					storePaths: [storePath],
 				},
@@ -351,6 +354,15 @@ describe("detectInstallMethod", () => {
 			args: ["profile", "upgrade", "--profile", profile, "--refresh", "pi-flake"],
 			display: `nix profile upgrade --profile "${profile}" --refresh pi-flake`,
 		});
+	});
+
+	test("does not self-update local Nix path flake installs as release updates", () => {
+		createNixProfileInstall({ originalUrl: "path:/Users/timpierson/Work/pi" });
+
+		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
+		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toBe(
+			"This installation is managed by a local Nix flake profile entry (pi: path:/Users/timpierson/Work/pi). Update that flake source, then run: nix profile upgrade --refresh pi. To track releases through nix profile upgrade, reinstall pi from a remote flake URL.",
+		);
 	});
 
 	test("does not self-update Nix store installs when no profile entry owns the store path", () => {

@@ -6,7 +6,7 @@
 
 - Fixed `/model` autocomplete and model selection searches to match provider/model queries regardless of whether the provider or model token is typed first.
 - Fixed the tree navigator to horizontally pan deep entries so the selected item remains readable ([#5830](https://github.com/earendil-works/pi/issues/5830)).
-- Fixed `pi update --self` for flake installs in Nix profiles to upgrade the owning `nix profile` entry instead of trying to write into the Nix store.
+- Fixed `pi update --self` for remote flake installs in Nix profiles to upgrade the owning `nix profile` entry instead of trying to write into the Nix store, while local path-flake installs now explain that the local source must be updated first.
 - Fixed `pi uninstall`/`pi remove` for npm packages to avoid starting project-trust extensions during global removal and to use peer-relaxed package-manager flags, avoiding failures caused by unrelated stale peer dependencies in the managed package root.
 
 ## [0.79.6] - 2026-06-16

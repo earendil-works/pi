@@ -38,6 +38,18 @@ export interface SelfUpdateCommand extends SelfUpdateCommandStep {
 	steps?: SelfUpdateCommandStep[];
 }
 
+interface NixProfileElement {
+	name: string;
+	originalUrl?: string;
+	url?: string;
+}
+
+interface NixProfileInstall {
+	storePath: string;
+	profile?: string;
+	element: NixProfileElement;
+}
+
 function makeSelfUpdateCommand(
 	installStep: SelfUpdateCommandStep,
 	uninstallStep?: SelfUpdateCommandStep,
@@ -200,7 +212,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getNixProfileElementNameForStorePath(storePath: string, profile?: string): string | undefined {
+function getNixProfileElementForStorePath(storePath: string, profile?: string): NixProfileElement | undefined {
 	const output = readCommandOutput("nix", ["profile", "list", "--json", ...(profile ? ["--profile", profile] : [])]);
 	if (!output) return undefined;
 
@@ -217,30 +229,49 @@ function getNixProfileElementNameForStorePath(storePath: string, profile?: strin
 		const storePaths = getStringArray(rawElement.storePaths);
 		if (!storePaths) continue;
 		if (storePaths.some((candidate) => getNixStoreRoot(candidate) === storePath)) {
-			return name;
+			const originalUrl = typeof rawElement.originalUrl === "string" ? rawElement.originalUrl : undefined;
+			const url = typeof rawElement.url === "string" ? rawElement.url : undefined;
+			return { name, ...(originalUrl ? { originalUrl } : {}), ...(url ? { url } : {}) };
 		}
 	}
 	return undefined;
 }
 
-function getNixProfileSelfUpdateCommand(): SelfUpdateCommand | undefined {
+function getNixProfileInstall(): NixProfileInstall | undefined {
 	const storePath = getNixStoreRoot(getPackageDir()) ?? getNixStoreRoot(process.argv[1]);
 	if (!storePath) return undefined;
 
 	const envProfile = process.env.NIX_PROFILE || undefined;
 	const profileCandidates = envProfile ? [envProfile, undefined] : [undefined];
 	for (const profile of profileCandidates) {
-		const elementName = getNixProfileElementNameForStorePath(storePath, profile);
-		if (!elementName) continue;
-		return makeSelfUpdateCommandStep("nix", [
-			"profile",
-			"upgrade",
-			...(profile ? ["--profile", profile] : []),
-			"--refresh",
-			elementName,
-		]);
+		const element = getNixProfileElementForStorePath(storePath, profile);
+		if (!element) continue;
+		return { storePath, ...(profile ? { profile } : {}), element };
 	}
 	return undefined;
+}
+
+function isLocalNixProfileUrl(url: string | undefined): boolean {
+	return url?.startsWith("path:") === true || url?.startsWith("git+file:") === true;
+}
+
+function makeNixProfileUpgradeCommand(install: NixProfileInstall): SelfUpdateCommand {
+	return makeSelfUpdateCommandStep("nix", [
+		"profile",
+		"upgrade",
+		...(install.profile ? ["--profile", install.profile] : []),
+		"--refresh",
+		install.element.name,
+	]);
+}
+
+function getNixProfileSelfUpdateCommand(): SelfUpdateCommand | undefined {
+	const install = getNixProfileInstall();
+	if (!install) return undefined;
+	if (isLocalNixProfileUrl(install.element.originalUrl ?? install.element.url)) {
+		return undefined;
+	}
+	return makeNixProfileUpgradeCommand(install);
 }
 
 function readCommandOutput(
@@ -399,6 +430,12 @@ export function getSelfUpdateUnavailableInstruction(
 		const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 		if (command) {
 			return `Run: ${command.display}`;
+		}
+		const install = getNixProfileInstall();
+		if (install && isLocalNixProfileUrl(install.element.originalUrl ?? install.element.url)) {
+			const source = install.element.originalUrl ?? install.element.url ?? "unknown";
+			const upgradeCommand = makeNixProfileUpgradeCommand(install);
+			return `This installation is managed by a local Nix flake profile entry (${install.element.name}: ${source}). Update that flake source, then run: ${upgradeCommand.display}. To track releases through nix profile upgrade, reinstall ${APP_NAME} from a remote flake URL.`;
 		}
 		const storePath = getNixStoreRoot(getPackageDir()) ?? getNixStoreRoot(process.argv[1]);
 		const storePathDetail = storePath ? ` whose storePaths include ${storePath}` : "";
