@@ -212,6 +212,44 @@ describe("rewriteQueryWithCallLlm", () => {
     const result = await rewriteQueryWithCallLlm(callLlm, "my query", emptyConfig);
     expect(result.raw_query).toBe("my query");
   });
+
+  // Regression: LLM often returns BOTH the broken-down keywords AND the
+  // original phrase as a 4th keyword (e.g. ["PDF","图片","提取","图片提取"]
+  // for query "pdf中图片提取"). The 4th is redundant and over-biases FTS5
+  // matches. The dedupe helper drops any keyword that can be formed by
+  // concatenating a subsequence of the other keywords.
+  it("drops a keyword that is the concatenation of other keywords", async () => {
+    const callLlm = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        keywords: ["PDF", "图片", "提取", "图片提取"],
+        target_types: ["solution", "workflow"],
+      }),
+    );
+    const result = await rewriteQueryWithCallLlm(callLlm, "pdf中图片提取", emptyConfig);
+    expect(result.keywords).toEqual(["PDF", "图片", "提取"]);
+    expect(result.target_types).toEqual(["solution", "workflow"]);
+    expect(result.fallback).toBe(false);
+  });
+
+  // Regression: when the LLM echoes the query verbatim as one of the
+  // keywords, it's redundant with raw_query and contributes nothing to FTS5
+  // beyond what the broken-down tokens already cover.
+  it("drops a keyword that equals the query (case-insensitive, whitespace-normalized)", async () => {
+    const callLlm = vi.fn().mockResolvedValue(
+      JSON.stringify({ keywords: ["amplicon pipeline", "amplicon"], target_types: [] }),
+    );
+    const result = await rewriteQueryWithCallLlm(callLlm, "  Amplicon Pipeline ", emptyConfig);
+    expect(result.keywords).toEqual(["amplicon"]);
+  });
+
+  // Sanity: keywords that are NOT redundant stay intact.
+  it("keeps keywords that are not redundant", async () => {
+    const callLlm = vi.fn().mockResolvedValue(
+      JSON.stringify({ keywords: ["alpha", "beta", "gamma"], target_types: [] }),
+    );
+    const result = await rewriteQueryWithCallLlm(callLlm, "anything", emptyConfig);
+    expect(result.keywords).toEqual(["alpha", "beta", "gamma"]);
+  });
 });
 
 describe("searchAtomsWithScores", () => {

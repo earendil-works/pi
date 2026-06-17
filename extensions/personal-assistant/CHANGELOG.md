@@ -16,6 +16,10 @@
 ### Fixed
 
 - `writeAtomToFile(atom, baseDir)` previously emitted a `tmp → rename` overwrite that could collide with another atom sharing the same slugified title, silently orphaning the older file. (Documented as v1 limitation R14; not fixed — needs ID-stamped paths.)
+- Query rewriter now drops redundant keywords before they reach FTS5:
+  - `dedupeRedundantKeywords`: drops any keyword that can be formed by concatenating a subsequence of the other keywords (catches the common LLM behavior of returning BOTH the broken-down tokens AND the original phrase as one of the keywords, e.g. `["PDF","图片","提取","图片提取"]` for query `pdf中图片提取`).
+  - `dedupeAgainstQuery`: drops any keyword that equals the normalized user query (case-insensitive, whitespace-folded).
+  Both helpers run inside `parseRewriteJson` / `rewriteQueryWithCallLlm` / `rewriteQuery` / `callOllamaRewrite` so every code path that hands a `QueryRewriteResult` to `searchAtoms` benefits.
 
 ### Tests
 

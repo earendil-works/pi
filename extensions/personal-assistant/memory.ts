@@ -824,7 +824,9 @@ export async function rewriteQuery(
         const text = extractAssistantText(result);
         if (text) {
           const parsed = parseRewriteJson(text);
-          if (parsed) return parsed;
+          if (parsed) {
+            return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
+          }
         }
       }
     }
@@ -850,7 +852,9 @@ export async function rewriteQuery(
     if (!text) return simpleKeywordExtraction(query);
 
     const parsed = parseRewriteJson(text);
-    if (parsed) return parsed;
+    if (parsed) {
+      return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
+    }
   } catch {
     // Fall through to simple extraction
   }
@@ -881,7 +885,7 @@ export async function rewriteQueryWithCallLlm(
       const parsed = parseRewriteJson(llmRaw);
       if (parsed) {
         // Default raw_query to the user's input when LLM omits it (sdd-review HIGH #5).
-        return { ...parsed, raw_query: parsed.raw_query || query };
+        return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
       }
     }
   } catch {
@@ -917,8 +921,11 @@ function parseRewriteJson(text: string): QueryRewriteResult | null {
   try {
     const parsed = JSON.parse(jsonMatch[0]);
     if (Array.isArray(parsed.keywords) && parsed.keywords.length > 0) {
+      const rawKeywords = parsed.keywords
+        .filter((k: unknown) => typeof k === "string" && k.length > 0)
+        .slice(0, 10);
       return {
-        keywords: parsed.keywords.filter((k: unknown) => typeof k === "string").slice(0, 10),
+        keywords: dedupeRedundantKeywords(rawKeywords),
         target_types: Array.isArray(parsed.target_types)
           ? parsed.target_types.filter((t: unknown) => ATOM_TYPE_ORDER.includes(t as MemoryAtomType))
           : [],
@@ -928,6 +935,45 @@ function parseRewriteJson(text: string): QueryRewriteResult | null {
     }
   } catch { /* ignore */ }
   return null;
+}
+
+/**
+ * 去除 LLM 在 keywords 里冗余返回的"全句"关键词。
+ *
+ * 背景: LLM 经常既返回拆解后的关键词,又把原句作为第 N 个关键词塞回去
+ * (例如查询 "pdf中图片提取" 返回 ["PDF","图片","提取","图片提取"])。
+ * 第 4 项可以由第 2 + 第 3 项拼接而成,对 FTS5 检索只会重复加权重。
+ *
+ * 规则: 任何一个 keyword,如果能由"其余 keywords 的某个子序列(保序、连续拼接)"
+ * 组合得到,则视为冗余并丢弃。当 keywords 数量 ≤ 8 时用 2^N 暴力枚举即可。
+ */
+function dedupeRedundantKeywords(keywords: string[]): string[] {
+  if (keywords.length <= 1) return keywords;
+  return keywords.filter((k, i) => {
+    const others = keywords.filter((_, j) => j !== i);
+    // 子集枚举 (mask 跳过空集)
+    const n = others.length;
+    for (let mask = 1; mask < 1 << n; mask++) {
+      let composed = "";
+      for (let j = 0; j < n; j++) {
+        if (mask & (1 << j)) composed += others[j];
+      }
+      if (composed === k) return false; // 可由其余拼接得到 → 冗余,丢弃
+    }
+    return true;
+  });
+}
+
+/**
+ * 在 `dedupeRedundantKeywords` 之上再做一轮"query 感知"去重:
+ * 如果某个 keyword 与归一化后的 query 相同(忽略大小写、首尾空白、内部空白折叠),
+ * 则丢弃 — 它已被 raw_query 携带,FTS5 再搜一次是重复加权。
+ */
+function dedupeAgainstQuery(keywords: string[], query: string): string[] {
+  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  const target = normalize(query);
+  if (!target) return keywords;
+  return keywords.filter((k) => normalize(k) !== target);
 }
 
 async function callOllamaRewrite(model: string, query: string): Promise<QueryRewriteResult | null> {
@@ -947,7 +993,9 @@ async function callOllamaRewrite(model: string, query: string): Promise<QueryRew
     const data = (await res.json()) as { message?: { content?: string } };
     const text = data?.message?.content;
     if (!text) return null;
-    return parseRewriteJson(text);
+    const parsed = parseRewriteJson(text);
+    if (parsed) return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query) };
+    return null;
   } catch {
     return null;
   }

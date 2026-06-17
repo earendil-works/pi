@@ -21,3 +21,4 @@
 - MemoryPage filter input debounced 300ms before triggering a server refetch — typing in `q` / `tag` no longer fires a full list + stats refetch on every keystroke.
 - Preview tab now uses the shared `<Markdown>` component (matching chat-page rendering) instead of raw `whitespace-pre-wrap` text.
 - MemoryList archive control now shows "Archive" / "Restore" text labels instead of small ✕ / ↺ icons.
+- Clicking the **active** list item now re-fetches the detail panel. `setSelectedId(id)` with the same id was a React no-op, leaving `MemoryDetail` with stale state and only re-fetching on the 3s polling tick. Fixed by giving `MemoryPage` a `refreshKey` counter that bumps on every click and becomes part of `MemoryDetail`'s `key` prop, forcing React to unmount + remount. (`MemoryPage.tsx`)

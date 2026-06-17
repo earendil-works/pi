@@ -23,6 +23,17 @@ export function MemoryPage() {
   });
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Clicking the active item (selectedId === id) is a no-op for setState, so
+  // we bump refreshKey on every click and feed it into MemoryDetail's key prop.
+  // When the key changes React unmounts + remounts, which re-runs the
+  // `useEffect(..., [id])` fetcher inside MemoryDetail. This gives users
+  // explicit control over when they want a fresh server read of the same atom.
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleSelect = (id: string) => {
+    setSelectedId(id);
+    setRefreshKey((k) => k + 1);
+  };
 
   // Commit filter changes after 300ms idle so we batch rapid keystrokes.
   useEffect(() => {
@@ -97,7 +108,7 @@ export function MemoryPage() {
           <MemoryList
             atoms={atoms}
             selectedId={selectedId ?? undefined}
-            onSelect={(id) => setSelectedId(id)}
+            onSelect={handleSelect}
             onArchive={handleArchive}
             filters={filters}
             onFilterChange={setFilters}
@@ -107,7 +118,12 @@ export function MemoryPage() {
         {/* 右 70%: detail */}
         <div className="w-[70%] min-h-0">
           {selectedId ? (
-            <MemoryDetail id={selectedId} onArchive={handleArchive} onListRefresh={handleRefresh} />
+            <MemoryDetail
+              key={`${selectedId}:${refreshKey}`}
+              id={selectedId}
+              onArchive={handleArchive}
+              onListRefresh={handleRefresh}
+            />
           ) : (
             <div className="p-4 text-sm text-gray-500">Select an atom from the list</div>
           )}
@@ -115,7 +131,7 @@ export function MemoryPage() {
       </div>
       {/* bottom: search tester */}
       <div className="max-h-64 overflow-auto">
-        <MemorySearchTester onSelectAtom={(id) => setSelectedId(id)} />
+        <MemorySearchTester onSelectAtom={handleSelect} />
       </div>
     </div>
   );

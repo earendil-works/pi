@@ -103,6 +103,34 @@ describe("MemoryPage", () => {
     await waitFor(() => expect(screen.getByDisplayValue("Atom 1")).toBeInTheDocument());
   });
 
+  // Regression: clicking the active (already-selected) item must re-fetch
+  // the detail. setSelectedId(id) with same id is a no-op in React, so without
+  // a remount key MemoryDetail keeps its stale state. The fix forces a
+  // re-fetch by bumping a refresh counter that becomes part of MemoryDetail's
+  // key prop, remounting the panel.
+  it("clicking the active item re-fetches the detail", async () => {
+    (api.memory.get as ReturnType<typeof vi.fn>).mockClear();
+    const updatedAtom = { ...ATOMS[0], content: "# v2 body", updated_at: "2025-02-01T00:00:00Z" };
+    (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ATOMS[0]);
+    (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedAtom);
+
+    render(<MemoryPage />);
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    // First click → load atom-1 (mock 1, count = 1)
+    fireEvent.click(screen.getByText("Atom 1"));
+    await waitFor(() => expect(screen.getByDisplayValue("Atom 1")).toBeInTheDocument());
+    expect((api.memory.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+    // Second click on the same active item → must trigger another GET (mock 2)
+    fireEvent.click(screen.getByText("Atom 1"));
+    await waitFor(() =>
+      expect((api.memory.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2),
+    );
+  });
+
   it("Archive handler removes atom from list optimistically", async () => {
     (api.memory.archive as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
