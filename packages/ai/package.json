@@ -101,6 +101,6 @@
 	"devDependencies": {
 		"@types/node": "24.12.4",
 		"canvas": "3.2.3",
-		"vitest": "3.2.4"
+		"vitest": "3.2.6"
 	}
 }

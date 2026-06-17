@@ -53,8 +53,8 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
-		"@vitest/coverage-v8": "3.2.4",
+		"@vitest/coverage-v8": "3.2.6",
 		"typescript": "5.9.3",
-		"vitest": "3.2.4"
+		"vitest": "3.2.6"
 	}
 }

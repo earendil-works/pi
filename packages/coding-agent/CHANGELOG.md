@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `vitest` to 3.2.6 to pick up upstream security fixes from the bundled `vite`/`esbuild`/`ws`/`protobufjs` transitive dependencies.
+
 ### Fixed
 
 - Fixed `/model` autocomplete and model selection searches to match provider/model queries regardless of whether the provider or model token is typed first.

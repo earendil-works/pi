@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped `vitest` and `@vitest/coverage-v8` to 3.2.6 to pick up upstream security fixes from the bundled `vite`/`esbuild`/`ws` transitive dependencies.
+
 ## [0.79.6] - 2026-06-16
 
 ## [0.79.5] - 2026-06-16
