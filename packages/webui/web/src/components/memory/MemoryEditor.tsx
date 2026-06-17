@@ -42,6 +42,39 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
     setLastResetKey(initialKey);
   }
 
+  const reportChange = (patch: Partial<MemoryAtom>) => {
+    if (Object.keys(patch).length === 0) return;
+    void onSave(patch);
+  };
+
+  const handleTitleChange = (v: string) => {
+    setTitle(v);
+    if (v !== atom.title) reportChange({ title: v });
+  };
+  const handleTypeChange = (v: MemoryAtomType) => {
+    setType(v);
+    if (v !== atom.type) reportChange({ type: v });
+  };
+  const handleImportanceChange = (v: number) => {
+    setImportance(v);
+    if (v !== atom.importance) reportChange({ importance: v });
+  };
+  const handleTagsChange = (v: string) => {
+    setTagsText(v);
+    const tags = v.split(",").map((s) => s.trim()).filter(Boolean);
+    const tagsSame =
+      tags.length === atom.tags.length && tags.every((t, i) => t === atom.tags[i]);
+    if (!tagsSame) reportChange({ tags });
+  };
+  const handleSummaryChange = (v: string) => {
+    setSummary(v);
+    if (v !== atom.summary) reportChange({ summary: v });
+  };
+  const handleContentChange = (v: string) => {
+    setContent(v);
+    if (v !== atom.content) reportChange({ content: v });
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -60,7 +93,9 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
       if (!tagsSame) patch.tags = tags;
       if (summary !== atom.summary) patch.summary = summary;
       if (content !== atom.content) patch.content = content;
-      await onSave(patch);
+      if (Object.keys(patch).length > 0) {
+        await onSave(patch);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -77,7 +112,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => handleTitleChange(e.target.value)}
             data-field="title"
             className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
@@ -87,7 +122,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
             <label className="text-xs text-gray-500 block">type</label>
             <select
               value={type}
-              onChange={(e) => setType(e.target.value as MemoryAtomType)}
+              onChange={(e) => handleTypeChange(e.target.value as MemoryAtomType)}
               className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
             >
               {TYPES.map((t) => (
@@ -107,7 +142,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
               max="1"
               step="0.05"
               value={importance}
-              onChange={(e) => setImportance(Number(e.target.value))}
+              onChange={(e) => handleImportanceChange(Number(e.target.value))}
               className="w-full"
             />
           </div>
@@ -117,7 +152,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
           <input
             type="text"
             value={tagsText}
-            onChange={(e) => setTagsText(e.target.value)}
+            onChange={(e) => handleTagsChange(e.target.value)}
             className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
         </div>
@@ -125,7 +160,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
           <label className="text-xs text-gray-500 block">summary</label>
           <textarea
             value={summary}
-            onChange={(e) => setSummary(e.target.value)}
+            onChange={(e) => handleSummaryChange(e.target.value)}
             rows={2}
             className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
@@ -153,7 +188,7 @@ export function MemoryEditor({ atom, onSave, onArchive }: MemoryEditorProps) {
           {tab === "edit" ? (
             <textarea
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onChange={(e) => handleContentChange(e.target.value)}
               data-field="content"
               className="w-full h-full p-3 font-mono text-sm border-0 resize-none focus:outline-none"
             />
