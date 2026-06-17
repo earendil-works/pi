@@ -85,6 +85,7 @@
 				"thinkingMedium",
 				"thinkingHigh",
 				"thinkingXhigh",
+				"thinkingMax",
 				"bashMode"
 			],
 			"properties": {
@@ -287,6 +288,10 @@
 				"thinkingXhigh": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Thinking level border: xhigh (OpenAI codex-max only)"
+				},
+				"thinkingMax": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Thinking level border: max (unconstrained reasoning; selected Anthropic models)"
 				},
 				"bashMode": {
 					"$ref": "#/$defs/colorValue",

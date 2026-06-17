@@ -286,9 +286,9 @@ Set the reasoning/thinking level for models that support it.
 {"type": "set_thinking_level", "level": "high"}
 ```
 
-Levels: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`
+Levels: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`
 
-Note: `"xhigh"` is only supported by OpenAI codex-max models.
+Note: `"xhigh"` is only supported by OpenAI codex-max models. `"max"` is only supported by selected Anthropic models (Opus 4.6/4.7/4.8, Sonnet 4.6).
 
 Response:
 ```json

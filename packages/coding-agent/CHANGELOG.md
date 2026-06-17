@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Added a `max` thinking level. Selecting it drives the provider's `max` reasoning effort on adaptive Anthropic models (Opus 4.6/4.7/4.8, Sonnet 4.6). Models opt in via `thinkingLevelMap.max`; a `thinkingMax` theme color plus the `max` value for `--thinking`, `defaultThinkingLevel`, and the thinking selectors were added alongside.
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed

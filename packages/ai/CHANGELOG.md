@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Added `max` to `ThinkingLevel`/`ModelThinkingLevel` and `getSupportedThinkingLevels` (gated on `thinkingLevelMap.max`, mirroring `xhigh`). The Anthropic provider already supported `max` effort; OpenAI/Google providers clamp `max` to a supported effort when a model doesn't advertise it.
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed
