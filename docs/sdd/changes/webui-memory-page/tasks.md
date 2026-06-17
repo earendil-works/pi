@@ -182,7 +182,7 @@
   - **验证**: 单测加 2 条:空 DB 返回 `{total:0, archived:0, byType:{}}`、3 个不同 type 正确分类
   - **依赖**: 2.6
 
-- [ ] 2.8 **`createApp` mount 路由**
+- [x] 2.8 **`createApp` mount 路由**
   - **文件**: `packages/webui/server/index.ts` (Modify)
   - **内容**: 在 `mountSessionsRoutes(app, sessionPool, { callLlm, settings });`(line 240)下方加:
     ```typescript
@@ -200,7 +200,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && npm run check` 全过;单测 `node ../../node_modules/vitest/dist/cli.js --run test/index.test.ts` 仍绿(确认 createApp mount 顺序没破坏)
   - **依赖**: 2.7
 
-- [ ] 2.9 **回归:`runMemoryExtraction` 流程不变**
+- [x] 2.9 **回归:`runMemoryExtraction` 流程不变**
   - **文件**: 无(纯命令)
   - **内容**: 跑 `node ../../node_modules/vitest/dist/cli.js --run test/sessions-routes.test.ts` 全绿,特别是 `(g1)`/`(f1)` 这些 spy `runMemoryExtraction` 的测试,确认 export 列表扩充没破坏签名
   - **验证**: sessions-routes 单测全绿
