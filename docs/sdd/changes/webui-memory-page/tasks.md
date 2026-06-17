@@ -46,7 +46,7 @@
   - **验证**: 同 1.2,新增 `rewriteQueryWithCallLlm` 测试条目(正常 LLM 返回 + 抛错降级两条)
   - **依赖**: 1.1
 
-- [ ] 1.5 **新增 `searchAtomsWithScores(index, query, topK)` helper**
+- [x] 1.5 **新增 `searchAtomsWithScores(index, query, topK)` helper**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 复制 `searchAtoms`(line 970-1042)的候选打分逻辑,函数签名改为
     ```typescript
@@ -208,7 +208,7 @@
 
 ## 3. 客户端基础
 
-- [ ] 3.1 **`api.ts` memory namespace**
+- [x] 3.1 **`api.ts` memory namespace**
   - **文件**: `packages/webui/web/src/lib/api.ts` (Modify)
   - **内容**: 在文件末尾追加:
     ```typescript
@@ -230,7 +230,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && npm run check` 全过(TS 编译过)
   - **依赖**: 2.9
 
-- [ ] 3.2 **`useAutoSave` hook**
+- [x] 3.2 **`useAutoSave` hook**
   - **文件**: `packages/webui/web/src/lib/useAutoSave.ts` (Create)
   - **内容**: 实现 design.md 架构章节伪代码里的 hook。3s debounce,unmount cleanup 取消 timer + await in-flight 200ms 兜底超时;`state` 状态机 idle/dirty/saving/saved/error。导出 `{state, lastSaved, flushNow}`。`flushNow` 在 unmount 期间被外部用 `useRef` 持有以便显式 await。用 `useRef<boolean>` 持有 `mounted` 标志位避免 setState on unmounted(React 18+ 警告)
   - **验证**: 写 `packages/webui/web/src/lib/useAutoSave.test.ts`(用 vitest + React Testing Library 或者直接测试纯函数 `computeNextState`)覆盖 4 个状态:debounce 触发、flush 触发、error 状态、cleanup 200ms 兜底
@@ -238,49 +238,49 @@
 
 ## 4. 客户端组件
 
-- [ ] 4.1 **`MemoryTypeBadge` 组件**
+- [x] 4.1 **`MemoryTypeBadge` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemoryTypeBadge.tsx` (Create)
   - **内容**: 7 种 type 各自颜色 chip:constraint=red,preference=blue,workflow=purple,knowledge=green,event=amber,solution=indigo,insight=pink。Props: `{type: MemoryAtomType}`。复用 webui 现有 `Badge`-ish 风格(`bg-{color}-100 text-{color}-800 rounded px-2 py-0.5 text-xs`)
   - **验证**: vitest 渲染 7 个 type 各 1 次,断言 className 含正确颜色
   - **依赖**: 3.1
 
-- [ ] 4.2 **`MemoryList` 组件**
+- [x] 4.2 **`MemoryList` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemoryList.tsx` (Create)
   - **内容**: Props: `{atoms: MemoryAtom[]; selectedId?: string; onSelect: (id) => void; onArchive: (id) => void; filters: {type, archived, tag, q}; onFilterChange: (f) => void}`。渲染顶部过滤栏(type 多选 chips、archived radio[active/archived/all]、tag input、q input、Refresh 按钮),下方卡片列表(每行 `MemoryTypeBadge` + title + `str=X.XX imp=X.XX last=Nh ago` + 选中高亮 + 右键或 hover 显示 Archive 按钮)
   - **验证**: vitest + RTL 渲染 5 atom 列表,断言 type filter 切换后过滤正确
   - **依赖**: 4.1
 
-- [ ] 4.3 **`MemorySearchTester` 组件**
+- [x] 4.3 **`MemorySearchTester` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemorySearchTester.tsx` (Create)
   - **内容**: 折叠面板(`<details>` 即可,无需动画)。展开后:query input + Search 按钮、结果区显示 `keywords` chips + `target_types` chips + `embedding_available` 标签(不可用时显示"embedding unavailable"灰底)+ 结果列表,每行 `MemoryTypeBadge` + title + hover 显示 `{fts: 0.8, cos: 0.6, hybrid: 0.71, str: 0.9, imp: 0.7}`,点击跳到 detail
   - **验证**: vitest + RTL 模拟 `api.memory.search` 返回 mock,断言结果渲染 + 分数 tooltip 出现
   - **依赖**: 3.1, 4.1
 
-- [ ] 4.4 **`MemoryEditor` 组件(metadata + body)**
+- [x] 4.4 **`MemoryEditor` 组件(metadata + body)**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Create)
   - **内容**: Props: `{atom: MemoryAtom; onSave: (patch: Partial<MemoryAtom>) => Promise<void>; onArchive: () => void}`。上半 metadata form:title input、type select、importance slider(0-1,step 0.05)、tags chip input、summary textarea。下半 body editor:Edit/Preview tab(Edit 是 textarea 60vh + 内部滚动,Preview 用 webui 现有 `Markdown` 组件渲染)。所有字段改动汇聚成 `patch: Partial<MemoryAtom>`,传给父组件传入的 `onSave`。**注意:本任务不调 `useAutoSave`**,由父组件 `MemoryDetail` 决定 debounce 时机
   - **验证**: vitest + RTL 模拟 onSave,改 title 后断言 onSave 拿到 `{title: "new"}`、content 不在 patch 里
   - **依赖**: 3.1, 4.1
 
-- [ ] 4.5 **`MemoryDetail` 组件**
+- [x] 4.5 **`MemoryDetail` 组件**
   - **文件**: `packages/webui/web/src/components/memory/MemoryDetail.tsx` (Create)
   - **内容**: Props: `{id: string; onArchive: (id) => void; onListRefresh: () => void}`。内部 state: `atom` (DB 拿的)、`localAtom` (in-flight edit)、`error`。`useEffect` 拉 `api.memory.get(id)` + 3s 轮询。把 `localAtom` 传给 `useAutoSave(localAtom, (v) => api.memory.patch(id, v), 3000)`,header 显示状态条(Saving…/Saved Ns ago/error)+ Archive 按钮(直接调 `onArchive(id)`,不走 debounce)。header 旁边显示 Read-only metadata 行(strength/importance/access_count/created_at/updated_at/last_access/file_path),让用户看清 DB 状态
   - **验证**: vitest + RTL 模拟 api.memory.get/patch,改 title 后 3s 触发 patch;mock 失败时显示红色 error
   - **依赖**: 3.1, 3.2, 4.4
 
-- [ ] 4.6 **`MemoryPage` 装配**
+- [x] 4.6 **`MemoryPage` 装配**
   - **文件**: `packages/webui/web/src/pages/MemoryPage.tsx` (Create)
   - **内容**: 3-pane:`MemoryList` 左侧 30% 宽 + `MemoryDetail` 右侧 70% 宽 + `MemorySearchTester` 底部折叠。state: `selectedId`、`atoms`(list 数据)、`filters`。`useEffect` 拉 `api.memory.list({...filters})` + 3s 轮询;`useEffect` 拉 `api.memory.stats()` 显示顶部 stats badge。Archive handler 调 `api.memory.archive(id, true)` 然后 `setAtoms(prev => prev.filter(a => a.id !== id))` 立即更新
   - **验证**: vitest + RTL 渲染,断言 list 渲染 atom 数 = mock 数据数、点击列表项 detail 装入
   - **依赖**: 4.5
 
-- [ ] 4.7 **`AppShell` 加 Memory icon**
+- [x] 4.7 **`AppShell` 加 Memory icon**
   - **文件**: `packages/webui/web/src/components/AppShell.tsx` (Modify)
   - **内容**: 找到现有 `IconRow` 的位置(当前只有 cron icon 之类),加一个 Memory icon(`Brain` 来自 lucide-react,或 `BookOpen` 备选)。点击调 `onNavigate('memory')` 或类似(参考现有 IconRow 的回调风格)。在 `AppShellProps` 加 `currentView` + `onNavigateView` props,`IconRow` 接受 `currentView` 高亮 active icon
   - **验证**: `npm run check` 过 TS;浏览器(开发模式)打开看到 icon 在 sidebar
   - **依赖**: 4.6
 
-- [ ] 4.8 **路由 `/memory`**
+- [x] 4.8 **路由 `/memory`**
   - **文件**: `packages/webui/web/src/App.tsx` + `main.tsx` (Modify)
   - **内容**: 在路由表加 `<Route path="memory" element={<MemoryPage />} />`(参考现有 `/cron` 路由加法)。`AppShell` 用 `currentView` 决定渲染 `MemoryPage` / `ChatPage` / `CronPage`
   - **验证**: 浏览器访问 `/memory` 看到 MemoryPage 渲染
@@ -316,10 +316,10 @@
 
 ## Verification
 
-- [ ] 全量 check: `cd /home/qjh/workspace/personal/pi && npm run check` 退出码 0
-- [ ] 个人助理新 helper 单测: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 8/8 绿
-- [ ] webui server memory 路由单测: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` 全绿
-- [ ] webui server sessions 回归: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/sessions-routes.test.ts` 全绿(含 `runMemoryExtraction` spy 测试)
-- [ ] useAutoSave 单元测试: `cd /home/qjh/workspace/personal/pi/packages/webui/web && node ../../node_modules/vitest/dist/cli.js --run src/lib/useAutoSave.test.ts` 全绿
-- [ ] 组件渲染测试: 4 个 `Memory*.test.tsx` 全绿
-- [ ] 端到端 smoke: 8 个步骤全部通过
+- [x] 全量 check: `cd /home/qjh/workspace/personal/pi && npm run check` 退出码 0
+- [x] 个人助理新 helper 单测: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-exports.test.ts` 8/8 绿
+- [x] webui server memory 路由单测: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` 全绿
+- [x] webui server sessions 回归: `cd /home/qjh/workspace/personal/pi/packages/webui && node ../../node_modules/vitest/dist/cli.js --run test/sessions-routes.test.ts` 全绿(含 `runMemoryExtraction` spy 测试)
+- [x] useAutoSave 单元测试: `cd /home/qjh/workspace/personal/pi/packages/webui/web && node ../../node_modules/vitest/dist/cli.js --run src/lib/useAutoSave.test.ts` 全绿
+- [x] 组件渲染测试: 4 个 `Memory*.test.tsx` 全绿
+- [x] 端到端 smoke: 8 个步骤全部通过
