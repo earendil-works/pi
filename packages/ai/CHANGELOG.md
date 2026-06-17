@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Fireworks GLM 5.2 model metadata for `accounts/fireworks/models/glm-5p2`.
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed

@@ -48,6 +48,26 @@ describe("Fireworks models", () => {
 		expect(model?.input).toEqual(["text", "image"]);
 	});
 
+	it("registers GLM 5.2 from the Fireworks serverless catalog", () => {
+		const model = getModel("fireworks", "accounts/fireworks/models/glm-5p2");
+
+		expect(model).toBeDefined();
+		expect(model.name).toBe("GLM 5.2");
+		expect(model.api).toBe("anthropic-messages");
+		expect(model.provider).toBe("fireworks");
+		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference");
+		expect(model.reasoning).toBe(true);
+		expect(model.input).toEqual(["text"]);
+		expect(model.contextWindow).toBe(1048576);
+		expect(model.maxTokens).toBe(131072);
+		expect(model.cost).toEqual({
+			input: 1.4,
+			output: 4.4,
+			cacheRead: 0.26,
+			cacheWrite: 0,
+		});
+	});
+
 	it("resolves FIREWORKS_API_KEY from the environment", () => {
 		process.env.FIREWORKS_API_KEY = "test-fireworks-key";
 
