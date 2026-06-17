@@ -309,10 +309,10 @@ describe("searchAtomsWithScores", () => {
     expect(result.results[0].hybrid_score).toBeGreaterThan(0);
   });
 
-  it("returns embedding_available=false and cosine_score=0 when no embeddings exist", async () => {
+  it("returns embedding_available=false when embedding service is unreachable", async () => {
     // Mock fetch to throw — simulates embedding service unavailable.
-    // searchEmbeddings() catches the error in getEmbedding() and returns null,
-    // which makes it return an empty Map, so we go to the FTS-only branch.
+    // searchEmbeddings() catches the error in getEmbedding() and returns
+    // serviceAvailable=false, so we go to the FTS-only branch.
     const fetchMock = vi.fn(async () => {
       throw new Error("embedding service unavailable");
     });
@@ -334,6 +334,45 @@ describe("searchAtomsWithScores", () => {
 
     expect(result.embedding_available).toBe(false);
     expect(result.results.length).toBeGreaterThanOrEqual(1);
+    expect(result.results[0].cosine_score).toBe(0);
+    expect(result.results[0].hybrid_score).toBeGreaterThan(0);
+  });
+
+  // Regression: the previous implementation set embedding_available to
+  // (embeddingResults.size > 0). That conflated "the service is reachable"
+  // with "the matched candidates happen to have stored embeddings", and
+  // caused the webui Search Tester to incorrectly display "embedding
+  // unavailable" whenever the user's query matched atoms that lacked
+  // stored embeddings (which is the common case — embeddings are a
+  // lazy-write cache, not always populated). Now embedding_available
+  // means: did getEmbedding(queryText) succeed?
+  it("returns embedding_available=true when service works but no candidate has stored embedding", async () => {
+    // Service reachable (fetch returns a vector), but neither atom has a
+    // stored embedding row.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ embedding: new Array(8).fill(0.5) }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const atom1 = makeAtom({ id: "a-1", title: "token alpha" });
+    const atom2 = makeAtom({ id: "a-2", title: "token beta" });
+    index.upsertAtom(atom1);
+    index.upsertAtom(atom2);
+    // Deliberately no upsertEmbedding.
+
+    const result = await searchAtomsWithScores(
+      index,
+      { keywords: ["token"], target_types: [], raw_query: "token", fallback: false },
+      5,
+      testConfig,
+    );
+
+    expect(result.embedding_available).toBe(true);
+    expect(result.results.length).toBeGreaterThanOrEqual(1);
+    // cosine stays 0 (no candidate had a stored embedding) but the badge
+    // reports the service is available, so the user knows the limit is
+    // data-coverage, not config.
     expect(result.results[0].cosine_score).toBe(0);
     expect(result.results[0].hybrid_score).toBeGreaterThan(0);
   });

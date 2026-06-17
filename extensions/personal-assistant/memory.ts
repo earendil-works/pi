@@ -1033,7 +1033,12 @@ async function searchEmbeddings(
   queryText: string,
   candidateIds: string[],
   config?: PersonalAssistantConfig,
-): Promise<Map<string, number>> {
+): Promise<{ scores: Map<string, number>; serviceAvailable: boolean }> {
+  const empty: { scores: Map<string, number>; serviceAvailable: boolean } = {
+    scores: new Map(),
+    serviceAvailable: false,
+  };
+
   // Find embedding model config. Prefer the explicit override (server route
   // or test) so the function does not depend on ~/.pi/agent/settings.json
   // from whichever user happens to run it. Fall back to loadConfig() only
@@ -1041,7 +1046,7 @@ async function searchEmbeddings(
   // pass config, e.g. searchAtoms).
   const effectiveConfig = config ?? loadConfig();
   const embConfig = effectiveConfig.memory?.embedding;
-  if (!embConfig?.provider || !embConfig?.model) return new Map();
+  if (!embConfig?.provider || !embConfig?.model) return empty;
 
   let embModel: { baseUrl: string; id: string } | null = null;
   // We need access to modelRegistry here, but searchEmbeddings doesn't have ctx.
@@ -1052,14 +1057,17 @@ async function searchEmbeddings(
     const baseUrl = "http://localhost:11434/v1";
     embModel = { baseUrl, id: embConfig.model };
   } else {
-    return new Map();
+    return empty;
   }
 
-  if (!embModel) return new Map();
+  if (!embModel) return empty;
 
   const queryEmb = await getEmbedding(queryText, embModel.baseUrl, embModel.id);
-  if (!queryEmb) return new Map();
+  if (!queryEmb) return empty;
 
+  // Embedding service reached + returned a vector for the query. From this
+  // point on, any candidate atom that lacks a stored embedding will simply
+  // have cosine=0 in the response — it does NOT mean the service is broken.
   const candidateEmbs = index.getEmbeddings(candidateIds);
   const result = new Map<string, number>();
 
@@ -1067,7 +1075,7 @@ async function searchEmbeddings(
     result.set(id, cosineSimilarity(queryEmb, emb));
   }
 
-  return result;
+  return { scores: result, serviceAvailable: true };
 }
 
 export async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
@@ -1079,7 +1087,7 @@ export async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult,
     if (ftsResults.length === 0) return [];
 
     // Try embedding search if available
-    const embeddingResults = await searchEmbeddings(index, query.raw_query || query.keywords.join(" "), ftsResults.map(r => r.id));
+    const { scores: embeddingResults } = await searchEmbeddings(index, query.raw_query || query.keywords.join(" "), ftsResults.map(r => r.id));
 
     if (embeddingResults.size > 0) {
       const maxFts = Math.max(...ftsResults.map(r => Math.abs(r.score)));
@@ -1180,7 +1188,18 @@ export async function searchAtomsWithScores(
     hybrid_score: number;
   };
   const candidates: Scored[] = [];
+
+  // Compute `embedding_available` independently of FTS results.
+  // Previous versions set this inside the FTS path (only when there were
+  // candidates), which gave `false` even when the service was perfectly
+  // reachable — e.g. when the LLM returned empty keywords, or when FTS
+  // returned 0 results because the target_types filter excluded the
+  // matching atom. The UI badge should reflect SERVICE HEALTH, not the
+  // search path that ran.
   let embedding_available = false;
+  if (query.raw_query) {
+    embedding_available = await isEmbeddingServiceAvailable(query.raw_query, config);
+  }
 
   if (query.keywords.length > 0) {
     const ftsResults = index.searchByFts(query.keywords, query.target_types);
@@ -1189,13 +1208,15 @@ export async function searchAtomsWithScores(
       // Try embedding search (same call as searchAtoms). Forward the
       // optional config so server routes can drive embedding settings via
       // deps.settings rather than the dev's ~/.pi/agent/settings.json.
-      const embeddingResults = await searchEmbeddings(
+      // `embedding_available` was already computed above via
+      // isEmbeddingServiceAvailable(); the search below just populates
+      // per-atom cosine scores for hybrid ranking.
+      const { scores: embeddingResults } = await searchEmbeddings(
         index,
         query.raw_query || query.keywords.join(" "),
         ftsResults.map((r) => r.id),
         config,
       );
-      embedding_available = embeddingResults.size > 0;
 
       if (embeddingResults.size > 0) {
         // Hybrid path — same formula as searchAtoms hybrid branch.
@@ -1296,6 +1317,23 @@ async function getEmbedding(text: string, apiBase: string, model: string): Promi
   } catch {
     return null;
   }
+}
+
+/**
+ * Probe the embedding service for the given query text.
+ * Returns true iff getEmbedding() succeeded — used by searchAtomsWithScores
+ * to drive the UI's "embedding unavailable" badge independent of how many
+ * FTS candidates the query produced.
+ */
+async function isEmbeddingServiceAvailable(queryText: string, config?: PersonalAssistantConfig): Promise<boolean> {
+  const effectiveConfig = config ?? loadConfig();
+  const embConfig = effectiveConfig.memory?.embedding;
+  if (!embConfig?.provider || !embConfig?.model) return false;
+  // Only the local Ollama provider is wired today (matches searchEmbeddings).
+  if (embConfig.provider !== "local") return false;
+  const baseUrl = "http://localhost:11434/v1";
+  const queryEmb = await getEmbedding(queryText, baseUrl, embConfig.model);
+  return queryEmb !== null;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {

@@ -20,6 +20,7 @@
   - `dedupeRedundantKeywords`: drops any keyword that can be formed by concatenating a subsequence of the other keywords (catches the common LLM behavior of returning BOTH the broken-down tokens AND the original phrase as one of the keywords, e.g. `["PDF","图片","提取","图片提取"]` for query `pdf中图片提取`).
   - `dedupeAgainstQuery`: drops any keyword that equals the normalized user query (case-insensitive, whitespace-folded).
   Both helpers run inside `parseRewriteJson` / `rewriteQueryWithCallLlm` / `rewriteQuery` / `callOllamaRewrite` so every code path that hands a `QueryRewriteResult` to `searchAtoms` benefits.
+- `searchAtomsWithScores.embedding_available` now reflects the **embedding service's reachability**, not whether FTS candidates happened to have stored embeddings. Previously it was `(embeddingResults.size > 0)`, which conflated two unrelated facts and caused the webui Search Tester to display "embedding unavailable" in the common case where the LLM returned empty keywords or the FTS `target_types` filter excluded the matching atom. Fixed by adding `isEmbeddingServiceAvailable(queryText, config)` (probes the embedding service for the query vector) and calling it at the top of `searchAtomsWithScores`, independent of the FTS path. `searchEmbeddings` now also returns `{ scores, serviceAvailable }` so the scoring layer can keep using per-atom cosine scores without re-probing.
 
 ### Tests
 
