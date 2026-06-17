@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { MemoryAtom, MemoryAtomType } from "../../lib/api";
+import { Markdown } from "../Markdown";
 
 interface MemoryEditorProps {
   atom: MemoryAtom;
@@ -22,6 +23,8 @@ const TYPES: MemoryAtomType[] = [
   "event",
   "solution",
   "insight",
+  // 8th type — see task 6.7 / review-fail MEDIUM.
+  "bug",
 ];
 
 export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorProps) {
@@ -198,9 +201,7 @@ export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorP
               className="w-full h-full p-3 font-mono text-sm border-0 resize-none focus:outline-none"
             />
           ) : (
-            <div className="p-3 prose prose-sm max-w-none whitespace-pre-wrap text-sm">
-              {content}
-            </div>
+            <div className="p-3 prose prose-sm max-w-none"><Markdown text={content} /></div>
           )}
         </div>
       </div>
