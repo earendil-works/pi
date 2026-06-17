@@ -250,21 +250,19 @@ path/to/changed.ts
 </modified-files>
 ```
 
-### Message Serialization
+### KV Cache Reuse for Summarization
 
-Before summarization, messages are serialized to text via [`serializeConversation()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/utils.ts):
+Compaction summarization reuses the LLM's KV cache by keeping messages in their original format (not serializing to text). The summarization call uses:
 
 ```
-[User]: What they said
-[Assistant thinking]: Internal reasoning
-[Assistant]: Response text
-[Assistant tool calls]: read(path="foo.ts"); edit(path="bar.ts", ...)
-[Tool result]: Output from tool
+[systemPrompt] + [conversation messages] + [summarization instruction]
 ```
 
-This prevents the model from treating it as a conversation to continue.
+The `systemPrompt` is passed through from the original session, allowing the KV cache to cover the entire conversation prefix. Only the summarization instruction (~200 tokens) requires fresh processing.
 
-Tool results are truncated to 2000 characters during serialization. Content beyond that limit is replaced with a marker indicating how many characters were truncated. This keeps summarization requests within reasonable token budgets, since tool results (especially from `read` and `bash`) are typically the largest contributors to context size.
+If no `systemPrompt` is available, `SUMMARIZATION_SYSTEM_PROMPT` is used as a fallback.
+
+Extensions that provide custom summarization via `session_before_compact` can still use `serializeConversation()` for their own purposes — the built-in compaction no longer does.
 
 ## Custom Summarization via Extensions
 

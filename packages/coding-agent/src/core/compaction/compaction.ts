@@ -22,7 +22,6 @@ import {
 	type FileOperations,
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
-	serializeConversation,
 } from "./utils.ts";
 
 // ============================================================================
@@ -320,20 +319,17 @@ function findValidCutPoints(entries: SessionEntry[], startIndex: number, endInde
 			case "thinking_level_change":
 			case "model_change":
 			case "compaction":
-			case "branch_summary":
 			case "custom":
-			case "custom_message":
 			case "label":
 			case "session_info":
 				break;
+			case "branch_summary":
+			case "custom_message":
+				cutPoints.push(i);
+				break;
 		}
-
-		// branch_summary and custom_message are user-role messages, valid cut points
-		if (entry.type === "branch_summary" || entry.type === "custom_message") {
-			cutPoints.push(i);
 		}
-	}
-	return cutPoints;
+		return cutPoints;
 }
 
 /**
@@ -388,6 +384,7 @@ export function findCutPoint(
 	startIndex: number,
 	endIndex: number,
 	keepRecentTokens: number,
+	tokenScale = 1.0,
 ): CutPointResult {
 	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
 
@@ -403,8 +400,8 @@ export function findCutPoint(
 		const entry = entries[i];
 		if (entry.type !== "message") continue;
 
-		// Estimate this message's size
-		const messageTokens = estimateTokens(entry.message);
+		// Estimate this message's size, scaled by actual vs estimated ratio
+		const messageTokens = Math.ceil(estimateTokens(entry.message) * tokenScale);
 		accumulatedTokens += messageTokens;
 
 		// Check if we've exceeded the budget
@@ -568,11 +565,16 @@ export async function generateSummary(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	systemPrompt?: string,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
+
+	// Use the conversation's systemPrompt for KV cache prefix matching.
+	// Falls back to SUMMARIZATION_SYSTEM_PROMPT if not provided.
+	const effectiveSystemPrompt = systemPrompt ?? SUMMARIZATION_SYSTEM_PROMPT;
 
 	// Use update prompt if we have a previous summary, otherwise initial prompt
 	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
@@ -580,31 +582,31 @@ export async function generateSummary(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	// Serialize conversation to text so model doesn't try to continue it
-	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
-	const conversationText = serializeConversation(llmMessages);
+	// Convert to LLM messages (handles custom types like bashExecution, custom, etc.)
+	// These are the SAME messages already in the KV cache - no re-serialization needed
+	const conversationMessages = convertToLlm(currentMessages);
 
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+	// Build summarization messages: original conversation + summarization instruction
+	const summarizationMessages: AgentMessage[] = [...conversationMessages];
+
+	// Include previous summary if updating
 	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
-
-	const summarizationMessages = [
-		{
+		summarizationMessages.push({
 			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
+			content: [{ type: "text" as const, text: `<previous-summary>\n${previousSummary}\n</previous-summary>` }],
+		});
+	}
+
+	// Summarization instruction as final user message (~200 new tokens)
+	summarizationMessages.push({ role: "user" as const, content: [{ type: "text" as const, text: basePrompt }] });
 
 	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel);
 
+	// Use the conversation's systemPrompt for KV cache prefix matching.
+	// Falls back to SUMMARIZATION_SYSTEM_PROMPT if not provided.
 	const response = await completeSummarization(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{ systemPrompt: effectiveSystemPrompt, messages: summarizationMessages },
 		completionOptions,
 		streamFn,
 	);
@@ -756,6 +758,7 @@ export async function compact(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	systemPrompt?: string,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -787,6 +790,7 @@ export async function compact(
 						thinkingLevel,
 						streamFn,
 						env,
+						systemPrompt,
 					)
 				: Promise.resolve("No prior history."),
 			generateTurnPrefixSummary(
@@ -799,6 +803,7 @@ export async function compact(
 				signal,
 				thinkingLevel,
 				streamFn,
+				systemPrompt,
 			),
 		]);
 		// Merge into single summary
@@ -817,6 +822,7 @@ export async function compact(
 			thinkingLevel,
 			streamFn,
 			env,
+			systemPrompt,
 		);
 	}
 
@@ -849,25 +855,29 @@ async function generateTurnPrefixSummary(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	systemPrompt?: string,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	); // Smaller budget for turn prefix
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
+
+	// Convert to LLM messages - preserves KV cache prefix
+	const conversationMessages = convertToLlm(messages);
+
+	// Build summarization messages: original messages + instruction
+	const summarizationMessages: AgentMessage[] = [
+		...conversationMessages,
+		{ role: "user" as const, content: [{ type: "text" as const, text: TURN_PREFIX_SUMMARIZATION_PROMPT }] },
 	];
+
+	// Use the conversation's systemPrompt for KV cache prefix matching.
+	// Falls back to SUMMARIZATION_SYSTEM_PROMPT if not provided.
+	const effectiveSystemPrompt = systemPrompt ?? SUMMARIZATION_SYSTEM_PROMPT;
 
 	const response = await completeSummarization(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{ systemPrompt: effectiveSystemPrompt, messages: summarizationMessages },
 		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel),
 		streamFn,
 	);
