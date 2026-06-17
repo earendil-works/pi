@@ -20,6 +20,7 @@ import type {
 	ToolCall,
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { formatProviderError } from "../utils/provider-errors.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
@@ -268,7 +269,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 				}
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatProviderError(error, { providerName: "Google" });
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

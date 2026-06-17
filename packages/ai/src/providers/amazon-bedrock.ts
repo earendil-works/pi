@@ -51,6 +51,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { formatProviderError } from "../utils/provider-errors.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -320,15 +321,16 @@ const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/lat
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
-	const dataRetentionHint = /data retention mode/i.test(message)
+	const formatted = formatProviderError(error, { providerName: "Bedrock" });
+	const message = error instanceof Error ? error.message : formatted;
+	const dataRetentionHint = /data retention mode/i.test(formatted)
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}${dataRetentionHint}`;
+		return `${prefix}: ${formatted === message ? message : formatted}${dataRetentionHint}`;
 	}
-	return `${message}${dataRetentionHint}`;
+	return `${formatted}${dataRetentionHint}`;
 }
 
 /**

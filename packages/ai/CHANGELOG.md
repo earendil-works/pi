@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed provider HTTP errors to include raw response bodies when SDKs expose only opaque status messages ([#5763](https://github.com/earendil-works/pi/issues/5763)).
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed
