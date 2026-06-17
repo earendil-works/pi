@@ -62,7 +62,7 @@ describe("MemorySearchTester", () => {
 
   it("calls onSelectAtom when result clicked", async () => {
     (api.memory.search as ReturnType<typeof vi.fn>).mockResolvedValue({
-      rewritten: { keywords: ["x"], target_types: [], raw_query: "x" },
+      rewritten: { keywords: ["x"], target_types: [], raw_query: "x", fallback: false },
       embedding_available: false,
       results: [{
         atom: { id: "a-2", type: "preference", title: "X result", summary: "",
@@ -79,5 +79,19 @@ describe("MemorySearchTester", () => {
     await waitFor(() => expect(screen.getByText("X result")).toBeDefined());
     fireEvent.click(screen.getByText("X result"));
     expect(onSelect).toHaveBeenCalledWith("a-2");
+  });
+
+  // sdd-review CRITICAL #3: client-visible fallback flag must render a notice.
+  it("renders fallback notice when result.rewritten.fallback=true", async () => {
+    (api.memory.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rewritten: { keywords: ["foo"], target_types: [], raw_query: "foo", fallback: true },
+      embedding_available: false,
+      results: [],
+    });
+    render(<MemorySearchTester onSelectAtom={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Query..."), { target: { value: "foo" } });
+    fireEvent.click(screen.getByRole("button", { name: /search/i }));
+    await waitFor(() => expect(screen.getByTestId("fallback-notice")).toBeDefined());
+    expect(screen.getByText(/keyword fallback/)).toBeDefined();
   });
 });

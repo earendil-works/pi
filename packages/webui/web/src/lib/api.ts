@@ -122,6 +122,8 @@ export interface MemoryQueryRewriteResult {
   keywords: string[];
   target_types: string[];
   raw_query: string;
+  /** true if LLM failed/parse failed → used keyword fallback. */
+  fallback: boolean;
 }
 
 export interface MemorySearchResult {

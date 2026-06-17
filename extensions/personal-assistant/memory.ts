@@ -88,6 +88,8 @@ export interface QueryRewriteResult {
   keywords: string[];
   target_types: string[];
   raw_query: string;
+  /** true if LLM failed/parse failed → used simpleKeywordExtraction. */
+  fallback: boolean;
 }
 
 interface ExtractionPlanItem {
@@ -789,6 +791,7 @@ function simpleKeywordExtraction(query: string): QueryRewriteResult {
     keywords: unique.slice(0, 10),
     target_types: [],
     raw_query: query,
+    fallback: true,
   };
 }
 
@@ -871,7 +874,10 @@ export async function rewriteQueryWithCallLlm(
     const llmRaw = await callLlm(prompt);
     if (llmRaw) {
       const parsed = parseRewriteJson(llmRaw);
-      if (parsed) return parsed;
+      if (parsed) {
+        // Default raw_query to the user's input when LLM omits it (sdd-review HIGH #5).
+        return { ...parsed, raw_query: parsed.raw_query || query };
+      }
     }
   } catch {
     // LLM call threw or returned unparseable JSON — fall through to simple extraction.
@@ -912,6 +918,7 @@ function parseRewriteJson(text: string): QueryRewriteResult | null {
           ? parsed.target_types.filter((t: unknown) => ATOM_TYPE_ORDER.includes(t as MemoryAtomType))
           : [],
         raw_query: parsed.raw_query ?? "",
+        fallback: false,
       };
     }
   } catch { /* ignore */ }

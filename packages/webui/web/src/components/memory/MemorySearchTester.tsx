@@ -51,6 +51,14 @@ export function MemorySearchTester({ onSelectAtom }: MemorySearchTesterProps) {
         {error && <div className="text-xs text-red-600">error: {error}</div>}
         {result && (
           <div className="space-y-2">
+            {result.rewritten.fallback && (
+              <div
+                data-testid="fallback-notice"
+                className="text-xs italic text-gray-500 bg-gray-50 px-2 py-1 rounded"
+              >
+                using keyword fallback (no LLM rewrite)
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 text-xs">
               <div className="flex flex-wrap gap-1 items-center">
                 <span className="font-medium">keywords:</span>

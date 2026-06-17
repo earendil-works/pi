@@ -171,6 +171,47 @@ describe("rewriteQueryWithCallLlm", () => {
     expect(result.keywords).toContain("database");
     expect(result.keywords).toContain("schema");
   });
+
+  // sdd-review CRITICAL #3: client needs to know when fallback happened.
+  it("returns fallback=true when LLM throws", async () => {
+    const callLlm = vi.fn().mockRejectedValue(new Error("rate limit"));
+    const result = await rewriteQueryWithCallLlm(
+      callLlm,
+      "amplicon pipeline",
+      emptyConfig,
+    );
+    expect(result.fallback).toBe(true);
+    expect(result.keywords).toContain("amplicon");
+    expect(result.raw_query).toBe("amplicon pipeline");
+  });
+
+  it("returns fallback=false when LLM parses successfully", async () => {
+    const callLlm = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        keywords: ["foo"],
+        target_types: ["knowledge"],
+        raw_query: "user typed this",
+      }),
+    );
+    const result = await rewriteQueryWithCallLlm(callLlm, "user input", emptyConfig);
+    expect(result.fallback).toBe(false);
+    expect(result.keywords).toEqual(["foo"]);
+  });
+
+  it("returns fallback=true when LLM returns invalid JSON", async () => {
+    const callLlm = vi.fn().mockResolvedValue("this is not JSON at all");
+    const result = await rewriteQueryWithCallLlm(callLlm, "test", emptyConfig);
+    expect(result.fallback).toBe(true);
+  });
+
+  // sdd-review HIGH #5: default raw_query to user input, not empty string.
+  it("raw_query defaults to user input when LLM omits it", async () => {
+    const callLlm = vi.fn().mockResolvedValue(
+      JSON.stringify({ keywords: ["x"], target_types: [] }),
+    );
+    const result = await rewriteQueryWithCallLlm(callLlm, "my query", emptyConfig);
+    expect(result.raw_query).toBe("my query");
+  });
 });
 
 describe("searchAtomsWithScores", () => {
@@ -218,7 +259,7 @@ describe("searchAtomsWithScores", () => {
 
     const result = await searchAtomsWithScores(
       index,
-      { keywords: ["token"], target_types: [], raw_query: "token" },
+      { keywords: ["token"], target_types: [], raw_query: "token", fallback: false },
       5,
       testConfig,
     );
@@ -248,7 +289,7 @@ describe("searchAtomsWithScores", () => {
 
     const result = await searchAtomsWithScores(
       index,
-      { keywords: ["token"], target_types: [], raw_query: "token" },
+      { keywords: ["token"], target_types: [], raw_query: "token", fallback: false },
       5,
       testConfig,
     );
@@ -285,7 +326,7 @@ describe("searchAtomsWithScores", () => {
 
     const result = await searchAtomsWithScores(
       index,
-      { keywords: ["token"], target_types: [], raw_query: "token" },
+      { keywords: ["token"], target_types: [], raw_query: "token", fallback: false },
       5,
       testConfig,
     );
