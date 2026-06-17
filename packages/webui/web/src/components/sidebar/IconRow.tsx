@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { MessageSquare, Clock } from 'lucide-react';
+import { MessageSquare, Clock, Brain } from 'lucide-react';
 
 export function IconRow() {
   const location = useLocation();
   const isCron = location.pathname.startsWith('/cron');
+  const isMemory = location.pathname.startsWith('/memory');
 
   const linkClass = (active: boolean) =>
     `p-2 rounded-md transition-colors ${
@@ -14,11 +15,14 @@ export function IconRow() {
 
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b border-stone-100">
-      <Link to="/" aria-label="Chat" className={linkClass(!isCron)}>
+      <Link to="/" aria-label="Chat" className={linkClass(!isCron && !isMemory)}>
         <MessageSquare size={18} />
       </Link>
       <Link to="/cron" aria-label="Cron" className={linkClass(isCron)}>
         <Clock size={18} />
+      </Link>
+      <Link to="/memory" aria-label="Memory" className={linkClass(isMemory)}>
+        <Brain size={18} />
       </Link>
     </div>
   );
