@@ -22,6 +22,32 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 	}
 }
 
+function trimPartialClosingFences(tokens: readonly Token[]): void {
+	for (const token of tokens) {
+		if (token.type === "code") {
+			// Markdown fenced code blocks can use either backticks or tildes, with length 3 or more.
+			// Capture the opening fence marker ( ``` , ~~~ , or longer) so a streamed partial
+			// closing fence shorter than the opener can be removed from the code content below.
+			// This is done to avoid the content shtinking when rendering streamed partial code blocks.
+
+			const opener = /^(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
+			const marker = opener?.groups?.marker;
+			if (marker) {
+				const fenceChar = marker[0];
+				token.text = token.text.replace(new RegExp(`\\n${fenceChar}{1,${marker.length - 1}}$`), "");
+			}
+		}
+		if ("tokens" in token && Array.isArray(token.tokens)) {
+			trimPartialClosingFences(token.tokens);
+		}
+		if (token.type === "list") {
+			for (const item of token.items) {
+				trimPartialClosingFences(item.tokens);
+			}
+		}
+	}
+}
+
 const markdownParser = new Marked();
 markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
@@ -145,6 +171,7 @@ export class Markdown implements Component {
 
 		// Parse markdown to HTML-like tokens
 		const tokens = markdownParser.lexer(normalizedText);
+		trimPartialClosingFences(tokens);
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
