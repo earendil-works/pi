@@ -1,0 +1,22 @@
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- **Public API surface** for the memory subsystem: `MemoryIndex`, `MemoryAtom`, `MemoryAtomType`, `QueryRewriteResult` are now exported from `@earendil-works/pi-personal-assistant` (previously module-private), enabling the webui server to read/write atoms without re-implementing the index or the file store.
+- **Server-friendly helpers** that take an injected `callLlm` callback instead of `ExtensionContext.modelRegistry`, so the webui server can run the recall pipeline without constructing a fake agent context:
+  - `getAllAtoms(index)` — module-level function returning all atoms (including archived).
+  - `MemoryIndex.invalidateEmbedding(id)` — public method that removes the cached embedding row (PATCH callers invoke this to defer recompute).
+  - `rewriteQueryWithCallLlm(callLlm, query, config)` — runs the query rewrite path against an injected LLM callback; falls back to `simpleKeywordExtraction` on error or unparseable JSON.
+  - `searchAtomsWithScores(index, query, topK, config?)` — same hybrid FTS5 + embedding search as `searchAtoms`, but returns per-result `{fts_score, cosine_score, hybrid_score}` plus an `embedding_available` flag for the recall tester; accepts an optional `config` override so the server's settings (not the developer's `~/.pi/agent/settings.json`) drive embedding search.
+- `MemoryAtomType` union now includes `"bug"` as an 8th type alongside the documented 7 (production data contained 1 atom of this type).
+- `QueryRewriteResult.fallback: boolean` — `true` when the rewrite degraded to `simpleKeywordExtraction` (LLM threw, returned empty, or returned unparseable JSON), `false` when a structured LLM response was parsed.
+
+### Fixed
+
+- `writeAtomToFile(atom, baseDir)` previously emitted a `tmp → rename` overwrite that could collide with another atom sharing the same slugified title, silently orphaning the older file. (Documented as v1 limitation R14; not fixed — needs ID-stamped paths.)
+
+### Tests
+
+- `extensions/personal-assistant/test/memory-exports.test.ts` — 14 cases covering the 4 new helpers (with hermeticity test for `searchAtomsWithScores` that proves the new `config` parameter actually drives embedding selection, independent of `HOME` / `~/.pi/agent/settings.json`).

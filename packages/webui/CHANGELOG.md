@@ -1,0 +1,23 @@
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- **Memory page** (`/memory` sidebar route, `Brain` icon in IconRow): browse, edit, archive, and recall-test all memories persisted by the `pi-personal-assistant` extension.
+  - 3-pane layout: list (30%, filterable by type/archived/tag/q/sort/limit), detail (70%, metadata + Markdown body editor), and collapsible search tester (real `rewriteQuery + searchAtomsWithScores` pipeline).
+  - 6 new REST endpoints under `/api/memory`: `GET list`, `GET :id`, `PATCH :id`, `POST :id/archive`, `POST search`, `GET stats`.
+  - `api.memory` namespace on the webui client with 6 methods.
+  - `useAutoSave` hook (3s debounce + 200ms unmount flush deadline) wired into `MemoryDetail` for transparent auto-save.
+- "bug" promoted to 8th `MemoryAtomType` (production data had 1 atom of this type; previously caused silent type rewrite on PATCH).
+
+### Fixed
+
+- WebUI server tests (`memory-routes.test.ts`, 21 cases) now run via the project's actual `npm test` flow instead of silently failing — `packages/webui/vitest.config.ts` had no `server.deps.inline` for `node:sqlite` / `bun:sqlite` / `@earendil-works/pi-personal-assistant`, and `vite-node` 2.1.8 stripped the `node:` prefix from dynamic imports before the inline check ran. Added a small Vite plugin (`webui:sqlite-builtin-shim`) that re-adds the prefix and serves a `require`-based stub letting Node's CJS loader handle the builtin natively.
+- `<memory-error>` placeholder banner in the body editor when `content === ""` with a non-empty `file_path` (slug-collision case — file was overwritten by another atom sharing the title). Surfaces the existing R14 limitation as visible feedback instead of a silent empty editor.
+- `SearchTester` now shows a "using keyword fallback (no LLM rewrite)" notice when `rewriteQueryWithCallLlm` degraded to `simpleKeywordExtraction` (new `fallback: boolean` field on `QueryRewriteResult` propagated through the API response and the UI).
+- "Save now" button in `MemoryEditor` previously called `onSave` which restarted the 3s debounce — now calls `useAutoSave.flush()` directly via a new `onFlush` prop, so it actually saves immediately.
+- `raw_query` in search responses now defaults to the user's input query when the LLM omits the field (previously empty string).
+- MemoryPage filter input debounced 300ms before triggering a server refetch — typing in `q` / `tag` no longer fires a full list + stats refetch on every keystroke.
+- Preview tab now uses the shared `<Markdown>` component (matching chat-page rendering) instead of raw `whitespace-pre-wrap` text.
+- MemoryList archive control now shows "Archive" / "Restore" text labels instead of small ✕ / ↺ icons.
