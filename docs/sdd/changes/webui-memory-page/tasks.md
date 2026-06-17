@@ -300,7 +300,7 @@
   - **验证**: 4 个命令全绿
   - **依赖**: 4.8
 
-- [ ] 5.2 **手动 smoke:tmux 启 webui,Chrome DevTools 走完整流程**
+- [x] 5.2 **手动 smoke:tmux 启 webui,Chrome DevTools 走完整流程**
   - **文件**: 无(纯操作)
   - **内容**: 按 `AGENTS.md` 的"Testing pi Interactive Mode with tmux"段落启 webui(`./pi-test.sh` 或 `npm run dev:webui`),Chrome DevTools 打开:
     1. 访问 `/memory` → 空态显示 "No memories yet"
