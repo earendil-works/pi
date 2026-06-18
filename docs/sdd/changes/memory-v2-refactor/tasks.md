@@ -108,7 +108,7 @@
   - **文件**: `extensions/personal-assistant/extraction.ts` (Modify)
   - **内容**: `executePlan(index, config, atomsDir, plan)` 函数,对每 item: normalizeContent + fingerprint → DB 查 → skip;否则 embedText + findMostSimilarEmbedding → supersede (BEGIN TX + markSupersededTx) 或 create (BEGIN TX + insertAtom)。写 .md 文件 + audit。
   - **验证**: `npx vitest run test/extraction.test.ts` 通过 (≥8 测试:skip/supersede/create/transfer signals/parse fail/ollama fail/file write)
-  - **依赖**: 2.5, 2.6, 3.1, 3.2, 4.1, 4.2
+  - **依赖**: 2.4, 2.5, 2.6, 3.1, 3.2, 4.1, 4.2
 
 - [ ] 4.4 **实现 supersede 转移 signals 测试**
   - **文件**: `extensions/personal-assistant/test/supersede.test.ts` (Create)
