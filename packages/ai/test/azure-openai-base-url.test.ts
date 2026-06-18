@@ -12,6 +12,8 @@ interface CapturedAzureClientOptions {
 }
 
 interface CapturedAzureResponsesPayload {
+	instructions?: string;
+	input?: unknown[];
 	prompt_cache_key?: string;
 	store?: boolean;
 }
@@ -132,6 +134,24 @@ describe("azure-openai-responses base URL normalization", () => {
 		const result = await streamAzureOpenAIResponses(model, context, { apiKey: "test-api-key" }).result();
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toContain("Invalid Azure OpenAI base URL");
+	});
+
+	it("sends system prompt as instructions outside input", async () => {
+		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		await streamAzureOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-api-key",
+				azureBaseUrl: "https://my-resource.openai.azure.com",
+			},
+		).result();
+
+		expect(azureMock.lastParams?.instructions).toBe("sys");
+		expect(azureMock.lastParams?.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "hello" }] }]);
 	});
 
 	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {

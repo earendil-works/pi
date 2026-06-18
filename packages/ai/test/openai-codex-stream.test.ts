@@ -551,9 +551,13 @@ describe("openai-codex streaming", () => {
 				expect(headers?.has("session_id")).toBe(false);
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
-				// Verify sessionId is set in request body as prompt_cache_key
-				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				const body =
+					typeof init?.body === "string"
+						? (JSON.parse(init.body) as { input?: unknown[]; instructions?: string; prompt_cache_key?: string })
+						: null;
 				expect(body?.prompt_cache_key).toBe(sessionId);
+				expect(body?.instructions).toBe("You are a helpful assistant.");
+				expect(body?.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Say hello" }] }]);
 
 				return new Response(stream, {
 					status: 200,

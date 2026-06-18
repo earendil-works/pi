@@ -14,7 +14,12 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	buildResponsesInstructions,
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const DEFAULT_AZURE_API_VERSION = "v1";
@@ -260,6 +265,7 @@ function buildParams(
 
 	const params: ResponseCreateParamsStreaming = {
 		model: deploymentName,
+		instructions: buildResponsesInstructions(context),
 		input: messages,
 		stream: true,
 		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),

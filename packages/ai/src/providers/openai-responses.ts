@@ -7,7 +7,6 @@ import type {
 	CacheRetention,
 	Context,
 	Model,
-	OpenAIResponsesCompat,
 	ProviderEnv,
 	SimpleStreamOptions,
 	StreamFunction,
@@ -20,7 +19,12 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	buildResponsesInstructions,
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -39,19 +43,10 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
-function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
-	return {
-		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
-		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
-		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
-	};
-}
-
-function getPromptCacheRetention(
-	compat: Required<OpenAIResponsesCompat>,
-	cacheRetention: CacheRetention,
-): "24h" | undefined {
-	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
+function getPromptCacheRetention(model: Model<"openai-responses">, cacheRetention: CacheRetention): "24h" | undefined {
+	const supportsLongCacheRetention = model.compat?.supportsLongCacheRetention ?? true;
+	if (cacheRetention !== "long" || !supportsLongCacheRetention) return undefined;
+	return "24h";
 }
 
 function formatOpenAIResponsesError(error: unknown): string {
@@ -189,7 +184,6 @@ function createClient(
 	sessionId?: string,
 	env?: ProviderEnv,
 ) {
-	const compat = getCompat(model);
 	const headers = { ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
@@ -201,7 +195,8 @@ function createClient(
 	}
 
 	if (sessionId) {
-		if (compat.sendSessionIdHeader) {
+		const sendSessionIdHeader = model.compat?.sendSessionIdHeader ?? true;
+		if (sendSessionIdHeader) {
 			headers.session_id = sessionId;
 		}
 		headers["x-client-request-id"] = sessionId;
@@ -233,13 +228,13 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const compat = getCompat(model);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
+		instructions: buildResponsesInstructions(context),
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
-		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
+		prompt_cache_retention: getPromptCacheRetention(model, cacheRetention),
 		store: false,
 	};
 

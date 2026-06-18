@@ -75,10 +75,6 @@ export interface OpenAIResponsesStreamOptions {
 	) => void;
 }
 
-export interface ConvertResponsesMessagesOptions {
-	includeSystemPrompt?: boolean;
-}
-
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 }
@@ -87,11 +83,14 @@ export interface ConvertResponsesToolsOptions {
 // Message conversion
 // =============================================================================
 
+export function buildResponsesInstructions(context: Context): string | undefined {
+	return context.systemPrompt ? sanitizeSurrogates(context.systemPrompt) : undefined;
+}
+
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
 	context: Context,
 	allowedToolCallProviders: ReadonlySet<string>,
-	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
 	const messages: ResponseInput = [];
 
@@ -121,16 +120,6 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
-
-	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
-		messages.push({
-			role,
-			content: sanitizeSurrogates(context.systemPrompt),
-		});
-	}
 
 	let msgIndex = 0;
 	for (const msg of transformedMessages) {
