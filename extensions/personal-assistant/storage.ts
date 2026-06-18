@@ -36,6 +36,7 @@ interface BetterSqlite3Database {
 		get(...params: unknown[]): unknown;
 		run(...params: unknown[]): unknown;
 	};
+	transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R;
 }
 
 interface SqliteVecModule {
@@ -93,7 +94,121 @@ export class MemoryIndex {
 		return this.db;
 	}
 
-	// Phase 2.3 will add: insertAtom, updateAtom, getAtom, listActive, …
+	// -------------------------------------------------------------------------
+	// Phase 2.3: atom CRUD + fingerprint dedup
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Insert a new atom row + its vector in a single transaction. The caller
+	 * computes the embedding — storage never touches the embedder.
+	 *
+	 * The active-fingerprint UNIQUE partial index will reject a second
+	 * active row with the same content_fingerprint; that constraint is what
+	 * gives us dedup at write time (R3 / S15).
+	 */
+	async insertAtom(atom: MemoryAtom, embedding: number[]): Promise<void> {
+		const row = atomToRow(atom);
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`,
+				)
+				.run(row);
+			this.db
+				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
+				.run(atom.id, new Float32Array(embedding));
+		})();
+	}
+
+	/**
+	 * Update the mutable fields of an existing atom. Increments `version` on
+	 * the row (the value passed in `atom.version` is ignored — the SQL does
+	 * `version = version + 1`). If `embedding` is provided, the vector row
+	 * is also updated in the same transaction.
+	 */
+	async updateAtom(atom: MemoryAtom, embedding?: number[]): Promise<void> {
+		const row = atomToRow(atom);
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`
+				UPDATE memory_index SET
+					title = @title, summary = @summary, content = @content, tags = @tags,
+					importance = @importance, version = version + 1, updated_at = @updated_at,
+					content_fingerprint = @content_fingerprint
+				WHERE id = @id
+			`,
+				)
+				.run(row);
+			if (embedding) {
+				this.db
+					.prepare(`UPDATE memory_vectors SET embedding = ? WHERE id = ?`)
+					.run(new Float32Array(embedding), atom.id);
+			}
+		})();
+	}
+
+	/**
+	 * Fetch an atom by id regardless of state — active, archived, or
+	 * superseded. Returns null when no row exists.
+	 */
+	getAtom(id: string): MemoryAtom | null {
+		const row = this.db
+			.prepare(`SELECT * FROM memory_index WHERE id = ?`)
+			.get(id) as MemoryAtomRow | undefined;
+		return row ? rowToAtom(row) : null;
+	}
+
+	/**
+	 * Look up the active + latest atom matching a content fingerprint. Used
+	 * at write time to detect duplicate content and to short-circuit the
+	 * extraction pipeline (S15 / R12).
+	 */
+	getActiveAtomByFingerprint(fingerprint: string): MemoryAtom | null {
+		const row = this.db
+			.prepare(
+				`
+			SELECT * FROM memory_index
+			WHERE content_fingerprint = ? AND is_latest = 1 AND archived = 0
+		`,
+			)
+			.get(fingerprint) as MemoryAtomRow | undefined;
+		return row ? rowToAtom(row) : null;
+	}
+
+	/**
+	 * All active atoms, newest first. Optionally filtered by type. Excludes
+	 * archived and superseded rows (S2 / S3 / S4).
+	 */
+	getActiveAtoms(type?: MemoryAtomType): MemoryAtom[] {
+		const sql = type
+			? `SELECT * FROM memory_index WHERE is_latest = 1 AND archived = 0 AND type = ? ORDER BY created_at DESC`
+			: `SELECT * FROM memory_index WHERE is_latest = 1 AND archived = 0 ORDER BY created_at DESC`;
+		const stmt = this.db.prepare(sql);
+		const rows = (
+			type ? (stmt.all(type) as MemoryAtomRow[]) : (stmt.all() as MemoryAtomRow[])
+		);
+		return rows.map(rowToAtom);
+	}
+
+	/**
+	 * Convenience wrapper: active atoms of a single type. Equivalent to
+	 * `getActiveAtoms(type)`.
+	 */
+	getActiveAtomsByType(type: MemoryAtomType): MemoryAtom[] {
+		return this.getActiveAtoms(type);
+	}
+
 	// Phase 2.4 will add: vectorSearch, findMostSimilarEmbedding.
 	// Phase 2.5 will add: markSupersededTx, insertAudit.
 	// Phase 2.6 will add: updateAccess, updateStrength, markArchived, deleteVector.

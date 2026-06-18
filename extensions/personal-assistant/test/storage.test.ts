@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryIndex } from "../storage.ts";
+import type { MemoryAtom } from "../types.ts";
 
 // Minimal shape of rows returned by sqlite_master / PRAGMA queries.
 // better-sqlite3 returns columns as JS values; the driver exposes ints as
@@ -185,6 +187,119 @@ describe("MemoryIndex", () => {
 				"SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_memory%'",
 			).all() as NameRow[];
 			expect(indexes).toHaveLength(5);
+		});
+	});
+
+	describe("atom CRUD", () => {
+		let index: MemoryIndex;
+
+		beforeEach(async () => {
+			index = freshIndex();
+			await index.init();
+		});
+
+		afterEach(() => {
+			index.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "t",
+			content: "c",
+			summary: "s",
+			tags: ["a"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: "fp",
+			source_session: null,
+			...overrides,
+		});
+
+		const dummyEmbedding = (): number[] => new Array(1024).fill(0.01);
+
+		it("insertAtom stores row + vector, getAtom retrieves it", async () => {
+			const atom = sampleAtom();
+			await index.insertAtom(atom, dummyEmbedding());
+			const got = index.getAtom(atom.id);
+			expect(got).toEqual(atom);
+		});
+
+		it("insertAtom with duplicate fingerprint on active atom throws UNIQUE", async () => {
+			const atom1 = sampleAtom({ id: randomUUID(), content_fingerprint: "fp1" });
+			await index.insertAtom(atom1, dummyEmbedding());
+			const atom2 = sampleAtom({ id: randomUUID(), content_fingerprint: "fp1" });
+			await expect(index.insertAtom(atom2, dummyEmbedding())).rejects.toThrow();
+		});
+
+		it("updateAtom increments version and updates fields", async () => {
+			const atom = sampleAtom();
+			await index.insertAtom(atom, dummyEmbedding());
+			const updated: MemoryAtom = {
+				...atom,
+				title: "new title",
+				version: atom.version + 1,
+				updated_at: Date.now() + 1000,
+			};
+			await index.updateAtom(updated);
+			const got = index.getAtom(atom.id);
+			expect(got?.title).toBe("new title");
+			expect(got?.version).toBe(2);
+		});
+
+		it("updateAtom recomputes vector when embedding provided", async () => {
+			const atom = sampleAtom();
+			await index.insertAtom(atom, dummyEmbedding());
+			const newEmb: number[] = new Array(1024).fill(0.99);
+			await index.updateAtom(atom, newEmb);
+			const row = index
+				.getRawDb()
+				.prepare(`SELECT embedding FROM memory_vectors WHERE id = ?`)
+				.get(atom.id) as { embedding: Buffer };
+			const arr = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, 1024);
+			expect(arr[0]).toBeCloseTo(0.99, 5);
+		});
+
+		it("getActiveAtomByFingerprint returns active+latest matching atom", async () => {
+			const atom = sampleAtom({ content_fingerprint: "fp-unique" });
+			await index.insertAtom(atom, dummyEmbedding());
+			const got = index.getActiveAtomByFingerprint("fp-unique");
+			expect(got?.id).toBe(atom.id);
+		});
+
+		it("getActiveAtomByFingerprint returns null if archived or superseded", async () => {
+			const atom = sampleAtom({ content_fingerprint: "fp-arc", archived: 1 });
+			await index.insertAtom(atom, dummyEmbedding());
+			expect(index.getActiveAtomByFingerprint("fp-arc")).toBeNull();
+		});
+
+		it("getActiveAtoms returns all active atoms, excludes archived/superseded", async () => {
+			const a1 = sampleAtom({ id: randomUUID(), content_fingerprint: "fp-a1" });
+			const a2 = sampleAtom({ id: randomUUID(), content_fingerprint: "fp-a2", is_latest: 0 });
+			const a3 = sampleAtom({ id: randomUUID(), content_fingerprint: "fp-a3", archived: 1 });
+			await index.insertAtom(a1, dummyEmbedding());
+			await index.insertAtom(a2, dummyEmbedding());
+			await index.insertAtom(a3, dummyEmbedding());
+			const active = index.getActiveAtoms();
+			expect(active.map((a) => a.id)).toEqual([a1.id]);
+		});
+
+		it("getActiveAtomsByType filters correctly", async () => {
+			const rule = sampleAtom({ type: "rule", content_fingerprint: "fp-r" });
+			const fact = sampleAtom({ type: "fact", content_fingerprint: "fp-f" });
+			await index.insertAtom(rule, dummyEmbedding());
+			await index.insertAtom(fact, dummyEmbedding());
+			const rules = index.getActiveAtomsByType("rule");
+			expect(rules.map((a) => a.id)).toEqual([rule.id]);
 		});
 	});
 });

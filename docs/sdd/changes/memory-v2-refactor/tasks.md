@@ -43,7 +43,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/storage.test.ts -t "init creates all tables"` 通过
   - **依赖**: 2.1
 
-- [ ] 2.3 **实现 atom CRUD + fingerprint 查重**
+- [x] 2.3 **实现 atom CRUD + fingerprint 查重**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: `insertAtom(atom)`, `updateAtom(atom)`, `getAtom(id)`, `getActiveAtomByFingerprint(fp)`, `getActiveAtoms()`, `getActiveAtomsByType(type)`。`content_fingerprint` 唯一索引防重复 active+latest 同 fingerprint。
   - **验证**: `npx vitest run test/storage.test.ts -t "atom CRUD"` 通过 (≥5 测试)
@@ -98,7 +98,7 @@
   - **验证**: `npx vitest run test/fingerprint.test.ts` 通过 (≥3 测试)
   - **依赖**: 2.1
 
-- [ ] 4.2 **新 extraction prompt v2 (3 类 type + 2-4 段 content)**
+- [x] 4.2 **新 extraction prompt v2 (3 类 type + 2-4 段 content)**
   - **文件**: `extensions/personal-assistant/extraction.ts` (Modify)
   - **内容**: `EXTRACT_PROMPT_V2` 常量,含 3 类 type 标准 (rule/fact/process) + 内容格式要求 (2-4 段) + strategy (dedup 自动处理,emit 不担心重复) + output schema (无 action/id/changes,只有 type/title/content/summary/tags/importance)。
   - **验证**: prompt 字符串包含 "rule", "fact", "process", "2-4 段", 不含 "one-sentence"
@@ -171,7 +171,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "stats"` 通过
   - **依赖**: 7.1
 
-- [ ] 7.3 **实现 GET /api/memory/:id 详情 (含 .md body)**
+- [x] 7.3 **实现 GET /api/memory/:id 详情 (含 .md body)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: GET /api/memory/:id 返完整 atom JSON 含 content (从 .md 读)。404 if not found。File 缺失或 hash mismatch → content="",不 500。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "get detail"` 通过 (≥3 测试)
