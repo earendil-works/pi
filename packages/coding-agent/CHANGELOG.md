@@ -6,6 +6,10 @@
 
 - Exported `CONFIG_DIR_NAME` from the coding-agent public API so extensions can resolve project config paths without hardcoding `.pi`.
 
+### Changed
+
+- Updated extension examples and documentation to use `CONFIG_DIR_NAME` for project-local config paths.
+
 ### Fixed
 
 - Fixed `/model` autocomplete and model selection searches to match provider/model queries regardless of whether the provider or model token is typed first.
