@@ -1,6 +1,12 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { type Component, parseOsc11BackgroundColor, type Terminal, TUI } from "../src/index.ts";
+import {
+	type Component,
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type Terminal,
+	TUI,
+} from "../src/index.ts";
 
 class TestTerminal implements Terminal {
 	private inputHandler?: (data: string) => void;
@@ -101,6 +107,16 @@ describe("parseOsc11BackgroundColor", () => {
 		assert.strictEqual(parseOsc11BackgroundColor(`x\x1b]11;#ffffff\x07`), undefined);
 		assert.strictEqual(parseOsc11BackgroundColor("\x1b]10;#ffffff\x07"), undefined);
 		assert.strictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x07x"), undefined);
+	});
+});
+
+describe("parseTerminalColorSchemeReport", () => {
+	it("parses color scheme reports", () => {
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;1n"), "dark");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;2n"), "light");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;3n"), undefined);
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?996n"), undefined);
+		assert.strictEqual(parseTerminalColorSchemeReport("x\x1b[?997;1n"), undefined);
 	});
 });
 
@@ -229,5 +245,39 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 		} finally {
 			tui.stop();
 		}
+	});
+});
+
+describe("TUI terminal color-scheme reports", () => {
+	it("queries, notifies, and consumes color-scheme reports", async () => {
+		const terminal = new TestTerminal();
+		const tui = new TUI(terminal);
+		const component = new InputRecorder();
+		const reports: string[] = [];
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			tui.onTerminalColorSchemeChange((scheme) => {
+				reports.push(scheme);
+			});
+
+			const query = tui.queryTerminalColorScheme({ timeoutMs: 1000 });
+			assert.ok(terminal.writes.includes("\x1b[?996n"));
+			terminal.sendInput("\x1b[?997;2n");
+			assert.strictEqual(await query, "light");
+
+			tui.setTerminalColorSchemeNotifications(true);
+
+			assert.ok(terminal.writes.includes("\x1b[?2031h"));
+
+			terminal.sendInput("\x1b[?997;1n");
+
+			assert.deepStrictEqual(reports, ["light", "dark"]);
+			assert.deepStrictEqual(component.inputs, []);
+		} finally {
+			tui.stop();
+		}
+		assert.ok(terminal.writes.includes("\x1b[?2031l"));
 	});
 });

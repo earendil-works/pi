@@ -137,7 +137,7 @@ vim ~/.pi/agent/themes/my-theme.json
 }
 ```
 
-- `name` is required and must be unique.
+- `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
 - `colors` must define all 51 required tokens.
 

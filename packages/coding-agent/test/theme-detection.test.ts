@@ -5,6 +5,8 @@ import {
 	detectTerminalBackgroundTheme,
 	getThemeByName,
 	getThemeForRgbColor,
+	parseAutoThemeSetting,
+	resolveThemeSetting,
 } from "../src/modes/interactive/theme/theme.ts";
 
 afterEach(() => {
@@ -117,5 +119,15 @@ describe("theme detection from RGB", () => {
 	it("classifies RGB colors by luminance", () => {
 		expect(getThemeForRgbColor({ r: 8, g: 8, b: 8 })).toBe("dark");
 		expect(getThemeForRgbColor({ r: 250, g: 250, b: 250 })).toBe("light");
+	});
+});
+
+describe("theme setting helpers", () => {
+	it("parses and resolves automatic theme settings", () => {
+		expect(parseAutoThemeSetting("light/dark")).toEqual({ lightTheme: "light", darkTheme: "dark" });
+		expect(resolveThemeSetting("dark", "light")).toBe("dark");
+		expect(resolveThemeSetting("light/dark", "light")).toBe("light");
+		expect(resolveThemeSetting("light/dark", "dark")).toBe("dark");
+		expect(resolveThemeSetting("light/dark/extra", "dark")).toBeUndefined();
 	});
 });

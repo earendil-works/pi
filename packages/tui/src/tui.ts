@@ -8,7 +8,13 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
-import { isOsc11BackgroundColorResponse, parseOsc11BackgroundColor, type RgbColor } from "./terminal-colors.ts";
+import {
+	isOsc11BackgroundColorResponse,
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type RgbColor,
+	type TerminalColorScheme,
+} from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
@@ -86,6 +92,11 @@ type InputListener = (data: string) => InputListenerResult;
 type PendingOsc11BackgroundQuery = {
 	settled: boolean;
 	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+	timer: NodeJS.Timeout | undefined;
+};
+type PendingTerminalColorSchemeQuery = {
+	settled: boolean;
+	resolve: ((scheme: TerminalColorScheme | undefined) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
 
@@ -311,6 +322,9 @@ export class TUI extends Container {
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
+	private pendingTerminalColorSchemeQueries: PendingTerminalColorSchemeQuery[] = [];
+	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
+	private terminalColorSchemeNotificationsEnabled = false;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -631,6 +645,9 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		if (this.terminalColorSchemeNotificationsEnabled) {
+			this.terminal.write("\x1b[?2031h");
+		}
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -644,6 +661,23 @@ export class TUI extends Container {
 
 	removeInputListener(listener: InputListener): void {
 		this.inputListeners.delete(listener);
+	}
+
+	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void {
+		this.terminalColorSchemeListeners.add(listener);
+		return () => {
+			this.terminalColorSchemeListeners.delete(listener);
+		};
+	}
+
+	setTerminalColorSchemeNotifications(enabled: boolean): void {
+		if (this.terminalColorSchemeNotificationsEnabled === enabled) {
+			return;
+		}
+		this.terminalColorSchemeNotificationsEnabled = enabled;
+		if (!this.stopped) {
+			this.terminal.write(enabled ? "\x1b[?2031h" : "\x1b[?2031l");
+		}
 	}
 
 	private queryCellSize(): void {
@@ -661,6 +695,9 @@ export class TUI extends Container {
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
+		}
+		if (this.terminalColorSchemeNotificationsEnabled) {
+			this.terminal.write("\x1b[?2031l");
 		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
@@ -729,6 +766,9 @@ export class TUI extends Container {
 
 	private handleInput(data: string): void {
 		if (this.consumeOsc11BackgroundResponse(data)) {
+			return;
+		}
+		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
 		}
 
@@ -820,6 +860,33 @@ export class TUI extends Container {
 			}
 			query.resolve?.(rgb);
 			query.resolve = undefined;
+		}
+		return true;
+	}
+
+	private consumeTerminalColorSchemeReport(data: string): boolean {
+		const scheme = parseTerminalColorSchemeReport(data);
+		if (!scheme) {
+			return false;
+		}
+
+		while (this.pendingTerminalColorSchemeQueries.length > 0) {
+			const query = this.pendingTerminalColorSchemeQueries.shift();
+			if (!query || query.settled) {
+				continue;
+			}
+			query.settled = true;
+			if (query.timer) {
+				clearTimeout(query.timer);
+				query.timer = undefined;
+			}
+			query.resolve?.(scheme);
+			query.resolve = undefined;
+			break;
+		}
+
+		for (const listener of this.terminalColorSchemeListeners) {
+			listener(scheme);
 		}
 		return true;
 	}
@@ -1636,6 +1703,37 @@ export class TUI extends Container {
 			this.pendingOsc11BackgroundQueries.push(query);
 			this.pendingOsc11BackgroundReplies += 1;
 			this.terminal.write("\x1b]11;?\x07");
+		});
+	}
+
+	/**
+	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
+	 * Terminals that support the color palette notification protocol reply with
+	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
+	 */
+	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
+		return new Promise((resolve) => {
+			const query: PendingTerminalColorSchemeQuery = {
+				settled: false,
+				resolve,
+				timer: undefined,
+			};
+
+			query.timer = setTimeout(() => {
+				if (query.settled) {
+					return;
+				}
+				query.settled = true;
+				query.timer = undefined;
+				const index = this.pendingTerminalColorSchemeQueries.indexOf(query);
+				if (index !== -1) {
+					this.pendingTerminalColorSchemeQueries.splice(index, 1);
+				}
+				query.resolve?.(undefined);
+				query.resolve = undefined;
+			}, timeoutMs);
+			this.pendingTerminalColorSchemeQueries.push(query);
+			this.terminal.write("\x1b[?996n");
 		});
 	}
 }
