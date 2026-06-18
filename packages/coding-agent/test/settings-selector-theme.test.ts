@@ -3,7 +3,7 @@ import type { SettingsCallbacks, SettingsConfig } from "../src/modes/interactive
 import { SettingsSelectorComponent } from "../src/modes/interactive/components/settings-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
-function createConfig(): SettingsConfig {
+function createConfig(overrides: Partial<SettingsConfig> = {}): SettingsConfig {
 	return {
 		autoCompact: true,
 		showImages: false,
@@ -18,6 +18,7 @@ function createConfig(): SettingsConfig {
 		thinkingLevel: "medium",
 		availableThinkingLevels: ["off", "medium", "high"],
 		currentTheme: "dark",
+		terminalTheme: "dark",
 		availableThemes: ["dark", "light"],
 		hideThinkingBlock: false,
 		collapseChangelog: false,
@@ -32,6 +33,7 @@ function createConfig(): SettingsConfig {
 		clearOnShrink: false,
 		showTerminalProgress: false,
 		warnings: {},
+		...overrides,
 	};
 }
 
@@ -75,7 +77,7 @@ function openThemeSetting(component: SettingsSelectorComponent): void {
 }
 
 describe("SettingsSelectorComponent theme settings", () => {
-	it("opens a theme list and switches to automatic mode", () => {
+	it("opens a theme list, switches to automatic mode, and saves it", () => {
 		initTheme("dark");
 		const callbacks = createCallbacks();
 		const component = new SettingsSelectorComponent(createConfig(), callbacks);
@@ -90,11 +92,40 @@ describe("SettingsSelectorComponent theme settings", () => {
 		component.getSettingsList().handleInput("\x1b[A");
 		component.getSettingsList().handleInput("\r");
 
-		expect(callbacks.onThemeChange).toHaveBeenCalledWith("light/dark");
+		expect(callbacks.onThemeChange).toHaveBeenCalledWith("dark/dark");
 		const automaticOutput = component.getSettingsList().render(100).join("\n");
 		expect(automaticOutput).toContain("Light theme");
 		expect(automaticOutput).toContain("Dark theme");
 		expect(automaticOutput).toContain("Change mode");
 		expect(automaticOutput).toContain("switch to single theme");
+		expect(automaticOutput).not.toContain("Save");
+		expect(automaticOutput).toContain("Esc to save");
+
+		component.getSettingsList().handleInput("\x1b");
+
+		expect(callbacks.onThemeChange).toHaveBeenLastCalledWith("dark/dark");
+		const savedOutput = component.getSettingsList().render(100).join("\n");
+		expect(savedOutput).toContain("Theme");
+		expect(savedOutput).toContain("dark/dark");
+	});
+
+	it("switches automatic mode back to the active terminal-side theme", () => {
+		initTheme("dark");
+		const callbacks = createCallbacks();
+		const component = new SettingsSelectorComponent(
+			createConfig({
+				currentTheme: "solarized-light/tokyo-night",
+				terminalTheme: "light",
+				availableThemes: ["dark", "light", "solarized-light", "tokyo-night"],
+			}),
+			callbacks,
+		);
+
+		openThemeSetting(component);
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\r");
+
+		expect(callbacks.onThemeChange).toHaveBeenCalledWith("solarized-light");
 	});
 });

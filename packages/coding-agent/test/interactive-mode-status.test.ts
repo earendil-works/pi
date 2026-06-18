@@ -151,6 +151,13 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const fakeThis: any = {
 			session: { settingsManager },
 			settingsManager,
+			themeController: {
+				setThemeInstance: vi.fn(() => ({ success: true })),
+				setThemeName: vi.fn(() => {
+					fakeThis.ui.requestRender();
+					return { success: true };
+				}),
+			},
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -158,6 +165,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const result = uiContext.setTheme("light");
 
 		expect(result.success).toBe(true);
+		expect(fakeThis.themeController.setThemeName).toHaveBeenCalledWith("light");
 		expect(settingsManager.setTheme).toHaveBeenCalledWith("light");
 		expect(currentTheme).toBe("light");
 		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
@@ -173,6 +181,10 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const fakeThis: any = {
 			session: { settingsManager },
 			settingsManager,
+			themeController: {
+				setThemeInstance: vi.fn(() => ({ success: true })),
+				setThemeName: vi.fn(() => ({ success: false, error: "Theme not found" })),
+			},
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -180,6 +192,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const result = uiContext.setTheme("__missing_theme__");
 
 		expect(result.success).toBe(false);
+		expect(fakeThis.themeController.setThemeName).toHaveBeenCalledWith("__missing_theme__");
 		expect(settingsManager.setTheme).not.toHaveBeenCalled();
 		expect(fakeThis.ui.requestRender).not.toHaveBeenCalled();
 	});

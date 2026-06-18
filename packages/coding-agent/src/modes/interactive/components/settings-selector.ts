@@ -14,7 +14,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import type { DefaultProjectTrust, WarningSettings } from "../../../core/settings-manager.ts";
-import { getSelectListTheme, getSettingsListTheme, parseAutoThemeSetting, theme } from "../theme/theme.ts";
+import {
+	getSelectListTheme,
+	getSettingsListTheme,
+	parseAutoThemeSetting,
+	type TerminalTheme,
+	theme,
+} from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 
@@ -56,6 +62,7 @@ export interface SettingsConfig {
 	thinkingLevel: ThinkingLevel;
 	availableThinkingLevels: ThinkingLevel[];
 	currentTheme: string;
+	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
 	collapseChangelog: boolean;
@@ -242,16 +249,23 @@ function defaultAutomaticThemes(
 	if (autoTheme) return autoTheme;
 
 	const currentFixedTheme = currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
-	const currentThemeLooksLight = currentFixedTheme?.toLowerCase().includes("light") ?? false;
-	const lightTheme = preferredTheme(availableThemes, currentThemeLooksLight ? currentFixedTheme : undefined, "light");
-	const darkTheme = preferredTheme(availableThemes, currentThemeLooksLight ? undefined : currentFixedTheme, "dark");
-	return { lightTheme, darkTheme };
+	const themeName = preferredTheme(availableThemes, currentFixedTheme, "dark");
+	return { lightTheme: themeName, darkTheme: themeName };
+}
+
+function getAutomaticThemeSettingsListTheme() {
+	const settingsListTheme = getSettingsListTheme();
+	return {
+		...settingsListTheme,
+		hint: (text: string) => settingsListTheme.hint(text.replace("Esc to cancel", "Esc to save")),
+	};
 }
 
 class ThemeSubmenu extends Container {
 	private inputComponent: Component | undefined;
 	private readonly callbacks: SettingsCallbacks;
 	private readonly availableThemes: string[];
+	private readonly terminalTheme: TerminalTheme;
 	private readonly onDone: (selectedValue?: string) => void;
 	private mode: "single" | "automatic";
 	private singleTheme: string;
@@ -260,6 +274,7 @@ class ThemeSubmenu extends Container {
 
 	constructor(
 		currentThemeSetting: string,
+		terminalTheme: TerminalTheme,
 		availableThemes: string[],
 		callbacks: SettingsCallbacks,
 		onDone: (selectedValue?: string) => void,
@@ -267,14 +282,19 @@ class ThemeSubmenu extends Container {
 		super();
 		this.callbacks = callbacks;
 		this.availableThemes = availableThemes;
+		this.terminalTheme = terminalTheme;
 		this.onDone = onDone;
 		const autoTheme = parseAutoThemeSetting(currentThemeSetting);
 		const automaticThemes = defaultAutomaticThemes(currentThemeSetting, availableThemes);
 		const fixedTheme = autoTheme || currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
 		this.mode = autoTheme ? "automatic" : "single";
-		this.singleTheme = preferredTheme(availableThemes, fixedTheme, "dark");
 		this.lightTheme = automaticThemes.lightTheme;
 		this.darkTheme = automaticThemes.darkTheme;
+		this.singleTheme = preferredTheme(
+			availableThemes,
+			fixedTheme ?? (autoTheme ? this.getActiveAutomaticTheme() : undefined),
+			"dark",
+		);
 
 		if (this.mode === "automatic") {
 			this.showAutomaticMenu();
@@ -326,6 +346,7 @@ class ThemeSubmenu extends Container {
 		content.addChild(new Text(theme.bold(theme.fg("accent", "Automatic Theme")), 0, 0));
 		content.addChild(new Spacer(1));
 		content.addChild(new Text(theme.fg("muted", "Choose themes for terminal light and dark appearance."), 0, 0));
+		content.addChild(new Text(theme.fg("muted", "Light/dark detection requires terminal support."), 0, 0));
 		content.addChild(new Spacer(1));
 
 		const items: SettingItem[] = [
@@ -377,10 +398,11 @@ class ThemeSubmenu extends Container {
 		const settingsList = new SettingsList(
 			items,
 			Math.min(items.length, 10),
-			getSettingsListTheme(),
+			getAutomaticThemeSettingsListTheme(),
 			(id) => {
 				if (id === "single-mode") {
 					this.mode = "single";
+					this.singleTheme = this.getActiveAutomaticTheme();
 					this.callbacks.onThemeChange(this.singleTheme);
 					this.showSingleMenu();
 				}
@@ -414,6 +436,10 @@ class ThemeSubmenu extends Container {
 
 	private getThemeSetting(): string {
 		return this.mode === "automatic" ? this.getAutomaticThemeSetting() : this.singleTheme;
+	}
+
+	private getActiveAutomaticTheme(): string {
+		return this.terminalTheme === "light" ? this.lightTheme : this.darkTheme;
 	}
 
 	private getAutomaticThemeSetting(): string {
@@ -568,7 +594,8 @@ export class SettingsSelectorComponent extends Container {
 				label: "Theme",
 				description: "Color theme for the interface",
 				currentValue: config.currentTheme,
-				submenu: (currentValue, done) => new ThemeSubmenu(currentValue, config.availableThemes, callbacks, done),
+				submenu: (currentValue, done) =>
+					new ThemeSubmenu(currentValue, config.terminalTheme, config.availableThemes, callbacks, done),
 			},
 		];
 

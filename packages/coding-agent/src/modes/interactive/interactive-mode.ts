@@ -3975,6 +3975,7 @@ export class InteractiveMode {
 					thinkingLevel: this.session.thinkingLevel,
 					availableThinkingLevels: this.session.getAvailableThinkingLevels(),
 					currentTheme: this.settingsManager.getThemeSetting() || "dark",
+					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),

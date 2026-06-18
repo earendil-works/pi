@@ -84,6 +84,10 @@ export class InteractiveThemeController {
 		this.setAutoSync(false);
 	}
 
+	getTerminalTheme(): TerminalTheme {
+		return this.terminalTheme;
+	}
+
 	private applyThemeName(themeName: string, showError = false): ThemeResult {
 		const result = setTheme(themeName, true);
 		this.activeThemeName = result.success ? themeName : "dark";
