@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Updated extension examples and documentation to use `CONFIG_DIR_NAME` for project-local config paths.
+- Updated extension docs, examples, runtime help, trust prompts, and config labels to use the configured project config directory instead of hardcoded `.pi` paths.
 
 ### Fixed
 
