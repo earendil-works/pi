@@ -202,8 +202,27 @@ export function transformMessages<TApi extends Api>(
 
 			result.push(msg);
 		} else if (msg.role === "toolResult") {
-			existingToolResultIds.add(msg.toolCallId);
-			result.push(msg);
+			// If there are no pending tool calls from a preceding assistant message,
+			// this tool result is orphaned (e.g., after compaction, history load, or
+			// when a preceding errored/aborted assistant was filtered).
+			// Convert to user message to prevent API errors from providers that strictly
+			// require every tool role message to follow an assistant message with tool_calls.
+			if (pendingToolCalls.length === 0) {
+				const textContent = Array.isArray(msg.content)
+					? msg.content
+							.filter((b) => b.type === "text")
+							.map((b) => (b as TextContent).text)
+							.join("\n")
+					: "";
+				result.push({
+					role: "user",
+					content: [{ type: "text", text: textContent || "(tool result from previous context)" }],
+					timestamp: msg.timestamp,
+				});
+			} else {
+				existingToolResultIds.add(msg.toolCallId);
+				result.push(msg);
+			}
 		} else if (msg.role === "user") {
 			// User message interrupts tool flow - insert synthetic results for orphaned calls
 			insertSyntheticToolResults();

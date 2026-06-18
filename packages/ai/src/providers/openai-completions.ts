@@ -1004,6 +1004,31 @@ export function convertMessages(
 		lastRole = msg.role;
 	}
 
+	// Safety net: ensure no orphaned tool messages exist.
+	// Some providers (e.g., Moonshot AI) strictly require every 'tool' role message
+	// to be preceded by an assistant message with tool_calls (possibly with other
+	// tool messages in between for consecutive results from the same assistant call).
+	// The transformMessages function should prevent these from reaching this point,
+	// but convert any that slip through to user messages to guarantee API compatibility.
+	for (let i = 0; i < params.length; i++) {
+		if (params[i].role === "tool") {
+			// Walk backward past consecutive tool messages to find the preceding
+			// non-tool message. Multiple tool messages can legitimately follow
+			// a single assistant with tool_calls.
+			let prevIndex = i - 1;
+			while (prevIndex >= 0 && params[prevIndex].role === "tool") {
+				prevIndex--;
+			}
+			const prevMsg = prevIndex >= 0 ? params[prevIndex] : null;
+			if (!prevMsg || prevMsg.role !== "assistant" || !prevMsg.tool_calls) {
+				params[i] = {
+					role: "user",
+					content: `(tool result: ${typeof params[i].content === "string" ? params[i].content : "(see content above)"})`,
+				} as ChatCompletionMessageParam;
+			}
+		}
+	}
+
 	return params;
 }
 
