@@ -208,7 +208,7 @@ describe("SettingsManager", () => {
 			expect(manager.getTheme()).toBeUndefined();
 			expect(manager.getThemeSetting()).toBe("light/dark");
 
-			manager.setThemeSetting("solarized-light/tokyo-night");
+			manager.setTheme("solarized-light/tokyo-night");
 			await manager.flush();
 
 			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));

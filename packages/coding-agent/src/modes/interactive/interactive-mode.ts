@@ -4041,12 +4041,8 @@ export class InteractiveMode {
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 					},
-					onThemeChange: (themeName) => {
-						this.themeController.setThemeName(themeName, true);
-						this.settingsManager.setTheme(themeName);
-					},
-					onThemeSettingChange: (themeSetting) => {
-						this.settingsManager.setThemeSetting(themeSetting);
+					onThemeChange: (themeSetting) => {
+						this.settingsManager.setTheme(themeSetting);
 						void this.themeController.applyFromSettings();
 					},
 					onThemePreview: (themeName) => this.themeController.preview(themeName),

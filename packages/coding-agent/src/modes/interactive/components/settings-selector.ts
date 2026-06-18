@@ -85,7 +85,6 @@ export interface SettingsCallbacks {
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
 	onThinkingLevelChange: (level: ThinkingLevel) => void;
 	onThemeChange: (theme: string) => void;
-	onThemeSettingChange: (themeSetting: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
@@ -251,7 +250,7 @@ function defaultAutomaticThemes(
 
 class ThemeSubmenu extends Container {
 	private inputComponent: Component | undefined;
-	private callbacks: SettingsCallbacks;
+	private readonly callbacks: SettingsCallbacks;
 	private readonly availableThemes: string[];
 	private readonly onDone: (selectedValue?: string) => void;
 	private mode: "single" | "automatic";
@@ -271,12 +270,9 @@ class ThemeSubmenu extends Container {
 		this.onDone = onDone;
 		const autoTheme = parseAutoThemeSetting(currentThemeSetting);
 		const automaticThemes = defaultAutomaticThemes(currentThemeSetting, availableThemes);
+		const fixedTheme = autoTheme || currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
 		this.mode = autoTheme ? "automatic" : "single";
-		this.singleTheme = preferredTheme(
-			availableThemes,
-			autoTheme || currentThemeSetting.includes("/") ? undefined : currentThemeSetting,
-			"dark",
-		);
+		this.singleTheme = preferredTheme(availableThemes, fixedTheme, "dark");
 		this.lightTheme = automaticThemes.lightTheme;
 		this.darkTheme = automaticThemes.darkTheme;
 
@@ -307,7 +303,7 @@ class ThemeSubmenu extends Container {
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {
 					this.mode = "automatic";
-					this.callbacks.onThemeSettingChange(this.getThemeSetting());
+					this.callbacks.onThemeChange(this.getThemeSetting());
 					this.showAutomaticMenu();
 					return;
 				}
@@ -346,7 +342,7 @@ class ThemeSubmenu extends Container {
 						done,
 						(value) => {
 							this.lightTheme = value;
-							this.applyAutomaticThemeIfActive();
+							this.callbacks.onThemeChange(this.getAutomaticThemeSetting());
 							done(value);
 						},
 					),
@@ -364,7 +360,7 @@ class ThemeSubmenu extends Container {
 						done,
 						(value) => {
 							this.darkTheme = value;
-							this.applyAutomaticThemeIfActive();
+							this.callbacks.onThemeChange(this.getAutomaticThemeSetting());
 							done(value);
 						},
 					),
@@ -427,14 +423,6 @@ class ThemeSubmenu extends Container {
 	private finish(): void {
 		this.callbacks.onThemePreview?.(this.getThemeSetting());
 		this.onDone(this.getThemeSetting());
-	}
-
-	private applyAutomaticThemeIfActive(): void {
-		if (this.mode === "automatic") {
-			this.callbacks.onThemeSettingChange(this.getThemeSetting());
-		} else {
-			this.callbacks.onThemePreview?.(this.singleTheme);
-		}
 	}
 }
 

@@ -4,7 +4,7 @@ import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalBackgroundTheme,
 	initTheme,
-	isAutoThemeSetting,
+	parseAutoThemeSetting,
 	resolveThemeSetting,
 	setTheme,
 	setThemeInstance,
@@ -35,11 +35,11 @@ export class InteractiveThemeController {
 
 	async applyFromSettings(): Promise<void> {
 		const themeSetting = this.settingsManager.getThemeSetting();
-		if (isAutoThemeSetting(themeSetting)) {
+		const autoTheme = parseAutoThemeSetting(themeSetting);
+		if (autoTheme) {
 			this.terminalTheme = await this.detectTerminalThemeForAuto();
 			this.setAutoSync(true);
-			const themeName = resolveThemeSetting(themeSetting, this.terminalTheme);
-			if (themeName) this.applyThemeName(themeName, true);
+			this.applyThemeName(this.terminalTheme === "light" ? autoTheme.lightTheme : autoTheme.darkTheme, true);
 			return;
 		}
 
@@ -118,13 +118,13 @@ export class InteractiveThemeController {
 	private applyTerminalTheme(terminalTheme: TerminalTheme): void {
 		if (!this.autoSyncEnabled) return;
 		this.terminalTheme = terminalTheme;
-		const themeSetting = this.settingsManager.getThemeSetting();
-		if (!isAutoThemeSetting(themeSetting)) {
+		const autoTheme = parseAutoThemeSetting(this.settingsManager.getThemeSetting());
+		if (!autoTheme) {
 			this.setAutoSync(false);
 			return;
 		}
-		const themeName = resolveThemeSetting(themeSetting, terminalTheme);
-		if (themeName && themeName !== this.activeThemeName) {
+		const themeName = terminalTheme === "light" ? autoTheme.lightTheme : autoTheme.darkTheme;
+		if (themeName !== this.activeThemeName) {
 			this.applyThemeName(themeName);
 		}
 	}

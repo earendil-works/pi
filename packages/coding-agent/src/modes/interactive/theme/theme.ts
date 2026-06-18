@@ -652,10 +652,6 @@ export function parseAutoThemeSetting(
 	return { lightTheme, darkTheme };
 }
 
-export function isAutoThemeSetting(themeSetting: string | undefined): themeSetting is string {
-	return parseAutoThemeSetting(themeSetting) !== undefined;
-}
-
 export function resolveThemeSetting(
 	themeSetting: string | undefined,
 	terminalTheme: TerminalTheme,

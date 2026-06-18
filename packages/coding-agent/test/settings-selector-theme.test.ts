@@ -50,7 +50,6 @@ function createCallbacks(): SettingsCallbacks {
 		onHttpIdleTimeoutMsChange: noop,
 		onThinkingLevelChange: noop,
 		onThemeChange: vi.fn(),
-		onThemeSettingChange: vi.fn(),
 		onThemePreview: noop,
 		onHideThinkingBlockChange: noop,
 		onCollapseChangelogChange: noop,
@@ -91,7 +90,7 @@ describe("SettingsSelectorComponent theme settings", () => {
 		component.getSettingsList().handleInput("\x1b[A");
 		component.getSettingsList().handleInput("\r");
 
-		expect(callbacks.onThemeSettingChange).toHaveBeenCalledWith("light/dark");
+		expect(callbacks.onThemeChange).toHaveBeenCalledWith("light/dark");
 		const automaticOutput = component.getSettingsList().render(100).join("\n");
 		expect(automaticOutput).toContain("Light theme");
 		expect(automaticOutput).toContain("Dark theme");

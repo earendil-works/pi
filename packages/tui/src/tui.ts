@@ -94,11 +94,6 @@ type PendingOsc11BackgroundQuery = {
 	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
 	timer: NodeJS.Timeout | undefined;
 };
-type PendingTerminalColorSchemeQuery = {
-	settled: boolean;
-	resolve: ((scheme: TerminalColorScheme | undefined) => void) | undefined;
-	timer: NodeJS.Timeout | undefined;
-};
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -322,7 +317,6 @@ export class TUI extends Container {
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
-	private pendingTerminalColorSchemeQueries: PendingTerminalColorSchemeQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 
@@ -868,21 +862,6 @@ export class TUI extends Container {
 		const scheme = parseTerminalColorSchemeReport(data);
 		if (!scheme) {
 			return false;
-		}
-
-		while (this.pendingTerminalColorSchemeQueries.length > 0) {
-			const query = this.pendingTerminalColorSchemeQueries.shift();
-			if (!query || query.settled) {
-				continue;
-			}
-			query.settled = true;
-			if (query.timer) {
-				clearTimeout(query.timer);
-				query.timer = undefined;
-			}
-			query.resolve?.(scheme);
-			query.resolve = undefined;
-			break;
 		}
 
 		for (const listener of this.terminalColorSchemeListeners) {
@@ -1713,26 +1692,22 @@ export class TUI extends Container {
 	 */
 	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
 		return new Promise((resolve) => {
-			const query: PendingTerminalColorSchemeQuery = {
-				settled: false,
-				resolve,
-				timer: undefined,
+			let settled = false;
+			let timer: NodeJS.Timeout | undefined;
+			let unsubscribe: () => void = () => {};
+			const settle = (scheme: TerminalColorScheme | undefined) => {
+				if (settled) return;
+				settled = true;
+				if (timer) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
+				unsubscribe();
+				resolve(scheme);
 			};
 
-			query.timer = setTimeout(() => {
-				if (query.settled) {
-					return;
-				}
-				query.settled = true;
-				query.timer = undefined;
-				const index = this.pendingTerminalColorSchemeQueries.indexOf(query);
-				if (index !== -1) {
-					this.pendingTerminalColorSchemeQueries.splice(index, 1);
-				}
-				query.resolve?.(undefined);
-				query.resolve = undefined;
-			}, timeoutMs);
-			this.pendingTerminalColorSchemeQueries.push(query);
+			unsubscribe = this.onTerminalColorSchemeChange(settle);
+			timer = setTimeout(() => settle(undefined), timeoutMs);
 			this.terminal.write("\x1b[?996n");
 		});
 	}

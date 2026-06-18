@@ -731,12 +731,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	setThemeSetting(theme: string): void {
-		this.globalSettings.theme = theme;
-		this.markModified("theme");
-		this.save();
-	}
-
 	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
