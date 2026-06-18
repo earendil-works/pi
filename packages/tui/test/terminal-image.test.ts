@@ -30,6 +30,8 @@ const ENV_KEYS = [
 	"ITERM_SESSION_ID",
 	"WT_SESSION",
 	"CMUX_WORKSPACE_ID",
+	"WARP_SESSION_ID",
+	"WARP_TERMINAL_SESSION_UUID",
 ] as const;
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => void): void {
@@ -269,6 +271,48 @@ describe("detectCapabilities", () => {
 			const caps = detectCapabilities();
 			assert.strictEqual(caps.hyperlinks, true);
 		});
+	});
+
+	it("enables images and hyperlinks for Warp via TERM_PROGRAM", () => {
+		withEnv({ TERM_PROGRAM: "WarpTerminal" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.images, "kitty");
+			assert.strictEqual(caps.trueColor, true);
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables images and hyperlinks for Warp via WARP_SESSION_ID", () => {
+		withEnv({ WARP_SESSION_ID: "some-session-id" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.images, "kitty");
+			assert.strictEqual(caps.trueColor, true);
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables images and hyperlinks for Warp via WARP_TERMINAL_SESSION_UUID", () => {
+		withEnv({ WARP_TERMINAL_SESSION_UUID: "d0e1a2e5-7ca7-44cd-9037-ac7222011161" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.images, "kitty");
+			assert.strictEqual(caps.trueColor, true);
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("disables images for Warp inside tmux", () => {
+		withEnv(
+			{
+				TERM_PROGRAM: "WarpTerminal",
+				TMUX: "/tmp/tmux-1000/default,1234,0",
+				TERM: "tmux-256color",
+			},
+			() => {
+				const caps = detectCapabilities(() => true);
+				assert.strictEqual(caps.images, null);
+				assert.strictEqual(caps.hyperlinks, true);
+			},
+		);
 	});
 
 	it("enables hyperlinks for iTerm2", () => {

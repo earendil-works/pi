@@ -52,6 +52,7 @@ import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
+	CONFIG_DIR_NAME,
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
@@ -3288,7 +3289,7 @@ export class InteractiveMode {
 			new Text(
 				theme.fg(
 					"warning",
-					"This project is not trusted. Project .pi resources and packages are ignored. Use /trust to save a trust decision, then restart pi.",
+					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
 				),
 				1,
 				0,
