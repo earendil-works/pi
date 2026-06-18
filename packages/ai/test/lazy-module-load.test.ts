@@ -85,6 +85,12 @@ describe("lazy provider module loading", () => {
 		]);
 	});
 
+	it("registers built-in image transports when importing the root barrel", () => {
+		const result = runProbe(`return mod.getImagesApiProvider("openrouter-images")?.api;`);
+		expect(result.loadedSpecifiers).toEqual([]);
+		expect(result.value).toBe("openrouter-images");
+	});
+
 	it("does not load provider SDKs or register transports when importing the base barrel", () => {
 		const result = runProbe(`return mod.getApiProviders().map((provider) => provider.api);`, baseEntryUrl);
 		expect(result.loadedSpecifiers).toEqual([]);
