@@ -67,19 +67,20 @@ function useSummaryStreamFn(harness: Harness, summary: string): () => number {
 }
 
 function seedCompactableSession(harness: Harness): void {
+	harness.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 	const now = Date.now();
 	harness.sessionManager.appendMessage({
 		role: "user",
 		content: [{ type: "text", text: "message to compact" }],
 		timestamp: now - 1000,
 	});
-	harness.sessionManager.appendMessage(
-		createAssistant(harness, {
-			stopReason: "stop",
-			totalTokens: 100,
-			timestamp: now - 500,
-		}),
-	);
+	const assistant = createAssistant(harness, {
+		stopReason: "stop",
+		totalTokens: 100,
+		timestamp: now - 500,
+	});
+	assistant.content = [{ type: "text", text: "assistant response to compact" }];
+	harness.sessionManager.appendMessage(assistant);
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
@@ -96,6 +97,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("manually compacts using an extension-provided summary", async () => {
 		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => ({
@@ -145,7 +147,7 @@ describe("AgentSession compaction characterization", () => {
 
 		const result = await harness.session.compact();
 
-		expect(result.summary).toBe("summary from custom stream");
+		expect(result.summary).toContain("summary from custom stream");
 		expect(getStreamCallCount()).toBe(1);
 	});
 
@@ -165,6 +167,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("cancels in-progress manual compaction when abortCompaction is called", async () => {
 		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => {
@@ -246,6 +249,37 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionErrors).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
+	});
+
+	it("compacts successful overflow responses without retrying", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			models: [{ id: "faux-1", contextWindow: 1, maxTokens: 100 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "successful overflow compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("completed answer")]);
+
+		await expect(harness.session.prompt("hello")).resolves.toBeUndefined();
+
+		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
+		expect(compactionEnd).toMatchObject({
+			reason: "overflow",
+			aborted: false,
+			willRetry: false,
+		});
+		expect(harness.faux.state.callCount).toBe(1);
 	});
 
 	it("ignores stale pre-compaction assistant usage on pre-prompt checks", async () => {

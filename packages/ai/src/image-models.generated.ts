@@ -95,6 +95,21 @@ export const IMAGE_MODELS = {
 				cacheWrite: 0.08333333333333334,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
+		"google/gemini-3-pro-image": {
+			id: "google/gemini-3-pro-image",
+			name: "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["image", "text"],
+			output: ["image", "text"],
+			cost: {
+				input: 2,
+				output: 12,
+				cacheRead: 0.19999999999999998,
+				cacheWrite: 0.375,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3-pro-image-preview": {
 			id: "google/gemini-3-pro-image-preview",
 			name: "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
@@ -108,6 +123,21 @@ export const IMAGE_MODELS = {
 				output: 12,
 				cacheRead: 0.19999999999999998,
 				cacheWrite: 0.375,
+			},
+		} satisfies ImagesModel<"openrouter-images">,
+		"google/gemini-3.1-flash-image": {
+			id: "google/gemini-3.1-flash-image",
+			name: "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["image", "text"],
+			output: ["image", "text"],
+			cost: {
+				input: 0.5,
+				output: 3,
+				cacheRead: 0,
+				cacheWrite: 0,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3.1-flash-image-preview": {

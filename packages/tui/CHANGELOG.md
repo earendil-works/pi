@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
+## [0.79.7] - 2026-06-18
+
 ### Added
 
+- Added terminal color-scheme query and notification support for light/dark appearance detection (`TUI.queryTerminalColorScheme()`, `TUI.onTerminalColorSchemeChange()`, and `TUI.setTerminalColorSchemeNotifications()`) ([#5874](https://github.com/earendil-works/pi/pull/5874)).
+- Added Warp terminal detection for Kitty graphics inline image support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
 - Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
 
 ## [0.79.6] - 2026-06-16

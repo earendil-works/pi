@@ -503,6 +503,14 @@ function getCustomThemeInfos(): ThemeInfo[] {
 	return result;
 }
 
+function assertThemeNameIsValid(name: string): void {
+	if (name.includes("/")) {
+		throw new Error(
+			`Invalid theme name "${name}": theme names cannot contain "/" because it is reserved for automatic light/dark theme settings.`,
+		);
+	}
+}
+
 function parseThemeJson(label: string, json: unknown): ThemeJson {
 	if (!validateThemeJson.Check(json)) {
 		const errors = Array.from(validateThemeJson.Errors(json));
@@ -539,7 +547,9 @@ function parseThemeJson(label: string, json: unknown): ThemeJson {
 		throw new Error(errorMessage);
 	}
 
-	return json as ThemeJson;
+	const themeJson = json as ThemeJson;
+	assertThemeNameIsValid(themeJson.name);
+	return themeJson;
 }
 
 function parseThemeJsonContent(label: string, content: string): ThemeJson {
@@ -624,6 +634,36 @@ export function getThemeByName(name: string): Theme | undefined {
 }
 
 export type TerminalTheme = "dark" | "light";
+
+export function parseAutoThemeSetting(
+	themeSetting: string | undefined,
+): { lightTheme: string; darkTheme: string } | undefined {
+	if (!themeSetting) return undefined;
+	const slashIndex = themeSetting.indexOf("/");
+	if (slashIndex === -1 || themeSetting.indexOf("/", slashIndex + 1) !== -1) {
+		return undefined;
+	}
+
+	const lightTheme = themeSetting.slice(0, slashIndex).trim();
+	const darkTheme = themeSetting.slice(slashIndex + 1).trim();
+	if (!lightTheme || !darkTheme) {
+		return undefined;
+	}
+	return { lightTheme, darkTheme };
+}
+
+export function resolveThemeSetting(
+	themeSetting: string | undefined,
+	terminalTheme: TerminalTheme,
+): string | undefined {
+	const autoTheme = parseAutoThemeSetting(themeSetting);
+	if (autoTheme) {
+		return terminalTheme === "light" ? autoTheme.lightTheme : autoTheme.darkTheme;
+	}
+	if (themeSetting?.includes("/")) return undefined;
+	if (typeof themeSetting === "string") return themeSetting;
+	return undefined;
+}
 
 export interface TerminalThemeDetection {
 	theme: TerminalTheme;
@@ -752,6 +792,7 @@ export function setRegisteredThemes(themes: Theme[]): void {
 	registeredThemes.clear();
 	for (const theme of themes) {
 		if (theme.name) {
+			assertThemeNameIsValid(theme.name);
 			registeredThemes.set(theme.name, theme);
 		}
 	}
