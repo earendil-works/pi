@@ -77,7 +77,7 @@ function openThemeSetting(component: SettingsSelectorComponent): void {
 }
 
 describe("SettingsSelectorComponent theme settings", () => {
-	it("opens a theme list, switches to automatic mode, and saves it", () => {
+	it("opens a theme list, switches to automatic mode, and applies it", () => {
 		initTheme("dark");
 		const callbacks = createCallbacks();
 		const component = new SettingsSelectorComponent(createConfig(), callbacks);
@@ -89,24 +89,47 @@ describe("SettingsSelectorComponent theme settings", () => {
 		expect(output).toContain("dark");
 		expect(output).toContain("light");
 
-		component.getSettingsList().handleInput("\x1b[A");
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\x1b[B");
 		component.getSettingsList().handleInput("\r");
 
-		expect(callbacks.onThemeChange).toHaveBeenCalledWith("dark/dark");
+		expect(callbacks.onThemeChange).not.toHaveBeenCalled();
 		const automaticOutput = component.getSettingsList().render(100).join("\n");
 		expect(automaticOutput).toContain("Light theme");
 		expect(automaticOutput).toContain("Dark theme");
 		expect(automaticOutput).toContain("Change mode");
 		expect(automaticOutput).toContain("switch to single theme");
-		expect(automaticOutput).not.toContain("Save");
-		expect(automaticOutput).toContain("Esc to save");
+		expect(automaticOutput).toContain("Apply");
+		expect(automaticOutput).toContain("save and go back");
+		expect(automaticOutput).toContain("Esc to cancel");
 
-		component.getSettingsList().handleInput("\x1b");
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\r");
 
-		expect(callbacks.onThemeChange).toHaveBeenLastCalledWith("dark/dark");
+		expect(callbacks.onThemeChange).toHaveBeenCalledWith("dark/dark");
 		const savedOutput = component.getSettingsList().render(100).join("\n");
 		expect(savedOutput).toContain("Theme");
 		expect(savedOutput).toContain("dark/dark");
+	});
+
+	it("cancels automatic mode without saving and restores the original preview", () => {
+		initTheme("dark");
+		const callbacks = createCallbacks();
+		callbacks.onThemePreview = vi.fn();
+		const component = new SettingsSelectorComponent(createConfig(), callbacks);
+
+		openThemeSetting(component);
+		component.getSettingsList().handleInput("\x1b[A");
+		component.getSettingsList().handleInput("\r");
+		component.getSettingsList().handleInput("\x1b");
+
+		expect(callbacks.onThemeChange).not.toHaveBeenCalled();
+		expect(callbacks.onThemePreview).toHaveBeenLastCalledWith("dark");
+		const output = component.getSettingsList().render(100).join("\n");
+		expect(output).toContain("Theme");
+		expect(output).toContain("dark");
+		expect(output).not.toContain("dark/dark");
 	});
 
 	it("switches automatic mode back to the active terminal-side theme", () => {
@@ -124,6 +147,10 @@ describe("SettingsSelectorComponent theme settings", () => {
 		openThemeSetting(component);
 		component.getSettingsList().handleInput("\x1b[B");
 		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\x1b[B");
+		component.getSettingsList().handleInput("\r");
+		expect(callbacks.onThemeChange).not.toHaveBeenCalled();
+
 		component.getSettingsList().handleInput("\r");
 
 		expect(callbacks.onThemeChange).toHaveBeenCalledWith("solarized-light");

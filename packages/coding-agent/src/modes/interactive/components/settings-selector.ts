@@ -253,20 +253,13 @@ function defaultAutomaticThemes(
 	return { lightTheme: themeName, darkTheme: themeName };
 }
 
-function getAutomaticThemeSettingsListTheme() {
-	const settingsListTheme = getSettingsListTheme();
-	return {
-		...settingsListTheme,
-		hint: (text: string) => settingsListTheme.hint(text.replace("Esc to cancel", "Esc to save")),
-	};
-}
-
 class ThemeSubmenu extends Container {
 	private inputComponent: Component | undefined;
 	private readonly callbacks: SettingsCallbacks;
 	private readonly availableThemes: string[];
 	private readonly terminalTheme: TerminalTheme;
 	private readonly onDone: (selectedValue?: string) => void;
+	private readonly originalThemeSetting: string;
 	private mode: "single" | "automatic";
 	private singleTheme: string;
 	private lightTheme: string;
@@ -284,6 +277,7 @@ class ThemeSubmenu extends Container {
 		this.availableThemes = availableThemes;
 		this.terminalTheme = terminalTheme;
 		this.onDone = onDone;
+		this.originalThemeSetting = currentThemeSetting;
 		const autoTheme = parseAutoThemeSetting(currentThemeSetting);
 		const automaticThemes = defaultAutomaticThemes(currentThemeSetting, availableThemes);
 		const fixedTheme = autoTheme || currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
@@ -323,16 +317,15 @@ class ThemeSubmenu extends Container {
 			(value) => {
 				if (value === AUTOMATIC_THEME_VALUE) {
 					this.mode = "automatic";
-					this.callbacks.onThemeChange(this.getThemeSetting());
+					this.callbacks.onThemePreview?.(this.getThemeSetting());
 					this.showAutomaticMenu();
 					return;
 				}
 
 				this.singleTheme = value;
-				this.callbacks.onThemeChange(value);
-				this.onDone(value);
+				this.apply(value);
 			},
-			() => this.finish(),
+			() => this.cancel(),
 			(value) => {
 				this.callbacks.onThemePreview?.(value === AUTOMATIC_THEME_VALUE ? this.getAutomaticThemeSetting() : value);
 			},
@@ -363,7 +356,7 @@ class ThemeSubmenu extends Container {
 						done,
 						(value) => {
 							this.lightTheme = value;
-							this.callbacks.onThemeChange(this.getAutomaticThemeSetting());
+							this.callbacks.onThemePreview?.(this.getThemeSetting());
 							done(value);
 						},
 					),
@@ -381,10 +374,17 @@ class ThemeSubmenu extends Container {
 						done,
 						(value) => {
 							this.darkTheme = value;
-							this.callbacks.onThemeChange(this.getAutomaticThemeSetting());
+							this.callbacks.onThemePreview?.(this.getThemeSetting());
 							done(value);
 						},
 					),
+			},
+			{
+				id: "apply",
+				label: "Apply",
+				description: "Save and go back",
+				currentValue: "save and go back",
+				values: ["save and go back"],
 			},
 			{
 				id: "single-mode",
@@ -398,16 +398,21 @@ class ThemeSubmenu extends Container {
 		const settingsList = new SettingsList(
 			items,
 			Math.min(items.length, 10),
-			getAutomaticThemeSettingsListTheme(),
+			getSettingsListTheme(),
 			(id) => {
-				if (id === "single-mode") {
-					this.mode = "single";
-					this.singleTheme = this.getActiveAutomaticTheme();
-					this.callbacks.onThemeChange(this.singleTheme);
-					this.showSingleMenu();
+				switch (id) {
+					case "single-mode":
+						this.mode = "single";
+						this.singleTheme = this.getActiveAutomaticTheme();
+						this.callbacks.onThemePreview?.(this.singleTheme);
+						this.showSingleMenu();
+						break;
+					case "apply":
+						this.apply(this.getAutomaticThemeSetting());
+						break;
 				}
 			},
-			() => this.finish(),
+			() => this.cancel(),
 		);
 		content.addChild(settingsList);
 		this.setContent(content, settingsList);
@@ -446,9 +451,13 @@ class ThemeSubmenu extends Container {
 		return `${this.lightTheme}/${this.darkTheme}`;
 	}
 
-	private finish(): void {
-		this.callbacks.onThemePreview?.(this.getThemeSetting());
-		this.onDone(this.getThemeSetting());
+	private apply(themeSetting: string): void {
+		this.onDone(themeSetting);
+	}
+
+	private cancel(): void {
+		this.callbacks.onThemePreview?.(this.originalThemeSetting);
+		this.onDone();
 	}
 }
 
@@ -781,6 +790,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "theme":
+						callbacks.onThemeChange(newValue);
 						break;
 				}
 			},
