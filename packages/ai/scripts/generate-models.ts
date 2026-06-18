@@ -2030,6 +2030,32 @@ async function generateModels() {
 		});
 	}
 
+	// Add "fusion" alias for openrouter/fusion. OpenRouter exposes Fusion as a
+	// router alias/plugin entry point; its model metadata does not advertise
+	// tools, but the alias resolves to a concrete model that can invoke caller
+	// tools and has the openrouter:fusion server tool auto-injected.
+	if (!allModels.some(m => m.provider === "openrouter" && m.id === "openrouter/fusion")) {
+		allModels.push({
+			id: "openrouter/fusion",
+			name: "OpenRouter: Fusion",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				// we dont know about the costs because Fusion routes to multiple models
+				// and then charges you for the underlying used models
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 30000,
+		});
+	}
+
 	// Azure Foundry deploys these with larger context windows than OpenAI's own API,
 	// which caps gpt-5.4/gpt-5.5 at 272k. See models-sold-directly-by-azure docs.
 	const AZURE_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
