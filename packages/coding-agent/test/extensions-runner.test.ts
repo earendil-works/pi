@@ -7,8 +7,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
-import { ExtensionRunner } from "../src/core/extensions/runner.ts";
+import { createExtensionRuntime, discoverAndLoadExtensions, loadExtensions } from "../src/core/extensions/loader.ts";
+import { ExtensionRunner, emitProjectTrustEvent } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
 	ExtensionContextActions,
@@ -76,6 +76,7 @@ describe("ExtensionRunner", () => {
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
 		isIdle: () => true,
+		isProjectTrusted: () => true,
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
@@ -84,6 +85,45 @@ describe("ExtensionRunner", () => {
 		compact: () => {},
 		getSystemPrompt: () => "",
 	};
+
+	describe("project_trust", () => {
+		it("continues past undecided handlers and returns the first yes/no decision", async () => {
+			const undecidedPath = path.join(extensionsDir, "undecided.ts");
+			const decidedPath = path.join(extensionsDir, "decided.ts");
+			fs.writeFileSync(
+				undecidedPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "undecided", remember: true }));
+}`,
+			);
+			fs.writeFileSync(
+				decidedPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "no", remember: true }));
+}`,
+			);
+
+			const extensionsResult = await loadExtensions([undecidedPath, decidedPath], tempDir);
+			const result = await emitProjectTrustEvent(
+				extensionsResult,
+				{ type: "project_trust", cwd: tempDir },
+				{
+					cwd: tempDir,
+					mode: "tui",
+					hasUI: false,
+					ui: {
+						select: async () => undefined,
+						confirm: async () => false,
+						input: async () => undefined,
+						notify: () => {},
+					},
+				},
+			);
+
+			expect(result.result).toEqual({ trusted: "no", remember: true });
+			expect(result.errors).toEqual([]);
+		});
+	});
 
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
@@ -455,6 +495,18 @@ describe("ExtensionRunner", () => {
 			const ctx = runner.createContext();
 			expect(ctx.mode).toBe("print");
 			expect(ctx.hasUI).toBe(false);
+		});
+
+		it("exposes project trust state on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				isProjectTrusted: () => false,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.isProjectTrusted()).toBe(false);
 		});
 
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {

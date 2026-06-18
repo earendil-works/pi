@@ -3,7 +3,9 @@ import { getModels, getProviders } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
 
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
+	"anthropic/claude-fable-5",
 	"anthropic/claude-opus-4-8",
+	"cloudflare-ai-gateway/claude-fable-5",
 	"opencode/claude-opus-4-8",
 	"vercel-ai-gateway/anthropic/claude-opus-4.8",
 ];
@@ -22,7 +24,7 @@ describe("Anthropic adaptive thinking model metadata", () => {
 
 		expect(flaggedModels).toEqual(expect.arrayContaining([...EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS].sort()));
 		expect(flaggedModels).toEqual(
-			flaggedModels.filter((modelId) => /(opus[-.]4[-.][678]|sonnet[-.]4[-.]6)/.test(modelId)),
+			flaggedModels.filter((modelId) => /(opus[-.]4[-.][678]|sonnet[-.]4[-.]6|fable[-.]5)/.test(modelId)),
 		);
 	});
 });

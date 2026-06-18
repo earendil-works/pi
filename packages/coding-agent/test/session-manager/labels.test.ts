@@ -142,6 +142,19 @@ describe("SessionManager labels", () => {
 		expect(msg2Node?.labelTimestamp).toBe(msg2LabelEntry.timestamp);
 	});
 
+	it("rewires children of removed labels when forking", () => {
+		const session = SessionManager.inMemory();
+
+		const msg1Id = session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		session.appendLabelChange(msg1Id, "checkpoint");
+		const modelChangeId = session.appendModelChange("anthropic", "claude-test");
+		const msg2Id = session.appendMessage({ role: "user", content: "followup", timestamp: 2 });
+
+		session.createBranchedSession(msg2Id);
+
+		expect(session.getEntry(modelChangeId)?.parentId).toBe(msg1Id);
+	});
+
 	it("labels not on path are not preserved in createBranchedSession", () => {
 		const session = SessionManager.inMemory();
 

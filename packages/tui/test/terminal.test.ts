@@ -82,58 +82,80 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		};
 	}
 
-	it("activates Kitty mode for non-zero negotiated flags", () => {
-		mock.timers.enable({ apis: ["setTimeout"] });
+	it("queries Kitty mode before enabling modifyOtherKeys fallback", () => {
 		const harness = setupNegotiation();
 		try {
-			harness.send("\x1b[?1u");
-			mock.timers.tick(150);
-
 			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("activates Kitty mode for non-zero negotiated flags", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+
 			assert.equal(harness.getInput(), undefined);
 			assert.equal(harness.terminal.kittyProtocolActive, true);
+			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
+			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
 
 			harness.cleanup();
 			assert.equal(harness.writes.filter((write) => write === "\x1b[<u").length, 1);
+			assert.equal(harness.writes.includes("\x1b[>4;0m"), false);
 		} finally {
 			harness.cleanup();
-			mock.timers.reset();
 		}
 	});
 
-	it("falls back to modifyOtherKeys for unsupported or silent terminals", () => {
-		const unsupported = setupNegotiation();
+	it("falls back to modifyOtherKeys for zero Kitty flags", () => {
+		const harness = setupNegotiation();
 		try {
-			unsupported.send("\x1b[?62;4;52c");
+			harness.send("\x1b[?0u");
 
-			assert.equal(unsupported.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
-			assert.equal(unsupported.writes.includes("\x1b[>4;2m"), true);
-			assert.equal(unsupported.getInput(), undefined);
-			assert.equal(unsupported.terminal.kittyProtocolActive, false);
+			assert.equal(harness.getInput(), undefined);
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;2m").length, 1);
+
+			harness.cleanup();
+			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;0m").length, 1);
 		} finally {
-			unsupported.cleanup();
-		}
-
-		mock.timers.enable({ apis: ["setTimeout"] });
-		const silent = setupNegotiation();
-		try {
-			mock.timers.tick(150);
-
-			assert.equal(silent.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
-			assert.equal(silent.writes.includes("\x1b[>4;2m"), true);
-			assert.equal(silent.terminal.kittyProtocolActive, false);
-		} finally {
-			silent.cleanup();
-			mock.timers.reset();
+			harness.cleanup();
 		}
 	});
 
-	it("tracks late split Kitty confirmation after fallback", () => {
+	it("falls back to modifyOtherKeys for device attributes without Kitty flags", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?62;4;52c");
+
+			assert.equal(harness.getInput(), undefined);
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;2m").length, 1);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards normal input while waiting for Kitty response", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("a");
+
+			assert.equal(harness.getInput(), "a");
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("tracks split Kitty confirmation", () => {
 		mock.timers.enable({ apis: ["setTimeout"] });
 		const harness = setupNegotiation();
 		try {
-			mock.timers.tick(150);
 			harness.send("\x1b[?7");
 			mock.timers.tick(10);
 
@@ -141,26 +163,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			harness.send("u");
 
-			assert.equal(harness.writes.includes("\x1b[>4;2m"), true);
 			assert.equal(harness.terminal.kittyProtocolActive, true);
-
-			harness.cleanup();
-			assert.equal(harness.writes.filter((write) => write === "\x1b[<u").length, 1);
-			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;0m").length, 1);
+			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 		} finally {
 			harness.cleanup();
 			mock.timers.reset();
 		}
 	});
 
-	it("replays buffered CSI-prefix input after fallback", () => {
+	it("replays buffered CSI-prefix input when it is not a Kitty response", () => {
 		mock.timers.enable({ apis: ["setTimeout"] });
 		const harness = setupNegotiation();
 		try {
 			harness.send("\x1b[");
-			mock.timers.tick(150);
+			mock.timers.tick(10);
 
-			assert.equal(harness.writes.includes("\x1b[>4;2m"), true);
 			assert.equal(harness.getInput(), undefined);
 
 			mock.timers.tick(150);

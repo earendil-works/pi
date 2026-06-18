@@ -1,4 +1,5 @@
-import { setKeybindings } from "@earendil-works/pi-tui";
+import { stripVTControlCharacters } from "node:util";
+import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type {
@@ -245,6 +246,29 @@ describe("TreeSelectorComponent", () => {
 			// (since that's what we navigated to via parent traversal)
 			selector.handleInput("\x04"); // Ctrl+D
 			expect(list.getSelectedNode()?.entry.id).toBe("user-2");
+		});
+	});
+
+	describe("help", () => {
+		test("renders semantic help rows without truncating narrow terminal controls", () => {
+			const entries = [userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")];
+			const tree = buildTree(entries);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+
+			const plainLines = selector.render(30).map(stripVTControlCharacters);
+			const plain = plainLines.join("\n");
+			expect(plain).toContain("branch");
+			expect(plain).toContain("filters");
+			expect(plain).toContain("cycle");
+			expect(plain).toContain("label time");
+			expect(plain).not.toContain("...");
+			expect(plainLines.every((line) => visibleWidth(line) <= 30)).toBe(true);
 		});
 	});
 

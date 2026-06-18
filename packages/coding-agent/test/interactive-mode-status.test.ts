@@ -151,6 +151,13 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const fakeThis: any = {
 			session: { settingsManager },
 			settingsManager,
+			themeController: {
+				setThemeInstance: vi.fn(() => ({ success: true })),
+				setThemeName: vi.fn(() => {
+					fakeThis.ui.requestRender();
+					return { success: true };
+				}),
+			},
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -158,6 +165,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const result = uiContext.setTheme("light");
 
 		expect(result.success).toBe(true);
+		expect(fakeThis.themeController.setThemeName).toHaveBeenCalledWith("light");
 		expect(settingsManager.setTheme).toHaveBeenCalledWith("light");
 		expect(currentTheme).toBe("light");
 		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
@@ -173,6 +181,10 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const fakeThis: any = {
 			session: { settingsManager },
 			settingsManager,
+			themeController: {
+				setThemeInstance: vi.fn(() => ({ success: true })),
+				setThemeName: vi.fn(() => ({ success: false, error: "Theme not found" })),
+			},
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -180,6 +192,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 		const result = uiContext.setTheme("__missing_theme__");
 
 		expect(result.success).toBe(false);
+		expect(fakeThis.themeController.setThemeName).toHaveBeenCalledWith("__missing_theme__");
 		expect(settingsManager.setTheme).not.toHaveBeenCalled();
 		expect(fakeThis.ui.requestRender).not.toHaveBeenCalled();
 	});
@@ -323,6 +336,89 @@ describe("InteractiveMode.setupAutocompleteProvider", () => {
 		expect(provider).toBe(customEditor.setAutocompleteProvider.mock.calls[0]?.[0]);
 		expect(provider.shouldTriggerFileCompletion?.(["foo"], 0, 3)).toBe(true);
 		expect(calls).toEqual(["shouldTrigger:wrap2", "shouldTrigger:wrap1"]);
+	});
+
+	test("merges triggerCharacters from wrapper factories", () => {
+		const defaultEditor = { setAutocompleteProvider: vi.fn() };
+		const customEditor = { setAutocompleteProvider: vi.fn() };
+		const passThrough =
+			(triggerCharacters: string[]): AutocompleteProviderFactory =>
+			(current) => ({
+				triggerCharacters,
+				getSuggestions: (lines, cursorLine, cursorCol, options) =>
+					current.getSuggestions(lines, cursorLine, cursorCol, options),
+				applyCompletion: (lines, cursorLine, cursorCol, item, prefix) =>
+					current.applyCompletion(lines, cursorLine, cursorCol, item, prefix),
+			});
+
+		const fakeThis = {
+			createBaseAutocompleteProvider: () => new CombinedAutocompleteProvider([], "/tmp/project", undefined),
+			defaultEditor,
+			editor: customEditor,
+			autocompleteProviderWrappers: [passThrough(["$"]), passThrough(["!"])],
+		};
+
+		(
+			InteractiveMode as unknown as {
+				prototype: { setupAutocompleteProvider: (this: typeof fakeThis) => void };
+			}
+		).prototype.setupAutocompleteProvider.call(fakeThis);
+
+		const provider = defaultEditor.setAutocompleteProvider.mock.calls[0]?.[0] as AutocompleteProvider;
+		expect(provider.triggerCharacters).toEqual(["$", "!"]);
+	});
+});
+
+describe("InteractiveMode.createBaseAutocompleteProvider", () => {
+	test("matches model command arguments across provider/model order", async () => {
+		type TestModel = { id: string; provider: string; name: string };
+		type FakeInteractiveMode = {
+			session: {
+				scopedModels: Array<{ model: TestModel }>;
+				modelRegistry: { getAvailable: () => TestModel[] };
+				promptTemplates: [];
+				extensionRunner: { getRegisteredCommands: () => [] };
+				resourceLoader: { getSkills: () => { skills: [] } };
+			};
+			settingsManager: { getEnableSkillCommands: () => boolean };
+			skillCommands: Map<string, string>;
+			sessionManager: { getCwd: () => string };
+			fdPath: null;
+		};
+
+		const createBaseAutocompleteProvider = (
+			InteractiveMode as unknown as {
+				prototype: { createBaseAutocompleteProvider(this: FakeInteractiveMode): AutocompleteProvider };
+			}
+		).prototype.createBaseAutocompleteProvider;
+		const models = [
+			{ id: "gpt-5.2-codex", provider: "github-copilot", name: "GPT-5.2 Codex" },
+			{ id: "gpt-5.5", provider: "openai-codex", name: "GPT-5.5" },
+		];
+		const fakeThis: FakeInteractiveMode = {
+			session: {
+				scopedModels: [],
+				modelRegistry: { getAvailable: () => models },
+				promptTemplates: [],
+				extensionRunner: { getRegisteredCommands: () => [] },
+				resourceLoader: { getSkills: () => ({ skills: [] }) },
+			},
+			settingsManager: { getEnableSkillCommands: () => false },
+			skillCommands: new Map(),
+			sessionManager: { getCwd: () => "/tmp" },
+			fdPath: null,
+		};
+
+		const provider = createBaseAutocompleteProvider.call(fakeThis);
+		const line = "/model codexgpt";
+		const suggestions = await provider.getSuggestions([line], 0, line.length, {
+			signal: new AbortController().signal,
+		});
+
+		expect(suggestions?.items.map((item) => item.value)).toEqual([
+			"openai-codex/gpt-5.5",
+			"github-copilot/gpt-5.2-codex",
+		]);
 	});
 });
 

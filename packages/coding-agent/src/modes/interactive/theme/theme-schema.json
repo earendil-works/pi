@@ -11,7 +11,8 @@
 		},
 		"name": {
 			"type": "string",
-			"description": "Theme name"
+			"pattern": "^[^/]+$",
+			"description": "Theme name. Must not contain '/' because it is reserved for automatic light/dark theme settings."
 		},
 		"vars": {
 			"type": "object",

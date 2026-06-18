@@ -1,17 +1,17 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.78.0",
+	"version": "0.79.7",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.78.0",
+			"version": "0.79.7",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.78.0",
-				"@earendil-works/pi-ai": "^0.78.0",
-				"@earendil-works/pi-tui": "^0.78.0",
+				"@earendil-works/pi-agent-core": "^0.79.7",
+				"@earendil-works/pi-ai": "^0.79.7",
+				"@earendil-works/pi-tui": "^0.79.7",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -23,6 +23,7 @@
 				"jiti": "2.7.0",
 				"minimatch": "10.2.5",
 				"proper-lockfile": "4.1.2",
+				"semver": "7.8.0",
 				"typebox": "1.1.38",
 				"undici": "8.3.0",
 				"yaml": "2.9.0"
@@ -473,11 +474,11 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "0.78.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.78.0.tgz",
+			"version": "0.79.7",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.79.7.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.78.0",
+				"@earendil-works/pi-ai": "^0.79.7",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -487,8 +488,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "0.78.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.78.0.tgz",
+			"version": "0.79.7",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.79.7.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -510,12 +511,12 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "0.78.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.78.0.tgz",
+			"version": "0.79.7",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.79.7.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
-				"marked": "15.0.12"
+				"marked": "18.0.5"
 			},
 			"engines": {
 				"node": ">=22.19.0"
@@ -1398,15 +1399,15 @@
 			}
 		},
 		"node_modules/marked": {
-			"version": "15.0.12",
-			"resolved": "https://registry.npmjs.org/marked/-/marked-15.0.12.tgz",
-			"integrity": "sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==",
+			"version": "18.0.5",
+			"resolved": "https://registry.npmjs.org/marked/-/marked-18.0.5.tgz",
+			"integrity": "sha512-S6GcvALHg6K4ohtu4E7x0a1AqhAjp6cV8KhLSyN9qVapnzJkusVBxZRcIU9AeYsbe6P1hKDusSbEOzGyyuce6w==",
 			"license": "MIT",
 			"bin": {
 				"marked": "bin/marked.js"
 			},
 			"engines": {
-				"node": ">= 18"
+				"node": ">= 20"
 			}
 		},
 		"node_modules/minimatch": {
@@ -1635,6 +1636,18 @@
 					"url": "https://feross.org/support"
 				}
 			]
+		},
+		"node_modules/semver": {
+			"version": "7.8.0",
+			"resolved": "https://registry.npmjs.org/semver/-/semver-7.8.0.tgz",
+			"integrity": "sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==",
+			"license": "ISC",
+			"bin": {
+				"semver": "bin/semver.js"
+			},
+			"engines": {
+				"node": ">=10"
+			}
 		},
 		"node_modules/shebang-command": {
 			"version": "2.0.0",

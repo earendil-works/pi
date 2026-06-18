@@ -1,6 +1,7 @@
 import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/index.ts";
+import { Agent, type AgentEvent, type AgentTool, type AgentToolUpdateCallback } from "../src/index.ts";
 
 // Mock stream that mimics AssistantMessageEventStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -32,6 +33,28 @@ function createAssistantMessage(text: string): AssistantMessage {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "stop",
+		timestamp: Date.now(),
+	};
+}
+
+type ToolCallContent = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
+
+function createAssistantToolUseMessage(content: ToolCallContent[]): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: "openai-responses",
+		provider: "openai",
+		model: "mock",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "toolUse",
 		timestamp: Date.now(),
 	};
 }
@@ -240,6 +263,147 @@ describe("Agent", () => {
 		await promptPromise;
 
 		expect(receivedSignal?.aborted).toBe(true);
+	});
+
+	it("should ignore tool updates after the tool execution settles", async () => {
+		const toolSchema = Type.Object({});
+		let delayedUpdate: AgentToolUpdateCallback<{ status: string }> | undefined;
+		const events: AgentEvent[] = [];
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (error: unknown) => {
+			unhandledRejections.push(error);
+		};
+		const tool: AgentTool<typeof toolSchema, { status: string }> = {
+			name: "delayed_tool",
+			label: "Delayed Tool",
+			description: "Captures progress callbacks",
+			parameters: toolSchema,
+			async execute(_toolCallId, _params, _signal, onUpdate) {
+				delayedUpdate = onUpdate;
+				onUpdate?.({
+					content: [{ type: "text", text: "running" }],
+					details: { status: "running" },
+				});
+				return {
+					content: [{ type: "text", text: "ok" }],
+					details: { status: "done" },
+					terminate: true,
+				};
+			},
+		};
+		const agent = new Agent({
+			initialState: { tools: [tool] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantToolUseMessage([
+							{ type: "toolCall", id: "call-1", name: "delayed_tool", arguments: {} },
+						]),
+					});
+				});
+				return stream;
+			},
+		});
+		agent.subscribe((event) => {
+			events.push(event);
+		});
+
+		process.on("unhandledRejection", onUnhandledRejection);
+		try {
+			await agent.prompt("run tool");
+			const eventCountAfterPrompt = events.length;
+
+			delayedUpdate?.({
+				content: [{ type: "text", text: "late" }],
+				details: { status: "late" },
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(events.filter((event) => event.type === "tool_execution_update")).toHaveLength(1);
+			expect(events).toHaveLength(eventCountAfterPrompt);
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandledRejection);
+		}
+	});
+
+	it("should ignore a settled parallel tool update while another tool is still running", async () => {
+		const toolSchema = Type.Object({});
+		const slowStarted = createDeferred();
+		const settledToolEnded = createDeferred();
+		const releaseSlow = createDeferred();
+		let settledToolUpdate: AgentToolUpdateCallback<{ status: string }> | undefined;
+		const events: AgentEvent[] = [];
+		const settledTool: AgentTool<typeof toolSchema, { status: string }> = {
+			name: "settled_tool",
+			label: "Settled Tool",
+			description: "Captures progress callbacks",
+			parameters: toolSchema,
+			async execute(_toolCallId, _params, _signal, onUpdate) {
+				settledToolUpdate = onUpdate;
+				return {
+					content: [{ type: "text", text: "done" }],
+					details: { status: "done" },
+					terminate: true,
+				};
+			},
+		};
+		const slowTool: AgentTool<typeof toolSchema, { status: string }> = {
+			name: "slow_tool",
+			label: "Slow Tool",
+			description: "Keeps the agent run active",
+			parameters: toolSchema,
+			async execute() {
+				slowStarted.resolve();
+				await releaseSlow.promise;
+				return {
+					content: [{ type: "text", text: "done" }],
+					details: { status: "done" },
+					terminate: true,
+				};
+			},
+		};
+		const agent = new Agent({
+			initialState: { tools: [settledTool, slowTool] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantToolUseMessage([
+							{ type: "toolCall", id: "call-1", name: "settled_tool", arguments: {} },
+							{ type: "toolCall", id: "call-2", name: "slow_tool", arguments: {} },
+						]),
+					});
+				});
+				return stream;
+			},
+		});
+		agent.subscribe((event) => {
+			events.push(event);
+			if (event.type === "tool_execution_end" && event.toolCallId === "call-1") {
+				settledToolEnded.resolve();
+			}
+		});
+
+		const promptPromise = agent.prompt("run tools");
+		await Promise.all([slowStarted.promise, settledToolEnded.promise]);
+		const eventCountBeforeLateUpdate = events.length;
+
+		settledToolUpdate?.({
+			content: [{ type: "text", text: "late" }],
+			details: { status: "late" },
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(events).toHaveLength(eventCountBeforeLateUpdate);
+
+		releaseSlow.resolve();
+		await promptPromise;
+		expect(events.filter((event) => event.type === "tool_execution_update")).toHaveLength(0);
 	});
 
 	it("should update state with mutators", () => {

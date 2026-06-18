@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel, getSupportedThinkingLevels } from "../src/models.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context } from "../src/types.ts";
 
@@ -53,6 +53,16 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		systemPrompt: "You are a helpful assistant.",
 		messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 	};
+
+	it("applies Copilot-specific adaptive thinking effort overrides", () => {
+		const opus47 = getModel("github-copilot", "claude-opus-4.7");
+		expect(opus47.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh" });
+		expect(getSupportedThinkingLevels(opus47)).toContain("xhigh");
+
+		const sonnet46 = getModel("github-copilot", "claude-sonnet-4.6");
+		expect(sonnet46.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "max" });
+		expect(getSupportedThinkingLevels(sonnet46)).toContain("xhigh");
+	});
 
 	it("uses Bearer auth, Copilot headers, and valid Anthropic Messages payload", async () => {
 		const model = getModel("github-copilot", "claude-sonnet-4.6");

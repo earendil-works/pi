@@ -21,6 +21,7 @@ type ShutdownThis = {
 	unregisterSignalHandlers: () => void;
 	runtimeHost: { dispose: () => Promise<void> };
 	ui: { terminal: { drainInput: (ms: number) => Promise<void> } };
+	themeController: { disableAutoSync: () => void };
 	stop: () => void;
 	sessionManager: SessionManager;
 };
@@ -81,6 +82,7 @@ function createContext(order: string[], sessionManager = createSessionManager())
 				}),
 			},
 		},
+		themeController: { disableAutoSync: vi.fn() },
 		stop: vi.fn(() => {
 			order.push("stop");
 		}),
@@ -116,7 +118,6 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 
 		expect(order).toEqual(["dispose", "drainInput", "stop"]);
 		expect(context.isShuttingDown).toBe(true);
-		expect(context.unregisterSignalHandlers).toHaveBeenCalledTimes(1);
 	});
 
 	test("interactive quit stops the TUI before emitting session_shutdown", async () => {

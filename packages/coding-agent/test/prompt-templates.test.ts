@@ -191,6 +191,52 @@ describe("substituteArgs", () => {
 });
 
 // ============================================================================
+// substituteArgs - Positional Defaults
+// ============================================================================
+
+describe("substituteArgs - positional defaults", () => {
+	test("should use default when positional arg is missing", () => {
+		expect(substituteArgs(`List exactly \${1:-7} next steps`, [])).toBe("List exactly 7 next steps");
+	});
+
+	test("should use positional arg when present", () => {
+		expect(substituteArgs(`List exactly \${1:-7} next steps`, ["3"])).toBe("List exactly 3 next steps");
+	});
+
+	test("should use default when positional arg is empty", () => {
+		expect(substituteArgs(`Mode: \${1:-brief}`, [""])).toBe("Mode: brief");
+	});
+
+	test("should support multiple positional defaults", () => {
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, [])).toBe("7 brief");
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, ["3"])).toBe("3 brief");
+		expect(substituteArgs(`\${1:-7} \${2:-brief}`, ["3", "verbose"])).toBe("3 verbose");
+	});
+
+	test("should not recursively substitute patterns in arg values", () => {
+		expect(substituteArgs(`\${1:-7}`, ["$ARGUMENTS"])).toBe("$ARGUMENTS");
+		expect(substituteArgs(`\${1:-7}`, ["$1"])).toBe("$1");
+	});
+
+	test("should not recursively substitute patterns in default values", () => {
+		expect(substituteArgs(`\${1:-$ARGUMENTS}`, ["a", "b"])).toBe("a");
+		expect(substituteArgs(`\${3:-$ARGUMENTS}`, ["a", "b"])).toBe("$ARGUMENTS");
+	});
+
+	test("should support defaults with spaces", () => {
+		expect(substituteArgs(`\${1:-seven steps}`, [])).toBe("seven steps");
+	});
+
+	test("should support out-of-range positional defaults", () => {
+		expect(substituteArgs(`\${3:-fallback}`, ["a", "b"])).toBe("fallback");
+	});
+
+	test("should mix positional defaults with existing placeholders", () => {
+		expect(substituteArgs(`$1 \${2:-x} $ARGUMENTS`, ["a"])).toBe("a x a");
+	});
+});
+
+// ============================================================================
 // substituteArgs - Array Slicing (Bash-Style)
 // ============================================================================
 

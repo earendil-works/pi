@@ -71,7 +71,7 @@ export interface MarkdownTheme {
 }
 
 export interface MarkdownOptions {
-	/** Preserve source ordered-list markers instead of normalizing them from the list start. */
+	/** Preserve source list markers instead of normalizing them. */
 	preserveOrderedListMarkers?: boolean;
 }
 
@@ -561,6 +561,11 @@ export class Markdown implements Component {
 		return match ? `${match[1]} ` : undefined;
 	}
 
+	private getUnorderedListMarker(item: Tokens.ListItem): string | undefined {
+		const match = /^(?: {0,3})([-+*])(?:[ \t]+|(?=\r?\n|$))/.exec(item.raw);
+		return match ? `${match[1]} ` : undefined;
+	}
+
 	/**
 	 * Render a list with proper nesting support
 	 */
@@ -572,11 +577,14 @@ export class Markdown implements Component {
 
 		for (let i = 0; i < token.items.length; i++) {
 			const item = token.items[i];
+			const isLastItem = i === token.items.length - 1;
 			const bullet = token.ordered
 				? this.options.preserveOrderedListMarkers
 					? (this.getOrderedListMarker(item) ?? `${startNumber + i}. `)
 					: `${startNumber + i}. `
-				: "- ";
+				: this.options.preserveOrderedListMarkers
+					? (this.getUnorderedListMarker(item) ?? "- ")
+					: "- ";
 			const taskMarker = item.task ? `[${item.checked ? "x" : " "}] ` : "";
 			const marker = bullet + taskMarker;
 			const firstPrefix = indent + this.theme.listBullet(marker);
@@ -603,6 +611,10 @@ export class Markdown implements Component {
 
 			if (!renderedAnyLine) {
 				lines.push(firstPrefix);
+			}
+
+			if (token.loose && !isLastItem) {
+				lines.push("");
 			}
 		}
 

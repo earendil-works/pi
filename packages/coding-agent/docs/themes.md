@@ -20,7 +20,7 @@ Pi loads themes from:
 
 - Built-in: `dark`, `light`
 - Global: `~/.pi/agent/themes/*.json`
-- Project: `.pi/themes/*.json`
+- Project: `.pi/themes/*.json` (only after the project is trusted)
 - Packages: `themes/` directories or `pi.themes` entries in `package.json`
 - Settings: `themes` array with files or directories
 - CLI: `--theme <path>` (repeatable)
@@ -137,7 +137,7 @@ vim ~/.pi/agent/themes/my-theme.json
 }
 ```
 
-- `name` is required and must be unique.
+- `name` is required, must be unique, and must not contain `/`.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
 - `colors` must define all 51 required tokens.
 

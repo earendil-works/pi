@@ -40,7 +40,7 @@ If you want `Shift+Enter` to keep working in tmux via that remap, add `ctrl+j` t
 
 ## WezTerm
 
-Create `~/.wezterm.lua`:
+WezTerm usually works out of the box for `Shift+Enter` via xterm modifyOtherKeys. To use the Kitty keyboard protocol explicitly, create `~/.wezterm.lua`:
 
 ```lua
 local wezterm = require 'wezterm'
@@ -49,16 +49,50 @@ config.enable_kitty_keyboard = true
 return config
 ```
 
+On macOS, WezTerm binds `Option+Enter` to fullscreen by default. To use `Option+Enter` for pi follow-up queueing, add this key override:
+
+```lua
+local wezterm = require 'wezterm'
+local config = wezterm.config_builder()
+config.keys = {
+  {
+    key = 'Enter',
+    mods = 'ALT',
+    action = wezterm.action.SendString('\x1b[13;3u'),
+  },
+}
+return config
+```
+
+If you already have a `config.keys` table, add the entry to it.
+
 On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `PI_HARDWARE_CURSOR=1` before running pi or set `showHardwareCursor` to `true` in settings.
 
+## Alacritty
+
+Alacritty usually works out of the box for `Shift+Enter`. On macOS, `Option+Enter` may arrive as plain `Enter`. To use `Option+Enter` for pi follow-up queueing, add to `~/.config/alacritty/alacritty.toml`:
+
+```toml
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Alt"
+chars = "\u001b[13;3u"
+```
+
+Restart Alacritty after changing the config.
+
 ## VS Code (Integrated Terminal)
+
+VS Code 1.109.5 and newer enable Kitty keyboard protocol in the integrated terminal by default, so `Shift+Enter` should work out of the box.
+
+VS Code versions older than 1.109.5 need an explicit terminal keybinding for `Shift+Enter`.
 
 `keybindings.json` locations:
 - macOS: `~/Library/Application Support/Code/User/keybindings.json`
 - Linux: `~/.config/Code/User/keybindings.json`
 - Windows: `%APPDATA%\\Code\\User\\keybindings.json`
 
-Add to `keybindings.json` to enable `Shift+Enter` for multi-line input:
+Add to `keybindings.json`:
 
 ```json
 {
