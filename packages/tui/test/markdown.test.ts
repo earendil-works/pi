@@ -1386,6 +1386,22 @@ bar`,
 			assert.deepStrictEqual(lines, ["```ts", "  const x = 1;", "```"]);
 		});
 
+		it("preserves partial-looking lines in closed code blocks", () => {
+			const markdown = new Markdown("```md\nnot a closing fence:\n``\n```", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["```md", "  not a closing fence:", "  ``", "```"]);
+		});
+
+		it("does not adjust non-final code blocks", () => {
+			const markdown = new Markdown("```md\nnot a closing fence:\n``\n```\n\nafter", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["```md", "  not a closing fence:", "  ``", "```", "", "after"]);
+		});
+
 		it("keeps line count stable when a closing fence completes", () => {
 			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
 			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
