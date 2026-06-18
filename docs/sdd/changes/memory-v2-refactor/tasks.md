@@ -31,13 +31,13 @@
 
 ## 2. Storage Layer
 
-^- [x] 2.1 **新建 types.ts**
+- [x] 2.1 **新建 types.ts**
   - **文件**: `extensions/personal-assistant/types.ts` (Create)
   - **内容**: 定义 `MemoryAtom` interface (含 is_latest/parent_id/content_fingerprint/superseded_at 新字段), `MemoryAtomType` union (`"rule" | "fact" | "process"`), `RecallResult`, `ExtractionItem`, `ExtractionResult`。导出供其他模块用。
   - **验证**: `cd extensions/personal-assistant && node -e "import('./types.ts').then(m => console.log(Object.keys(m)))"` 输出包含 `MemoryAtom, MemoryAtomType, RecallResult, ExtractionItem`
   - **依赖**: 1.1
 
-^- [x] 2.2 **实现 MemoryIndex 类基础 + 新 schema 初始化**
+- [x] 2.2 **实现 MemoryIndex 类基础 + 新 schema 初始化**
   - **文件**: `extensions/personal-assistant/storage.ts` (Create)
   - **内容**: `MemoryIndex` 类,`constructor(dbPath)`, `async init()` 建 `memory_index` + `memory_vectors` (vec0) + `memory_audit` 表 + 索引 (`UNIQUE idx_memory_active_fingerprint`, `idx_memory_active_recent`)。`close()` 方法。
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/storage.test.ts -t "init creates all tables"` 通过
@@ -76,13 +76,13 @@
 
 ## 3. Embed & File Store
 
-^- [x] 3.1 **实现 embed.ts**
+- [x] 3.1 **实现 embed.ts**
   - **文件**: `extensions/personal-assistant/embed.ts` (Create)
   - **内容**: `embedText(text, config?)` 单函数调 ollama `/v1/embeddings`,返 `number[] | null`,15s timeout。`buildEmbeddableText(atom)` 拼 `title + summary + content + tags`。`loadConfig()` 复用。
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/embed.test.ts` 通过 (≥3 测试,含 buildEmbeddableText)
   - **依赖**: 2.1
 
-^- [x] 3.2 **实现 file-store.ts (id-based path)**
+- [x] 3.2 **实现 file-store.ts (id-based path)**
   - **文件**: `extensions/personal-assistant/file-store.ts` (Create)
   - **内容**: `writeAtomToFile(atom, baseDir)` 写 `atoms/<type>/<atom.id>.md`。frontmatter 含所有 atom 字段。`readAtomFromFile(filePath, expectedHash?)` 读 + 校验 hash。`normalizeMarkdown(s)` 工具函数 (frontmatter 分离)。
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/file-store.test.ts` 通过 (≥4 测试)
@@ -92,7 +92,7 @@
 
 ## 4. Extraction
 
-^- [x] 4.1 **实现 fingerprint + normalizeContent helpers**
+- [x] 4.1 **实现 fingerprint + normalizeContent helpers**
   - **文件**: `extensions/personal-assistant/extraction.ts` (Create)
   - **内容**: `normalizeContent(content)` 去多余空白 + trim + lowercase。`computeFingerprint(content)` 返回 `sha256(normalizeContent(content)).slice(0, 16)`。
   - **验证**: `npx vitest run test/fingerprint.test.ts` 通过 (≥3 测试)
