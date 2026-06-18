@@ -133,7 +133,17 @@ function serializeFrontmatter(atom: MemoryAtom): string {
 	return lines.join("\n");
 }
 
-/** Quote a string for safe frontmatter round-trip; escapes `\n`, `"`, `\`. */
+/** Quote a string for safe frontmatter round-trip; escapes `\n`, `"`, `\`.
+ *
+ * Escape order matters here even though the string itself is plain (no YAML
+ * constructs), because every `\`, `"`, and real newline must map to a distinct
+ * on-disk sequence that `parseValue`'s single-pass `\\(.)` regex can recover
+ * without ambiguity. Concretely:
+ *   - `\`     → `\\`     (literal backslash doubled)
+ *   - `"`     → `\"`     (escape the surrounding quote)
+ *   - `\n`    → `\n`     (real newline becomes the 2-char backslash-n sequence)
+ * The two `\` in the literal `\n` are themselves already escaped by step 1 if
+ * the source contains a real newline preceded by nothing else. */
 function quoteString(s: string): string {
 	return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
@@ -209,13 +219,30 @@ function parseValue(s: string): unknown {
 	if (s === "" || s === "null") return null;
 	if (s === "true") return true;
 	if (s === "false") return false;
-	// Quoted string — strip quotes, unescape basic escapes.
+	// Quoted string — strip quotes, unescape via single-pass regex. This must
+	// be single-pass so the parser can never confuse a literal `\` followed by
+	// `n` (3 chars on disk: `\\n`) with the escape sequence for a real newline
+	// (2 chars on disk: `\n`). With one match consuming both characters of each
+	// escape, the two cases are unambiguous:
+	//   - on-disk `\n`  → real newline
+	//   - on-disk `\\n` → literal `\` + literal `n` (because the regex matches
+	//                     `\\` first, leaving `n` as plain text)
 	if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
-		return s
-			.slice(1, -1)
-			.replace(/\\n/g, "\n")
-			.replace(/\\"/g, '"')
-			.replace(/\\\\/g, "\\");
+		return s.slice(1, -1).replace(/\\(.)/g, (_, c: string) => {
+			switch (c) {
+				case "n":
+					return "\n";
+				case "t":
+					return "\t";
+				case '"':
+					return '"';
+				case "\\":
+					return "\\";
+				default:
+					// Unknown escape — keep the literal char after the backslash.
+					return c;
+			}
+		});
 	}
 	// JSON array (tags).
 	if (s.startsWith("[") && s.endsWith("]")) {

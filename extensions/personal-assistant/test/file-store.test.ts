@@ -231,4 +231,54 @@ describe("file-store", () => {
 		expect(second).not.toBeNull();
 		expect(second?.atom.title).toBe(atom.title);
 	});
+
+	// ---- Escape/unescape ambiguity (regression) ----
+	//
+	// Earlier serialize/parse used a multi-pass replace that could not
+	// distinguish a literal `\` followed by `n` from a `\n` escape sequence.
+	// The fix uses a single-pass `\\(.)` regex on parse (with serialize matching
+	// it). These tests guard the round-trip for the bug-reported inputs.
+
+	it("preserves literal backslash + n in title round-trip", async () => {
+		// Literal 6-char string: t e s t \ n
+		const atom = sampleAtom({ title: "test\\n" });
+		await writeAtomToFile(atom, baseDir);
+		const result = await readAtomFromFile(path.join(baseDir, "rule", `${atom.id}.md`));
+		expect(result).not.toBeNull();
+		expect(result?.atom.title).toBe("test\\n");
+	});
+
+	it("preserves literal backslash + backslash in summary", async () => {
+		// Literal Windows-style path: p a t h \ t o \ f i l e
+		const atom = sampleAtom({ summary: "path\\to\\file" });
+		await writeAtomToFile(atom, baseDir);
+		const result = await readAtomFromFile(path.join(baseDir, "rule", `${atom.id}.md`));
+		expect(result?.atom.summary).toBe("path\\to\\file");
+	});
+
+	it("preserves mixed newlines and backslashes", async () => {
+		const atom = sampleAtom({
+			title: "Line 1\\nLine 2", // literal \n (not a newline)
+			summary: "Has\\nmultiple\\nliteral sequences",
+		});
+		await writeAtomToFile(atom, baseDir);
+		const result = await readAtomFromFile(path.join(baseDir, "rule", `${atom.id}.md`));
+		expect(result?.atom.title).toBe("Line 1\\nLine 2");
+		expect(result?.atom.summary).toBe("Has\\nmultiple\\nliteral sequences");
+	});
+
+	it("preserves actual newlines in title alongside literal backslash-n", async () => {
+		// Title mixes a real newline with a literal `\n` sequence.
+		const atom = sampleAtom({ title: "Line 1\nLine 2\\nLine 3" });
+		await writeAtomToFile(atom, baseDir);
+		const result = await readAtomFromFile(path.join(baseDir, "rule", `${atom.id}.md`));
+		expect(result?.atom.title).toBe("Line 1\nLine 2\\nLine 3");
+	});
+
+	it("preserves escaped double quote inside a quoted field", async () => {
+		const atom = sampleAtom({ title: 'She said "hi"' });
+		await writeAtomToFile(atom, baseDir);
+		const result = await readAtomFromFile(path.join(baseDir, "rule", `${atom.id}.md`));
+		expect(result?.atom.title).toBe('She said "hi"');
+	});
 });
