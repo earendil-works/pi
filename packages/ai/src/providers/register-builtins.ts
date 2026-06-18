@@ -253,7 +253,6 @@ export const streamOpenAIResponses = openAIResponsesProvider.stream;
 export const streamSimpleOpenAIResponses = openAIResponsesProvider.streamSimple;
 
 const registerBuiltInApiProviderFunctions = [
-	() => registerImagesApiProvider(openRouterImagesProvider),
 	() => registerApiProvider(anthropicProvider),
 	() => registerApiProvider(openAICompletionsProvider),
 	() => registerApiProvider(mistralProvider),
