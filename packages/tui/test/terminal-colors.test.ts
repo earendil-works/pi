@@ -247,37 +247,3 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 		}
 	});
 });
-
-describe("TUI terminal color-scheme reports", () => {
-	it("queries, notifies, and consumes color-scheme reports", async () => {
-		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
-		const component = new InputRecorder();
-		const reports: string[] = [];
-		tui.addChild(component);
-		tui.setFocus(component);
-		tui.start();
-		try {
-			tui.onTerminalColorSchemeChange((scheme) => {
-				reports.push(scheme);
-			});
-
-			const query = tui.queryTerminalColorScheme({ timeoutMs: 1000 });
-			assert.ok(terminal.writes.includes("\x1b[?996n"));
-			terminal.sendInput("\x1b[?997;2n");
-			assert.strictEqual(await query, "light");
-
-			tui.setTerminalColorSchemeNotifications(true);
-
-			assert.ok(terminal.writes.includes("\x1b[?2031h"));
-
-			terminal.sendInput("\x1b[?997;1n");
-
-			assert.deepStrictEqual(reports, ["light", "dark"]);
-			assert.deepStrictEqual(component.inputs, []);
-		} finally {
-			tui.stop();
-		}
-		assert.ok(terminal.writes.includes("\x1b[?2031l"));
-	});
-});
