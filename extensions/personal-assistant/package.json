@@ -1,0 +1,15 @@
+{
+  "name": "personal-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "sqlite-vec": "0.1.9"
+  }
+}
