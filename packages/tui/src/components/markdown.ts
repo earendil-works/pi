@@ -23,28 +23,34 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 }
 
 function trimPartialClosingFences(tokens: readonly Token[]): void {
-	for (const token of tokens) {
-		if (token.type === "code") {
-			// Markdown fenced code blocks can use either backticks or tildes, with length 3 or more.
-			// Capture the opening fence marker ( ``` , ~~~ , or longer) so a streamed partial
-			// closing fence shorter than the opener can be removed from the code content below.
-			// This is done to avoid the content shtinking when rendering streamed partial code blocks.
+	const token = tokens[tokens.length - 1];
+	if (token?.type === "list") {
+		trimPartialClosingFences(token.items[token.items.length - 1]?.tokens ?? []);
+		return;
+	}
+	if (token?.type === "blockquote") {
+		trimPartialClosingFences(token.tokens ?? []);
+		return;
+	}
 
-			const opener = /^(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
-			const marker = opener?.groups?.marker;
-			if (marker) {
-				const fenceChar = marker[0];
-				token.text = token.text.replace(new RegExp(`\\n${fenceChar}{1,${marker.length - 1}}$`), "");
-			}
-		}
-		if ("tokens" in token && Array.isArray(token.tokens)) {
-			trimPartialClosingFences(token.tokens);
-		}
-		if (token.type === "list") {
-			for (const item of token.items) {
-				trimPartialClosingFences(item.tokens);
-			}
-		}
+	if (token?.type !== "code") {
+		return;
+	}
+
+	// Markdown fenced code blocks can use either backticks or tildes, with length 3 or more.
+	// Capture the opening fence marker ( ``` , ~~~ , or longer) so a streamed partial
+	// closing fence shorter than the opener can be removed from the code content below.
+	// This is done to avoid the content shrinking when rendering streamed partial code blocks.
+	const opener = /^(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
+	const marker = opener?.groups?.marker;
+	if (!marker) {
+		return;
+	}
+
+	const fenceChar = marker[0];
+	const partialClosingFence = new RegExp(`\\n${fenceChar}{1,${marker.length - 1}}$`);
+	if (partialClosingFence.test(token.raw)) {
+		token.text = token.text.replace(partialClosingFence, "");
 	}
 }
 

@@ -6,6 +6,10 @@
 
 - Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
 
+### Changed
+
+- Trim the incomplete fence (\`\`\`) on the last code block in markdown to prevernt content shrinking.
+
 ## [0.79.6] - 2026-06-16
 
 ## [0.79.5] - 2026-06-16
