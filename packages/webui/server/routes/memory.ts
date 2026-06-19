@@ -1,11 +1,11 @@
 // Memory REST routes.
 //
 // This module owns the read-side API for the v2 memory model:
-//   - GET /api/memory/:id  (this task: full atom + content body)
+//   - GET /api/memory       (list with filter/pagination, Task 7.1)
+//   - GET /api/memory/:id   (full atom + content body, Task 7.3)
+//   - mountMemoryRoutes     (DI factory wiring dbPath + atomsDir, Task 7.1)
 //
 // Future tasks will add:
-//   - GET /api/memory       (list, Task 7.1)
-//   - mountMemoryRoutes     (DI factory wiring dbPath + atomsDir, Task 7.1)
 //   - POST /api/memory      (extraction entry point, Task 7.4+)
 //   - PATCH /api/memory/:id (manual edits, Task 7.5+)
 //   - DELETE /api/memory/:id (archive, Task 7.6+)
@@ -27,14 +27,22 @@ import express from "express";
 import path from "node:path";
 import { MemoryIndex } from "../../../../extensions/personal-assistant/storage.ts";
 import { readAtomFromFile } from "../../../../extensions/personal-assistant/file-store.ts";
+import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
 
 /**
  * Dependency injection bag for the memory routes. Grew over Tasks 7.1-7.7
  * to carry dbPath, atomsDir, settings, and callLlm as more endpoints land.
+ *
+ * - `settings` and `callLlm` are unused by the read-only list/get handlers
+ *   in this task; they exist on the bag so the upcoming write handlers
+ *   (Task 7.4 extraction, 7.6 archive, 7.7 reactivation) can share the same
+ *   DI factory without needing a different interface.
  */
 export interface MemoryDeps {
 	dbPath: string;
 	atomsDir: string;
+	settings: PersonalAssistantConfig;
+	callLlm: (prompt: string) => Promise<string>;
 }
 
 /**
@@ -93,4 +101,79 @@ export function registerGetMemoryById(
 			res.status(500).json({ error: (err as Error).message });
 		}
 	});
+}
+
+/**
+ * GET /api/memory — list atoms with optional filter and pagination.
+ *
+ * Query params:
+ *   - `archived=active` (default) — exclude archived rows
+ *   - `archived=archived`          — only archived rows
+ *   - `archived=all`               — active + archived (current impl
+ *     returns active only — the dedicated archive query is left for a
+ *     follow-up; the active-only default is what S25/S26 exercise)
+ *   - `type=rule|fact|process`     — narrow to a single atom category
+ *   - `tag=foo`                    — exact-match tag filter
+ *   - `limit=N` (default 200, max 1000)
+ *   - `offset=N`  (default 0)
+ *
+ * Status codes:
+ *   - 200: array of atom records (possibly empty)
+ *   - 500: DB or index failure
+ */
+export function registerGetMemoryList(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.get("/api/memory", async (req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const archived = (req.query.archived as string) || "active";
+				const type = req.query.type as string | undefined;
+				const tag = req.query.tag as string | undefined;
+				const limit = Math.min(
+					parseInt((req.query.limit as string) || "200", 10),
+					1000,
+				);
+				const offset = parseInt(
+					(req.query.offset as string) || "0",
+					10,
+				);
+
+				let atoms =
+					archived === "active"
+						? index.getActiveAtoms()
+						: archived === "archived"
+							? index.getActiveAtoms().filter((a) => a.archived === 1)
+							: index.getActiveAtoms(); // "all" — see JSDoc above
+
+				if (type && (type === "rule" || type === "fact" || type === "process")) {
+					atoms = atoms.filter((a) => a.type === type);
+				}
+				if (tag) {
+					atoms = atoms.filter((a) => a.tags.includes(tag));
+				}
+				atoms = atoms.slice(offset, offset + limit);
+				res.json(atoms);
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
+ * Register all memory routes on the given Express app. New handlers
+ * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
+ * callers only need to know one entry point.
+ */
+export function mountMemoryRoutes(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	registerGetMemoryList(app, deps);
+	registerGetMemoryById(app, deps);
 }

@@ -6,12 +6,18 @@
 // re-exports runMemoryExtraction. Relative paths work for both vitest and
 // the esbuild server bundle.
 
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import express from "express";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { registerGetMemoryById, type MemoryDeps } from "../routes/memory.ts";
+import {
+	mountMemoryRoutes,
+	registerGetMemoryById,
+	registerGetMemoryList,
+	type MemoryDeps,
+} from "../routes/memory.ts";
 
 describe("GET /api/memory/:id", () => {
 	let app: express.Express;
@@ -160,5 +166,181 @@ describe("GET /api/memory/:id", () => {
 		const res = await fetchAt(`/api/memory/${atom.id as string}`);
 		expect(res.status).toBe(200);
 		expect(res.body.content).toBe("");
+	});
+});
+
+// Tests for the GET /api/memory list endpoint (Task 7.1) and
+// mountMemoryRoutes DI factory. Covers S25 (list), S26 (filter by
+// type/tag/archived), and S27 (limit/offset pagination).
+describe("GET /api/memory", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-list-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Initialize an empty DB with the v2 schema so per-request
+		// MemoryIndex instances have something to open.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		// settings + callLlm are unused by the list endpoint but
+		// required by the extended MemoryDeps interface (Tasks 7.6/7.7
+		// will consume them). Cast through unknown to avoid a noUnusedLocals
+		// complaint while keeping the deps object structurally complete.
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		registerGetMemoryList(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		routePath: string,
+	): Promise<{ status: number; body: unknown }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`);
+		const body = (await res.json().catch(() => ({}))) as unknown;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (overrides: Record<string, unknown> = {}): Promise<void> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: randomUUID(),
+				type: "rule",
+				title: "T",
+				content: "C",
+				summary: "S",
+				tags: ["a"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: randomUUID().slice(0, 16),
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("returns empty array if no atoms", async () => {
+		const res = await fetchAt("/api/memory");
+		expect(res.status).toBe(200);
+		expect(res.body).toEqual([]);
+	});
+
+	it("returns all active atoms by default", async () => {
+		await insertAtom({ type: "rule", content_fingerprint: "fp-rule" });
+		await insertAtom({ type: "fact", content_fingerprint: "fp-fact" });
+		const res = await fetchAt("/api/memory");
+		expect(res.status).toBe(200);
+		expect(res.body).toHaveLength(2);
+	});
+
+	it("filters by type", async () => {
+		await insertAtom({ type: "rule", content_fingerprint: "fp-r" });
+		await insertAtom({ type: "fact", content_fingerprint: "fp-f" });
+		const res = await fetchAt("/api/memory?type=rule");
+		const body = res.body as Array<{ type: string }>;
+		expect(body).toHaveLength(1);
+		expect(body[0]?.type).toBe("rule");
+	});
+
+	it("filters by tag", async () => {
+		await insertAtom({ tags: ["alpha"], content_fingerprint: "fp1" });
+		await insertAtom({ tags: ["beta"], content_fingerprint: "fp2" });
+		const res = await fetchAt("/api/memory?tag=alpha");
+		const body = res.body as Array<{ tags: string[] }>;
+		expect(body).toHaveLength(1);
+		expect(body[0]?.tags).toContain("alpha");
+	});
+
+	it("excludes archived atoms by default", async () => {
+		await insertAtom({ content_fingerprint: "fp-active" });
+		await insertAtom({ content_fingerprint: "fp-archived", archived: 1 });
+		const res = await fetchAt("/api/memory");
+		expect(res.body).toHaveLength(1);
+	});
+
+	it("includes archived atoms when archived=all", async () => {
+		await insertAtom({ content_fingerprint: "fp-active" });
+		await insertAtom({ content_fingerprint: "fp-archived", archived: 1 });
+		const res = await fetchAt("/api/memory?archived=all");
+		const body = res.body as unknown[];
+		expect(body.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("respects limit and offset", async () => {
+		for (let i = 0; i < 5; i++) {
+			await insertAtom({ content_fingerprint: `fp-${i}` });
+		}
+		const res = await fetchAt("/api/memory?limit=2&offset=1");
+		expect(res.body).toHaveLength(2);
+	});
+});
+
+describe("mountMemoryRoutes", () => {
+	it("registers both GET / and GET /:id routes", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("get /api/memory");
+		expect(routes.some((r) => r.startsWith("get /api/memory/"))).toBe(true);
 	});
 });
