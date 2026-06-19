@@ -36,11 +36,12 @@ import {
 	getCapabilities,
 	hyperlink,
 	Loader,
-	type LoaderIndicatorOptions,
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	Spinner,
+	type SpinnerOptions,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -283,10 +284,10 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
-	private loadingAnimation: Loader | undefined = undefined;
+	private workingSpinner: Spinner | undefined = undefined;
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
-	private workingIndicatorOptions: LoaderIndicatorOptions | undefined = undefined;
+	private workingSpinnerOptions: SpinnerOptions | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -1537,11 +1538,7 @@ export class InteractiveMode {
 			commandContextActions: {
 				waitForIdle: () => this.session.agent.waitForIdle(),
 				newSession: async (options) => {
-					if (this.loadingAnimation) {
-						this.loadingAnimation.stop();
-						this.loadingAnimation = undefined;
-					}
-					this.statusContainer.clear();
+					this.clearActivityStatus();
 					try {
 						const result = await this.runtimeHost.newSession(options);
 						if (!result.cancelled) {
@@ -1732,47 +1729,57 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private getWorkingLoaderMessage(): string {
+	private getWorkingMessage(): string {
 		return this.workingMessage ?? this.defaultWorkingMessage;
 	}
 
-	private createWorkingLoader(): Loader {
-		return new Loader(
-			this.ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
-			this.getWorkingLoaderMessage(),
-			this.workingIndicatorOptions,
-		);
+	private updateWorkingStatus(): void {
+		const renderedIndicator = this.workingSpinner?.renderFrame((frame) => theme.fg("accent", frame));
+		const prefix = renderedIndicator ? `${renderedIndicator} ` : "";
+		this.footerDataProvider.setActivityStatus(`${prefix}${theme.fg("muted", this.getWorkingMessage())}`);
+		this.ui.requestRender();
 	}
 
-	private stopWorkingLoader(): void {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
+	private stopWorkingStatus(): void {
+		this.workingSpinner?.stop();
+		this.workingSpinner = undefined;
+		this.footerDataProvider.setActivityStatus(undefined);
+	}
+
+	private startWorkingStatus(): void {
+		this.stopWorkingStatus();
+		this.workingSpinner = new Spinner(() => this.updateWorkingStatus(), this.workingSpinnerOptions);
+		this.workingSpinner.start();
+	}
+
+	private clearActivityStatus(): void {
+		this.stopWorkingStatus();
 		this.statusContainer.clear();
 	}
 
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
-			this.stopWorkingLoader();
+			this.stopWorkingStatus();
 			this.ui.requestRender();
 			return;
 		}
-		if (this.session.isStreaming && !this.loadingAnimation) {
-			this.statusContainer.clear();
-			this.loadingAnimation = this.createWorkingLoader();
-			this.statusContainer.addChild(this.loadingAnimation);
+		if (this.session.isStreaming && !this.workingSpinner) {
+			this.startWorkingStatus();
+			return;
 		}
-		this.ui.requestRender();
 	}
 
-	private setWorkingIndicator(options?: LoaderIndicatorOptions): void {
-		this.workingIndicatorOptions = options;
-		this.loadingAnimation?.setIndicator(options);
-		this.ui.requestRender();
+	private setWorkingIndicator(options?: SpinnerOptions): void {
+		this.workingSpinnerOptions = options;
+		if (this.session.isStreaming && this.workingVisible) {
+			if (this.workingSpinner) {
+				this.workingSpinner.setOptions(options);
+			} else {
+				this.startWorkingStatus();
+			}
+			return;
+		}
 	}
 
 	private setHiddenThinkingLabel(label?: string): void {
@@ -1870,9 +1877,6 @@ export class InteractiveMode {
 		this.workingMessage = undefined;
 		this.workingVisible = true;
 		this.setWorkingIndicator();
-		if (this.loadingAnimation) {
-			this.loadingAnimation.setMessage(`${this.defaultWorkingMessage} (${keyText("app.interrupt")} to interrupt)`);
-		}
 		this.setHiddenThinkingLabel();
 	}
 
@@ -2035,8 +2039,8 @@ export class InteractiveMode {
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
-				if (this.loadingAnimation) {
-					this.loadingAnimation.setMessage(message ?? this.defaultWorkingMessage);
+				if (this.session.isStreaming && this.workingVisible) {
+					this.updateWorkingStatus();
 				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
@@ -2743,10 +2747,9 @@ export class InteractiveMode {
 					this.retryLoader.stop();
 					this.retryLoader = undefined;
 				}
-				this.stopWorkingLoader();
+				this.clearActivityStatus();
 				if (this.workingVisible) {
-					this.loadingAnimation = this.createWorkingLoader();
-					this.statusContainer.addChild(this.loadingAnimation);
+					this.startWorkingStatus();
 				}
 				this.ui.requestRender();
 				break;
@@ -2910,11 +2913,7 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				if (this.loadingAnimation) {
-					this.loadingAnimation.stop();
-					this.loadingAnimation = undefined;
-					this.statusContainer.clear();
-				}
+				this.stopWorkingStatus();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -2936,7 +2935,7 @@ export class InteractiveMode {
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
-				this.statusContainer.clear();
+				this.clearActivityStatus();
 				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
 				const label =
 					event.reason === "manual"
@@ -3003,7 +3002,7 @@ export class InteractiveMode {
 					this.session.abortRetry();
 				};
 				// Show retry indicator
-				this.statusContainer.clear();
+				this.clearActivityStatus();
 				this.retryCountdown?.dispose();
 				const retryMessage = (seconds: number) =>
 					`Retrying (${event.attempt}/${event.maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
@@ -4588,11 +4587,7 @@ export class InteractiveMode {
 		sessionPath: string,
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.clearActivityStatus();
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -5177,11 +5172,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			if (this.loadingAnimation) {
-				this.loadingAnimation.stop();
-				this.loadingAnimation = undefined;
-			}
-			this.statusContainer.clear();
+			this.clearActivityStatus();
 			const result = await this.runtimeHost.importFromJsonl(inputPath);
 			if (result.cancelled) {
 				this.showStatus("Import cancelled");
@@ -5530,11 +5521,7 @@ export class InteractiveMode {
 	}
 
 	private async handleClearCommand(): Promise<void> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.clearActivityStatus();
 		try {
 			const result = await this.runtimeHost.newSession();
 			if (result.cancelled) {
@@ -5694,11 +5681,7 @@ export class InteractiveMode {
 	}
 
 	private async handleCompactCommand(customInstructions?: string): Promise<void> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.clearActivityStatus();
 
 		try {
 			await this.session.compact(customInstructions);
@@ -5711,10 +5694,7 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
+		this.stopWorkingStatus();
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
