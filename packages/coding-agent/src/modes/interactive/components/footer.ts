@@ -163,6 +163,10 @@ export class FooterComponent implements Component {
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
+		const activityStatus = this.footerData.getActivityStatus();
+		if (activityStatus) {
+			statsParts.push(sanitizeStatusText(activityStatus));
+		}
 
 		let statsLeft = statsParts.join(" ");
 
@@ -220,9 +224,9 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
+		// Apply dim to each part separately. statsLeft may contain color codes (for context %
+		// or working status) that end with a reset, which would clear an outer dim
+		// wrapper. So we dim the parts before and after the colored section independently.
 		const dimStatsLeft = theme.fg("dim", statsLeft);
 		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
 		const dimRemainder = theme.fg("dim", remainder);

@@ -101,6 +101,7 @@ export class FooterDataProvider {
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private activityStatus: string | undefined = undefined;
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
@@ -136,6 +137,11 @@ export class FooterDataProvider {
 		return this.extensionStatuses;
 	}
 
+	/** Current activity status for footer display. */
+	getActivityStatus(): string | undefined {
+		return this.activityStatus;
+	}
+
 	/** Subscribe to git branch changes. Returns unsubscribe function. */
 	onBranchChange(callback: () => void): () => void {
 		this.branchChangeCallbacks.add(callback);
@@ -154,6 +160,11 @@ export class FooterDataProvider {
 	/** Internal: clear extension statuses */
 	clearExtensionStatuses(): void {
 		this.extensionStatuses.clear();
+	}
+
+	/** Internal: set activity status for footer display. */
+	setActivityStatus(status: string | undefined): void {
+		this.activityStatus = status;
 	}
 
 	/** Number of unique providers with available models (for footer display) */
@@ -384,5 +395,5 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getGitBranch" | "getExtensionStatuses" | "getActivityStatus" | "getAvailableProviderCount" | "onBranchChange"
 >;
