@@ -7,6 +7,11 @@ import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { resolveToCwd } from "./path-utils.ts";
 
+// Shared grapheme cluster segmenter. NFKC is computed per cluster so canonical
+// composition (which attaches combining marks to their preceding base) stays
+// within a cluster and the per-cluster concatenation equals whole-string NFKC.
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 export function detectLineEnding(content: string): "\r\n" | "\n" {
 	const crlfIdx = content.indexOf("\r\n");
 	const lfIdx = content.indexOf("\n");
@@ -51,6 +56,119 @@ export function normalizeForFuzzyMatch(text: string): string {
 			// U+205F medium math space, U+3000 ideographic space
 			.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ")
 	);
+}
+
+/**
+ * Map from offsets in the fuzzy-normalized content back to offsets in the
+ * original content. One entry per normalized UTF-16 code unit.
+ */
+interface FuzzyOffsetMap {
+	/** The normalized content (equals normalizeForFuzzyMatch(content) when ok). */
+	norm: string;
+	/** Original (inclusive) start offset of the cluster that produced this code unit. */
+	origStart: Int32Array;
+	/** Original (exclusive) end offset of the cluster that produced this code unit. */
+	origEnd: Int32Array;
+}
+
+/**
+ * Build a fuzzy-normalized version of `content` together with a per-code-unit
+ * map back to the original, by replaying normalizeForFuzzyMatch's pipeline with
+ * offset tracking. Stage 1 (NFKC) is computed per grapheme cluster so it equals
+ * whole-string NFKC while remaining mappable; stages 3-5 are 1:1 substitutions
+ * that preserve indices.
+ */
+function buildFuzzyOffsetMap(content: string): FuzzyOffsetMap | null {
+	// Stage 1: NFKC per grapheme cluster.
+	const stage1: string[] = [];
+	const clusterStart: number[] = [];
+	const clusterEnd: number[] = [];
+	for (const { segment, index } of graphemeSegmenter.segment(content)) {
+		const normalizedCluster = segment.normalize("NFKC");
+		for (let k = 0; k < normalizedCluster.length; k++) {
+			stage1.push(normalizedCluster.charAt(k));
+			clusterStart.push(index);
+			clusterEnd.push(index + segment.length);
+		}
+	}
+
+	// Stage 2: strip trailing whitespace from each line, keeping the newline.
+	const out: string[] = [];
+	const outToStage1: number[] = [];
+	let i = 0;
+	while (i < stage1.length) {
+		const lineStart = i;
+		while (i < stage1.length && stage1[i] !== "\n") i++;
+		const lineEnd = i;
+		let keepEnd = lineEnd;
+		while (keepEnd > lineStart && /\s/.test(stage1[keepEnd - 1])) keepEnd--;
+		for (let j = lineStart; j < keepEnd; j++) {
+			out.push(stage1[j]);
+			outToStage1.push(j);
+		}
+		if (i < stage1.length) {
+			out.push("\n");
+			outToStage1.push(i);
+			i++;
+		}
+	}
+
+	// Stages 3-5: 1:1 substitutions, indices unchanged.
+	let norm = out.join("");
+	norm = norm
+		.replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+		.replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+		.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+		.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
+
+	const origStart = new Int32Array(norm.length);
+	const origEnd = new Int32Array(norm.length);
+	for (let n = 0; n < norm.length; n++) {
+		const stage1Index = outToStage1[n];
+		origStart[n] = clusterStart[stage1Index];
+		origEnd[n] = clusterEnd[stage1Index];
+	}
+
+	// Guard against ICU/normalization quirks: if the rebuilt normalization does
+	// not reproduce the canonical one exactly, refuse to map offsets back. Fuzzy
+	// edits then fail safely ("not found") instead of splicing the wrong region.
+	if (norm !== normalizeForFuzzyMatch(content)) {
+		return null;
+	}
+	return { norm, origStart, origEnd };
+}
+
+interface EditSpan {
+	found: boolean;
+	/** Start offset in the original content (inclusive). */
+	start: number;
+	/** End offset in the original content (exclusive). */
+	end: number;
+}
+
+/**
+ * Find the span of `oldText` in `content`, preferring an exact match (which
+ * preserves the content byte-for-byte) and falling back to a fuzzy match whose
+ * normalized-space span is translated back to original offsets via `map`.
+ */
+function findEditSpan(content: string, oldText: string, map: FuzzyOffsetMap | null): EditSpan {
+	const exactIndex = content.indexOf(oldText);
+	if (exactIndex !== -1) {
+		return { found: true, start: exactIndex, end: exactIndex + oldText.length };
+	}
+	if (!map) {
+		return { found: false, start: -1, end: -1 };
+	}
+	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	const fuzzyIndex = map.norm.indexOf(fuzzyOldText);
+	if (fuzzyIndex === -1) {
+		return { found: false, start: -1, end: -1 };
+	}
+	return {
+		found: true,
+		start: map.origStart[fuzzyIndex],
+		end: map.origEnd[fuzzyIndex + fuzzyOldText.length - 1],
+	};
 }
 
 export interface FuzzyMatchResult {
@@ -182,12 +300,18 @@ function getNoChangeError(path: string, totalEdits: number): Error {
 }
 
 /**
- * Apply one or more exact-text replacements to LF-normalized content.
+ * Apply one or more text replacements to LF-normalized content.
  *
- * All edits are matched against the same original content. Replacements are
- * then applied in reverse order so offsets remain stable. If any edit needs
- * fuzzy matching, the operation runs in fuzzy-normalized content space to
- * preserve current single-edit behavior.
+ * Edits match against the original content. Fuzzy matching (trailing whitespace
+ * stripped, Unicode quotes/dashes/spaces and NFKC compatibility forms folded)
+ * is used only to LOCATE a match when an exact one is missing; the replacement
+ * is then applied to the ORIGINAL content at the matched region's real offsets.
+ * This keeps every untouched region byte-for-byte identical, so a fuzzy edit no
+ * longer rewrites the whole file in normalized form.
+ *
+ * Replacements are applied in reverse offset order so earlier offsets stay
+ * valid. Duplicate and overlap detection still operate in fuzzy-normalized
+ * space to preserve the existing semantics.
  */
 export function applyEditsToNormalizedContent(
 	normalizedContent: string,
@@ -205,28 +329,27 @@ export function applyEditsToNormalizedContent(
 		}
 	}
 
-	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
-	const baseContent = initialMatches.some((match) => match.usedFuzzyMatch)
-		? normalizeForFuzzyMatch(normalizedContent)
-		: normalizedContent;
+	// Only build the offset map when some edit cannot be matched exactly.
+	const needsFuzzyMap = normalizedEdits.some((edit) => normalizedContent.indexOf(edit.oldText) === -1);
+	const fuzzyMap = needsFuzzyMap ? buildFuzzyOffsetMap(normalizedContent) : null;
 
 	const matchedEdits: MatchedEdit[] = [];
 	for (let i = 0; i < normalizedEdits.length; i++) {
 		const edit = normalizedEdits[i];
-		const matchResult = fuzzyFindText(baseContent, edit.oldText);
-		if (!matchResult.found) {
+		const span = findEditSpan(normalizedContent, edit.oldText, fuzzyMap);
+		if (!span.found) {
 			throw getNotFoundError(path, i, normalizedEdits.length);
 		}
 
-		const occurrences = countOccurrences(baseContent, edit.oldText);
+		const occurrences = countOccurrences(normalizedContent, edit.oldText);
 		if (occurrences > 1) {
 			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
 		}
 
 		matchedEdits.push({
 			editIndex: i,
-			matchIndex: matchResult.index,
-			matchLength: matchResult.matchLength,
+			matchIndex: span.start,
+			matchLength: span.end - span.start,
 			newText: edit.newText,
 		});
 	}
@@ -242,6 +365,7 @@ export function applyEditsToNormalizedContent(
 		}
 	}
 
+	const baseContent = normalizedContent;
 	let newContent = baseContent;
 	for (let i = matchedEdits.length - 1; i >= 0; i--) {
 		const edit = matchedEdits[i];

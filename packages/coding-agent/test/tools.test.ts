@@ -981,6 +981,36 @@ describe("edit tool fuzzy matching", () => {
 
 		expect(readFileSync(testFile, "utf-8")).toBe("console.log('world');\nhello universe\n");
 	});
+
+	it("should not rewrite untouched lines when a fuzzy match is used", async () => {
+		// A fuzzy match (model omits trailing whitespace) must only replace the
+		// matched region. Untouched lines keep their trailing whitespace, smart
+		// quotes, and compatibility characters byte-for-byte.
+		const testFile = join(testDir, "fuzzy-preserve-untouched.txt");
+		writeFileSync(testFile, "keep trailing   \nconsole.log(\u2018target\u2019);\nflag = true;\n");
+
+		await editTool.execute("test-fuzzy-preserve", {
+			path: testFile,
+			edits: [{ oldText: "console.log('target');", newText: "console.log('replaced');" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("keep trailing   \nconsole.log('replaced');\nflag = true;\n");
+	});
+
+	it("should preserve untouched content when one edit fuzzy-matches across lines", async () => {
+		// oldText omits the trailing whitespace inside the matched region, so only a
+		// fuzzy match succeeds. The matched region is replaced, but the untouched
+		// lines above and below keep their trailing whitespace verbatim.
+		const testFile = join(testDir, "fuzzy-preserve-cross-line.txt");
+		writeFileSync(testFile, "untouched   \nreplace me   \nafter\ntrailing   \n");
+
+		await editTool.execute("test-fuzzy-preserve-cross-line", {
+			path: testFile,
+			edits: [{ oldText: "replace me\nafter", newText: "DONE\nDONE2" }],
+		});
+
+		expect(readFileSync(testFile, "utf-8")).toBe("untouched   \nDONE\nDONE2\ntrailing   \n");
+	});
 });
 
 describe("edit tool CRLF handling", () => {
