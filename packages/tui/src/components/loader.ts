@@ -1,26 +1,15 @@
 import type { TUI } from "../tui.ts";
+import { Spinner, type SpinnerOptions } from "./spinner.ts";
 import { Text } from "./text.ts";
 
-export interface LoaderIndicatorOptions {
-	/** Animation frames. Use an empty array to hide the indicator. */
-	frames?: string[];
-	/** Frame interval in milliseconds for animated indicators. */
-	intervalMs?: number;
-}
-
-const DEFAULT_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const DEFAULT_INTERVAL_MS = 80;
+export type LoaderIndicatorOptions = SpinnerOptions;
 
 /**
  * Loader component that updates with an optional spinning animation.
  */
 export class Loader extends Text {
-	private frames = [...DEFAULT_FRAMES];
-	private intervalMs = DEFAULT_INTERVAL_MS;
-	private currentFrame = 0;
-	private intervalId: NodeJS.Timeout | null = null;
-	private ui: TUI | null = null;
-	private renderIndicatorVerbatim = false;
+	private ui: TUI;
+	private spinner: Spinner;
 	private spinnerColorFn: (str: string) => string;
 	private messageColorFn: (str: string) => string;
 	private message: string = "Loading...";
@@ -37,7 +26,8 @@ export class Loader extends Text {
 		this.spinnerColorFn = spinnerColorFn;
 		this.messageColorFn = messageColorFn;
 		this.message = message;
-		this.setIndicator(indicator);
+		this.spinner = new Spinner(() => this.updateDisplay(), indicator);
+		this.spinner.start();
 	}
 
 	render(width: number): string[] {
@@ -45,15 +35,11 @@ export class Loader extends Text {
 	}
 
 	start(): void {
-		this.updateDisplay();
-		this.restartAnimation();
+		this.spinner.start();
 	}
 
 	stop(): void {
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-			this.intervalId = null;
-		}
+		this.spinner.stop();
 	}
 
 	setMessage(message: string): void {
@@ -62,31 +48,13 @@ export class Loader extends Text {
 	}
 
 	setIndicator(indicator?: LoaderIndicatorOptions): void {
-		this.renderIndicatorVerbatim = indicator !== undefined;
-		this.frames = indicator?.frames !== undefined ? [...indicator.frames] : [...DEFAULT_FRAMES];
-		this.intervalMs = indicator?.intervalMs && indicator.intervalMs > 0 ? indicator.intervalMs : DEFAULT_INTERVAL_MS;
-		this.currentFrame = 0;
-		this.start();
-	}
-
-	private restartAnimation(): void {
-		this.stop();
-		if (this.frames.length <= 1) {
-			return;
-		}
-		this.intervalId = setInterval(() => {
-			this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-			this.updateDisplay();
-		}, this.intervalMs);
+		this.spinner.setOptions(indicator);
 	}
 
 	private updateDisplay(): void {
-		const frame = this.frames[this.currentFrame] ?? "";
-		const renderedFrame = this.renderIndicatorVerbatim ? frame : this.spinnerColorFn(frame);
-		const indicator = frame.length > 0 ? `${renderedFrame} ` : "";
+		const renderedFrame = this.spinner.renderFrame(this.spinnerColorFn);
+		const indicator = renderedFrame.length > 0 ? `${renderedFrame} ` : "";
 		this.setText(`${indicator}${this.messageColorFn(this.message)}`);
-		if (this.ui) {
-			this.ui.requestRender();
-		}
+		this.ui.requestRender();
 	}
 }
