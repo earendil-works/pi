@@ -26,7 +26,15 @@
 import express from "express";
 import path from "node:path";
 import { MemoryIndex } from "../../../../extensions/personal-assistant/storage.ts";
-import { readAtomFromFile } from "../../../../extensions/personal-assistant/file-store.ts";
+import {
+	readAtomFromFile,
+	writeAtomToFile,
+} from "../../../../extensions/personal-assistant/file-store.ts";
+import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
+import {
+	buildEmbeddableText,
+	embedText,
+} from "../../../../extensions/personal-assistant/embed.ts";
 import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
 
 /**
@@ -37,12 +45,16 @@ import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assist
  *   in this task; they exist on the bag so the upcoming write handlers
  *   (Task 7.4 extraction, 7.6 archive, 7.7 reactivation) can share the same
  *   DI factory without needing a different interface.
+ * - `embedTimeoutMs` is consumed only by the PATCH handler so it can keep
+ *   the embed call short in tests (ollama is unreachable in CI). Optional;
+ *   when unset, embedText's 15s default applies.
  */
 export interface MemoryDeps {
 	dbPath: string;
 	atomsDir: string;
 	settings: PersonalAssistantConfig;
 	callLlm: (prompt: string) => Promise<string>;
+	embedTimeoutMs?: number;
 }
 
 /**
@@ -166,6 +178,116 @@ export function registerGetMemoryList(
 }
 
 /**
+ * PATCH /api/memory/:id — manually edit tags, content, or importance.
+ *
+ * Body fields (all optional):
+ *   - `content`:    string — replaces the existing content. Empty strings
+ *                   are ignored (preserves the old content). Recomputes
+ *                   `content_fingerprint` on change.
+ *   - `tags`:       string[] — unioned with the existing tags (deduplicated;
+ *                   existing order preserved, new tags appended).
+ *   - `importance`: number — clamped to [0, 1].
+ *
+ * Other atom fields (id, type, title, summary, strength, access_count,
+ * version, parent_id, superseded_at, archived, created_at, last_access,
+ * source_session) are preserved from the existing atom.
+ *
+ * Version is incremented via updateAtom's SQL (`version = version + 1`)
+ * and reflected in the response payload.
+ *
+ * Architecture constraints:
+ *   - The ollama embedding call is awaited OUTSIDE the DB transaction
+ *     so the better-sqlite3 WAL write lock isn't held for the full
+ *     embed round-trip (which can take seconds).
+ *   - When embedText returns null (ollama down / timeout / network
+ *     error), the route still updates the DB row and rewrites the .md
+ *     file — only the vector is skipped (Decision 7: no fallback).
+ *
+ * Status codes:
+ *   - 200: updated atom JSON.
+ *   - 404: atom id is unknown.
+ *   - 500: DB / file-system failure.
+ */
+export function registerPatchMemory(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.patch("/api/memory/:id", async (req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const existing = index.getAtom(req.params.id);
+				if (!existing) {
+					res.status(404).json({ error: "atom not found" });
+					return;
+				}
+
+				// Merge body fields. content is replaced only when a
+				// non-empty string is supplied; tags are unioned;
+				// importance is clamped to [0, 1].
+				const mergedContent =
+					typeof req.body?.content === "string" &&
+					req.body.content.length > 0
+						? req.body.content
+						: existing.content;
+				const mergedTags = Array.isArray(req.body?.tags)
+					? Array.from(new Set([...existing.tags, ...req.body.tags]))
+					: existing.tags;
+				const mergedImportance =
+					typeof req.body?.importance === "number"
+						? Math.max(0, Math.min(1, req.body.importance))
+						: existing.importance;
+
+				// Build the merged atom. Type is inferred from `existing`
+				// (MemoryAtom), so no explicit import of MemoryAtom is
+				// required here — spread + three overrides preserves the
+				// full shape.
+				const mergedAtom = {
+					...existing,
+					content: mergedContent,
+					tags: mergedTags,
+					importance: mergedImportance,
+					updated_at: Date.now(),
+				};
+
+				// Recompute fingerprint from the (possibly new) content.
+				// This is sync (sha256 + slice) — no async overhead.
+				mergedAtom.content_fingerprint =
+					computeFingerprint(mergedContent);
+
+				// Compute embedding OUTSIDE any DB transaction. The await
+				// on ollama could take seconds; we do not want to hold
+				// the better-sqlite3 WAL write lock that long.
+				const embeddableText = buildEmbeddableText(mergedAtom);
+				const embedding = await embedText(embeddableText, {
+					timeoutMs: deps.embedTimeoutMs,
+				});
+
+				// Fast atomic DB update. updateAtom() runs in its own
+				// transaction and bumps version internally. Passing
+				// `undefined` for embedding skips the vector update
+				// when ollama was unreachable.
+				await index.updateAtom(mergedAtom, embedding ?? undefined);
+
+				// Mirror the version+1 from updateAtom's SQL so the
+				// response body matches what the DB row now holds.
+				mergedAtom.version = existing.version + 1;
+
+				// Write the .md file. Must happen after the DB update so
+				// the file's content_hash matches content_fingerprint.
+				await writeAtomToFile(mergedAtom, deps.atomsDir);
+
+				res.json(mergedAtom);
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
  * Register all memory routes on the given Express app. New handlers
  * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
  * callers only need to know one entry point.
@@ -176,4 +298,5 @@ export function mountMemoryRoutes(
 ): void {
 	registerGetMemoryList(app, deps);
 	registerGetMemoryById(app, deps);
+	registerPatchMemory(app, deps);
 }

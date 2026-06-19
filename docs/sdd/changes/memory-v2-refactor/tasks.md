@@ -177,7 +177,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "get detail"` 通过 (≥3 测试)
   - **依赖**: 3.2
 
-- [ ] 7.4 **实现 PATCH /api/memory/:id 编辑**
+- [x] 7.4 **实现 PATCH /api/memory/:id 编辑**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: PATCH /api/memory/:id merge body:tags union,content 用 body.content ?? currentBody,importance 用 body.importance ?? existing。**先 await embedText(merged.content) → 再 BEGIN TX updateAtom + updateVector + COMMIT → 最后 writeAtomToFile**。事务中不 await ollama call (避免长锁)。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "patch"` 通过 (≥3 测试:union tags/recompute embedding/version+1)

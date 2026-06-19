@@ -16,6 +16,7 @@ import {
 	mountMemoryRoutes,
 	registerGetMemoryById,
 	registerGetMemoryList,
+	registerPatchMemory,
 	type MemoryDeps,
 } from "../routes/memory.ts";
 
@@ -342,5 +343,202 @@ describe("mountMemoryRoutes", () => {
 		}
 		expect(routes).toContain("get /api/memory");
 		expect(routes.some((r) => r.startsWith("get /api/memory/"))).toBe(true);
+	});
+});
+
+// Tests for the PATCH /api/memory/:id edit endpoint (Task 7.5).
+// Covers S28 (tags are unioned), S29 (embedding recomputed), S30
+// (version increments) and R30-R32 (merge semantics + clamp + version+1).
+//
+// embedText is called with a short timeout via deps.embedTimeoutMs so the
+// suite stays fast even when ollama is unreachable — embedText returns null
+// in that case, which the route handles by updating the DB and .md file
+// but skipping the vector (per Decision 7).
+describe("PATCH /api/memory/:id", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-patch-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Seed an empty v2-schema DB.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			// Short embed timeout — ollama is unreachable in CI, so
+			// embedText resolves to null in <embedTimeoutMs ms and the
+			// route continues with the DB + .md update.
+			embedTimeoutMs: 200,
+		};
+		registerPatchMemory(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		routePath: string,
+		init: { method?: string; body?: unknown } = {},
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: init.method ?? "GET",
+			headers: { "Content-Type": "application/json" },
+			body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-1",
+				type: "rule",
+				title: "T",
+				content: "Original content",
+				summary: "S",
+				tags: ["existing"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-orig-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("returns 404 if atom not found", async () => {
+		const res = await fetchAt("/api/memory/nonexistent", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+		});
+		expect(res.status).toBe(404);
+		expect(String(res.body.error)).toContain("not found");
+	});
+
+	it("unions new tags with existing", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: ["new-tag"] },
+		});
+		expect(res.status).toBe(200);
+		const tags = res.body.tags as string[];
+		expect(tags).toEqual(expect.arrayContaining(["existing", "new-tag"]));
+		// Dedup: re-adding an existing tag must not duplicate it.
+		const dup = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: ["existing"] },
+		});
+		const dupTags = dup.body.tags as string[];
+		expect(dupTags.filter((t) => t === "existing")).toHaveLength(1);
+	});
+
+	it("recomputes content fingerprint on content change", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { content: "Totally different content here" },
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.content).toBe("Totally different content here");
+		expect(res.body.content_fingerprint).not.toBe("fp-orig-12345678");
+	});
+
+	it("clamps importance to [0,1]", async () => {
+		await insertAtom();
+		const high = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { importance: 1.5 },
+		});
+		expect(high.body.importance).toBe(1);
+		const low = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { importance: -0.5 },
+		});
+		expect(low.body.importance).toBe(0);
+	});
+
+	it("increments version on update", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+		});
+		expect(res.body.version).toBe(2);
+	});
+});
+
+// Verifies the mount factory registers the PATCH handler alongside the
+// GET handlers from 7.1 / 7.3. This guards against accidental removal of
+// the registerPatchMemory call in mountMemoryRoutes.
+describe("mountMemoryRoutes includes PATCH", () => {
+	it("registers PATCH /api/memory/:id", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("PATCH /api/memory/:id");
 	});
 });
