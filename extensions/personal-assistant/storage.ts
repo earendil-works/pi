@@ -34,7 +34,7 @@ interface BetterSqlite3Database {
 	prepare(source: string): {
 		all(...params: unknown[]): unknown[];
 		get(...params: unknown[]): unknown;
-		run(...params: unknown[]): unknown;
+		run(...params: unknown[]): { lastInsertRowid: number | bigint; changes: number };
 	};
 	transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R;
 }
@@ -209,9 +209,323 @@ export class MemoryIndex {
 		return this.getActiveAtoms(type);
 	}
 
-	// Phase 2.4 will add: vectorSearch, findMostSimilarEmbedding.
-	// Phase 2.5 will add: markSupersededTx, insertAudit.
-	// Phase 2.6 will add: updateAccess, updateStrength, markArchived, deleteVector.
+	// -------------------------------------------------------------------------
+	// Phase 2.4: vector search
+	// -------------------------------------------------------------------------
+
+	/**
+	 * K-nearest-neighbour query against the sqlite-vec `memory_vectors`
+	 * virtual table, joined back to `memory_index` so the standard active
+	 * filters (archived / superseded / type) can be applied. Default
+	 * behaviour is to return only the active + latest atoms; the caller
+	 * can opt into other rows with the `filter` argument.
+	 *
+	 * The KNN side uses sqlite-vec's native `MATCH … AND k = N` syntax
+	 * with a `Float32Array` binding (R20). The `k` parameter both bounds
+	 * sqlite-vec's internal candidate set and the number of returned
+	 * rows; we rely on the post-JOIN filter to drop the rest.
+	 */
+	vectorSearch(
+		embedding: number[],
+		k: number,
+		filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean },
+	): Array<{ id: string; distance: number }> {
+		const whereClauses: string[] = ["archived = 0"];
+		if (filter?.type) whereClauses.push("type = ?");
+		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
+		if (filter?.archived === true) {
+			// explicit override — include archived too
+			whereClauses.length = 0;
+		}
+
+		const sql = `
+			SELECT v.id, v.distance
+			FROM memory_vectors v
+			INNER JOIN memory_index i ON v.id = i.id
+			WHERE ${whereClauses.join(" AND ")}
+			AND v.embedding MATCH ?
+			AND k = ?
+			ORDER BY v.distance
+		`;
+		const params: (string | number | Float32Array)[] = [];
+		if (filter?.type) params.push(filter.type);
+		params.push(new Float32Array(embedding));
+		params.push(k);
+
+		type Row = { id: string; distance: number };
+		const rows = this.db.prepare(sql).all(...params) as Row[];
+		return rows;
+	}
+
+	/**
+	 * Top-1 lookup gated by a cosine-similarity threshold. Returns the
+	 * hydrated atom + the cosine (derived from the L2 distance returned
+	 * by sqlite-vec as `1 - distance/2`, valid only when both vectors
+	 * are L2-normalised) when the best match clears the threshold,
+	 * otherwise null (R21).
+	 */
+	findMostSimilarEmbedding(
+		embedding: number[],
+		threshold: number,
+		filter?: { type?: MemoryAtomType },
+	): { atom: MemoryAtom; cosine: number } | null {
+		const results = this.vectorSearch(embedding, 1, { ...filter });
+		if (results.length === 0) return null;
+		const top = results[0]!;
+		const cosine = 1 - top.distance / 2;
+		if (cosine < threshold) return null;
+		const atom = this.getAtom(top.id);
+		if (!atom) return null;
+		return { atom, cosine };
+	}
+
+	/**
+	 * Pure cosine similarity helper. Exposed for callers (and tests) that
+	 * want to score two `number[]` vectors without going through sqlite.
+	 * Throws when dimensions disagree — callers must normalise length
+	 * first or accept a length-mismatch error as a programming bug.
+	 */
+	cosineSimilarity(a: number[], b: number[]): number {
+		if (a.length !== b.length) throw new Error("dimension mismatch");
+		let dot = 0;
+		let normA = 0;
+		let normB = 0;
+		for (let i = 0; i < a.length; i++) {
+			dot += a[i]! * b[i]!;
+			normA += a[i]! * a[i]!;
+			normB += b[i]! * b[i]!;
+		}
+		return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+	}
+
+	// -------------------------------------------------------------------------
+	// Phase 2.5: supersede transaction + audit log
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Atomic transaction that marks `oldId` as superseded and inserts `newAtom`
+	 * as its successor, transferring continuity signals (access_count, strength,
+	 * created_at) from the old row to the new one (R22 / R23 / S9).
+	 *
+	 * `newAtom.importance` is set to `max(old.importance, new.importance)` so a
+	 * supersede never downgrades the priority of an existing well-ranked atom.
+	 * The new atom always starts at `version = 1` (R23) regardless of the
+	 * transferred signals.
+	 *
+	 * Both rows get audit-log entries in the same transaction: the old row
+	 * gets `superseded` with the transferred signals, the new row gets
+	 * `created_from_supersede` with the old id (R24 / S11).
+	 *
+	 * Throws if `oldId` is not found. If the INSERT of the new atom fails
+	 * (e.g. UNIQUE fingerprint collision on the active-fingerprint partial
+	 * index), the entire transaction — including the UPDATE marking the old
+	 * atom superseded — is rolled back atomically (S10).
+	 */
+	markSupersededTx(
+		oldId: string,
+		newAtom: MemoryAtom,
+		newEmbedding: number[],
+	): { oldAtom: MemoryAtom; newAtom: MemoryAtom } {
+		const old = this.getAtom(oldId);
+		if (!old) throw new Error(`atom ${oldId} not found`);
+
+		// Transfer continuity signals from old to new. The new atom's own
+		// id, type, title, summary, content, tags, content_fingerprint, and
+		// source_session are preserved from the caller-supplied newAtom.
+		const transferredAtom: MemoryAtom = {
+			...newAtom,
+			parent_id: old.id,
+			created_at: old.created_at, // preserve creation time
+			access_count: old.access_count, // transfer access count
+			strength: old.strength, // transfer strength
+			version: 1, // new atom starts at v1
+			importance: Math.max(newAtom.importance, old.importance),
+		};
+
+		this.db.transaction(() => {
+			// Mark old as superseded. `Date.now()` is captured inside the
+			// transaction so a failed rollback leaves no partial timestamp.
+			this.db
+				.prepare(
+					`
+				UPDATE memory_index SET
+					is_latest = 0,
+					superseded_at = ?
+				WHERE id = ?
+			`,
+				)
+				.run(Date.now(), oldId);
+
+			// Insert the new atom row + its vector in the same transaction.
+			// We inline the INSERT instead of calling `this.insertAtom`
+			// because `insertAtom` is async: a sync throw inside its
+			// inner transaction would be caught by the async wrapper and
+			// surface as an unhandled Promise rejection AFTER the outer
+			// transaction has already committed — defeating atomicity.
+			// Inlining keeps any UNIQUE-constraint error on the active
+			// fingerprint visible to `db.transaction`, which then rolls
+			// back the entire supersede atomically (S10).
+			const row = atomToRow(transferredAtom);
+			this.db
+				.prepare(
+					`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`,
+				)
+				.run(row);
+			this.db
+				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
+				.run(transferredAtom.id, new Float32Array(newEmbedding));
+
+			// Audit: both atoms get an entry describing the supersede link.
+			this.insertAudit(oldId, "superseded", {
+				newId: transferredAtom.id,
+				transferredSignals: {
+					access_count: old.access_count,
+					strength: old.strength,
+					created_at: old.created_at,
+				},
+			});
+			this.insertAudit(transferredAtom.id, "created_from_supersede", {
+				oldId,
+			});
+		})();
+
+		return { oldAtom: old, newAtom: transferredAtom };
+	}
+
+	/**
+	 * Append a row to the `memory_audit` log. The created_at column is filled
+	 * server-side from `unixepoch() * 1000` by the schema default, but we
+	 * also pass an explicit `Date.now()` so the value matches what callers
+	 * see elsewhere in the storage layer.
+	 *
+	 * `details` is JSON-encoded; pass `null`/omit to store an empty audit
+	 * entry. Returns the new row id as a number (better-sqlite3 returns
+	 * bigint for INTEGER PRIMARY KEY AUTOINCREMENT; we coerce to number for
+	 * ergonomic JS usage — ids stay well within Number.MAX_SAFE_INTEGER
+	 * for any realistic audit volume).
+	 */
+	insertAudit(atomId: string, action: string, details?: Record<string, unknown> | null): number {
+		const stmt = this.db.prepare(`
+			INSERT INTO memory_audit (atom_id, action, details, created_at)
+			VALUES (?, ?, ?, ?)
+		`);
+		const result = stmt.run(atomId, action, details ? JSON.stringify(details) : null, Date.now());
+		return Number(result.lastInsertRowid);
+	}
+
+	/**
+	 * Read the most recent audit rows for a given atom, newest first. The
+	 * `details` column is JSON-decoded back into the original object
+	 * (null when the row was written without details). `limit` defaults to
+	 * 50 to keep the result list bounded; pass a higher value for
+	 * long-history inspection.
+	 */
+	getAudit(
+		atomId: string,
+		limit = 50,
+	): Array<{ id: number; action: string; details: unknown; created_at: number }> {
+		const rows = this.db
+			.prepare(
+				`
+			SELECT id, action, details, created_at FROM memory_audit
+			WHERE atom_id = ?
+			ORDER BY created_at DESC LIMIT ?
+		`,
+			)
+			.all(atomId, limit) as Array<{
+			id: number | bigint;
+			action: string;
+			details: string | null;
+			created_at: number;
+		}>;
+		return rows.map((r) => ({
+			id: Number(r.id),
+			action: r.action,
+			details: r.details ? JSON.parse(r.details) : null,
+			created_at: r.created_at,
+		}));
+	}
+
+	// -------------------------------------------------------------------------
+	// Phase 2.6: access tracking, strength decay, archive, vector GC
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Bump `access_count` by 1 and stamp `last_access` with the current
+	 * time. Called on every successful recall (S12 / R25).
+	 *
+	 * No-op when the id does not exist — `UPDATE` against a missing row
+	 * simply affects zero rows, which is the intended behaviour for
+	 * idempotent recall paths.
+	 */
+	updateAccess(id: string): void {
+		this.db
+			.prepare(
+				`
+			UPDATE memory_index SET
+				access_count = access_count + 1,
+				last_access = ?
+			WHERE id = ?
+		`,
+			)
+			.run(Date.now(), id);
+	}
+
+	/**
+	 * Set `strength` to a new value, typically the decay-modulated result
+	 * computed by a separate decay function (this layer never computes
+	 * decay itself — that lives in the memory module per the architecture
+	 * split).
+	 */
+	updateStrength(id: string, strength: number): void {
+		this.db.prepare(`UPDATE memory_index SET strength = ? WHERE id = ?`).run(strength, id);
+	}
+
+	/**
+	 * Mark an atom as archived in a single transaction with an audit row
+	 * (S13 / R26). The transaction makes the state change and the audit
+	 * record atomic: a process crash between the UPDATE and the INSERT
+	 * cannot leave the audit log out of sync with the row state.
+	 *
+	 * The embedding is NOT deleted here — that is the caller's job (see
+	 * design: deleteVector is a separate method so a decay workflow can
+	 * orchestrate archive + vector GC explicitly).
+	 */
+	markArchived(id: string): void {
+		this.db.transaction(() => {
+			this.db.prepare(`UPDATE memory_index SET archived = 1 WHERE id = ?`).run(id);
+			this.insertAudit(id, "archived", null);
+		})();
+	}
+
+	/**
+	 * Restore an archived atom to active state. Intentionally NOT wrapped
+	 * in a transaction with an audit row — the design says unarchive
+	 * should not recompute or audit, since the original archived audit
+	 * row is still present and sufficient to reconstruct history.
+	 */
+	markUnarchived(id: string): void {
+		this.db.prepare(`UPDATE memory_index SET archived = 0 WHERE id = ?`).run(id);
+	}
+
+	/**
+	 * Remove the embedding row for an atom. Idempotent: `DELETE` against
+	 * a missing row affects zero rows. Decoupled from `markArchived` so
+	 * callers can decide when (or whether) to free the vector (R27).
+	 */
+	deleteVector(id: string): void {
+		this.db.prepare(`DELETE FROM memory_vectors WHERE id = ?`).run(id);
+	}
 }
 
 // Single source of truth for the v2 memory schema. Applied via db.exec() in

@@ -302,4 +302,317 @@ describe("MemoryIndex", () => {
 			expect(rules.map((a) => a.id)).toEqual([rule.id]);
 		});
 	});
+
+	describe("vector search", () => {
+		let index: MemoryIndex;
+
+		beforeEach(async () => {
+			index = new MemoryIndex(":memory:");
+			await index.init();
+		});
+
+		afterEach(() => {
+			index.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "t",
+			content: "c",
+			summary: "s",
+			tags: ["a"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: randomUUID().slice(0, 16),
+			source_session: null,
+			...overrides,
+		});
+
+		const randomVec = (seed: number): number[] => {
+			const arr = new Array(1024).fill(0);
+			let s = seed;
+			for (let i = 0; i < 1024; i++) {
+				s = (s * 1103515245 + 12345) & 0x7fffffff;
+				arr[i] = (s / 0x7fffffff) * 2 - 1;
+			}
+			const norm = Math.sqrt(arr.reduce((sum, v) => sum + v * v, 0));
+			return arr.map((v) => v / norm);
+		};
+
+		it("vectorSearch returns K nearest by L2 distance", async () => {
+			const a1 = sampleAtom({ id: "a1", content_fingerprint: "fp1", type: "rule" });
+			const a2 = sampleAtom({ id: "a2", content_fingerprint: "fp2", type: "fact" });
+			await index.insertAtom(a1, randomVec(1));
+			await index.insertAtom(a2, randomVec(2));
+			const results = index.vectorSearch(randomVec(1), 10);
+			expect(results.length).toBe(2);
+			expect(results[0].id).toBe("a1");
+			expect(results[0].distance).toBeCloseTo(0, 1);
+		});
+
+		it("vectorSearch filters by type", async () => {
+			const r = sampleAtom({ id: "r1", content_fingerprint: "fr1", type: "rule" });
+			const f = sampleAtom({ id: "f1", content_fingerprint: "ff1", type: "fact" });
+			await index.insertAtom(r, randomVec(10));
+			await index.insertAtom(f, randomVec(20));
+			const results = index.vectorSearch(randomVec(10), 10, { type: "rule" });
+			expect(results.length).toBe(1);
+			expect(results[0].id).toBe("r1");
+		});
+
+		it("vectorSearch excludes archived and superseded by default", async () => {
+			const a = sampleAtom({ id: "a", content_fingerprint: "fa" });
+			const arch = sampleAtom({
+				id: "arch",
+				content_fingerprint: "farch",
+				archived: 1,
+			});
+			const sup = sampleAtom({
+				id: "sup",
+				content_fingerprint: "fsup",
+				is_latest: 0,
+			});
+			await index.insertAtom(a, randomVec(100));
+			await index.insertAtom(arch, randomVec(200));
+			await index.insertAtom(sup, randomVec(300));
+			const results = index.vectorSearch(randomVec(100), 10);
+			expect(results.map((r) => r.id)).toEqual(["a"]);
+		});
+
+		it("findMostSimilarEmbedding returns top-1 if cosine > threshold", async () => {
+			const a = sampleAtom({ id: "match", content_fingerprint: "fmatch" });
+			await index.insertAtom(a, randomVec(42));
+			const result = index.findMostSimilarEmbedding(randomVec(42), 0.9);
+			expect(result).not.toBeNull();
+			expect(result!.atom.id).toBe("match");
+			expect(result!.cosine).toBeCloseTo(1.0, 2);
+		});
+
+		it("findMostSimilarEmbedding returns null if cosine < threshold", async () => {
+			const a = sampleAtom({ id: "x", content_fingerprint: "fx" });
+			await index.insertAtom(a, randomVec(1));
+			const result = index.findMostSimilarEmbedding(randomVec(999), 0.99);
+			expect(result).toBeNull();
+		});
+
+		it("cosineSimilarity returns 1.0 for identical vectors", () => {
+			const v = randomVec(5);
+			expect(index.cosineSimilarity(v, v)).toBeCloseTo(1.0, 5);
+		});
+	});
+
+	describe("supersede transaction", () => {
+		let index: MemoryIndex;
+
+		beforeEach(async () => {
+			index = new MemoryIndex(":memory:");
+			await index.init();
+		});
+
+		afterEach(() => {
+			index.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "t",
+			content: "c",
+			summary: "s",
+			tags: ["a"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: randomUUID().slice(0, 16),
+			source_session: null,
+			...overrides,
+		});
+
+		const dummyEmbedding = (): number[] => new Array(1024).fill(0.01);
+
+		it("markSupersededTx atomically marks old as superseded and inserts new", async () => {
+			const old = sampleAtom({ id: "old", access_count: 5, strength: 0.8 });
+			await index.insertAtom(old, dummyEmbedding());
+			const newAtom = sampleAtom({ id: "new", access_count: 0, strength: 0.5 });
+			const result = index.markSupersededTx("old", newAtom, dummyEmbedding());
+			expect(result.oldAtom.id).toBe("old");
+			expect(result.newAtom.id).toBe("new");
+			const oldAfter = index.getAtom("old");
+			expect(oldAfter?.is_latest).toBe(0);
+			expect(oldAfter?.superseded_at).not.toBeNull();
+			const newAfter = index.getAtom("new");
+			expect(newAfter?.is_latest).toBe(1);
+			expect(newAfter?.parent_id).toBe("old");
+		});
+
+		it("transfers access_count, strength, created_at from old to new", async () => {
+			const oldTime = Date.now() - 10000;
+			const old = sampleAtom({
+				id: "old",
+				access_count: 7,
+				strength: 0.9,
+				created_at: oldTime,
+			});
+			await index.insertAtom(old, dummyEmbedding());
+			const newAtom = sampleAtom({
+				id: "new",
+				access_count: 0,
+				strength: 0.5,
+				created_at: Date.now(),
+			});
+			const { newAtom: result } = index.markSupersededTx("old", newAtom, dummyEmbedding());
+			expect(result.access_count).toBe(7);
+			expect(result.strength).toBe(0.9);
+			expect(result.created_at).toBe(oldTime);
+			expect(result.version).toBe(1);
+		});
+
+		it("newAtom.importance takes max(old.importance, new.importance)", async () => {
+			const old = sampleAtom({ id: "old", importance: 0.3 });
+			await index.insertAtom(old, dummyEmbedding());
+			const newA = sampleAtom({ id: "na", importance: 0.9 });
+			const r1 = index.markSupersededTx("old", newA, dummyEmbedding());
+			expect(r1.newAtom.importance).toBeCloseTo(0.9, 5);
+		});
+
+		it("rolls back if any operation in transaction fails", async () => {
+			const old = sampleAtom({ id: "old", content_fingerprint: "fp-old-rollback" });
+			await index.insertAtom(old, dummyEmbedding());
+			// newAtom with duplicate fingerprint should fail INSERT (UNIQUE index)
+			const newAtom = sampleAtom({ id: "new", content_fingerprint: "fp-other-active" });
+			await index.insertAtom(newAtom, dummyEmbedding()); // takes the fingerprint
+			const newAtom2 = sampleAtom({
+				id: "new2",
+				content_fingerprint: "fp-other-active",
+			});
+			expect(() => index.markSupersededTx("old", newAtom2, dummyEmbedding())).toThrow();
+			// old should still be is_latest=1 (transaction rolled back)
+			expect(index.getAtom("old")?.is_latest).toBe(1);
+		});
+
+		it("writes audit entries for both atoms", async () => {
+			const old = sampleAtom({ id: "old" });
+			await index.insertAtom(old, dummyEmbedding());
+			const newAtom = sampleAtom({ id: "new" });
+			index.markSupersededTx("old", newAtom, dummyEmbedding());
+			const oldAudit = index.getAudit("old");
+			const newAudit = index.getAudit("new");
+			expect(oldAudit.some((a) => a.action === "superseded")).toBe(true);
+			expect(newAudit.some((a) => a.action === "created_from_supersede")).toBe(true);
+		});
+	});
+
+	describe("access and decay", () => {
+		let index: MemoryIndex;
+
+		beforeEach(async () => {
+			index = new MemoryIndex(":memory:");
+			await index.init();
+		});
+
+		afterEach(() => {
+			index.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "t",
+			content: "c",
+			summary: "s",
+			tags: ["a"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: randomUUID().slice(0, 16),
+			source_session: null,
+			...overrides,
+		});
+
+		const dummyEmbedding = (): number[] => new Array(1024).fill(0.01);
+
+		it("updateAccess increments access_count and sets last_access", async () => {
+			const atom = sampleAtom({ id: "a" });
+			await index.insertAtom(atom, dummyEmbedding());
+			const before = Date.now();
+			index.updateAccess("a");
+			const after = Date.now();
+			const got = index.getAtom("a");
+			expect(got?.access_count).toBe(1);
+			expect(got?.last_access).toBeGreaterThanOrEqual(before);
+			expect(got?.last_access).toBeLessThanOrEqual(after);
+		});
+
+		it("updateAccess increments multiple times", async () => {
+			const atom = sampleAtom({ id: "a" });
+			await index.insertAtom(atom, dummyEmbedding());
+			index.updateAccess("a");
+			index.updateAccess("a");
+			index.updateAccess("a");
+			expect(index.getAtom("a")?.access_count).toBe(3);
+		});
+
+		it("updateStrength sets new strength value", async () => {
+			const atom = sampleAtom({ id: "a", strength: 0.5 });
+			await index.insertAtom(atom, dummyEmbedding());
+			index.updateStrength("a", 0.2);
+			expect(index.getAtom("a")?.strength).toBeCloseTo(0.2, 5);
+		});
+
+		it("markArchived sets archived=1 and writes audit entry", async () => {
+			const atom = sampleAtom({ id: "a" });
+			await index.insertAtom(atom, dummyEmbedding());
+			index.markArchived("a");
+			expect(index.getAtom("a")?.archived).toBe(1);
+			const audit = index.getAudit("a");
+			expect(audit.some((a) => a.action === "archived")).toBe(true);
+		});
+
+		it("markUnarchived restores archived=0 (no audit)", async () => {
+			const atom = sampleAtom({ id: "a", archived: 1 });
+			await index.insertAtom(atom, dummyEmbedding());
+			// Pre-existing audit baseline so we can detect a (forbidden) new entry.
+			const baselineAuditCount = index.getAudit("a").length;
+			index.markUnarchived("a");
+			expect(index.getAtom("a")?.archived).toBe(0);
+			expect(index.getAudit("a").length).toBe(baselineAuditCount);
+		});
+
+		it("deleteVector removes the embedding from memory_vectors", async () => {
+			const atom = sampleAtom({ id: "a" });
+			await index.insertAtom(atom, dummyEmbedding());
+			// Confirm vector exists
+			const before = index.getRawDb().prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`).get("a");
+			expect(before).toBeDefined();
+			index.deleteVector("a");
+			const after = index.getRawDb().prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`).get("a");
+			expect(after).toBeUndefined();
+		});
+	});
 });

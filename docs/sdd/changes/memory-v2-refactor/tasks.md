@@ -49,19 +49,19 @@
   - **验证**: `npx vitest run test/storage.test.ts -t "atom CRUD"` 通过 (≥5 测试)
   - **依赖**: 2.2
 
-- [ ] 2.4 **实现 vectorSearch + findMostSimilarEmbedding**
+- [x] 2.4 **实现 vectorSearch + findMostSimilarEmbedding**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: `vectorSearch(embedding, k, filter?)` 用 sqlite-vec KNN, JOIN memory_index 过滤 `archived=0 AND is_latest=1` (可选 type)。返 `[{id, distance}]`。`findMostSimilarEmbedding(embedding, threshold)` 返 top-1 if cosine > threshold else null。
   - **验证**: `npx vitest run test/storage.test.ts -t "vector search"` 通过 (≥3 测试)
   - **依赖**: 2.3
 
-- [ ] 2.5 **实现 markSupersededTx 事务 + audit 写入**
+- [x] 2.5 **实现 markSupersededTx 事务 + audit 写入**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: `markSupersededTx(oldId, newId)` 用 `BEGIN IMMEDIATE` UPDATE old is_latest=0/superseded_at=now + INSERT new。事务失败自动 rollback。`insertAudit(atom_id, action, details?)` 写 `memory_audit`。
   - **验证**: `npx vitest run test/storage.test.ts -t "supersede transaction"` 通过 (≥3 测试,验证原子性 + rollback + audit)
   - **依赖**: 2.3
 
-- [ ] 2.6 **实现 updateAccess + updateStrength + markArchived + deleteVector**
+- [x] 2.6 **实现 updateAccess + updateStrength + markArchived + deleteVector**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: `updateAccess(id)` (access_count+1, last_access=now), `updateStrength(id, strength)`, `markArchived(id)` (set archived=1, superseded_at 不变), `deleteVector(id)` (DELETE FROM memory_vectors)。
   - **验证**: `npx vitest run test/storage.test.ts -t "access and decay"` 通过 (≥4 测试)
@@ -156,7 +156,7 @@
 
 ## 7. Webui REST Routes
 
-- [ ] 7.1 **实现 GET /api/memory 列表 + filter + mountMemoryRoutes**
+- [x] 7.1 **实现 GET /api/memory 列表 + filter + mountMemoryRoutes**
   - **文件**: `packages/webui/server/routes/memory.ts` (Create, 重写)
   - **内容**: 
     1. **export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps)** — 注册全部 7 个 route,在文件底部调用
