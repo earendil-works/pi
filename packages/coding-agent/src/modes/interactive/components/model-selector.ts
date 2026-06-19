@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ModelRegistry } from "../../../core/model-registry.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
-import { getModelSearchText } from "../model-search.ts";
+import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -219,7 +219,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private filterModels(query: string): void {
 		this.filteredModels = query
 			? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
-					getModelSearchText({ id, provider, name: model.name }),
+					getModelSelectorSearchText({ id, provider, name: model.name }),
 				)
 			: this.activeModels;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));

@@ -1,5 +1,3 @@
-import "./providers/images/register-builtins.ts";
-
 import { getImagesApiProvider } from "./images-api-registry.ts";
 import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ProviderImagesOptions } from "./types.ts";
 

@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.79.6",
+	"version": "0.79.8",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -36,9 +36,9 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.79.6",
-		"@earendil-works/pi-ai": "^0.79.6",
-		"@earendil-works/pi-tui": "^0.79.6",
+		"@earendil-works/pi-agent-core": "^0.79.8",
+		"@earendil-works/pi-ai": "^0.79.8",
+		"@earendil-works/pi-tui": "^0.79.8",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
@@ -52,7 +52,7 @@
 		"proper-lockfile": "4.1.2",
 		"semver": "7.8.0",
 		"typebox": "1.1.38",
-		"undici": "8.3.0",
+		"undici": "8.5.0",
 		"yaml": "2.9.0"
 	},
 	"overrides": {
@@ -74,7 +74,7 @@
 		"@types/semver": "7.7.1",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
-		"vitest": "3.2.4"
+		"vitest": "4.1.9"
 	},
 	"keywords": [
 		"coding-agent",

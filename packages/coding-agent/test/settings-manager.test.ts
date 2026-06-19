@@ -198,6 +198,24 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("theme setting", () => {
+		it("stores slash-separated automatic theme settings separately from fixed theme names", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "light/dark" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTheme()).toBeUndefined();
+			expect(manager.getThemeSetting()).toBe("light/dark");
+
+			manager.setTheme("solarized-light/tokyo-night");
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.theme).toBe("solarized-light/tokyo-night");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

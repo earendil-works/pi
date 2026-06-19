@@ -66,7 +66,7 @@ export interface BashOperations {
 export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
-			const { shell, args } = getShellConfig(options?.shellPath);
+			const shellConfig = getShellConfig(options?.shellPath);
 			try {
 				await fsAccess(cwd, constants.F_OK);
 			} catch {
@@ -76,13 +76,18 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 				throw new Error("aborted");
 			}
 
-			const child = spawn(shell, [...args, command], {
+			const commandFromStdin = shellConfig.commandTransport === "stdin";
+			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
 				cwd,
 				detached: process.platform !== "win32",
 				env: env ?? getShellEnv(),
-				stdio: ["ignore", "pipe", "pipe"],
+				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
 				windowsHide: true,
 			});
+			if (commandFromStdin) {
+				child.stdin?.on("error", () => {});
+				child.stdin?.end(command);
+			}
 			if (child.pid) trackDetachedChildPid(child.pid);
 			let timedOut = false;
 			let timeoutHandle: NodeJS.Timeout | undefined;

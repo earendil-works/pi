@@ -41,7 +41,7 @@
 		"@biomejs/biome": "2.3.5",
 		"@types/node": "22.19.19",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
-		"esbuild": "0.28.0",
+		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
 		"shx": "0.4.0",

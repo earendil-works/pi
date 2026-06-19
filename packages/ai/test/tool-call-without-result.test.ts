@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import { complete } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
-import { complete } from "../src/stream.ts";
 import type { Api, Context, Model, StreamOptions, Tool } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;

@@ -26,6 +26,7 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -412,6 +413,14 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 		thinkingBudgets: options.thinkingBudgets,
 	} satisfies BedrockOptions);
 };
+
+export function register(): void {
+	registerApiProvider({
+		api: "bedrock-converse-stream",
+		stream: streamBedrock,
+		streamSimple: streamSimpleBedrock,
+	});
+}
 
 function handleContentBlockStart(
 	event: ContentBlockStartEvent,

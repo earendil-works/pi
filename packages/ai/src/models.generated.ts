@@ -4566,25 +4566,6 @@ export const MODELS = {
 			contextWindow: 400000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
-		"raptor-mini": {
-			id: "raptor-mini",
-			name: "Raptor mini",
-			api: "openai-completions",
-			provider: "github-copilot",
-			baseUrl: "https://api.individual.githubcopilot.com",
-			headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
-			compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false},
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 0.25,
-				output: 2,
-				cacheRead: 0.025,
-				cacheWrite: 0,
-			},
-			contextWindow: 400000,
-			maxTokens: 128000,
-		} satisfies Model<"openai-completions">,
 	},
 	"google": {
 		"gemini-2.0-flash": {
@@ -5780,7 +5761,7 @@ export const MODELS = {
 			cost: {
 				input: 0.3,
 				output: 0.9,
-				cacheRead: 0,
+				cacheRead: 0.03,
 				cacheWrite: 0,
 			},
 			contextWindow: 256000,
@@ -5797,7 +5778,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -5814,7 +5795,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -5831,7 +5812,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5848,7 +5829,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -5865,7 +5846,7 @@ export const MODELS = {
 			cost: {
 				input: 0.1,
 				output: 0.3,
-				cacheRead: 0,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5882,7 +5863,7 @@ export const MODELS = {
 			cost: {
 				input: 0.1,
 				output: 0.3,
-				cacheRead: 0,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5916,7 +5897,7 @@ export const MODELS = {
 			cost: {
 				input: 2,
 				output: 5,
-				cacheRead: 0,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5933,7 +5914,7 @@ export const MODELS = {
 			cost: {
 				input: 0.5,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.05,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5950,7 +5931,7 @@ export const MODELS = {
 			cost: {
 				input: 0.04,
 				output: 0.04,
-				cacheRead: 0,
+				cacheRead: 0.004,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5967,7 +5948,7 @@ export const MODELS = {
 			cost: {
 				input: 0.1,
 				output: 0.1,
-				cacheRead: 0,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5984,7 +5965,7 @@ export const MODELS = {
 			cost: {
 				input: 2,
 				output: 6,
-				cacheRead: 0,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -6001,7 +5982,7 @@ export const MODELS = {
 			cost: {
 				input: 0.5,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.05,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -6018,7 +5999,7 @@ export const MODELS = {
 			cost: {
 				input: 0.5,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.05,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -6035,7 +6016,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -6052,7 +6033,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -6069,7 +6050,7 @@ export const MODELS = {
 			cost: {
 				input: 1.5,
 				output: 7.5,
-				cacheRead: 0,
+				cacheRead: 0.15,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -6103,7 +6084,7 @@ export const MODELS = {
 			cost: {
 				input: 0.4,
 				output: 2,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -6120,7 +6101,7 @@ export const MODELS = {
 			cost: {
 				input: 0.15,
 				output: 0.15,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -6137,7 +6118,7 @@ export const MODELS = {
 			cost: {
 				input: 0.1,
 				output: 0.3,
-				cacheRead: 0,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -6154,7 +6135,7 @@ export const MODELS = {
 			cost: {
 				input: 0.15,
 				output: 0.6,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 256000,
@@ -6171,7 +6152,7 @@ export const MODELS = {
 			cost: {
 				input: 0.15,
 				output: 0.6,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 256000,
@@ -6188,7 +6169,7 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 0.25,
-				cacheRead: 0,
+				cacheRead: 0.025,
 				cacheWrite: 0,
 			},
 			contextWindow: 8000,
@@ -6205,7 +6186,7 @@ export const MODELS = {
 			cost: {
 				input: 0.15,
 				output: 0.15,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -6222,7 +6203,7 @@ export const MODELS = {
 			cost: {
 				input: 2,
 				output: 6,
-				cacheRead: 0,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 64000,
@@ -6239,7 +6220,7 @@ export const MODELS = {
 			cost: {
 				input: 0.7,
 				output: 0.7,
-				cacheRead: 0,
+				cacheRead: 0.07,
 				cacheWrite: 0,
 			},
 			contextWindow: 32000,
@@ -6256,7 +6237,7 @@ export const MODELS = {
 			cost: {
 				input: 0.15,
 				output: 0.15,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -6273,7 +6254,7 @@ export const MODELS = {
 			cost: {
 				input: 2,
 				output: 6,
-				cacheRead: 0,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -10592,13 +10573,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0.68,
-				output: 3.41,
-				cacheRead: 0.34,
+				input: 0.67,
+				output: 3.5,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262142,
+			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"moonshotai/kimi-k2.7-code": {
 			id: "moonshotai/kimi-k2.7-code",
@@ -11575,7 +11556,7 @@ export const MODELS = {
 			cost: {
 				input: 0.075,
 				output: 0.3,
-				cacheRead: 0.037,
+				cacheRead: 0.0375,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -11768,6 +11749,23 @@ export const MODELS = {
 			contextWindow: 200000,
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
+		"openrouter/fusion": {
+			id: "openrouter/fusion",
+			name: "OpenRouter: Fusion",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 30000,
+		} satisfies Model<"openai-completions">,
 		"openrouter/owl-alpha": {
 			id: "openrouter/owl-alpha",
 			name: "Owl Alpha",
@@ -11785,6 +11783,23 @@ export const MODELS = {
 			contextWindow: 1048756,
 			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
+		"poolside/laguna-m.1": {
+			id: "poolside/laguna-m.1",
+			name: "Poolside: Laguna M.1",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.2,
+				output: 0.4,
+				cacheRead: 0.1,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+		} satisfies Model<"openai-completions">,
 		"poolside/laguna-m.1:free": {
 			id: "poolside/laguna-m.1:free",
 			name: "Poolside: Laguna M.1 (free)",
@@ -11797,6 +11812,23 @@ export const MODELS = {
 				input: 0,
 				output: 0,
 				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+		} satisfies Model<"openai-completions">,
+		"poolside/laguna-xs.2": {
+			id: "poolside/laguna-xs.2",
+			name: "Poolside: Laguna XS.2",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.1,
+				output: 0.2,
+				cacheRead: 0.05,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -12425,11 +12457,11 @@ export const MODELS = {
 			cost: {
 				input: 0.14,
 				output: 1,
-				cacheRead: 0.05,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 81920,
+			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3.5-397b-a17b": {
 			id: "qwen/qwen3.5-397b-a17b",
@@ -12542,9 +12574,9 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0.15,
+				input: 0.14,
 				output: 1,
-				cacheRead: 0.05,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -13052,13 +13084,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 1.4,
-				output: 4.4,
-				cacheRead: 0.26,
+				input: 1.2,
+				output: 4.1,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 1048576,
-			maxTokens: 262144,
+			maxTokens: 131072,
 		} satisfies Model<"openai-completions">,
 		"~anthropic/claude-fable-latest": {
 			id: "~anthropic/claude-fable-latest",
@@ -13171,13 +13203,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0.68,
-				output: 3.41,
-				cacheRead: 0.34,
+				input: 0.67,
+				output: 3.5,
+				cacheRead: 0.2,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262142,
+			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"~openai/gpt-latest": {
 			id: "~openai/gpt-latest",

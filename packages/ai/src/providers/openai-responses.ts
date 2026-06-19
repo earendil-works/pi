@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import { registerApiProvider } from "../api-registry.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -180,6 +181,14 @@ export const streamSimpleOpenAIResponses: StreamFunction<"openai-responses", Sim
 		reasoningEffort,
 	} satisfies OpenAIResponsesOptions);
 };
+
+export function register(): void {
+	registerApiProvider({
+		api: "openai-responses",
+		stream: streamOpenAIResponses,
+		streamSimple: streamSimpleOpenAIResponses,
+	});
+}
 
 function createClient(
 	model: Model<"openai-responses">,

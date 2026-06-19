@@ -1,5 +1,6 @@
 import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import { registerApiProvider } from "../api-registry.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -169,6 +170,14 @@ export const streamSimpleAzureOpenAIResponses: StreamFunction<"azure-openai-resp
 		reasoningEffort,
 	} satisfies AzureOpenAIResponsesOptions);
 };
+
+export function register(): void {
+	registerApiProvider({
+		api: "azure-openai-responses",
+		stream: streamAzureOpenAIResponses,
+		streamSimple: streamSimpleAzureOpenAIResponses,
+	});
+}
 
 function normalizeAzureBaseUrl(baseUrl: string): string {
 	const trimmed = baseUrl.trim().replace(/\/+$/, "");

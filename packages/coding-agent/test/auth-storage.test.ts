@@ -5,7 +5,8 @@ import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { clearConfigValueCache } from "../src/core/resolve-config-value.ts";
+import { clearConfigValueCache, resolveConfigValueUncached } from "../src/core/resolve-config-value.ts";
+import * as shellModule from "../src/utils/shell.ts";
 
 describe("AuthStorage", () => {
 	let tempDir: string;
@@ -319,6 +320,30 @@ describe("AuthStorage", () => {
 			const apiKey = await authStorage.getApiKey("anthropic");
 
 			expect(apiKey).toBe("hello-world");
+		});
+
+		test("command config uses stdin when configured shell requires it", () => {
+			if (process.platform === "win32") return;
+			const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+			vi.spyOn(shellModule, "getShellConfig").mockReturnValue({
+				shell: "/bin/bash",
+				args: ["-s"],
+				commandTransport: "stdin",
+			});
+
+			try {
+				Object.defineProperty(process, "platform", {
+					configurable: true,
+					value: "win32",
+				});
+				const nameExpansion = "$" + "{name}";
+
+				expect(resolveConfigValueUncached(`!name='World'; echo "Hello, ${nameExpansion}!"`)).toBe("Hello, World!");
+			} finally {
+				if (platformDescriptor) {
+					Object.defineProperty(process, "platform", platformDescriptor);
+				}
+			}
 		});
 
 		describe("caching", () => {

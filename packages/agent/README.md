@@ -31,6 +31,24 @@ agent.subscribe((event) => {
 await agent.prompt("Hello!");
 ```
 
+## Base Entry Point
+
+Use `@earendil-works/pi-agent-core/base` with `@earendil-works/pi-ai/base` when bundling applications that should include only selected provider transports:
+
+```typescript
+import { Agent } from "@earendil-works/pi-agent-core/base";
+import { getModel } from "@earendil-works/pi-ai/base";
+import { register } from "@earendil-works/pi-ai/anthropic";
+
+register();
+
+const agent = new Agent({
+  initialState: { model: getModel("anthropic", "claude-sonnet-4-6") },
+});
+```
+
+The default `@earendil-works/pi-agent-core` entry point remains batteries-included and registers pi-ai's lazy built-in transports for backward compatibility.
+
 ## Core Concepts
 
 ### AgentMessage vs LLM Message

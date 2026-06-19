@@ -1,6 +1,12 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { type Component, parseOsc11BackgroundColor, type Terminal, TUI } from "../src/index.ts";
+import {
+	type Component,
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type Terminal,
+	TUI,
+} from "../src/index.ts";
 
 class TestTerminal implements Terminal {
 	private inputHandler?: (data: string) => void;
@@ -101,6 +107,16 @@ describe("parseOsc11BackgroundColor", () => {
 		assert.strictEqual(parseOsc11BackgroundColor(`x\x1b]11;#ffffff\x07`), undefined);
 		assert.strictEqual(parseOsc11BackgroundColor("\x1b]10;#ffffff\x07"), undefined);
 		assert.strictEqual(parseOsc11BackgroundColor("\x1b]11;#ffffff\x07x"), undefined);
+	});
+});
+
+describe("parseTerminalColorSchemeReport", () => {
+	it("parses color scheme reports", () => {
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;1n"), "dark");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;2n"), "light");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;3n"), undefined);
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?996n"), undefined);
+		assert.strictEqual(parseTerminalColorSchemeReport("x\x1b[?997;1n"), undefined);
 	});
 });
 

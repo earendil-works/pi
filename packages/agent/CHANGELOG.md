@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Node execution environment commands through legacy WSL `bash.exe` to pass scripts over stdin so shell variables expand in the target bash ([#5893](https://github.com/earendil-works/pi/issues/5893)).
+
+## [0.79.8] - 2026-06-19
+
+### Added
+
+- Added `@earendil-works/pi-agent-core/base` for bundlers that want to pair the agent core with selective `@earendil-works/pi-ai/base` provider registration ([#5348](https://github.com/earendil-works/pi/pull/5348) by [@FredKSchott](https://github.com/FredKSchott)).
+
+## [0.79.7] - 2026-06-18
+
 ## [0.79.6] - 2026-06-16
 
 ## [0.79.5] - 2026-06-16

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stream } from "../src/index.ts";
 import { MODELS } from "../src/models.generated.ts";
 import { getModel } from "../src/models.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
-import { stream } from "../src/stream.ts";
 import type { Context, Model } from "../src/types.ts";
 
 class PayloadCaptured extends Error {
