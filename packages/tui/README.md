@@ -10,6 +10,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
 - **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container
+- **Animation Utilities**: Spinner primitive for inline animated status indicators
 - **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
 - **Autocomplete Support**: File paths and slash commands
 
@@ -385,6 +386,32 @@ md.setText("Updated markdown");
 - Optional syntax highlighting via `highlightCode`
 - Padding support
 - Render caching for performance
+
+### Spinner
+
+Animated spinner primitive for inline status displays. `Spinner` is not a component; it owns the frame timer and calls `onUpdate` whenever the current frame changes.
+
+```typescript
+const spinner = new Spinner(() => tui.requestRender());
+spinner.start();
+
+const frame = spinner.renderFrame((s) => chalk.cyan(s));
+const status = `${frame} Working...`;
+
+spinner.stop();
+```
+
+Custom frames are rendered verbatim, so callers can provide their own styling. Use an empty frame array to hide the indicator.
+
+```typescript
+const spinner = new Spinner(
+  () => tui.requestRender(),
+  {
+    frames: [chalk.dim("·"), chalk.gray("•"), chalk.cyan("●"), chalk.gray("•")],
+    intervalMs: 120,
+  },
+);
+```
 
 ### Loader
 
