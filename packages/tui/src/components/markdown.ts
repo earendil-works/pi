@@ -48,7 +48,7 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	}
 
 	const fenceChar = marker[0];
-	const partialClosingFence = new RegExp(`\\n${fenceChar}{1,${marker.length - 1}}$`);
+	const partialClosingFence = new RegExp(`(?:^|\\n)${fenceChar}{1,${marker.length - 1}}$`);
 	if (partialClosingFence.test(token.raw)) {
 		token.text = token.text.replace(partialClosingFence, "");
 	}
