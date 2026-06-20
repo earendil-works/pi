@@ -35,13 +35,12 @@ import {
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
-	Loader,
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
-	Spinner,
 	type SpinnerOptions,
+	SpinnerStatus,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -178,6 +177,9 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
+const FOOTER_ACTIVITY_PRIORITY = ["retry", "compaction", "branchSummary", "working"] as const;
+type FooterActivityKind = (typeof FOOTER_ACTIVITY_PRIORITY)[number];
+
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 
 function isDeadTerminalError(error: unknown): boolean {
@@ -284,7 +286,30 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
-	private workingSpinner: Spinner | undefined = undefined;
+	private footerActivities: Record<FooterActivityKind, SpinnerStatus> = {
+		working: new SpinnerStatus(
+			() => this.updateFooterActivityStatus(),
+			(frame) => theme.fg("accent", frame),
+		),
+		branchSummary: new SpinnerStatus(
+			() => this.updateFooterActivityStatus(),
+			(frame) => theme.fg("accent", frame),
+		),
+		compaction: new SpinnerStatus(
+			() => this.updateFooterActivityStatus(),
+			(frame) => theme.fg("accent", frame),
+		),
+		retry: new SpinnerStatus(
+			() => this.updateFooterActivityStatus(),
+			(frame) => theme.fg("warning", frame),
+		),
+	};
+	private footerActivityActive: Record<FooterActivityKind, boolean> = {
+		working: false,
+		branchSummary: false,
+		compaction: false,
+		retry: false,
+	};
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
 	private workingSpinnerOptions: SpinnerOptions | undefined = undefined;
@@ -332,11 +357,9 @@ export class InteractiveMode {
 	private pendingBashComponents: BashExecutionComponent[] = [];
 
 	// Auto-compaction state
-	private autoCompactionLoader: Loader | undefined = undefined;
 	private autoCompactionEscapeHandler?: () => void;
 
 	// Auto-retry state
-	private retryLoader: Loader | undefined = undefined;
 	private retryCountdown: CountdownTimer | undefined = undefined;
 	private retryEscapeHandler?: () => void;
 
@@ -1733,39 +1756,61 @@ export class InteractiveMode {
 		return this.workingMessage ?? this.defaultWorkingMessage;
 	}
 
-	private updateWorkingStatus(): void {
-		const renderedIndicator = this.workingSpinner?.renderFrame((frame) => theme.fg("accent", frame));
-		const prefix = renderedIndicator ? `${renderedIndicator} ` : "";
-		this.footerDataProvider.setActivityStatus(`${prefix}${theme.fg("muted", this.getWorkingMessage())}`);
+	private updateFooterActivityStatus(): void {
+		const activityKind = FOOTER_ACTIVITY_PRIORITY.find((kind) => this.footerActivityActive[kind]);
+		if (activityKind === undefined) {
+			this.footerDataProvider.setActivityStatus(undefined);
+			this.ui.requestRender();
+			return;
+		}
+
+		const activity = this.footerActivities[activityKind];
+		this.footerDataProvider.setActivityStatus(activity.renderText());
 		this.ui.requestRender();
 	}
 
-	private stopWorkingStatus(): void {
-		this.workingSpinner?.stop();
-		this.workingSpinner = undefined;
-		this.footerDataProvider.setActivityStatus(undefined);
+	private startFooterActivity(kind: FooterActivityKind, message: string, options?: SpinnerOptions): void {
+		const activity = this.footerActivities[kind];
+		const wasActive = this.footerActivityActive[kind];
+		activity.setMessage(theme.fg("muted", message));
+		activity.setOptions(options);
+		this.footerActivityActive[kind] = true;
+		if (!wasActive) {
+			activity.start();
+		}
 	}
 
-	private startWorkingStatus(): void {
-		this.stopWorkingStatus();
-		this.workingSpinner = new Spinner(() => this.updateWorkingStatus(), this.workingSpinnerOptions);
-		this.workingSpinner.start();
+	private updateFooterActivityMessage(kind: FooterActivityKind, message: string): void {
+		this.footerActivities[kind].setMessage(theme.fg("muted", message));
+	}
+
+	private stopFooterActivity(kind?: FooterActivityKind): void {
+		if (kind !== undefined) {
+			this.footerActivityActive[kind] = false;
+			this.footerActivities[kind].stop();
+		} else {
+			for (const activityKind of FOOTER_ACTIVITY_PRIORITY) {
+				this.footerActivityActive[activityKind] = false;
+				this.footerActivities[activityKind].stop();
+			}
+		}
+		this.updateFooterActivityStatus();
 	}
 
 	private clearActivityStatus(): void {
-		this.stopWorkingStatus();
+		this.stopFooterActivity();
 		this.statusContainer.clear();
 	}
 
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
-			this.stopWorkingStatus();
+			this.stopFooterActivity("working");
 			this.ui.requestRender();
 			return;
 		}
-		if (this.session.isStreaming && !this.workingSpinner) {
-			this.startWorkingStatus();
+		if (this.session.isStreaming && !this.footerActivityActive.working) {
+			this.startFooterActivity("working", this.getWorkingMessage(), this.workingSpinnerOptions);
 			return;
 		}
 	}
@@ -1773,11 +1818,7 @@ export class InteractiveMode {
 	private setWorkingIndicator(options?: SpinnerOptions): void {
 		this.workingSpinnerOptions = options;
 		if (this.session.isStreaming && this.workingVisible) {
-			if (this.workingSpinner) {
-				this.workingSpinner.setOptions(options);
-			} else {
-				this.startWorkingStatus();
-			}
+			this.startFooterActivity("working", this.getWorkingMessage(), this.workingSpinnerOptions);
 			return;
 		}
 	}
@@ -2040,7 +2081,7 @@ export class InteractiveMode {
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				if (this.session.isStreaming && this.workingVisible) {
-					this.updateWorkingStatus();
+					this.updateFooterActivityMessage("working", this.getWorkingMessage());
 				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
@@ -2743,13 +2784,9 @@ export class InteractiveMode {
 					this.retryCountdown.dispose();
 					this.retryCountdown = undefined;
 				}
-				if (this.retryLoader) {
-					this.retryLoader.stop();
-					this.retryLoader = undefined;
-				}
 				this.clearActivityStatus();
 				if (this.workingVisible) {
-					this.startWorkingStatus();
+					this.startFooterActivity("working", this.getWorkingMessage(), this.workingSpinnerOptions);
 				}
 				this.ui.requestRender();
 				break;
@@ -2913,7 +2950,7 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				this.stopWorkingStatus();
+				this.stopFooterActivity("working");
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -2935,19 +2972,12 @@ export class InteractiveMode {
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
-				this.clearActivityStatus();
 				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
 				const label =
 					event.reason === "manual"
 						? `Compacting context... ${cancelHint}`
 						: `${event.reason === "overflow" ? "Context overflow detected, " : ""}Auto-compacting... ${cancelHint}`;
-				this.autoCompactionLoader = new Loader(
-					this.ui,
-					(spinner) => theme.fg("accent", spinner),
-					(text) => theme.fg("muted", text),
-					label,
-				);
-				this.statusContainer.addChild(this.autoCompactionLoader);
+				this.startFooterActivity("compaction", label);
 				this.ui.requestRender();
 				break;
 			}
@@ -2960,11 +2990,7 @@ export class InteractiveMode {
 					this.defaultEditor.onEscape = this.autoCompactionEscapeHandler;
 					this.autoCompactionEscapeHandler = undefined;
 				}
-				if (this.autoCompactionLoader) {
-					this.autoCompactionLoader.stop();
-					this.autoCompactionLoader = undefined;
-					this.statusContainer.clear();
-				}
+				this.stopFooterActivity("compaction");
 				if (event.aborted) {
 					if (event.reason === "manual") {
 						this.showError("Compaction cancelled");
@@ -3002,27 +3028,20 @@ export class InteractiveMode {
 					this.session.abortRetry();
 				};
 				// Show retry indicator
-				this.clearActivityStatus();
 				this.retryCountdown?.dispose();
 				const retryMessage = (seconds: number) =>
 					`Retrying (${event.attempt}/${event.maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
-				this.retryLoader = new Loader(
-					this.ui,
-					(spinner) => theme.fg("warning", spinner),
-					(text) => theme.fg("muted", text),
-					retryMessage(Math.ceil(event.delayMs / 1000)),
-				);
+				this.startFooterActivity("retry", retryMessage(Math.ceil(event.delayMs / 1000)));
 				this.retryCountdown = new CountdownTimer(
 					event.delayMs,
 					this.ui,
 					(seconds) => {
-						this.retryLoader?.setMessage(retryMessage(seconds));
+						this.updateFooterActivityMessage("retry", retryMessage(seconds));
 					},
 					() => {
 						this.retryCountdown = undefined;
 					},
 				);
-				this.statusContainer.addChild(this.retryLoader);
 				this.ui.requestRender();
 				break;
 			}
@@ -3037,12 +3056,7 @@ export class InteractiveMode {
 					this.retryCountdown.dispose();
 					this.retryCountdown = undefined;
 				}
-				// Stop loader
-				if (this.retryLoader) {
-					this.retryLoader.stop();
-					this.retryLoader = undefined;
-					this.statusContainer.clear();
-				}
+				this.stopFooterActivity("retry");
 				// Show error only on final failure (success shows normal response)
 				if (!event.success) {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
@@ -4476,22 +4490,17 @@ export class InteractiveMode {
 						}
 					}
 
-					// Set up escape handler and loader if summarizing
-					let summaryLoader: Loader | undefined;
+					// Set up escape handler and footer activity if summarizing
 					const originalOnEscape = this.defaultEditor.onEscape;
 
 					if (wantsSummary) {
 						this.defaultEditor.onEscape = () => {
 							this.session.abortBranchSummary();
 						};
-						this.chatContainer.addChild(new Spacer(1));
-						summaryLoader = new Loader(
-							this.ui,
-							(spinner) => theme.fg("accent", spinner),
-							(text) => theme.fg("muted", text),
+						this.startFooterActivity(
+							"branchSummary",
 							`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
 						);
-						this.statusContainer.addChild(summaryLoader);
 						this.ui.requestRender();
 					}
 
@@ -4523,10 +4532,7 @@ export class InteractiveMode {
 					} catch (error) {
 						this.showError(error instanceof Error ? error.message : String(error));
 					} finally {
-						if (summaryLoader) {
-							summaryLoader.stop();
-							this.statusContainer.clear();
-						}
+						this.stopFooterActivity("branchSummary");
 						this.defaultEditor.onEscape = originalOnEscape;
 					}
 				},
@@ -5694,7 +5700,7 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
-		this.stopWorkingStatus();
+		this.stopFooterActivity("working");
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
