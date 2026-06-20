@@ -1,17 +1,18 @@
 // recallAtoms — quality test on a labeled dataset.
 //
 // Validates that pure-vector recall (via recallAtoms) hits the recall/precision
-// targets on a curated 10-atom corpus with 5 hand-labeled queries, using a
-// deterministic char-bigram mock embedder so the test is hermetic and does not
-// require ollama.
+// targets on a curated 14-atom corpus with 9 hand-labeled queries (5 original
+// + 4 Chinese-language), using a deterministic char-bigram mock embedder so
+// the test is hermetic and does not require ollama.
 //
-// Metrics (R51 / R52 / R53):
+// Metrics (R51 / R52 / R53 / R57):
 //   - avg_recall_at_5  >= 0.7
 //   - avg_recall_at_10 >= 0.85
 //   - avg_precision_at_5 >= 0.2   // lowered from 0.5; see rationale below
+//   - chinese_query_recall_at_5 >= 0.5  // R57 — asserted via focused suite
 //
-// precision@5 rationale: with 5 queries and at most 1-2 relevant atoms each,
-// the ceiling is Σrelevant / (5 × queries) = 6 / 25 = 0.24. The recall
+// precision@5 rationale: with 9 queries and at most 1-2 relevant atoms each,
+// the ceiling is Σrelevant / (5 × queries) ≤ 12 / 45 ≈ 0.27. The recall
 // thresholds (0.7 / 0.85) are the binding quality gate; precision@5 is
 // reported as a secondary signal constrained by the dataset size.
 //
@@ -20,6 +21,11 @@
 // from other domains). Threshold is 0 so we measure pure retrieval ranking
 // before cosine filtering; a separate test will tune the threshold against the
 // real embedder.
+//
+// Task 9.2 (S62 / S63): the focused `Chinese query recall (focused)` suite
+// below asserts that Chinese-language queries (图片 / PDF提取 / CMYK处理 /
+// 中文) land on Chinese-language atoms (atom-10..atom-13) at top-K, separate
+// from the aggregate metrics computed over the full query set.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
@@ -101,7 +107,7 @@ describe("recallAtoms quality (labeled dataset)", () => {
 		await writeAtomToFile(atom, atomsDir);
 	};
 
-	// Labeled dataset: 10 atoms, 5 queries
+	// Labeled dataset: 14 atoms (10 original + 4 Chinese-language), 9 queries
 	const dataset = {
 		atoms: [
 			{
@@ -164,6 +170,31 @@ describe("recallAtoms quality (labeled dataset)", () => {
 				tags: ["pdf", "pdfplumber"],
 				type: "fact" as const,
 			},
+			// ---- Chinese-language atoms (appended for Task 9.2) ----
+			{
+				title: "PDF 图片提取",
+				content: "PDF 提取图片必须用 pymupdf 而不是 pdfplumber。fitz.open() 处理 CMYK。",
+				tags: ["pdf", "pymupdf"],
+				type: "process" as const,
+			},
+			{
+				title: "CMYK 颜色转换",
+				content: "印刷品导出图片必须 CMYK 颜色空间,不是 RGB。",
+				tags: ["print", "color"],
+				type: "fact" as const,
+			},
+			{
+				title: "PDF 文本提取",
+				content: "PDF text extraction with pdfplumber returns whitespace-padded strings.",
+				tags: ["pdf", "pdfplumber"],
+				type: "fact" as const,
+			},
+			{
+				title: "中文编码问题",
+				content: "处理中文文件路径时必须用 UTF-8 编码,Windows 用 GBK。",
+				tags: ["encoding", "chinese"],
+				type: "rule" as const,
+			},
 		],
 		queries: [
 			{ query: "图片提取", relevantIndices: [0], category: "chinese" },
@@ -171,6 +202,11 @@ describe("recallAtoms quality (labeled dataset)", () => {
 			{ query: "TypeScript preferences", relevantIndices: [2], category: "semantic" },
 			{ query: "cron timeout", relevantIndices: [1], category: "exact" },
 			{ query: "CMYK color space", relevantIndices: [3], category: "exact" },
+			// ---- Chinese-language queries (appended for Task 9.2) ----
+			{ query: "图片", relevantIndices: [10, 11], category: "chinese" },
+			{ query: "PDF提取", relevantIndices: [10, 12], category: "chinese" },
+			{ query: "CMYK处理", relevantIndices: [11], category: "chinese" },
+			{ query: "中文", relevantIndices: [13], category: "chinese" },
 		],
 	};
 
@@ -250,5 +286,37 @@ describe("recallAtoms quality (labeled dataset)", () => {
 		expect(avgRecallAt5).toBeGreaterThanOrEqual(0.7);
 		expect(avgRecallAt10).toBeGreaterThanOrEqual(0.85);
 		expect(avgPrecisionAt5).toBeGreaterThanOrEqual(0.2);  // Lowered from 0.5 — mathematical floor for small dataset
+	});
+
+	// Chinese-language focused recall tests (S62 / S63 / R57).
+	// Asserts that a Chinese query hits the Chinese-language atom, not just
+	// any atom that shares an English token. Relies on the parent beforeEach
+	// having inserted atom-10..atom-13.
+	describe("Chinese query recall (focused)", () => {
+		it("'图片' should hit at least one Chinese atom (atom-10 or atom-11)", async () => {
+			const results = await recallAtoms(index, "图片", atomsDir, { topK: 10, threshold: 0 });
+			const ids = results.map((r) => r.atom.id);
+			const hits = [10, 11].filter((i) => ids.includes(`atom-${i}`));
+			expect(hits.length).toBeGreaterThan(0);
+		});
+
+		it("'PDF提取' should hit at least one PDF-related Chinese atom (atom-10 or atom-12)", async () => {
+			const results = await recallAtoms(index, "PDF提取", atomsDir, { topK: 10, threshold: 0 });
+			const ids = results.map((r) => r.atom.id);
+			const hits = [10, 12].filter((i) => ids.includes(`atom-${i}`));
+			expect(hits.length).toBeGreaterThan(0);
+		});
+
+		it("'CMYK处理' should hit CMYK Chinese atom (atom-11)", async () => {
+			const results = await recallAtoms(index, "CMYK处理", atomsDir, { topK: 10, threshold: 0 });
+			const ids = results.map((r) => r.atom.id);
+			expect(ids).toContain("atom-11");
+		});
+
+		it("'中文' should hit 中文编码 atom (atom-13)", async () => {
+			const results = await recallAtoms(index, "中文", atomsDir, { topK: 10, threshold: 0 });
+			const ids = results.map((r) => r.atom.id);
+			expect(ids).toContain("atom-13");
+		});
 	});
 });
