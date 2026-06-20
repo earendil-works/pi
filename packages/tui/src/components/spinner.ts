@@ -30,12 +30,6 @@ export class Spinner {
 		return this.frames[this.currentFrame] ?? "";
 	}
 
-	/** @deprecated Use renderText(). */
-	renderFrame(defaultColorFn?: (frame: string) => string): string {
-		const frame = this.renderText();
-		return frame && defaultColorFn ? defaultColorFn(frame) : frame;
-	}
-
 	isActive(): boolean {
 		return this.active;
 	}
