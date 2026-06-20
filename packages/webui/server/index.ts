@@ -11,6 +11,7 @@ import { mountCronRoutes } from "./routes/cron";
 import { mountSessionsRoutes } from "./routes/sessions";
 import { mountModelsRoutes } from "./routes/models";
 import { mountSettingsRoutes } from "./routes/settings";
+import { mountMemoryRoutes } from "./routes/memory";
 import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
@@ -244,6 +245,18 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
 
   // Settings REST API endpoint - mounted BEFORE static catch-all
   mountSettingsRoutes(app);
+
+  // Memory REST API endpoints - mounted BEFORE static catch-all.
+  // dbPath / atomsDir resolve to the same default location as the
+  // personal-assistant extension's DEFAULT_DB_PATH / DEFAULT_ATOMS_DIR
+  // (extensions/personal-assistant/memory.ts). Env-var overrides keep
+  // tests and CI off the user's real ~/.pi/agent/memory tree.
+  mountMemoryRoutes(app, {
+    dbPath: process.env.PI_MEMORY_DB_PATH ?? join(homedir(), ".pi", "agent", "memory", "memory.db"),
+    atomsDir: process.env.PI_MEMORY_ATOMS_DIR ?? join(homedir(), ".pi", "agent", "memory", "atoms"),
+    settings,
+    callLlm,
+  });
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   // Search for the web build in both dev and bundled contexts. In dev (tsx

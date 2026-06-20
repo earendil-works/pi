@@ -639,11 +639,13 @@ export function mountMemoryRoutes(
 	app: express.Express,
 	deps: MemoryDeps,
 ): void {
+	// Static paths MUST register before /:id to avoid Express route shadowing
 	registerGetMemoryList(app, deps);
-	registerGetMemoryById(app, deps);
-	registerPatchMemory(app, deps);
 	registerGetMemoryStats(app, deps);
-	registerPostArchive(app, deps);
 	registerPostSearch(app, deps);
 	registerPostExtract(app, deps);
+	// Parameterized paths last
+	registerGetMemoryById(app, deps);
+	registerPatchMemory(app, deps);
+	registerPostArchive(app, deps);
 }
