@@ -1378,47 +1378,41 @@ bar`,
 	});
 
 	describe("Streaming code fences", () => {
-		it("does not render partial closing fences as code content", () => {
-			const markdown = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+		it("stabilizes partial closing fence rendering", () => {
+			const cases = [
+				{
+					input: "```ts\nconst x = 1;\n``",
+					expected: ["```ts", "  const x = 1;", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```",
+					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+				},
+				{
+					input: "```ts\n``",
+					expected: ["```ts", "", "```"],
+				},
+				{
+					input: "````\n```",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "~~~~~\n~~~~",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
+					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+				},
+			];
 
-			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+			for (const { input, expected } of cases) {
+				const markdown = new Markdown(input, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["```ts", "  const x = 1;", "```"]);
-		});
+				assert.deepStrictEqual(lines, expected);
+			}
 
-		it("preserves partial-looking lines in closed code blocks", () => {
-			const markdown = new Markdown("```md\nnot a closing fence:\n``\n```", 0, 0, defaultMarkdownTheme);
-
-			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
-
-			assert.deepStrictEqual(lines, ["```md", "  not a closing fence:", "  ``", "```"]);
-		});
-
-		it("trims partial closing fences from empty streamed code blocks", () => {
-			const markdown = new Markdown("```ts\n``", 0, 0, defaultMarkdownTheme);
-
-			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
-
-			assert.deepStrictEqual(lines, ["```ts", "", "```"]);
-		});
-
-		it("trims partial closing fences shorter than longer openers", () => {
-			const markdown = new Markdown("````\n```", 0, 0, defaultMarkdownTheme);
-
-			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
-
-			assert.deepStrictEqual(lines, ["```", "", "```"]);
-		});
-
-		it("does not adjust non-final code blocks", () => {
-			const markdown = new Markdown("```md\nnot a closing fence:\n``\n```\n\nafter", 0, 0, defaultMarkdownTheme);
-
-			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
-
-			assert.deepStrictEqual(lines, ["```md", "  not a closing fence:", "  ``", "```", "", "after"]);
-		});
-
-		it("keeps line count stable when a closing fence completes", () => {
 			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
 			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
 

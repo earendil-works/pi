@@ -32,26 +32,19 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 		trimPartialClosingFences(token.tokens ?? []);
 		return;
 	}
-
 	if (token?.type !== "code") {
 		return;
 	}
 
-	// Markdown fenced code blocks can use either backticks or tildes, with length 3 or more.
-	// Capture the opening fence marker ( ``` , ~~~ , or longer) so a streamed partial
-	// closing fence shorter than the opener can be removed from the code content below.
-	// This is done to avoid the content shrinking when rendering streamed partial code blocks.
-	const opener = /^(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
-	const marker = opener?.groups?.marker;
-	if (!marker) {
+	// Trim streamed partial closing fences so code blocks do not shrink/flicker
+	// when the final fence character arrives. See https://github.com/earendil-works/pi/issues/5825.
+	const marker = /^(`{3,}|~{3,})/.exec(token.raw)?.[1];
+	const lastLine = token.raw.split("\n").pop();
+	if (!marker || !lastLine || lastLine.length >= marker.length || lastLine !== marker[0]?.repeat(lastLine.length)) {
 		return;
 	}
 
-	const fenceChar = marker[0];
-	const partialClosingFence = new RegExp(`(?:^|\\n)${fenceChar}{1,${marker.length - 1}}$`);
-	if (partialClosingFence.test(token.raw)) {
-		token.text = token.text.replace(partialClosingFence, "");
-	}
+	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
 }
 
 const markdownParser = new Marked();
