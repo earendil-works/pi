@@ -1176,3 +1176,182 @@ describe("mountMemoryRoutes includes search", () => {
 		expect(routes).toContain("POST /api/memory/search");
 	});
 });
+
+// Tests for the POST /api/memory/extract endpoint (Task 7.7).
+// Covers S65 (extract creates atoms from messages), S66 (empty plan
+// returns zero counts), and S67 (validates message shape). Mirrors the
+// runMemoryExtraction contract from extensions/personal-assistant/extraction.ts.
+//
+// embedText is mocked at the module level (top of file) so extraction
+// can complete without ollama. The route's callLlm dependency is
+// satisfied by an inline mock that returns a valid extraction plan.
+describe("POST /api/memory/extract", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+	// Holder pattern: deps.callLlm captures the closure-bound mockCallLlm
+	// so per-test reassignments of `mockImpl` flow through without
+	// re-registering the route.
+	let mockImpl: () => string;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-extract-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		// Default mock LLM returns one valid item. Individual tests
+		// reassign `mockImpl` before their request to change the
+		// response (e.g. empty plan).
+		mockImpl = () =>
+			JSON.stringify({
+				items: [
+					{
+						type: "rule",
+						title: "Extracted rule",
+						content: "Test content from extract",
+						summary: "Test summary",
+						tags: ["extract"],
+						importance: 0.5,
+					},
+				],
+			});
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: { memory: { embedding: { model: "test-model" } } } as never,
+			callLlm: async (_prompt: string) => mockImpl(),
+		};
+		const { registerPostExtract } = await import("../routes/memory.ts");
+		registerPostExtract(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		path: string,
+		body: Record<string, unknown> = {},
+	): Promise<{ status: number; data: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}${path}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, data };
+	};
+
+	it("returns 400 if messages missing", async () => {
+		const res = await fetchAt("/api/memory/extract", {});
+		expect(res.status).toBe(400);
+		expect(String(res.data.error)).toContain("messages");
+	});
+
+	it("returns 400 if messages is empty array", async () => {
+		const res = await fetchAt("/api/memory/extract", { messages: [] });
+		expect(res.status).toBe(400);
+		expect(String(res.data.error)).toContain("messages");
+	});
+
+	it("returns 400 if message missing role/content", async () => {
+		const res = await fetchAt("/api/memory/extract", {
+			messages: [{ content: "x" }],
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("returns 400 if message role/content not strings", async () => {
+		const res = await fetchAt("/api/memory/extract", {
+			messages: [{ role: 123, content: "x" }],
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("extracts atoms and returns counts (S65)", async () => {
+		const res = await fetchAt("/api/memory/extract", {
+			messages: [{ role: "user", content: "I prefer dark mode" }],
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.created).toBe(1);
+		const createdIds = res.data.createdIds as string[];
+		expect(createdIds).toHaveLength(1);
+		expect(typeof createdIds[0]).toBe("string");
+		// plan echo contract: items + modelUsed + generatedAt
+		const plan = res.data.plan as Record<string, unknown>;
+		expect(Array.isArray(plan.items)).toBe(true);
+		expect((plan.items as unknown[]).length).toBe(1);
+		expect(plan.modelUsed).toBe("test-model");
+		expect(typeof plan.generatedAt).toBe("number");
+	});
+
+	it("handles LLM returning no items (S66)", async () => {
+		// Override the closure-bound mockImpl so deps.callLlm returns
+		// the empty plan for this test only.
+		mockImpl = () => JSON.stringify({ items: [] });
+		const res = await fetchAt("/api/memory/extract", {
+			messages: [{ role: "user", content: "nothing" }],
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.created).toBe(0);
+		expect(res.data.superseded).toBe(0);
+		expect(res.data.skipped).toBe(0);
+		const createdIds = res.data.createdIds as unknown[];
+		expect(createdIds).toHaveLength(0);
+	});
+
+	it("returns supersededPairs and skippedIds as arrays", async () => {
+		const res = await fetchAt("/api/memory/extract", {
+			messages: [{ role: "user", content: "x" }],
+		});
+		expect(res.status).toBe(200);
+		expect(Array.isArray(res.data.supersededPairs)).toBe(true);
+		expect(Array.isArray(res.data.skippedIds)).toBe(true);
+	});
+});
+
+// Verifies mountMemoryRoutes registers the extract handler. Guards against
+// accidental removal of the registerPostExtract call.
+describe("mountMemoryRoutes includes extract", () => {
+	it("registers POST /api/memory/extract", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("POST /api/memory/extract");
+	});
+});

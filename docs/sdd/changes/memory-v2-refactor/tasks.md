@@ -195,7 +195,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "search"` 通过 (≥2 测试)
   - **依赖**: 5.1, 5.2, 7.1
 
-- [ ] 7.7 **实现 POST /api/memory/extract (手动触发)**
+- [x] 7.7 **实现 POST /api/memory/extract (手动触发)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: POST /api/memory/extract body `{messages: [...]}` → `runMemoryExtraction({ callLlm, config, messages, dbPath, atomsDir })` (统一签名,见 Task 4.5)。返 `{plan, created, superseded, skipped}`。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "extract"` 通过 (≥1 测试)

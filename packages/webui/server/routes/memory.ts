@@ -7,10 +7,8 @@
 //   - GET /api/memory/stats      (counts, Task 7.2)
 //   - POST /api/memory/:id/archive  (toggle archived flag, Task 7.5)
 //   - POST /api/memory/search    (recall + token budget, Task 7.6)
+//   - POST /api/memory/extract   (manual extraction pipeline, Task 7.7)
 //   - mountMemoryRoutes          (DI factory wiring dbPath + atomsDir, Task 7.1)
-//
-// Future tasks will add:
-//   - POST /api/memory           (extraction entry point, Task 7.7+)
 //
 // Cross-package imports: extensions/personal-assistant is not in the root
 // workspaces array, and its index.ts only re-exports runMemoryExtraction.
@@ -535,6 +533,104 @@ export function registerPostSearch(
 }
 
 /**
+ * POST /api/memory/extract — manually trigger the full extraction
+ * pipeline against a conversation transcript (R59, S65-S67).
+ *
+ * Body:
+ *   - `messages` (required): non-empty array of `{role: string,
+ *     content: string}` entries. The shape mirrors the LLM chat format
+ *     so callers can pass a session transcript directly. Each entry
+ *     must have both `role` and `content` as strings (S67).
+ *
+ * Behavior:
+ *   - Validates the body. Missing / empty `messages` → 400. Malformed
+ *     entries → 400. No silent fallback.
+ *   - Lazy-imports runMemoryExtraction from
+ *     extensions/personal-assistant/extraction.ts (the same pattern as
+ *     registerPostSearch) so the cold-start cost is minimal when the
+ *     route is unused. runMemoryExtraction opens its own MemoryIndex
+ *     internally, so the route doesn't need to hold the DB handle.
+ *   - Returns counts and IDs from each extraction bucket (created,
+ *     superseded, skipped) plus a slimmed-down plan echo. Per R60 the
+ *     response shape is `{plan, created, superseded, skipped,
+ *     createdIds, supersededPairs, skippedIds}`.
+ *
+ * Architecture constraints:
+ *   - Per-route `express.json()` (matching the rest of the POST handlers
+ *     in this file) so other handlers stay payload-free.
+ *   - 500 is reserved for genuine runMemoryExtraction failures (DB /
+ *     LLM / file-system). Validation errors stay 400 so callers can
+ *     distinguish "bad input" from "internal failure".
+ *
+ * Status codes:
+ *   - 200: extraction ran. Counts may be zero if the LLM returned an
+ *     empty plan (S66) or invalid JSON.
+ *   - 400: messages missing / empty / malformed (S67).
+ *   - 500: runMemoryExtraction threw.
+ */
+export function registerPostExtract(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/extract", express.json(), async (req, res) => {
+		try {
+			const { messages } = req.body || {};
+			if (!Array.isArray(messages) || messages.length === 0) {
+				res
+					.status(400)
+					.json({ error: "messages must be a non-empty array" });
+				return;
+			}
+			// Validate each message has string role + content (S67).
+			// `m?.role` / `m?.content` short-circuits when the entry
+			// itself is null/undefined so the error fires on the shape,
+			// not on a TypeError inside the loop.
+			for (const m of messages) {
+				if (typeof m?.role !== "string" || typeof m?.content !== "string") {
+					res.status(400).json({
+						error: "each message must have string role and content",
+					});
+					return;
+				}
+			}
+
+			// Lazy-import so this route pays nothing at server boot and
+			// so we don't drag the extraction module graph into modules
+			// that never call the route.
+			const { runMemoryExtraction } = await import(
+				"../../../../extensions/personal-assistant/extraction.ts"
+			);
+			const result = await runMemoryExtraction({
+				callLlm: deps.callLlm,
+				config: { model: deps.settings.memory?.embedding?.model },
+				messages,
+				dbPath: deps.dbPath,
+				atomsDir: deps.atomsDir,
+			});
+
+			res.json({
+				plan: {
+					items: result.plan.items,
+					modelUsed: result.plan.modelUsed,
+					generatedAt: result.plan.generatedAt,
+				},
+				created: result.created.length,
+				superseded: result.superseded.length,
+				skipped: result.skipped.length,
+				createdIds: result.created.map((a) => a.id),
+				supersededPairs: result.superseded.map((s) => ({
+					oldId: s.oldId,
+					newId: s.newAtom.id,
+				})),
+				skippedIds: result.skipped.map((a) => a.id),
+			});
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
  * Register all memory routes on the given Express app. New handlers
  * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
  * callers only need to know one entry point.
@@ -549,4 +645,5 @@ export function mountMemoryRoutes(
 	registerGetMemoryStats(app, deps);
 	registerPostArchive(app, deps);
 	registerPostSearch(app, deps);
+	registerPostExtract(app, deps);
 }
