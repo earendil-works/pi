@@ -189,7 +189,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "archive"` 通过 (≥2 测试)
   - **依赖**: 2.6, 7.3
 
-- [ ] 7.6 **实现 POST /api/memory/search (召回 + token budget)**
+- [x] 7.6 **实现 POST /api/memory/search (召回 + token budget)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: POST /api/memory/search body `{query, topK?, tokenBudget?}` → recallAtoms → formatMemoryContext。返 `{results, recallTimeMs, tokenBudgetUsed}`。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "search"` 通过 (≥2 测试)
@@ -211,7 +211,7 @@
 
 ## 8. Lifecycle Integration
 
-- [ ] 8.1 **实现 registerMemory + session_before_compact hook**
+- [x] 8.1 **实现 registerMemory + session_before_compact hook**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify, 重写)
   - **内容**: `registerMemory(pi)` 注册 `session_before_compact` 调 `extractMemories` + writeExtractionReport。`session_start` 调 `runDecay`(每小时最多一次)。
   - **验证**: vitest mock pi ExtensionAPI,验证 hook 注册 + session_before_compact 触发 extractMemories
@@ -262,7 +262,7 @@
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/recall-quality.test.ts` 通过,且 metrics 满足阈值。console.log 输出每次 query 的 metrics。
   - **依赖**: 5.1
 
-- [ ] 9.2 **添加 chinese query 召回 case (关键!)**
+- [x] 9.2 **添加 chinese query 召回 case (关键!)**
   - **文件**: `extensions/personal-assistant/test/recall-quality.test.ts` (Modify)
   - **内容**: dataset 含中文 atom (e.g., title="PDF图片提取必须用pymupdf", content 详细)。queries: `"图片"` / `"PDF提取"` / `"CMYK处理"`。验证:中文 query 命中中文 atom,recall ≥ 0.5 (因中文数据集小,门槛低)。
   - **验证**: 9.1 测试通过,中文 case recall@5 ≥ 0.5
@@ -272,7 +272,7 @@
 
 ## 10. Cleanup & Index
 
-- [ ] 10.1 **更新 index.ts 导出新 API**
+- [x] 10.1 **更新 index.ts 导出新 API**
   - **文件**: `extensions/personal-assistant/index.ts` (Modify)
   - **内容**: 导出 `MemoryIndex`, `MemoryAtom`, `MemoryAtomType`, `RecallResult`, `ExtractionItem`, `extractionPlanSchema`, `runMemoryExtraction`, `runMemoryExtractionFromPlan` (新), `recallAtoms`, `formatMemoryContext`, `writeAtomToFile`, `readAtomFromFile`, `embedText`, `getMemoryConfig`, `loadConfig`。删除旧导出 (searchByFts, searchAtoms, expandCjkKeywords 等)。
   - **验证**: `cd extensions/personal-assistant && node -e "import('./index.ts').then(m => console.log(Object.keys(m).sort()))"` 输出新 API 名

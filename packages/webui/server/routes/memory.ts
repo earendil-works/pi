@@ -1,14 +1,16 @@
 // Memory REST routes.
 //
 // This module owns the read-side API for the v2 memory model:
-//   - GET /api/memory       (list with filter/pagination, Task 7.1)
-//   - GET /api/memory/:id   (full atom + content body, Task 7.3)
-//   - mountMemoryRoutes     (DI factory wiring dbPath + atomsDir, Task 7.1)
+//   - GET /api/memory            (list with filter/pagination, Task 7.1)
+//   - GET /api/memory/:id        (full atom + content body, Task 7.3)
+//   - PATCH /api/memory/:id      (manual edits, Task 7.5)
+//   - GET /api/memory/stats      (counts, Task 7.2)
+//   - POST /api/memory/:id/archive  (toggle archived flag, Task 7.5)
+//   - POST /api/memory/search    (recall + token budget, Task 7.6)
+//   - mountMemoryRoutes          (DI factory wiring dbPath + atomsDir, Task 7.1)
 //
 // Future tasks will add:
-//   - POST /api/memory      (extraction entry point, Task 7.4+)
-//   - PATCH /api/memory/:id (manual edits, Task 7.5+)
-//   - DELETE /api/memory/:id (archive, Task 7.6+)
+//   - POST /api/memory           (extraction entry point, Task 7.7+)
 //
 // Cross-package imports: extensions/personal-assistant is not in the root
 // workspaces array, and its index.ts only re-exports runMemoryExtraction.
@@ -432,6 +434,107 @@ export function registerPostArchive(
 }
 
 /**
+ * POST /api/memory/search — recall ranked atoms and format them within
+ * a token budget (R54, S59, S60).
+ *
+ * Body:
+ *   - `query`        (required) — non-empty string to embed and search.
+ *   - `topK`         (optional, default 10) — max candidates to return.
+ *   - `tokenBudget`  (optional, default 4000) — ceiling for the formatted
+ *                    text block; we never exceed it (R49).
+ *   - `type`         (optional) — restrict recall to a single atom type.
+ *
+ * Response:
+ *   - `results`: ranked list of `{ id, type, title, summary, tags,
+ *     distance, cosine, tier }`. Empty when no atoms match or ollama is
+ *     unreachable (embedText → null → []).
+ *   - `formattedText`: a single text block of `formatMemoryContext`
+ *     output, packed within `tokenBudget` tokens.
+ *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
+ *   - `tokenBudgetUsed`: actual tokens consumed by `formattedText`.
+ *
+ * Architecture constraints:
+ *   - recallAtoms + formatMemoryContext are imported via the relative
+ *     extensions/personal-assistant path (same as MemoryIndex) — the
+ *     package is not in the workspace and `index.ts` only re-exports
+ *     runMemoryExtraction.
+ *   - Per-route `express.json()` so other handlers stay payload-free.
+ *
+ * Status codes:
+ *   - 200: search ran (results may be empty).
+ *   - 400: query missing or empty.
+ *   - 500: only for genuine DB / vector / file errors.
+ */
+export function registerPostSearch(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/search", express.json(), async (req, res) => {
+		try {
+			const {
+				query,
+				topK = 10,
+				tokenBudget = 4000,
+				type,
+			} = req.body || {};
+			if (typeof query !== "string" || query.length === 0) {
+				res
+					.status(400)
+					.json({ error: "query must be a non-empty string" });
+				return;
+			}
+
+			const index = await createIndex(deps.dbPath);
+			try {
+				// Lazy-import to avoid a static import cycle and to keep
+				// the cold-start cost minimal when the route is unused.
+				const { recallAtoms } = await import(
+					"../../../../extensions/personal-assistant/search.ts"
+				);
+				const { formatMemoryContext } = await import(
+					"../../../../extensions/personal-assistant/format.ts"
+				);
+
+				// Measure only the recall itself, not the formatting —
+				// formatMemoryContext is pure and sub-millisecond.
+				const t0 = Date.now();
+				const results = await recallAtoms(
+					index,
+					query,
+					deps.atomsDir,
+					{
+						topK,
+						filter: type ? { type } : undefined,
+					},
+				);
+				const recallTimeMs = Date.now() - t0;
+
+				const formatted = formatMemoryContext(results, tokenBudget);
+				res.json({
+					results: results.map((r) => ({
+						id: r.atom.id,
+						type: r.atom.type,
+						title: r.atom.title,
+						summary: r.atom.summary,
+						tags: r.atom.tags,
+						distance: r.distance,
+						cosine: r.cosine,
+						tier: r.tier,
+					})),
+					formattedText: formatted.text,
+					recallTimeMs,
+					tokenBudgetUsed: formatted.used,
+				});
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
  * Register all memory routes on the given Express app. New handlers
  * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
  * callers only need to know one entry point.
@@ -445,4 +548,5 @@ export function mountMemoryRoutes(
 	registerPatchMemory(app, deps);
 	registerGetMemoryStats(app, deps);
 	registerPostArchive(app, deps);
+	registerPostSearch(app, deps);
 }

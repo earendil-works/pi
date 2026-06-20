@@ -7,11 +7,12 @@
 // the esbuild server bundle.
 
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { embedText } from "../../../../extensions/personal-assistant/embed.ts";
 import {
 	mountMemoryRoutes,
 	registerGetMemoryById,
@@ -21,6 +22,29 @@ import {
 	registerPostArchive,
 	type MemoryDeps,
 } from "../routes/memory.ts";
+
+// Module-level vi.mock so memory.ts's runtime `await import(...embed.ts)`
+// path inside recallAtoms hits the deterministic char-bag implementation
+// below. Without this, embedText returns null in CI (ollama unreachable)
+// and recallAtoms collapses to [] (Decision 7 — no fallback).
+vi.mock("../../../../extensions/personal-assistant/embed.ts", async () => {
+	const actual = await vi.importActual<
+		typeof import("../../../../extensions/personal-assistant/embed.ts")
+	>("../../../../extensions/personal-assistant/embed.ts");
+	const charBag = async (text: string): Promise<number[]> => {
+		const arr = new Array(1024).fill(0);
+		for (let i = 0; i < text.length; i++) {
+			arr[text.charCodeAt(i) % 1024] += 1;
+		}
+		const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
+		if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
+		return arr;
+	};
+	return {
+		...actual,
+		embedText: vi.fn(charBag),
+	};
+});
 
 describe("GET /api/memory/:id", () => {
 	let app: express.Express;
@@ -935,5 +959,220 @@ describe("mountMemoryRoutes includes archive", () => {
 			}
 		}
 		expect(routes).toContain("POST /api/memory/:id/archive");
+	});
+});
+
+// Tests for the POST /api/memory/search endpoint (Task 7.6).
+// Covers S59 (ranked results), S60 (token budget respected), and R54
+// (request body shape). Mirrors the recallAtoms + formatMemoryContext
+// contract from extensions/personal-assistant/{search,format}.ts.
+//
+// The module-level vi.mock of embed.ts (at the top of this file) makes
+// embedText deterministic so recallAtoms can return real ranked results
+// even though ollama is unreachable in CI. Without the mock, embedText
+// would return null and recallAtoms would collapse to [] (Decision 7).
+describe("POST /api/memory/search", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-search-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		// registerPostSearch is added in memory.ts by Task 7.6. The tests
+		// below expect it to exist; if this import fails, the test file
+		// fails to load — that IS the RED signal.
+		const { registerPostSearch } = await import("../routes/memory.ts");
+		registerPostSearch(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: `search-${Math.random().toString(36).slice(2, 10)}`,
+				type: "rule",
+				title: "Test rule content",
+				content: "Distinct test content alpha",
+				summary: "Test summary",
+				tags: ["test"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-" + Math.random().toString(36).slice(2, 14),
+				source_session: null,
+				...overrides,
+			};
+			// Use the mocked embedText to produce an embedding that
+			// shares the char-bag space with query embeddings at
+			// recall-time. This is what makes the cosine threshold (0.5)
+			// pass for matching texts in tests.
+			const text = `${String(atom.title)}\n\n${String(atom.summary)}\n\n${String(atom.content)}\n\n${(atom.tags as string[]).join(" ")}`;
+			const embedding = await embedText(text);
+			if (!embedding) throw new Error("mocked embedText returned null");
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	const fetchAt = async (
+		routePath: string,
+		body: Record<string, unknown> = {},
+	): Promise<{ status: number; data: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, data };
+	};
+
+	it("returns 400 if query missing", async () => {
+		const res = await fetchAt("/api/memory/search", {});
+		expect(res.status).toBe(400);
+		expect(String(res.data.error)).toContain("query");
+	});
+
+	it("returns 400 if query is empty string", async () => {
+		const res = await fetchAt("/api/memory/search", { query: "" });
+		expect(res.status).toBe(400);
+	});
+
+	it("returns empty results if no atoms match", async () => {
+		const res = await fetchAt("/api/memory/search", { query: "any query" });
+		expect(res.status).toBe(200);
+		expect(res.data.results).toEqual([]);
+		expect(res.data.tokenBudgetUsed).toBe(0);
+		expect(res.data.formattedText).toBe("");
+	});
+
+	it("returns results + tokenBudgetUsed for valid query", async () => {
+		await insertAtom({ content: "test content alpha distinct keywords here" });
+		const res = await fetchAt("/api/memory/search", {
+			query: "alpha content keywords",
+			tokenBudget: 1000,
+		});
+		expect(res.status).toBe(200);
+		const results = res.data.results as Array<Record<string, unknown>>;
+		expect(results.length).toBeGreaterThan(0);
+		expect(typeof res.data.tokenBudgetUsed).toBe("number");
+		expect(res.data.tokenBudgetUsed as number).toBeGreaterThan(0);
+		// Result shape contract: id/type/title/summary/tags/distance/cosine/tier
+		const first = results[0] as Record<string, unknown>;
+		expect(typeof first.id).toBe("string");
+		expect(typeof first.type).toBe("string");
+		expect(typeof first.distance).toBe("number");
+		expect(typeof first.cosine).toBe("number");
+		expect(first.tier === "L0" || first.tier === "L1").toBe(true);
+	});
+
+	it("respects type filter", async () => {
+		await insertAtom({ type: "rule", content: "rule content alpha keywords" });
+		await insertAtom({ type: "fact", content: "fact content beta keywords" });
+		const res = await fetchAt("/api/memory/search", {
+			query: "alpha content keywords",
+			type: "rule",
+		});
+		expect(res.status).toBe(200);
+		const results = res.data.results as Array<{ type: string }>;
+		expect(results.length).toBeGreaterThan(0);
+		expect(results.every((r) => r.type === "rule")).toBe(true);
+	});
+
+	it("respects tokenBudget", async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertAtom({
+				content: `Content atom ${i} distinct words ${i * 100} keyword alpha`,
+			});
+		}
+		const res = await fetchAt("/api/memory/search", {
+			query: "any query alpha",
+			topK: 10,
+			tokenBudget: 50,
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.tokenBudgetUsed as number).toBeLessThanOrEqual(50);
+	});
+
+	it("reports a non-negative recallTimeMs", async () => {
+		await insertAtom({ content: "alpha content keyword phrase" });
+		const res = await fetchAt("/api/memory/search", { query: "alpha content" });
+		expect(res.status).toBe(200);
+		expect(typeof res.data.recallTimeMs).toBe("number");
+		expect(res.data.recallTimeMs as number).toBeGreaterThanOrEqual(0);
+	});
+});
+
+// Verifies mountMemoryRoutes registers the search handler. Guards against
+// accidental removal of the registerPostSearch call.
+describe("mountMemoryRoutes includes search", () => {
+	it("registers POST /api/memory/search", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("POST /api/memory/search");
 	});
 });
