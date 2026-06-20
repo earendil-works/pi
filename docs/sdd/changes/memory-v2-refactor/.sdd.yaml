@@ -1,0 +1,11 @@
+phase: review
+workflow: full
+change: memory-v2-refactor
+created_at: 2026-06-18
+base_ref: 3956c586dadd9c60807fcc7fe8d9d418567b9541
+tasks_total: 41
+tasks_done: 41
+isolation: branch
+verify_result: pending
+last_review_sha: 48c889dbab5dbcba176e94dd5d6605a682035325
+archived: false
