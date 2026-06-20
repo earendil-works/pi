@@ -18,6 +18,7 @@ import {
 	registerGetMemoryList,
 	registerGetMemoryStats,
 	registerPatchMemory,
+	registerPostArchive,
 	type MemoryDeps,
 } from "../routes/memory.ts";
 
@@ -708,5 +709,231 @@ describe("mountMemoryRoutes includes stats", () => {
 			}
 		}
 		expect(routes).toContain("GET /api/memory/stats");
+	});
+});
+
+// Tests for the POST /api/memory/:id/archive endpoint (Task 7.5).
+// Covers S48 (archive sets archived=1 + deletes vector), S49 (unarchive
+// sets archived=0, no vector recompute), and S50 (explicit body.archived
+// overrides toggle). Reflects R44-R46.
+//
+// Architecture notes mirrored from memory.ts:
+//   - markArchived writes an audit row; markUnarchived does not (per design).
+//   - Vector is deleted only on archive (not on unarchive) — unarchive
+//     leaves the row absent; if it was archived and the vector was already
+//     deleted, no vector re-compute is performed.
+//   - express.json() is applied per-route (not globally) so other handlers
+//     stay payload-free unless they explicitly need a body.
+describe("POST /api/memory/:id/archive", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-archive-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		registerPostArchive(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-arch",
+				type: "fact",
+				title: "T",
+				content: "C",
+				summary: "S",
+				tags: [],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-arch-" + Math.random().toString(36).slice(2, 14),
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	const fetchAt = async (
+		routePath: string,
+		opts: { method?: string; body?: unknown } = {},
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: opts.method ?? "GET",
+			headers: { "Content-Type": "application/json" },
+			body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	it("returns 404 if atom not found", async () => {
+		const res = await fetchAt("/api/memory/nonexistent/archive", {
+			method: "POST",
+		});
+		expect(res.status).toBe(404);
+		expect(String(res.body.error)).toContain("not found");
+	});
+
+	it("archives active atom (toggle)", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-arch/archive", {
+			method: "POST",
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.id).toBe("atom-arch");
+		expect(res.body.archived).toBe(1);
+	});
+
+	it("deletes vector when archiving (R45)", async () => {
+		await insertAtom();
+		// Confirm vector exists before archiving.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx1 = new MemoryIndex(dbPath);
+		await idx1.init();
+		const before = idx1
+			.getRawDb()
+			.prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`)
+			.get("atom-arch");
+		expect(before).toBeDefined();
+		idx1.close();
+
+		await fetchAt("/api/memory/atom-arch/archive", { method: "POST" });
+
+		const idx2 = new MemoryIndex(dbPath);
+		await idx2.init();
+		const after = idx2
+			.getRawDb()
+			.prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`)
+			.get("atom-arch");
+		expect(after).toBeUndefined();
+		idx2.close();
+	});
+
+	it("unarchives archived atom (toggle)", async () => {
+		await insertAtom({ archived: 1 });
+		const res = await fetchAt("/api/memory/atom-arch/archive", {
+			method: "POST",
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.archived).toBe(0);
+	});
+
+	it("explicit body.archived=true archives (S50)", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-arch/archive", {
+			method: "POST",
+			body: { archived: true },
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.archived).toBe(1);
+	});
+
+	it("explicit body.archived=false unarchives (S50, no vector recompute per R46)", async () => {
+		await insertAtom({ archived: 1 });
+		const res = await fetchAt("/api/memory/atom-arch/archive", {
+			method: "POST",
+			body: { archived: false },
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.archived).toBe(0);
+	});
+
+	it("persists archived state in DB after toggle archive", async () => {
+		await insertAtom();
+		await fetchAt("/api/memory/atom-arch/archive", { method: "POST" });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const row = idx.getAtom("atom-arch");
+			expect(row).not.toBeNull();
+			expect(row?.archived).toBe(1);
+		} finally {
+			idx.close();
+		}
+	});
+});
+
+// Verifies mountMemoryRoutes registers the POST archive handler alongside
+// the other handlers. Guards against accidental removal of the
+// registerPostArchive call.
+describe("mountMemoryRoutes includes archive", () => {
+	it("registers POST /api/memory/:id/archive", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("POST /api/memory/:id/archive");
 	});
 });

@@ -183,7 +183,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "patch"` 通过 (≥3 测试:union tags/recompute embedding/version+1)
   - **依赖**: 2.3, 3.1, 3.2, 7.3
 
-- [ ] 7.5 **实现 POST /api/memory/:id/archive**
+- [x] 7.5 **实现 POST /api/memory/:id/archive**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: POST /api/memory/:id/archive toggle archived field (default toggle,body.archived 显式 set)。markArchived + deleteVector。**unarchive 不自动 re-compute vector** (scenarios.md:179 明确)。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "archive"` 通过 (≥2 测试)

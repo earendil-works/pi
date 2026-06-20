@@ -358,6 +358,80 @@ export function registerGetMemoryStats(
 }
 
 /**
+ * POST /api/memory/:id/archive — toggle or explicitly set the atom's
+ * archived flag (R44).
+ *
+ * Body:
+ *   - `archived` (boolean, optional): explicit target state. If omitted,
+ *     the route toggles the current state (active→archived, archived→
+ *     active). If provided, the boolean overrides the toggle and the
+ *     target state equals the body value (S50).
+ *
+ * Behavior (mirrors storage.ts design):
+ *   - Archiving (target=1): markArchived + deleteVector (R45). The
+ *     storage layer writes an audit row inside markArchived's
+ *     transaction.
+ *   - Unarchiving (target=0): markUnarchived only (R46). No audit row,
+ *     no vector re-compute — the original archive audit row is
+ *     considered sufficient to reconstruct history, and a vector
+ *     absent since archive stays absent.
+ *
+ * Per-route `express.json()` middleware is used so other handlers
+ * remain payload-free unless they explicitly need a body.
+ *
+ * Status codes:
+ *   - 200: `{ id, archived }` (0 or 1).
+ *   - 404: atom id is unknown.
+ *   - 500: DB or index failure.
+ */
+export function registerPostArchive(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/:id/archive", express.json(), async (req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const existing = index.getAtom(req.params.id);
+				if (!existing) {
+					res.status(404).json({ error: "atom not found" });
+					return;
+				}
+				// Explicit body.archived overrides the toggle; otherwise
+				// invert the current state (S50).
+				const explicitArchived = req.body?.archived;
+				const targetArchived: 0 | 1 =
+					typeof explicitArchived === "boolean"
+						? explicitArchived
+							? 1
+							: 0
+						: existing.archived === 0
+							? 1
+							: 0;
+
+				if (targetArchived === 1) {
+					// markArchived writes the audit row in its own
+					// transaction; deleteVector is idempotent so calling
+					// it unconditionally is safe (matches R45 + R27).
+					index.markArchived(req.params.id);
+					index.deleteVector(req.params.id);
+				} else {
+					// No transaction, no audit, no vector re-compute —
+					// mirrors markUnarchived's intentional simplicity.
+					index.markUnarchived(req.params.id);
+				}
+
+				res.json({ id: req.params.id, archived: targetArchived });
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
  * Register all memory routes on the given Express app. New handlers
  * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
  * callers only need to know one entry point.
@@ -370,4 +444,5 @@ export function mountMemoryRoutes(
 	registerGetMemoryById(app, deps);
 	registerPatchMemory(app, deps);
 	registerGetMemoryStats(app, deps);
+	registerPostArchive(app, deps);
 }
