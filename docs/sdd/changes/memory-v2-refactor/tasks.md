@@ -278,7 +278,7 @@
   - **验证**: `cd extensions/personal-assistant && node -e "import('./index.ts').then(m => console.log(Object.keys(m).sort()))"` 输出新 API 名
   - **依赖**: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 6.1
 
-- [ ] 10.2 **删除旧 functions (searchByFts, rewriteQuery 等)**
+- [x] 10.2 **删除旧 functions (searchByFts, rewriteQuery 等)**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 删除: `searchByFts`, `searchAtoms`, `searchAtomsWithScores`, `rewriteQuery`, `rewriteQueryWithCallLlm`, `callOllamaRewrite`, `simpleKeywordExtraction`, `dedupeRedundantKeywords`, `dedupeAgainstQuery`, `expandCjkKeywords`, `isEmbeddingServiceAvailable`, `searchEmbeddings`, `parseRewriteJson`, `getEmbedding`。memory.ts 只保留 entry points (registerMemory, extractMemories, runMemoryExtraction)。
   - **验证**: `grep -n "searchByFts\|rewriteQuery\|simpleKeywordExtraction\|expandCjkKeywords" memory.ts` 输出空
