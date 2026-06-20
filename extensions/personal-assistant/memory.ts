@@ -8,9 +8,12 @@
 //   - decay.ts      — runDecay
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText
+//   - search.ts     — recallAtoms (used by the context-injection pipeline)
+//   - format.ts     — formatMemoryContext (used by the context-injection pipeline)
 //
 // What memory.ts still owns:
-//   - registerMemory(pi) — wires session_before_compact + session_start hooks
+//   - registerMemory(pi) — wires session_before_compact + session_start + the
+//     before_agent_start / context memory-injection pipeline.
 //   - loadConfig()       — reads personal-assistant config (graceful fallback to {})
 //   - re-exports the v2 entry points / types so index.ts keeps its current shape
 //
@@ -19,10 +22,15 @@
 //     dependency — the LLM call is supplied by the hook at call time).
 //   - session_start decay is throttled to once per hour per process (DECAY_INTERVAL_MS)
 //     so a chatty session does not thrash the DB.
+//   - before_agent_start kicks off recallAtoms async and stashes the promise in
+//     the module-level `pendingMemorySearch`; context awaits it (raced against
+//     an 8s timeout) and injects the formatted block into the last user
+//     message. Non-destructive: original event is returned if nothing to inject.
 //   - loadConfig returns {} on any failure — never throws. Real config wiring
 //     is external (see SettingsManager / webui routes).
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runDecay } from "./decay.ts";
@@ -71,6 +79,21 @@ const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
 const DECAY_INTERVAL_MS = 60 * 60 * 1000;
 let lastDecayAt = 0;
 
+/**
+ * Per-turn memory-context pipeline state. The before_agent_start hook
+ * kicks off `recallAtoms` async and stores the promise here; the context
+ * hook awaits it (with an 8s race timeout) and injects the formatted
+ * result into the last user message of the event.
+ *
+ * Module-level so the two hooks share the same in-flight search across
+ * the same process. Cleared after the context hook reads it.
+ */
+type FormattedMemory = { text: string; used: number; included: number };
+let pendingMemorySearch: Promise<FormattedMemory | null> | null = null;
+
+/** Hard cap on how long the context hook waits for the recall to finish. */
+const CONTEXT_RECALL_TIMEOUT_MS = 8_000;
+
 // ---------------------------------------------------------------------------
 // Re-exports — keep memory.ts as the single import surface for callers
 // (index.ts re-exports these as the public personal-assistant memory API).
@@ -107,6 +130,14 @@ export function loadConfig(): PersonalAssistantConfig {
  *
  *   - session_start: throttle-guarded runDecay() against the active index.
  *     The hook is a no-op if a decay ran within the last hour.
+ *
+ *   - before_agent_start: fire-and-forget recall of relevant atoms for the
+ *     incoming user prompt. Result is stashed in `pendingMemorySearch` for
+ *     the context hook to pick up.
+ *
+ *   - context: await the pending recall (8s race) and inject the formatted
+ *     memory block into the last user message of the event. Returns the
+ *     original event unchanged when no memory should be injected.
  */
 export function registerMemory(pi: ExtensionAPI): void {
 	// session_before_compact — extract memories before the conversation is
@@ -166,4 +197,94 @@ export function registerMemory(pi: ExtensionAPI): void {
 			index.close();
 		}
 	});
+
+	// before_agent_start — fire-and-forget recall of relevant atoms for the
+	// incoming user prompt. The result is stashed in `pendingMemorySearch`
+	// for the context hook to await on the same turn. Dynamic imports of
+	// search.ts / format.ts keep the cold-start cost off the critical path
+	// for sessions that never reach the context hook.
+	pi.on("before_agent_start", async (event, _ctx) => {
+		const userMessage = (event as { prompt?: string }).prompt ?? "";
+		if (userMessage.length === 0) return;
+
+		const config = loadConfig();
+		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+
+		pendingMemorySearch = (async (): Promise<FormattedMemory | null> => {
+			const index = new MemoryIndex(dbPath);
+			await index.init();
+			try {
+				const { recallAtoms } = await import("./search.ts");
+				const { formatMemoryContext } = await import("./format.ts");
+				const results = await recallAtoms(index, userMessage, atomsDir, { topK: 10 });
+				return formatMemoryContext(results, 4000);
+			} finally {
+				index.close();
+			}
+		})();
+	});
+
+	// context — await the pending recall (raced against an 8s timeout) and
+	// inject the formatted memory block into the last user message of the
+	// event. Non-destructive: the original event is returned unchanged if
+	// there is no pending search, no formatted text, or no user message to
+	// mutate. Modifications produce a fresh messages array — never the
+	// caller's array reference.
+	pi.on("context", async (event: ContextEvent, _ctx) => {
+		const result = await injectMemoryContext(event, pendingMemorySearch);
+		pendingMemorySearch = null;
+		return result;
+	});
+}
+
+/**
+ * Build the context-event result for the memory injection pipeline.
+ *
+ * Extracted to its own typed function so the call site (`pi.on("context", …)`)
+ * returns a value that satisfies the ExtensionHandler<ContextEvent,
+ * ContextEventResult> contract without widening the lambda's inferred return
+ * type into a shape the `on` overload set cannot reconcile (TS will otherwise
+ * fall through to the `"input"` overload and complain).
+ *
+ * Returns:
+ *   - the original event (cast to ContextEventResult) when no search is
+ *     pending, the search produced no text, or no user message is present;
+ *   - a fresh `{ messages: [...] }` object with the last user message
+ *     prefixed by the formatted memory block otherwise.
+ */
+async function injectMemoryContext(
+	event: ContextEvent,
+	pending: Promise<FormattedMemory | null> | null,
+): Promise<{ messages?: AgentMessage[] }> {
+	if (!pending) return event as unknown as { messages?: AgentMessage[] };
+
+	const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), CONTEXT_RECALL_TIMEOUT_MS));
+	const formatted = await Promise.race([pending, timeout]);
+
+	if (!formatted || !formatted.text) return event as unknown as { messages?: AgentMessage[] };
+
+	const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
+	if (!Array.isArray(messages) || messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
+
+	// Manual scan — Array.prototype.findLastIndex is ES2023, not in the
+	// repo's tsconfig lib target.
+	let lastUserIdx = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "user") {
+			lastUserIdx = i;
+			break;
+		}
+	}
+
+	if (lastUserIdx === -1) return event as unknown as { messages?: AgentMessage[] };
+
+	const lastUser = messages[lastUserIdx];
+	const originalContent = typeof lastUser.content === "string" ? lastUser.content : JSON.stringify(lastUser.content);
+	const memoryPrefix = `[Relevant memory context]\n${formatted.text}\n\n[User message]\n`;
+	const newContent = memoryPrefix + originalContent;
+
+	const newMessages = [...messages];
+	newMessages[lastUserIdx] = { ...lastUser, content: newContent };
+	return { messages: newMessages as unknown as AgentMessage[] };
 }

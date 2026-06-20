@@ -64,16 +64,27 @@ describe("registerMemory", () => {
 	it("registers exactly the expected hooks (no extras)", () => {
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const registered = Array.from(mockPi.hooks.keys()).sort();
-		// Order-independent comparison: we want exactly these two, no others.
-		expect(registered).toEqual(["session_before_compact", "session_start"]);
+		// Order-independent comparison: we want exactly these four, no others.
+		// Task 8.2 added before_agent_start + context on top of the v2
+		// session_before_compact + session_start surface.
+		expect(registered).toEqual([
+			"before_agent_start",
+			"context",
+			"session_before_compact",
+			"session_start",
+		]);
 	});
 
 	it("registered handlers are functions", () => {
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const beforeCompact = mockPi.hooks.get("session_before_compact");
 		const start = mockPi.hooks.get("session_start");
+		const beforeAgentStart = mockPi.hooks.get("before_agent_start");
+		const context = mockPi.hooks.get("context");
 		expect(typeof beforeCompact).toBe("function");
 		expect(typeof start).toBe("function");
+		expect(typeof beforeAgentStart).toBe("function");
+		expect(typeof context).toBe("function");
 	});
 });
 
