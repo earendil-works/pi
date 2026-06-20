@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { MemoryAtom } from "./types.ts";
+import { normalizeContent } from "./extraction.ts";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -102,7 +103,11 @@ export function normalizeMarkdown(raw: string): { frontmatter: string; body: str
  * stale files cheaply.
  */
 export function computeContentHash(body: string): string {
-	return createHash("sha256").update(body).digest("hex").slice(0, 16);
+	// Match computeFingerprint semantics: normalize before hashing so the
+	// content_fingerprint stored in the DB matches the file's hash.
+	// This is critical for L1 hydration in recall (search.ts) and
+	// GET /api/memory/:id (routes/memory.ts).
+	return createHash("sha256").update(normalizeContent(body)).digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
