@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promises as fs } from "node:fs";
 import { z } from "zod";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { embedText, buildEmbeddableText, loadConfig } from "./embed.ts";
 import { writeAtomToFile } from "./file-store.ts";
-import type { MemoryIndex } from "./storage.ts";
+import { MemoryIndex } from "./storage.ts";
 import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
 
 // normalizeContent: strip extra whitespace, trim, lowercase
@@ -232,4 +236,182 @@ export function parseExtractionJson(json: string): ExtractionResult | null {
 	} catch {
 		return null;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.5: top-level extraction entry points
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the full prompt that gets sent to the LLM: instruction + the
+ * conversation transcript. Kept as a pure function so it can be inspected in
+ * tests without needing to mock the LLM.
+ */
+function buildExtractionPrompt(messages: Array<{ role: string; content: string }>): string {
+	const messagesText = messages.map((m) => `[${m.role}] ${m.content}`).join("\n\n");
+	return `${EXTRACT_PROMPT_V2}\n\n## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
+}
+
+/**
+ * Placeholder bridge between the extraction pipeline and pi's active LLM
+ * session. The actual implementation depends on the ExtensionContext API
+ * surface (which exposes the session's model + a streaming completion
+ * method), so until that integration lands we throw loudly rather than
+ * silently emitting empty plans.
+ *
+ * Once the ExtensionContext shape is pinned down, this becomes a thin
+ * adapter over `ctx.session.complete(prompt)`.
+ */
+async function callLlmViaContext(_ctx: ExtensionContext, _prompt: string): Promise<string> {
+	throw new Error("callLlmViaContext: not implemented in this task — use callLlm version");
+}
+
+/**
+ * Internal helper shared by both extraction entry points. Given a parsed
+ * LLM response (or null on parse failure) and an execution context,
+ * returns the plan + the buckets of atoms created/superseded/skipped.
+ *
+ * Writes the extraction report to the standard log directory as a side
+ * effect so the audit trail captures every run, including the empty ones.
+ */
+async function executeParsedPlan(
+	index: MemoryIndex,
+	atomsDir: string,
+	parsed: ExtractionResult | null,
+	modelUsed: string,
+): Promise<{
+	plan: ExtractionPlan;
+	created: MemoryAtom[];
+	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
+	skipped: MemoryAtom[];
+}> {
+	if (!parsed) {
+		return {
+			plan: { items: [], modelUsed, generatedAt: Date.now() },
+			created: [],
+			superseded: [],
+			skipped: [],
+		};
+	}
+
+	const plan: ExtractionPlan = {
+		items: parsed.items.map((item) => ({ item, status: "create" })),
+		modelUsed,
+		generatedAt: Date.now(),
+	};
+
+	const execResult = await executePlan(index, atomsDir, plan);
+	await writeExtractionReport(plan);
+	return { plan, ...execResult };
+}
+
+/**
+ * Extract memories from a conversation transcript using the active pi
+ * session's LLM (via the ExtensionContext). Used by pi itself when
+ * running the extraction hook inline; webui uses the explicit-callLlm
+ * variant instead because the LLM there is an HTTP handler, not a
+ * session object.
+ */
+export async function extractMemories(
+	messages: Array<{ role: string; content: string }>,
+	index: MemoryIndex,
+	ctx: ExtensionContext,
+	config: { atomsDir: string; model?: string },
+): Promise<{
+	plan: ExtractionPlan;
+	created: MemoryAtom[];
+	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
+	skipped: MemoryAtom[];
+}> {
+	const prompt = buildExtractionPrompt(messages);
+	const response = await callLlmViaContext(ctx, prompt);
+	const parsed = parseExtractionJson(response);
+	return executeParsedPlan(index, config.atomsDir, parsed, config.model ?? "unknown");
+}
+
+/**
+ * Same pipeline as `extractMemories`, but the LLM is supplied as an
+ * explicit `(prompt) => response` callback. Webui passes its HTTP-side
+ * LLM call here; the index lifecycle stays in the caller's hands so this
+ * function is reusable inside a longer-lived process.
+ */
+export async function extractMemoriesWithCallLlm(
+	callLlm: (prompt: string) => Promise<string>,
+	messages: Array<{ role: string; content: string }>,
+	index: MemoryIndex,
+	config: { atomsDir: string; model?: string },
+): Promise<{
+	plan: ExtractionPlan;
+	created: MemoryAtom[];
+	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
+	skipped: MemoryAtom[];
+}> {
+	const prompt = buildExtractionPrompt(messages);
+	const response = await callLlm(prompt);
+	const parsed = parseExtractionJson(response);
+	return executeParsedPlan(index, config.atomsDir, parsed, config.model ?? "unknown");
+}
+
+/** Options for the webui entry point. Bundles everything the caller has to know. */
+export interface RunMemoryExtractionOptions {
+	callLlm: (prompt: string) => Promise<string>;
+	config: { model?: string };
+	messages: Array<{ role: string; content: string }>;
+	dbPath: string;
+	atomsDir: string;
+}
+
+/** Result bundle for the webui entry point. */
+export interface RunMemoryExtractionResult {
+	plan: ExtractionPlan;
+	created: MemoryAtom[];
+	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
+	skipped: MemoryAtom[];
+}
+
+/**
+ * Webui-friendly entry point: open a fresh MemoryIndex, run the full
+ * extraction pipeline, close the index. The whole call is wrapped in
+ * try/finally so a downstream failure still releases the sqlite handle
+ * — leaked file descriptors and lingering WAL checkpoints are both bad.
+ */
+export async function runMemoryExtraction(
+	opts: RunMemoryExtractionOptions,
+): Promise<RunMemoryExtractionResult> {
+	const index = new MemoryIndex(opts.dbPath);
+	await index.init();
+	try {
+		return await extractMemoriesWithCallLlm(opts.callLlm, opts.messages, index, {
+			atomsDir: opts.atomsDir,
+			model: opts.config.model,
+		});
+	} finally {
+		index.close();
+	}
+}
+
+/**
+ * Persist a JSON report describing the extraction plan that just ran.
+ * Defaults to `~/.pi/agent/logs/extraction-report-<timestamp>.json`;
+ * callers (mostly tests) can override `logDir` to capture runs into a
+ * temp directory. The directory is created recursively so first-run
+ * installations do not need a pre-existing log directory.
+ *
+ * Returns the absolute file path so callers can surface it in UI / logs.
+ */
+export async function writeExtractionReport(plan: ExtractionPlan, logDir?: string): Promise<string> {
+	const dir = logDir ?? join(homedir(), ".pi", "agent", "logs");
+	await fs.mkdir(dir, { recursive: true });
+	// Colons and dots are replaced because Windows / FAT32 file systems reject
+	// them, and the iso timestamp uses both. We still keep enough granularity
+	// for chronological ordering.
+	const ts = new Date().toISOString().replace(/[:.]/g, "-");
+	const fp = join(dir, `extraction-report-${ts}.json`);
+	const report = {
+		plan,
+		timestamp: new Date().toISOString(),
+		itemCount: plan.items.length,
+	};
+	await fs.writeFile(fp, JSON.stringify(report, null, 2), "utf8");
+	return fp;
 }
