@@ -41,14 +41,14 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	// Capture the opening fence marker ( ``` , ~~~ , or longer) so a streamed partial
 	// closing fence shorter than the opener can be removed from the code content below.
 	// This is done to avoid the content shrinking when rendering streamed partial code blocks.
-	const opener = /^(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
+	const opener = /^(?: {0,3})(?<marker>`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(token.raw);
 	const marker = opener?.groups?.marker;
 	if (!marker) {
 		return;
 	}
 
 	const fenceChar = marker[0];
-	const partialClosingFence = new RegExp(`(?:^|\\n)${fenceChar}{1,${marker.length - 1}}$`);
+	const partialClosingFence = new RegExp(`(?:^|\\n) {0,3}${fenceChar}{1,${marker.length - 1}}[ \\t]*$`);
 	if (partialClosingFence.test(token.raw)) {
 		token.text = token.text.replace(partialClosingFence, "");
 	}

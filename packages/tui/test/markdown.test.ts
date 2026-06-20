@@ -1410,6 +1410,14 @@ bar`,
 			assert.deepStrictEqual(lines, ["```", "", "```"]);
 		});
 
+		it("trims indented partial closing fences", () => {
+			const markdown = new Markdown("  ```ts\nconst x = 1;\n  ``", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["```ts", "  const x = 1;", "```"]);
+		});
+
 		it("does not adjust non-final code blocks", () => {
 			const markdown = new Markdown("```md\nnot a closing fence:\n``\n```\n\nafter", 0, 0, defaultMarkdownTheme);
 
