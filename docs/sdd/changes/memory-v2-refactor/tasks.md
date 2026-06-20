@@ -223,7 +223,7 @@
   - **验证**: vitest mock ExtensionContext,验证 hook + formatMemoryContext 调用
   - **依赖**: 5.1, 5.2, 8.1
 
-- [ ] 8.3 **集成测试: end-to-end extraction → embedding → recall 链路**
+- [x] 8.3 **集成测试: end-to-end extraction → embedding → recall 链路**
   - **文件**: `extensions/personal-assistant/test/integration.test.ts` (Create)
   - **内容**: mock LLM 返 plan → extractMemories → recallAtoms(query related to plan content) → 验证新 atom 在 top-K
   - **验证**: `npx vitest run test/integration.test.ts` 通过 (≥3 测试)
@@ -284,7 +284,7 @@
   - **验证**: `grep -n "searchByFts\|rewriteQuery\|simpleKeywordExtraction\|expandCjkKeywords" memory.ts` 输出空
   - **依赖**: 10.1
 
-- [ ] 10.3 **CHANGELOG 更新**
+- [x] 10.3 **CHANGELOG 更新**
   - **文件**: `extensions/personal-assistant/CHANGELOG.md` (Modify), `packages/webui/CHANGELOG.md` (Modify)
   - **内容**: Unreleased 段加 Breaking/Added/Changed/Fixed/Removed entries,说明 v1→v2 变化。
   - **验证**: 两个 CHANGELOG 都有新 entry
