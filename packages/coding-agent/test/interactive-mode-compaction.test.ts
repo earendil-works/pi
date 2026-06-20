@@ -9,7 +9,6 @@ describe("InteractiveMode compaction events", () => {
 			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
 			autoCompactionLoader: undefined,
 			defaultEditor: {},
-			statusContainer: { clear: vi.fn() },
 			chatContainer: { clear: vi.fn() },
 			stopFooterActivity: vi.fn(),
 			rebuildChatFromMessages: vi.fn(),

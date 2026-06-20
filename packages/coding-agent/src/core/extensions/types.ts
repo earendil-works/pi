@@ -143,7 +143,7 @@ export interface ExtensionUIContext {
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
 
-	/** Show or hide the built-in interactive working loader row during streaming. */
+	/** Show or hide the built-in interactive working status in the footer during streaming. */
 	setWorkingVisible(visible: boolean): void;
 
 	/**
@@ -170,8 +170,8 @@ export interface ExtensionUIContext {
 	/** Set a custom footer component, or undefined to restore the built-in footer.
 	 *
 	 * The factory receives a FooterDataProvider for data not otherwise accessible:
-	 * git branch and extension statuses from setStatus(). Token stats, model info,
-	 * etc. are available via ctx.sessionManager and ctx.model.
+	 * git branch, activity status, and extension statuses from setStatus(). Token
+	 * stats, model info, etc. are available via ctx.sessionManager and ctx.model.
 	 */
 	setFooter(
 		factory:
