@@ -67,7 +67,7 @@
   - **验证**: `npx vitest run test/storage.test.ts -t "access and decay"` 通过 (≥4 测试)
   - **依赖**: 2.3
 
-- [ ] 2.7 **所有 storage 测试全绿**
+- [x] 2.7 **所有 storage 测试全绿**
   - **文件**: `extensions/personal-assistant/test/storage.test.ts`
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/storage.test.ts` 通过 (≥18 测试累计)
   - **依赖**: 2.3, 2.4, 2.5, 2.6
@@ -104,7 +104,7 @@
   - **验证**: prompt 字符串包含 "rule", "fact", "process", "2-4 段", 不含 "one-sentence"
   - **依赖**: 4.1
 
-- [ ] 4.3 **实现 executePlan with dedup**
+- [x] 4.3 **实现 executePlan with dedup**
   - **文件**: `extensions/personal-assistant/extraction.ts` (Modify)
   - **内容**: `executePlan(index, config, atomsDir, plan)` 函数,对每 item: normalizeContent + fingerprint → DB 查 → skip;否则 embedText + findMostSimilarEmbedding → supersede (BEGIN TX + markSupersededTx) 或 create (BEGIN TX + insertAtom)。写 .md 文件 + audit。
   - **验证**: `npx vitest run test/extraction.test.ts` 通过 (≥8 测试:skip/supersede/create/transfer signals/parse fail/ollama fail/file write)
@@ -130,7 +130,7 @@
 
 ## 5. Search & Format
 
-- [ ] 5.1 **实现 recallAtoms (纯向量 KNN)**
+- [x] 5.1 **实现 recallAtoms (纯向量 KNN)**
   - **文件**: `extensions/personal-assistant/search.ts` (Create)
   - **内容**: `recallAtoms(index, query, config?)`: embedText(query) → vectorSearch(index, queryEmb, k=topK*2, filter) → hydrate → updateAccess → top-3 sync 读 .md (L1 tier),其余 L0。返 `RecallResult[]` with distance, cosine (1 - distance/2)。
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/search.test.ts` 通过 (≥6 测试:top-K/filter/archived 排除/is_latest=0 排除/file 缺失降级/hash 错位降级)
@@ -146,7 +146,7 @@
 
 ## 6. Decay
 
-- [ ] 6.1 **更新 runDecay 用新 schema + deleteVector**
+- [x] 6.1 **更新 runDecay 用新 schema + deleteVector**
   - **文件**: `extensions/personal-assistant/decay.ts` (Create)
   - **内容**: `runDecay(index, baseDecay, archiveThreshold)` 沿用旧公式 (strength * exp(-lambda * deltaDays / denom)),`rule` 类型永不 archive,`fact`/`process` strength < threshold → markArchived + deleteVector。
   - **验证**: `npx vitest run test/decay.test.ts` 通过 (≥4 测试:new_strength 计算/rule 不 archive/fact/archive 触发 deleteVector)
@@ -165,7 +165,7 @@
   - **验证**: `cd packages/webui && npm test -- --run test/memory-routes.test.ts -t "list endpoint"` 通过
   - **依赖**: 2.3
 
-- [ ] 7.2 **实现 GET /api/memory/stats**
+- [x] 7.2 **实现 GET /api/memory/stats**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: GET /api/memory/stats 返 `{total, archived, byType: {rule: N, fact: M, process: K}}`。
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "stats"` 通过

@@ -1,5 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { embedText, buildEmbeddableText, loadConfig } from "./embed.ts";
+import { writeAtomToFile } from "./file-store.ts";
+import type { MemoryIndex } from "./storage.ts";
+import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
 
 // normalizeContent: strip extra whitespace, trim, lowercase
 export function normalizeContent(content: string): string {
@@ -90,3 +94,142 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 
 如果没有可提取的, 返回 { "items": [] }
 `;
+
+// ---------------------------------------------------------------------------
+// executePlan — execute extraction items against the memory index
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute a single extraction item against the index:
+ *   - fingerprint dedup: skip when an active atom with the same fingerprint exists
+ *   - cosine dedup: supersede when the most similar active atom clears 0.92
+ *   - otherwise: create a new atom (DB row + vector + .md file)
+ *
+ * Returns the outcome (skip / supersede / create) and the resulting atom when
+ * applicable. Embedding failures collapse to "create with zero-vector" so the
+ * file write still happens — sqlite-vec accepts zero vectors and downstream
+ * recall simply misses this atom until a real embedding lands.
+ */
+async function executeItem(
+	index: MemoryIndex,
+	atomsDir: string,
+	item: ExtractionItem,
+): Promise<{ status: "skip" | "supersede" | "create"; atom?: MemoryAtom }> {
+	const fingerprint = computeFingerprint(item.content);
+
+	// Fingerprint dedup — cheapest check first.
+	const existing = index.getActiveAtomByFingerprint(fingerprint);
+	if (existing) {
+		return { status: "skip", atom: existing };
+	}
+
+	// Embed the full atom text (title + summary + content + tags).
+	const fakeAtom = {
+		title: item.title,
+		summary: item.summary,
+		content: item.content,
+		tags: item.tags,
+	} as Pick<MemoryAtom, "title" | "summary" | "content" | "tags">;
+	const embeddableText = buildEmbeddableText(fakeAtom);
+	const embedding = await embedText(embeddableText);
+
+	// Cosine dedup — only when we actually got a vector.
+	if (embedding) {
+		const similar = index.findMostSimilarEmbedding(embedding, 0.92);
+		if (similar) {
+			const newAtom = buildAtomFromItem(item, fingerprint);
+			const { newAtom: finalNew } = index.markSupersededTx(similar.atom.id, newAtom, embedding);
+			await writeAtomToFile(finalNew, atomsDir);
+			return { status: "supersede", atom: finalNew };
+		}
+	}
+
+	// Create new atom.
+	const newAtom = buildAtomFromItem(item, fingerprint);
+	const vector = embedding ?? new Array(1024).fill(0);
+	await index.insertAtom(newAtom, vector);
+	await writeAtomToFile(newAtom, atomsDir);
+	return { status: "create", atom: newAtom };
+}
+
+/**
+ * Build a fresh `MemoryAtom` from an extraction item. All version-chain
+ * fields default to "first version, active, no parent" — `markSupersededTx`
+ * overrides these for the supersede path.
+ */
+function buildAtomFromItem(item: ExtractionItem, fingerprint: string): MemoryAtom {
+	const now = Date.now();
+	return {
+		id: randomUUID(),
+		type: item.type,
+		title: item.title,
+		content: item.content,
+		summary: item.summary,
+		tags: item.tags,
+		importance: item.importance,
+		strength: item.importance,
+		access_count: 0,
+		version: 1,
+		is_latest: 1,
+		parent_id: null,
+		superseded_at: null,
+		archived: 0,
+		created_at: now,
+		updated_at: now,
+		last_access: null,
+		content_fingerprint: fingerprint,
+		source_session: null,
+	};
+}
+
+/**
+ * Process every item in the plan sequentially and return three buckets:
+ *   - created: new atoms written to DB + file
+ *   - superseded: pairs of (oldId, newAtom) for atoms replaced by similar content
+ *   - skipped: existing atoms that matched the fingerprint exactly
+ *
+ * Items are processed in order — the spec is sequential, not parallel.
+ */
+export async function executePlan(
+	index: MemoryIndex,
+	atomsDir: string,
+	plan: ExtractionPlan,
+): Promise<{
+	created: MemoryAtom[];
+	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
+	skipped: MemoryAtom[];
+}> {
+	const created: MemoryAtom[] = [];
+	const superseded: Array<{ oldId: string; newAtom: MemoryAtom }> = [];
+	const skipped: MemoryAtom[] = [];
+
+	for (const planItem of plan.items) {
+		const result = await executeItem(index, atomsDir, planItem.item);
+		if (result.status === "create" && result.atom) {
+			created.push(result.atom);
+		} else if (result.status === "supersede" && result.atom) {
+			superseded.push({ oldId: planItem.item.title, newAtom: result.atom });
+		} else if (result.status === "skip" && result.atom) {
+			skipped.push(result.atom);
+		}
+	}
+
+	return { created, superseded, skipped };
+}
+
+/**
+ * Safely parse LLM JSON output and validate it against the extraction schema.
+ * Returns `null` for any failure — invalid JSON, missing required fields,
+ * type mismatches. Callers should treat null as "no usable plan" and skip
+ * the execution step rather than throw.
+ */
+export function parseExtractionJson(json: string): ExtractionResult | null {
+	try {
+		const parsed = JSON.parse(json);
+		const result = extractionPlanSchema.safeParse(parsed);
+		if (!result.success) return null;
+		return result.data as ExtractionResult;
+	} catch {
+		return null;
+	}
+}
