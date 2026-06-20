@@ -16,6 +16,7 @@ import {
 	mountMemoryRoutes,
 	registerGetMemoryById,
 	registerGetMemoryList,
+	registerGetMemoryStats,
 	registerPatchMemory,
 	type MemoryDeps,
 } from "../routes/memory.ts";
@@ -540,5 +541,172 @@ describe("mountMemoryRoutes includes PATCH", () => {
 			}
 		}
 		expect(routes).toContain("PATCH /api/memory/:id");
+	});
+});
+
+// Tests for the GET /api/memory/stats endpoint (Task 7.2).
+// Covers S46 (returns total/archived/byType) and S47 (byType counts
+// all 3 categories). The handler uses getRawDb() because getActiveAtoms
+// filters archived rows out at SQL level — we need cross-status counts.
+describe("GET /api/memory/stats", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-stats-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Seed an empty v2-schema DB.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		registerGetMemoryStats(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}/api/memory/stats`);
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (overrides: Record<string, unknown> = {}): Promise<void> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: randomUUID(),
+				type: "rule",
+				title: "T",
+				content: "C",
+				summary: "S",
+				tags: [],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: randomUUID().slice(0, 16),
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("returns zeros for empty DB", async () => {
+		const res = await fetchAt();
+		expect(res.status).toBe(200);
+		expect(res.body).toEqual({
+			total: 0,
+			archived: 0,
+			byType: { rule: 0, fact: 0, process: 0 },
+		});
+	});
+
+	it("counts all active+archived atoms by type", async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertAtom({ type: "rule", content_fingerprint: `fp-r-${i}` });
+		}
+		await insertAtom({ type: "fact", content_fingerprint: "fp-f-1" });
+
+		const res = await fetchAt();
+		expect(res.status).toBe(200);
+		const body = res.body as { total: number; archived: number; byType: Record<string, number> };
+		expect(body.total).toBe(4);
+		expect(body.archived).toBe(0);
+		expect(body.byType.rule).toBe(3);
+		expect(body.byType.fact).toBe(1);
+		expect(body.byType.process).toBe(0);
+	});
+
+	it("counts archived separately from total", async () => {
+		const archivedId = randomUUID();
+		await insertAtom({ id: archivedId, type: "rule", content_fingerprint: "fp-arch" });
+
+		// Archive it via the index's own method (avoids raw SQL drift).
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			idx.markArchived(archivedId);
+		} finally {
+			idx.close();
+		}
+
+		const res = await fetchAt();
+		expect(res.status).toBe(200);
+		const body = res.body as { total: number; archived: number; byType: Record<string, number> };
+		expect(body.total).toBe(1);
+		expect(body.archived).toBe(1);
+		expect(body.byType.rule).toBe(1);
+	});
+});
+
+// Verifies the mount factory registers the stats handler alongside the
+// other GET/PATCH handlers. Guards against accidental removal of the
+// registerGetMemoryStats call in mountMemoryRoutes.
+describe("mountMemoryRoutes includes stats", () => {
+	it("registers GET /api/memory/stats", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{ route?: { path: string; methods: Record<string, boolean> } }>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("GET /api/memory/stats");
 	});
 });

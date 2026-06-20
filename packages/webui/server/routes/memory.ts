@@ -288,6 +288,76 @@ export function registerPatchMemory(
 }
 
 /**
+ * GET /api/memory/stats — counts of all atoms (active + archived),
+ * grouped by type (S46 / S47 / R43).
+ *
+ * Returns `{ total, archived, byType: { rule, fact, process } }`:
+ *   - `total`     — all `is_latest = 1` rows (active + archived).
+ *   - `archived`  — subset of `total` with `archived = 1`.
+ *   - `byType`    — count of latest rows for each of the three atom
+ *     types. Missing categories default to 0 so the UI can render
+ *     a stable shape even when the DB is empty.
+ *
+ * The handler uses `getRawDb()` directly because `getActiveAtoms()`
+ * filters `archived = 0` at SQL level — we need cross-status counts
+ * for the stats panel. `getRawDb()` is `@internal` (Task 2.2) and
+ * acceptable for this cross-status aggregation; new typed methods
+ * should be added to MemoryIndex if/when a second caller needs the
+ * same view.
+ *
+ * Status codes:
+ *   - 200: `{ total, archived, byType }`.
+ *   - 500: DB or index failure.
+ */
+export function registerGetMemoryStats(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.get("/api/memory/stats", async (_req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const rawDb = index.getRawDb();
+				const total = (
+					rawDb
+						.prepare(
+							`SELECT COUNT(*) as n FROM memory_index WHERE is_latest = 1`,
+						)
+						.get() as { n: number }
+				).n;
+				const archived = (
+					rawDb
+						.prepare(
+							`SELECT COUNT(*) as n FROM memory_index WHERE is_latest = 1 AND archived = 1`,
+						)
+						.get() as { n: number }
+				).n;
+				const byTypeRows = rawDb
+					.prepare(
+						`SELECT type, COUNT(*) as n FROM memory_index
+						 WHERE is_latest = 1
+						 GROUP BY type`,
+					)
+					.all() as Array<{ type: string; n: number }>;
+				const byType: Record<string, number> = {
+					rule: 0,
+					fact: 0,
+					process: 0,
+				};
+				for (const { type, n } of byTypeRows) {
+					byType[type] = n;
+				}
+				res.json({ total, archived, byType });
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
  * Register all memory routes on the given Express app. New handlers
  * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
  * callers only need to know one entry point.
@@ -299,4 +369,5 @@ export function mountMemoryRoutes(
 	registerGetMemoryList(app, deps);
 	registerGetMemoryById(app, deps);
 	registerPatchMemory(app, deps);
+	registerGetMemoryStats(app, deps);
 }
