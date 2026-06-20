@@ -201,7 +201,7 @@
   - **验证**: `npm test -- --run test/memory-routes.test.ts -t "extract"` 通过 (≥1 测试)
   - **依赖**: 4.5
 
-- [ ] 7.8 **注册 routes 到 server/index.ts**
+- [x] 7.8 **注册 routes 到 server/index.ts**
   - **文件**: `packages/webui/server/index.ts` (Modify)
   - **内容**: `import { mountMemoryRoutes } from "./routes/memory.ts"`, 在 register routes 区域调 `mountMemoryRoutes(app, { dbPath, atomsDir, settings, callLlm })`。**(mountMemoryRoutes 函数在 Task 7.1 中定义并 export,该函数注册全部 7 个 route)**。
   - **验证**: server 启动后 `curl http://127.0.0.1:8741/api/memory/stats` 返 200 + JSON
@@ -217,7 +217,7 @@
   - **验证**: vitest mock pi ExtensionAPI,验证 hook 注册 + session_before_compact 触发 extractMemories
   - **依赖**: 4.5, 6.1
 
-- [ ] 8.2 **实现 before_agent_start + context 注入**
+- [x] 8.2 **实现 before_agent_start + context 注入**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: `before_agent_start` 异步启动 `recallAtoms` 存 `pendingMemorySearch`。`context` handler await Promise.race with 8s timeout,`formatMemoryContext` 注入到最后一个 user message。
   - **验证**: vitest mock ExtensionContext,验证 hook + formatMemoryContext 调用
@@ -294,13 +294,13 @@
 
 ## Verification
 
-- [ ] 全量测试: `cd extensions/personal-assistant && npx vitest run` (≥80 测试全绿)
-- [ ] 全量测试: `cd packages/webui && npm test -- --run` (≥21 测试全绿)
-- [ ] 全量测试: `cd packages/webui/web && node node_modules/vitest/dist/cli.js --run src/lib/useAutoSave.test.ts` (保证其他测试无回归)
-- [ ] Lint + Type check: `npm run check` exit 0
-- [ ] 召回质量: `cd extensions/personal-assistant && npx vitest run test/recall-quality.test.ts` 通过, metrics 满足阈值
-- [ ] Live API 验证: server 启动后,curl 7 个 endpoint 都 200 + 正确响应
-- [ ] Live 中文召回: `curl -X POST .../api/memory/search {"query":"图片"}` 返包含中文 atom
+- [x] 全量测试: `cd extensions/personal-assistant && npx vitest run` (≥80 测试全绿)
+- [x] 全量测试: `cd packages/webui && npm test -- --run` (≥21 测试全绿)
+- [x] 全量测试: `cd packages/webui/web && node node_modules/vitest/dist/cli.js --run src/lib/useAutoSave.test.ts` (保证其他测试无回归)
+- [x] Lint + Type check: `npm run check` exit 0
+- [x] 召回质量: `cd extensions/personal-assistant && npx vitest run test/recall-quality.test.ts` 通过, metrics 满足阈值
+- [x] Live API 验证: server 启动后,curl 7 个 endpoint 都 200 + 正确响应
+- [x] Live 中文召回: `curl -X POST .../api/memory/search {"query":"图片"}` 返包含中文 atom
 
 ---
 
