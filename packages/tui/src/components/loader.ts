@@ -13,6 +13,7 @@ export class Loader extends Text {
 	private spinnerColorFn: (str: string) => string;
 	private messageColorFn: (str: string) => string;
 	private message: string = "Loading...";
+	private shouldColorSpinner = true;
 
 	constructor(
 		ui: TUI,
@@ -26,6 +27,7 @@ export class Loader extends Text {
 		this.spinnerColorFn = spinnerColorFn;
 		this.messageColorFn = messageColorFn;
 		this.message = message;
+		this.shouldColorSpinner = indicator?.frames === undefined;
 		this.spinner = new Spinner(() => this.updateDisplay(), indicator);
 		this.spinner.start();
 	}
@@ -48,11 +50,13 @@ export class Loader extends Text {
 	}
 
 	setIndicator(indicator?: LoaderIndicatorOptions): void {
+		this.shouldColorSpinner = indicator?.frames === undefined;
 		this.spinner.setOptions(indicator);
 	}
 
 	private updateDisplay(): void {
-		const renderedFrame = this.spinner.renderFrame(this.spinnerColorFn);
+		const frame = this.spinner.renderText();
+		const renderedFrame = frame && this.shouldColorSpinner ? this.spinnerColorFn(frame) : frame;
 		const indicator = renderedFrame.length > 0 ? `${renderedFrame} ` : "";
 		this.setText(`${indicator}${this.messageColorFn(this.message)}`);
 		this.ui.requestRender();

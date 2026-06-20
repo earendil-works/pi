@@ -108,7 +108,7 @@ export type TerminalInputHandler = (data: string) => { consume?: boolean; data?:
 /** Working indicator configuration for the interactive streaming loader. */
 export interface WorkingIndicatorOptions {
 	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
-	frames?: string[];
+	frames?: readonly string[];
 	/** Frame interval in milliseconds for animated indicators. */
 	intervalMs?: number;
 }

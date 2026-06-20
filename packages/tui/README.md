@@ -389,19 +389,22 @@ md.setText("Updated markdown");
 
 ### Spinner
 
-Animated spinner primitive for inline status displays. `Spinner` is not a component; it owns the frame timer and calls `onUpdate` whenever the current frame changes.
+Animated spinner primitive for inline status displays. `Spinner` is not a component; it owns a frame timer while active and calls `onUpdate` when rendered output may need to change: on start, active option changes, and animation ticks. Call `stop()` when the status display is removed so the timer is cleared.
+
+`stop()` stops frame advancement; it does not clear whatever rendered the last frame. Clear or hide the owning status display separately.
 
 ```typescript
 const spinner = new Spinner(() => tui.requestRender());
 spinner.start();
 
-const frame = spinner.renderFrame((s) => chalk.cyan(s));
-const status = `${frame} Working...`;
+const frame = spinner.renderText();
+const indicator = frame ? `${chalk.cyan(frame)} ` : "";
+const status = `${indicator}Working...`;
 
 spinner.stop();
 ```
 
-Custom frames are rendered verbatim, so callers can provide their own styling. Use an empty frame array to hide the indicator.
+Custom frames can include ANSI styling. Components built on this primitive (`Loader` and `SpinnerStatus`) apply their default spinner color only to default frames; custom frames are rendered verbatim for API compatibility. Use an empty frame array to hide the indicator.
 
 ```typescript
 const spinner = new Spinner(

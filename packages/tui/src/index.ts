@@ -25,7 +25,7 @@ export {
 } from "./components/select-list.ts";
 export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.ts";
 export { Spacer } from "./components/spacer.ts";
-export { Spinner, type SpinnerOptions } from "./components/spinner.ts";
+export { Spinner, type SpinnerOptions, SpinnerStatus } from "./components/spinner.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText } from "./components/truncated-text.ts";
 // Editor component interface (for custom editors)
