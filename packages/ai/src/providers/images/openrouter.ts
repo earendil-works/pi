@@ -165,6 +165,7 @@ function parseUsage(
 		prompt_tokens?: number;
 		completion_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		cost?: number;
 	},
 	model: ImagesModel<"openrouter-images">,
 ) {
@@ -190,5 +191,9 @@ function parseUsage(
 		},
 	};
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	// OpenRouter returns the actual USD cost in usage.cost. Use it when available.
+	if (rawUsage.cost != null && rawUsage.cost > 0) {
+		usage.cost.total = rawUsage.cost;
+	}
 	return usage;
 }

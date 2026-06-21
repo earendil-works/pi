@@ -1084,6 +1084,7 @@ function parseChunkUsage(
 		completion_tokens?: number;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		cost?: number;
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1111,6 +1112,11 @@ function parseChunkUsage(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);
+	// OpenRouter returns the actual USD cost in usage.cost. Use it when available
+	// instead of (or in addition to) the static per-token estimate.
+	if (rawUsage.cost != null && rawUsage.cost > 0) {
+		usage.cost.total = rawUsage.cost;
+	}
 	return usage;
 }
 
