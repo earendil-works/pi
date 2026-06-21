@@ -31,6 +31,7 @@ import type { AssistantMessage } from "../types.ts";
  *   with output=0 (no room left to generate). Detected via stopReason "length" + zero output +
  *   input filling the context window.
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
+ * - vLLM (v0.8+): "This model's maximum context length is X tokens. However, you requested Y output tokens and your prompt contains at least Z input tokens"
  */
 const OVERFLOW_PATTERNS = [
 	/prompt is too long/i, // Anthropic token overflow
@@ -52,6 +53,10 @@ const OVERFLOW_PATTERNS = [
 	/too large for model with \d+ maximum context length/i, // Mistral
 	/model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 	/prompt too long; exceeded (?:max )?context length/i, // Ollama explicit overflow error
+	/this model.?s maximum context length is \d+/i, // vLLM: "This model's maximum context length is X tokens"
+	/requested \d+ output tokens/i, // vLLM: "requested Y output tokens"
+	/prompt contains.*\d+ input tokens/i, // vLLM: "prompt contains at least Z input tokens"
+	/for a total of.*\d+ tokens/i, // vLLM: "for a total of at least Z tokens"
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
@@ -87,6 +92,7 @@ const NON_OVERFLOW_PATTERNS = [
  * **Reliable detection (returns error with detectable message):**
  * - Anthropic: "prompt is too long: X tokens > Y maximum" or "request_too_large"
  * - OpenAI (Completions & Responses): "exceeds the context window", "exceeds the model's maximum context length of X tokens", or "exceeds model's maximum context length (X)"
+ * - vLLM: "This model's maximum context length is X tokens"
  * - Google Gemini: "input token count exceeds the maximum"
  * - xAI (Grok): "maximum prompt length is X but request contains Y"
  * - Groq: "reduce the length of the messages"
