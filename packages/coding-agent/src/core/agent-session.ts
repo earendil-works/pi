@@ -1684,6 +1684,8 @@ export class AgentSession {
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions,
+					reason: "manual",
+					willRetry: false,
 					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
@@ -1747,6 +1749,8 @@ export class AgentSession {
 					type: "session_compact",
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
+					reason: "manual",
+					willRetry: false,
 				});
 			}
 
@@ -1945,6 +1949,8 @@ export class AgentSession {
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
+					reason,
+					willRetry,
 					signal: this._autoCompactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
@@ -2022,6 +2028,8 @@ export class AgentSession {
 					type: "session_compact",
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
+					reason,
+					willRetry,
 				});
 			}
 
