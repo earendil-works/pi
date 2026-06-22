@@ -23,6 +23,8 @@ export function computeFingerprint(content: string): string {
 }
 
 // extractionPlanSchema: validate LLM JSON output
+// .passthrough() on items so unknown fields (e.g. "system": true hallucinated
+// by some models) don't fail validation — we only use the 6 known fields.
 export const extractionPlanSchema = z.object({
 	items: z.array(z.object({
 		type: z.enum(["rule", "fact", "process"]),
@@ -31,7 +33,7 @@ export const extractionPlanSchema = z.object({
 		summary: z.string().min(5).max(500),
 		tags: z.array(z.string().min(1).max(50)).max(10),
 		importance: z.number().min(0).max(1),
-	})).min(1).max(50),
+	}).passthrough()).min(1).max(50),
 });
 
 // Type inferred from schema
