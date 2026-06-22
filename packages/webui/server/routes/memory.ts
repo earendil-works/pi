@@ -20,6 +20,30 @@ export interface MemoryDeps {
 	callLlm: (prompt: string) => Promise<string>;
 }
 
+// PATCH whitelist — keys outside this set are silently dropped so clients cannot override id, created_at, file_path, content_hash, strength, access_count, last_access, version, or archived.
+const PATCHABLE_FIELDS = [
+	"title",
+	"type",
+	"summary",
+	"tags",
+	"importance",
+	"content",
+] as const;
+
+type PatchableKey = (typeof PATCHABLE_FIELDS)[number];
+
+function pickPatchable(body: unknown): Partial<Pick<MemoryAtom, PatchableKey>> {
+	if (typeof body !== "object" || body === null) return {};
+	const out: Partial<Pick<MemoryAtom, PatchableKey>> = {};
+	for (const k of PATCHABLE_FIELDS) {
+		if (k in body) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(out as any)[k] = (body as Record<string, unknown>)[k];
+		}
+	}
+	return out;
+}
+
 export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void {
 	// (2.2) GET /api/memory — list + filter. Reads only the sqlite index (no .md
 	// body); per design Decision 6. Filter order per Decision 7:
@@ -106,10 +130,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			await idx.init();
 			try {
 				const id = req.params.id;
-				// MemoryIndex has no public getAtom; use getAllAtoms (mirrors getAllAtoms
-				// approach: getAllRows + rowToAtom), returns all atoms including archived.
-				const all = getAllAtoms(idx);
-				const existing = all.find((a) => a.id === id);
+				const existing = idx.getAtom(id);
 				if (!existing) {
 					res.status(404).json({ error: `atom not found: ${id}` });
 					return;
@@ -144,8 +165,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			await idx.init();
 			try {
 				const id = req.params.id;
-				const all = getAllAtoms(idx);
-				const existing = all.find((a) => a.id === id);
+				const existing = idx.getAtom(id);
 				if (!existing) {
 					res.status(404).json({ error: `atom not found: ${id}` });
 					return;
@@ -160,8 +180,8 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 						currentBody = "";
 					}
 				}
-				// 2. merge: req.body 覆盖; content 默认 currentBody; version + 1; updated_at = now
-				const body = (req.body ?? {}) as Partial<MemoryAtom>;
+				// 2. merge: 仅 PATCHABLE_FIELDS 覆盖; content 默认 currentBody; version + 1; updated_at = now
+				const body = pickPatchable(req.body);
 				const merged: MemoryAtom = {
 					...existing,
 					...body,
@@ -202,8 +222,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 			await idx.init();
 			try {
 				const id = req.params.id;
-				const all = getAllAtoms(idx);
-				const existing = all.find((a) => a.id === id);
+				const existing = idx.getAtom(id);
 				if (!existing) {
 					res.status(404).json({ error: `atom not found: ${id}` });
 					return;
@@ -217,9 +236,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				};
 				idx.upsertAtom(updated);
 				idx.invalidateEmbedding(id);
-				// 重新查询返回最新 (MemoryIndex 内部会刷新缓存)
-				const allAfter = getAllAtoms(idx);
-				const after = allAfter.find((a) => a.id === id)!;
+				const after = idx.getAtom(id)!;
 				res.json({ ok: true, atom: after });
 			} finally {
 				idx.close();

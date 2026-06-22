@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import { createServer } from "node:http";
 import * as fs from "node:fs/promises";
@@ -261,6 +261,20 @@ describe("(c) GET /api/memory/:id detail endpoint", () => {
 		const atom = await res.json();
 		expect(atom.content).toBe(""); // hash mismatch → empty
 	});
+
+	it("GET /api/memory/:id uses MemoryIndex.getAtom not getAllAtoms (task 7.2 review)", async () => {
+		await setupIndexAndServer({ id: "a-1", writeFile: true });
+		const { MemoryIndex } = await import("@earendil-works/pi-personal-assistant");
+		const spy = vi.spyOn(MemoryIndex.prototype, "getAtom");
+		try {
+			const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`);
+			expect(res.status).toBe(200);
+			expect(spy).toHaveBeenCalled();
+			expect(spy.mock.calls.some((call) => call[0] === "a-1")).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
+	});
 });
 
 describe("(d) PATCH /api/memory/:id update endpoint", () => {
@@ -416,6 +430,35 @@ describe("(d) PATCH /api/memory/:id update endpoint", () => {
 			body: JSON.stringify({ title: "x" }),
 		});
 		expect(res.status).toBe(404);
+	});
+
+	it("PATCH ignores immutable fields like id, created_at, version (task 7.2 review)", async () => {
+		await setupIndexAndServer({ ...baseAtom, version: 3 });
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				id: "X_NEW",
+				created_at: "2099-01-01T00:00:00Z",
+				version: 99,
+				title: "new",
+			}),
+		});
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.id).toBe("a-1");
+		expect(atom.created_at).toBe("2025-01-01T00:00:00Z");
+		expect(atom.version).toBe(4); // 3 + 1
+		expect(atom.title).toBe("new");
+		// confirm DB has only the original id, no X_NEW
+		const { MemoryIndex } = await import("@earendil-works/pi-personal-assistant");
+		const verifyIdx = new MemoryIndex(dbPath);
+		await verifyIdx.init();
+		const original = verifyIdx.getAtom("a-1");
+		const renamed = verifyIdx.getAtom("X_NEW");
+		verifyIdx.close();
+		expect(original).not.toBeNull();
+		expect(renamed).toBeNull();
 	});
 });
 
