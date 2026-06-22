@@ -12,14 +12,13 @@ import { mountSessionsRoutes } from "./routes/sessions";
 import { mountMemoryRoutes } from "./routes/memory";
 import { mountModelsRoutes } from "./routes/models";
 import { mountSettingsRoutes } from "./routes/settings";
-import { mountMemoryRoutes } from "./routes/memory";
 import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
 import { attachWsHandler } from "./ws/handler";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
-import { ATOMS_DIR, MEMORY_DB_PATH, type PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
+import { type PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -241,14 +240,6 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
 
   // Session REST API endpoints - mounted BEFORE static catch-all
   mountSessionsRoutes(app, sessionPool, { callLlm, settings });
-
-  // Memory REST API endpoints - mounted BEFORE static catch-all
-  mountMemoryRoutes(app, {
-    dbPath: MEMORY_DB_PATH,
-    atomsDir: ATOMS_DIR,
-    settings,
-    callLlm,
-  });
 
   // Models REST API endpoint - mounted BEFORE static catch-all
   mountModelsRoutes(app);

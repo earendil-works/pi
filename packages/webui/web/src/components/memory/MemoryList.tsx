@@ -20,7 +20,7 @@ interface MemoryListProps {
   isEmptyDb?: boolean;
 }
 
-const TYPES: MemoryAtomType[] = ["constraint", "preference", "workflow", "knowledge", "event", "solution", "insight", "bug"];
+const TYPES: MemoryAtomType[] = ["rule", "fact", "process"];
 
 function timeAgo(iso: string): string {
   if (!iso) return "—";

@@ -15,17 +15,7 @@ interface MemoryEditorProps {
   onFlush?: () => Promise<void>;
 }
 
-const TYPES: MemoryAtomType[] = [
-  "constraint",
-  "preference",
-  "workflow",
-  "knowledge",
-  "event",
-  "solution",
-  "insight",
-  // 8th type — see task 6.7 / review-fail MEDIUM.
-  "bug",
-];
+const TYPES: MemoryAtomType[] = ["rule", "fact", "process"];
 
 export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorProps) {
   // 本地编辑态 (parent 通过重新传 atom 触发 reset)
