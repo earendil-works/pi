@@ -379,3 +379,50 @@
 - [x] 6.7 **`<details>` 折叠细节; "bug" type 处理; memoryList archive button 文字化**
 - [x] 6.8 **debounce filter input 300ms (避免每个 keystroke 重 fetch)**
 
+## 7. Review-fail fix tasks (from sdd-review 2026-06-22)
+
+> `@code-reviewer` 找到 1 critical + 5 important + 9 minor。
+> Critical + 5 important 必须修。Minor 记录,不动。
+> 此 section 必须全 [x] 后才回 review。
+
+- [x] 7.1 **[CRITICAL] `/api/memory` PATCH 提升 express.json body limit 到 1mb**
+  - **文件**: `packages/webui/server/index.ts` (Modify)
+  - **内容**: 当前 line 209 `app.use(express.json({ limit: "32kb" }))` 是全局,spec S24 要求 50KB+ body 可编辑。应改为:
+    - 把全局 limit 保留 32kb(给 sessions/cron 等小 payload 用)
+    - 在 `mountMemoryRoutes(app, ...)` 之前 mount 一个 `app.use("/api/memory", express.json({ limit: "1mb" }))`
+  - **验证**: 跑 `cd packages/webui && node ../../node_modules/vitest/dist/cli.js --run --no-file-parallelism server/test/memory-routes.test.ts` 全过;手测 `curl -X PATCH .../api/memory/<id> -d '{"content":"<60KB string>"}'` 返回 200 而非 413
+  - **依赖**: 无
+  - **新增测试**: `server/test/memory-routes.test.ts` 加 1 test: PATCH 60KB content → 200,DB content_hash 变,version+1
+
+- [x] 7.2 **[IMPORTANT] PATCH 字段白名单 + 用 `idx.getAtom(id)` 替代 `getAllAtoms().find()`**
+  - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
+  - **内容**:
+    1. 顶部加 `const PATCHABLE_FIELDS = ["title", "type", "summary", "tags", "importance", "content"] as const`,PATCH handler 里 `const safeBody = pick(req.body, PATCHABLE_FIELDS)`,再 merge。这样客户端无法通过 body 改 `id`/`created_at`/`file_path`/`content_hash`/`strength`/`access_count`/`last_access`/`version`。
+    2. `getAtom`,`patch`,`archive` handler 里 `getAllAtoms(idx).find(a => a.id === id)` 全部替换成 `idx.getAtom(id)`。MemoryIndex.getAtom 已经在 `memory.ts:560` 是 public。删除 routes/memory.ts:109 那条误导性注释 "MemoryIndex has no public getAtom"。
+    3. 加 helper `function pick(obj, keys)` (top of file)
+  - **验证**: 跑 server test 全过;新增 2 tests:
+    - (a) PATCH body 含 `{id: "X_NEW", created_at: "..."}` → server 忽略这些字段,DB 的 `id`/`created_at` 不变
+    - (b) PATCH 改 title 100 次,测时间无明显变化(无 O(n) find)
+  - **依赖**: 无
+  - **新增测试**: 2 tests in `server/test/memory-routes.test.ts`
+
+- [x] 7.3 **[IMPORTANT] Empty state 分 "no memories" vs "no matches";memory-error placeholder 只在 hash 真的不匹配时显示**
+  - **文件**:
+    - `packages/webui/web/src/pages/MemoryPage.tsx` (Modify)
+    - `packages/webui/web/src/components/memory/MemoryList.tsx` (Modify)
+    - `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Modify)
+    - `packages/webui/server/routes/memory.ts` (Modify)
+  - **内容**:
+    1. Server: `GET /api/memory/:id` 当 file 缺失或 hash mismatch 时,除了 `content: ""` 还要在返回 atom 上加 `hash_mismatch: true` 字段(纯 client 提示用,不入 DB)。
+    2. Client: MemoryEditor.tsx banner 触发条件改 `atom.hash_mismatch === true`,而不是 `atom.content === "" && atom.file_path`。
+    3. Client: MemoryPage 区分 empty state:
+       - 当 `atoms.length === 0 && 全部 filter default` (filter 全空) → 显示 "No memories yet" + "Run a session to start"
+       - 其他情况(有 atoms 但 filter 过滤后 0) → 现有 "No matches"
+  - **验证**: vitest + RTL:
+    - MemoryPage test 加 case: 空 DB → 显示 "No memories yet"
+    - MemoryPage test 加 case: 有 atoms 但 filter 全选 → 显示 "No matches"
+    - MemoryEditor test 加 case: atom.hash_mismatch=true → banner 显示;atom.hash_mismatch=false 但 content="" → banner 不显示
+    - server test 加 case: GET atom + 删 .md → 返回 `hash_mismatch: true`
+  - **依赖**: 无
+  - **新增测试**: 4 tests (3 web + 1 server)
+

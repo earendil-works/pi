@@ -251,6 +251,17 @@ describe("(c) GET /api/memory/:id detail endpoint", () => {
 		expect(atom.content).toBe("");
 	});
 
+	it("GET /api/memory/:id returns hash_mismatch=true when .md file is deleted (task 7.3)", async () => {
+		await setupIndexAndServer({ id: "a-1", writeFile: true });
+		const filePath = path.join(atomsDir, "preference", "test.md");
+		await fs.unlink(filePath);
+		const res = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`);
+		expect(res.status).toBe(200);
+		const atom = await res.json();
+		expect(atom.content).toBe("");
+		expect(atom.hash_mismatch).toBe(true);
+	});
+
 	it("returns content='' when content_hash is corrupted", async () => {
 		await setupIndexAndServer({ id: "a-1", writeFile: true });
 		// mutate .md content on disk — sha256 won't match the hash stored in db

@@ -154,6 +154,42 @@ describe("MemoryPage", () => {
     expect(screen.getByText("Select an atom from the list")).toBeInTheDocument();
   });
 
+  it("shows 'No memories yet' when DB is empty and filters are default (task 7.3)", async () => {
+    (api.memory.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.memory.stats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 0,
+      archived: 0,
+      byType: {},
+    });
+    render(<MemoryPage />);
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(screen.getByText("No memories yet")).toBeInTheDocument();
+    expect(screen.getByText(/Run a session to start/i)).toBeInTheDocument();
+    expect(screen.queryByText("No matches")).toBeNull();
+  });
+
+  it("shows 'No matches' when DB has atoms but filter excludes all (task 7.3)", async () => {
+    (api.memory.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.memory.stats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 5,
+      archived: 0,
+      byType: { preference: 5 },
+    });
+    render(<MemoryPage />);
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    // Toggle the "preference" type chip on so the filter is non-default.
+    fireEvent.click(screen.getByRole("button", { name: "preference" }));
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(screen.getByText("No matches")).toBeInTheDocument();
+    expect(screen.queryByText("No memories yet")).toBeNull();
+  });
+
   it("debounces filter input by 300ms before re-fetching", async () => {
     // This test needs full fake timers (including setTimeout) because the
     // debounce uses setTimeout. beforeEach only fakes setInterval/clearInterval

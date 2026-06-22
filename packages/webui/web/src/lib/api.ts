@@ -114,6 +114,7 @@ export interface MemoryAtom {
   content: string;
   file_path: string;
   content_hash: string;
+  hash_mismatch?: boolean;
 }
 
 export interface MemoryAtomWithScores {

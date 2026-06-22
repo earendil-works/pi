@@ -85,10 +85,38 @@ describe("MemoryEditor", () => {
   });
 
   it("renders <memory-error> placeholder when content='' and file_path set", () => {
-    const atom: MemoryAtom = { ...ATOM, content: "", file_path: "/tmp/x.md" };
+    const atom: MemoryAtom = {
+      ...ATOM,
+      content: "",
+      file_path: "/tmp/x.md",
+      hash_mismatch: true,
+    };
     render(<MemoryEditor atom={atom} onSave={vi.fn()} onArchive={vi.fn()} />);
     expect(screen.getByTestId("memory-error")).toBeDefined();
     expect(screen.getByText(/file hash mismatch/)).toBeDefined();
+  });
+
+  it("shows memory-error banner only when atom.hash_mismatch is true (task 7.3)", () => {
+    const mismatched: MemoryAtom = {
+      ...ATOM,
+      content: "",
+      file_path: "/tmp/x.md",
+      hash_mismatch: true,
+    };
+    const { unmount } = render(
+      <MemoryEditor atom={mismatched} onSave={vi.fn()} onArchive={vi.fn()} />,
+    );
+    expect(screen.getByTestId("memory-error")).toBeDefined();
+    expect(screen.getByText(/file hash mismatch/)).toBeDefined();
+    unmount();
+
+    const clearedBody: MemoryAtom = {
+      ...ATOM,
+      content: "",
+      file_path: "/tmp/x.md",
+    };
+    render(<MemoryEditor atom={clearedBody} onSave={vi.fn()} onArchive={vi.fn()} />);
+    expect(screen.queryByTestId("memory-error")).toBeNull();
   });
 
   it("does NOT render <memory-error> when content is non-empty", () => {

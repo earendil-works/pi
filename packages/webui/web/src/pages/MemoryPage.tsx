@@ -113,6 +113,13 @@ export function MemoryPage() {
             filters={filters}
             onFilterChange={setFilters}
             onRefresh={handleRefresh}
+            isEmptyDb={
+              atoms.length === 0 &&
+              filters.types.length === 0 &&
+              filters.tag === "" &&
+              filters.q === "" &&
+              filters.archived === "active"
+            }
           />
         </div>
         {/* 右 70%: detail */}

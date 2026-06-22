@@ -136,6 +136,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 					return;
 				}
 				// Read .md body. Missing file / hash mismatch → content = "" (no 500).
+				let hashMismatch = false;
 				if (existing.file_path) {
 					try {
 						const fromFile = readAtomFromFile(existing.file_path, existing.content_hash || undefined);
@@ -143,14 +144,16 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 							existing.content = fromFile.content;
 						} else {
 							existing.content = ""; // file missing
+							hashMismatch = true;
 						}
 					} catch {
 						existing.content = ""; // hash mismatch or other read error
+						hashMismatch = true;
 					}
 				} else {
 					existing.content = "";
 				}
-				res.json(existing);
+				res.json({ ...existing, hash_mismatch: hashMismatch });
 			} finally {
 				idx.close();
 			}

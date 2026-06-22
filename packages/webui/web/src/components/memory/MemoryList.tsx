@@ -17,6 +17,7 @@ interface MemoryListProps {
   filters: MemoryListFilters;
   onFilterChange: (f: MemoryListFilters) => void;
   onRefresh: () => void;
+  isEmptyDb?: boolean;
 }
 
 const TYPES: MemoryAtomType[] = ["constraint", "preference", "workflow", "knowledge", "event", "solution", "insight", "bug"];
@@ -32,7 +33,7 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-export function MemoryList({ atoms, selectedId, onSelect, onArchive, filters, onFilterChange, onRefresh }: MemoryListProps) {
+export function MemoryList({ atoms, selectedId, onSelect, onArchive, filters, onFilterChange, onRefresh, isEmptyDb = false }: MemoryListProps) {
   // 客户端再做一次过滤 (server 已 filter 过; 这里用于乐观更新)
   const filtered = useMemo(() => {
     let list = atoms;
@@ -119,7 +120,17 @@ export function MemoryList({ atoms, selectedId, onSelect, onArchive, filters, on
       {/* 列表 */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="p-4 text-sm text-gray-500">No matches</div>
+          isEmptyDb ? (
+            <div
+              data-testid="empty-db"
+              className="p-4 text-sm text-gray-500"
+            >
+              <div className="font-medium text-gray-700">No memories yet</div>
+              <div className="mt-1 text-xs">Run a session to start</div>
+            </div>
+          ) : (
+            <div className="p-4 text-sm text-gray-500">No matches</div>
+          )
         ) : (
           filtered.map((a) => (
             <div

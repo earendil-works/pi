@@ -165,7 +165,7 @@ export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorP
       </div>
       {/* body editor */}
       <div className="flex-1 flex flex-col min-h-0">
-        {atom.content === "" && atom.file_path && (
+        {atom.hash_mismatch && (
           <div
             data-testid="memory-error"
             className="bg-red-50 border-b border-red-200 px-3 py-2 text-xs text-red-800"
