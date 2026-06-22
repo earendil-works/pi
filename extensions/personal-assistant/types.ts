@@ -70,8 +70,12 @@ export interface RecallResult {
 	distance: number;
 	/** Cosine similarity in [0,1], derived as 1 - distance²/2 (for L2-normalized vectors). */
 	cosine: number;
-	/** L0 = summary only (low bandwidth), L1 = full content hydrated. */
-	tier: "L0" | "L1";
+	/**
+	 * Absolute path to the atom's `.md` storage file. The agent reads this file
+	 * with the standard `read` tool to fetch full content on demand — search is
+	 * discovery only, never hydration (Decision: search returns summaries only).
+	 */
+	file_path: string;
 }
 
 // ---------------------------------------------------------------------------

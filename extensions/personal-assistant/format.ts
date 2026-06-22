@@ -1,35 +1,29 @@
 // formatMemoryBlock / formatMemoryContext — pure renderers for recall results.
 //
 // Architecture constraints (from design.md):
-//   - L0 = summary only (title + summary + tags). Low bandwidth.
-//   - L1 = full content hydrated. Higher bandwidth.
+//   - Search is discovery-only; results always carry only summary + file_path.
+//   - Each block: [type] title / summary / file: <path> / Tags: <t1, t2, ...>
+//     The agent uses the standard `read` tool on the file_path to fetch full
+//     content on demand. We never hydrate content at format time.
 //   - Token estimate: Math.ceil(text.length / 2.5) — rough, deterministic, no
 //     tokenizer dependency. (R49: strict budget, never exceed.)
 //   - Sort by distance ASC (best first) before packing into the budget (S57).
 //   - Pure functions only. No I/O, no clock, no random.
 
-import type { RecallResult, MemoryAtom } from "./types.ts";
+import type { RecallResult } from "./types.ts";
 
 /**
- * Format a single atom as L0 (summary) or L1 (full content). Pure.
+ * Format a single recall result as a single L0-style block. Pure.
  *
- * L0 layout:
+ * Block layout:
  *   [<type>] <title>
  *   <summary>
- *   Tags: <t1, t2, ...>
- *
- * L1 layout:
- *   [<type>] <title>
- *   <summary>
- *   <content>
+ *   file: <file_path>
  *   Tags: <t1, t2, ...>
  */
-export function formatMemoryBlock(atom: MemoryAtom, tier: "L0" | "L1"): string {
-	if (tier === "L0") {
-		return `[${atom.type}] ${atom.title}\n${atom.summary}\nTags: ${atom.tags.join(", ")}`;
-	}
-	// L1: full content between summary and tags.
-	return `[${atom.type}] ${atom.title}\n${atom.summary}\n${atom.content}\nTags: ${atom.tags.join(", ")}`;
+export function formatMemoryBlock(result: RecallResult): string {
+	const { atom, file_path } = result;
+	return `[${atom.type}] ${atom.title}\n${atom.summary}\nfile: ${file_path}\nTags: ${atom.tags.join(", ")}`;
 }
 
 /**
@@ -62,7 +56,7 @@ export function formatMemoryContext(
 	let included = 0;
 
 	for (const r of sorted) {
-		const block = formatMemoryBlock(r.atom, r.tier);
+		const block = formatMemoryBlock(r);
 		const blockTokens = estimateTokens(block);
 		// Strict budget: if adding this block would exceed, stop. Never
 		// partially include a block.

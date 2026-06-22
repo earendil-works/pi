@@ -319,8 +319,8 @@ export const api = {
       );
     },
 
-    search(query: string, topK?: number): Promise<MemorySearchResult> {
-      return request<MemorySearchResult>("/api/memory/search", {
+    search(query: string, topK?: number): Promise<unknown> {
+      return request<unknown>("/api/memory/search", {
         method: "POST",
         body: JSON.stringify({ query, topK }),
       });

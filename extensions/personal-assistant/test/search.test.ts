@@ -3,7 +3,8 @@
 // Architecture constraints (from design.md Decision 7, 8):
 //   - embedText returns null on failure → recallAtoms must return [] (no fallback).
 //   - Pure sqlite-vec KNN: no keyword matching, no FTS5.
-//   - Top-3 results are L1 (full content hydrated from .md), rest are L0.
+//   - Discovery-only: every result carries file_path, no L0/L1 hydration split.
+//     The agent reads full content via the standard `read` tool on demand.
 //   - updateAccess called for every returned atom.
 //   - Default cosine threshold = 0.5.
 
@@ -186,7 +187,19 @@ describe("recallAtoms", () => {
 		expect(results.find((r: RecallResult) => r.atom.id === sup.id)).toBeUndefined();
 	});
 
-	it("marks first 3 results as L1 tier (full content hydrated)", async () => {
+	it("returns file_path pointing to atomsDir/<type>/<id>.md", async () => {
+		const a = sampleAtom({ type: "process", content: "zeta signal unique" });
+		await insertAtom(a);
+
+		const results = await recallAtoms(index, "zeta signal unique", atomsDir);
+		expect(results.length).toBeGreaterThan(0);
+		const first = results[0] as RecallResult;
+		expect(first.file_path).toBe(
+			path.join(atomsDir, "process", `${a.id}.md`),
+		);
+	});
+
+	it("returns every result regardless of position (search is discovery-only, no L1 tier)", async () => {
 		const a1 = sampleAtom({ content: "First distinct theta keyword" });
 		const a2 = sampleAtom({ content: "Second distinct iota keyword" });
 		const a3 = sampleAtom({ content: "Third distinct kappa keyword" });
@@ -199,13 +212,12 @@ describe("recallAtoms", () => {
 		const results = await recallAtoms(index, "distinct theta keyword", atomsDir, {
 			topK: 10,
 		});
-		const l1Count = results.filter((r: RecallResult) => r.tier === "L1").length;
-		const l0Count = results.filter((r: RecallResult) => r.tier === "L0").length;
-		expect(l1Count).toBeLessThanOrEqual(3);
-		expect(l0Count).toBe(results.length - l1Count);
+		// Search must return all 4 — none are filtered out by an L0/L1 tier
+		// distinction (there is no such distinction anymore).
+		expect(results.length).toBe(4);
 	});
 
-	it("degrades gracefully if .md file missing (returns atom anyway)", async () => {
+	it("returns the atom even when the .md file is missing on disk", async () => {
 		const a = sampleAtom({ content: "No file content mu signal unique" });
 		await insertAtom(a);
 		// Delete the .md file to simulate a missing-on-disk scenario.
@@ -215,6 +227,8 @@ describe("recallAtoms", () => {
 		const results = await recallAtoms(index, "mu signal unique", atomsDir);
 		expect(results.length).toBeGreaterThan(0);
 		expect(results[0]?.atom.id).toBe(a.id);
+		// file_path is still computed — caller decides whether to read it.
+		expect(results[0]?.file_path).toBe(fp);
 	});
 
 	it("updates access_count on retrieved atoms", async () => {

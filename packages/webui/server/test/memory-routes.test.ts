@@ -1090,28 +1090,31 @@ describe("POST /api/memory/search", () => {
 		const res = await fetchAt("/api/memory/search", { query: "any query" });
 		expect(res.status).toBe(200);
 		expect(res.data.results).toEqual([]);
-		expect(res.data.tokenBudgetUsed).toBe(0);
-		expect(res.data.formattedText).toBe("");
 	});
 
-	it("returns results + tokenBudgetUsed for valid query", async () => {
+	it("returns results with file_path for valid query (discovery-only contract)", async () => {
 		await insertAtom({ content: "test content alpha distinct keywords here" });
 		const res = await fetchAt("/api/memory/search", {
 			query: "alpha content keywords",
-			tokenBudget: 1000,
 		});
 		expect(res.status).toBe(200);
 		const results = res.data.results as Array<Record<string, unknown>>;
 		expect(results.length).toBeGreaterThan(0);
-		expect(typeof res.data.tokenBudgetUsed).toBe("number");
-		expect(res.data.tokenBudgetUsed as number).toBeGreaterThan(0);
-		// Result shape contract: id/type/title/summary/tags/distance/cosine/tier
+		// Result shape contract: id/type/title/summary/tags/file_path/distance/cosine
 		const first = results[0] as Record<string, unknown>;
 		expect(typeof first.id).toBe("string");
 		expect(typeof first.type).toBe("string");
 		expect(typeof first.distance).toBe("number");
 		expect(typeof first.cosine).toBe("number");
-		expect(first.tier === "L0" || first.tier === "L1").toBe(true);
+		expect(typeof first.file_path).toBe("string");
+		// Discovery-only: no tier / no formattedText / no tokenBudgetUsed.
+		expect(first.tier).toBeUndefined();
+		expect(res.data.formattedText).toBeUndefined();
+		expect(res.data.tokenBudgetUsed).toBeUndefined();
+		// file_path resolves to atomsDir/<type>/<id>.md on disk.
+		const fp = first.file_path as string;
+		expect(fp.startsWith(path.join(atomsDir, first.type as string))).toBe(true);
+		expect(fp.endsWith(".md")).toBe(true);
 	});
 
 	it("respects type filter", async () => {
@@ -1125,21 +1128,6 @@ describe("POST /api/memory/search", () => {
 		const results = res.data.results as Array<{ type: string }>;
 		expect(results.length).toBeGreaterThan(0);
 		expect(results.every((r) => r.type === "rule")).toBe(true);
-	});
-
-	it("respects tokenBudget", async () => {
-		for (let i = 0; i < 3; i++) {
-			await insertAtom({
-				content: `Content atom ${i} distinct words ${i * 100} keyword alpha`,
-			});
-		}
-		const res = await fetchAt("/api/memory/search", {
-			query: "any query alpha",
-			topK: 10,
-			tokenBudget: 50,
-		});
-		expect(res.status).toBe(200);
-		expect(res.data.tokenBudgetUsed as number).toBeLessThanOrEqual(50);
 	});
 
 	it("reports a non-negative recallTimeMs", async () => {

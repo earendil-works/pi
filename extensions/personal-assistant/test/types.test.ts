@@ -131,19 +131,19 @@ describe("types", () => {
 		expect(back.is_latest).toBe(0);
 	});
 
-	it("shapes RecallResult with distance, cosine, tier", () => {
+	it("shapes RecallResult with distance, cosine, file_path", () => {
 		const result: RecallResult = {
 			atom: makeAtom(),
 			distance: 0.42,
 			cosine: 0.79,
-			tier: "L1",
+			file_path: "/home/u/.pi/agent/memory/atoms/rule/abc.md",
 		};
-		expect(result.tier).toBe("L1");
+		expect(result.file_path).toMatch(/\.md$/);
 		expect(result.cosine).toBeGreaterThan(0);
 		expect(result.cosine).toBeLessThanOrEqual(1);
 
-		const summaryOnly: RecallResult = { ...result, tier: "L0" };
-		expect(summaryOnly.tier).toBe("L0");
+		const summaryOnly: RecallResult = { ...result, file_path: "/x/y.md" };
+		expect(summaryOnly.file_path).toBe("/x/y.md");
 	});
 
 	it("shapes ExtractionItem with the 6 fields", () => {

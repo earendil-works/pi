@@ -24,6 +24,7 @@
 - All v1 search/extract/decay logic moved to specialized modules (storage, search, format, extraction, decay)
 - Schema: new tables (memory_index, memory_vectors vec0 FLOAT[1024], memory_audit) with 5 indexes
 - Embedding: full text (title+summary+content+tags) instead of title-only
+- Search is discovery-only: `recallAtoms` returns summary + `file_path` for every result (no L0/L1 tier hydration). The agent reads full content on demand via the standard `read` tool on the `file_path`. The `formatMemoryContext` injection block now includes a `file: <path>` line per atom so the LLM knows where to read.
 
 ### Fixed
 - Hash mismatch between DB content_fingerprint and file contentHash (both now use normalizeContent before sha256)

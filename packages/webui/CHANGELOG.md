@@ -11,6 +11,10 @@
   - `useAutoSave` hook (3s debounce + 200ms unmount flush deadline) wired into `MemoryDetail` for transparent auto-save.
 - "bug" promoted to 8th `MemoryAtomType` (production data had 1 atom of this type; previously caused silent type rewrite on PATCH).
 
+### Changed
+
+- `POST /api/memory/search` response is now discovery-only: `{results: [{id, type, title, summary, tags, file_path, distance, cosine}], recallTimeMs}` — no `tier` / `formattedText` / `tokenBudgetUsed`. The agent reads full content on demand via the standard `read` tool on `file_path`. The MemorySearchTester UI now shows each result's `file_path` directly.
+
 ### Fixed
 
 - WebUI server tests (`memory-routes.test.ts`, 21 cases) now run via the project's actual `npm test` flow instead of silently failing — `packages/webui/vitest.config.ts` had no `server.deps.inline` for `node:sqlite` / `bun:sqlite` / `@earendil-works/pi-personal-assistant`, and `vite-node` 2.1.8 stripped the `node:` prefix from dynamic imports before the inline check ran. Added a small Vite plugin (`webui:sqlite-builtin-shim`) that re-adds the prefix and serves a `require`-based stub letting Node's CJS loader handle the builtin natively.

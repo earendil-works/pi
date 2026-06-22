@@ -32,7 +32,6 @@ import {
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
 import { recallAtoms } from "../../../../extensions/personal-assistant/search.ts";
-import { formatMemoryContext } from "../../../../extensions/personal-assistant/format.ts";
 import {
 	buildEmbeddableText,
 	embedText,
@@ -434,36 +433,34 @@ export function registerPostArchive(
 }
 
 /**
- * POST /api/memory/search — recall ranked atoms and format them within
- * a token budget (R54, S59, S60).
+ * POST /api/memory/search — recall ranked atoms in discovery-only mode.
  *
  * Body:
- *   - `query`        (required) — non-empty string to embed and search.
- *   - `topK`         (optional, default 10) — max candidates to return.
- *   - `tokenBudget`  (optional, default 4000) — ceiling for the formatted
- *                    text block; we never exceed it (R49).
- *   - `type`         (optional) — restrict recall to a single atom type.
+ *   - `query`  (required) — non-empty string to embed and search.
+ *   - `topK`   (optional, default 10) — max candidates to return.
+ *   - `type`   (optional) — restrict recall to a single atom type.
  *
  * Response:
  *   - `results`: ranked list of `{ id, type, title, summary, tags,
- *     distance, cosine, tier }`. Empty when no atoms match or ollama is
- *     unreachable (embedText → null → []).
- *   - `formattedText`: a single text block of `formatMemoryContext`
- *     output, packed within `tokenBudget` tokens.
+ *     file_path, distance, cosine }`. Empty when no atoms match or
+ *     ollama is unreachable (embedText → null → []).
  *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
- *   - `tokenBudgetUsed`: actual tokens consumed by `formattedText`.
+ *
+ * Discovery-only contract (R-search-cheap):
+ *   - No `formattedText`, no `tier` field, no `tokenBudgetUsed`. Search
+ *     is for finding candidates; full content is fetched on demand by
+ *     reading `file_path` with the standard `read` tool.
  *
  * Architecture constraints:
- *   - recallAtoms + formatMemoryContext are imported via the relative
- *     extensions/personal-assistant path (same as MemoryIndex) — the
- *     package is not in the workspace and `index.ts` only re-exports
- *     runMemoryExtraction.
+ *   - recallAtoms is imported via the relative extensions/personal-assistant
+ *     path (same as MemoryIndex) — the package is not in the workspace and
+ *     `index.ts` only re-exports runMemoryExtraction.
  *   - Per-route `express.json()` so other handlers stay payload-free.
  *
  * Status codes:
  *   - 200: search ran (results may be empty).
  *   - 400: query missing or empty.
- *   - 500: only for genuine DB / vector / file errors.
+ *   - 500: only for genuine DB / vector errors.
  */
 export function registerPostSearch(
 	app: express.Express,
@@ -471,12 +468,7 @@ export function registerPostSearch(
 ): void {
 	app.post("/api/memory/search", express.json(), async (req, res) => {
 		try {
-			const {
-				query,
-				topK = 10,
-				tokenBudget = 4000,
-				type,
-			} = req.body || {};
+			const { query, topK = 10, type } = req.body || {};
 			if (typeof query !== "string" || query.length === 0) {
 				res
 					.status(400)
@@ -486,21 +478,13 @@ export function registerPostSearch(
 
 			const index = await createIndex(deps.dbPath);
 			try {
-				// Measure only the recall itself, not the formatting —
-				// formatMemoryContext is pure and sub-millisecond.
 				const t0 = Date.now();
-				const results = await recallAtoms(
-					index,
-					query,
-					deps.atomsDir,
-					{
-						topK,
-						filter: type ? { type } : undefined,
-					},
-				);
+				const results = await recallAtoms(index, query, deps.atomsDir, {
+					topK,
+					filter: type ? { type } : undefined,
+				});
 				const recallTimeMs = Date.now() - t0;
 
-				const formatted = formatMemoryContext(results, tokenBudget);
 				res.json({
 					results: results.map((r) => ({
 						id: r.atom.id,
@@ -508,13 +492,11 @@ export function registerPostSearch(
 						title: r.atom.title,
 						summary: r.atom.summary,
 						tags: r.atom.tags,
+						file_path: r.file_path,
 						distance: r.distance,
 						cosine: r.cosine,
-						tier: r.tier,
 					})),
-					formattedText: formatted.text,
 					recallTimeMs,
-					tokenBudgetUsed: formatted.used,
 				});
 			} finally {
 				index.close();

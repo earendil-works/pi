@@ -8,8 +8,8 @@
 //   - decay.ts      — runDecay
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText
-//   - search.ts     — recallAtoms (used by the context-injection pipeline)
-//   - format.ts     — formatMemoryContext (used by the context-injection pipeline)
+//   - search.ts     — recallAtoms (discovery-only; results carry file_path)
+//   - format.ts     — formatMemoryContext (renders summaries + file_path blocks)
 //
 // What memory.ts still owns:
 //   - registerMemory(pi) — wires session_before_compact + session_start + the
@@ -24,8 +24,10 @@
 //     so a chatty session does not thrash the DB.
 //   - before_agent_start kicks off recallAtoms async and stashes the promise in
 //     the module-level `pendingMemorySearch`; context awaits it (raced against
-//     an 8s timeout) and injects the formatted block into the last user
-//     message. Non-destructive: original event is returned if nothing to inject.
+//     an 8s timeout) and injects the formatted block (summary + file_path per
+//     atom) into the last user message. The LLM uses the standard `read` tool
+//     on the file_path when it needs the full body. Non-destructive: original
+//     event is returned if nothing to inject.
 //   - loadConfig returns {} on any failure — never throws. Real config wiring
 //     is external (see SettingsManager / webui routes).
 
