@@ -4,7 +4,7 @@
 // rewrite, persona injection, and inline extraction logic). v2 splits the
 // work across specialised modules and keeps memory.ts minimal:
 //
-//   - extraction.ts — extractMemories / extractMemoriesWithCallLlm / runMemoryExtraction
+//   - extraction.ts — extractMemoriesWithCallLlm / runMemoryExtraction
 //   - decay.ts      — runDecay
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText

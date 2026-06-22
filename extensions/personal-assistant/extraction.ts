@@ -3,8 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promises as fs } from "node:fs";
 import { z } from "zod";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { embedText, buildEmbeddableText, loadConfig } from "./embed.ts";
+import { embedText, buildEmbeddableText } from "./embed.ts";
 import { writeAtomToFile } from "./file-store.ts";
 import { MemoryIndex } from "./storage.ts";
 import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
@@ -255,21 +254,7 @@ function buildExtractionPrompt(messages: Array<{ role: string; content: string }
 }
 
 /**
- * Placeholder bridge between the extraction pipeline and pi's active LLM
- * session. The actual implementation depends on the ExtensionContext API
- * surface (which exposes the session's model + a streaming completion
- * method), so until that integration lands we throw loudly rather than
- * silently emitting empty plans.
- *
- * Once the ExtensionContext shape is pinned down, this becomes a thin
- * adapter over `ctx.session.complete(prompt)`.
- */
-async function callLlmViaContext(_ctx: ExtensionContext, _prompt: string): Promise<string> {
-	throw new Error("callLlmViaContext: not implemented in this task — use callLlm version");
-}
-
-/**
- * Internal helper shared by both extraction entry points. Given a parsed
+ * Internal helper shared by the extraction entry point. Given a parsed
  * LLM response (or null on parse failure) and an execution context,
  * returns the plan + the buckets of atoms created/superseded/skipped.
  *
@@ -308,34 +293,10 @@ async function executeParsedPlan(
 }
 
 /**
- * Extract memories from a conversation transcript using the active pi
- * session's LLM (via the ExtensionContext). Used by pi itself when
- * running the extraction hook inline; webui uses the explicit-callLlm
- * variant instead because the LLM there is an HTTP handler, not a
- * session object.
- */
-export async function extractMemories(
-	messages: Array<{ role: string; content: string }>,
-	index: MemoryIndex,
-	ctx: ExtensionContext,
-	config: { atomsDir: string; model?: string },
-): Promise<{
-	plan: ExtractionPlan;
-	created: MemoryAtom[];
-	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
-	skipped: MemoryAtom[];
-}> {
-	const prompt = buildExtractionPrompt(messages);
-	const response = await callLlmViaContext(ctx, prompt);
-	const parsed = parseExtractionJson(response);
-	return executeParsedPlan(index, config.atomsDir, parsed, config.model ?? "unknown");
-}
-
-/**
- * Same pipeline as `extractMemories`, but the LLM is supplied as an
- * explicit `(prompt) => response` callback. Webui passes its HTTP-side
- * LLM call here; the index lifecycle stays in the caller's hands so this
- * function is reusable inside a longer-lived process.
+ * Extract memories from a conversation transcript using a caller-supplied
+ * `(prompt) => response` callback. Webui passes its HTTP-side LLM call
+ * here; the index lifecycle stays in the caller's hands so this function
+ * is reusable inside a longer-lived process.
  */
 export async function extractMemoriesWithCallLlm(
 	callLlm: (prompt: string) => Promise<string>,
