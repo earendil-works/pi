@@ -6,6 +6,6 @@ base_ref: 5cb6242777cd58a9f67074209da877ba697bd62e
 tasks_total: 0
 tasks_done: 0
 isolation: null
-verify_result: null
+verify_result: pending
 last_review_sha: null
 archived: false
