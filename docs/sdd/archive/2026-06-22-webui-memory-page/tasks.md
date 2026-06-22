@@ -426,3 +426,10 @@
   - **依赖**: 无
   - **新增测试**: 4 tests (3 web + 1 server)
 
+- [x] 7.4 **[IMPORTANT] Empty-state false positive: 用 `stats.total === 0` 而非 filter 全空**
+  - **文件**: `packages/webui/web/src/pages/MemoryPage.tsx` (Modify)
+  - **内容**: 当前 `isEmptyDb = atoms.length === 0 && filters 全 default` 在用户只有 archived atom 时会误判为 "No memories yet"("Run a session to start" 误导,因为 DB 不空)。改为 `isEmptyDb = stats?.total === 0` —— 直接用 `/api/memory/stats.total` 判断 DB 是不是真的 0 行,与 filter 无关。
+  - **验证**: MemoryPage test 加 case: `stats.total = 5, atoms.length = 0`(因为 filter=active 但只有 archived) → 显示 "No matches" 而不是 "No memories yet"
+  - **依赖**: 7.3
+  - **新增测试**: 1 test
+

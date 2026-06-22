@@ -38,3 +38,13 @@ work in this repo; per-change principles are in `docs/sdd/archive/<change>/princ
 - 被动注入 + 扩展钩子 + 阈值控制是记忆系统核心范式,本次修改不引入新机制(不主动 tool / 不滑动窗口)
 - 工具结果截断(50KB / 2000 行)已是 baseline,文件跟踪 regex 必须正确处理 truncated 边界,不假设完整输出
 - 边界 case 降级而非报错,任意文件跟踪失败不应阻塞压缩流程
+
+## webui-memory-page 原则
+
+- **`MemoryIndex` 是 personal-assistant 的 public API**：class 和 `MemoryAtom` / `MemoryAtomType` / `searchAtoms` / `rewriteQuery` / `writeAtomToFile` / `readAtomFromFile` / `ATOMS_DIR` / `MEMORY_DB_PATH` 必须 export；webui server 通过 tsconfig path mapping 直接 import，不重复实现 SQLite 读写
+- **`.md` 文件是 single source of truth，DB 是索引**：body 编辑必须重算 hash、可能重写文件、可能迁移 `file_path`、必重建 FTS 行、必清 embedding
+- **编辑必落盘**：3s debounce + 路由切换 / 关闭 tab / 刷新页面时强制 flush pending save，不丢用户输入
+- **Recall 测试 = 真实 pipeline**：不 mock、不写测试专用的 search 函数；调真实的 `rewriteQueryWithCallLlm` + `searchAtomsWithScores`，展示分项分数让用户能定位召回失败原因
+- **v1 不做 create / delete atom**：atom 由抽取流程自然生成，UI 手动 create 容易污染模型对真实用户偏好的判断；delete 用归档（`archived=true`）替代
+- **编辑失败 = 视觉反馈 + 一次重试**：toast 提示、in-memory 值回滚、3s 后再试一次，第二次失败停手，不无限循环
+- **Server 端走 `callLlm` 回调，不构造 `ExtensionContext` stub**：`ExtensionContext.modelRegistry` 强耦合 session 生命周期，stub 易跑偏；server 永远用 `*WithCallLlm` 形态访问 LLM 能力，和现有 `runMemoryExtraction` 一致

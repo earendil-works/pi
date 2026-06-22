@@ -600,3 +600,5 @@ server: `rewriteQuery` → `searchAtoms` → 返回 `{rewritten, atoms[]}` → �
 - 不在 v1 加 embedding 异步重算（v2）
 - 不在 v1 加 WebSocket 推送（v2）
 - 不在 v1 加 create / delete（v2 视情况）
+
+<!-- archived-with: 2026-06-22-webui-memory-page | status: final -->
