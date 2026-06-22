@@ -12,8 +12,9 @@ import { formatMemoryContext } from "./extensions/personal-assistant/format.ts";
 const SESSION_PATH = "/home/qjh/.pi/agent/sessions/--home-qjh-.pi-agent--/2026-06-02T15-20-09.141Z_34022d26-2c71-49a5-83bf-c83df47a322a.jsonl.bak";
 const DB_PATH = "/tmp/memory-v2-real/memory.db";
 const ATOMS_DIR = "/tmp/memory-v2-real/atoms";
-const OLLAMA_URL = "http://127.0.0.1:11434";
-const LLM_MODEL = "qwen2.5:3b-instruct-q4_0";
+const LLM_PROVIDER = "minimax-cn";
+const LLM_MODEL = "MiniMax-M3";
+const LLM_BASE_URL = "https://api.minimaxi.com/anthropic";
 
 interface SessionMsg { role: "user" | "assistant"; content: string; ts: string; }
 
@@ -36,24 +37,28 @@ async function loadSession(filePath: string): Promise<SessionMsg[]> {
   return out;
 }
 
-// Real ollama LLM via /api/chat (uses system role for reliable JSON)
+// Real MiniMax-M3 LLM via /api/chat (uses system role for reliable JSON)
 async function callOllamaChat(systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+  const res = await fetch(`${LLM_BASE_URL}/v1/messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.MINIMAX_CN_API_KEY || "",
+      "anthropic-version": "2023-06-01",
+    },
     body: JSON.stringify({
       model: LLM_MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      stream: false,
-      options: { temperature: 0.1, num_predict: 4096, num_ctx: 8192 },
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
     }),
   });
-  if (!res.ok) throw new Error(`ollama /api/chat failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`MiniMax API failed: ${res.status} ${errBody.slice(0, 300)}`);
+  }
   const data = await res.json();
-  return data.message.content;
+  return data.content?.[0]?.text ?? "";
 }
 
 const SYSTEM_PROMPT = `You are a memory extraction agent. From the conversation, extract knowledge worth keeping as JSON.
