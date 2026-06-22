@@ -80,6 +80,8 @@ async function runCli(
 				[ENV_AGENT_DIR]: dirs.agentDir,
 				PI_OFFLINE: "1",
 				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
+				ANTHROPIC_API_KEY: "sk-ant-api03-dummy",
+				OPENAI_API_KEY: "dummy",
 			},
 			stdio: ["ignore", "ignore", "pipe"],
 		});
