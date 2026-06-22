@@ -260,7 +260,7 @@ export class MemoryIndex {
 	/**
 	 * Top-1 lookup gated by a cosine-similarity threshold. Returns the
 	 * hydrated atom + the cosine (derived from the L2 distance returned
-	 * by sqlite-vec as `1 - distance/2`, valid only when both vectors
+	 * by sqlite-vec as `1 - distance²/2`, valid only when both vectors
 	 * are L2-normalised) when the best match clears the threshold,
 	 * otherwise null (R21).
 	 */
@@ -269,14 +269,20 @@ export class MemoryIndex {
 		threshold: number,
 		filter?: { type?: MemoryAtomType },
 	): { atom: MemoryAtom; cosine: number } | null {
-		const results = this.vectorSearch(embedding, 1, { ...filter });
+		// Pull top-5 candidates (not just top-1) so threshold check has a fair
+		// chance even if the closest atom doesn't pass but #2-#5 might.
+		const results = this.vectorSearch(embedding, 5, { ...filter });
 		if (results.length === 0) return null;
-		const top = results[0]!;
-		const cosine = 1 - top.distance / 2;
-		if (cosine < threshold) return null;
-		const atom = this.getAtom(top.id);
-		if (!atom) return null;
-		return { atom, cosine };
+		for (const r of results) {
+			// Correct L2 → cosine: cosine = 1 - distance²/2 (only valid for
+			// L2-normalized vectors, which bge-m3 outputs are).
+			const cosine = 1 - (r.distance * r.distance) / 2;
+			if (cosine >= threshold) {
+				const atom = this.getAtom(r.id);
+				if (atom) return { atom, cosine };
+			}
+		}
+		return null;
 	}
 
 	/**

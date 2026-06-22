@@ -68,7 +68,7 @@ export interface RecallResult {
 	atom: MemoryAtom;
 	/** Raw L2 distance returned by sqlite-vec. Smaller = closer. */
 	distance: number;
-	/** Cosine similarity in [0,1], derived as 1 - distance/2. */
+	/** Cosine similarity in [0,1], derived as 1 - distance²/2 (for L2-normalized vectors). */
 	cosine: number;
 	/** L0 = summary only (low bandwidth), L1 = full content hydrated. */
 	tier: "L0" | "L1";

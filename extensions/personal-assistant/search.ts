@@ -62,7 +62,7 @@ export async function recallAtoms(
 	for (const { id, distance } of raw) {
 		const atom = index.getAtom(id);
 		if (!atom) continue;
-		const cosine = 1 - distance / 2;
+		const cosine = 1 - (distance * distance) / 2;  // L2 → cosine (for unit vectors)
 		if (cosine < threshold) continue;
 
 		// Atomic UPDATE; better-sqlite3 makes this synchronous at the JS level.

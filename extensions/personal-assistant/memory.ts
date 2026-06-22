@@ -89,7 +89,11 @@ let lastDecayAt = 0;
  * the same process. Cleared after the context hook reads it.
  */
 type FormattedMemory = { text: string; used: number; included: number };
-let pendingMemorySearch: Promise<FormattedMemory | null> | null = null;
+// Per-prompt pending searches. Module-level Map (not single var) so two
+// concurrent turns with different prompts don't stomp each other's recall.
+// Same-prompt concurrent turns remain a theoretical race; pi's
+// single-user runtime makes this vanishingly rare.
+let pendingMemorySearches = new Map<string, Promise<FormattedMemory | null>>();
 
 /** Hard cap on how long the context hook waits for the recall to finish. */
 const CONTEXT_RECALL_TIMEOUT_MS = 8_000;
@@ -140,6 +144,11 @@ export function loadConfig(): PersonalAssistantConfig {
  *     original event unchanged when no memory should be injected.
  */
 export function registerMemory(pi: ExtensionAPI): void {
+	// Reset per-session state. The Map is module-level (so the two hooks
+	// share it), but each registerMemory call gets a fresh map so test
+	// runs and extension reloads don't leak state between each other.
+	pendingMemorySearches = new Map();
+
 	// session_before_compact — extract memories before the conversation is
 	// summarised and discarded. Errors are caught so a broken memory pipeline
 	// never blocks compaction itself.
@@ -154,11 +163,24 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
-			// Stub LLM caller — the real SessionBeforeCompactEvent does not
-			// expose a callLlm on the context, so production wiring either
-			// uses ctx.session.complete() or routes through a webui-side
-			// HTTP handler. For v2 we return an empty plan; callers can
-			// override by passing a real callLlm through the hook event.
+			// KNOWN LIMITATION: v2 does not yet wire a real LLM caller for
+			// the session_before_compact hook. The ExtensionContext passed
+			// by pi does not yet expose a synchronous callLlm; production
+			// wiring requires either ctx.session.complete() integration
+			// (requires a session-bound model) or routing through a
+			// webui-side HTTP handler. For now, the stub returns an empty
+			// plan — meaning compaction produces zero atoms. This is a
+			// known gap, NOT a bug. Until wired, populate atoms via:
+			//   - manual POST /api/memory/extract
+			//   - or wait for the follow-up task that wires ctx.session.complete()
+			//
+			// See: docs/sdd/changes/memory-v2-refactor/verification-checklist.md
+			// (extraction stub) and code review notes.
+			// eslint-disable-next-line no-console
+			console.warn(
+				"[memory-v2] session_before_compact: LLM caller not wired in v2, " +
+				"extraction returns empty plan. Use POST /api/memory/extract for manual extraction."
+			);
 			const callLlm = async (_prompt: string): Promise<string> => '{"items":[]}';
 
 			const result = await extractMemoriesWithCallLlm(
@@ -211,7 +233,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
-		pendingMemorySearch = (async (): Promise<FormattedMemory | null> => {
+		const promise = (async (): Promise<FormattedMemory | null> => {
 			const index = new MemoryIndex(dbPath);
 			await index.init();
 			try {
@@ -223,6 +245,11 @@ export function registerMemory(pi: ExtensionAPI): void {
 				index.close();
 			}
 		})();
+		// Key by prompt to avoid stomping between concurrent turns. If a
+		// context hook arrives for a different prompt, it won't see this
+		// promise. (The hook reads by matching the event's last user
+		// message content against pending keys.)
+		pendingMemorySearches.set(userMessage, promise);
 	});
 
 	// context — await the pending recall (raced against an 8s timeout) and
@@ -232,8 +259,27 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// mutate. Modifications produce a fresh messages array — never the
 	// caller's array reference.
 	pi.on("context", async (event: ContextEvent, _ctx) => {
-		const result = await injectMemoryContext(event, pendingMemorySearch);
-		pendingMemorySearch = null;
+		// Find the pending search by matching against the last user message
+		// of the event. Falls back to the most-recent entry if no match.
+		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
+		let lastUserPrompt = "";
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i]?.role === "user") {
+				const content = messages[i]?.content;
+				lastUserPrompt = typeof content === "string" ? content : JSON.stringify(content);
+				break;
+			}
+		}
+		// Find the pending search by matching against the last user message
+		// of the event. If no key matches AND the map has exactly one
+		// entry, fall back to that entry (handles prompt-mutation edge
+		// case). Otherwise no pending search.
+		let pending: Promise<FormattedMemory | null> | null = pendingMemorySearches.get(lastUserPrompt) ?? null;
+		if (!pending && pendingMemorySearches.size === 1) {
+			pending = Array.from(pendingMemorySearches.values())[0] ?? null;
+		}
+		const result = await injectMemoryContext(event, pending);
+		if (pending) pendingMemorySearches.delete(lastUserPrompt);
 		return result;
 	});
 }
