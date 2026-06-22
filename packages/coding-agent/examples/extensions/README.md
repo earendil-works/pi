@@ -135,6 +135,12 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `with-deps/` | Extension with its own package.json and dependencies (demonstrates jiti module resolution) |
 | `file-trigger.ts` | Watches a trigger file and injects contents into conversation |
 
+### Cost Optimization
+
+| Extension | Description |
+|-----------|-------------|
+| `auto-router.ts` | Auto-routes between DeepSeek V4 Flash (simple tasks) and DeepSeek V4 Pro (complex tasks) based on prompt complexity analysis. Includes `/route flash`, `/route pro`, and `/route status` commands. Saves ~60-70% on API costs vs using Pro for everything. |
+
 ## Writing Extensions
 
 See [docs/extensions.md](../../docs/extensions.md) for full documentation.
