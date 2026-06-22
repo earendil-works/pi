@@ -83,6 +83,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		cerebras: "CEREBRAS_API_KEY",
 		xai: "XAI_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",
+		"merge-gateway": "MERGE_GATEWAY_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
 		zai: "ZAI_API_KEY",
 		"zai-coding-cn": "ZAI_CODING_CN_API_KEY",

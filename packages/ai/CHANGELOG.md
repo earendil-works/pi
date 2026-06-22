@@ -17,6 +17,7 @@
 - `fauxProvider()` returns a faux `Provider` for tests built on explicit `Models` collections.
 - Image generation mirrors the chat-side design: `createImagesModels()`/`ImagesProvider`/`createImagesProvider()` with sync model reads, explicit `refresh()`, provider-resolved auth, and never-rejecting `generateImages()`; `openrouterImagesProvider()` factory plus `builtinImagesProviders()`/`builtinImagesModels()` in `providers/all`. The `ImagesProvider` id type alias is renamed to `ImagesProviderId`; the old global image API stays on `/compat`.
 - When Amazon Bedrock rejects an unsupported data retention mode, the error now links the AWS data retention documentation ([#5561](https://github.com/earendil-works/pi/pull/5561) by [@unexge](https://github.com/unexge)).
+- Added **Merge Gateway** as a built-in OpenAI-compatible provider (`MERGE_GATEWAY_API_KEY`). It routes to many model vendors through a single gateway; models are referenced by their `provider/model` catalog slug (e.g. `anthropic/claude-sonnet-4-6`).
 
 ### Fixed
 
