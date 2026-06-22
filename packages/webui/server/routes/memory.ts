@@ -31,6 +31,8 @@ import {
 	writeAtomToFile,
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
+import { recallAtoms } from "../../../../extensions/personal-assistant/search.ts";
+import { formatMemoryContext } from "../../../../extensions/personal-assistant/format.ts";
 import {
 	buildEmbeddableText,
 	embedText,
@@ -484,15 +486,6 @@ export function registerPostSearch(
 
 			const index = await createIndex(deps.dbPath);
 			try {
-				// Lazy-import to avoid a static import cycle and to keep
-				// the cold-start cost minimal when the route is unused.
-				const { recallAtoms } = await import(
-					"../../../../extensions/personal-assistant/search.ts"
-				);
-				const { formatMemoryContext } = await import(
-					"../../../../extensions/personal-assistant/format.ts"
-				);
-
 				// Measure only the recall itself, not the formatting —
 				// formatMemoryContext is pure and sub-millisecond.
 				const t0 = Date.now();
