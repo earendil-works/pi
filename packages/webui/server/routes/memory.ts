@@ -9,8 +9,6 @@ import {
 	getAllAtoms,
 	rewriteQueryWithCallLlm,
 	searchAtomsWithScores,
-	ATOMS_DIR,
-	MEMORY_DB_PATH,
 } from "@earendil-works/pi-personal-assistant";
 
 export interface MemoryDeps {
@@ -18,6 +16,18 @@ export interface MemoryDeps {
 	atomsDir: string;
 	settings: PersonalAssistantConfig;
 	callLlm: (prompt: string) => Promise<string>;
+}
+
+// Open the sqlite index, run the caller, then close — even if the caller
+// throws. Centralises the boilerplate shared by every route.
+async function withMemoryIndex<T>(deps: MemoryDeps, fn: (idx: MemoryIndex) => Promise<T>): Promise<T> {
+	const idx = new MemoryIndex(deps.dbPath);
+	await idx.init();
+	try {
+		return await fn(idx);
+	} finally {
+		idx.close();
+	}
 }
 
 // PATCH whitelist — keys outside this set are silently dropped so clients cannot override id, created_at, file_path, content_hash, strength, access_count, last_access, version, or archived.
@@ -50,9 +60,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	// archived → type → tag → q → sort → limit/offset.
 	app.get("/api/memory", async (req, res) => {
 		try {
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
+			const paged = await withMemoryIndex(deps, async (idx) => {
 				const all = getAllAtoms(idx);
 				// 1. archived filter
 				const archivedMode = String(req.query.archived ?? "active");
@@ -87,11 +95,9 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				// 6. limit / offset
 				const limit = Math.min(Number(req.query.limit ?? 200), 1000);
 				const offset = Number(req.query.offset ?? 0);
-				const paged = filtered.slice(offset, offset + limit);
-				res.json(paged);
-			} finally {
-				idx.close();
-			}
+				return filtered.slice(offset, offset + limit);
+			});
+			res.json(paged);
 		} catch (err) {
 			console.error("[memory list] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
@@ -105,9 +111,7 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	// UI can derive active = total - archived without a second query.
 	app.get("/api/memory/stats", async (_req, res) => {
 		try {
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
+			const stats = await withMemoryIndex(deps, async (idx) => {
 				const all = getAllAtoms(idx);
 				const byType: Record<string, number> = {};
 				let archivedCount = 0;
@@ -115,10 +119,9 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 					byType[a.type] = (byType[a.type] ?? 0) + 1;
 					if (a.archived) archivedCount++;
 				}
-				res.json({ total: all.length, archived: archivedCount, byType });
-			} finally {
-				idx.close();
-			}
+				return { total: all.length, archived: archivedCount, byType };
+			});
+			res.json(stats);
 		} catch (err) {
 			console.error("[memory stats] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
@@ -126,15 +129,10 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	});
 	app.get("/api/memory/:id", async (req, res) => {
 		try {
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
-				const id = req.params.id;
+			const id = req.params.id;
+			const result = await withMemoryIndex(deps, async (idx) => {
 				const existing = idx.getAtom(id);
-				if (!existing) {
-					res.status(404).json({ error: `atom not found: ${id}` });
-					return;
-				}
+				if (!existing) return { kind: "not_found" as const };
 				// Read .md body. Missing file / hash mismatch → content = "" (no 500).
 				let hashMismatch = false;
 				if (existing.file_path) {
@@ -153,10 +151,13 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				} else {
 					existing.content = "";
 				}
-				res.json({ ...existing, hash_mismatch: hashMismatch });
-			} finally {
-				idx.close();
+				return { kind: "ok" as const, atom: { ...existing, hash_mismatch: hashMismatch } };
+			});
+			if (result.kind === "not_found") {
+				res.status(404).json({ error: `atom not found: ${id}` });
+				return;
 			}
+			res.json(result.atom);
 		} catch (err) {
 			console.error("[memory get] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
@@ -164,15 +165,10 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	});
 	app.patch("/api/memory/:id", async (req, res) => {
 		try {
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
-				const id = req.params.id;
+			const id = req.params.id;
+			const result = await withMemoryIndex(deps, async (idx) => {
 				const existing = idx.getAtom(id);
-				if (!existing) {
-					res.status(404).json({ error: `atom not found: ${id}` });
-					return;
-				}
+				if (!existing) return { kind: "not_found" as const };
 				// 1. 读 currentBody (file 丢失 / hash 错位 → "")
 				let currentBody = "";
 				if (existing.file_path) {
@@ -210,10 +206,13 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				// 6. upsert 到 db + 清 embedding (v2 lazy recompute)
 				idx.upsertAtom(merged);
 				idx.invalidateEmbedding(merged.id);
-				res.json(merged);
-			} finally {
-				idx.close();
+				return { kind: "ok" as const, atom: merged };
+			});
+			if (result.kind === "not_found") {
+				res.status(404).json({ error: `atom not found: ${id}` });
+				return;
 			}
+			res.json(result.atom);
 		} catch (err) {
 			console.error("[memory patch] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
@@ -221,15 +220,10 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 	});
 	app.post("/api/memory/:id/archive", async (req, res) => {
 		try {
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
-				const id = req.params.id;
+			const id = req.params.id;
+			const result = await withMemoryIndex(deps, async (idx) => {
 				const existing = idx.getAtom(id);
-				if (!existing) {
-					res.status(404).json({ error: `atom not found: ${id}` });
-					return;
-				}
+				if (!existing) return { kind: "not_found" as const };
 				const archived = (req.body as { archived?: boolean })?.archived ?? !existing.archived;
 				const updated: MemoryAtom = {
 					...existing,
@@ -239,11 +233,13 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				};
 				idx.upsertAtom(updated);
 				idx.invalidateEmbedding(id);
-				const after = idx.getAtom(id)!;
-				res.json({ ok: true, atom: after });
-			} finally {
-				idx.close();
+				return { kind: "ok" as const, atom: idx.getAtom(id)! };
+			});
+			if (result.kind === "not_found") {
+				res.status(404).json({ error: `atom not found: ${id}` });
+				return;
 			}
+			res.json({ ok: true, atom: result.atom });
 		} catch (err) {
 			console.error("[memory archive] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
@@ -266,26 +262,18 @@ export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void 
 				res.status(400).json({ error: "query required" });
 				return;
 			}
-			const idx = new MemoryIndex(deps.dbPath);
-			await idx.init();
-			try {
+			const { rewritten, results, embedding_available } = await withMemoryIndex(deps, async (idx) => {
 				// 1. rewrite query via LLM (降级到 simpleKeywordExtraction on error)
-				const rewritten = await rewriteQueryWithCallLlm(
+				const r = await rewriteQueryWithCallLlm(
 					deps.callLlm,
 					query,
 					deps.settings,
 				);
 				// 2. search with scores
-				const { results, embedding_available } = await searchAtomsWithScores(
-					idx,
-					rewritten,
-					topK,
-					deps.settings,
-				);
-				res.json({ rewritten, embedding_available, results });
-			} finally {
-				idx.close();
-			}
+				const { results, embedding_available } = await searchAtomsWithScores(idx, r, topK, deps.settings);
+				return { rewritten: r, results, embedding_available };
+			});
+			res.json({ rewritten, embedding_available, results });
 		} catch (err) {
 			console.error("[memory search] error:", err);
 			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });

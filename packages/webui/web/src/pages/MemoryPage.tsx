@@ -70,23 +70,27 @@ export function MemoryPage() {
     return () => { alive = false; clearInterval(interval); };
   }, [committedFilters]);
 
+  const refreshAll = async () => {
+    const [list, s] = await Promise.all([api.memory.list({}), api.memory.stats()]);
+    setAtoms(list);
+    setStats(s);
+  };
+
   const handleArchive = async (id: string) => {
     try {
       // optimistic: 立即从列表移除
       setAtoms((prev) => prev.filter((a) => a.id !== id));
       await api.memory.archive(id, true);
-      // 重新拉 stats
-      void api.memory.stats().then((s) => setStats(s));
+      void api.memory.stats().then(setStats);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       // 失败回滚: 重新拉
-      void api.memory.list({}).then((list) => setAtoms(list));
+      void refreshAll();
     }
   };
 
   const handleRefresh = () => {
-    void api.memory.list({}).then((list) => setAtoms(list));
-    void api.memory.stats().then((s) => setStats(s));
+    void refreshAll();
   };
 
   return (

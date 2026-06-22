@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createDatabase } from "./sqlite.ts";
-import type { Database, Statement } from "./sqlite.ts";
+import type { Database } from "./sqlite.ts";
 
 // ============================================================================
 // Types
@@ -82,11 +82,6 @@ export interface PersonalAssistantConfig {
     soul_path?: string;
     user_path?: string;
   };
-}
-
-interface SearchResult {
-  atom: MemoryAtom;
-  score: number;
 }
 
 export interface QueryRewriteResult {
@@ -393,10 +388,6 @@ function escapeXml(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function getFileHash(filePath: string): string {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
-}
-
 function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }>): string {
   const parts: string[] = [];
   for (const msg of messages) {
@@ -537,13 +528,6 @@ export class MemoryIndex {
     db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
   }
 
-  getEmbedding(id: string): number[] | null {
-    const db = this.ensureDb();
-    const row = db.prepare("SELECT embedding FROM memory_embeddings WHERE id = ?").get(id) as { embedding: string } | undefined;
-    if (!row) return null;
-    try { return JSON.parse(row.embedding); } catch { return null; }
-  }
-
   getEmbeddings(ids: string[]): Map<string, number[]> {
     const db = this.ensureDb();
     const result = new Map<string, number[]>();
@@ -567,12 +551,6 @@ export class MemoryIndex {
   getActiveAtoms(): MemoryAtom[] {
     const db = this.ensureDb();
     const rows = db.prepare("SELECT * FROM memory_index WHERE archived = 0").all() as Array<Record<string, unknown>>;
-    return rows.map((r) => this.rowToAtom(r));
-  }
-
-  getAtomsByType(type: MemoryAtomType): MemoryAtom[] {
-    const db = this.ensureDb();
-    const rows = db.prepare("SELECT * FROM memory_index WHERE type = ? AND archived = 0").all(type) as Array<Record<string, unknown>>;
     return rows.map((r) => this.rowToAtom(r));
   }
 
@@ -974,31 +952,6 @@ function dedupeAgainstQuery(keywords: string[], query: string): string[] {
   const target = normalize(query);
   if (!target) return keywords;
   return keywords.filter((k) => normalize(k) !== target);
-}
-
-async function callOllamaRewrite(model: string, query: string): Promise<QueryRewriteResult | null> {
-  try {
-    const prompt = buildRewritePrompt(query);
-    const res = await fetch("http://localhost:11434/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        stream: false,
-        options: { temperature: 0.1 },
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { message?: { content?: string } };
-    const text = data?.message?.content;
-    if (!text) return null;
-    const parsed = parseRewriteJson(text);
-    if (parsed) return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query) };
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 // ============================================================================
