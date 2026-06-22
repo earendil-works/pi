@@ -487,6 +487,12 @@ export interface AnthropicMessagesCompat {
 	 */
 	supportsTemperature?: boolean;
 	/**
+	 * Explicitly override the auth type. If "oauth", the apiKey is treated as a Bearer
+	 * token. If "apiKey", it is treated as a standard API key (e.g. x-api-key header).
+	 * If omitted, default heuristic (e.g., matching "sk-ant-oat") is used.
+	 */
+	authMode?: "apiKey" | "oauth";
+	/**
 	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
 	 * `output_config.effort`) regardless of the model id. Built-in models that
 	 * require adaptive thinking set this in generated metadata. Custom

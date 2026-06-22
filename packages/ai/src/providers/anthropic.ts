@@ -169,7 +169,8 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
+): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "authMode">> &
+	Pick<AnthropicMessagesCompat, "authMode"> {
 	// Auto-detect session affinity and cache control support from provider
 	const isFireworks = model.provider === "fireworks";
 	const isCloudflareAiGatewayAnthropic =
@@ -182,6 +183,7 @@ function getAnthropicCompat(
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
+		authMode: model.compat?.authMode,
 	};
 }
 
@@ -786,7 +788,9 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 	} satisfies AnthropicOptions);
 };
 
-function isOAuthToken(apiKey: string): boolean {
+function isOAuthToken(apiKey: string, compat?: ReturnType<typeof getAnthropicCompat>): boolean {
+	if (compat?.authMode === "oauth") return true;
+	if (compat?.authMode === "apiKey") return false;
 	return apiKey.includes("sk-ant-oat");
 }
 
@@ -856,7 +860,7 @@ function createClient(
 	}
 
 	// OAuth: Bearer auth, Claude Code identity headers
-	if (isOAuthToken(apiKey)) {
+	if (isOAuthToken(apiKey, getAnthropicCompat(model))) {
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
