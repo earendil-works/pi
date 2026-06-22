@@ -419,6 +419,77 @@ describe("(d) PATCH /api/memory/:id update endpoint", () => {
 	});
 });
 
+describe("(d.1) PATCH /api/memory/:id body size limit (S24)", () => {
+	let app: express.Express;
+	let server: ReturnType<typeof createServer>;
+	let port: number;
+	let tempDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		tempDir = await fs.mkdtemp(path.join("/tmp", "pi-memory-patch-limit-test-"));
+		dbPath = path.join(tempDir, "test.db");
+		atomsDir = path.join(tempDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tempDir, { recursive: true, force: true });
+	});
+
+	async function setupAppWithMiddleware(initialAtom: any) {
+		const { MemoryIndex, writeAtomToFile } = await import("@earendil-works/pi-personal-assistant");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const { filePath, contentHash } = writeAtomToFile(initialAtom, atomsDir);
+		idx.upsertAtom({ ...initialAtom, file_path: filePath, content_hash: contentHash });
+		idx.close();
+		const { mountMemoryRoutes } = await import("../routes/memory");
+		app = express();
+		app.use("/api/memory", express.json({ limit: "1mb" }));
+		app.use(express.json({ limit: "32kb" }));
+		mountMemoryRoutes(app, { dbPath, atomsDir, settings: {}, callLlm: async () => "" });
+		server = createServer(app);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		port = (server.address() as { port: number }).port;
+	}
+
+	const baseAtom = {
+		id: "a-1",
+		type: "preference" as const,
+		title: "Old title",
+		summary: "summary",
+		tags: [],
+		importance: 0.5,
+		strength: 0.7,
+		access_count: 0,
+		last_access: "",
+		created_at: "2025-01-01T00:00:00Z",
+		updated_at: "2025-01-01T00:00:00Z",
+		version: 1,
+		archived: false,
+		content: "# old body",
+		file_path: "",
+		content_hash: "",
+	};
+
+	it("PATCH accepts 60KB content body (S24: 50KB+ bodies)", async () => {
+		await setupAppWithMiddleware(baseAtom);
+		const big = "x".repeat(60 * 1024);
+		const patchRes = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content: big }),
+		});
+		expect(patchRes.status).toBe(200);
+		const getRes = await fetch(`http://127.0.0.1:${port}/api/memory/a-1`);
+		const atom = await getRes.json();
+		expect(atom.content).toBe(big);
+	});
+});
+
 describe("(e) POST /api/memory/:id/archive endpoint", () => {
 	let app: express.Express;
 	let server: ReturnType<typeof createServer>;

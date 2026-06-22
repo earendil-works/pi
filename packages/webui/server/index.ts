@@ -206,6 +206,7 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   });
 
   // JSON body parser with size limit
+  app.use("/api/memory", express.json({ limit: "1mb" }));
   app.use(express.json({ limit: "32kb" }));
 
   // Security headers. In dev mode (PI_WEB_DEV=1) vite injects React
