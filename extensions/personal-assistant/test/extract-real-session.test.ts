@@ -9,7 +9,10 @@ import { runMemoryExtraction } from "./../extraction.ts";
 import { recallAtoms } from "./../search.ts";
 import { formatMemoryContext } from "./../format.ts";
 
-const SESSION_PATH = "/home/qjh/.pi/agent/sessions/--home-qjh-.pi-agent--/2026-06-02T15-20-09.141Z_34022d26-2c71-49a5-83bf-c83df47a322a.jsonl.bak";
+// Default to committed fixture (200 messages, ~400KB). Set
+// SESSION_PATH_OVERRIDE env var to use the full 31MB session file.
+const SESSION_PATH = process.env.SESSION_PATH_OVERRIDE
+  ?? new URL("./fixtures/session-sample.jsonl", import.meta.url).pathname;
 const DB_PATH = "/tmp/memory-v2-real/memory.db";
 const ATOMS_DIR = "/tmp/memory-v2-real/atoms";
 const LLM_PROVIDER = "minimax-cn";
