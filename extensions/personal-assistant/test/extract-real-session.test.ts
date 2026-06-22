@@ -4,10 +4,10 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { MemoryIndex } from "./extensions/personal-assistant/storage.ts";
-import { runMemoryExtraction } from "./extensions/personal-assistant/extraction.ts";
-import { recallAtoms } from "./extensions/personal-assistant/search.ts";
-import { formatMemoryContext } from "./extensions/personal-assistant/format.ts";
+import { MemoryIndex } from "./../storage.ts";
+import { runMemoryExtraction } from "./../extraction.ts";
+import { recallAtoms } from "./../search.ts";
+import { formatMemoryContext } from "./../format.ts";
 
 const SESSION_PATH = "/home/qjh/.pi/agent/sessions/--home-qjh-.pi-agent--/2026-06-02T15-20-09.141Z_34022d26-2c71-49a5-83bf-c83df47a322a.jsonl.bak";
 const DB_PATH = "/tmp/memory-v2-real/memory.db";
@@ -57,7 +57,7 @@ async function callOllamaChat(systemPrompt: string, userPrompt: string): Promise
     const errBody = await res.text();
     throw new Error(`MiniMax API failed: ${res.status} ${errBody.slice(0, 300)}`);
   }
-  const data = await res.json();
+  const data = (await res.json()) as { content?: Array<{ text?: string }> };
   return data.content?.[0]?.text ?? "";
 }
 
