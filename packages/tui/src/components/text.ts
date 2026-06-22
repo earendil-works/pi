@@ -1,5 +1,28 @@
+import { getCapabilities, hyperlink } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+
+const URL_REGEX = /https?:\/\/[^\s<>"`\x1b]+/g;
+const TRAILING_URL_PUNCTUATION = /[),.;:!?\]]/;
+const OSC8_PREFIX = "\x1b]8;";
+
+function linkifyPlainUrls(text: string): string {
+	if (!getCapabilities().hyperlinks || !text.includes("://") || text.includes(OSC8_PREFIX)) {
+		return text;
+	}
+
+	return text.replace(URL_REGEX, (match) => {
+		let url = match;
+		let trailing = "";
+		let last = url.at(-1);
+		while (last && TRAILING_URL_PUNCTUATION.test(last)) {
+			trailing = last + trailing;
+			url = url.slice(0, -1);
+			last = url.at(-1);
+		}
+		return url ? hyperlink(url, url) + trailing : match;
+	});
+}
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -63,8 +86,11 @@ export class Text implements Component {
 		// Calculate content width (subtract left/right margins)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 
+		// Linkify before wrapping so long URLs keep one OSC 8 target across pi-rendered hard line breaks.
+		const displayText = linkifyPlainUrls(normalizedText);
+
 		// Wrap text (this preserves ANSI codes but does NOT pad)
-		const wrappedLines = wrapTextWithAnsi(normalizedText, contentWidth);
+		const wrappedLines = wrapTextWithAnsi(displayText, contentWidth);
 
 		// Add margins and background to each line
 		const leftMargin = " ".repeat(this.paddingX);
