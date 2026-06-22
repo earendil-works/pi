@@ -190,6 +190,21 @@ describe("MemoryPage", () => {
     expect(screen.queryByText("No memories yet")).toBeNull();
   });
 
+  it("shows 'No matches' (not 'No memories yet') when stats.total > 0 but filter excludes all (task 7.4)", async () => {
+    (api.memory.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.memory.stats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 5,
+      archived: 5,
+      byType: { event: 5 },
+    });
+    render(<MemoryPage />);
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(screen.getByText("No matches")).toBeInTheDocument();
+    expect(screen.queryByText("No memories yet")).toBeNull();
+  });
+
   it("debounces filter input by 300ms before re-fetching", async () => {
     // This test needs full fake timers (including setTimeout) because the
     // debounce uses setTimeout. beforeEach only fakes setInterval/clearInterval
