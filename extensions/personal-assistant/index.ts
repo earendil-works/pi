@@ -1,48 +1,42 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  registerMemory,
-  runMemoryExtraction,
-  type RunMemoryExtractionOptions,
-  type RunMemoryExtractionResult,
-  type PersonalAssistantConfig,
-  // 1.1+1.2+1.3+1.4+1.5b 新增:
-  MemoryIndex,
-  type MemoryAtom,
-  type MemoryAtomType,
-  type QueryRewriteResult,
-  writeAtomToFile,
-  readAtomFromFile,
-  searchAtoms,
-  rewriteQuery,
-  getAllAtoms,
-  rewriteQueryWithCallLlm,
-  searchAtomsWithScores,
-  MEMORY_DB_PATH,
-  ATOMS_DIR,
-} from "./memory.ts";
+import { registerMemory, loadConfig } from "./memory.ts";
 import { registerTools } from "./tools.ts";
 import { registerCron } from "./cron.ts";
 import { registerAskUserQuestion } from "./ask_user_question.ts";
+import type {
+	MemoryAtom,
+	MemoryAtomType,
+	RecallResult,
+	ExtractionItem,
+	ExtractionResult,
+	ExtractionPlan,
+} from "./types.ts";
+import type {
+	RunMemoryExtractionOptions,
+	RunMemoryExtractionResult,
+	PersonalAssistantConfig,
+} from "./memory.ts";
 
-export default function (pi: ExtensionAPI) {
-  registerMemory(pi);
-  registerTools(pi);
-  registerCron(pi);
-  registerAskUserQuestion(pi);
+export default function (pi: ExtensionAPI): void {
+	registerMemory(pi);
+	registerTools(pi);
+	registerCron(pi);
+	registerAskUserQuestion(pi);
 }
 
-export { runMemoryExtraction };
-export {
-  MemoryIndex,
-  writeAtomToFile,
-  readAtomFromFile,
-  searchAtoms,
-  rewriteQuery,
-  getAllAtoms,
-  rewriteQueryWithCallLlm,
-  searchAtomsWithScores,
-  MEMORY_DB_PATH,
-  ATOMS_DIR,
+// Re-export v2 types
+export type {
+	MemoryAtom,
+	MemoryAtomType,
+	RecallResult,
+	ExtractionItem,
+	ExtractionResult,
+	ExtractionPlan,
+	RunMemoryExtractionOptions,
+	RunMemoryExtractionResult,
+	PersonalAssistantConfig,
 };
-export type { RunMemoryExtractionOptions, RunMemoryExtractionResult, PersonalAssistantConfig };
-export type { MemoryAtom, MemoryAtomType, QueryRewriteResult };
+
+// Re-export v2 runtime API (for webui consumption)
+export { runMemoryExtraction, extractionPlanSchema, EXTRACT_PROMPT_V2, parseExtractionJson, executePlan } from "./extraction.ts";
+export { loadConfig };

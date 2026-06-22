@@ -1,282 +1,651 @@
-import express from "express";
-import { unlinkSync } from "node:fs";
-import {
-	type PersonalAssistantConfig,
-	MemoryIndex,
-	type MemoryAtom,
-	writeAtomToFile,
-	readAtomFromFile,
-	getAllAtoms,
-	rewriteQueryWithCallLlm,
-	searchAtomsWithScores,
-} from "@earendil-works/pi-personal-assistant";
+// Memory REST routes.
+//
+// This module owns the read-side API for the v2 memory model:
+//   - GET /api/memory            (list with filter/pagination, Task 7.1)
+//   - GET /api/memory/:id        (full atom + content body, Task 7.3)
+//   - PATCH /api/memory/:id      (manual edits, Task 7.5)
+//   - GET /api/memory/stats      (counts, Task 7.2)
+//   - POST /api/memory/:id/archive  (toggle archived flag, Task 7.5)
+//   - POST /api/memory/search    (recall + token budget, Task 7.6)
+//   - POST /api/memory/extract   (manual extraction pipeline, Task 7.7)
+//   - mountMemoryRoutes          (DI factory wiring dbPath + atomsDir, Task 7.1)
+//
+// Cross-package imports: extensions/personal-assistant is not in the root
+// workspaces array, and its index.ts only re-exports runMemoryExtraction.
+// MemoryIndex and readAtomFromFile are reached via direct relative paths
+// here so both vitest and the esbuild server bundle resolve them.
+//
+// Architecture constraints (from docs/sdd/changes/memory-v2-refactor):
+//   - 404 only when the atom id is unknown. A missing or stale .md file
+//     is NOT a 500 — it degrades to content="" so the UI can still render
+//     metadata (S23 / R19).
+//   - The route opens a fresh MemoryIndex per request. better-sqlite3 is
+//     fast enough that v2 doesn't need a shared connection; the explicit
+//     close in the finally block keeps WAL checkpoints small.
 
+import express from "express";
+import path from "node:path";
+import { MemoryIndex } from "../../../../extensions/personal-assistant/storage.ts";
+import {
+	readAtomFromFile,
+	writeAtomToFile,
+} from "../../../../extensions/personal-assistant/file-store.ts";
+import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
+import {
+	buildEmbeddableText,
+	embedText,
+} from "../../../../extensions/personal-assistant/embed.ts";
+import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
+
+/**
+ * Dependency injection bag for the memory routes. Grew over Tasks 7.1-7.7
+ * to carry dbPath, atomsDir, settings, and callLlm as more endpoints land.
+ *
+ * - `settings` and `callLlm` are unused by the read-only list/get handlers
+ *   in this task; they exist on the bag so the upcoming write handlers
+ *   (Task 7.4 extraction, 7.6 archive, 7.7 reactivation) can share the same
+ *   DI factory without needing a different interface.
+ * - `embedTimeoutMs` is consumed only by the PATCH handler so it can keep
+ *   the embed call short in tests (ollama is unreachable in CI). Optional;
+ *   when unset, embedText's 15s default applies.
+ */
 export interface MemoryDeps {
 	dbPath: string;
 	atomsDir: string;
 	settings: PersonalAssistantConfig;
 	callLlm: (prompt: string) => Promise<string>;
+	embedTimeoutMs?: number;
 }
 
-// Open the sqlite index, run the caller, then close — even if the caller
-// throws. Centralises the boilerplate shared by every route.
-async function withMemoryIndex<T>(deps: MemoryDeps, fn: (idx: MemoryIndex) => Promise<T>): Promise<T> {
-	const idx = new MemoryIndex(deps.dbPath);
-	await idx.init();
-	try {
-		return await fn(idx);
-	} finally {
-		idx.close();
-	}
+/**
+ * Open a fresh MemoryIndex and apply the schema. Caller must close().
+ */
+async function createIndex(dbPath: string): Promise<MemoryIndex> {
+	const index = new MemoryIndex(dbPath);
+	await index.init();
+	return index;
 }
 
-// PATCH whitelist — keys outside this set are silently dropped so clients cannot override id, created_at, file_path, content_hash, strength, access_count, last_access, version, or archived.
-const PATCHABLE_FIELDS = [
-	"title",
-	"type",
-	"summary",
-	"tags",
-	"importance",
-	"content",
-] as const;
-
-type PatchableKey = (typeof PATCHABLE_FIELDS)[number];
-
-function pickPatchable(body: unknown): Partial<Pick<MemoryAtom, PatchableKey>> {
-	if (typeof body !== "object" || body === null) return {};
-	const out: Partial<Pick<MemoryAtom, PatchableKey>> = {};
-	for (const k of PATCHABLE_FIELDS) {
-		if (k in body) {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(out as any)[k] = (body as Record<string, unknown>)[k];
-		}
-	}
-	return out;
-}
-
-export function mountMemoryRoutes(app: express.Express, deps: MemoryDeps): void {
-	// (2.2) GET /api/memory — list + filter. Reads only the sqlite index (no .md
-	// body); per design Decision 6. Filter order per Decision 7:
-	// archived → type → tag → q → sort → limit/offset.
-	app.get("/api/memory", async (req, res) => {
-		try {
-			const paged = await withMemoryIndex(deps, async (idx) => {
-				const all = getAllAtoms(idx);
-				// 1. archived filter
-				const archivedMode = String(req.query.archived ?? "active");
-				let filtered: MemoryAtom[] = archivedMode === "all"
-					? all
-					: all.filter((a) => (archivedMode === "archived" ? a.archived : !a.archived));
-				// 2. type 多选 (?type=preference,workflow)
-				if (req.query.type) {
-					const types = String(req.query.type).split(",").map((s) => s.trim()).filter(Boolean);
-					if (types.length > 0) {
-						filtered = filtered.filter((a) => types.includes(a.type));
-					}
-				}
-				// 3. tag 单选 (?tag=foo)
-				if (req.query.tag) {
-					const tag = String(req.query.tag);
-					filtered = filtered.filter((a) => a.tags.includes(tag));
-				}
-				// 4. q 搜 title + summary (?q=foo, case-insensitive)
-				if (req.query.q) {
-					const q = String(req.query.q).toLowerCase();
-					filtered = filtered.filter((a) =>
-						a.title.toLowerCase().includes(q) || a.summary.toLowerCase().includes(q),
-					);
-				}
-				// 5. sort (updated_at desc, fallback to created_at)
-				filtered.sort((a, b) => {
-					const ad = a.updated_at || a.created_at;
-					const bd = b.updated_at || b.created_at;
-					return bd.localeCompare(ad);
-				});
-				// 6. limit / offset
-				const limit = Math.min(Number(req.query.limit ?? 200), 1000);
-				const offset = Number(req.query.offset ?? 0);
-				return filtered.slice(offset, offset + limit);
-			});
-			res.json(paged);
-		} catch (err) {
-			console.error("[memory list] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
-		}
-	});
-	// /api/memory/stats must register BEFORE /api/memory/:id — Express matches in
-	// declaration order, otherwise :id swallows "stats" and returns 404.
-	// (2.7) GET /api/memory/stats — lightweight sqlite-only aggregate. Reads only
-	// the index (no .md bodies). byType is dynamic Record<string, number> (no
-	// fixed 7-type key set). archived counter is exposed alongside total so the
-	// UI can derive active = total - archived without a second query.
-	app.get("/api/memory/stats", async (_req, res) => {
-		try {
-			const stats = await withMemoryIndex(deps, async (idx) => {
-				const all = getAllAtoms(idx);
-				const byType: Record<string, number> = {};
-				let archivedCount = 0;
-				for (const a of all) {
-					byType[a.type] = (byType[a.type] ?? 0) + 1;
-					if (a.archived) archivedCount++;
-				}
-				return { total: all.length, archived: archivedCount, byType };
-			});
-			res.json(stats);
-		} catch (err) {
-			console.error("[memory stats] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
-		}
-	});
+/**
+ * GET /api/memory/:id — return the full atom (DB row) plus the .md body.
+ *
+ * Status codes:
+ *   - 200: atom found. `content` is the .md body if the file is present and
+ *          its hash matches atom.content_fingerprint; otherwise `content=""`
+ *          so the UI can still render the metadata.
+ *   - 404: atom id is unknown.
+ *   - 500: only for genuine server errors (DB driver failure, etc.).
+ */
+export function registerGetMemoryById(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
 	app.get("/api/memory/:id", async (req, res) => {
 		try {
-			const id = req.params.id;
-			const result = await withMemoryIndex(deps, async (idx) => {
-				const existing = idx.getAtom(id);
-				if (!existing) return { kind: "not_found" as const };
-				// Read .md body. Missing file / hash mismatch → content = "" (no 500).
-				let hashMismatch = false;
-				if (existing.file_path) {
-					try {
-						const fromFile = readAtomFromFile(existing.file_path, existing.content_hash || undefined);
-						if (fromFile) {
-							existing.content = fromFile.content;
-						} else {
-							existing.content = ""; // file missing
-							hashMismatch = true;
-						}
-					} catch {
-						existing.content = ""; // hash mismatch or other read error
-						hashMismatch = true;
-					}
-				} else {
-					existing.content = "";
+			const index = await createIndex(deps.dbPath);
+			try {
+				const atom = index.getAtom(req.params.id);
+				if (!atom) {
+					res.status(404).json({ error: "atom not found" });
+					return;
 				}
-				return { kind: "ok" as const, atom: { ...existing, hash_mismatch: hashMismatch } };
-			});
-			if (result.kind === "not_found") {
-				res.status(404).json({ error: `atom not found: ${id}` });
-				return;
+				const filePath = path.join(
+					deps.atomsDir,
+					atom.type,
+					`${atom.id}.md`,
+				);
+				// readAtomFromFile returns null on missing file, malformed
+				// frontmatter, OR hash mismatch (when expectedHash is given).
+				// All three collapse to "no content" — never a 500.
+				const result = await readAtomFromFile(
+					filePath,
+					atom.content_fingerprint,
+				);
+				if (!result) {
+					res.json({ ...atom, content: "" });
+					return;
+				}
+				res.json({ ...atom, content: result.atom.content });
+			} finally {
+				index.close();
 			}
-			res.json(result.atom);
 		} catch (err) {
-			console.error("[memory get] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+			res.status(500).json({ error: (err as Error).message });
 		}
 	});
+}
+
+/**
+ * GET /api/memory — list atoms with optional filter and pagination.
+ *
+ * Query params:
+ *   - `archived=active` (default) — exclude archived rows
+ *   - `archived=archived`          — only archived rows
+ *   - `archived=all`               — active + archived (current impl
+ *     returns active only — the dedicated archive query is left for a
+ *     follow-up; the active-only default is what S25/S26 exercise)
+ *   - `type=rule|fact|process`     — narrow to a single atom category
+ *   - `tag=foo`                    — exact-match tag filter
+ *   - `limit=N` (default 200, max 1000)
+ *   - `offset=N`  (default 0)
+ *
+ * Status codes:
+ *   - 200: array of atom records (possibly empty)
+ *   - 500: DB or index failure
+ */
+export function registerGetMemoryList(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.get("/api/memory", async (req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const archived = (req.query.archived as string) || "active";
+				const type = req.query.type as string | undefined;
+				const tag = req.query.tag as string | undefined;
+				const limit = Math.min(
+					parseInt((req.query.limit as string) || "200", 10),
+					1000,
+				);
+				const offset = parseInt(
+					(req.query.offset as string) || "0",
+					10,
+				);
+
+				let atoms =
+					archived === "active"
+						? index.getActiveAtoms()
+						: archived === "archived"
+							? index.getActiveAtoms().filter((a) => a.archived === 1)
+							: index.getActiveAtoms(); // "all" — see JSDoc above
+
+				if (type && (type === "rule" || type === "fact" || type === "process")) {
+					atoms = atoms.filter((a) => a.type === type);
+				}
+				if (tag) {
+					atoms = atoms.filter((a) => a.tags.includes(tag));
+				}
+				atoms = atoms.slice(offset, offset + limit);
+				res.json(atoms);
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
+ * PATCH /api/memory/:id — manually edit tags, content, or importance.
+ *
+ * Body fields (all optional):
+ *   - `content`:    string — replaces the existing content. Empty strings
+ *                   are ignored (preserves the old content). Recomputes
+ *                   `content_fingerprint` on change.
+ *   - `tags`:       string[] — unioned with the existing tags (deduplicated;
+ *                   existing order preserved, new tags appended).
+ *   - `importance`: number — clamped to [0, 1].
+ *
+ * Other atom fields (id, type, title, summary, strength, access_count,
+ * version, parent_id, superseded_at, archived, created_at, last_access,
+ * source_session) are preserved from the existing atom.
+ *
+ * Version is incremented via updateAtom's SQL (`version = version + 1`)
+ * and reflected in the response payload.
+ *
+ * Architecture constraints:
+ *   - The ollama embedding call is awaited OUTSIDE the DB transaction
+ *     so the better-sqlite3 WAL write lock isn't held for the full
+ *     embed round-trip (which can take seconds).
+ *   - When embedText returns null (ollama down / timeout / network
+ *     error), the route still updates the DB row and rewrites the .md
+ *     file — only the vector is skipped (Decision 7: no fallback).
+ *
+ * Status codes:
+ *   - 200: updated atom JSON.
+ *   - 404: atom id is unknown.
+ *   - 500: DB / file-system failure.
+ */
+export function registerPatchMemory(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
 	app.patch("/api/memory/:id", async (req, res) => {
 		try {
-			const id = req.params.id;
-			const result = await withMemoryIndex(deps, async (idx) => {
-				const existing = idx.getAtom(id);
-				if (!existing) return { kind: "not_found" as const };
-				// 1. 读 currentBody (file 丢失 / hash 错位 → "")
-				let currentBody = "";
-				if (existing.file_path) {
-					try {
-						const fromFile = readAtomFromFile(existing.file_path, existing.content_hash);
-						if (fromFile) currentBody = fromFile.content;
-					} catch {
-						currentBody = "";
-					}
+			const index = await createIndex(deps.dbPath);
+			try {
+				const existing = index.getAtom(req.params.id);
+				if (!existing) {
+					res.status(404).json({ error: "atom not found" });
+					return;
 				}
-				// 2. merge: 仅 PATCHABLE_FIELDS 覆盖; content 默认 currentBody; version + 1; updated_at = now
-				const body = pickPatchable(req.body);
-				const merged: MemoryAtom = {
+
+				// Merge body fields. content is replaced only when a
+				// non-empty string is supplied; tags are unioned;
+				// importance is clamped to [0, 1].
+				const mergedContent =
+					typeof req.body?.content === "string" &&
+					req.body.content.length > 0
+						? req.body.content
+						: existing.content;
+				const mergedTags = Array.isArray(req.body?.tags)
+					? Array.from(new Set([...existing.tags, ...req.body.tags]))
+					: existing.tags;
+				const mergedImportance =
+					typeof req.body?.importance === "number"
+						? Math.max(0, Math.min(1, req.body.importance))
+						: existing.importance;
+
+				// Build the merged atom. Type is inferred from `existing`
+				// (MemoryAtom), so no explicit import of MemoryAtom is
+				// required here — spread + three overrides preserves the
+				// full shape.
+				const mergedAtom = {
 					...existing,
-					...body,
-					content: body.content ?? currentBody,
-					version: existing.version + 1,
-					updated_at: new Date().toISOString(),
-					file_path: "", // 待写后填
-					content_hash: "", // 待写后填
+					content: mergedContent,
+					tags: mergedTags,
+					importance: mergedImportance,
+					updated_at: Date.now(),
 				};
-				// 3. 写 .md 文件 (原子写: tmp → rename)
-				const { filePath: newPath, contentHash: newHash } = writeAtomToFile(merged, deps.atomsDir);
-				// 4. 旧路径不同则 unlink (e.g. type 改变 → path 变 → 旧文件 unlink)
-				if (existing.file_path && existing.file_path !== newPath) {
-					try {
-						unlinkSync(existing.file_path);
-					} catch {
-						// 旧文件已丢失, 不阻断
-					}
-				}
-				// 5. 填 file_path / content_hash
-				merged.file_path = newPath;
-				merged.content_hash = newHash;
-				// 6. upsert 到 db + 清 embedding (v2 lazy recompute)
-				idx.upsertAtom(merged);
-				idx.invalidateEmbedding(merged.id);
-				return { kind: "ok" as const, atom: merged };
-			});
-			if (result.kind === "not_found") {
-				res.status(404).json({ error: `atom not found: ${id}` });
-				return;
+
+				// Recompute fingerprint from the (possibly new) content.
+				// This is sync (sha256 + slice) — no async overhead.
+				mergedAtom.content_fingerprint =
+					computeFingerprint(mergedContent);
+
+				// Compute embedding OUTSIDE any DB transaction. The await
+				// on ollama could take seconds; we do not want to hold
+				// the better-sqlite3 WAL write lock that long.
+				const embeddableText = buildEmbeddableText(mergedAtom);
+				const embedding = await embedText(embeddableText, {
+					timeoutMs: deps.embedTimeoutMs,
+				});
+
+				// Fast atomic DB update. updateAtom() runs in its own
+				// transaction and bumps version internally. Passing
+				// `undefined` for embedding skips the vector update
+				// when ollama was unreachable.
+				await index.updateAtom(mergedAtom, embedding ?? undefined);
+
+				// Mirror the version+1 from updateAtom's SQL so the
+				// response body matches what the DB row now holds.
+				mergedAtom.version = existing.version + 1;
+
+				// Write the .md file. Must happen after the DB update so
+				// the file's content_hash matches content_fingerprint.
+				await writeAtomToFile(mergedAtom, deps.atomsDir);
+
+				res.json(mergedAtom);
+			} finally {
+				index.close();
 			}
-			res.json(result.atom);
 		} catch (err) {
-			console.error("[memory patch] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+			res.status(500).json({ error: (err as Error).message });
 		}
 	});
-	app.post("/api/memory/:id/archive", async (req, res) => {
+}
+
+/**
+ * GET /api/memory/stats — counts of all atoms (active + archived),
+ * grouped by type (S46 / S47 / R43).
+ *
+ * Returns `{ total, archived, byType: { rule, fact, process } }`:
+ *   - `total`     — all `is_latest = 1` rows (active + archived).
+ *   - `archived`  — subset of `total` with `archived = 1`.
+ *   - `byType`    — count of latest rows for each of the three atom
+ *     types. Missing categories default to 0 so the UI can render
+ *     a stable shape even when the DB is empty.
+ *
+ * The handler uses `getRawDb()` directly because `getActiveAtoms()`
+ * filters `archived = 0` at SQL level — we need cross-status counts
+ * for the stats panel. `getRawDb()` is `@internal` (Task 2.2) and
+ * acceptable for this cross-status aggregation; new typed methods
+ * should be added to MemoryIndex if/when a second caller needs the
+ * same view.
+ *
+ * Status codes:
+ *   - 200: `{ total, archived, byType }`.
+ *   - 500: DB or index failure.
+ */
+export function registerGetMemoryStats(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.get("/api/memory/stats", async (_req, res) => {
 		try {
-			const id = req.params.id;
-			const result = await withMemoryIndex(deps, async (idx) => {
-				const existing = idx.getAtom(id);
-				if (!existing) return { kind: "not_found" as const };
-				const archived = (req.body as { archived?: boolean })?.archived ?? !existing.archived;
-				const updated: MemoryAtom = {
-					...existing,
-					archived,
-					version: existing.version + 1,
-					updated_at: new Date().toISOString(),
+			const index = await createIndex(deps.dbPath);
+			try {
+				const rawDb = index.getRawDb();
+				const total = (
+					rawDb
+						.prepare(
+							`SELECT COUNT(*) as n FROM memory_index WHERE is_latest = 1`,
+						)
+						.get() as { n: number }
+				).n;
+				const archived = (
+					rawDb
+						.prepare(
+							`SELECT COUNT(*) as n FROM memory_index WHERE is_latest = 1 AND archived = 1`,
+						)
+						.get() as { n: number }
+				).n;
+				const byTypeRows = rawDb
+					.prepare(
+						`SELECT type, COUNT(*) as n FROM memory_index
+						 WHERE is_latest = 1
+						 GROUP BY type`,
+					)
+					.all() as Array<{ type: string; n: number }>;
+				const byType: Record<string, number> = {
+					rule: 0,
+					fact: 0,
+					process: 0,
 				};
-				idx.upsertAtom(updated);
-				idx.invalidateEmbedding(id);
-				return { kind: "ok" as const, atom: idx.getAtom(id)! };
-			});
-			if (result.kind === "not_found") {
-				res.status(404).json({ error: `atom not found: ${id}` });
-				return;
+				for (const { type, n } of byTypeRows) {
+					byType[type] = n;
+				}
+				res.json({ total, archived, byType });
+			} finally {
+				index.close();
 			}
-			res.json({ ok: true, atom: result.atom });
 		} catch (err) {
-			console.error("[memory archive] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+			res.status(500).json({ error: (err as Error).message });
 		}
 	});
-	// (2.6) POST /api/memory/search — real search pipeline. Per design Decisions 2
-	// & 4: rewriteQueryWithCallLlm + searchAtomsWithScores (no ExtensionContext
-	// stub). Forwards deps.settings to searchAtomsWithScores so the server's
-	// settings drive embedding config rather than the dev's
-	// ~/.pi/agent/settings.json (task 1.5b plumbing). callLlm throws are
-	// absorbed inside rewriteQueryWithCallLlm (falls back to
-	// simpleKeywordExtraction), so this endpoint never returns 500 because of
-	// a transient LLM failure.
-	app.post("/api/memory/search", async (req, res) => {
+}
+
+/**
+ * POST /api/memory/:id/archive — toggle or explicitly set the atom's
+ * archived flag (R44).
+ *
+ * Body:
+ *   - `archived` (boolean, optional): explicit target state. If omitted,
+ *     the route toggles the current state (active→archived, archived→
+ *     active). If provided, the boolean overrides the toggle and the
+ *     target state equals the body value (S50).
+ *
+ * Behavior (mirrors storage.ts design):
+ *   - Archiving (target=1): markArchived + deleteVector (R45). The
+ *     storage layer writes an audit row inside markArchived's
+ *     transaction.
+ *   - Unarchiving (target=0): markUnarchived only (R46). No audit row,
+ *     no vector re-compute — the original archive audit row is
+ *     considered sufficient to reconstruct history, and a vector
+ *     absent since archive stays absent.
+ *
+ * Per-route `express.json()` middleware is used so other handlers
+ * remain payload-free unless they explicitly need a body.
+ *
+ * Status codes:
+ *   - 200: `{ id, archived }` (0 or 1).
+ *   - 404: atom id is unknown.
+ *   - 500: DB or index failure.
+ */
+export function registerPostArchive(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/:id/archive", express.json(), async (req, res) => {
 		try {
-			const body = (req.body ?? {}) as { query?: string; topK?: number };
-			const query = body.query ?? "";
-			const topK = body.topK ?? 10;
-			if (!query) {
-				res.status(400).json({ error: "query required" });
+			const index = await createIndex(deps.dbPath);
+			try {
+				const existing = index.getAtom(req.params.id);
+				if (!existing) {
+					res.status(404).json({ error: "atom not found" });
+					return;
+				}
+				// Explicit body.archived overrides the toggle; otherwise
+				// invert the current state (S50).
+				const explicitArchived = req.body?.archived;
+				const targetArchived: 0 | 1 =
+					typeof explicitArchived === "boolean"
+						? explicitArchived
+							? 1
+							: 0
+						: existing.archived === 0
+							? 1
+							: 0;
+
+				if (targetArchived === 1) {
+					// markArchived writes the audit row in its own
+					// transaction; deleteVector is idempotent so calling
+					// it unconditionally is safe (matches R45 + R27).
+					index.markArchived(req.params.id);
+					index.deleteVector(req.params.id);
+				} else {
+					// No transaction, no audit, no vector re-compute —
+					// mirrors markUnarchived's intentional simplicity.
+					index.markUnarchived(req.params.id);
+				}
+
+				res.json({ id: req.params.id, archived: targetArchived });
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
+ * POST /api/memory/search — recall ranked atoms and format them within
+ * a token budget (R54, S59, S60).
+ *
+ * Body:
+ *   - `query`        (required) — non-empty string to embed and search.
+ *   - `topK`         (optional, default 10) — max candidates to return.
+ *   - `tokenBudget`  (optional, default 4000) — ceiling for the formatted
+ *                    text block; we never exceed it (R49).
+ *   - `type`         (optional) — restrict recall to a single atom type.
+ *
+ * Response:
+ *   - `results`: ranked list of `{ id, type, title, summary, tags,
+ *     distance, cosine, tier }`. Empty when no atoms match or ollama is
+ *     unreachable (embedText → null → []).
+ *   - `formattedText`: a single text block of `formatMemoryContext`
+ *     output, packed within `tokenBudget` tokens.
+ *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
+ *   - `tokenBudgetUsed`: actual tokens consumed by `formattedText`.
+ *
+ * Architecture constraints:
+ *   - recallAtoms + formatMemoryContext are imported via the relative
+ *     extensions/personal-assistant path (same as MemoryIndex) — the
+ *     package is not in the workspace and `index.ts` only re-exports
+ *     runMemoryExtraction.
+ *   - Per-route `express.json()` so other handlers stay payload-free.
+ *
+ * Status codes:
+ *   - 200: search ran (results may be empty).
+ *   - 400: query missing or empty.
+ *   - 500: only for genuine DB / vector / file errors.
+ */
+export function registerPostSearch(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/search", express.json(), async (req, res) => {
+		try {
+			const {
+				query,
+				topK = 10,
+				tokenBudget = 4000,
+				type,
+			} = req.body || {};
+			if (typeof query !== "string" || query.length === 0) {
+				res
+					.status(400)
+					.json({ error: "query must be a non-empty string" });
 				return;
 			}
-			const { rewritten, results, embedding_available } = await withMemoryIndex(deps, async (idx) => {
-				// 1. rewrite query via LLM (降级到 simpleKeywordExtraction on error)
-				const r = await rewriteQueryWithCallLlm(
-					deps.callLlm,
-					query,
-					deps.settings,
+
+			const index = await createIndex(deps.dbPath);
+			try {
+				// Lazy-import to avoid a static import cycle and to keep
+				// the cold-start cost minimal when the route is unused.
+				const { recallAtoms } = await import(
+					"../../../../extensions/personal-assistant/search.ts"
 				);
-				// 2. search with scores
-				const { results, embedding_available } = await searchAtomsWithScores(idx, r, topK, deps.settings);
-				return { rewritten: r, results, embedding_available };
-			});
-			res.json({ rewritten, embedding_available, results });
+				const { formatMemoryContext } = await import(
+					"../../../../extensions/personal-assistant/format.ts"
+				);
+
+				// Measure only the recall itself, not the formatting —
+				// formatMemoryContext is pure and sub-millisecond.
+				const t0 = Date.now();
+				const results = await recallAtoms(
+					index,
+					query,
+					deps.atomsDir,
+					{
+						topK,
+						filter: type ? { type } : undefined,
+					},
+				);
+				const recallTimeMs = Date.now() - t0;
+
+				const formatted = formatMemoryContext(results, tokenBudget);
+				res.json({
+					results: results.map((r) => ({
+						id: r.atom.id,
+						type: r.atom.type,
+						title: r.atom.title,
+						summary: r.atom.summary,
+						tags: r.atom.tags,
+						distance: r.distance,
+						cosine: r.cosine,
+						tier: r.tier,
+					})),
+					formattedText: formatted.text,
+					recallTimeMs,
+					tokenBudgetUsed: formatted.used,
+				});
+			} finally {
+				index.close();
+			}
 		} catch (err) {
-			console.error("[memory search] error:", err);
-			res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
+			res.status(500).json({ error: (err as Error).message });
 		}
 	});
+}
+
+/**
+ * POST /api/memory/extract — manually trigger the full extraction
+ * pipeline against a conversation transcript (R59, S65-S67).
+ *
+ * Body:
+ *   - `messages` (required): non-empty array of `{role: string,
+ *     content: string}` entries. The shape mirrors the LLM chat format
+ *     so callers can pass a session transcript directly. Each entry
+ *     must have both `role` and `content` as strings (S67).
+ *
+ * Behavior:
+ *   - Validates the body. Missing / empty `messages` → 400. Malformed
+ *     entries → 400. No silent fallback.
+ *   - Lazy-imports runMemoryExtraction from
+ *     extensions/personal-assistant/extraction.ts (the same pattern as
+ *     registerPostSearch) so the cold-start cost is minimal when the
+ *     route is unused. runMemoryExtraction opens its own MemoryIndex
+ *     internally, so the route doesn't need to hold the DB handle.
+ *   - Returns counts and IDs from each extraction bucket (created,
+ *     superseded, skipped) plus a slimmed-down plan echo. Per R60 the
+ *     response shape is `{plan, created, superseded, skipped,
+ *     createdIds, supersededPairs, skippedIds}`.
+ *
+ * Architecture constraints:
+ *   - Per-route `express.json()` (matching the rest of the POST handlers
+ *     in this file) so other handlers stay payload-free.
+ *   - 500 is reserved for genuine runMemoryExtraction failures (DB /
+ *     LLM / file-system). Validation errors stay 400 so callers can
+ *     distinguish "bad input" from "internal failure".
+ *
+ * Status codes:
+ *   - 200: extraction ran. Counts may be zero if the LLM returned an
+ *     empty plan (S66) or invalid JSON.
+ *   - 400: messages missing / empty / malformed (S67).
+ *   - 500: runMemoryExtraction threw.
+ */
+export function registerPostExtract(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.post("/api/memory/extract", express.json(), async (req, res) => {
+		try {
+			const { messages } = req.body || {};
+			if (!Array.isArray(messages) || messages.length === 0) {
+				res
+					.status(400)
+					.json({ error: "messages must be a non-empty array" });
+				return;
+			}
+			// Validate each message has string role + content (S67).
+			// `m?.role` / `m?.content` short-circuits when the entry
+			// itself is null/undefined so the error fires on the shape,
+			// not on a TypeError inside the loop.
+			for (const m of messages) {
+				if (typeof m?.role !== "string" || typeof m?.content !== "string") {
+					res.status(400).json({
+						error: "each message must have string role and content",
+					});
+					return;
+				}
+			}
+
+			// Lazy-import so this route pays nothing at server boot and
+			// so we don't drag the extraction module graph into modules
+			// that never call the route.
+			const { runMemoryExtraction } = await import(
+				"../../../../extensions/personal-assistant/extraction.ts"
+			);
+			const result = await runMemoryExtraction({
+				callLlm: deps.callLlm,
+				config: { model: deps.settings.memory?.embedding?.model },
+				messages,
+				dbPath: deps.dbPath,
+				atomsDir: deps.atomsDir,
+			});
+
+			res.json({
+				plan: {
+					items: result.plan.items,
+					modelUsed: result.plan.modelUsed,
+					generatedAt: result.plan.generatedAt,
+				},
+				created: result.created.length,
+				superseded: result.superseded.length,
+				skipped: result.skipped.length,
+				createdIds: result.created.map((a) => a.id),
+				supersededPairs: result.superseded.map((s) => ({
+					oldId: s.oldId,
+					newId: s.newAtom.id,
+				})),
+				skippedIds: result.skipped.map((a) => a.id),
+			});
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
+ * Register all memory routes on the given Express app. New handlers
+ * (POST / PATCH / DELETE in Tasks 7.4-7.7) should be appended here so
+ * callers only need to know one entry point.
+ */
+export function mountMemoryRoutes(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	// Static paths MUST register before /:id to avoid Express route shadowing
+	registerGetMemoryList(app, deps);
+	registerGetMemoryStats(app, deps);
+	registerPostSearch(app, deps);
+	registerPostExtract(app, deps);
+	// Parameterized paths last
+	registerGetMemoryById(app, deps);
+	registerPatchMemory(app, deps);
+	registerPostArchive(app, deps);
 }

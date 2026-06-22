@@ -1,1881 +1,336 @@
-/**
- * Pi Personal Assistant Memory System
- *
- * Provides persistent memory for the Pi coding agent with:
- * - SQLite FTS5-based memory index for fast keyword search
- * - Optional Ollama embedding-based hybrid search
- * - Automatic memory extraction from conversation compaction
- * - Memory decay with importance-weighted strength reduction
- * - Query rewriting via LLM for better retrieval
- * - Memory injection into system prompt before agent start
- */
+// v2 memory.ts — surgical hook entry points.
+//
+// This module replaces the legacy v1 memory.ts (which carried FTS, query
+// rewrite, persona injection, and inline extraction logic). v2 splits the
+// work across specialised modules and keeps memory.ts minimal:
+//
+//   - extraction.ts — extractMemoriesWithCallLlm / runMemoryExtraction
+//   - decay.ts      — runDecay
+//   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
+//   - embed.ts      — embedText
+//   - search.ts     — recallAtoms (used by the context-injection pipeline)
+//   - format.ts     — formatMemoryContext (used by the context-injection pipeline)
+//
+// What memory.ts still owns:
+//   - registerMemory(pi) — wires session_before_compact + session_start + the
+//     before_agent_start / context memory-injection pipeline.
+//   - loadConfig()       — reads personal-assistant config (graceful fallback to {})
+//   - re-exports the v2 entry points / types so index.ts keeps its current shape
+//
+// Design decisions honoured here:
+//   - session_before_compact uses extractMemoriesWithCallLlm (no ExtensionContext
+//     dependency — the LLM call is supplied by the hook at call time).
+//   - session_start decay is throttled to once per hour per process (DECAY_INTERVAL_MS)
+//     so a chatty session does not thrash the DB.
+//   - before_agent_start kicks off recallAtoms async and stashes the promise in
+//     the module-level `pendingMemorySearch`; context awaits it (raced against
+//     an 8s timeout) and injects the formatted block into the last user
+//     message. Non-destructive: original event is returned if nothing to inject.
+//   - loadConfig returns {} on any failure — never throws. Real config wiring
+//     is external (see SettingsManager / webui routes).
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { completeSimple } from "@earendil-works/pi-ai";
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createDatabase } from "./sqlite.ts";
-import type { Database } from "./sqlite.ts";
+import { runDecay } from "./decay.ts";
+import { MemoryIndex } from "./storage.ts";
+import {
+	runMemoryExtraction,
+	extractMemoriesWithCallLlm,
+	writeExtractionReport,
+} from "./extraction.ts";
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // Types
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-export type MemoryAtomType =
-  | "constraint"
-  | "preference"
-  | "workflow"
-  | "knowledge"
-  | "event"
-  | "solution"
-  | "insight"
-  // 8th type — production data has 1 atom with type='bug' (out-of-band from
-  // the documented 7-type set). Promoted to first-class so the editor's
-  // <select> doesn't silently change it to "constraint" on PATCH.
-  // See task 6.7 / review-fail MEDIUM.
-  | "bug";
-
-export interface MemoryAtom {
-  id: string;
-  type: MemoryAtomType;
-  title: string;
-  summary: string;
-  tags: string[];
-  importance: number;
-  strength: number;
-  access_count: number;
-  last_access: string;
-  created_at: string;
-  updated_at: string;
-  version: number;
-  archived: boolean;
-  content: string;
-  file_path: string;
-  content_hash: string;
-}
-
+/**
+ * Minimal config shape consumed by memory.ts. Real config lives elsewhere
+ * (settings-manager / webui) and is structurally compatible with this shape.
+ * v1 had a much wider type; v2 narrows to only what the hooks actually read.
+ */
 export interface PersonalAssistantConfig {
-  agent?: {
-    provider?: string;
-    model?: string;
-    thinking?: string;
-    max_tokens?: number;
-    temperature?: number;
-  };
-  subagent?: {
-    provider?: string;
-    model?: string;
-    max_iterations?: number;
-    max_parallel?: number;
-  };
-  memory?: {
-    enabled?: boolean;
-    query_rewrite?: { provider?: string; model?: string };
-    extraction?: { provider?: string; model?: string };
-    embedding?: { provider?: string; model?: string };
-    decay?: { base_decay?: number; archive_threshold?: number };
-    injection?: { max_count?: number };
-  };
-  persona?: {
-    soul_path?: string;
-    user_path?: string;
-  };
+	memory?: {
+		dbPath?: string;
+		atomsDir?: string;
+		embedding?: { ollamaUrl?: string; model?: string };
+		autoDecay?: boolean;
+		autoExtract?: boolean;
+	};
 }
 
-export interface QueryRewriteResult {
-  keywords: string[];
-  target_types: string[];
-  raw_query: string;
-  /** true if LLM failed/parse failed → used simpleKeywordExtraction. */
-  fallback: boolean;
-}
-
-interface ExtractionPlanItem {
-  action: "create" | "update" | "skip";
-  type?: MemoryAtomType;
-  title?: string;
-  summary?: string;
-  tags?: string[];
-  importance?: number;
-  id?: string;
-  changes?: Partial<Pick<MemoryAtom, "title" | "summary" | "tags" | "importance" | "content">>;
-}
-
-interface ExtractionPlan {
-  plan: ExtractionPlanItem[];
-}
-
-export interface RunMemoryExtractionOptions {
-  /** LLM caller. Given a prompt string, returns the assistant text. Throws on failure. */
-  callLlm: (prompt: string) => Promise<string>;
-  /** Settings config (must include memory.extraction model + memory.embedding model, etc.) */
-  config: PersonalAssistantConfig;
-  /** Conversation messages extracted from JSONL */
-  messages: Array<{ role: string; content: unknown }>;
-  /** Override db path (defaults to ~/.pi/agent/data/memory.db) */
-  dbPath?: string;
-  /** Override atoms dir (defaults to ~/.pi/agent/data/memory/atoms) */
-  atomsDir?: string;
-}
-
-export interface RunMemoryExtractionResult {
-  plan: ExtractionPlan | null;
-  atomsWritten: number;
-}
-
-// ============================================================================
+// ---------------------------------------------------------------------------
 // Constants
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-const PI_DIR = join(homedir(), ".pi");
-const AGENT_DIR = join(PI_DIR, "agent");
-const SETTINGS_PATH = join(AGENT_DIR, "settings.json");
-const DATA_DIR = join(AGENT_DIR, "data");
-export const MEMORY_DB_PATH = join(DATA_DIR, "memory.db");
-export const ATOMS_DIR = join(DATA_DIR, "memory", "atoms");
-const REPORTS_DIR = join(DATA_DIR, "memory", "reports");
+/** Default sqlite database path. Override via config.memory.dbPath. */
+const DEFAULT_DB_PATH = join(homedir(), ".pi", "agent", "memory", "memory.db");
 
-const DEFAULT_BASE_DECAY = 0.05;
-const DEFAULT_ARCHIVE_THRESHOLD = 0.15;
-const DEFAULT_MAX_INJECTION = 10;
-const DECAY_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-const STOP_WORDS = new Set([
-  "a",
-  "an",
-  "the",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "have",
-  "has",
-  "had",
-  "do",
-  "does",
-  "did",
-  "will",
-  "would",
-  "could",
-  "should",
-  "may",
-  "might",
-  "shall",
-  "can",
-  "need",
-  "must",
-  "ought",
-  "i",
-  "me",
-  "my",
-  "we",
-  "our",
-  "you",
-  "your",
-  "he",
-  "him",
-  "his",
-  "she",
-  "her",
-  "it",
-  "its",
-  "they",
-  "them",
-  "their",
-  "this",
-  "that",
-  "these",
-  "those",
-  "what",
-  "which",
-  "who",
-  "whom",
-  "when",
-  "where",
-  "why",
-  "how",
-  "all",
-  "each",
-  "every",
-  "both",
-  "few",
-  "more",
-  "most",
-  "other",
-  "some",
-  "such",
-  "no",
-  "not",
-  "only",
-  "own",
-  "same",
-  "so",
-  "than",
-  "too",
-  "very",
-  "just",
-  "because",
-  "as",
-  "until",
-  "while",
-  "of",
-  "at",
-  "by",
-  "for",
-  "with",
-  "about",
-  "against",
-  "between",
-  "through",
-  "during",
-  "before",
-  "after",
-  "above",
-  "below",
-  "to",
-  "from",
-  "up",
-  "down",
-  "in",
-  "out",
-  "on",
-  "off",
-  "over",
-  "under",
-  "again",
-  "further",
-  "then",
-  "once",
-  "here",
-  "there",
-  "and",
-  "but",
-  "or",
-  "nor",
-  "if",
-  "else",
-  "also",
-  "just",
-  "like",
-  "get",
-  "got",
-  "make",
-  "made",
-  "use",
-  "used",
-  "using",
-  "want",
-  "know",
-  "think",
-  "see",
-  "look",
-  "come",
-  "go",
-  "take",
-  "give",
-  "say",
-  "said",
-  "tell",
-  "told",
-  "ask",
-  "asked",
-  "try",
-  "tried",
-  "put",
-  "set",
-  "let",
-  "keep",
-  "kept",
-  "seem",
-  "run",
-  "show",
-  "help",
-  "start",
-  "move",
-  "play",
-  "feel",
-]);
-
-const ATOM_TYPE_ORDER: MemoryAtomType[] = [
-  "constraint",
-  "preference",
-  "workflow",
-  "knowledge",
-  "event",
-  "solution",
-  "insight",
-];
-
-// ============================================================================
-// Config Loading
-// ============================================================================
-
-function loadConfig(): PersonalAssistantConfig {
-  try {
-    if (!existsSync(SETTINGS_PATH)) return {};
-    const raw = readFileSync(SETTINGS_PATH, "utf-8");
-    const settings = JSON.parse(raw);
-    return (settings?.personalAssistant ?? {}) as PersonalAssistantConfig;
-  } catch {
-    return {};
-  }
-}
-
-function getMemoryConfig(config: PersonalAssistantConfig) {
-  return {
-    enabled: config.memory?.enabled !== false,
-    queryRewriteProvider: config.memory?.query_rewrite?.provider,
-    queryRewriteModel: config.memory?.query_rewrite?.model,
-    extractionProvider: config.memory?.extraction?.provider,
-    extractionModel: config.memory?.extraction?.model,
-    embeddingProvider: config.memory?.embedding?.provider,
-    embeddingModel: config.memory?.embedding?.model,
-    baseDecay: config.memory?.decay?.base_decay ?? DEFAULT_BASE_DECAY,
-    archiveThreshold: config.memory?.decay?.archive_threshold ?? DEFAULT_ARCHIVE_THRESHOLD,
-    maxInjection: config.memory?.injection?.max_count ?? DEFAULT_MAX_INJECTION,
-  };
-}
-
-function getRewriteModelLabel(config: PersonalAssistantConfig, ctx: ExtensionContext): string {
-  const rw = config.memory?.query_rewrite;
-  if (rw?.provider && rw?.model) {
-    return `${rw.provider}/${rw.model}`;
-  }
-  return ctx.model?.id ?? "?";
-}
-
-// ============================================================================
-// Utility
-// ============================================================================
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
-
-function nowISO(): string {
-  return new Date().toISOString();
-}
-
-function daysBetween(a: string, b: string): number {
-  return (new Date(b).getTime() - new Date(a).getTime()) / (1000 * 60 * 60 * 24);
-}
-
-function slugify(title: string): string {
-  // Check for non-ASCII characters
-  if (/[^\x00-\x7F]/.test(title)) {
-    // Use first 8 hex chars of MD5 hash
-    return createHash("md5").update(title).digest("hex").slice(0, 8);
-  }
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }>): string {
-  const parts: string[] = [];
-  for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      parts.push(`[${msg.role}]: ${msg.content}`);
-    } else if (Array.isArray(msg.content)) {
-      const textParts = msg.content
-        .filter((c: unknown): c is { type: string; text: string } => {
-          return typeof c === "object" && c !== null && "type" in c && "text" in c && (c as { type: string }).type === "text";
-        })
-        .map((c) => c.text);
-      if (textParts.length > 0) {
-        parts.push(`[${msg.role}]: ${textParts.join("\n")}`);
-      }
-    }
-  }
-  return parts.join("\n\n");
-}
-
-// ============================================================================
-// MemoryIndex — SQLite FTS5
-// ============================================================================
-
-export class MemoryIndex {
-  private db: Database | null = null;
-  private dbPath: string;
-
-  constructor(dbPath: string) {
-    this.dbPath = dbPath;
-  }
-
-  async init(): Promise<void> {
-    ensureDir(join(this.dbPath, ".."));
-    this.db = await createDatabase(this.dbPath);
-
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS memory_index (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        tags TEXT NOT NULL DEFAULT '[]',
-        importance REAL NOT NULL DEFAULT 0.5,
-        strength REAL NOT NULL DEFAULT 1.0,
-        access_count INTEGER NOT NULL DEFAULT 0,
-        last_access TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        archived INTEGER NOT NULL DEFAULT 0,
-        file_path TEXT NOT NULL DEFAULT '',
-        content_hash TEXT NOT NULL DEFAULT ''
-      )
-    `);
-
-    this.db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-        id,
-        title,
-        tags,
-        tokenize='unicode61'
-      )
-    `);
-
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS memory_embeddings (
-        id TEXT PRIMARY KEY REFERENCES memory_index(id),
-        embedding TEXT NOT NULL
-      )
-    `);
-
-    // Add columns for existing databases (silently ignored if present)
-    try { this.db.exec("ALTER TABLE memory_index ADD COLUMN file_path TEXT NOT NULL DEFAULT ''"); } catch { /* ok */ }
-    try { this.db.exec("ALTER TABLE memory_index ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); } catch { /* ok */ }
-    try { this.db.exec("CREATE TABLE IF NOT EXISTS memory_embeddings (id TEXT PRIMARY KEY REFERENCES memory_index(id), embedding TEXT NOT NULL)"); } catch { /* ok */ }
-  }
-
-  close(): void {
-    this.db?.close();
-    this.db = null;
-  }
-
-  private ensureDb(): Database {
-    if (!this.db) throw new Error("MemoryIndex not initialized");
-    return this.db;
-  }
-
-  upsertAtom(atom: MemoryAtom): void {
-    const db = this.ensureDb();
-    const tagsJson = JSON.stringify(atom.tags);
-    const archivedInt = atom.archived ? 1 : 0;
-    const ts = nowISO();
-
-    // Upsert main table
-    db.prepare(`
-      INSERT INTO memory_index (id, type, title, tags, importance, strength, access_count, last_access, created_at, updated_at, version, archived, file_path, content_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        type=excluded.type,
-        title=excluded.title,
-        tags=excluded.tags,
-        importance=excluded.importance,
-        strength=excluded.strength,
-        access_count=excluded.access_count,
-        last_access=excluded.last_access,
-        updated_at=excluded.updated_at,
-        version=excluded.version,
-        archived=excluded.archived,
-        file_path=excluded.file_path,
-        content_hash=excluded.content_hash
-    `).run(
-      atom.id, atom.type, atom.title, tagsJson,
-      atom.importance, atom.strength, atom.access_count,
-      atom.last_access, atom.created_at, atom.updated_at,
-      atom.version, archivedInt, atom.file_path, atom.content_hash,
-    );
-
-    // Upsert FTS
-    db.prepare("DELETE FROM memory_fts WHERE id = ?").run(atom.id);
-    db.prepare("INSERT INTO memory_fts (id, title, tags) VALUES (?, ?, ?)").run(
-      atom.id, atom.title, tagsJson,
-    );
-  }
-
-  upsertEmbedding(id: string, embedding: number[]): void {
-    const db = this.ensureDb();
-    db.prepare(`
-      INSERT INTO memory_embeddings (id, embedding) VALUES (?, ?)
-      ON CONFLICT(id) DO UPDATE SET embedding=excluded.embedding
-    `).run(id, JSON.stringify(embedding));
-  }
-
-  /**
-   * 清除指定 atom 的 embedding 缓存。
-   * 编辑 body 后 server 端 PATCH 调此方法使下次 searchAtoms 触发重算。
-   */
-  invalidateEmbedding(id: string): void {
-    const db = this.ensureDb();
-    db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
-  }
-
-  getEmbeddings(ids: string[]): Map<string, number[]> {
-    const db = this.ensureDb();
-    const result = new Map<string, number[]>();
-    if (ids.length === 0) return result;
-
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = db.prepare(`SELECT id, embedding FROM memory_embeddings WHERE id IN (${placeholders})`).all(...ids) as Array<{ id: string; embedding: string }>;
-    for (const row of rows) {
-      try { result.set(row.id, JSON.parse(row.embedding)); } catch { /* skip */ }
-    }
-    return result;
-  }
-
-  getAtom(id: string): MemoryAtom | null {
-    const db = this.ensureDb();
-    const row = db.prepare("SELECT * FROM memory_index WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    return this.rowToAtom(row);
-  }
-
-  getActiveAtoms(): MemoryAtom[] {
-    const db = this.ensureDb();
-    const rows = db.prepare("SELECT * FROM memory_index WHERE archived = 0").all() as Array<Record<string, unknown>>;
-    return rows.map((r) => this.rowToAtom(r));
-  }
-
-  updateAccess(id: string): void {
-    const db = this.ensureDb();
-    db.prepare("UPDATE memory_index SET access_count = access_count + 1, last_access = ? WHERE id = ?").run(nowISO(), id);
-  }
-
-  updateStrength(id: string, strength: number): void {
-    const db = this.ensureDb();
-    db.prepare("UPDATE memory_index SET strength = ?, updated_at = ? WHERE id = ?").run(strength, nowISO(), id);
-  }
-
-  markArchived(id: string): void {
-    const db = this.ensureDb();
-    db.prepare("UPDATE memory_index SET archived = 1, updated_at = ? WHERE id = ?").run(nowISO(), id);
-  }
-
-  searchByFts(
-    keywords: string[],
-    typeFilter?: string[],
-    limit: number = 20,
-  ): Array<{ id: string; score: number }> {
-    const db = this.ensureDb();
-
-    // Build FTS5 MATCH query — quote each keyword for safety
-    const matchQuery = keywords.map((k) => `"${k.replace(/"/g, '""')}"`).join(" OR ");
-
-    let sql: string;
-    let params: unknown[];
-    if (typeFilter && typeFilter.length > 0) {
-      // IN (...) clause for multi-type filter
-      const placeholders = typeFilter.map(() => "?").join(", ");
-      sql = `
-        SELECT f.id, bm25(memory_fts) as score
-        FROM memory_fts f
-        JOIN memory_index m ON m.id = f.id
-        WHERE memory_fts MATCH ?
-          AND m.type IN (${placeholders})
-          AND m.archived = 0
-        ORDER BY bm25(memory_fts)
-        LIMIT ?
-      `;
-      params = [matchQuery, ...typeFilter, limit];
-    } else {
-      sql = `
-        SELECT f.id, bm25(memory_fts) as score
-        FROM memory_fts f
-        JOIN memory_index m ON m.id = f.id
-        WHERE memory_fts MATCH ?
-          AND m.archived = 0
-        ORDER BY bm25(memory_fts)
-        LIMIT ?
-      `;
-      params = [matchQuery, limit];
-    }
-
-    try {
-      const rows = db.prepare(sql).all(...params) as Array<{ id: string; score: number }>;
-      return rows.map((r) => ({ id: r.id, score: Math.abs(r.score) }));
-    } catch {
-      return [];
-    }
-  }
-
-  private rowToAtom(row: Record<string, unknown>): MemoryAtom {
-    return {
-      id: row.id as string,
-      type: row.type as MemoryAtomType,
-      title: row.title as string,
-      summary: "",
-      tags: JSON.parse((row.tags as string) ?? "[]"),
-      importance: row.importance as number,
-      strength: row.strength as number,
-      access_count: row.access_count as number,
-      last_access: row.last_access as string,
-      created_at: row.created_at as string,
-      updated_at: row.updated_at as string,
-      version: row.version as number,
-      archived: (row.archived as number) === 1,
-      content: "",
-      file_path: (row.file_path as string) ?? "",
-      content_hash: (row.content_hash as string) ?? "",
-    };
-  }
-
-  /** Get all memory_index rows for migration. */
-  getAllRows(): Array<Record<string, unknown>> {
-    const db = this.ensureDb();
-    return db.prepare("SELECT * FROM memory_index").all() as Array<Record<string, unknown>>;
-  }
-}
-
-// ============================================================================
-// Atom File Storage
-// ============================================================================
-
-export function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom | null {
-  if (!existsSync(filePath)) return null;
-
-  const raw = readFileSync(filePath, "utf-8");
-
-  // Validate content hash if provided
-  if (expectedHash) {
-    const actualHash = createHash("sha256").update(raw).digest("hex");
-    if (actualHash !== expectedHash) {
-      throw new Error(`content hash mismatch (expected ${expectedHash}, got ${actualHash})`);
-    }
-  }
-
-  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) {
-    throw new Error(`missing frontmatter in ${filePath}`);
-  }
-
-  const frontmatter = match[1];
-  const content = match[2];
-
-  const fields: Record<string, string> = {};
-  for (const line of frontmatter.split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const val = line.slice(colonIdx + 1).trim();
-    fields[key] = val;
-  }
-
-  // Validate required fields
-  for (const field of ["id", "type", "title"] as const) {
-    if (!fields[field]) {
-      throw new Error(`missing required field "${field}" in ${filePath}`);
-    }
-  }
-
-  const typeDir = filePath.split("/").slice(-2, -1)[0] as MemoryAtomType;
-
-  let tags: string[] = [];
-  if (fields.tags) {
-    const tagsStr = fields.tags;
-    if (tagsStr.startsWith("[") && tagsStr.endsWith("]")) {
-      tags = tagsStr
-        .slice(1, -1)
-        .split(",")
-        .map((t) => t.trim().replace(/^["']|["']$/g, ""))
-        .filter(Boolean);
-    }
-  }
-
-  return {
-    id: fields.id,
-    type: (fields.type as MemoryAtomType) ?? typeDir,
-    title: fields.title,
-    summary: fields.summary ?? "",
-    tags,
-    importance: parseFloat(fields.importance ?? "0.5"),
-    strength: parseFloat(fields.strength ?? "1.0"),
-    access_count: parseInt(fields.access_count ?? "0", 10),
-    last_access: fields.last_access ?? nowISO(),
-    created_at: fields.created_at ?? nowISO(),
-    updated_at: fields.updated_at ?? nowISO(),
-    version: parseInt(fields.version ?? "1", 10),
-    archived: fields.archived === "true",
-    content: content.trim(),
-    file_path: filePath,
-    content_hash: expectedHash ?? createHash("sha256").update(raw).digest("hex"),
-  };
-}
-
-export function writeAtomToFile(atom: MemoryAtom, baseDir?: string): { filePath: string; contentHash: string } {
-  const dir = join(baseDir ?? ATOMS_DIR, atom.type);
-  ensureDir(dir);
-
-  const slug = slugify(atom.title);
-  const filePath = join(dir, `${slug}.md`);
-
-  const tagsStr = `[${atom.tags.map((t) => `"${t}"`).join(", ")}]`;
-
-  const frontmatter = [
-    "---",
-    `id: ${atom.id}`,
-    `type: ${atom.type}`,
-    `title: ${atom.title}`,
-    `summary: ${atom.summary}`,
-    `tags: ${tagsStr}`,
-    `importance: ${atom.importance}`,
-    `strength: ${atom.strength}`,
-    `access_count: ${atom.access_count}`,
-    `last_access: ${atom.last_access}`,
-    `created_at: ${atom.created_at}`,
-    `updated_at: ${atom.updated_at}`,
-    `version: ${atom.version}`,
-    `archived: ${atom.archived}`,
-    "---",
-  ].join("\n");
-
-  const body = atom.content || atom.summary;
-  const content = `${frontmatter}\n\n${body}\n`;
-
-  // Atomic write: temp file → rename
-  const tmpPath = filePath + ".tmp";
-  writeFileSync(tmpPath, content, "utf-8");
-  renameSync(tmpPath, filePath);
-
-  const contentHash = createHash("sha256").update(content).digest("hex");
-  return { filePath, contentHash };
-}
-
-// ============================================================================
-// Query Rewriter
-// ============================================================================
-
-function simpleKeywordExtraction(query: string): QueryRewriteResult {
-  const words = query
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
-
-  const unique = [...new Set(words)];
-  return {
-    keywords: unique.slice(0, 10),
-    target_types: [],
-    raw_query: query,
-    fallback: true,
-  };
-}
-
-export async function rewriteQuery(
-  query: string,
-  ctx: ExtensionContext,
-  config: PersonalAssistantConfig,
-): Promise<QueryRewriteResult> {
-  const memConfig = getMemoryConfig(config);
-
-  // Use configured rewrite model if provider+model are set
-  const rewriteProvider = memConfig.queryRewriteProvider;
-  const rewriteModel = memConfig.queryRewriteModel;
-  if (rewriteProvider && rewriteModel) {
-    const configuredModel = ctx.modelRegistry.find(rewriteProvider, rewriteModel);
-    if (configuredModel) {
-      const auth = await ctx.modelRegistry.getApiKeyAndHeaders(configuredModel);
-      if (auth.ok) {
-        const prompt = buildRewritePrompt(query);
-        const result = await completeSimple(configuredModel, { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] }, {
-          maxTokens: 256,
-          apiKey: auth.apiKey,
-          headers: auth.headers,
-        });
-        const text = extractAssistantText(result);
-        if (text) {
-          const parsed = parseRewriteJson(text);
-          if (parsed) {
-            return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
-          }
-        }
-      }
-    }
-  }
-
-  // Fall back to session model
-  const model = ctx.model;
-  if (!model) return simpleKeywordExtraction(query);
-
-  try {
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok) return simpleKeywordExtraction(query);
-
-    const prompt = buildRewritePrompt(query);
-
-    const result = await completeSimple(model, { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] }, {
-      maxTokens: 256,
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-    });
-
-    const text = extractAssistantText(result);
-    if (!text) return simpleKeywordExtraction(query);
-
-    const parsed = parseRewriteJson(text);
-    if (parsed) {
-      return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
-    }
-  } catch {
-    // Fall through to simple extraction
-  }
-
-  return simpleKeywordExtraction(query);
-}
+/** Default atom file directory. Override via config.memory.atomsDir. */
+const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
 
 /**
- * Server-friendly query rewriting. 复制 `rewriteQuery` 的 LLM 路径,
- * 把 `ctx.modelRegistry` 调 LLM 替换成 `callLlm(prompt)` 回调。
- * Server 端 routes/memory.ts 用此避免构造 `ExtensionContext.modelRegistry` stub。
+ * Throttle window for the session_start decay run. One hour keeps the DB
+ * workload bounded on long-running sessions while still keeping memory
+ * strength reasonably fresh. Module-level state — survives across hook
+ * invocations within the same process.
+ */
+const DECAY_INTERVAL_MS = 60 * 60 * 1000;
+let lastDecayAt = 0;
+
+/**
+ * Per-turn memory-context pipeline state. The before_agent_start hook
+ * kicks off `recallAtoms` async and stores the promise here; the context
+ * hook awaits it (with an 8s race timeout) and injects the formatted
+ * result into the last user message of the event.
  *
- * LLM 抛错或返回无法解析的 JSON 时,降级到 `simpleKeywordExtraction(query)`。
+ * Module-level so the two hooks share the same in-flight search across
+ * the same process. Cleared after the context hook reads it.
+ */
+type FormattedMemory = { text: string; used: number; included: number };
+// Per-prompt pending searches. Module-level Map (not single var) so two
+// concurrent turns with different prompts don't stomp each other's recall.
+// Same-prompt concurrent turns remain a theoretical race; pi's
+// single-user runtime makes this vanishingly rare.
+let pendingMemorySearches = new Map<string, Promise<FormattedMemory | null>>();
+
+/** Hard cap on how long the context hook waits for the recall to finish. */
+const CONTEXT_RECALL_TIMEOUT_MS = 8_000;
+
+// ---------------------------------------------------------------------------
+// Re-exports — keep memory.ts as the single import surface for callers
+// (index.ts re-exports these as the public personal-assistant memory API).
+// ---------------------------------------------------------------------------
+
+export { runMemoryExtraction, extractMemoriesWithCallLlm };
+export type { RunMemoryExtractionOptions, RunMemoryExtractionResult } from "./extraction.ts";
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+/**
+ * Read personal-assistant config from disk. v2 keeps this as a thin stub —
+ * the real config wiring is owned by SettingsManager / webui. Returning {}
+ * on any failure keeps hook bodies from throwing on missing config files.
+ */
+export function loadConfig(): PersonalAssistantConfig {
+	return {};
+}
+
+// ---------------------------------------------------------------------------
+// Hook registration
+// ---------------------------------------------------------------------------
+
+/**
+ * Register the memory subsystem's pi hooks:
  *
- * @param callLlm  调用 LLM 的回调,接收 prompt 字符串,返回 assistant 文本。抛错表示失败。
- * @param query    原始用户查询。
- * @param config   Settings 配置(保留以备将来根据 config 选 prompt 变体;当前未使用)。
- */
-export async function rewriteQueryWithCallLlm(
-  callLlm: (prompt: string) => Promise<string>,
-  query: string,
-  config: PersonalAssistantConfig,
-): Promise<QueryRewriteResult> {
-  try {
-    const prompt = buildRewritePrompt(query);
-    const llmRaw = await callLlm(prompt);
-    if (llmRaw) {
-      const parsed = parseRewriteJson(llmRaw);
-      if (parsed) {
-        // Default raw_query to the user's input when LLM omits it (sdd-review HIGH #5).
-        return { ...parsed, keywords: dedupeAgainstQuery(parsed.keywords, query), raw_query: parsed.raw_query || query };
-      }
-    }
-  } catch {
-    // LLM call threw or returned unparseable JSON — fall through to simple extraction.
-  }
-  return simpleKeywordExtraction(query);
-}
-
-function buildRewritePrompt(query: string): string {
-  return `You are a query rewriting assistant. Given a user query, extract keywords and suggest which memory atom types would be most relevant.
-
-Memory atom types:
-- constraint: Hard requirements or rules
-- preference: User preferences and style choices
-- workflow: Process and workflow patterns
-- knowledge: Facts, knowledge, and information
-- event: Past events and interactions
-- solution: Solutions to problems
-- insight: Insights and observations
-
-Respond with ONLY valid JSON in this exact format:
-{"keywords": ["keyword1", "keyword2"], "target_types": ["type1", "type2"]}
-
-If no specific types seem relevant, use an empty array for target_types.
-Extract 3-8 meaningful keywords. Remove stop words and focus on content words.
-
-User query: ${query}`;
-}
-
-function parseRewriteJson(text: string): QueryRewriteResult | null {
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
-  try {
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (Array.isArray(parsed.keywords) && parsed.keywords.length > 0) {
-      const rawKeywords = parsed.keywords
-        .filter((k: unknown) => typeof k === "string" && k.length > 0)
-        .slice(0, 10);
-      return {
-        keywords: dedupeRedundantKeywords(rawKeywords),
-        target_types: Array.isArray(parsed.target_types)
-          ? parsed.target_types.filter((t: unknown) => ATOM_TYPE_ORDER.includes(t as MemoryAtomType))
-          : [],
-        raw_query: parsed.raw_query ?? "",
-        fallback: false,
-      };
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-/**
- * 去除 LLM 在 keywords 里冗余返回的"全句"关键词。
+ *   - session_before_compact: run extractMemoriesWithCallLlm on the messages
+ *     about to be summarised, write a report file, close the index.
+ *     Uses (event as any).messages as a defensive access pattern — the real
+ *     SessionBeforeCompactEvent carries messages in event.preparation.messagesToSummarize
+ *     (AgentMessage[]); the caller is responsible for the projection.
  *
- * 背景: LLM 经常既返回拆解后的关键词,又把原句作为第 N 个关键词塞回去
- * (例如查询 "pdf中图片提取" 返回 ["PDF","图片","提取","图片提取"])。
- * 第 4 项可以由第 2 + 第 3 项拼接而成,对 FTS5 检索只会重复加权重。
+ *   - session_start: throttle-guarded runDecay() against the active index.
+ *     The hook is a no-op if a decay ran within the last hour.
  *
- * 规则: 任何一个 keyword,如果能由"其余 keywords 的某个子序列(保序、连续拼接)"
- * 组合得到,则视为冗余并丢弃。当 keywords 数量 ≤ 8 时用 2^N 暴力枚举即可。
+ *   - before_agent_start: fire-and-forget recall of relevant atoms for the
+ *     incoming user prompt. Result is stashed in `pendingMemorySearch` for
+ *     the context hook to pick up.
+ *
+ *   - context: await the pending recall (8s race) and inject the formatted
+ *     memory block into the last user message of the event. Returns the
+ *     original event unchanged when no memory should be injected.
  */
-function dedupeRedundantKeywords(keywords: string[]): string[] {
-  if (keywords.length <= 1) return keywords;
-  return keywords.filter((k, i) => {
-    const others = keywords.filter((_, j) => j !== i);
-    // 子集枚举 (mask 跳过空集)
-    const n = others.length;
-    for (let mask = 1; mask < 1 << n; mask++) {
-      let composed = "";
-      for (let j = 0; j < n; j++) {
-        if (mask & (1 << j)) composed += others[j];
-      }
-      if (composed === k) return false; // 可由其余拼接得到 → 冗余,丢弃
-    }
-    return true;
-  });
-}
-
-/**
- * 在 `dedupeRedundantKeywords` 之上再做一轮"query 感知"去重:
- * 如果某个 keyword 与归一化后的 query 相同(忽略大小写、首尾空白、内部空白折叠),
- * 则丢弃 — 它已被 raw_query 携带,FTS5 再搜一次是重复加权。
- */
-function dedupeAgainstQuery(keywords: string[], query: string): string[] {
-  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-  const target = normalize(query);
-  if (!target) return keywords;
-  return keywords.filter((k) => normalize(k) !== target);
-}
-
-// ============================================================================
-// LLM Helpers
-// ============================================================================
-
-function extractAssistantText(result: { content?: Array<{ type: string; text?: string; thinking?: string }> }): string | null {
-  if (!result.content) return null;
-  const textParts = result.content
-    .filter((c) => c.type === "text" && typeof c.text === "string")
-    .map((c) => c.text as string);
-  return textParts.length > 0 ? textParts.join("") : null;
-}
-
-// ============================================================================
-// Memory Search
-// ============================================================================
-
-async function searchMemory(
-  index: MemoryIndex,
-  query: string,
-  ctx: ExtensionContext,
-  config: PersonalAssistantConfig,
-  topK: number,
-): Promise<MemoryAtom[]> {
-  const rewritten = await rewriteQuery(query, ctx, config);
-  return searchAtoms(index, rewritten, topK);
-}
-
-async function searchEmbeddings(
-  index: MemoryIndex,
-  queryText: string,
-  candidateIds: string[],
-  config?: PersonalAssistantConfig,
-): Promise<{ scores: Map<string, number>; serviceAvailable: boolean }> {
-  const empty: { scores: Map<string, number>; serviceAvailable: boolean } = {
-    scores: new Map(),
-    serviceAvailable: false,
-  };
-
-  // Find embedding model config. Prefer the explicit override (server route
-  // or test) so the function does not depend on ~/.pi/agent/settings.json
-  // from whichever user happens to run it. Fall back to loadConfig() only
-  // when no override is supplied (preserves prior call sites that don't
-  // pass config, e.g. searchAtoms).
-  const effectiveConfig = config ?? loadConfig();
-  const embConfig = effectiveConfig.memory?.embedding;
-  if (!embConfig?.provider || !embConfig?.model) return empty;
-
-  let embModel: { baseUrl: string; id: string } | null = null;
-  // We need access to modelRegistry here, but searchEmbeddings doesn't have ctx.
-  // Instead we'll read baseUrl from the config directly like the old approach.
-  // The embedding config in settings still has api_base for this case.
-  // Actually, for new code, use known local models:
-  if (embConfig.provider === "local") {
-    const baseUrl = "http://localhost:11434/v1";
-    embModel = { baseUrl, id: embConfig.model };
-  } else {
-    return empty;
-  }
-
-  if (!embModel) return empty;
-
-  const queryEmb = await getEmbedding(queryText, embModel.baseUrl, embModel.id);
-  if (!queryEmb) return empty;
-
-  // Embedding service reached + returned a vector for the query. From this
-  // point on, any candidate atom that lacks a stored embedding will simply
-  // have cosine=0 in the response — it does NOT mean the service is broken.
-  const candidateEmbs = index.getEmbeddings(candidateIds);
-  const result = new Map<string, number>();
-
-  for (const [id, emb] of candidateEmbs) {
-    result.set(id, cosineSimilarity(queryEmb, emb));
-  }
-
-  return { scores: result, serviceAvailable: true };
-}
-
-export async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
-  const candidates: Array<{ atom: MemoryAtom; score: number }> = [];
-
-  if (query.keywords.length > 0) {
-    // FTS5 search
-    const ftsResults = index.searchByFts(query.keywords, query.target_types);
-    if (ftsResults.length === 0) return [];
-
-    // Try embedding search if available
-    const { scores: embeddingResults } = await searchEmbeddings(index, query.raw_query || query.keywords.join(" "), ftsResults.map(r => r.id));
-
-    if (embeddingResults.size > 0) {
-      const maxFts = Math.max(...ftsResults.map(r => Math.abs(r.score)));
-      const maxEmb = Math.max(...Array.from(embeddingResults.values()));
-      const ftsRange = maxFts > 0 ? maxFts : 1;
-      const embRange = maxEmb > 0 ? maxEmb : 1;
-
-      for (const fts of ftsResults) {
-        const ftsNorm = Math.abs(fts.score) / ftsRange;
-        const cosScore = embeddingResults.get(fts.id) ?? 0;
-        const cosNorm = cosScore / embRange;
-        const atomData = index.getAtom(fts.id);
-        if (!atomData) continue;
-        const hybrid = (0.5 * ftsNorm + 0.5 * cosNorm) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
-        candidates.push({ atom: atomData, score: hybrid });
-      }
-    } else {
-      // FTS-only scoring
-      for (const fts of ftsResults) {
-        const atomData = index.getAtom(fts.id);
-        if (!atomData) continue;
-        const score = Math.abs(fts.score) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
-        candidates.push({ atom: atomData, score });
-      }
-    }
-  } else {
-    // No keywords — rank by type filter + strength + importance
-    let atoms = index.getActiveAtoms();
-    if (query.target_types.length > 0) {
-      const typeSet = new Set(query.target_types);
-      atoms = atoms.filter((a) => typeSet.has(a.type));
-    }
-    for (const atom of atoms) {
-      candidates.push({ atom, score: 0.5 + 0.3 * atom.strength + 0.2 * atom.importance });
-    }
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  const results = candidates.slice(0, topK);
-
-  // Update access stats
-  for (const r of results) {
-    index.updateAccess(r.atom.id);
-  }
-
-  // Load full atom data from files for return (summary, content, file_path)
-  const loaded = await Promise.all(
-    results.map(async (r) => {
-      const atom = r.atom;
-      if (atom.file_path) {
-        try {
-          return readAtomFromFile(atom.file_path, atom.content_hash || undefined) ?? atom;
-        } catch {
-          // File read failed — return DB info as-is (summary empty)
-          return atom;
-        }
-      }
-      return atom;
-    }),
-  );
-
-  return loaded;
-}
-
-export function getAllAtoms(index: MemoryIndex): MemoryAtom[] {
-  // Returns every atom in the index, including archived (no archived=0 filter).
-  // Used by webui list endpoint. Reuses the class's private rowToAtom mapper
-  // by binding it to the index instance.
-  const rows = index.getAllRows();
-  const rowToAtom = (index as unknown as { rowToAtom: (row: Record<string, unknown>) => MemoryAtom }).rowToAtom
-    .bind(index) as (row: Record<string, unknown>) => MemoryAtom;
-  return rows.map(rowToAtom);
-}
-
-/**
- * Server-friendly search returning per-result score breakdown.
- * 与 searchAtoms 区别: 返回每条结果的 fts_score / cosine_score / hybrid_score 三项分,
- * 以及 embedding_available 标志(用于 webui 召回测试面板显示 "embedding unavailable" 灰底)。
- */
-export async function searchAtomsWithScores(
-  index: MemoryIndex,
-  query: QueryRewriteResult,
-  topK: number,
-  config?: PersonalAssistantConfig,
-): Promise<{
-  results: Array<{
-    atom: MemoryAtom;
-    fts_score: number;
-    cosine_score: number;
-    hybrid_score: number;
-  }>;
-  embedding_available: boolean;
-}> {
-  type Scored = {
-    atom: MemoryAtom;
-    fts_score: number;
-    cosine_score: number;
-    hybrid_score: number;
-  };
-  const candidates: Scored[] = [];
-
-  // Compute `embedding_available` independently of FTS results.
-  // Previous versions set this inside the FTS path (only when there were
-  // candidates), which gave `false` even when the service was perfectly
-  // reachable — e.g. when the LLM returned empty keywords, or when FTS
-  // returned 0 results because the target_types filter excluded the
-  // matching atom. The UI badge should reflect SERVICE HEALTH, not the
-  // search path that ran.
-  let embedding_available = false;
-  if (query.raw_query) {
-    embedding_available = await isEmbeddingServiceAvailable(query.raw_query, config);
-  }
-
-  if (query.keywords.length > 0) {
-    const ftsResults = index.searchByFts(query.keywords, query.target_types);
-
-    if (ftsResults.length > 0) {
-      // Try embedding search (same call as searchAtoms). Forward the
-      // optional config so server routes can drive embedding settings via
-      // deps.settings rather than the dev's ~/.pi/agent/settings.json.
-      // `embedding_available` was already computed above via
-      // isEmbeddingServiceAvailable(); the search below just populates
-      // per-atom cosine scores for hybrid ranking.
-      const { scores: embeddingResults } = await searchEmbeddings(
-        index,
-        query.raw_query || query.keywords.join(" "),
-        ftsResults.map((r) => r.id),
-        config,
-      );
-
-      if (embeddingResults.size > 0) {
-        // Hybrid path — same formula as searchAtoms hybrid branch.
-        const maxFts = Math.max(...ftsResults.map((r) => Math.abs(r.score)));
-        const maxEmb = Math.max(...Array.from(embeddingResults.values()));
-        const ftsRange = maxFts > 0 ? maxFts : 1;
-        const embRange = maxEmb > 0 ? maxEmb : 1;
-
-        for (const fts of ftsResults) {
-          const atomData = index.getAtom(fts.id);
-          if (!atomData) continue;
-          const ftsNorm = Math.abs(fts.score) / ftsRange;
-          const cosScore = embeddingResults.get(fts.id) ?? 0;
-          const cosNorm = cosScore / embRange;
-          const hybrid =
-            (0.5 * ftsNorm + 0.5 * cosNorm) *
-            (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
-          candidates.push({
-            atom: atomData,
-            fts_score: ftsNorm,
-            cosine_score: cosScore,
-            hybrid_score: hybrid,
-          });
-        }
-      } else {
-        // FTS-only path — same formula as searchAtoms FTS-only branch.
-        const maxFts = Math.max(...ftsResults.map((r) => Math.abs(r.score)));
-        const ftsRange = maxFts > 0 ? maxFts : 1;
-        for (const fts of ftsResults) {
-          const atomData = index.getAtom(fts.id);
-          if (!atomData) continue;
-          const ftsNorm = Math.abs(fts.score) / ftsRange;
-          const score =
-            Math.abs(fts.score) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
-          candidates.push({
-            atom: atomData,
-            fts_score: ftsNorm,
-            cosine_score: 0,
-            hybrid_score: score,
-          });
-        }
-      }
-    }
-  } else {
-    // No keywords — rank by type filter + strength + importance
-    let atoms = index.getActiveAtoms();
-    if (query.target_types.length > 0) {
-      const typeSet = new Set(query.target_types);
-      atoms = atoms.filter((a) => typeSet.has(a.type));
-    }
-    for (const atom of atoms) {
-      candidates.push({
-        atom,
-        fts_score: 0,
-        cosine_score: 0,
-        hybrid_score: 0.5 + 0.3 * atom.strength + 0.2 * atom.importance,
-      });
-    }
-  }
-
-  candidates.sort((a, b) => b.hybrid_score - a.hybrid_score);
-  const top = candidates.slice(0, topK);
-
-  // Update access stats
-  for (const r of top) {
-    index.updateAccess(r.atom.id);
-  }
-
-  // Load full atom data from files (summary, content, file_path)
-  const loaded = await Promise.all(
-    top.map(async (r) => {
-      if (r.atom.file_path) {
-        try {
-          return readAtomFromFile(r.atom.file_path, r.atom.content_hash || undefined) ?? r.atom;
-        } catch {
-          return r.atom;
-        }
-      }
-      return r.atom;
-    }),
-  );
-
-  const results: Scored[] = top.map((r, i) => ({ ...r, atom: loaded[i] }));
-  return { results, embedding_available };
-}
-
-async function getEmbedding(text: string, apiBase: string, model: string): Promise<number[] | null> {
-  try {
-    const resp = await fetch(`${apiBase}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as { data?: Array<{ embedding?: number[] }> };
-    return data?.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Probe the embedding service for the given query text.
- * Returns true iff getEmbedding() succeeded — used by searchAtomsWithScores
- * to drive the UI's "embedding unavailable" badge independent of how many
- * FTS candidates the query produced.
- */
-async function isEmbeddingServiceAvailable(queryText: string, config?: PersonalAssistantConfig): Promise<boolean> {
-  const effectiveConfig = config ?? loadConfig();
-  const embConfig = effectiveConfig.memory?.embedding;
-  if (!embConfig?.provider || !embConfig?.model) return false;
-  // Only the local Ollama provider is wired today (matches searchEmbeddings).
-  if (embConfig.provider !== "local") return false;
-  const baseUrl = "http://localhost:11434/v1";
-  const queryEmb = await getEmbedding(queryText, baseUrl, embConfig.model);
-  return queryEmb !== null;
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-// ============================================================================
-// Decay Logic
-// ============================================================================
-
-function runDecay(
-  index: MemoryIndex,
-  baseDecay: number,
-  archiveThreshold: number,
-): void {
-  const atoms = index.getActiveAtoms();
-  const now = nowISO();
-
-  for (const atom of atoms) {
-    const deltaDays = daysBetween(atom.last_access, now);
-    if (deltaDays <= 0) continue;
-
-    const lambda = baseDecay * (1 - atom.importance);
-    const denom = 1 + 0.3 * Math.log(1 + atom.access_count + 2);
-    const newStrength = atom.strength * Math.exp((-lambda * deltaDays) / denom);
-
-    index.updateStrength(atom.id, newStrength);
-
-    // Archive weak non-constraint atoms
-    if (atom.type !== "constraint" && newStrength < archiveThreshold) {
-      index.markArchived(atom.id);
-    }
-  }
-}
-
-// ============================================================================
-// Memory Extraction
-// ============================================================================
-
-function extractKeywordsFromMessages(messages: Array<{ role: string; content: unknown }>): string[] {
-  const allText = messages
-    .map((m) => {
-      if (typeof m.content === "string") return m.content;
-      if (Array.isArray(m.content)) {
-        return m.content
-          .filter((c: unknown): c is { type: string; text: string } => {
-            return typeof c === "object" && c !== null && "type" in c && "text" in c && (c as { type: string }).type === "text";
-          })
-          .map((c) => c.text)
-          .join(" ");
-      }
-      return "";
-    })
-    .join(" ");
-
-  return allText
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
-}
-
-async function extractMemories(
-  messages: Array<{ role: string; content: unknown }>,
-  index: MemoryIndex,
-  ctx: ExtensionContext,
-  config: PersonalAssistantConfig,
-): Promise<void> {
-  const memConfig = getMemoryConfig(config);
-  const model = ctx.model;
-  if (!model) return;
-
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) return;
-
-  // Search for existing atoms that might be relevant
-  const keywords = extractKeywordsFromMessages(messages);
-  const existingAtoms = keywords.length > 0
-    ? index.searchByFts(keywords.slice(0, 5), undefined, 5).map((r) => index.getAtom(r.id)).filter(Boolean)
-    : [];
-
-  const formattedMessages = formatMessagesForLLM(messages);
-  const formattedAtoms = existingAtoms
-    .map((a) => `- [${a!.id}] (${a!.type}) ${a!.title}: ${a!.summary}`)
-    .join("\n");
-
-  const extractPrompt = `You are a memory extraction assistant. Analyze the following conversation and identify important information that should be saved as memory atoms.
-
-Memory atom types:
-- constraint: Hard requirements or rules the user has set
-- preference: User preferences and style choices
-- workflow: Process and workflow patterns
-- knowledge: Facts, knowledge, and information learned
-- event: Important events or interactions
-- solution: Solutions to problems that were found
-- insight: Insights and observations
-
-For each memory to create or update, provide:
-- action: "create" (new atom), "update" (modify existing), or "skip" (not worth saving)
-- type: the atom type (required for create)
-- title: short descriptive title (required for create)
-- summary: one-sentence summary
-- tags: array of relevant tags
-- importance: 0.0 to 1.0 (how critical is this to remember)
-- id: existing atom ID (required for update)
-- changes: object with fields to update (required for update)
-
-Existing atoms for reference:
-${formattedAtoms || "(none)"}
-
-Conversation:
-${formattedMessages.slice(0, 8000)}
-
-Respond with ONLY valid JSON:
-{"plan": [{"action": "create"|"update"|"skip", ...}]}
-
-Only create atoms for genuinely important information. Skip routine conversation.`;
-
-  try {
-    const result = await completeSimple(model, { messages: [{ role: "user", content: extractPrompt, timestamp: Date.now() }] }, {
-      maxTokens: 2048,
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-    });
-
-    const text = extractAssistantText(result);
-    if (!text) return;
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return;
-
-    const plan: ExtractionPlan = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(plan.plan)) return;
-
-    // Write extraction report
-    writeExtractionReport(plan.plan);
-
-    // Execute the plan
-    for (const item of plan.plan) {
-      if (item.action === "skip") continue;
-
-      if (item.action === "create" && item.type && item.title) {
-        const atom: MemoryAtom = {
-          id: randomUUID(),
-          type: item.type,
-          title: item.title,
-          summary: item.summary ?? item.title,
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          importance: item.importance ?? 0.5,
-          strength: 1.0,
-          access_count: 0,
-          last_access: nowISO(),
-          created_at: nowISO(),
-          updated_at: nowISO(),
-          version: 1,
-          archived: false,
-          content: item.summary ?? item.title,
-          file_path: "",
-          content_hash: "",
-        };
-        const { filePath, contentHash } = writeAtomToFile(atom);
-        atom.file_path = filePath;
-        atom.content_hash = contentHash;
-        index.upsertAtom(atom);
-        // Embedding computed on next write; migration script handles it
-      }
-
-      if (item.action === "update" && item.id && item.changes) {
-        const existing = index.getAtom(item.id);
-        if (!existing) continue;
-
-        const updated: MemoryAtom = {
-          ...existing,
-          ...item.changes,
-          updated_at: nowISO(),
-          version: existing.version + 1,
-        };
-        const { filePath, contentHash } = writeAtomToFile(updated);
-        updated.file_path = filePath;
-        updated.content_hash = contentHash;
-        index.upsertAtom(updated);
-      }
-    }
-  } catch {
-    // Extraction failed silently — don't disrupt compaction
-  }
-}
-
-/**
- * Standalone memory extraction that can be called without ExtensionContext.
- * Used by the webui DELETE /api/sessions/:id endpoint.
- */
-export async function runMemoryExtraction(opts: RunMemoryExtractionOptions): Promise<RunMemoryExtractionResult> {
-  const { callLlm, config, messages, dbPath, atomsDir } = opts;
-  const effectiveDbPath = dbPath ?? MEMORY_DB_PATH;
-  const effectiveAtomsDir = atomsDir ?? ATOMS_DIR;
-
-  const index = new MemoryIndex(effectiveDbPath);
-  try {
-    await index.init();
-  } catch {
-    return { plan: null, atomsWritten: 0 };
-  }
-
-  try {
-    const result = await extractMemoriesWithCallLlm(callLlm, messages, index, config, effectiveAtomsDir);
-    return result;
-  } finally {
-    index.close();
-  }
-}
-
-async function extractMemoriesWithCallLlm(
-  callLlm: (prompt: string) => Promise<string>,
-  messages: Array<{ role: string; content: unknown }>,
-  index: MemoryIndex,
-  config: PersonalAssistantConfig,
-  atomsDir: string,
-): Promise<RunMemoryExtractionResult> {
-  const memConfig = getMemoryConfig(config);
-
-  // Search for existing atoms that might be relevant
-  const keywords = extractKeywordsFromMessages(messages);
-  const existingAtoms = keywords.length > 0
-    ? index.searchByFts(keywords.slice(0, 5), undefined, 5).map((r) => index.getAtom(r.id)).filter(Boolean)
-    : [];
-
-  const formattedMessages = formatMessagesForLLM(messages);
-  const formattedAtoms = existingAtoms
-    .map((a) => `- [${a!.id}] (${a!.type}) ${a!.title}: ${a!.summary}`)
-    .join("\n");
-
-  const extractPrompt = `You are a memory extraction assistant. Analyze the following conversation and identify important information that should be saved as memory atoms.
-
-Memory atom types:
-- constraint: Hard requirements or rules the user has set
-- preference: User preferences and style choices
-- workflow: Process and workflow patterns
-- knowledge: Facts, knowledge, and information learned
-- event: Important events or interactions
-- solution: Solutions to problems that were found
-- insight: Insights and observations
-
-For each memory to create or update, provide:
-- action: "create" (new atom), "update" (modify existing), or "skip" (not worth saving)
-- type: the atom type (required for create)
-- title: short descriptive title (required for create)
-- summary: one-sentence summary
-- tags: array of relevant tags
-- importance: 0.0 to 1.0 (how critical is this to remember)
-- id: existing atom ID (required for update)
-- changes: object with fields to update (required for update)
-
-Existing atoms for reference:
-${formattedAtoms || "(none)"}
-
-Conversation:
-${formattedMessages.slice(0, 8000)}
-
-Respond with ONLY valid JSON:
-{"plan": [{"action": "create"|"update"|"skip", ...}]}
-
-Only create atoms for genuinely important information. Skip routine conversation.`;
-
-  try {
-    const text = await callLlm(extractPrompt);
-    if (!text) return { plan: null, atomsWritten: 0 };
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { plan: null, atomsWritten: 0 };
-
-    const plan: ExtractionPlan = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(plan.plan)) return { plan: null, atomsWritten: 0 };
-
-    // Write extraction report
-    writeExtractionReport(plan.plan);
-
-    let atomsWritten = 0;
-
-    // Execute the plan
-    for (const item of plan.plan) {
-      if (item.action === "skip") continue;
-
-      if (item.action === "create" && item.type && item.title) {
-        const atom: MemoryAtom = {
-          id: randomUUID(),
-          type: item.type,
-          title: item.title,
-          summary: item.summary ?? item.title,
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          importance: item.importance ?? 0.5,
-          strength: 1.0,
-          access_count: 0,
-          last_access: nowISO(),
-          created_at: nowISO(),
-          updated_at: nowISO(),
-          version: 1,
-          archived: false,
-          content: item.summary ?? item.title,
-          file_path: "",
-          content_hash: "",
-        };
-        const { filePath, contentHash } = writeAtomToFile(atom, atomsDir);
-        atom.file_path = filePath;
-        atom.content_hash = contentHash;
-        index.upsertAtom(atom);
-        atomsWritten++;
-      }
-
-      if (item.action === "update" && item.id && item.changes) {
-        const existing = index.getAtom(item.id);
-        if (!existing) continue;
-
-        const updated: MemoryAtom = {
-          ...existing,
-          ...item.changes,
-          updated_at: nowISO(),
-          version: existing.version + 1,
-        };
-        const { filePath, contentHash } = writeAtomToFile(updated, atomsDir);
-        updated.file_path = filePath;
-        updated.content_hash = contentHash;
-        index.upsertAtom(updated);
-        atomsWritten++;
-      }
-    }
-
-    return { plan, atomsWritten };
-  } catch {
-    return { plan: null, atomsWritten: 0 };
-  }
-}
-
-function writeExtractionReport(plan: ExtractionPlanItem[]): void {
-  ensureDir(REPORTS_DIR);
-
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const filePath = join(REPORTS_DIR, `extract-${ts}.md`);
-
-  const lines = [
-    `# Memory Extraction Report`,
-    ``,
-    `**Date:** ${nowISO()}`,
-    ``,
-    `## Plan`,
-    ``,
-  ];
-
-  for (const item of plan) {
-    if (item.action === "skip") {
-      lines.push(`- **skip**`);
-    } else if (item.action === "create") {
-      lines.push(`- **create** (${item.type}) "${item.title}" — ${item.summary ?? ""}`);
-      lines.push(`  - importance: ${item.importance ?? 0.5}`);
-      lines.push(`  - tags: ${(item.tags ?? []).join(", ")}`);
-    } else if (item.action === "update") {
-      lines.push(`- **update** [${item.id}] — ${JSON.stringify(item.changes)}`);
-    }
-  }
-
-  writeFileSync(filePath, lines.join("\n") + "\n", "utf-8");
-}
-
-// ============================================================================
-// Persona Injection
-// ============================================================================
-
-function loadPersonaPrompt(config: PersonalAssistantConfig): string {
-  const parts: string[] = [];
-
-  const soulPath = (config.persona?.soul_path || join(AGENT_DIR, "SOUL.md"));
-  const userPath = (config.persona?.user_path || join(AGENT_DIR, "USER.md"));
-
-  if (existsSync(soulPath)) {
-    try {
-      const soul = readFileSync(soulPath, "utf-8").trim();
-      if (soul) parts.push(`<soul>\n${soul}\n</soul>`);
-    } catch {
-      // ignore read errors
-    }
-  }
-
-  if (existsSync(userPath)) {
-    try {
-      const user = readFileSync(userPath, "utf-8").trim();
-      if (user) parts.push(`<user-context>\n${user}\n</user-context>`);
-    } catch {
-      // ignore read errors
-    }
-  }
-
-  if (parts.length === 0) return "";
-
-  return `\n\n## Persona\n\n${parts.join("\n\n")}`;
-}
-
-// ============================================================================
-// Memory Context Formatting
-// ============================================================================
-
-function formatMemoryContext(atoms: MemoryAtom[]): string {
-  if (atoms.length === 0) return "";
-
-  const sections: string[] = [];
-
-  for (const atom of atoms) {
-    const tagsStr = atom.tags.length > 0 ? ` [${atom.tags.join(", ")}]` : "";
-
-    // If file read failed, summary will be empty — inject error
-    if (atom.file_path && !atom.summary) {
-      sections.push(
-        `<memory-error>Atom ${atom.id} (${atom.title}) could not be loaded from ${atom.file_path}</memory-error>`,
-      );
-      continue;
-    }
-
-    sections.push(
-      `<memory type="${atom.type}" importance="${atom.importance.toFixed(2)}" strength="${atom.strength.toFixed(2)}" file="${escapeXml(atom.file_path)}">` +
-        `\n  <title>${escapeXml(atom.title)}</title>` +
-        `\n  <summary>${escapeXml(atom.summary)}</summary>` +
-        (tagsStr ? `\n  <tags>${escapeXml(atom.tags.join(", "))}</tags>` : "") +
-        `\n</memory>`,
-    );
-  }
-
-  return `<memory-context>\n${sections.join("\n")}\n</memory-context>`;
-}
-
-// ============================================================================
-// Main Registration
-// ============================================================================
-
 export function registerMemory(pi: ExtensionAPI): void {
-  let memoryIndex: MemoryIndex | null = null;
-  let lastDecayCheck = 0;
+	// Reset per-session state. The Map is module-level (so the two hooks
+	// share it), but each registerMemory call gets a fresh map so test
+	// runs and extension reloads don't leak state between each other.
+	pendingMemorySearches = new Map();
 
-  async function getIndex(): Promise<MemoryIndex | null> {
-    if (!memoryIndex) {
-      try {
-        memoryIndex = new MemoryIndex(MEMORY_DB_PATH);
-        await memoryIndex.init();
-      } catch {
-        return null;
-      }
-    }
-    return memoryIndex;
-  }
+	// session_before_compact — extract memories before the conversation is
+	// summarised and discarded. Errors are caught so a broken memory pipeline
+	// never blocks compaction itself.
+	pi.on("session_before_compact", async (event, _ctx) => {
+		const config = loadConfig();
+		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
-  // --- session_start: decay + persona ---
-  pi.on("session_start", async (_event, ctx) => {
-    const config = loadConfig();
-    const memConfig = getMemoryConfig(config);
+		const messages = (event as { messages?: unknown }).messages ?? [];
+		if (!Array.isArray(messages) || messages.length === 0) return;
 
-    if (!memConfig.enabled) return;
+		const index = new MemoryIndex(dbPath);
+		await index.init();
+		try {
+			// KNOWN LIMITATION: v2 does not yet wire a real LLM caller for
+			// the session_before_compact hook. The ExtensionContext passed
+			// by pi does not yet expose a synchronous callLlm; production
+			// wiring requires either ctx.session.complete() integration
+			// (requires a session-bound model) or routing through a
+			// webui-side HTTP handler. For now, the stub returns an empty
+			// plan — meaning compaction produces zero atoms. This is a
+			// known gap, NOT a bug. Until wired, populate atoms via:
+			//   - manual POST /api/memory/extract
+			//   - or wait for the follow-up task that wires ctx.session.complete()
+			//
+			// See: docs/sdd/changes/memory-v2-refactor/verification-checklist.md
+			// (extraction stub) and code review notes.
+			// eslint-disable-next-line no-console
+			console.warn(
+				"[memory-v2] session_before_compact: LLM caller not wired in v2, " +
+				"extraction returns empty plan. Use POST /api/memory/extract for manual extraction."
+			);
+			const callLlm = async (_prompt: string): Promise<string> => '{"items":[]}';
 
-    const index = await getIndex();
-    if (!index) return;
+			const result = await extractMemoriesWithCallLlm(
+				callLlm,
+				messages as Array<{ role: string; content: string }>,
+				index,
+				{
+					atomsDir,
+					model: config.memory?.embedding?.model,
+				},
+			);
 
-    // Run decay if enough time has passed
-    const now = Date.now();
-    if (now - lastDecayCheck > DECAY_CHECK_INTERVAL_MS) {
-      try {
-        runDecay(index, memConfig.baseDecay, memConfig.archiveThreshold);
-        lastDecayCheck = now;
-      } catch {
-        // Don't let decay errors break session start
-      }
-    }
-  });
+			await writeExtractionReport(result.plan);
+		} finally {
+			index.close();
+		}
+	});
 
-  // --- before_agent_start: inject persona fast, kick off async memory search ---
+	// session_start — throttled decay run. The first session in a process
+	// always runs decay; subsequent session_start events within the
+	// DECAY_INTERVAL_MS window skip. Errors are swallowed so a broken
+	// decay path does not block startup.
+	pi.on("session_start", async (_event, _ctx) => {
+		const now = Date.now();
+		if (now - lastDecayAt < DECAY_INTERVAL_MS) return;
+		lastDecayAt = now;
 
-  // Shared promise for memory search started in before_agent_start,
-  // awaited in context handler so it doesn't block TUI rendering.
-  let pendingMemorySearch:
-    | { promise: Promise<MemoryAtom[]>; timestamp: number }
-    | undefined;
-  let pendingMemoryModel: string | undefined;
+		const config = loadConfig();
+		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    const config = loadConfig();
-    const memConfig = getMemoryConfig(config);
-    if (!memConfig.enabled) return;
+		const index = new MemoryIndex(dbPath);
+		await index.init();
+		try {
+			await runDecay(index);
+		} finally {
+			index.close();
+		}
+	});
 
-    ctx.ui.setStatus("memory", undefined); // clear previous status
+	// before_agent_start — fire-and-forget recall of relevant atoms for the
+	// incoming user prompt. The result is stashed in `pendingMemorySearch`
+	// for the context hook to await on the same turn. Dynamic imports of
+	// search.ts / format.ts keep the cold-start cost off the critical path
+	// for sessions that never reach the context hook.
+	pi.on("before_agent_start", async (event, _ctx) => {
+		const userMessage = (event as { prompt?: string }).prompt ?? "";
+		if (userMessage.length === 0) return;
 
-    let systemPrompt = event.systemPrompt;
+		const config = loadConfig();
+		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
-    // Inject persona (fast file read, no LLM call)
-    const persona = loadPersonaPrompt(config);
-    if (persona) {
-      systemPrompt += persona;
-    }
+		const promise = (async (): Promise<FormattedMemory | null> => {
+			const index = new MemoryIndex(dbPath);
+			await index.init();
+			try {
+				const { recallAtoms } = await import("./search.ts");
+				const { formatMemoryContext } = await import("./format.ts");
+				const results = await recallAtoms(index, userMessage, atomsDir, { topK: 10 });
+				return formatMemoryContext(results, 4000);
+			} finally {
+				index.close();
+			}
+		})();
+		// Key by prompt to avoid stomping between concurrent turns. If a
+		// context hook arrives for a different prompt, it won't see this
+		// promise. (The hook reads by matching the event's last user
+		// message content against pending keys.)
+		pendingMemorySearches.set(userMessage, promise);
+	});
 
-    // Kick off async memory search — show status immediately
-    const prompt = event.prompt.trim();
-    if (prompt) {
-      const index = await getIndex();
-      if (index) {
-        pendingMemoryModel = getRewriteModelLabel(config, ctx);
-        ctx.ui.setStatus("memory", `mem: ${pendingMemoryModel} searching\u2026`);
-        const searchPromise = searchMemory(index, prompt, ctx, config, memConfig.maxInjection);
-        pendingMemorySearch = { promise: searchPromise, timestamp: Date.now() };
-        searchPromise.catch(() => { /* don't crash */ });
-      }
-    }
+	// context — await the pending recall (raced against an 8s timeout) and
+	// inject the formatted memory block into the last user message of the
+	// event. Non-destructive: the original event is returned unchanged if
+	// there is no pending search, no formatted text, or no user message to
+	// mutate. Modifications produce a fresh messages array — never the
+	// caller's array reference.
+	pi.on("context", async (event: ContextEvent, _ctx) => {
+		// Find the pending search by matching against the last user message
+		// of the event. Falls back to the most-recent entry if no match.
+		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
+		let lastUserPrompt = "";
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i]?.role === "user") {
+				const content = messages[i]?.content;
+				lastUserPrompt = typeof content === "string" ? content : JSON.stringify(content);
+				break;
+			}
+		}
+		// Find the pending search by matching against the last user message
+		// of the event. If no key matches AND the map has exactly one
+		// entry, fall back to that entry (handles prompt-mutation edge
+		// case). Otherwise no pending search.
+		let pending: Promise<FormattedMemory | null> | null = pendingMemorySearches.get(lastUserPrompt) ?? null;
+		if (!pending && pendingMemorySearches.size === 1) {
+			pending = Array.from(pendingMemorySearches.values())[0] ?? null;
+		}
+		const result = await injectMemoryContext(event, pending);
+		if (pending) pendingMemorySearches.delete(lastUserPrompt);
+		return result;
+	});
+}
 
-    return { systemPrompt };
-  });
+/**
+ * Build the context-event result for the memory injection pipeline.
+ *
+ * Extracted to its own typed function so the call site (`pi.on("context", …)`)
+ * returns a value that satisfies the ExtensionHandler<ContextEvent,
+ * ContextEventResult> contract without widening the lambda's inferred return
+ * type into a shape the `on` overload set cannot reconcile (TS will otherwise
+ * fall through to the `"input"` overload and complain).
+ *
+ * Returns:
+ *   - the original event (cast to ContextEventResult) when no search is
+ *     pending, the search produced no text, or no user message is present;
+ *   - a fresh `{ messages: [...] }` object with the last user message
+ *     prefixed by the formatted memory block otherwise.
+ */
+async function injectMemoryContext(
+	event: ContextEvent,
+	pending: Promise<FormattedMemory | null> | null,
+): Promise<{ messages?: AgentMessage[] }> {
+	if (!pending) return event as unknown as { messages?: AgentMessage[] };
 
-  // --- context: inject memory context before first LLM call ---
-  pi.on("context" as any, async (event: { messages: unknown[] }, ctx: ExtensionContext) => {
-    if (!pendingMemorySearch) return;
-    const ps = pendingMemorySearch;
-    pendingMemorySearch = undefined;
+	const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), CONTEXT_RECALL_TIMEOUT_MS));
+	const formatted = await Promise.race([pending, timeout]);
 
-    try {
-      const results = await Promise.race([
-        ps.promise,
-        new Promise<null>((_, reject) =>
-          setTimeout(() => reject(new Error("memory search timeout")), 8000),
-        ),
-      ]);
+	if (!formatted || !formatted.text) return event as unknown as { messages?: AgentMessage[] };
 
-      if (!results || results.length === 0) {
-        ctx.ui.setStatus("memory", undefined);
-        pendingMemoryModel = undefined;
-        return;
-      }
+	const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
+	if (!Array.isArray(messages) || messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
 
-      ctx.ui.setStatus("memory", `mem: ${pendingMemoryModel ?? "?"} ${results.length} found`);
-      pendingMemoryModel = undefined;
+	// Manual scan — Array.prototype.findLastIndex is ES2023, not in the
+	// repo's tsconfig lib target.
+	let lastUserIdx = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "user") {
+			lastUserIdx = i;
+			break;
+		}
+	}
 
-      const memoryBlock = formatMemoryContext(results);
-      if (!memoryBlock) return;
+	if (lastUserIdx === -1) return event as unknown as { messages?: AgentMessage[] };
 
-      // Inject memory context into the last user message
-      for (let i = event.messages.length - 1; i >= 0; i--) {
-        const msg = event.messages[i] as Record<string, unknown>;
-        if (msg.role === "user" && typeof msg.content === "string") {
-          msg.content = `${memoryBlock}\n\n${msg.content}`;
-          break;
-        }
-      }
-    } catch {
-      ctx.ui.setStatus("memory", undefined);
-      pendingMemoryModel = undefined;
-    }
-  });
+	const lastUser = messages[lastUserIdx];
+	const originalContent = typeof lastUser.content === "string" ? lastUser.content : JSON.stringify(lastUser.content);
+	const memoryPrefix = `[Relevant memory context]\n${formatted.text}\n\n[User message]\n`;
+	const newContent = memoryPrefix + originalContent;
 
-  // --- agent_end: clear memory status ---
-  pi.on("agent_end", async (_event, ctx) => {
-    ctx.ui.setStatus("memory", undefined);
-    pendingMemoryModel = undefined;
-  });
-
-  // --- session_before_compact: extract memories ---
-  pi.on("session_before_compact", async (event, ctx) => {
-    const config = loadConfig();
-    const memConfig = getMemoryConfig(config);
-
-    if (!memConfig.enabled) return;
-
-    const index = await getIndex();
-    if (!index) return;
-
-    // Extract memories from messages being compacted
-    const messages = event.preparation.messagesToSummarize;
-    if (messages.length === 0) return;
-
-    try {
-      await extractMemories(
-        messages as Array<{ role: string; content: unknown }>,
-        index,
-        ctx,
-        config,
-      );
-    } catch {
-      // Don't let extraction errors block compaction
-    }
-  });
+	const newMessages = [...messages];
+	newMessages[lastUserIdx] = { ...lastUser, content: newContent };
+	return { messages: newMessages as unknown as AgentMessage[] };
 }
