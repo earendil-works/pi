@@ -25,12 +25,13 @@ memory-v2 当前的召回链路有 3 个结构性问题,导致 agent 端的 reca
 
 ## 非目标
 
-- **不改** recall 排序公式 — 仍然按 cosine desc 单键排序,`strength` / `importance` 不参与 recall(用户已说"排序先放到一边",等 Phase 1+3 落地后再评估)。
+- **不改** `strength` / `importance` 参与 recall 排序 — recall 公式保持纯 cosine,`strength` / `importance` 不参与(用户已说"排序先放到一边",等 strength 在真实 usage 累积后再评估)。
 - **不改** agent 端 `read()` 工具 — agent 用 `memory_get(id)` 替代 `read(path)`,不再需要 `read()` 拦截 hook。
 - **不改** webui MemoryEditor 自动 preview — 用户在 UI 看 atom 详情**不**算"get",不 bump strength(programmatic get only)。
 - **不重新实现** extraction pipeline 其他部分(dedup / supersede / write 等不动)。
 - **不** 把 tone scoring 也用于 search-time rerank — 只在 extraction 写入时用,不改 recall 公式。
 - **不** 给 atomic decay(`runDecay`) 引入新参数 — 现有 `last_access` 已经反映"最近被 get 过",自然进入 decay 流程,无需改动。
+- **不** 让 `formatMemoryContext` 保留 round-robin 顺序 — 它会再按 distance asc 全局排序,交错顺序只在 search response 里存在。
 
 ## 验收标准
 

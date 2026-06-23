@@ -105,6 +105,63 @@ memory-v2 当前(2026-06-23)实现了一整套纯向量召回的 pipeline,但 se
 - B. GET /:id 永远 bump — 拒绝,违反"UI 不 bump"
 - C. **本方案:GET /:id 不 bump** — 选这个,与 memory_get tool 形成清晰分工
 
+### 8. per-type top-3 排序:组内 cosine desc + 组间 round-robin 交错
+**Decision**: 召回算法分两层排序:
+1. **组内(per-type)**: 每个 type 内部,先 cosine ≥ 0.5 过滤,再按 cosine 降序取前 3 条(稀疏 type 自动降到 1,绝不强行凑)
+2. **组间(cross-type)**: 三个 type 的 top-3 用 round-robin 交错拼接 → `[rule[0], fact[0], process[0], rule[1], fact[1], process[1], rule[2], fact[2], process[2]]`
+
+**Rationale**:
+- 顶层 LLM 视野下,前 3 条原子类型各不相同(diversity 最大),后续 3 条次之,最后 3 条补全 — 避免 cosine 接近时某 type 集中霸榜
+- 格式注入(`formatMemoryContext`)再做一次全局 distance asc 排序,所以交错顺序对 prompt budget 没有影响
+- 顺序确定性:同 query 多次调用结果完全一致(便于调试、测试 snapshot)
+- 稀疏 type 跳过:空 type 不参与 round-robin,既不污染结果也不凑数
+
+**Alternatives considered**:
+- A. 组内 cosine desc + 组间**全局 cosine desc 合并** — 拒绝,会把相似度高的 rule 集中到顶部,破坏多样性
+- B. 组内 cosine desc + 组间**保 type 顺序**(rule[] fact[] process[] 分组) — 拒绝,前几条可能全 rule,LLM 看到的还是偏斜
+- C. 单 KNN 全 top-30 + JS 端分组 — 拒绝,sqlite-vec KNN 在大 K 下精度下降(详见 Decision 2)
+- D. **本方案:3 独立 KNN + 组内 cosine desc + 组间 round-robin** — 选这个,既保多样性又保算法清晰
+
+**算法伪代码**:
+```ts
+const TYPES = ["rule", "fact", "process"] as const;
+const PER_TYPE_CAP = 3;
+const THRESHOLD = 0.5;
+const RAW_BUFFER = 6;  // 3 cap × 2 headroom
+
+async function recallAtoms(index, query, atomsDir, options) {
+  const emb = await embedText(query);
+  if (!emb) return [];
+
+  const perType: Record<MemoryAtomType, RecallResult[]> = { rule: [], fact: [], process: [] };
+  for (const type of TYPES) {
+    if (options.filter?.type && options.filter.type !== type) continue;
+    const raw = index.vectorSearch(emb, RAW_BUFFER, { type, isLatestOnly: true, archived: false });
+    for (const { id, distance } of raw) {
+      const atom = index.getAtom(id);
+      if (!atom) continue;
+      const cosine = 1 - (distance * distance) / 2;
+      if (cosine < THRESHOLD) continue;
+      perType[type].push({ atom, distance, cosine });
+    }
+    perType[type].sort((a, b) => b.cosine - a.cosine);  // cosine desc
+    perType[type] = perType[type].slice(0, PER_TYPE_CAP);  // top-3
+  }
+
+  // Round-robin interleave
+  const result: RecallResult[] = [];
+  for (let i = 0; i < PER_TYPE_CAP; i++) {
+    for (const type of TYPES) {
+      const item = perType[type][i];
+      if (item) result.push(item);
+    }
+  }
+  return result;
+}
+```
+
+**注意**: `formatMemoryContext` 后续再做 `sorted = [...results].sort((a, b) => a.distance - b.distance)`(distance asc),所以最终注入 LLM 的 prompt 不一定是交错顺序,而是全局最相关的在前。这是**预期的** —— 交错顺序只在 search response 里(给 UI / 调试看),prompt 里走 distance asc。
+
 ## Architecture
 
 ### 组件

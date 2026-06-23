@@ -139,6 +139,29 @@
 - **THEN** 该 candidate 被跳过(因为 `archived = 0` WHERE clause 过滤),不返
 - **AND THEN** 返回剩余 results,total 可能 < 9,但不报错
 
+### Scenario: per-type top-3 排序按 round-robin 交错
+- **GIVEN** DB 中有 6 个 active atom(2 rule + 3 fact + 1 process),所有 cosine 都 ≥ 0.5
+- **WHEN** search 返回
+- **THEN** 返回 6 个(2 rule + 3 fact + 1 process,稀疏 process 自动降到 1)
+- **AND THEN** 顺序是 round-robin 交错:`[rule[0], fact[0], process[0], rule[1], fact[1], process[1], fact[2]]`(注意 process 只 1 个,所以第 2 轮 process 槽位空,自动跳过;fact 第 2 轮 [1] 在 process[1] 空槽之后补上)
+
+### Scenario: per-type 全空
+- **GIVEN** DB 中只有 rule 和 fact,没有 process atom
+- **WHEN** search 返回
+- **THEN** 返回 `[rule[0], fact[0], rule[1], fact[1], rule[2], fact[2]]`(共 6 条,process 槽位全部跳过,不返 0-cosine placeholder)
+
+### Scenario: per-type 内部 cosine desc
+- **GIVEN** rule type 有 3 个 atom, cosine 分别为 0.9 / 0.7 / 0.85
+- **WHEN** search 返回
+- **THEN** rule 槽位顺序为 `[0.9, 0.85, 0.7]`(cosine desc,严格降序)
+- **AND THEN** round-robin 后 rule 出现在 `[0]`、`[3]`、`[6]` 位置
+
+### Scenario: formatMemoryContext 注入时再做 distance asc 全局排序
+- **GIVEN** search 返回 6 条(round-robin 交错)
+- **WHEN** `formatMemoryContext(results, 4000)` 渲染
+- **THEN** 最终注入 LLM prompt 的 block 按 distance asc 全局排序(最近 → 最远),不再是 round-robin 交错
+- **AND THEN** block 内格式 `[type] title\nsummary\nid: <uuid>\nTags: ...`
+
 ### Scenario: tone scoring 边界词 "如果"
 - **GIVEN** user 消息 "如果今天有空,就帮我看下 bug"
 - **WHEN** `scoreUserTone` 扫描
