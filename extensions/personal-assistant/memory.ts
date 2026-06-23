@@ -239,6 +239,14 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// carrying the prompt, matching how the webui server routes manual
 	// extraction (`packages/webui/server/index.ts` buildCallLlm).
 	pi.on("session_before_compact", async (event, ctx) => {
+		// Wrap the entire body: a broken memory pipeline must NEVER block
+		// compaction (compact is critical for long sessions). The runtime's
+		// emit() catches and logs via the extension error channel, but we
+		// also console.warn here so the user sees the failure in the TUI.
+		// MemoryIndex itself self-heals its parent directory (storage.ts),
+		// so a missing ~/.pi/agent/memory/ no longer turns extraction into a
+		// silent no-op.
+		try {
 		const config = loadConfig();
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
@@ -313,6 +321,13 @@ export function registerMemory(pi: ExtensionAPI): void {
 			await writeExtractionReport(result.plan);
 		} finally {
 			index.close();
+		}
+		} catch (err) {
+			// eslint-disable-next-line no-console
+			console.warn(
+				"[memory-v2] session_before_compact: extraction failed:",
+				err instanceof Error ? err.message : String(err),
+			);
 		}
 	});
 

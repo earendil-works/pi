@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryIndex } from "../storage.ts";
 import type { MemoryAtom } from "../types.ts";
@@ -613,6 +616,51 @@ describe("MemoryIndex", () => {
 			index.deleteVector("a");
 			const after = index.getRawDb().prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`).get("a");
 			expect(after).toBeUndefined();
+		});
+	});
+
+	describe("constructor self-heals missing parent directory", () => {
+		// Regression: deleting ~/.pi/agent/memory/ (or installing onto a fresh
+		// machine) used to make every subsequent MemoryIndex construction fail
+		// with SQLITE_CANTOPEN. better-sqlite3 does not create the parent
+		// directory of a file-backed DB; the storage layer must.
+		let tmpRoot: string;
+
+		beforeEach(() => {
+			tmpRoot = mkdtempSync(join(tmpdir(), "memory-index-selfheal-"));
+		});
+
+		afterEach(() => {
+			rmSync(tmpRoot, { recursive: true, force: true });
+		});
+
+		it("creates nested parent directory and opens DB on first construction", async () => {
+			const dbPath = join(tmpRoot, "deeply", "nested", "memory.db");
+			expect(existsSync(join(tmpRoot, "deeply"))).toBe(false);
+
+			const idx = new MemoryIndex(dbPath);
+			try {
+				await idx.init();
+				expect(existsSync(dbPath)).toBe(true);
+				const tables = idx.getRawDb()
+					.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+					.all() as NameRow[];
+				const tableNames = tables.map((t) => t.name);
+				expect(tableNames).toContain("memory_index");
+			} finally {
+				idx.close();
+			}
+		});
+
+		it("does not touch filesystem for :memory: databases", () => {
+			// In-memory DBs have no parent dir to create; the constructor must
+			// not call mkdir (would throw on a non-directory dbPath like ":memory:").
+			const idx = new MemoryIndex(":memory:");
+			try {
+				expect(idx).toBeInstanceOf(MemoryIndex);
+			} finally {
+				idx.close();
+			}
 		});
 	});
 });

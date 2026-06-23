@@ -13,6 +13,8 @@
 //   - Tags stored as a JSON string in a single TEXT column.
 
 import { createRequire } from "node:module";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { MemoryAtom, MemoryAtomRow, MemoryAtomType } from "./types.ts";
 import { atomToRow, rowToAtom } from "./types.ts";
 
@@ -60,6 +62,20 @@ export class MemoryIndex {
 
 	constructor(dbPath: string) {
 		this.dbPath = dbPath;
+		// better-sqlite3 refuses to create the parent directory of a
+		// file-backed DB — calling new Database() against a path whose
+		// `dirname()` does not exist throws SQLITE_CANTOPEN. This breaks
+		// first-run / recovery flows: if the user clears ~/.pi/agent/memory
+		// (or installs onto a fresh machine), the very next session_before_
+		// compact / session_start / before_agent_start call hits this error
+		// and the extraction silently no-ops (the runtime's emit() catch
+		// swallows it so the surrounding flow still completes). Self-heal
+		// the parent dir here so MemoryIndex is safe to construct in any
+		// of those contexts. In-memory DBs (dbPath === ":memory:") have
+		// no parent dir to create.
+		if (dbPath !== ":memory:") {
+			mkdirSync(dirname(dbPath), { recursive: true });
+		}
 		this.db = new BetterSqlite3(dbPath);
 		this.db.loadExtension(sqliteVec.getLoadablePath());
 		// WAL requires a file-backed database: an in-memory db has no journal
