@@ -150,17 +150,49 @@
 - **WHEN** search 返回
 - **THEN** 返回 `[rule[0], fact[0], rule[1], fact[1], rule[2], fact[2]]`(共 6 条,process 槽位全部跳过,不返 0-cosine placeholder)
 
-### Scenario: per-type 内部 cosine desc
-- **GIVEN** rule type 有 3 个 atom, cosine 分别为 0.9 / 0.7 / 0.85
+### Scenario: per-type 内部多键排序 cosine → strength → importance
+- **GIVEN** rule type 有 3 个 atom, cosine 分别为 0.9 / 0.85 / 0.7,strength 分别为 0.5 / 0.5 / 0.5,importance 分别为 0.5 / 0.5 / 0.5
 - **WHEN** search 返回
 - **THEN** rule 槽位顺序为 `[0.9, 0.85, 0.7]`(cosine desc,严格降序)
 - **AND THEN** round-robin 后 rule 出现在 `[0]`、`[3]`、`[6]` 位置
 
-### Scenario: formatMemoryContext 注入时再做 distance asc 全局排序
-- **GIVEN** search 返回 6 条(round-robin 交错)
+### Scenario: cosine 相同时 strength 作 tiebreaker
+- **GIVEN** rule type 有 2 个 atom,**cosine 都是 0.8**,但 atom A 的 `strength=0.7`(近期 get 过,衰减慢),atom B 的 `strength=0.3`(长期未 get,衰减明显)
+- **WHEN** search 返回(同 cosine 时按 strength DESC)
+- **THEN** rule 槽位顺序为 `[A(0.8, strength 0.7), B(0.8, strength 0.3)]`
+- **AND THEN** A 排在 B 之前(因为 A"更活跃",用户最近实际用过)
+
+### Scenario: cosine + strength 都相同时 importance 作 tiebreaker
+- **GIVEN** rule type 有 2 个 atom, **cosine 都是 0.8**,**strength 都是 0.5**,但 atom A 的 `importance=0.85`(rule 类型),atom B 的 `importance=0.5`(实际上 type 也是 rule,但 importance 较低)
+- **WHEN** search 返回(同 cosine + strength 时按 importance DESC)
+- **THEN** rule 槽位顺序为 `[A, B]`
+- **AND THEN** A 排在 B 之前(因为 A importance 更高,作者给它的优先级更高)
+
+### Scenario: rule type strength = importance(永不衰减)
+- **GIVEN** DB 中 rule type 有 5 个 atom,importance 分别是 0.5 / 0.6 / 0.7 / 0.8 / 0.9,**所有 strength 都 = importance**(rule 永不衰减)
+- **AND GIVEN** 所有 cosine 都 = 0.8(完全相同)
+- **WHEN** search 返回(多键排序最终按 importance DESC)
+- **THEN** rule 槽位顺序为 `[importance=0.9, 0.8, 0.7, 0.6, 0.5]`
+- **NOTE**: 这条测试验证 rule type 的 strength tiebreaker 等价于 importance tiebreaker,因为 strength 永远等于 importance。
+
+### Scenario: fact/process 类型 strength < importance(衰减后)
+- **GIVEN** fact type 有 2 个 atom,**cosine 都是 0.8**,**importance 都是 0.7**,但 atom A 创建于 1 天前(刚 access 过),atom B 创建于 30 天前(没 access 过)
+- **WHEN** search 返回
+- **THEN** A 的 strength ≈ 0.7(未衰减),B 的 strength ≈ 0.1(衰减后)
+- **AND THEN** rule 槽位顺序为 `[A(0.7), B(0.1)]`(按 strength DESC)
+
+### Scenario: strength tiebreaker 跨 type 也有效
+- **GIVEN** rule A 和 fact B 的 cosine 都是 0.8,但 rule A 的 strength=0.85,fact B 的 strength=0.5
+- **WHEN** search 返回
+- **THEN** rule A 和 fact B 都在各自 type 的 top-3 内(各自的 type 内部排序按多键)
+- **AND THEN** round-robin 交错后,rule A 出现在 round N,fact B 出现在 round N'(type 之间位置由 round-robin 决定,不是直接比较 strength)
+
+### Scenario: formatMemoryContext 注入时再做 distance asc 全局排序(只看 cosine 主键)
+- **GIVEN** search 返回 6 条(round-robin 交错,**多键排序已应用**)
 - **WHEN** `formatMemoryContext(results, 4000)` 渲染
-- **THEN** 最终注入 LLM prompt 的 block 按 distance asc 全局排序(最近 → 最远),不再是 round-robin 交错
-- **AND THEN** block 内格式 `[type] title\nsummary\nid: <uuid>\nTags: ...`
+- **THEN** 最终注入 LLM prompt 的 block 按 distance asc 全局排序(等价于 cosine DESC,只看主键),不再是 round-robin 交错
+- **AND THEN** block 内格式 `[type] title\nsummary\nid: <uuid>\nTags: ...`,LLM **看不到** strength / importance(这些是 metadata,不在 block 里)
+- **NOTE**: 多键排序的影响**仅**体现在 search response(给 UI / 调试看),prompt 注入只按 cosine。这是有意为之 — LLM 拿 prompt 时只看 cosine 主键,strength/importance 是 metadata,不暴露给 LLM。
 
 ### Scenario: tone scoring 边界词 "如果"
 - **GIVEN** user 消息 "如果今天有空,就帮我看下 bug"
