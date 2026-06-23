@@ -38,5 +38,5 @@ export type {
 };
 
 // Re-export v2 runtime API (for webui consumption)
-export { runMemoryExtraction, extractionPlanSchema, EXTRACT_PROMPT_V2, parseExtractionJson, executePlan } from "./extraction.ts";
+export { runMemoryExtraction, extractionPlanSchema, EXTRACT_PROMPT_V2, parseExtractionJson, executePlan, scoreUserTone, buildExtractionPrompt } from "./extraction.ts";
 export { loadConfig };
