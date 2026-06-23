@@ -270,7 +270,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Stack;
-	private readonly statusPlaceholder = new Container();
+	private readonly statusPlaceholder = new Spacer(2);
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
@@ -408,8 +408,6 @@ export class InteractiveMode {
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Stack();
-		this.statusPlaceholder.addChild(new Spacer(1));
-		this.statusPlaceholder.addChild(new Text("[status placeholder]", 1, 0));
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
