@@ -177,7 +177,7 @@ async function main() {
   try {
     for (const q of queries) {
       const t0 = Date.now();
-      const results = await recallAtoms(index, q, ATOMS_DIR, { topK: 3, threshold: 0.3 });
+      const results = await recallAtoms(index, q, { topK: 3, threshold: 0.3 });
       const dt = Date.now() - t0;
       console.log(`\n  "${q}" (${dt}ms) → ${results.length} hits:`);
       for (const r of results) {

@@ -485,7 +485,7 @@ export function registerPostSearch(
 			const index = await createIndex(deps.dbPath);
 			try {
 				const t0 = Date.now();
-				const results = await recallAtoms(index, query, deps.atomsDir, {
+				const results = await recallAtoms(index, query, {
 					topK,
 					filter: type ? { type } : undefined,
 				});

@@ -288,7 +288,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			try {
 				const { recallAtoms } = await import("./search.ts");
 				const { formatMemoryContext } = await import("./format.ts");
-				const results = await recallAtoms(index, userMessage, atomsDir, { topK: 10 });
+				const results = await recallAtoms(index, userMessage, { topK: 10 });
 				return formatMemoryContext(results, 4000);
 			} finally {
 				index.close();

@@ -170,7 +170,7 @@ describe("recallAtoms", () => {
 		// (none, since we don't insert any atoms here) still see the default.
 		vi.mocked(embedText).mockResolvedValueOnce(null);
 
-		const results = await recallAtoms(index, "test query", "/unused");
+		const results = await recallAtoms(index, "test query");
 		expect(results).toEqual([]);
 	});
 
@@ -192,7 +192,7 @@ describe("recallAtoms", () => {
 		await insertAtom(fact);
 		await insertAtom(process);
 
-		const results = await recallAtoms(index, "common keyword alpha", "/unused", {
+		const results = await recallAtoms(index, "common keyword alpha", {
 			topK: 5,
 		});
 		// One atom per type → at most one result per type → 3 total.
@@ -222,7 +222,7 @@ describe("recallAtoms", () => {
 				}),
 			);
 		}
-		const results = await recallAtoms(index, "Common shared content marker", "/unused", {
+		const results = await recallAtoms(index, "Common shared content marker", {
 			topK: 20,
 		});
 		// Hard cap: only 3 of the 5 matching rule atoms surface, even though
@@ -238,7 +238,7 @@ describe("recallAtoms", () => {
 		await insertAtom(rule);
 		await insertAtom(fact);
 
-		const results = await recallAtoms(index, "alpha content keyword", "/unused", {
+		const results = await recallAtoms(index, "alpha content keyword", {
 			filter: { type: "rule" },
 		});
 		expect(results.length).toBeGreaterThan(0);
@@ -255,7 +255,7 @@ describe("recallAtoms", () => {
 		await insertAtom(a);
 		await insertAtom(arch);
 
-		const results = await recallAtoms(index, "gamma signal unique", "/unused");
+		const results = await recallAtoms(index, "gamma signal unique");
 		expect(results.find((r: RecallResult) => r.atom.id === arch.id)).toBeUndefined();
 	});
 
@@ -269,7 +269,7 @@ describe("recallAtoms", () => {
 		await insertAtom(a);
 		await insertAtom(sup);
 
-		const results = await recallAtoms(index, "epsilon signal unique", "/unused");
+		const results = await recallAtoms(index, "epsilon signal unique");
 		expect(results.find((r: RecallResult) => r.atom.id === sup.id)).toBeUndefined();
 	});
 
@@ -281,7 +281,7 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, "xi signal unique", "/unused");
+		const results = await recallAtoms(index, "xi signal unique");
 		expect(results.length).toBeGreaterThan(0);
 		const first = results[0] as RecallResult;
 		// Runtime check: the new contract drops `file_path` from results.
@@ -298,7 +298,7 @@ describe("recallAtoms", () => {
 		const a = sampleAtom({ content: "Score field test omicron signal unique" });
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, "omicron signal unique", "/unused");
+		const results = await recallAtoms(index, "omicron signal unique");
 		expect(results.length).toBeGreaterThan(0);
 		for (const r of results) {
 			expect(typeof r.score).toBe("number");
@@ -312,7 +312,7 @@ describe("recallAtoms", () => {
 		const a = sampleAtom({ content: "No bump test pi signal unique" });
 		await insertAtom(a);
 
-		await recallAtoms(index, "pi signal unique", "/unused");
+		await recallAtoms(index, "pi signal unique");
 		const got = index.getAtom(a.id);
 		// Strength feedback is the memory_get tool's job, not search's.
 		expect(got?.access_count).toBe(0);
@@ -340,7 +340,7 @@ describe("recallAtoms", () => {
 		await insertAtom(p1);
 		await insertAtom(p2);
 
-		const results = await recallAtoms(index, "sigma marker", "/unused");
+		const results = await recallAtoms(index, "sigma marker");
 		expect(results.length).toBe(3);
 		expect(results[0]?.atom.type).toBe("rule");
 		expect(results[1]?.atom.type).toBe("process");
@@ -355,7 +355,7 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY, "/unused");
+		const results = await recallAtoms(index, QRY);
 		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
 	});
 
@@ -376,7 +376,7 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY, "/unused");
+		const results = await recallAtoms(index, QRY);
 		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
 	});
 
@@ -391,7 +391,7 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY, "/unused");
+		const results = await recallAtoms(index, QRY);
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.5, 5);
@@ -408,7 +408,7 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY, "/unused");
+		const results = await recallAtoms(index, QRY);
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.05, 5);
@@ -475,7 +475,7 @@ describe("recallAtoms", () => {
 			return [];
 		}) as typeof index.vectorSearch;
 
-		const results = await recallAtoms(index, "round robin common content chi marker", "/unused");
+		const results = await recallAtoms(index, "round robin common content chi marker");
 		expect(results.length).toBe(9);
 		// Round-robin interleaves per-type lists in TYPES order. Position k:
 		//   rule   at k ∈ {0, 3, 6}
@@ -499,7 +499,7 @@ describe("recallAtoms", () => {
 
 	// (p) NEW — empty index yields empty result across all three type slots.
 	it("returns empty when all 3 types have zero matching atoms", async () => {
-		const results = await recallAtoms(index, "anything at all", "/unused");
+		const results = await recallAtoms(index, "anything at all");
 		expect(results).toEqual([]);
 	});
 });

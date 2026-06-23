@@ -237,7 +237,7 @@ describe("recallAtoms quality (labeled dataset)", () => {
 
 	for (const q of dataset.queries) {
 		it(`query="${q.query}" (${q.category}) should retrieve relevant atoms`, async () => {
-			const results = await recallAtoms(index, q.query, atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, q.query, { topK: 10, threshold: 0 });
 			const retrievedIds = results.map((r) => r.atom.id);
 			const { hits, relevant, retrieved } = computeMetrics(q.relevantIndices, retrievedIds);
 
@@ -261,7 +261,7 @@ describe("recallAtoms quality (labeled dataset)", () => {
 		const n = dataset.queries.length;
 
 		for (const q of dataset.queries) {
-			const results = await recallAtoms(index, q.query, atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, q.query, { topK: 10, threshold: 0 });
 			const retrievedIds = results.map((r) => r.atom.id);
 			const { hits, relevant, retrieved } = computeMetrics(q.relevantIndices, retrievedIds);
 
@@ -294,27 +294,27 @@ describe("recallAtoms quality (labeled dataset)", () => {
 	// having inserted atom-10..atom-13.
 	describe("Chinese query recall (focused)", () => {
 		it("'图片' should hit at least one Chinese atom (atom-10 or atom-11)", async () => {
-			const results = await recallAtoms(index, "图片", atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, "图片", { topK: 10, threshold: 0 });
 			const ids = results.map((r) => r.atom.id);
 			const hits = [10, 11].filter((i) => ids.includes(`atom-${i}`));
 			expect(hits.length).toBeGreaterThan(0);
 		});
 
 		it("'PDF提取' should hit at least one PDF-related Chinese atom (atom-10 or atom-12)", async () => {
-			const results = await recallAtoms(index, "PDF提取", atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, "PDF提取", { topK: 10, threshold: 0 });
 			const ids = results.map((r) => r.atom.id);
 			const hits = [10, 12].filter((i) => ids.includes(`atom-${i}`));
 			expect(hits.length).toBeGreaterThan(0);
 		});
 
 		it("'CMYK处理' should hit CMYK Chinese atom (atom-11)", async () => {
-			const results = await recallAtoms(index, "CMYK处理", atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, "CMYK处理", { topK: 10, threshold: 0 });
 			const ids = results.map((r) => r.atom.id);
 			expect(ids).toContain("atom-11");
 		});
 
 		it("'中文' should hit 中文编码 atom (atom-13)", async () => {
-			const results = await recallAtoms(index, "中文", atomsDir, { topK: 10, threshold: 0 });
+			const results = await recallAtoms(index, "中文", { topK: 10, threshold: 0 });
 			const ids = results.map((r) => r.atom.id);
 			expect(ids).toContain("atom-13");
 		});

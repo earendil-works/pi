@@ -72,14 +72,10 @@ export interface RecallOptions {
  * exclusively by the agent's `memory_get` tool. Results therefore carry
  * `atom.id` (and the metadata fields `distance` / `cosine` / `score`),
  * not `file_path`.
- *
- * The `atomsDir` parameter is retained for signature compatibility with
- * prior callers; it is no longer used to construct any path.
  */
 export async function recallAtoms(
 	index: MemoryIndex,
 	query: string,
-	_atomsDir: string,
 	options: RecallOptions = {},
 ): Promise<RecallResult[]> {
 	// Embed query — null means ollama is down. No fallback per Decision 7.

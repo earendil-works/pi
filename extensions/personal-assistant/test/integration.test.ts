@@ -74,7 +74,7 @@ describe("integration: extraction → embedding → recall", () => {
     await index.init();
     try {
       // threshold: 0 to work around position-sensitive char-bigram mock embed
-      const recall = await recallAtoms(index, "图片提取", atomsDir, { topK: 5, threshold: 0 });
+      const recall = await recallAtoms(index, "图片提取", { topK: 5, threshold: 0 });
       const ids = recall.map(r => r.atom.id);
       expect(ids).toContain(createdAtom.id);
     } finally {

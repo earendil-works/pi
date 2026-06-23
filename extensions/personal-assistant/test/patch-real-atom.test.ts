@@ -175,7 +175,7 @@ async function main() {
   await idx2.init();
   try {
     // Use Chinese query that closely matches the PATCHed content
-    const results = await recallAtoms(idx2, "CCA 轴标签 修正", ATOMS_DIR, { topK: 5, threshold: 0.3 });
+    const results = await recallAtoms(idx2, "CCA 轴标签 修正", { topK: 5, threshold: 0.3 });
     console.log(`  query "CCA 轴标签 修正" → ${results.length} hits`);
     for (const r of results) {
       console.log(`    [${r.atom.type}] ${r.atom.title} (cos=${r.cosine.toFixed(3)})`);
