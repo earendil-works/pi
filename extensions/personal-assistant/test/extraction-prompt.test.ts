@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractionPlanSchema, EXTRACT_PROMPT_V2 } from "../extraction.ts";
+import { extractionPlanSchema, EXTRACT_PROMPT_V2, scoreUserTone, buildExtractionPrompt } from "../extraction.ts";
 
 describe("EXTRACT_PROMPT_V2", () => {
 	it("contains 3 atom type names", () => {
@@ -116,5 +116,90 @@ describe("extractionPlanSchema", () => {
 			}],
 		});
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("scoreUserTone", () => {
+	it('(a) "千万记得每次 commit 前跑 check" → STRONG (importanceHint 0.85)', () => {
+		const messages = [{ role: "user", content: "千万记得每次 commit 前跑 check" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "strong", importanceHint: 0.85 });
+	});
+
+	it('(b) "我总是 9 点起床" → HABIT (importanceHint 0.65)', () => {
+		const messages = [{ role: "user", content: "我总是 9 点起床" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "habit", importanceHint: 0.65 });
+	});
+
+	it('(c) "也许可以试试 bge-m3" → WEAK (importanceHint 0.35)', () => {
+		const messages = [{ role: "user", content: "也许可以试试 bge-m3" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "weak", importanceHint: 0.35 });
+	});
+
+	it('(d) "如果今天有空就帮我看下 bug" → WEAK (importanceHint 0.35) — "如果" hits', () => {
+		const messages = [{ role: "user", content: "如果今天有空就帮我看下 bug" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "weak", importanceHint: 0.35 });
+	});
+
+	it('(e) "今天天气不错" → NEUTRAL (importanceHint 0.5)', () => {
+		const messages = [{ role: "user", content: "今天天气不错" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "neutral", importanceHint: 0.5 });
+	});
+
+	it('(f) "我有时候会看看文档" → RARE (importanceHint 0.2) — "有时" hits', () => {
+		const messages = [{ role: "user", content: "我有时候会看看文档" }];
+		expect(scoreUserTone(messages)).toEqual({ level: "rare", importanceHint: 0.2 });
+	});
+
+	it("tone scoring aggregates across messages — STRONG wins over WEAK", () => {
+		const messages = [
+			{ role: "user", content: "今天先这样" },
+			{ role: "user", content: "明天千万记得帮我看下 bug" },
+			{ role: "user", content: "如果不出问题就算了" },
+		];
+		expect(scoreUserTone(messages)).toEqual({ level: "strong", importanceHint: 0.85 });
+	});
+});
+
+describe("buildExtractionPrompt tone injection", () => {
+	it("(a) NEUTRAL messages: prompt does NOT contain <user_tone>", () => {
+		const messages = [{ role: "user", content: "今天天气不错" }];
+		const prompt = buildExtractionPrompt(messages);
+		// The prompt docs mention `<user_tone>` and `<importance_hint>` as backtick-wrapped
+		// examples, so a naive toContain() check would always hit. We assert that no actual
+		// closed-form tone block is injected: no `<user_tone>X</user_tone>` for any tier.
+		expect(prompt).not.toMatch(/<user_tone>(strong|habit|weak|rare)<\/user_tone>/);
+		expect(prompt).not.toMatch(/<importance_hint>0\.\d+<\/importance_hint>/);
+	});
+
+	it("(b) STRONG messages: prompt contains <user_tone>strong</user_tone> AND <importance_hint>0.85</importance_hint>", () => {
+		const messages = [{ role: "user", content: "千万记得每次 commit 前跑 check" }];
+		const prompt = buildExtractionPrompt(messages);
+		expect(prompt).toContain("<user_tone>strong</user_tone>");
+		expect(prompt).toContain("<importance_hint>0.85</importance_hint>");
+	});
+
+	it("(c) HABIT messages: prompt contains <user_tone>habit</user_tone> AND <importance_hint>0.65</importance_hint>", () => {
+		const messages = [{ role: "user", content: "我总是 9 点起床" }];
+		const prompt = buildExtractionPrompt(messages);
+		expect(prompt).toContain("<user_tone>habit</user_tone>");
+		expect(prompt).toContain("<importance_hint>0.65</importance_hint>");
+	});
+
+	it("(d) WEAK messages: prompt contains <user_tone>weak</user_tone> AND <importance_hint>0.35</importance_hint>", () => {
+		const messages = [{ role: "user", content: "也许可以试试 bge-m3" }];
+		const prompt = buildExtractionPrompt(messages);
+		expect(prompt).toContain("<user_tone>weak</user_tone>");
+		expect(prompt).toContain("<importance_hint>0.35</importance_hint>");
+	});
+
+	it("(e) RARE messages: prompt contains <user_tone>rare</user_tone> AND <importance_hint>0.2</importance_hint>", () => {
+		const messages = [{ role: "user", content: "我有时候会看看文档" }];
+		const prompt = buildExtractionPrompt(messages);
+		expect(prompt).toContain("<user_tone>rare</user_tone>");
+		expect(prompt).toContain("<importance_hint>0.2</importance_hint>");
+	});
+
+	it("(f) EXTRACT_PROMPT_V2 documents the importance hint (search for ±0.15 or 可上下浮动)", () => {
+		expect(EXTRACT_PROMPT_V2).toMatch(/±0\.15|可上下浮动/);
 	});
 });
