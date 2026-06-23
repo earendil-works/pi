@@ -73,6 +73,10 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 - 高频引用 + 难复现 → 0.8-1.0
 - 一次性细节 → 0.2-0.4
 
+## User Tone Hint
+
+如果用户消息携带 \`<user_tone>\` 和 \`<importance_hint>\` 段,这表示用户语气的强度暗示。LLM 应基于此**调整 importance**,但仍可上下浮动 ±0.15 — 这是 hint,不是 hardcode。
+
 ## Dedup 策略 (重要!)
 
 代码会自动处理 dedup, 你不需要担心:
@@ -243,14 +247,63 @@ export function parseExtractionJson(json: string): ExtractionResult | null {
 // Phase 4.5: top-level extraction entry points
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// scoreUserTone — 5-tier user tone scoring
+// ---------------------------------------------------------------------------
+//
+// Bilingual word lists scanned against the joined content of ALL user
+// messages. The strongest tier hit wins (STRONG > HABIT > WEAK > RARE;
+// NEUTRAL when nothing matches). Pure substring matching via `includes` —
+// microseconds, no LLM call. The resulting `importanceHint` is an anchor
+// for the extraction LLM, which may still deviate ±0.15 from it.
+
+const STRONG_WORDS = ["千万", "务必", "必须", "一定要", "must", "always", "never", "绝对", "禁止"];
+const HABIT_WORDS = ["总是", "永远", "记得", "每次", "习惯", "usually", "often", "always do"];
+const WEAK_WORDS = ["可能", "也许", "大概", "如果", "maybe", "perhaps", "might", "could"];
+const RARE_WORDS = ["偶尔", "有时", "sometimes", "rarely"];
+
 /**
- * Build the full prompt that gets sent to the LLM: instruction + the
- * conversation transcript. Kept as a pure function so it can be inspected in
- * tests without needing to mock the LLM.
+ * Score the user's tone across every user-role message in `messages`.
+ * Returns `{ level, importanceHint }` where `importanceHint` is the anchor
+ * the extraction LLM should bias toward when picking `importance`.
+ *
+ * Tier priority: STRONG (0.85) > HABIT (0.65) > WEAK (0.35) > RARE (0.2);
+ * NEUTRAL (0.5) when none of the words hit. The function aggregates across
+ * all user messages — not just the latest — so a single strongly-worded
+ * message in a long conversation still promotes the whole transcript.
  */
-function buildExtractionPrompt(messages: Array<{ role: string; content: string }>): string {
+export function scoreUserTone(messages: Array<{ role: string; content: string }>): {
+	level: "strong" | "habit" | "neutral" | "weak" | "rare";
+	importanceHint: number;
+} {
+	const userText = messages
+		.filter((m) => m.role === "user")
+		.map((m) => m.content)
+		.join("\n");
+	if (STRONG_WORDS.some((w) => userText.includes(w))) return { level: "strong", importanceHint: 0.85 };
+	if (HABIT_WORDS.some((w) => userText.includes(w))) return { level: "habit", importanceHint: 0.65 };
+	if (WEAK_WORDS.some((w) => userText.includes(w))) return { level: "weak", importanceHint: 0.35 };
+	if (RARE_WORDS.some((w) => userText.includes(w))) return { level: "rare", importanceHint: 0.2 };
+	return { level: "neutral", importanceHint: 0.5 };
+}
+
+/**
+ * Build the full prompt that gets sent to the LLM: instruction + (optional)
+ * user tone hint + the conversation transcript. Kept as a pure function so
+ * it can be inspected in tests without needing to mock the LLM.
+ *
+ * When `scoreUserTone` returns a non-NEUTRAL level, a `<user_tone>` +
+ * `<importance_hint>` block is inserted between the system prompt and the
+ * messages section. NEUTRAL messages inject nothing — the prompt stays
+ * byte-identical to the v1 shape.
+ */
+export function buildExtractionPrompt(messages: Array<{ role: string; content: string }>): string {
 	const messagesText = messages.map((m) => `[${m.role}] ${m.content}`).join("\n\n");
-	return `${EXTRACT_PROMPT_V2}\n\n## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
+	const tone = scoreUserTone(messages);
+	const toneHint = tone.level === "neutral"
+		? ""
+		: `<user_tone>${tone.level}</user_tone>\n<importance_hint>${tone.importanceHint}</importance_hint>\n\n`;
+	return `${EXTRACT_PROMPT_V2}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
 }
 
 /**
