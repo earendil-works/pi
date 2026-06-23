@@ -12,9 +12,9 @@ interface SearchResult {
 	title: string;
 	summary: string;
 	tags: string[];
-	file_path: string;
 	distance: number;
 	cosine: number;
+	score: number;
 }
 
 interface SearchResponse {
@@ -78,18 +78,17 @@ export function MemorySearchTester({ onSelectAtom }: MemorySearchTesterProps) {
 									data-result-id={r.id}
 									onClick={() => onSelectAtom(r.id)}
 									className="border border-gray-100 rounded p-2 cursor-pointer hover:bg-gray-50"
-									title={r.file_path}
 								>
 									<div className="flex items-center gap-2">
 										<MemoryTypeBadge type={r.type} />
 										<span className="font-medium text-sm">{r.title}</span>
 										<span className="ml-auto text-xs text-gray-500">
-											cos {r.cosine.toFixed(3)}
+											cos {r.cosine.toFixed(3)} · score {r.score.toFixed(3)}
 										</span>
 									</div>
 									<div className="text-xs text-gray-600 mt-1 line-clamp-2">{r.summary}</div>
-									<div className="text-xs text-gray-400 mt-1 font-mono truncate" title={r.file_path}>
-										{r.file_path}
+									<div className="text-xs text-gray-400 mt-1 font-mono truncate">
+										id: {r.id.slice(0, 8)}… · {r.tags.join(", ")}
 									</div>
 								</div>
 							))}
