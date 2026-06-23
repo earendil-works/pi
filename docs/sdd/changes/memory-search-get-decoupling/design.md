@@ -69,24 +69,25 @@ memory-v2 当前(2026-06-23)实现了一整套纯向量召回的 pipeline,但 se
 - C. **本方案:block 只含 id** — 选这个,context 注入信息熵最大、长度最小
 
 ### 4. importance 由 extraction LLM 自主判断,tone 只给 hint
-**Decision**: `scoreUserTone(messages)` 返回 `{level, score}`,作为 hint 段 `<user_tone level="..." score="...">` 注入 EXTRACT_PROMPT_V2。LLM 看到 hint 后**自己**决定 importance,词表扫描**不**直接覆写。
+**Decision**: `scoreUserTone(messages)` 返回 `{level, importanceHint}`,作为 hint 段 `<user_tone>level</user_tone>\n<importance_hint>importanceHint</importance_hint>` 注入 EXTRACT_PROMPT_V2(仅当 level 不是 NEUTRAL 时)。LLM 看到 hint 后**自己**决定 importance,允许 ±0.15 偏离 hint;词表扫描**不**直接覆写。
 
-**Rationale**: LLM 有上下文判断能力(消息中其他语气、对话氛围、atom 内容),纯词表规则无法匹敌。但 LLM 在没提示时容易给保守打分(0.5-0.7),hint 可以把它推向正确区间(强语气 → 0.9+)。
+**Rationale**: LLM 有上下文判断能力(消息中其他语气、对话氛围、atom 内容),纯词表规则无法匹敌。但 LLM 在没提示时容易给保守打分(0.5-0.7),hint 可以把它推向正确区间(强语气 → 0.9+,弱语气 → 0.3-0.5)。±0.15 偏离允许 LLM 在 hint 基础上做精细调整。
 
 **Alternatives considered**:
 - A. tone score 直接覆写 LLM importance — 拒绝,失去 LLM 上下文判断能力,且用户不同意
 - B. 加权混合 `0.6*LLM + 0.4*tone` — 拒绝,需要调权重,泛化性差
-- C. **本方案:tone 作为 hint,LLM 自主判断** — 选这个,符合用户明确指示
+- C. **本方案:tone 作为 hint,LLM 自主判断 ±0.15** — 选这个,符合用户明确指示
 
-### 5. 中英语气词词表,纯匹配
-**Decision**: 4 档词表(STRONG / HABIT / WEAK / NEUTRAL),~20 词覆盖中文("千万 / 务必 / 必须 / 一定 / 总是 / 永远 / 可能 / 也许")和英文("must / always / never / maybe")。只看最近一条 user 消息,微秒级,无 LLM 调用。
+### 5. 中英语气词词表,纯匹配 — 5 档
+**Decision**: 5 档词表(STRONG / HABIT / NEUTRAL / WEAK / RARE),~20 词覆盖中英双语。`scoreUserTone` 扫描**全部 messages** 聚合取最强命中 tier。NEUTRAL 等级**不**向 prompt 注入任何 hint 段(完全透明,中性消息保持原行为)。映射:`STRONG=0.85, HABIT=0.65, NEUTRAL=omit, WEAK=0.35, RARE=0.2`。微秒级,无 LLM 调用。
 
-**Rationale**: 词表匹配足够捕捉用户显式语气,误判成本低(LLM 还有一次机会修正),且零额外延迟。如果未来需要更高精度,可以加 LLM 二次 prompt,但当前阶段 YAGNI。
+**Rationale**: 词表匹配足够捕捉用户显式语气,误判成本低(LLM 还有一次机会修正),且零额外延迟。聚合所有消息而非只看最近一条,能在多轮对话中捕捉用户的整体语气强度(例如第 2 条消息用了"千万"足以代表整个对话的语气)。如果未来需要更高精度,可以加 LLM 二次 prompt,但当前阶段 YAGNI。
 
 **Alternatives considered**:
 - A. 独立 LLM call 判断 tone — 拒绝,每次 extraction 多 1 次 LLM 调用,成本高
 - B. 只中文 — 拒绝,虽然项目以中文为主,但双语覆盖几乎零成本
-- C. **本方案:双语词表,纯匹配** — 选这个,简单且足够
+- C. 4 档(无 RARE)— 拒绝,RARE("偶尔/sometimes")代表低频但稳定的事实,与 WEAK("也许/maybe")的语义不同,合并会丢失信号
+- D. **本方案:5 档,双语词表,聚合多轮,纯匹配** — 选这个,简单且足够
 
 ### 6. memory_get tool 注册在 extension,而非 webui server
 **Decision**: `memory_get` 是 agent LLM-facing tool,只在 personal-assistant extension 注册(`pi.registerTool({...})`)。webui server **不**暴露等价 endpoint,bump 路径完全在 agent 进程内。
@@ -354,27 +355,27 @@ export function formatMemoryBlock(result: RecallResult): string {
 
 ```ts
 // extensions/personal-assistant/extraction.ts (NEW scoreUserTone + prompt injection)
-const STRONG_WORDS = ["千万", "务必", "必须", "一定", "绝对", "切记", "严禁", "禁止", "must", "always", "never"];
-const HABIT_WORDS  = ["总是", "永远", "一直", "不要", "记得", "每次", "别"];
-const WEAK_WORDS   = ["可能", "也许", "大概", "试试", "如果", "maybe", "perhaps"];
+const STRONG_WORDS = ["千万", "务必", "必须", "一定要", "绝对", "禁止", "must", "always", "never"];
+const HABIT_WORDS  = ["总是", "永远", "记得", "每次", "习惯", "usually", "often", "always do"];
+const WEAK_WORDS   = ["可能", "也许", "大概", "如果", "maybe", "perhaps", "might", "could"];
+const RARE_WORDS   = ["偶尔", "有时", "sometimes", "rarely"];
 
-export function scoreUserTone(messages: Array<{ role: string; content: string }>): { level: "strong" | "habit" | "neutral" | "weak"; score: number } {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const text = lastUser?.content ?? "";
-  if (STRONG_WORDS.some((w) => text.includes(w))) return { level: "strong", score: 0.95 };
-  if (HABIT_WORDS.some((w) => text.includes(w))) return { level: "habit", score: 0.85 };
-  if (WEAK_WORDS.some((w) => text.includes(w))) return { level: "weak", score: 0.35 };
-  return { level: "neutral", score: 0.5 };
+export function scoreUserTone(messages: Array<{ role: string; content: string }>):
+  { level: "strong" | "habit" | "neutral" | "weak" | "rare"; importanceHint: number } {
+  // Aggregate tone signals across ALL user messages, take strongest tier hit.
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content).join("\n");
+  if (STRONG_WORDS.some((w) => userTexts.includes(w))) return { level: "strong", importanceHint: 0.85 };
+  if (HABIT_WORDS.some((w) => userTexts.includes(w)))  return { level: "habit", importanceHint: 0.65 };
+  if (WEAK_WORDS.some((w) => userTexts.includes(w)))   return { level: "weak", importanceHint: 0.35 };
+  if (RARE_WORDS.some((w) => userTexts.includes(w)))   return { level: "rare", importanceHint: 0.2 };
+  return { level: "neutral", importanceHint: 0.5 };
 }
 
-function buildExtractionPrompt(messages) {
+export function buildExtractionPrompt(messages: Array<{ role: string; content: string }>): string {
   const tone = scoreUserTone(messages);
-  const toneHint = `\n\n<user_tone level="${tone.level}" score="${tone.score}">\n` +
-    (tone.level === "strong" ? "User's message contains emphatic language. Atoms reflecting these emphatic preferences should have importance >= 0.9." :
-     tone.level === "habit" ? "User's message contains habit-style language. Atoms reflecting habitual patterns should have importance >= 0.7." :
-     tone.level === "weak" ? "User's message contains tentative language. Atoms should have importance <= 0.5." :
-     "No strong tone indicators. Default importance 0.5.") +
-    "\n</user_tone>";
+  const toneHint = tone.level === "neutral"
+    ? ""
+    : `\n<user_tone>${tone.level}</user_tone>\n<importance_hint>${tone.importanceHint}</importance_hint>\n`;
   return `${EXTRACT_PROMPT_V2}${toneHint}\n\n## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
 }
 ```
@@ -417,11 +418,11 @@ buildExtractionPrompt(messages)
    ↓
 scoreUserTone(messages) → {level, score}
    ↓
-EXTRACT_PROMPT_V2 + <user_tone>...</user_tone> + messages
+EXTRACT_PROMPT_V2 + (NEUTRAL 时无 hint | 否则) <user_tone>level</user_tone> + <importance_hint>hint</importance_hint> + messages
    ↓
-LLM 看到 hint,自主决定 importance
+LLM 看到 hint,自主决定 importance (±0.15 范围内)
    ↓
-importance: 0.85+ (强语气) | 0.5 (中性) | 0.3-0.4 (弱语气)
+importance: STRONG=0.85 hint | HABIT=0.65 | WEAK=0.35 | RARE=0.2 | NEUTRAL 保持原行为
    ↓
 executePlan → atom 写入 DB
 ```
@@ -435,7 +436,7 @@ executePlan → atom 写入 DB
 | `scoreUserTone` 纯词表匹配,某些上下文会误判(如"如果"在"如果下雨"和"如果你能帮我"中不同) | 当前接受这层精度损失,LLM 还有一次机会修正 importance。如果未来需要更高精度,加 LLM 二次 prompt 评分 |
 | 3 个独立 `vectorSearch` 比 1 个稍慢 | 每个 vectorSearch 是毫秒级,3 个总和 < 5ms,实测可接受 |
 | `memory_get` tool 只在 extension 注册,TUI 用户能直接用,但如果某天 webui 也想 bump,需要新加端点 | 当前不做,YAGNI;后续有需求再加 `POST /api/memory/:id/feedback` 端点 |
-| `scoreUserTone` 用 `text.includes(w)` 简单匹配,长字符串 + 短词容易误触(如"也许"出现在"也不许"中) | 当前接受,词表精简到 ~20 词,且只有 STRONG/HABIT 档才有实际权重影响(都 ≥ 0.7) |
+| `scoreUserTone` 用 `text.includes(w)` 简单匹配,长字符串 + 短词容易误触(如"也许"出现在"也不许"中) | 当前接受,词表精简到 ~20 词,LLM 还有 ±0.15 的修正机会 |
 | 加权公式 score = cosine × (1 + 0.3×strength + 0.2×importance) 的权重 α=0.3 β=0.2 是 hardcode 的经验值,可能不是全局最优 | 当前接受,YAGNI;如未来需要调,改成 `RecallOptions` 可调参数,默认值同上。score 字段已经在 response 里,便于 A/B 调权重 |
 | 加权公式让 rule type 在 search 中更显(rule importance 普遍 ≥ fact/process),可能让 rule 过度代表 | 接受(符合"用户偏好/约束是最高优先级"的直觉);如果发现 rule 偏斜过度,可降低 β(importance weight)或单独调权重 |
 | `score` 字段暴露在 search response 里,但 LLM 看不见 — 字段可能让 API 消费者误以为 LLM 也能用 | 在 search route 的 doc comment 和 types.ts 的 JSDoc 明确说 "score 仅给 UI/debug,LLM 不通过 prompt 看到" |

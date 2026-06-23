@@ -117,9 +117,10 @@
 - **THEN** 返回 `{level: "weak", score: 0.35}`(取最强匹配,弱语气优先,因为没有更强语气词)
 
 ### Scenario: tone scoring 跨多句
-- **GIVEN** user 最近 3 条消息: "今天先这样" / "明天千万记得..." / "如果不出问题就算了"
-- **WHEN** `scoreUserTone` 只取最近一条 user 消息扫描
-- **THEN** 返回强语气结果(只看最近一条,不聚合多轮)
+- **GIVEN** user 3 条消息: "今天先这样" (NEUTRAL) / "明天千万记得帮我看下 bug" (STRONG, "千万") / "如果不出问题就算了" (WEAK, "如果")
+- **WHEN** `scoreUserTone(messages)` 扫描全部消息并取最高 tier
+- **THEN** 返回 STRONG(0.85)— 因为聚合时 STRONG 命中("千万"),强于 WEAK ("如果")
+- **NOTE**: 设计上 `scoreUserTone` 接收完整 messages 数组并聚合所有 user 消息中的 tone 信号,而不是只看最近一条。这样能在多轮对话中捕捉到用户的整体语气强度。
 
 ### Scenario: get atom content hash mismatch
 - **GIVEN** DB 中 atom 的 `content_fingerprint` 与 .md 文件 sha256 不一致(被外部修改过)
