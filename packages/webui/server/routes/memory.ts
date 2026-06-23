@@ -71,6 +71,11 @@ async function createIndex(dbPath: string): Promise<MemoryIndex> {
 /**
  * GET /api/memory/:id — return the full atom (DB row) plus the .md body.
  *
+ * This endpoint is a UI preview only — reading an atom via the webui does NOT
+ * count toward the strength-feedback loop. Strength feedback is recorded
+ * exclusively by the agent's `memory_get` tool (see
+ * extensions/personal-assistant/memory.ts).
+ *
  * Status codes:
  *   - 200: atom found. `content` is the .md body if the file is present and
  *          its hash matches atom.content_fingerprint; otherwise `content=""`
