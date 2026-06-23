@@ -41,13 +41,15 @@ const IMPORTANCE_WEIGHT = 0.2;
 const TYPES: readonly MemoryAtomType[] = ["rule", "fact", "process"];
 
 /**
- * Options for `recallAtoms`. `topK` controls the per-type cap (default 3,
- * Decision 2). `threshold` is honored (default 0.5) so hermetic tests with
+ * Options for `recallAtoms`. `topK` controls the per-type KNN candidate
+ * count (default 3, Decision 2). The per-type result cap is fixed at 3
+ * (Decision 2 hard ceiling — sparse types degrade below this). `threshold`
+ * is the cosine minimum (default 0.5, Decision 8); hermetic tests with
  * weaker mock embedders can dial it down. `filter` narrows the search to
  * a single atom type.
  */
 export interface RecallOptions {
-	/** Per-type cap on results (Decision 2). Default 3. */
+	/** Per-type KNN candidate count (Decision 2). Default 3. */
 	topK?: number;
 	/** Minimum cosine similarity (post-filter). Default 0.5 (Decision 8). */
 	threshold?: number;
@@ -103,11 +105,7 @@ export async function recallAtoms(
 				isLatestOnly: true,
 				archived: false,
 			});
-			// Local shape with `score` so the in-place sort typechecks; the
-			// entries are cast to `RecallResult` at the very end (Task 1.1
-			// will replace `file_path` with `score` on the public type, after
-			// which no cast is needed).
-			const scored: ScoredCandidate[] = [];
+			const scored: RecallResult[] = [];
 			for (const { id, distance } of raw) {
 				const atom = index.getAtom(id);
 				if (!atom) continue;
@@ -121,7 +119,7 @@ export async function recallAtoms(
 				scored.push({ atom, distance, cosine, score });
 			}
 			scored.sort((a, b) => b.score - a.score); // score DESC within type
-			return scored.slice(0, DEFAULT_TOP_K).map(asRecallResult);
+			return scored.slice(0, DEFAULT_TOP_K);
 		}),
 	);
 
@@ -136,27 +134,4 @@ export async function recallAtoms(
 		}
 	}
 	return results;
-}
-
-/**
- * Internal result shape carrying the multiplicative `score` field. The
- * public `RecallResult` does not yet expose `score` (Task 1.1 will add it
- * in place of `file_path`), so we type the per-type working list locally
- * and cast to `RecallResult` at the very end.
- */
-interface ScoredCandidate {
-	atom: MemoryAtom;
-	distance: number;
-	cosine: number;
-	score: number;
-}
-
-/**
- * Transitional cast from the local `ScoredCandidate` shape to the public
- * `RecallResult`. Task 1.1 will add `score` to `RecallResult` (and drop
- * `file_path`), at which point this cast becomes a structural no-op and
- * can be removed.
- */
-function asRecallResult(c: ScoredCandidate): RecallResult {
-	return c as unknown as RecallResult;
 }

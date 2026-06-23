@@ -94,15 +94,12 @@ export interface MemoryAtom {
   importance: number;
   strength: number;
   access_count: number;
-  last_access: string;
-  created_at: string;
-  updated_at: string;
+  last_access: number | null;
+  created_at: number;
+  updated_at: number;
   version: number;
   archived: boolean;
   content: string;
-  file_path: string;
-  content_hash: string;
-  hash_mismatch?: boolean;
 }
 
 export interface MemorySearchResult {

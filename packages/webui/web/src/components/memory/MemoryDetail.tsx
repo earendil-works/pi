@@ -29,8 +29,6 @@ const SERVER_FIELDS: ReadonlySet<keyof MemoryAtom> = new Set<keyof MemoryAtom>([
   "strength",
   "access_count",
   "last_access",
-  "file_path",
-  "content_hash",
   "archived",
 ]);
 
@@ -147,7 +145,6 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
           <div>created: {atom.created_at}</div>
           <div>updated: {atom.updated_at}</div>
           <div>last_access: {atom.last_access || "—"}</div>
-          <div className="col-span-2 truncate">file: {atom.file_path}</div>
         </div>
       </div>
       {/* editor */}

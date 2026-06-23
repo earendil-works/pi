@@ -26,8 +26,8 @@
 - All v1 search/extract/decay logic moved to specialized modules (storage, search, format, extraction, decay)
 - Schema: new tables (memory_index, memory_vectors vec0 FLOAT[1024], memory_audit) with 5 indexes
 - Embedding: full text (title+summary+content+tags) instead of title-only
-- Search is discovery-only: `recallAtoms` returns summary + `file_path` for every result (no L0/L1 tier hydration). The agent reads full content on demand via the standard `read` tool on the `file_path`. The `formatMemoryContext` injection block now includes a `file: <path>` line per atom so the LLM knows where to read.
-- Search response now returns `score` instead of `file_path`. Agents use the new `memory_get` tool to fetch full content — search is discovery-only. Score = cosine × (1 + 0.3 × strength + 0.2 × importance), per-type top-3 with round-robin interleaving. Extraction prompt now accepts `<user_tone>` hint to calibrate importance.
+- Search is discovery-only: `recallAtoms` returns summary + `id` for every result (no L0/L1 tier hydration). The agent calls `memory_get(id)` to fetch full content — that call is the sole programmatic strength-feedback signal.
+- Search response now returns `score` instead of `file_path`. Score = cosine × (1 + 0.3 × strength + 0.2 × importance), per-type top-3 with round-robin interleaving. `formatMemoryContext` re-sorts by `distance` ASC (cosine DESC) before injecting into LLM prompt — `score` is metadata, not visible to the LLM. Extraction prompt now accepts `<user_tone>` hint to calibrate importance.
 - Webui `GET /api/memory/:id` is preview-only — does NOT bump `access_count`. Strength feedback is recorded exclusively by the agent's `memory_get` tool.
 
 ### Fixed

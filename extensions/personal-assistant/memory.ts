@@ -8,8 +8,8 @@
 //   - decay.ts      — runDecay
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText
-//   - search.ts     — recallAtoms (discovery-only; results carry file_path)
-//   - format.ts     — formatMemoryContext (renders summaries + file_path blocks)
+//   - search.ts     — recallAtoms (discovery-only; results carry `id` + `score`)
+//   - format.ts     — formatMemoryContext (renders summaries + id blocks for memory_get routing)
 //
 // What memory.ts still owns:
 //   - registerMemory(pi) — wires session_before_compact + session_start + the
@@ -28,10 +28,10 @@
 //     so a chatty session does not thrash the DB.
 //   - before_agent_start kicks off recallAtoms async and stashes the promise in
 //     the module-level `pendingMemorySearch`; context awaits it (raced against
-//     an 8s timeout) and injects the formatted block (summary + file_path per
-//     atom) into the last user message. The LLM uses the standard `read` tool
-//     on the file_path when it needs the full body. Non-destructive: original
-//     event is returned if nothing to inject.
+//     an 8s timeout) and injects the formatted block (summary + id per atom)
+//     into the last user message. The LLM calls `memory_get(id)` to fetch the
+//     full body — that call is the sole programmatic strength-feedback signal.
+//     Non-destructive: original event is returned if nothing to inject.
 //   - `memory_get` is registered as a tool on `pi` so the agent can explicitly
 //     hydrate a search result. The execute body opens a fresh `MemoryIndex`,
 //     looks up the atom, and ONLY on a successful hit calls `index.updateAccess`
