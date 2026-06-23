@@ -154,9 +154,8 @@ score = cosine * (1 + 0.3 * strength + 0.2 * importance)
 **算法伪代码**:
 ```ts
 const TYPES = ["rule", "fact", "process"] as const;
-const PER_TYPE_CAP = 3;
-const THRESHOLD = 0.5;
-const RAW_BUFFER = 6;  // 3 cap × 2 headroom
+const DEFAULT_PER_TYPE_CAP = 3;     // Decision 2 (overridable via topK for tests)
+const DEFAULT_THRESHOLD = 0.5;       // Decision 8 (overridable via threshold for tests)
 const STRENGTH_WEIGHT = 0.3;
 const IMPORTANCE_WEIGHT = 0.2;
 
@@ -168,15 +167,18 @@ async function recallAtoms(index, query, atomsDir, options) {
   const emb = await embedText(query);
   if (!emb) return [];
 
+  const topK = options.topK ?? DEFAULT_PER_TYPE_CAP;
+  const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+
   const perType: Record<MemoryAtomType, RecallResult[]> = { rule: [], fact: [], process: [] };
   for (const type of TYPES) {
     if (options.filter?.type && options.filter.type !== type) continue;
-    const raw = index.vectorSearch(emb, RAW_BUFFER, { type, isLatestOnly: true, archived: false });
+    const raw = index.vectorSearch(emb, topK, { type, isLatestOnly: true, archived: false });
     for (const { id, distance } of raw) {
       const atom = index.getAtom(id);
       if (!atom) continue;
       const cosine = 1 - (distance * distance) / 2;
-      if (cosine < THRESHOLD) continue;
+      if (cosine < threshold) continue;
       const score = computeScore(cosine, atom.strength, atom.importance);
       perType[type].push({ atom, distance, cosine, score });
     }

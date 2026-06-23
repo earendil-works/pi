@@ -1,11 +1,11 @@
-phase: brainstorm
+phase: review
 workflow: full
 change: memory-search-get-decoupling
 created_at: 2026-06-23
 base_ref: 58d95354c998033b9a173342d8a1d877fea1d74c
 tasks_total: 0
 tasks_done: 0
-isolation: null
-verify_result: null
+isolation: branch
+verify_result: pending
 last_review_sha: null
 archived: false

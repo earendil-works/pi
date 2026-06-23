@@ -131,19 +131,26 @@ describe("types", () => {
 		expect(back.is_latest).toBe(0);
 	});
 
-	it("shapes RecallResult with distance, cosine, file_path", () => {
+	it("shapes RecallResult with distance, cosine, score (no file_path)", () => {
 		const result: RecallResult = {
 			atom: makeAtom(),
 			distance: 0.42,
 			cosine: 0.79,
-			file_path: "/home/u/.pi/agent/memory/atoms/rule/abc.md",
+			score: 0.79 * (1 + 0.3 * 0.7 + 0.2 * 0.7), // = 0.79 × 1.35 = 1.0665
 		};
-		expect(result.file_path).toMatch(/\.md$/);
+		expect(result.score).toBeGreaterThan(0);
+		expect(result.score).toBeLessThanOrEqual(1.5); // max boost scenario
 		expect(result.cosine).toBeGreaterThan(0);
 		expect(result.cosine).toBeLessThanOrEqual(1);
+		// file_path is gone — confirm via type-level: no such field
+		expect((result as { file_path?: unknown }).file_path).toBeUndefined();
+	});
 
-		const summaryOnly: RecallResult = { ...result, file_path: "/x/y.md" };
-		expect(summaryOnly.file_path).toBe("/x/y.md");
+	it("score field follows the multiplicative formula", () => {
+		// cosine × (1 + 0.3 × strength + 0.2 × importance)
+		const atom = makeAtom({ strength: 1.0, importance: 1.0 });
+		const result: RecallResult = { atom, distance: 0.1, cosine: 0.99, score: 0.99 * 1.5 };
+		expect(result.score).toBeCloseTo(1.485);
 	});
 
 	it("shapes ExtractionItem with the 6 fields", () => {

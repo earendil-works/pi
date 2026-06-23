@@ -94,36 +94,26 @@ export interface MemoryAtom {
   importance: number;
   strength: number;
   access_count: number;
-  last_access: string;
-  created_at: string;
-  updated_at: string;
+  last_access: number | null;
+  created_at: number;
+  updated_at: number;
   version: number;
   archived: boolean;
   content: string;
-  file_path: string;
-  content_hash: string;
-  hash_mismatch?: boolean;
-}
-
-export interface MemoryAtomWithScores {
-  atom: MemoryAtom;
-  fts_score: number;
-  cosine_score: number;
-  hybrid_score: number;
-}
-
-export interface MemoryQueryRewriteResult {
-  keywords: string[];
-  target_types: string[];
-  raw_query: string;
-  /** true if LLM failed/parse failed → used keyword fallback. */
-  fallback: boolean;
 }
 
 export interface MemorySearchResult {
-  rewritten: MemoryQueryRewriteResult;
-  embedding_available: boolean;
-  results: MemoryAtomWithScores[];
+  results: Array<{
+    id: string;
+    type: MemoryAtomType;
+    title: string;
+    summary: string;
+    tags: string[];
+    distance: number;
+    cosine: number;
+    score: number;
+  }>;
+  recallTimeMs: number;
 }
 
 export interface MemoryStats {
@@ -319,8 +309,8 @@ export const api = {
       );
     },
 
-    search(query: string, topK?: number): Promise<unknown> {
-      return request<unknown>("/api/memory/search", {
+    search(query: string, topK?: number): Promise<MemorySearchResult> {
+      return request<MemorySearchResult>("/api/memory/search", {
         method: "POST",
         body: JSON.stringify({ query, topK }),
       });

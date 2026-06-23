@@ -18,13 +18,17 @@
 - Lifecycle hooks: session_before_compact (extraction), session_start (throttled decay), before_agent_start + context (memory injection with 8s timeout)
 - Extraction report JSON to ~/.pi/agent/logs/
 - Recall quality validation: 14 atoms / 9 queries labeled dataset, char n-gram mock embed
+- New `memory_get` tool — sole programmatic strength-feedback entry. Bumps `access_count` and `last_access` on successful lookup.
+- New `scoreUserTone` 5-tier user-tone scorer (STRONG/HABIT/WEAK/RARE/NEUTRAL) + `<user_tone>` hint injection in `buildExtractionPrompt`. Extraction LLM uses it to calibrate importance (±0.15 deviation allowed).
 
 ### Changed
 - memory.ts reduced from 1649 → 290 lines (v2 is entry-point-only)
 - All v1 search/extract/decay logic moved to specialized modules (storage, search, format, extraction, decay)
 - Schema: new tables (memory_index, memory_vectors vec0 FLOAT[1024], memory_audit) with 5 indexes
 - Embedding: full text (title+summary+content+tags) instead of title-only
-- Search is discovery-only: `recallAtoms` returns summary + `file_path` for every result (no L0/L1 tier hydration). The agent reads full content on demand via the standard `read` tool on the `file_path`. The `formatMemoryContext` injection block now includes a `file: <path>` line per atom so the LLM knows where to read.
+- Search is discovery-only: `recallAtoms` returns summary + `id` for every result (no L0/L1 tier hydration). The agent calls `memory_get(id)` to fetch full content — that call is the sole programmatic strength-feedback signal.
+- Search response now returns `score` instead of `file_path`. Score = cosine × (1 + 0.3 × strength + 0.2 × importance), per-type top-3 with round-robin interleaving. `formatMemoryContext` re-sorts by `distance` ASC (cosine DESC) before injecting into LLM prompt — `score` is metadata, not visible to the LLM. Extraction prompt now accepts `<user_tone>` hint to calibrate importance.
+- Webui `GET /api/memory/:id` is preview-only — does NOT bump `access_count`. Strength feedback is recorded exclusively by the agent's `memory_get` tool.
 
 ### Fixed
 - Hash mismatch between DB content_fingerprint and file contentHash (both now use normalizeContent before sha256)
@@ -33,6 +37,7 @@
 ### Removed
 - searchByFts, rewriteQuery, simpleKeywordExtraction, dedupeRedundantKeywords, dedupeAgainstQuery, expandCjkKeywords, isEmbeddingServiceAvailable, searchEmbeddings, parseRewriteJson, getEmbedding, callOllamaRewrite, searchAtoms, searchAtomsWithScores
 - Legacy sqlite.ts wrapper
+- `file_path` from search response and `formatMemoryBlock` output. Replaced with `id` for `memory_get` lookup.
 
 ### Added (webui-memory-page)
 

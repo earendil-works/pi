@@ -8,12 +8,16 @@
 //   - decay.ts      — runDecay
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText
-//   - search.ts     — recallAtoms (discovery-only; results carry file_path)
-//   - format.ts     — formatMemoryContext (renders summaries + file_path blocks)
+//   - search.ts     — recallAtoms (discovery-only; results carry `id` + `score`)
+//   - format.ts     — formatMemoryContext (renders summaries + id blocks for memory_get routing)
 //
 // What memory.ts still owns:
 //   - registerMemory(pi) — wires session_before_compact + session_start + the
-//     before_agent_start / context memory-injection pipeline.
+//     before_agent_start / context memory-injection pipeline + the `memory_get`
+//     tool. The tool is the ONLY programmatic entry point that records
+//     strength feedback for a specific atom (bump `access_count` /
+//     `last_access` via `index.updateAccess`). Search does NOT bump — see
+//     search.ts for the discovery-only invariant.
 //   - loadConfig()       — reads personal-assistant config (graceful fallback to {})
 //   - re-exports the v2 entry points / types so index.ts keeps its current shape
 //
@@ -24,15 +28,21 @@
 //     so a chatty session does not thrash the DB.
 //   - before_agent_start kicks off recallAtoms async and stashes the promise in
 //     the module-level `pendingMemorySearch`; context awaits it (raced against
-//     an 8s timeout) and injects the formatted block (summary + file_path per
-//     atom) into the last user message. The LLM uses the standard `read` tool
-//     on the file_path when it needs the full body. Non-destructive: original
-//     event is returned if nothing to inject.
+//     an 8s timeout) and injects the formatted block (summary + id per atom)
+//     into the last user message. The LLM calls `memory_get(id)` to fetch the
+//     full body — that call is the sole programmatic strength-feedback signal.
+//     Non-destructive: original event is returned if nothing to inject.
+//   - `memory_get` is registered as a tool on `pi` so the agent can explicitly
+//     hydrate a search result. The execute body opens a fresh `MemoryIndex`,
+//     looks up the atom, and ONLY on a successful hit calls `index.updateAccess`
+//     — that bump is the sole programmatic strength-feedback signal. Missing
+//     atoms return a "not found" result without writing anything.
 //   - loadConfig returns {} on any failure — never throws. Real config wiring
 //     is external (see SettingsManager / webui routes).
 
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runDecay } from "./decay.ts";
@@ -42,6 +52,7 @@ import {
 	extractMemoriesWithCallLlm,
 	writeExtractionReport,
 } from "./extraction.ts";
+import type { MemoryAtomType } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,6 +110,42 @@ let pendingMemorySearches = new Map<string, Promise<FormattedMemory | null>>();
 
 /** Hard cap on how long the context hook waits for the recall to finish. */
 const CONTEXT_RECALL_TIMEOUT_MS = 8_000;
+
+// ---------------------------------------------------------------------------
+// memory_get tool schema
+// ---------------------------------------------------------------------------
+
+/**
+ * TypeBox schema for the `memory_get` tool. `id` is a UUID produced by the
+ * memory pipeline (see storage.ts `crypto.randomUUID()`); the LLM gets this
+ * id from a `recallAtoms` search result and passes it back to hydrate the
+ * atom's full content. Defined at module level so the schema object is
+ * stable across `registerMemory` invocations (extension reloads).
+ */
+const MemoryGetParams = Type.Object({
+	id: Type.String({ description: "Atom UUID from a search result" }),
+});
+
+/**
+ * Discriminated details payload for the `memory_get` tool. Two variants:
+ *   - success: every field the LLM may want from a hydrated atom.
+ *   - not_found: explicit "no such atom" signal so callers can branch on
+ *     `details.error` without parsing the content text.
+ */
+type MemoryGetDetails =
+	| {
+			error: "not_found";
+			id: string;
+	  }
+	| {
+			id: string;
+			type: MemoryAtomType;
+			title: string;
+			content: string;
+			summary: string;
+			tags: string[];
+			importance: number;
+	  };
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep memory.ts as the single import surface for callers
@@ -283,6 +330,77 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const result = await injectMemoryContext(event, pending);
 		if (pending) pendingMemorySearches.delete(lastUserPrompt);
 		return result;
+	});
+
+	// memory_get tool — the ONLY programmatic strength-feedback entry.
+	//
+	// Search (`recallAtoms`) is deliberately bump-free: surfacing a candidate
+	// in context is not the same as the LLM acting on it. Only an explicit
+	// `memory_get(id)` call from the agent counts as a feedback signal, and
+	// it must increment `access_count` / stamp `last_access` so the
+	// strength-feedback loop can keep the atom visible. The bump is the
+	// path from "search hit" to "this is worth surfacing again" — without
+	// it, every search would converge to the same ranking and the memory
+	// system would stop learning from agent behaviour.
+	//
+	// Tool contract (see specs/memory-search-decoupled/spec.md):
+	//   - parameters: { id: string (UUID) }
+	//   - success: { content: [{ type: "text", text: "<title>\n<summary>\n<content>" }],
+	//                details: { id, type, title, content, summary, tags, importance } }
+	//   - not found: { content: [{ type: "text", text: "atom not found: <id>" }],
+	//                  details: { error: "not_found", id } }
+	//   - updateAccess is called ONLY on the success branch; missing ids
+	//     never modify any row.
+	pi.registerTool({
+		name: "memory_get",
+		label: "Memory Get",
+		description:
+			"Fetch the full content of an atom by id. Use this to hydrate a search result before acting on it. Bumps the atom's access_count so the strength-feedback loop keeps it visible.",
+		promptSnippet: "Fetch full content of a memory atom.",
+		parameters: MemoryGetParams,
+		async execute(
+			_toolCallId,
+			params,
+			_signal,
+			_onUpdate,
+			_ctx,
+		): Promise<AgentToolResult<MemoryGetDetails>> {
+			const index = new MemoryIndex(DEFAULT_DB_PATH);
+			await index.init();
+			try {
+				const atom = index.getAtom(params.id);
+				if (atom === null) {
+					return {
+						content: [
+							{ type: "text", text: `atom not found: ${params.id}` },
+						],
+						details: { error: "not_found", id: params.id },
+					};
+				}
+				// Strength-feedback bump — the sole programmatic entry.
+				// Must run after the null-check so missing ids never write.
+				index.updateAccess(atom.id);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${atom.title}\n${atom.summary}\n${atom.content}`,
+						},
+					],
+					details: {
+						id: atom.id,
+						type: atom.type,
+						title: atom.title,
+						content: atom.content,
+						summary: atom.summary,
+						tags: atom.tags,
+						importance: atom.importance,
+					},
+				};
+			} finally {
+				index.close();
+			}
+		},
 	});
 }
 

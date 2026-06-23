@@ -194,6 +194,35 @@ describe("GET /api/memory/:id", () => {
 		expect(res.status).toBe(200);
 		expect(res.body.content).toBe("");
 	});
+
+	// Regression for the preview-only contract (Task 6.2/6.4): GET on the
+	// webui is a UI preview and must NOT touch access_count / last_access.
+	// Strength feedback is recorded exclusively by the agent's `memory_get`
+	// tool (see extensions/personal-assistant/memory.ts). The handler body
+	// must not call `index.updateAccess(...)`; this test fails the moment
+	// anyone re-introduces that side effect.
+	it("does not bump access_count on GET preview (preview-only contract)", async () => {
+		const atom = await insertTestAtom();
+		const res = await fetchAt(`/api/memory/${atom.id as string}`);
+		expect(res.status).toBe(200);
+
+		// Re-open the index on the same dbPath and read back the row.
+		// The route closes its index per request (see memory.ts), so this
+		// is a fresh connection that sees the on-disk state.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const got = idx.getAtom(atom.id as string);
+			expect(got).not.toBeNull();
+			expect(got?.access_count).toBe(0);
+			expect(got?.last_access).toBeNull();
+		} finally {
+			idx.close();
+		}
+	});
 });
 
 // Tests for the GET /api/memory list endpoint (Task 7.1) and
@@ -1092,7 +1121,7 @@ describe("POST /api/memory/search", () => {
 		expect(res.data.results).toEqual([]);
 	});
 
-	it("returns results with file_path for valid query (discovery-only contract)", async () => {
+	it("returns results with id+score for valid query (discovery-only contract)", async () => {
 		await insertAtom({ content: "test content alpha distinct keywords here" });
 		const res = await fetchAt("/api/memory/search", {
 			query: "alpha content keywords",
@@ -1100,21 +1129,21 @@ describe("POST /api/memory/search", () => {
 		expect(res.status).toBe(200);
 		const results = res.data.results as Array<Record<string, unknown>>;
 		expect(results.length).toBeGreaterThan(0);
-		// Result shape contract: id/type/title/summary/tags/file_path/distance/cosine
+		// Result shape contract: id/type/title/summary/tags/distance/cosine/score
+		// (no file_path — full content fetched via memory_get(id))
 		const first = results[0] as Record<string, unknown>;
 		expect(typeof first.id).toBe("string");
 		expect(typeof first.type).toBe("string");
 		expect(typeof first.distance).toBe("number");
 		expect(typeof first.cosine).toBe("number");
-		expect(typeof first.file_path).toBe("string");
+		expect(typeof first.score).toBe("number");
+		expect(first.score as number).toBeGreaterThanOrEqual(0);
+		// file_path removed from response — LLM uses memory_get(id) for full content
+		expect(first.file_path).toBeUndefined();
 		// Discovery-only: no tier / no formattedText / no tokenBudgetUsed.
 		expect(first.tier).toBeUndefined();
 		expect(res.data.formattedText).toBeUndefined();
 		expect(res.data.tokenBudgetUsed).toBeUndefined();
-		// file_path resolves to atomsDir/<type>/<id>.md on disk.
-		const fp = first.file_path as string;
-		expect(fp.startsWith(path.join(atomsDir, first.type as string))).toBe(true);
-		expect(fp.endsWith(".md")).toBe(true);
 	});
 
 	it("respects type filter", async () => {

@@ -1,39 +1,93 @@
-// recallAtoms — pure vector KNN retrieval (no fallback, no FTS).
+// recallAtoms — per-type top-3 KNN with multiplicative boost score.
 //
-// Architecture constraints (from design.md Decision 7, 8):
-//   - embedText returns null on failure → recallAtoms must return [] (no fallback).
-//   - Pure sqlite-vec KNN: no keyword matching, no FTS5.
-//   - Discovery-only: every result carries file_path, no L0/L1 hydration split.
-//     The agent reads full content via the standard `read` tool on demand.
-//   - updateAccess called for every returned atom.
-//   - Default cosine threshold = 0.5.
+// Contract (from design.md Decisions 2, 7, 8):
+//   - 3 independent vectorSearch calls (one per atom type), each capped at
+//     DEFAULT_TOP_K = 3 by `cosine × (1 + 0.3 × strength + 0.2 × importance)`.
+//   - Per-type lists sorted by score DESC, then interleaved round-robin so
+//     each type gets a turn. Sparse types skip their slot (never pad with
+//     cross-type items or placeholders).
+//   - cosine < 0.5 is dropped after the KNN returns.
+//   - Results carry `{ atom, distance, cosine, score }` — no `file_path`.
+//   - Search is DISCOVERY ONLY: does NOT bump `access_count`. Programmatic
+//     strength feedback is the responsibility of the agent's `memory_get`
+//     tool (R-search-cheap / R-feedback-loop).
+//   - `embedText` returning null → `recallAtoms` returns `[]`. No FTS /
+//     keyword fallback (Decision 7).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { embedText } from "../embed.ts";
-import { writeAtomToFile } from "../file-store.ts";
 import { recallAtoms } from "../search.ts";
 import { MemoryIndex } from "../storage.ts";
 import type { MemoryAtom, RecallResult } from "../types.ts";
 
-// Mock embed.ts at module top — vitest hoists vi.mock, so this applies to all
-// imports below (including the static import in search.ts). The factory passes
-// through real implementations of buildEmbeddableText / loadConfig and replaces
-// embedText with a deterministic char-bag mock that produces L2-normalised
-// 1024-dim vectors. The char-bag hashes each char into a 1024-bin histogram so
-// texts sharing characters (regardless of position) score high cosine and texts
-// with disjoint character sets score near zero — this gives a wide margin above
-// the 0.5 threshold for "similar" texts that a position-based bag cannot.
+// ---------------------------------------------------------------------------
+// Test scaffolding
+// ---------------------------------------------------------------------------
+
+const DIM = 1024;
+
+/**
+ * Char-bag embedding — position-independent character histogram, L2-normalised.
+ * Mirrors the real bge-m3 (L2-normalised) embedding's behaviour for cosine
+ * ordering purposes. Texts sharing characters (regardless of position) score
+ * high cosine; texts with disjoint character sets score near zero.
+ */
+const charBag = (text: string): number[] => {
+	const arr = new Array(DIM).fill(0);
+	for (let i = 0; i < text.length; i++) {
+		arr[text.charCodeAt(i) % DIM] += 1;
+	}
+	const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
+	if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
+	return arr;
+};
+
+/**
+ * Build an L2-normalised 1024-dim vector whose cosine with the unit reference
+ * vector `V_UNIT = [1, 0, 0, ...]` is exactly `dominant`. The construction
+ * puts `dominant` at dimension 0 and `sqrt(1 - dominant²)` at dimension 1, so
+ * two such vectors with the same `dominant` value also have cosine = `dominant`
+ * with each other (dim-1 is orthogonal in cosine terms).
+ */
+const makeVec = (dominant: number): number[] => {
+	const arr = new Array(DIM).fill(0);
+	arr[0] = dominant;
+	arr[1] = Math.sqrt(Math.max(0, 1 - dominant * dominant));
+	return arr;
+};
+
+const V_UNIT = makeVec(1.0);
+const V_COS_07 = makeVec(0.7);
+const V_COS_05 = makeVec(0.5);
+const V_COS_04 = makeVec(0.4);
+const V_COS_0 = makeVec(0.0);
+
+const VECS_BY_CODE: Record<string, number[]> = {
+	"1": V_UNIT,
+	"0.7": V_COS_07,
+	"0.5": V_COS_05,
+	"0.4": V_COS_04,
+	"0": V_COS_0,
+};
+
+// Sentinels recognised by the controlled embedText mock. Tests that need
+// precise cosine values prefix the atom's content with `__COS:<code>` and
+// query with the literal string `__QUERY__`. The mock extracts the code
+// from anywhere in the embedText input — the joined `insertAtom` text
+// interleaves title/summary/content/tags, so a prefix-only match would miss.
+const QRY = "__QUERY__";
+const COS_RE = /__COS:([0-9.]+)/;
+
 vi.mock("../embed.ts", async () => {
 	const actual = await vi.importActual<typeof import("../embed.ts")>("../embed.ts");
 	return {
 		...actual,
 		embedText: vi.fn(async (text: string) => {
-			const arr = new Array(1024).fill(0);
+			// Default implementation — char-bag fallback. Per-test setup may
+			// override with `installControlledMock` for precise cosine values.
+			const arr = new Array(DIM).fill(0);
 			for (let i = 0; i < text.length; i++) {
-				arr[text.charCodeAt(i) % 1024] += 1;
+				arr[text.charCodeAt(i) % DIM] += 1;
 			}
 			const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
 			if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
@@ -42,39 +96,42 @@ vi.mock("../embed.ts", async () => {
 	};
 });
 
+/** Switch embedText to controlled vectors (recognises `QRY` + `__COS:` sentinels). */
+const installControlledMock = (): void => {
+	vi.mocked(embedText).mockImplementation(async (text: string) => {
+		if (text === QRY) return V_UNIT;
+		const m = text.match(COS_RE);
+		if (m) {
+			const v = VECS_BY_CODE[m[1]];
+			if (v) return v;
+		}
+		return charBag(text);
+	});
+};
+
+const installCharBagMock = (): void => {
+	vi.mocked(embedText).mockImplementation(async (text: string) => charBag(text));
+};
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 describe("recallAtoms", () => {
 	let index: MemoryIndex;
-	let tmpDir: string;
-	let atomsDir: string;
-	let dbPath: string;
 
 	beforeEach(async () => {
-		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "search-test-"));
-		atomsDir = path.join(tmpDir, "atoms");
-		dbPath = path.join(tmpDir, "memory.db");
-		await fs.mkdir(atomsDir, { recursive: true });
-		index = new MemoryIndex(dbPath);
+		// :memory: avoids WAL setup and per-test filesystem teardown. Search
+		// no longer reads from disk, so the atomsDir parameter is now just a
+		// signature-compat placeholder.
+		index = new MemoryIndex(":memory:");
 		await index.init();
-		// Reset the mocked embedText between tests so per-test overrides do not
-		// leak. vi.mocked(embedText) reaches the same vi.fn instance across tests.
 		vi.mocked(embedText).mockReset();
-		// Reinstall the default implementation after reset — vi.fn() carries its
-		// implementation through, but mockReset clears call history and any
-		// per-test mockResolvedValueOnce overrides.
-		vi.mocked(embedText).mockImplementation(async (text: string) => {
-			const arr = new Array(1024).fill(0);
-			for (let i = 0; i < text.length; i++) {
-				arr[text.charCodeAt(i) % 1024] += 1;
-			}
-			const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
-			if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
-			return arr;
-		});
+		installCharBagMock();
 	});
 
-	afterEach(async () => {
+	afterEach(() => {
 		index.close();
-		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
 	const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
@@ -105,62 +162,90 @@ describe("recallAtoms", () => {
 		const emb = await embedText(text);
 		if (!emb) throw new Error("mocked embedText returned null in test setup");
 		await index.insertAtom(atom, emb);
-		await writeAtomToFile(atom, atomsDir);
 	};
 
+	// (a) KEEP AS-IS — embedText null → empty result, no fallback.
 	it("returns empty array when ollama is unreachable (no fallback)", async () => {
 		// Force the recall-time embedText call to return null. Earlier calls
 		// (none, since we don't insert any atoms here) still see the default.
 		vi.mocked(embedText).mockResolvedValueOnce(null);
 
-		const results = await recallAtoms(index, "test query", atomsDir);
+		const results = await recallAtoms(index, "test query", "/unused");
 		expect(results).toEqual([]);
 	});
 
-	it("returns top-K results sorted by cosine", async () => {
-		const a1 = sampleAtom({
-			title: "TypeScript strict",
-			content: "TypeScript strict mode is preferred in this project",
+	// (b) UPDATE — per-type cap: 3 atoms (1 per type) → 3 results max.
+	it("returns top-K results sorted by cosine (per-type cap)", async () => {
+		const rule = sampleAtom({
+			type: "rule",
+			content: "common keyword alpha rule content extended",
 		});
-		const a2 = sampleAtom({
-			title: "JavaScript loose",
-			content: "JavaScript dynamic typing is fine for prototypes",
+		const fact = sampleAtom({
+			type: "fact",
+			content: "common keyword alpha fact content extended",
 		});
-		await insertAtom(a1);
-		await insertAtom(a2);
+		const process = sampleAtom({
+			type: "process",
+			content: "common keyword alpha process content extended",
+		});
+		await insertAtom(rule);
+		await insertAtom(fact);
+		await insertAtom(process);
 
-		const results = await recallAtoms(index, "TypeScript strict mode", atomsDir, {
+		const results = await recallAtoms(index, "common keyword alpha", "/unused", {
 			topK: 5,
 		});
-		expect(results.length).toBeGreaterThan(0);
-		expect(results[0]?.atom.id).toBe(a1.id); // query shares prefix with a1
+		// One atom per type → at most one result per type → 3 total.
+		expect(results.length).toBe(3);
+		// Each result must carry a finite positive score (cosine > 0 against
+		// the query).
+		expect(results.every((r: RecallResult) => Number.isFinite(r.score) && r.score > 0)).toBe(true);
+		// Round-robin interleaves per-type lists in TYPES order
+		// (rule → fact → process); position 0 is therefore the rule atom.
+		expect(results[0]?.atom.id).toBe(rule.id);
+		expect(results[1]?.atom.id).toBe(fact.id);
+		expect(results[2]?.atom.id).toBe(process.id);
 	});
 
-	it("respects topK limit", async () => {
+	// (c) NEW — per-type cap = 3, even with topK > 3 and 5 matching atoms of
+	// a single type. We use one type only because sqlite-vec's `k = N` is a
+	// global KNN limit — with multiple types present, the top-N nearest may
+	// span types and the per-type filter trims the result below the cap. The
+	// per-type cap behaviour is best observed with a single type where every
+	// matching atom is in the global top-N.
+	it("respects per-type topK cap (3 per type)", async () => {
 		for (let i = 0; i < 5; i++) {
 			await insertAtom(
 				sampleAtom({
-					content: `Distinct content number ${i} with unique words ${i * 100}`,
+					type: "rule",
+					content: `Common shared content marker ${i} unique words ${i * 100}`,
 				}),
 			);
 		}
-		const results = await recallAtoms(index, "any query", atomsDir, { topK: 3 });
-		expect(results.length).toBeLessThanOrEqual(3);
+		const results = await recallAtoms(index, "Common shared content marker", "/unused", {
+			topK: 20,
+		});
+		// Hard cap: only 3 of the 5 matching rule atoms surface, even though
+		// the caller asked for 20 and 5 cleared the cosine threshold.
+		expect(results.length).toBe(3);
+		expect(results.every((r: RecallResult) => r.atom.type === "rule")).toBe(true);
 	});
 
+	// (d) KEEP AS-IS — filter restricts KNN to a single type.
 	it("filters by type", async () => {
 		const rule = sampleAtom({ type: "rule", content: "Rule content unique alpha keyword" });
 		const fact = sampleAtom({ type: "fact", content: "Fact content unique beta keyword" });
 		await insertAtom(rule);
 		await insertAtom(fact);
 
-		const results = await recallAtoms(index, "alpha content keyword", atomsDir, {
+		const results = await recallAtoms(index, "alpha content keyword", "/unused", {
 			filter: { type: "rule" },
 		});
 		expect(results.length).toBeGreaterThan(0);
 		expect(results.every((r: RecallResult) => r.atom.type === "rule")).toBe(true);
 	});
 
+	// (e) KEEP AS-IS — archived atoms are filtered out by the KNN query.
 	it("excludes archived atoms", async () => {
 		const a = sampleAtom({ content: "Active content gamma signal unique" });
 		const arch = sampleAtom({
@@ -170,10 +255,11 @@ describe("recallAtoms", () => {
 		await insertAtom(a);
 		await insertAtom(arch);
 
-		const results = await recallAtoms(index, "gamma signal unique", atomsDir);
+		const results = await recallAtoms(index, "gamma signal unique", "/unused");
 		expect(results.find((r: RecallResult) => r.atom.id === arch.id)).toBeUndefined();
 	});
 
+	// (f) KEEP AS-IS — superseded (is_latest=0) atoms are filtered out.
 	it("excludes superseded atoms (is_latest=0)", async () => {
 		const a = sampleAtom({ content: "Latest content epsilon signal unique" });
 		const sup = sampleAtom({
@@ -183,60 +269,237 @@ describe("recallAtoms", () => {
 		await insertAtom(a);
 		await insertAtom(sup);
 
-		const results = await recallAtoms(index, "epsilon signal unique", atomsDir);
+		const results = await recallAtoms(index, "epsilon signal unique", "/unused");
 		expect(results.find((r: RecallResult) => r.atom.id === sup.id)).toBeUndefined();
 	});
 
-	it("returns file_path pointing to atomsDir/<type>/<id>.md", async () => {
-		const a = sampleAtom({ type: "process", content: "zeta signal unique" });
+	// (g) REPLACE old file_path test — discovery-only shape: id + score only.
+	it("does NOT carry file_path (search is discovery-only with id+score)", async () => {
+		const a = sampleAtom({
+			type: "process",
+			content: "discovery test xi signal unique",
+		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, "zeta signal unique", atomsDir);
+		const results = await recallAtoms(index, "xi signal unique", "/unused");
 		expect(results.length).toBeGreaterThan(0);
 		const first = results[0] as RecallResult;
-		expect(first.file_path).toBe(
-			path.join(atomsDir, "process", `${a.id}.md`),
-		);
+		// Runtime check: the new contract drops `file_path` from results.
+		// `RecallResult` no longer types the field, so use `hasOwn` rather
+		// than direct property access (which the type system rejects).
+		expect(Object.hasOwn(first, "file_path")).toBe(false);
+		// The agent reads full content via memory_get(atom.id) — id is the
+		// handle, not a path.
+		expect(first.atom.id).toBe(a.id);
 	});
 
-	it("returns every result regardless of position (search is discovery-only, no L1 tier)", async () => {
-		const a1 = sampleAtom({ content: "First distinct theta keyword" });
-		const a2 = sampleAtom({ content: "Second distinct iota keyword" });
-		const a3 = sampleAtom({ content: "Third distinct kappa keyword" });
-		const a4 = sampleAtom({ content: "Fourth distinct lambda keyword" });
-		await insertAtom(a1);
-		await insertAtom(a2);
-		await insertAtom(a3);
-		await insertAtom(a4);
-
-		const results = await recallAtoms(index, "distinct theta keyword", atomsDir, {
-			topK: 10,
-		});
-		// Search must return all 4 — none are filtered out by an L0/L1 tier
-		// distinction (there is no such distinction anymore).
-		expect(results.length).toBe(4);
-	});
-
-	it("returns the atom even when the .md file is missing on disk", async () => {
-		const a = sampleAtom({ content: "No file content mu signal unique" });
+	// (h) NEW — every result carries the multiplicative score field.
+	it("returns score field for each result", async () => {
+		const a = sampleAtom({ content: "Score field test omicron signal unique" });
 		await insertAtom(a);
-		// Delete the .md file to simulate a missing-on-disk scenario.
-		const fp = path.join(atomsDir, a.type, `${a.id}.md`);
-		await fs.rm(fp, { force: true });
 
-		const results = await recallAtoms(index, "mu signal unique", atomsDir);
+		const results = await recallAtoms(index, "omicron signal unique", "/unused");
 		expect(results.length).toBeGreaterThan(0);
-		expect(results[0]?.atom.id).toBe(a.id);
-		// file_path is still computed — caller decides whether to read it.
-		expect(results[0]?.file_path).toBe(fp);
+		for (const r of results) {
+			expect(typeof r.score).toBe("number");
+			expect(Number.isFinite(r.score)).toBe(true);
+			expect(r.score).toBeGreaterThan(0);
+		}
 	});
 
-	it("updates access_count on retrieved atoms", async () => {
-		const a = sampleAtom({ content: "Access count test nu signal unique" });
+	// (i) REPLACE old updateAccess test — search does NOT bump access_count.
+	it("does NOT bump access_count on search (programmatic feedback is via memory_get only)", async () => {
+		const a = sampleAtom({ content: "No bump test pi signal unique" });
 		await insertAtom(a);
 
-		await recallAtoms(index, "nu signal unique", atomsDir);
+		await recallAtoms(index, "pi signal unique", "/unused");
 		const got = index.getAtom(a.id);
-		expect(got?.access_count).toBe(1);
+		// Strength feedback is the memory_get tool's job, not search's.
+		expect(got?.access_count).toBe(0);
+	});
+
+	// (j) NEW — sparse types skip their slot (no padding, no cross-type fill).
+	it("sparse type slot is skipped in round-robin", async () => {
+		// 1 rule + 0 fact + 2 process → round-robin yields:
+		//   round 0: rule[0], (fact[0]=undef skip), process[0]
+		//   round 1: (rule[1]=undef skip), (fact[1]=undef skip), process[1]
+		// Final: [rule, process, process] — fact is sparse, no padding.
+		const r1 = sampleAtom({
+			type: "rule",
+			content: "rule common content sigma marker",
+		});
+		const p1 = sampleAtom({
+			type: "process",
+			content: "process common content sigma marker",
+		});
+		const p2 = sampleAtom({
+			type: "process",
+			content: "process common content sigma marker two",
+		});
+		await insertAtom(r1);
+		await insertAtom(p1);
+		await insertAtom(p2);
+
+		const results = await recallAtoms(index, "sigma marker", "/unused");
+		expect(results.length).toBe(3);
+		expect(results[0]?.atom.type).toBe("rule");
+		expect(results[1]?.atom.type).toBe("process");
+		expect(results[2]?.atom.type).toBe("process");
+	});
+
+	// (k) NEW — cosine < 0.5 is dropped after vectorSearch returns.
+	it("cosine below threshold (0.5) is dropped", async () => {
+		installControlledMock();
+		const a = sampleAtom({
+			content: "__COS:0.4 below threshold atom rho signal",
+		});
+		await insertAtom(a);
+
+		const results = await recallAtoms(index, QRY, "/unused");
+		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
+	});
+
+	// (l) NEW — cosine=0 forces score=0; even max boost cannot rescue it.
+	it("score formula: cosine=0 yields score=0 regardless of strength/importance", async () => {
+		installControlledMock();
+		// Orthogonal vector (cosine=0 with query). Even at max boost
+		// (strength=1, importance=1), the multiplicative formula gives
+		// score = 0 × (1 + 0.3 + 0.2) = 0, and the cosine=0 result falls
+		// below the 0.5 threshold — so the atom never surfaces. An additive
+		// formula would give score = 0 + 0.3 + 0.2 = 0.5, landing on the
+		// threshold boundary; the multiplicative-anchor property is what
+		// keeps this atom out of results.
+		const a = sampleAtom({
+			content: "__COS:0 orthogonal atom tau signal",
+			strength: 1.0,
+			importance: 1.0,
+		});
+		await insertAtom(a);
+
+		const results = await recallAtoms(index, QRY, "/unused");
+		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
+	});
+
+	// (m) NEW — cosine=1 with max boost yields score=1.5.
+	it("score formula: cosine=1 with max boost yields score=1.5", async () => {
+		installControlledMock();
+		// score = 1 × (1 + 0.3 × 1 + 0.2 × 1) = 1.5.
+		const a = sampleAtom({
+			content: "__COS:1 perfect atom upsilon signal",
+			strength: 1.0,
+			importance: 1.0,
+		});
+		await insertAtom(a);
+
+		const results = await recallAtoms(index, QRY, "/unused");
+		expect(results.length).toBe(1);
+		expect(results[0]?.atom.id).toBe(a.id);
+		expect(results[0]?.score).toBeCloseTo(1.5, 5);
+	});
+
+	// (n) NEW — score follows the multiplicative formula exactly.
+	it("score field follows the multiplicative formula", async () => {
+		installControlledMock();
+		// score = 0.7 × (1 + 0.3 × 1 + 0.2 × 1) = 0.7 × 1.5 = 1.05.
+		const a = sampleAtom({
+			content: "__COS:0.7 mid cosine atom phi signal",
+			strength: 1.0,
+			importance: 1.0,
+		});
+		await insertAtom(a);
+
+		const results = await recallAtoms(index, QRY, "/unused");
+		expect(results.length).toBe(1);
+		expect(results[0]?.atom.id).toBe(a.id);
+		expect(results[0]?.score).toBeCloseTo(1.05, 5);
+	});
+
+	// (o) NEW — round-robin interleaves per-type slots in canonical order.
+	//
+	// We mock `index.vectorSearch` per type filter because sqlite-vec's
+	// `k = N` is a global KNN limit; with multiple types in the index, the
+	// top-N nearest can span types and the per-type filter trims the result
+	// below the per-type cap. Mocking isolates the round-robin algorithm
+	// from the KNN's global-k behaviour so we can exercise a 3+3+3 → 9
+	// result interleaving directly.
+	it("round-robin interleaves type slots", async () => {
+		// Build 3 atoms of each type so getAtom() inside search.ts can
+		// resolve every mocked id back to a real row.
+		const ruleAtoms: MemoryAtom[] = [];
+		const factAtoms: MemoryAtom[] = [];
+		const processAtoms: MemoryAtom[] = [];
+		for (let i = 0; i < 3; i++) {
+			ruleAtoms.push(
+				await (async () => {
+					const a = sampleAtom({
+						type: "rule",
+						content: `rule ${i} round robin common content chi marker`,
+					});
+					await insertAtom(a);
+					return a;
+				})(),
+			);
+			factAtoms.push(
+				await (async () => {
+					const a = sampleAtom({
+						type: "fact",
+						content: `fact ${i} round robin common content chi marker`,
+					});
+					await insertAtom(a);
+					return a;
+				})(),
+			);
+			processAtoms.push(
+				await (async () => {
+					const a = sampleAtom({
+						type: "process",
+						content: `process ${i} round robin common content chi marker`,
+					});
+					await insertAtom(a);
+					return a;
+				})(),
+			);
+		}
+
+		// Mock vectorSearch to return 3 per type. Distances are crafted so
+		// cosine = 1 - dist²/2 = 0.9 (well above the 0.5 threshold) and so
+		// that within-type ordering is stable: rule-0 < rule-1 < rule-2 by
+		// score (i.e., higher cosine first).
+		const makeEntries = (atoms: MemoryAtom[]) =>
+			atoms.map((a, i) => ({ id: a.id, distance: Math.sqrt(0.2) + i * 0.001 }));
+
+		index.vectorSearch = ((_embedding: number[], _k: number, filter?: { type?: string }) => {
+			if (filter?.type === "rule") return makeEntries(ruleAtoms);
+			if (filter?.type === "fact") return makeEntries(factAtoms);
+			if (filter?.type === "process") return makeEntries(processAtoms);
+			return [];
+		}) as typeof index.vectorSearch;
+
+		const results = await recallAtoms(index, "round robin common content chi marker", "/unused");
+		expect(results.length).toBe(9);
+		// Round-robin interleaves per-type lists in TYPES order. Position k:
+		//   rule   at k ∈ {0, 3, 6}
+		//   fact   at k ∈ {1, 4, 7}
+		//   process at k ∈ {2, 5, 8}
+		expect(results[0]?.atom.type).toBe("rule");
+		expect(results[1]?.atom.type).toBe("fact");
+		expect(results[2]?.atom.type).toBe("process");
+		expect(results[3]?.atom.type).toBe("rule");
+		expect(results[4]?.atom.type).toBe("fact");
+		expect(results[5]?.atom.type).toBe("process");
+		expect(results[6]?.atom.type).toBe("rule");
+		expect(results[7]?.atom.type).toBe("fact");
+		expect(results[8]?.atom.type).toBe("process");
+		// And the within-type order must match the score-DESC order we
+		// mocked (rule-0 first, rule-1 second, rule-2 third).
+		expect(results[0]?.atom.id).toBe(ruleAtoms[0]!.id);
+		expect(results[3]?.atom.id).toBe(ruleAtoms[1]!.id);
+		expect(results[6]?.atom.id).toBe(ruleAtoms[2]!.id);
+	});
+
+	// (p) NEW — empty index yields empty result across all three type slots.
+	it("returns empty when all 3 types have zero matching atoms", async () => {
+		const results = await recallAtoms(index, "anything at all", "/unused");
+		expect(results).toEqual([]);
 	});
 });

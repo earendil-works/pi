@@ -71,11 +71,21 @@ export interface RecallResult {
 	/** Cosine similarity in [0,1], derived as 1 - distance²/2 (for L2-normalized vectors). */
 	cosine: number;
 	/**
-	 * Absolute path to the atom's `.md` storage file. The agent reads this file
-	 * with the standard `read` tool to fetch full content on demand — search is
-	 * discovery only, never hydration (Decision: search returns summaries only).
+	 * Weighted ranking score used to order hits within each atom type during
+	 * search. Formula: `score = cosine × (1 + 0.3 × strength + 0.2 × importance)`.
+	 *
+	 * Cosine is the multiplicative anchor: a cosine of 0 forces score to 0,
+	 * regardless of strength/importance. The strength/importance term adds a
+	 * continuous boost capped at +0.5 (when both are 1.0), so an unrelated atom
+	 * can never be boosted above a relevant one.
+	 *
+	 * `score` is exposed only in the search response (UI / debug surfaces).
+	 * The format layer (`formatMemoryContext`) re-sorts hits by `distance` ASC
+	 * before injecting them into the LLM prompt, so the LLM never sees
+	 * `score` — it sees cosine-ordered blocks and uses `id` to call `memory_get`
+	 * for full content.
 	 */
-	file_path: string;
+	score: number;
 }
 
 // ---------------------------------------------------------------------------
