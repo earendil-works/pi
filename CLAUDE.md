@@ -82,3 +82,4 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - `formatMemoryBlock` 输出 `[type] title\nsummary\nid: <uuid>\nTags: ...`，LLM 通过 id 反查 `memory_get` 拿全文
 - importance 由 extraction LLM 在收到 `<user_tone>` hint 后**自主**判断，词表扫描只决定 hint 强度（strong/habit/neutral/weak/rare），不直接覆写 LLM 输出；LLM 可在 ±0.15 范围内调整
 - `scoreUserTone` 纯词表匹配（中英双语 ~20 词，5 档 strong/habit/neutral/weak/rare），不调 LLM，微秒级；**聚合所有 user 消息**取最强命中 tier，NEUTRAL 等级不向 prompt 注入任何 hint
+- TUI footer 通过 `ctx.ui.setStatus("memory", …)` 显示召回摘要（hits: `📦 N atoms · rule=X fact=Y process=Z · top=0.XXX`；空: `🔍 no memory match`；失败: `⚠ memory recall failed`），让用户在不打开 webui 的情况下也能看到 memory pipeline 状态——LLM prompt 注入 + TUI 状态双轨

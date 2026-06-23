@@ -20,6 +20,7 @@
 - Recall quality validation: 14 atoms / 9 queries labeled dataset, char n-gram mock embed
 - New `memory_get` tool — sole programmatic strength-feedback entry. Bumps `access_count` and `last_access` on successful lookup.
 - New `scoreUserTone` 5-tier user-tone scorer (STRONG/HABIT/WEAK/RARE/NEUTRAL) + `<user_tone>` hint injection in `buildExtractionPrompt`. Extraction LLM uses it to calibrate importance (±0.15 deviation allowed).
+- TUI footer status indicator for memory recall. The `before_agent_start` hook now surfaces the most recent recall result via `ctx.ui.setStatus("memory", …)` so the user sees `"📦 N atoms · rule=X fact=Y process=Z · top=0.XXX"` (hits), `"🔍 no memory match"` (empty), or `"⚠ memory recall failed"` (error) below the mode chip. Status reflects the most recent recall; older states are not retained.
 
 ### Changed
 - memory.ts reduced from 1649 → 290 lines (v2 is entry-point-only)
@@ -38,6 +39,9 @@
 - searchByFts, rewriteQuery, simpleKeywordExtraction, dedupeRedundantKeywords, dedupeAgainstQuery, expandCjkKeywords, isEmbeddingServiceAvailable, searchEmbeddings, parseRewriteJson, getEmbedding, callOllamaRewrite, searchAtoms, searchAtomsWithScores
 - Legacy sqlite.ts wrapper
 - `file_path` from search response and `formatMemoryBlock` output. Replaced with `id` for `memory_get` lookup.
+
+### Known Limitations
+- **TUI memory status indicator**: the `ctx.ui.setStatus` API for footer status has existed since `7b902612 feat(coding-agent): add FooterDataProvider for git branch and extension statuses`, but neither v1 nor v2 memory ever called it. Recall results were only ever injected into the LLM prompt — invisible to the user. Now fixed via the `before_agent_start` hook firing `setStatus("memory", …)` on every turn.
 
 ### Added (webui-memory-page)
 

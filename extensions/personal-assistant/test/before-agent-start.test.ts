@@ -84,6 +84,22 @@ function createMockPi(): MockPi {
 	};
 }
 
+// Minimal ExtensionContext mock for hook handlers. The before_agent_start
+// hook now calls `ctx.ui.setStatus("memory", ...)` to surface the recall
+// status in the TUI footer (see memory-status.test.ts for the indicator
+// contract). Older tests in this file pass `{}` for ctx; we keep them
+// intact and only provide this minimal ctx where the hook is fired and
+// the status path runs.
+function createMockCtx(): { ui: { setStatus: (key: string, text: string | undefined) => void } } {
+	return {
+		ui: {
+			setStatus: () => {
+				// no-op — status assertions live in memory-status.test.ts
+			},
+		},
+	};
+}
+
 describe("before_agent_start + context hooks", () => {
 	let mockPi: MockPi;
 
@@ -147,7 +163,7 @@ describe("before_agent_start + context hooks", () => {
 		expect(ctxHandler).toBeDefined();
 
 		// Kick off the async recall via before_agent_start.
-		await beforeHandler!({ prompt: "test prompt" }, {});
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
 
 		// Context awaits the pending search and injects.
 		const event = { messages: [{ role: "user", content: "hello" }] };
@@ -184,7 +200,7 @@ describe("before_agent_start + context hooks", () => {
 		const beforeHandler = mockPi.hooks.get("before_agent_start");
 		const ctxHandler = mockPi.hooks.get("context");
 
-		await beforeHandler!({ prompt: "test prompt" }, {});
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
 		const event = { messages: [{ role: "user", content: "hello" }] };
 		const result = await ctxHandler!(event, {});
 
@@ -201,7 +217,7 @@ describe("before_agent_start + context hooks", () => {
 		const beforeHandler = mockPi.hooks.get("before_agent_start");
 		const ctxHandler = mockPi.hooks.get("context");
 
-		await beforeHandler!({ prompt: "test prompt" }, {});
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
 		const event = { messages: [{ role: "assistant", content: "hi" }] };
 		const result = await ctxHandler!(event, {});
 

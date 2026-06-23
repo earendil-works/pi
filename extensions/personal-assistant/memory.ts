@@ -52,7 +52,7 @@ import {
 	extractMemoriesWithCallLlm,
 	writeExtractionReport,
 } from "./extraction.ts";
-import type { MemoryAtomType } from "./types.ts";
+import type { MemoryAtomType, RecallResult } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -274,7 +274,16 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// for the context hook to await on the same turn. Dynamic imports of
 	// search.ts / format.ts keep the cold-start cost off the critical path
 	// for sessions that never reach the context hook.
-	pi.on("before_agent_start", async (event, _ctx) => {
+	//
+	// Surfaces a per-turn footer status (`memory` key) via `ctx.ui.setStatus`
+	// so the user sees "📦 N atoms · rule=X fact=Y process=Z · top=0.XXX" in
+	// the TUI status bar below the mode chip. Three observable states:
+	//   - hits found       → "📦 N atoms · rule=… fact=… process=… · top=0.XXX"
+	//   - empty recall     → "🔍 no memory match"
+	//   - recall failed    → "⚠ memory recall failed"
+	// The status reflects the most recent recall; older statuses are not
+	// remembered (no separate key per turn — single source of truth).
+	pi.on("before_agent_start", async (event, ctx) => {
 		const userMessage = (event as { prompt?: string }).prompt ?? "";
 		if (userMessage.length === 0) return;
 
@@ -288,7 +297,27 @@ export function registerMemory(pi: ExtensionAPI): void {
 			try {
 				const { recallAtoms } = await import("./search.ts");
 				const { formatMemoryContext } = await import("./format.ts");
-				const results = await recallAtoms(index, userMessage, { topK: 10 });
+				let results: RecallResult[];
+				try {
+					results = await recallAtoms(index, userMessage, { topK: 10 });
+				} catch (err) {
+					ctx.ui.setStatus("memory", "⚠ memory recall failed");
+					throw err;
+				}
+				if (results.length === 0) {
+					ctx.ui.setStatus("memory", "🔍 no memory match");
+				} else {
+					const byType = { rule: 0, fact: 0, process: 0 };
+					for (const r of results) byType[r.atom.type]++;
+					const topScore = results
+						.map((r) => r.score)
+						.reduce((a, b) => (b > a ? b : a), 0)
+						.toFixed(3);
+					ctx.ui.setStatus(
+						"memory",
+						`📦 ${results.length} atoms · rule=${byType.rule} fact=${byType.fact} process=${byType.process} · top=${topScore}`,
+					);
+				}
 				return formatMemoryContext(results, 4000);
 			} finally {
 				index.close();
