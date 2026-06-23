@@ -29,8 +29,9 @@ import type { MemoryAtom, MemoryAtomType, RecallResult } from "./types.ts";
 /** Per-type recall cap. Hard ceiling on the per-type top list (Decision 2). */
 const DEFAULT_TOP_K = 3;
 
-/** Minimum cosine similarity (post-filter). Atoms below this are dropped. */
-const THRESHOLD = 0.5;
+/** Default minimum cosine similarity (post-filter). Overridable per-call via
+ *  `RecallOptions.threshold` for hermetic tests that use a weaker mock embedder. */
+const DEFAULT_THRESHOLD = 0.5;
 
 /** Multiplicative boost weights for the score formula (Decision 8). */
 const STRENGTH_WEIGHT = 0.3;
@@ -40,16 +41,15 @@ const IMPORTANCE_WEIGHT = 0.2;
 const TYPES: readonly MemoryAtomType[] = ["rule", "fact", "process"];
 
 /**
- * Options for `recallAtoms`. `topK` and `threshold` are accepted for
- * signature compatibility with prior callers but are no longer wired in —
- * the per-type cap is fixed at `DEFAULT_TOP_K` and the cosine threshold is
- * fixed at `0.5` (Decisions 2, 8). `filter` still narrows the search to a
- * single atom type.
+ * Options for `recallAtoms`. `topK` controls the per-type cap (default 3,
+ * Decision 2). `threshold` is honored (default 0.5) so hermetic tests with
+ * weaker mock embedders can dial it down. `filter` narrows the search to
+ * a single atom type.
  */
 export interface RecallOptions {
-	/** Accepted for compat; ignored — per-type cap is fixed at `DEFAULT_TOP_K`. */
+	/** Per-type cap on results (Decision 2). Default 3. */
 	topK?: number;
-	/** Accepted for compat; ignored — cosine threshold is fixed at `0.5`. */
+	/** Minimum cosine similarity (post-filter). Default 0.5 (Decision 8). */
 	threshold?: number;
 	/** Restrict KNN to a single atom type. */
 	filter?: { type?: MemoryAtom["type"] };
@@ -94,9 +94,11 @@ export async function recallAtoms(
 	// synchronous) vectorSearch calls through a uniform async seam so a
 	// future async sqlite driver can drop in without rewriting this site
 	// (the per-type fan-out stays structurally parallel).
+	const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+	const topK = options.topK ?? DEFAULT_TOP_K;
 	const perTypeResults: RecallResult[][] = await Promise.all(
 		typesToSearch.map((type) => {
-			const raw = index.vectorSearch(queryEmbedding, DEFAULT_TOP_K, {
+			const raw = index.vectorSearch(queryEmbedding, topK, {
 				type,
 				isLatestOnly: true,
 				archived: false,
@@ -112,7 +114,7 @@ export async function recallAtoms(
 				// L2 → cosine, valid only when both vectors are L2-normalised
 				// (bge-m3 outputs are, by construction).
 				const cosine = 1 - (distance * distance) / 2;
-				if (cosine < THRESHOLD) continue;
+				if (cosine < threshold) continue;
 				const score =
 					cosine *
 					(1 + STRENGTH_WEIGHT * atom.strength + IMPORTANCE_WEIGHT * atom.importance);
@@ -124,10 +126,10 @@ export async function recallAtoms(
 	);
 
 	// Round-robin interleave: type[0], type[1], type[2], type[0], type[1], ...
-	// Sparse lists (length < DEFAULT_TOP_K) skip their slot — never pad with
+	// Sparse lists (length < topK) skip their slot — never pad with
 	// cross-type items or placeholders (Decision 2).
 	const results: RecallResult[] = [];
-	for (let i = 0; i < DEFAULT_TOP_K; i++) {
+	for (let i = 0; i < topK; i++) {
 		for (const list of perTypeResults) {
 			const item = list[i];
 			if (item) results.push(item);
