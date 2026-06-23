@@ -41,6 +41,7 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	Stack,
 	setKeybindings,
 	Text,
 	TruncatedText,
@@ -268,7 +269,8 @@ export class InteractiveMode {
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
-	private statusContainer: Container;
+	private statusContainer: Stack;
+	private readonly statusPlaceholder = new Container();
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
@@ -405,7 +407,9 @@ export class InteractiveMode {
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
-		this.statusContainer = new Container();
+		this.statusContainer = new Stack();
+		this.statusPlaceholder.addChild(new Spacer(1));
+		this.statusPlaceholder.addChild(new Text("[status placeholder]", 1, 0));
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -1548,11 +1552,7 @@ export class InteractiveMode {
 			commandContextActions: {
 				waitForIdle: () => this.session.agent.waitForIdle(),
 				newSession: async (options) => {
-					if (this.loadingAnimation) {
-						this.loadingAnimation.stop();
-						this.loadingAnimation = undefined;
-					}
-					this.statusContainer.clear();
+					this.stopWorkingLoader();
 					try {
 						return await this.runtimeHost.newSession(options);
 					} catch (error: unknown) {
@@ -1625,7 +1625,8 @@ export class InteractiveMode {
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
-		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		const clearOnShrink = this.settingsManager.getClearOnShrink();
+		this.ui.setClearOnShrink(clearOnShrink);
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
 		this.defaultEditor.setPaddingX(editorPaddingX);
@@ -1761,9 +1762,9 @@ export class InteractiveMode {
 	private stopWorkingLoader(): void {
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
+			this.statusContainer.removeChild(this.loadingAnimation);
 			this.loadingAnimation = undefined;
 		}
-		this.statusContainer.clear();
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -1774,7 +1775,6 @@ export class InteractiveMode {
 			return;
 		}
 		if (this.session.isStreaming && !this.loadingAnimation) {
-			this.statusContainer.clear();
 			this.loadingAnimation = this.createWorkingLoader();
 			this.statusContainer.addChild(this.loadingAnimation);
 		}
@@ -2753,10 +2753,14 @@ export class InteractiveMode {
 				}
 				if (this.retryLoader) {
 					this.retryLoader.stop();
+					this.statusContainer.removeChild(this.retryLoader);
 					this.retryLoader = undefined;
 				}
 				this.stopWorkingLoader();
 				if (this.workingVisible) {
+					if (this.ui.getClearOnShrink() && !this.statusContainer.children.includes(this.statusPlaceholder)) {
+						this.statusContainer.addChild(this.statusPlaceholder);
+					}
 					this.loadingAnimation = this.createWorkingLoader();
 					this.statusContainer.addChild(this.loadingAnimation);
 				}
@@ -2922,11 +2926,7 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(false);
 				}
-				if (this.loadingAnimation) {
-					this.loadingAnimation.stop();
-					this.loadingAnimation = undefined;
-					this.statusContainer.clear();
-				}
+				this.stopWorkingLoader();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
@@ -2948,7 +2948,7 @@ export class InteractiveMode {
 				this.defaultEditor.onEscape = () => {
 					this.session.abortCompaction();
 				};
-				this.statusContainer.clear();
+				this.stopWorkingLoader();
 				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
 				const label =
 					event.reason === "manual"
@@ -2975,8 +2975,8 @@ export class InteractiveMode {
 				}
 				if (this.autoCompactionLoader) {
 					this.autoCompactionLoader.stop();
+					this.statusContainer.removeChild(this.autoCompactionLoader);
 					this.autoCompactionLoader = undefined;
-					this.statusContainer.clear();
 				}
 				if (event.aborted) {
 					if (event.reason === "manual") {
@@ -3015,8 +3015,13 @@ export class InteractiveMode {
 					this.session.abortRetry();
 				};
 				// Show retry indicator
-				this.statusContainer.clear();
+				this.stopWorkingLoader();
 				this.retryCountdown?.dispose();
+				if (this.retryLoader) {
+					this.retryLoader.stop();
+					this.statusContainer.removeChild(this.retryLoader);
+					this.retryLoader = undefined;
+				}
 				const retryMessage = (seconds: number) =>
 					`Retrying (${event.attempt}/${event.maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
 				this.retryLoader = new Loader(
@@ -3053,8 +3058,8 @@ export class InteractiveMode {
 				// Stop loader
 				if (this.retryLoader) {
 					this.retryLoader.stop();
+					this.statusContainer.removeChild(this.retryLoader);
 					this.retryLoader = undefined;
-					this.statusContainer.clear();
 				}
 				// Show error only on final failure (success shows normal response)
 				if (!event.success) {
@@ -4538,7 +4543,7 @@ export class InteractiveMode {
 					} finally {
 						if (summaryLoader) {
 							summaryLoader.stop();
-							this.statusContainer.clear();
+							this.statusContainer.removeChild(summaryLoader);
 						}
 						this.defaultEditor.onEscape = originalOnEscape;
 					}
@@ -4600,11 +4605,7 @@ export class InteractiveMode {
 		sessionPath: string,
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.stopWorkingLoader();
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -5200,11 +5201,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			if (this.loadingAnimation) {
-				this.loadingAnimation.stop();
-				this.loadingAnimation = undefined;
-			}
-			this.statusContainer.clear();
+			this.stopWorkingLoader();
 			const result = await this.runtimeHost.importFromJsonl(inputPath);
 			if (result.cancelled) {
 				this.showStatus("Import cancelled");
@@ -5555,11 +5552,7 @@ export class InteractiveMode {
 	}
 
 	private async handleClearCommand(): Promise<void> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.stopWorkingLoader();
 		try {
 			const result = await this.runtimeHost.newSession();
 			if (result.cancelled) {
@@ -5718,11 +5711,7 @@ export class InteractiveMode {
 	}
 
 	private async handleCompactCommand(customInstructions?: string): Promise<void> {
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
-		this.statusContainer.clear();
+		this.stopWorkingLoader();
 
 		try {
 			await this.session.compact(customInstructions);
@@ -5735,10 +5724,7 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-			this.loadingAnimation = undefined;
-		}
+		this.stopWorkingLoader();
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();

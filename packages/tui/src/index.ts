@@ -108,6 +108,7 @@ export {
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
 	type SizeValue,
+	Stack,
 	TUI,
 } from "./tui.ts";
 // Utilities

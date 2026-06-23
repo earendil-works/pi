@@ -290,6 +290,15 @@ export class Container implements Component {
 }
 
 /**
+ * Stack - a component that keeps a stack of children and renders only the topmost child.
+ */
+export class Stack extends Container {
+	override render(width: number): string[] {
+		return this.children[this.children.length - 1]?.render(width) ?? [];
+	}
+}
+
+/**
  * TUI - Main class for managing terminal UI with differential rendering
  */
 export class TUI extends Container {
