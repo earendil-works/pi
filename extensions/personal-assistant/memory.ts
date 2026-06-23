@@ -42,7 +42,7 @@
 
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import { Type, completeSimple, getEnvApiKey } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runDecay } from "./decay.ts";
@@ -82,6 +82,34 @@ const DEFAULT_DB_PATH = join(homedir(), ".pi", "agent", "memory", "memory.db");
 
 /** Default atom file directory. Override via config.memory.atomsDir. */
 const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
+
+/**
+ * Flatten an AgentMessage into the {role, content: string} shape that
+ * `extractMemoriesWithCallLlm` consumes. Returns null for messages we can't
+ * flatten (no text content — e.g. image-only user messages, tool-only
+ * assistant turns). The caller filters nulls before passing to extraction.
+ */
+function agentMessageToExtractionMessage(msg: AgentMessage): {
+	role: string;
+	content: string;
+} | null {
+	const role = (msg as { role?: string }).role;
+	if (role !== "user" && role !== "assistant") return null;
+	const content = (msg as { content: unknown }).content;
+	if (typeof content === "string") {
+		return content.length === 0 ? null : { role, content };
+	}
+	if (!Array.isArray(content)) return null;
+	const textParts: string[] = [];
+	for (const block of content) {
+		if (block && typeof block === "object" && "type" in block && (block as { type: string }).type === "text") {
+			const t = (block as { text?: unknown }).text;
+			if (typeof t === "string" && t.length > 0) textParts.push(t);
+		}
+	}
+	if (textParts.length === 0) return null;
+	return { role, content: textParts.join("\n") };
+}
 
 /**
  * Throttle window for the session_start decay run. One hour keeps the DB
@@ -198,50 +226,90 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// runs and extension reloads don't leak state between each other.
 	pendingMemorySearches = new Map();
 
-	// session_before_compact — extract memories before the conversation is
-	// summarised and discarded. Errors are caught so a broken memory pipeline
+// session_before_compact — extract memories before the conversation is
+	// summarised and discarded. Fires on both manual /compact and auto-compact
+	// (token-threshold trigger). Errors are caught so a broken memory pipeline
 	// never blocks compaction itself.
-	pi.on("session_before_compact", async (event, _ctx) => {
+	//
+	// The event payload (SessionBeforeCompactEvent) carries the messages to
+	// summarise at `event.preparation.messagesToSummarize`, not at
+	// `event.messages` (which doesn't exist on this event). The extraction
+	// prompt is fully self-contained — EXTRACT_PROMPT_V2 + tone hint + the
+	// messages — so we use `completeSimple` with a single user-role message
+	// carrying the prompt, matching how the webui server routes manual
+	// extraction (`packages/webui/server/index.ts` buildCallLlm).
+	pi.on("session_before_compact", async (event, ctx) => {
 		const config = loadConfig();
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
-		const messages = (event as { messages?: unknown }).messages ?? [];
-		if (!Array.isArray(messages) || messages.length === 0) return;
+		const rawMessages = event.preparation?.messagesToSummarize ?? [];
+		if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+
+		// Convert AgentMessage → the simple {role, content} shape that
+		// extractMemoriesWithCallLlm expects. User messages may be string or
+		// (TextContent | ImageContent)[]; assistant messages are arrays of
+		// TextContent/ThinkingContent/ToolCall. We flatten to text only —
+		// images and tool calls don't help the extraction LLM.
+		const messages = rawMessages
+			.map(agentMessageToExtractionMessage)
+			.filter((m): m is { role: string; content: string } => m !== null);
+
+		if (messages.length === 0) return;
+
+		const model = ctx.model;
+		if (!model) {
+			// eslint-disable-next-line no-console
+			console.warn(
+				"[memory-v2] session_before_compact: no model in ctx (rpc/print mode?), skipping extraction",
+			);
+			return;
+		}
+
+		// API key resolution mirrors pi's normal agent flow: env first, then
+		// the auth storage the agent itself uses. This keeps extraction on
+		// the same auth path as the running session.
+		const envApiKey = getEnvApiKey(model.provider);
+		const apiKey = envApiKey ?? (await ctx.modelRegistry.getApiKeyForProvider(model.provider));
+
+		// Auth header convention differs by API family — anthropic uses
+		// `x-api-key: <key>` (no Bearer), everything else uses
+		// `Authorization: Bearer <key>`. Mirrors packages/webui/server/index.ts
+		// buildCallLlm (line 110).
+		const authHeader = model.api === "anthropic-messages" ? "x-api-key" : "Authorization";
+		const headers: Record<string, string> = { ...(model.headers ?? {}) };
+		if (apiKey) {
+			headers[authHeader] = authHeader === "Authorization" ? `Bearer ${apiKey}` : apiKey;
+		}
+
+		const callLlm = async (prompt: string): Promise<string> => {
+			const response = await completeSimple(
+				model,
+				{ messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+				{ apiKey: apiKey ?? undefined, headers, maxTokens: 2048 },
+			);
+			if (!response.content) {
+				throw new Error("No content in LLM response");
+			}
+			const textParts: string[] = [];
+			for (const c of response.content) {
+				if (c.type === "text" && "text" in c) {
+					textParts.push(c.text);
+				}
+			}
+			if (textParts.length === 0) {
+				throw new Error("No text content in LLM response");
+			}
+			return textParts.join("");
+		};
 
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
-			// KNOWN LIMITATION: v2 does not yet wire a real LLM caller for
-			// the session_before_compact hook. The ExtensionContext passed
-			// by pi does not yet expose a synchronous callLlm; production
-			// wiring requires either ctx.session.complete() integration
-			// (requires a session-bound model) or routing through a
-			// webui-side HTTP handler. For now, the stub returns an empty
-			// plan — meaning compaction produces zero atoms. This is a
-			// known gap, NOT a bug. Until wired, populate atoms via:
-			//   - manual POST /api/memory/extract
-			//   - or wait for the follow-up task that wires ctx.session.complete()
-			//
-			// See: docs/sdd/changes/memory-v2-refactor/verification-checklist.md
-			// (extraction stub) and code review notes.
-			// eslint-disable-next-line no-console
-			console.warn(
-				"[memory-v2] session_before_compact: LLM caller not wired in v2, " +
-				"extraction returns empty plan. Use POST /api/memory/extract for manual extraction."
-			);
-			const callLlm = async (_prompt: string): Promise<string> => '{"items":[]}';
-
-			const result = await extractMemoriesWithCallLlm(
-				callLlm,
-				messages as Array<{ role: string; content: string }>,
-				index,
-				{
-					atomsDir,
-					model: config.memory?.embedding?.model,
-				},
-			);
-
+			const result = await extractMemoriesWithCallLlm(callLlm, messages, index, {
+				atomsDir,
+				model: config.memory?.embedding?.model,
+			});
 			await writeExtractionReport(result.plan);
 		} finally {
 			index.close();

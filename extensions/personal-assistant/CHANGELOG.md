@@ -34,6 +34,7 @@
 ### Fixed
 - Hash mismatch between DB content_fingerprint and file contentHash (both now use normalizeContent before sha256)
 - Express route shadowing: /api/memory/stats, /search, /extract now register before /:id
+- **`session_before_compact` extraction wired up**: the hook previously read `event.messages` (a non-existent field) and used a hardcoded `callLlm` stub returning `'{"items":[]}'`, so compact fired the hook but never produced atoms. The handler now reads `event.preparation.messagesToSummarize`, calls `completeSimple` with the session's `ctx.model`, and resolves the API key via `getEnvApiKey` (env first) then `ctx.modelRegistry.getApiKeyForProvider` (auth-storage fallback). Compact now grows memory automatically on every summary — no more manual `POST /api/memory/extract` workaround.
 
 ### Removed
 - searchByFts, rewriteQuery, simpleKeywordExtraction, dedupeRedundantKeywords, dedupeAgainstQuery, expandCjkKeywords, isEmbeddingServiceAvailable, searchEmbeddings, parseRewriteJson, getEmbedding, callOllamaRewrite, searchAtoms, searchAtomsWithScores

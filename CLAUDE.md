@@ -54,7 +54,6 @@ work in this repo; per-change principles are in `docs/sdd/archive/<change>/princ
 - **测试 fixture 含真实会话**: `extensions/personal-assistant/test/fixtures/session-sample.jsonl` 是用户真实 session 截取 (416KB,最后 200 条),含用户名/项目路径/LLM 完整响应。仓库为私人项目 (no upstream sync),接受此风险,不替换为合成数据。
 - **embed.ts 无 SSRF guard**: `embed.ts` 直接 fetch `cfg.ollamaUrl` (默认 `http://127.0.0.1:11434`),未复用 `tools.ts` 的 `isPrivateIP` guard。接受风险 — 设计假设 ollama 始终是本地内嵌服务,config 仅 trusted local 来源写入 (settings.json 不可被未授权用户修改)。如未来 config 可被 prompt 注入或 webui 写入,需补 guard。
 - **召回 memory 无结构化分隔**: 召回 atom content 直接拼接到 user message (`memory.ts` context hook),不包裹 `<memory-context>` 标签。LLM 可能将 memory content 误识别为 instruction。接受 — local-only threat model + memory 来源已 controlled (LLM 自身提取 + PATCH 需要 access to webui)。
-- **session_before_compact LLM 存根**: hook 内 `callLlm` 永远返回 `{"items":[]}`,不会通过 LLM 提取 atoms。workaround 是手动调 `POST /api/memory/extract`。已知偏差,待 ExtensionContext API 稳定后替换为 `ctx.session.complete(prompt)`。
 
 Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 
