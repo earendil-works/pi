@@ -10,7 +10,7 @@
 - importance 反映作者/LLM 静态优先级,rule type 永远 ≥ fact/process,所以 rule 在 cosine + strength 相同时自然胜出
 - `runDecay` 现有行为(baseDecay=0.05, archiveThreshold=0.1, rule 永不 archive)不变 — strength 衰减让 score 自然下降,排名下降后进一步 decay,最终触发 archive,形成完整"遗忘 → 清理"链条
 - `formatMemoryBlock` 输出 `[type] title\nsummary\nid: <uuid>\nTags: ...`,LLM 通过 id 反查 `memory_get` 拿全文
-- importance 由 extraction LLM 在收到 `<user_tone>` hint 后**自主**判断,词表扫描只决定 hint 强度(strong/habit/neutral/weak),不直接覆写 LLM 输出
-- `scoreUserTone` 纯词表匹配(中英双语 ~20 词),不调 LLM,微秒级;只看最近一条 user 消息,不聚合多轮
+- importance 由 extraction LLM 在收到 `<user_tone>` hint 后**自主**判断,词表扫描只决定 hint 强度(strong/habit/neutral/weak/rare),不直接覆写 LLM 输出;LLM 可在 ±0.15 范围内调整
+- `scoreUserTone` 纯词表匹配(中英双语 ~20 词,5 档 strong/habit/neutral/weak/rare),不调 LLM,微秒级;**聚合所有 user 消息**取最强命中 tier,NEUTRAL 等级不向 prompt 注入任何 hint
 
 Verbatim from docs/sdd/changes/memory-search-get-decoupling/principles.md
