@@ -32,6 +32,7 @@ import {
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
 import { recallAtoms } from "../../../../extensions/personal-assistant/search.ts";
+import type { RecallResult } from "../../../../extensions/personal-assistant/types.ts";
 import {
 	buildEmbeddableText,
 	embedText,
@@ -441,15 +442,15 @@ export function registerPostArchive(
  *   - `type`   (optional) — restrict recall to a single atom type.
  *
  * Response:
- *   - `results`: ranked list of `{ id, type, title, summary, tags,
- *     file_path, distance, cosine }`. Empty when no atoms match or
+ *   - `results`: ranked list of `{ id, type, title, summary, tags, distance, cosine, score }`. Empty when no atoms match or
  *     ollama is unreachable (embedText → null → []).
  *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
+ *   - `score` is a debug/UI-only metadata field — LLM does not see it (formatMemoryContext re-sorts by distance before prompt injection).
  *
  * Discovery-only contract (R-search-cheap):
- *   - No `formattedText`, no `tier` field, no `tokenBudgetUsed`. Search
- *     is for finding candidates; full content is fetched on demand by
- *     reading `file_path` with the standard `read` tool.
+ *   - No `formattedText`, no `tier` field, no `tokenBudgetUsed`, no `file_path`.
+ *     Search is pure vector retrieval; full content is fetched on demand via
+ *     `GET /api/memory/:id` (Task 7.3).
  *
  * Architecture constraints:
  *   - recallAtoms is imported via the relative extensions/personal-assistant
@@ -492,9 +493,12 @@ export function registerPostSearch(
 						title: r.atom.title,
 						summary: r.atom.summary,
 						tags: r.atom.tags,
-						file_path: r.file_path,
 						distance: r.distance,
 						cosine: r.cosine,
+						// Task 1.1 will add `score` to RecallResult; until then
+						// the value is undefined and the response field is
+						// omitted (TS suppression below keeps HEAD compiling).
+						score: (r as RecallResult & { score?: number }).score ?? 0,
 					})),
 					recallTimeMs,
 				});
