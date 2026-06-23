@@ -8,7 +8,7 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, ToolResultMessage } from "../src/types.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
@@ -635,6 +635,109 @@ describe("openai-codex streaming", () => {
 		}).result();
 
 		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+	});
+
+	it("omits replayed reasoning items from Codex request input while preserving tool continuity", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+		const token = mockToken();
+		const sse = buildSSEPayload({ status: "completed" });
+		const encoder = new TextEncoder();
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(sse));
+				controller.close();
+			},
+		});
+		let capturedInput: unknown;
+
+		const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
+				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
+			}
+			if (url.startsWith("https://raw.githubusercontent.com/openai/codex/")) {
+				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
+			}
+			if (url === "https://chatgpt.com/backend-api/codex/responses") {
+				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				capturedInput = body?.input;
+				return new Response(stream, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				});
+			}
+			return new Response("not found", { status: 404 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			model: "gpt-5.5",
+			content: [
+				{
+					type: "thinking",
+					thinking: "",
+					thinkingSignature: JSON.stringify({
+						type: "reasoning",
+						id: "rs_test",
+						status: "completed",
+						encrypted_content: "opaque-encrypted-reasoning",
+						summary: [],
+					}),
+				},
+				{ type: "toolCall", id: "call_test|fc_test", name: "lookup", arguments: { value: 1 } },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+		const toolResult: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: "call_test|fc_test",
+			toolName: "lookup",
+			content: [{ type: "text", text: "lookup result" }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Use the lookup tool", timestamp: Date.now() }, assistant, toolResult],
+		};
+
+		await streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+		}).result();
+
+		expect(Array.isArray(capturedInput)).toBe(true);
+		const input = capturedInput as Array<Record<string, unknown>>;
+		expect(input.some((item) => item.type === "reasoning")).toBe(false);
+		expect(input.some((item) => item.type === "function_call")).toBe(true);
+		expect(input.some((item) => item.type === "function_call_output")).toBe(true);
+		expect(JSON.stringify(input)).not.toContain("encrypted_content");
+		expect(JSON.stringify(input)).not.toContain("opaque-encrypted-reasoning");
 	});
 
 	it("preserves gpt-5.5 xhigh reasoning effort from simple options", async () => {

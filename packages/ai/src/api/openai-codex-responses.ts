@@ -451,6 +451,7 @@ function buildRequestBody(
 ): RequestBody {
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
+		includeReasoningItems: false,
 	});
 
 	const body: RequestBody = {
@@ -1393,6 +1394,7 @@ async function processWebSocketStream(
 		} else if (useCachedContext && entry && output.responseId) {
 			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
 				includeSystemPrompt: false,
+				includeReasoningItems: false,
 			}).filter((item) => item.type !== "function_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,
