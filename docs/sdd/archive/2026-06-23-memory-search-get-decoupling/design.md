@@ -512,3 +512,5 @@ executePlan → atom 写入 DB
 **CHANGELOG 更新**(sdd-archive 阶段):
 - `extensions/personal-assistant/CHANGELOG.md`:Breaking Changes 段(删 file_path、新增 memory_get tool、search 不 bump)
 - `packages/webui/CHANGELOG.md`:Changed 段(SearchTester 不显示 file_path,GET /:id 不 bump) + Breaking Changes(同上)
+
+<!-- archived-with: 2026-06-23-memory-search-get-decoupling | status: final -->
