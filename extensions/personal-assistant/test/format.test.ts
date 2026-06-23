@@ -29,26 +29,28 @@ const sampleResult = (overrides: Partial<RecallResult> = {}): RecallResult => ({
 	atom: sampleAtom(overrides.atom as never),
 	distance: 0.5,
 	cosine: 0.75,
-	file_path: "/tmp/atoms/rule/test.md",
+	score: 1.0,
 	...overrides,
 });
 
 describe("formatMemoryBlock", () => {
-	it("includes title, summary, file_path, tags (no content)", () => {
-		const block = formatMemoryBlock(sampleResult());
+	it("includes title, summary, id, tags (no content)", () => {
+		const result = sampleResult();
+		const block = formatMemoryBlock(result);
 		expect(block).toContain("Test");
 		expect(block).toContain("Test summary");
-		expect(block).toContain("/tmp/atoms/rule/test.md");
+		expect(block).toContain(`id: ${result.atom.id}`);
 		expect(block).toContain("a, b");
+		// file_path is intentionally NOT exposed to the LLM — the agent uses
+		// `memory_get(id)` to fetch full content on demand.
+		expect(block).not.toContain("/tmp/atoms/rule/test.md");
 		// Content is never hydrated at format time — search is discovery-only.
 		expect(block).not.toContain("Detailed content here");
 	});
 
-	it("uses file_path prefix 'file: ' for visibility in LLM context", () => {
-		const block = formatMemoryBlock(
-			sampleResult({ file_path: "/home/u/.pi/agent/memory/atoms/process/abc.md" }),
-		);
-		expect(block).toMatch(/^file: \/home\/u\/.pi\/agent\/memory\/atoms\/process\/abc\.md$/m);
+	it("uses id prefix 'id: ' for memory_get routing", () => {
+		const block = formatMemoryBlock(sampleResult());
+		expect(block).toMatch(/^id: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/m);
 	});
 });
 
@@ -98,6 +100,31 @@ describe("formatMemoryContext", () => {
 		const bestIdx = out.text.indexOf("BEST");
 		const worstIdx = out.text.indexOf("WORST");
 		expect(bestIdx).toBeLessThan(worstIdx);
+	});
+
+	it("re-sorts by distance ASC, not by score DESC (cosine is primary key)", () => {
+		// A has higher score but lower cosine (higher distance); B has lower
+		// score but higher cosine (lower distance). If the formatter sorted by
+		// score DESC, A would win; correct behaviour is to sort by distance
+		// ASC, so B must appear first (S57 / R6).
+		const results = [
+			sampleResult({
+				distance: 0.9,
+				cosine: 0.7,
+				score: 1.5,
+				atom: sampleAtom({ title: "A_HIGH_SCORE" }),
+			}),
+			sampleResult({
+				distance: 0.1,
+				cosine: 0.95,
+				score: 0.7,
+				atom: sampleAtom({ title: "B_HIGH_COSINE" }),
+			}),
+		];
+		const out = formatMemoryContext(results, 10000);
+		const aIdx = out.text.indexOf("A_HIGH_SCORE");
+		const bIdx = out.text.indexOf("B_HIGH_COSINE");
+		expect(bIdx).toBeLessThan(aIdx);
 	});
 
 	it("separates blocks with a blank line so LLM can split sections", () => {
