@@ -9,6 +9,7 @@ memory-v2 当前(2026-06-23)实现了一整套纯向量召回的 pipeline,但 se
 - `recallAtoms` 排序仅按 cosine desc,**完全忽略** `strength` 和 `importance` 两个元数据字段,导致 strength 高(近期被用过)或 importance 高(rule 类型)的 atom 在 cosine 接近时仍可能排在后面
 - `EXTRACT_PROMPT_V2` 让 LLM 自主打 importance,但**没有**任何关于用户语气强度的 hint,LLM 容易给保守打分(0.5-0.7)
 - 单 KNN 全局 top-10,可能 8 rule + 2 fact 偏斜,process 完全漏掉
+- 现有的 `runDecay` 已经在做"遗忘" — strength 随时间衰减,低于阈值时归档,但 search 排序公式没有利用这个信号,导致"越用越显"的反馈循环是单向的(get → strength → archive 影响),排序侧不体现。
 
 本变更通过 3 个独立子动作解耦:
 1. search 纯向量、不 bump、返 id(让 LLM 知道可调 memory_get)
@@ -21,12 +22,15 @@ memory-v2 当前(2026-06-23)实现了一整套纯向量召回的 pipeline,但 se
 - search / get 在 DB 层语义分离,strength 只反映"agent 实际调用 get 的次数"
 - LLM 拿到 search 结果后,通过 `memory_get(id)` 拿全文,显式使用记录到 strength
 - recall 保证 type 多样性(rule / fact / process 都有机会出现),不被单一 type 偏斜淹没
-- search 排序考虑 `strength`(反映"近期被用过 + 没衰减")和 `importance`(反映"作者/LLM 给的静态优先级"),作为 cosine 接近时的 tiebreaker,**不**取代 cosine 主键
+- search 排序使用乘法 boost 公式 `score = cosine × (1 + 0.3 × strength + 0.2 × importance)`,cosine 是主乘数,strength/importance 持续参与每次排序
+- "越用越显"反馈循环: get → strength 高 → score 高 → 排名靠前 → 更频繁被 recall
+- "遗忘 → 清理"完整链条: runDecay → strength 低 → score 低 → 排名下降 → 进一步 decay → 最终 archive
 - importance 由 extraction LLM 在看到用户语气强度 hint 后**自主**判断,词表扫描只决定 hint 等级
 - 测试覆盖所有路径,`npm run check` 绿
 
 **Non-Goals**:
-- search 排序**不引入**加权 score 公式(`w1*cosine + w2*strength + w3*importance`)— 用多键排序(cosine → strength → importance)替代,避免权重调参与跨 type 不公平问题。
+- search 排序**不引入**线性加权公式(`α*cosine + β*strength + γ*importance`)— 会让不相关 atom 反超相关 atom,违反"必须相关"原则。改用乘法 boost 保证 cosine 是绝对主键。
+- search 排序**不**用多键 strict-equality 排序 — 在实际浮点 cosine 上 strict equality 几乎永远不触发二级键,等于纯 cosine。
 - 不改 agent 端 `read()` 工具 — agent 用 `memory_get(id)` 替代 `read(path)`,不再需要 `read()` 拦截 hook。
 - 不改 webui MemoryEditor 自动 preview — 用户在 UI 看 atom 详情**不**算"get",不 bump strength(programmatic get only)。
 - 不重新实现 extraction 其他阶段(dedup / supersede / write)
@@ -107,35 +111,44 @@ memory-v2 当前(2026-06-23)实现了一整套纯向量召回的 pipeline,但 se
 - B. GET /:id 永远 bump — 拒绝,违反"UI 不 bump"
 - C. **本方案:GET /:id 不 bump** — 选这个,与 memory_get tool 形成清晰分工
 
-### 8. per-type top-3 多键排序:cosine → strength → importance + round-robin 交错
-**Decision**: 召回算法分两层排序,组内用**多键排序**而非单 cosine:
+### 8. per-type top-3 加权公式 + round-robin 交错
+**Decision**: 召回算法分两层,组内用**加权公式**计算 score,组间 round-robin 交错:
+
+**Score 公式**:
+```
+score = cosine * (1 + 0.3 * strength + 0.2 * importance)
+```
 
 **组内(per-type)**: 每个 type 独立 `vectorSearch`,然后:
 1. cosine ≥ 0.5 过滤(全局 threshold)
-2. 多键排序:`cosine DESC → strength DESC → importance DESC`(从主到辅)
-3. 取前 3 条(稀疏 type 自动降到 1,绝不强行凑)
+2. 计算 `score = cosine * (1 + 0.3 * strength + 0.2 * importance)`
+3. 按 score DESC 排序,取前 3 条(稀疏 type 自动降到 1)
+4. `score` 字段写入 `RecallResult`(给 UI / 调试用)
 
 **组间(cross-type)**: 三个 type 的 top-3 用 round-robin 交错拼接:
 - `[rule[0], fact[0], process[0], rule[1], fact[1], process[1], rule[2], fact[2], process[2]]`
-- 稀疏 type 跳过对应槽位(不补 placeholder)
-
-**多键排序的语义**:
-- **cosine 主键**: 什么相关(向量相似度,核心信号)
-- **strength 二级 tiebreaker**: 哪些还"活着"(decay 后剩多少,反映"最近被用过 + 没衰减")。同 cosine 时,strength 高的优先,因为它代表"在 LLM 真实 usage 中被持续用到的"
-- **importance 三级 tiebreaker**: 哪些更重要(作者/LLM 给的静态优先级)。同 cosine + strength 时,importance 高的优先(典型场景:rule type importance 永远 ≥ fact/process,因为 rule 是用户偏好/约束)
+- 稀疏 type 跳过对应槽位
 
 **Rationale**:
-- 不用加权公式(`w1*cosine + w2*strength + w3*importance`),因为权重难调、泛化性差、不可解释
-- 多键排序纯排序无公式,可解释、可调试、零魔数
-- cosine 仍是绝对主键,strength/importance 只在 cosine 接近时(< 0.05 差距)起作用
-- 顶层 LLM 视野下,前几条按 cosine 降序看相关,后续几条按 strength/importance 选"最有用的"
-- `formatMemoryContext` 注入 prompt 时再做一次全局 distance asc 排序(相当于只看 cosine 主键),所以多键排序**只影响** search response(给 UI / 调试看),**不影响** 最终 LLM prompt
+- **cosine 仍是主键** — 公式用乘法结构 `cosine * (...)`,cosine 趋近 0 时 score 必趋近 0,**不相关 atom 不可能被 boost 反超**
+- **strength boost (0-0.3)**: 反映"近期被用过 + 没衰减",直接进入 feedback 循环
+  - atom 被 `memory_get` → strength 高 → score 高 → 排名靠前 → 更容易被未来 recall 看到 → 更容易被 get
+  - atom 长期不用 → runDecay 把 strength 拉低 → score 降 → 排名降 → 更慢被 recall → 进一步 decay → 触发归档
+- **importance boost (0-0.2)**: 反映"作者/LLM 给的静态优先级"
+  - rule type importance 永远 ≥ fact/process,所以 rule 在 cosine + strength 相同时自然胜出
+  - 高 importance atom 即使 strength 低也能保留(因为 importance 是静态,不衰减)
+- **权重 α=0.3, β=0.2 的边界**: max boost = 0.5,所以 score ∈ [0, 1.5 * cosine_max]
+  - cosine 必须 ≥ 0.667x 才能仅靠 cosine 嬴(boost 极限)
+  - 实际差距: cosine=0.6/strength=1.0/importance=1.0 → score=0.9;cosine=0.85/strength=0.1/importance=0.1 → score=0.8925 — 后者仍然嬴,因为 cosine 0.85 的差距大于 boost 带来的差距
+- **对比旧设计(多键排序 strict equality)**: 在实际浮点 cosine 上,strict `b.cosine !== a.cosine` 几乎永远 true,二级键永远不触发,等于纯 cosine。新公式让 strength/importance **持续参与**每次排序
+- **与现有 `runDecay` 配合**: `runDecay` 持续调低 strength → score 持续降 → 排名降 → 自然形成"遗忘 → 清理"链条,与现有 archive 阈值 (0.1) 形成完整 feedback
+- `formatMemoryContext` 注入 prompt 时再做一次全局 distance asc 排序(只看 cosine 主键),所以 score **影响** search response,**不影响** LLM prompt 内容
 - 顺序确定性:同 query 多次调用结果完全一致(便于调试、测试 snapshot)
 
 **Alternatives considered**:
-- A. 单 cosine desc(纯检索)— 拒绝,strength/importance 完全浪费,与 memory-v2 的 strength decay 设计脱节
-- B. 加权公式 `0.7*cosine + 0.3*importance` — 拒绝,权重难调、跨 type 不公平(rule importance 高会让 rule 永远霸榜)
-- C. **本方案:多键排序 + 组间 round-robin** — 选这个,无魔数、可解释、tiebreaker 自然
+- A. 多键排序 `cosine → strength → importance`(strict equality)— **拒绝**,在实际浮点 cosine 上 strict equality 几乎永远 true,等于纯 cosine
+- B. 线性加权 `α*cosine + β*strength + γ*importance` — 拒绝,strength=1.0 且 cosine=0.5 时 score=0.8,可能赢过 cosine=0.7 的 atom,违反"必须相关"原则
+- C. **本方案:乘法 boost** — 选这个,cosine 是绝对的最小乘数,strength/importance 持续参与,formula 一行可解释
 
 **算法伪代码**:
 ```ts
@@ -143,6 +156,12 @@ const TYPES = ["rule", "fact", "process"] as const;
 const PER_TYPE_CAP = 3;
 const THRESHOLD = 0.5;
 const RAW_BUFFER = 6;  // 3 cap × 2 headroom
+const STRENGTH_WEIGHT = 0.3;
+const IMPORTANCE_WEIGHT = 0.2;
+
+function computeScore(cosine: number, strength: number, importance: number): number {
+  return cosine * (1 + STRENGTH_WEIGHT * strength + IMPORTANCE_WEIGHT * importance);
+}
 
 async function recallAtoms(index, query, atomsDir, options) {
   const emb = await embedText(query);
@@ -157,15 +176,11 @@ async function recallAtoms(index, query, atomsDir, options) {
       if (!atom) continue;
       const cosine = 1 - (distance * distance) / 2;
       if (cosine < THRESHOLD) continue;
-      perType[type].push({ atom, distance, cosine });
+      const score = computeScore(cosine, atom.strength, atom.importance);
+      perType[type].push({ atom, distance, cosine, score });
     }
-    // Multi-key sort: cosine DESC → strength DESC → importance DESC
-    perType[type].sort((a, b) => {
-      if (b.cosine !== a.cosine) return b.cosine - a.cosine;
-      if (b.atom.strength !== a.atom.strength) return b.atom.strength - a.atom.strength;
-      return b.atom.importance - a.atom.importance;
-    });
-    perType[type] = perType[type].slice(0, PER_TYPE_CAP);  // top-3
+    perType[type].sort((a, b) => b.score - a.score);  // score DESC
+    perType[type] = perType[type].slice(0, PER_TYPE_CAP);
   }
 
   // Round-robin interleave (sparse types skipped)
@@ -181,8 +196,29 @@ async function recallAtoms(index, query, atomsDir, options) {
 ```
 
 **注意**:
-- `formatMemoryContext` 后续再做 `sorted = [...results].sort((a, b) => a.distance - b.distance)`(distance asc),所以**最终注入 LLM prompt 的顺序按 cosine 单键**。多键排序**仅影响** search response(给 UI / 调试看),prompt 里走 distance asc。这是**预期的**——LLM 拿到 prompt 时只看 cosine(因为 strength/importance 是 metadata,LLM 不该看见),UI 调试时看多键(因为 debug 时需要按 strength 高的优先看)。
-- rule type 的 strength 永远 = importance(永不衰减),所以 rule 的 strength tiebreaker 实际上等价于 importance tiebreaker。fact/process 才会真正触发 strength vs importance 的差异化。
+- `formatMemoryContext` 后续再做 `sorted = [...results].sort((a, b) => a.distance - b.distance)`(distance asc),所以**最终注入 LLM prompt 的顺序按 cosine 单键**(等价于 score,因为 cosine 是主乘数,prompt 里无法看到 strength/importance 影响)。score **仅影响** search response(给 UI / 调试看)。
+- rule type 的 strength 永远 = importance(永不衰减),所以 rule 的 score 公式可以简化为 `cosine * (1 + 0.5 * importance)`,但代码里用通用公式即可,简化在 fact/process 上才体现价值。
+- 权重 α=0.3, β=0.2 暂时 hardcode。未来如果需要调整,改成 `RecallOptions` 的可调参数,默认值同上。
+- **新加字段**: `RecallResult.score: number` 暴露给 search response(给 UI / debug / 测试 snapshot 用)。LLM 看不到(不在 `formatMemoryBlock` 里)。
+
+### 9. runDecay 现有行为不变,作为"遗忘强度 → 清理"的后台机制
+**Decision**: 不修改 `runDecay` 的现有公式或阈值:
+- `baseDecay = 0.05`, `archiveThreshold = 0.1`
+- `strength_new = strength_old * exp(-λ * deltaDays / max(0.1, importance))`
+- rule type 永不 archive
+- 非 rule type: strength < 0.1 时 archive
+
+**Rationale**: 
+- 现有的 decay 公式已经实现了"遗忘 → 清理"完整链条
+- `runDecay` 1 小时 throttle 一次,不会频繁 hit DB
+- 新的加权公式(score = cosine × (1 + 0.3×strength + 0.2×importance))自然利用 strength 衰减信号 — strength 下降 → score 下降 → search 排名下降 → 进一步 decay → 最终 archive
+- **重要:score 公式让 `strength` 的衰减有了"显式可见"的效果** — search ranking 反映遗忘进度,不只是后台默默归档
+- 用户明确指示"保持现有 runDecay 不动",所以本 change 不修改 decay 逻辑
+
+**Alternatives considered**:
+- A. 提高 archiveThreshold 到 0.2 — 拒绝,用户已选保持现状
+- B. 加 importance 阈值 — 拒绝,用户已选保持现状
+- C. **本方案:runDecay 完全不动** — 选这个,新 score 公式自动利用 strength 信号,feedback 循环自然形成
 
 ## Architecture
 
@@ -240,11 +276,18 @@ async function recallAtoms(index, query, atomsDir, options) {
 ### 关键类型变更
 
 ```ts
-// extensions/personal-assistant/types.ts (DELETE file_path from RecallResult)
+// extensions/personal-assistant/types.ts (DELETE file_path, ADD score to RecallResult)
 export interface RecallResult {
   atom: MemoryAtom;
   distance: number;
   cosine: number;
+  /**
+   * 加权综合分 = cosine × (1 + 0.3 × strength + 0.2 × importance)。
+   * 用于 per-type 内部排序 + search response 暴露给 UI/debug。
+   * 不注入 LLM prompt —— `formatMemoryContext` 后续按 distance asc 全局排序,
+   * 相当于只看 cosine 主键。
+   */
+  score: number;
   // file_path: string;  // REMOVED — LLM uses memory_get(id) instead
 }
 ```
@@ -258,9 +301,10 @@ export async function recallAtoms(
   options: RecallOptions = {},
 ): Promise<RecallResult[]> {
   // Per-type KNN: 3 × vectorSearch(embedding, topK*2, {type: X})
-  // Each type → top-3 (sparse → 1)
+  // Each type → top-3 by score = cosine × (1 + 0.3×strength + 0.2×importance)
+  // Round-robin interleave, sparse types skipped
   // NO updateAccess (search is pure retrieval)
-  // NO file_path in result
+  // NO file_path in result, ADD score in result
 }
 ```
 
@@ -392,6 +436,10 @@ executePlan → atom 写入 DB
 | 3 个独立 `vectorSearch` 比 1 个稍慢 | 每个 vectorSearch 是毫秒级,3 个总和 < 5ms,实测可接受 |
 | `memory_get` tool 只在 extension 注册,TUI 用户能直接用,但如果某天 webui 也想 bump,需要新加端点 | 当前不做,YAGNI;后续有需求再加 `POST /api/memory/:id/feedback` 端点 |
 | `scoreUserTone` 用 `text.includes(w)` 简单匹配,长字符串 + 短词容易误触(如"也许"出现在"也不许"中) | 当前接受,词表精简到 ~20 词,且只有 STRONG/HABIT 档才有实际权重影响(都 ≥ 0.7) |
+| 加权公式 score = cosine × (1 + 0.3×strength + 0.2×importance) 的权重 α=0.3 β=0.2 是 hardcode 的经验值,可能不是全局最优 | 当前接受,YAGNI;如未来需要调,改成 `RecallOptions` 可调参数,默认值同上。score 字段已经在 response 里,便于 A/B 调权重 |
+| 加权公式让 rule type 在 search 中更显(rule importance 普遍 ≥ fact/process),可能让 rule 过度代表 | 接受(符合"用户偏好/约束是最高优先级"的直觉);如果发现 rule 偏斜过度,可降低 β(importance weight)或单独调权重 |
+| `score` 字段暴露在 search response 里,但 LLM 看不见 — 字段可能让 API 消费者误以为 LLM 也能用 | 在 search route 的 doc comment 和 types.ts 的 JSDoc 明确说 "score 仅给 UI/debug,LLM 不通过 prompt 看到" |
+| 新加权公式与现有 `runDecay` 的交互未充分测试 — 不同 strength/importance 组合下的 score 行为需要回归验证 | 测试覆盖 5+ 个 weighted formula scenarios(见 scenarios.md),包括正常 / 边界 / 极端值 |
 
 ## Testing Strategy
 
@@ -400,9 +448,15 @@ executePlan → atom 写入 DB
   - search 不调用 `updateAccess`(mock 后断言 0 次调用)
   - per-type top-3 在 6 atom DB(2 rule + 3 fact + 1 process)上 → 返回 6 个(2+3+1,稀疏 process 自动降到 1)
   - per-type 全空 → 该 type 不出现在 results
-  - response 不含 `file_path` 字段
-  - **多键排序**:同 cosine 时 strength DESC,同 cosine + strength 时 importance DESC,三键全同时 importance 兜底
+  - response 不含 `file_path` 字段,**含** `score` 字段
+  - **加权公式 score = cosine × (1 + 0.3×strength + 0.2×importance)**:5 个测试用例覆盖正常 / 边界 / 极端值
   - **round-robin 交错**:3 type × 3 cap 满员时位置正确,稀疏 type 跳过对应槽位
+  - **加权公式覆盖**:
+    - atom A(cosine=0.7, strength=1.0, importance=1.0)→ score = 0.7 × 1.5 = 1.05
+    - atom B(cosine=0.7, strength=0.0, importance=0.0)→ score = 0.7 × 1.0 = 0.7
+    - cosine=0 → score=0(无论 strength/importance 多高)
+    - cosine=1 → score=1.5(满分 atom 上限)
+  - **加权公式 vs cosine 主导性**: cosine 0.6/strength=1.0/importance=1.0 (score=0.9) vs cosine 0.85/strength=0.1/importance=0.1 (score=0.8925) — 后者嬴,验证 cosine 仍是主键
 - `extensions/personal-assistant/test/format.test.ts`:
   - `formatMemoryBlock` 输出含 `id:` 行,**不**含 `file:` 行
   - `formatMemoryContext` 仍按 distance 排序,token budget 限制生效

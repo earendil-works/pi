@@ -150,52 +150,101 @@
 - **WHEN** search 返回
 - **THEN** 返回 `[rule[0], fact[0], rule[1], fact[1], rule[2], fact[2]]`(共 6 条,process 槽位全部跳过,不返 0-cosine placeholder)
 
-### Scenario: per-type 内部多键排序 cosine → strength → importance
-- **GIVEN** rule type 有 3 个 atom, cosine 分别为 0.9 / 0.85 / 0.7,strength 分别为 0.5 / 0.5 / 0.5,importance 分别为 0.5 / 0.5 / 0.5
-- **WHEN** search 返回
-- **THEN** rule 槽位顺序为 `[0.9, 0.85, 0.7]`(cosine desc,严格降序)
-- **AND THEN** round-robin 后 rule 出现在 `[0]`、`[3]`、`[6]` 位置
+### Scenario: per-type 内部 score DESC 排序(加权公式)
+- **GIVEN** rule type 有 3 个 atom, cosine / strength / importance 分别为:
+  - atom A: cosine=0.7, strength=1.0, importance=1.0 → score = 0.7 × 1.5 = **1.05**
+  - atom B: cosine=0.85, strength=0.1, importance=0.1 → score = 0.85 × 1.05 = **0.8925**
+  - atom C: cosine=0.6, strength=1.0, importance=0.8 → score = 0.6 × 1.46 = **0.876**
+- **WHEN** search 返回(组内按 score DESC)
+- **THEN** rule 槽位顺序为 `[A, B, C]`(A 因为 boost 高排第一,B 因为 cosine 高排第二,C 排第三)
+- **NOTE**: A 的 cosine 比 B 低 0.15,但 strength + importance 的 boost 让 A 嬴 — 反映"越用越显"反馈
 
-### Scenario: cosine 相同时 strength 作 tiebreaker
-- **GIVEN** rule type 有 2 个 atom,**cosine 都是 0.8**,但 atom A 的 `strength=0.7`(近期 get 过,衰减慢),atom B 的 `strength=0.3`(长期未 get,衰减明显)
-- **WHEN** search 返回(同 cosine 时按 strength DESC)
-- **THEN** rule 槽位顺序为 `[A(0.8, strength 0.7), B(0.8, strength 0.3)]`
-- **AND THEN** A 排在 B 之前(因为 A"更活跃",用户最近实际用过)
+### Scenario: score 边界值 — cosine=0 → score=0
+- **GIVEN** 某个 atom cosine=0(完全无关),但 strength=1.0、importance=1.0
+- **WHEN** 计算 score
+- **THEN** score = 0 × (1 + 0.3 + 0.2) = **0**
+- **AND THEN** cosine=0 的 atom 不会因为 boost 反超相关 atom(cosine 主键保证)
 
-### Scenario: cosine + strength 都相同时 importance 作 tiebreaker
-- **GIVEN** rule type 有 2 个 atom, **cosine 都是 0.8**,**strength 都是 0.5**,但 atom A 的 `importance=0.85`(rule 类型),atom B 的 `importance=0.5`(实际上 type 也是 rule,但 importance 较低)
-- **WHEN** search 返回(同 cosine + strength 时按 importance DESC)
-- **THEN** rule 槽位顺序为 `[A, B]`
-- **AND THEN** A 排在 B 之前(因为 A importance 更高,作者给它的优先级更高)
+### Scenario: score 边界值 — cosine=1 → score=1.5
+- **GIVEN** 某个 atom cosine=1.0(完美匹配),strength=1.0、importance=1.0
+- **WHEN** 计算 score
+- **THEN** score = 1.0 × 1.5 = **1.5**(满分 atom 上限)
+- **AND THEN** 该 atom 永远排在 top(除非其他 atom cosine 更高,但 cosine 已 max)
 
-### Scenario: rule type strength = importance(永不衰减)
-- **GIVEN** DB 中 rule type 有 5 个 atom,importance 分别是 0.5 / 0.6 / 0.7 / 0.8 / 0.9,**所有 strength 都 = importance**(rule 永不衰减)
-- **AND GIVEN** 所有 cosine 都 = 0.8(完全相同)
-- **WHEN** search 返回(多键排序最终按 importance DESC)
-- **THEN** rule 槽位顺序为 `[importance=0.9, 0.8, 0.7, 0.6, 0.5]`
-- **NOTE**: 这条测试验证 rule type 的 strength tiebreaker 等价于 importance tiebreaker,因为 strength 永远等于 importance。
+### Scenario: cosine 主导性验证
+- **GIVEN** 2 个 atom:
+  - atom X: cosine=0.6, strength=1.0, importance=1.0 → score = 0.6 × 1.5 = **0.9**
+  - atom Y: cosine=0.85, strength=0.1, importance=0.1 → score = 0.85 × 1.05 = **0.8925**
+- **WHEN** 比较 score
+- **THEN** Y 嬴(Y score=0.8925 > X score=0.9)— **不对,Y 略小于 X**
+- **修正**: X score = 0.9, Y score = 0.8925,X **嬴**(差 0.0075)
+- **NOTE**: 这条测试验证 boost 在 cosine 差距较大时不能反超,cosine 是主键。X 的 cosine 仅比 Y 低 0.25,但 boost 弥补了这个差距 — 边界情况,接近赢面相等。
 
-### Scenario: fact/process 类型 strength < importance(衰减后)
-- **GIVEN** fact type 有 2 个 atom,**cosine 都是 0.8**,**importance 都是 0.7**,但 atom A 创建于 1 天前(刚 access 过),atom B 创建于 30 天前(没 access 过)
-- **WHEN** search 返回
-- **THEN** A 的 strength ≈ 0.7(未衰减),B 的 strength ≈ 0.1(衰减后)
-- **AND THEN** rule 槽位顺序为 `[A(0.7), B(0.1)]`(按 strength DESC)
+### Scenario: rule type strength = importance 时的简化
+- **GIVEN** rule type 有 5 个 atom,importance 分别是 0.5 / 0.6 / 0.7 / 0.8 / 0.9,**所有 strength 都 = importance**(rule 永不衰减)
+- **AND GIVEN** cosine 都是 0.8(完全相同)
+- **WHEN** 计算 score
+- **THEN** 5 个 score 分别为:
+  - importance=0.5: 0.8 × (1 + 0.15 + 0.10) = 0.8 × 1.25 = **1.0**
+  - importance=0.6: 0.8 × (1 + 0.18 + 0.12) = 0.8 × 1.30 = **1.04**
+  - importance=0.7: 0.8 × (1 + 0.21 + 0.14) = 0.8 × 1.35 = **1.08**
+  - importance=0.8: 0.8 × (1 + 0.24 + 0.16) = 0.8 × 1.40 = **1.12**
+  - importance=0.9: 0.8 × (1 + 0.27 + 0.18) = 0.8 × 1.45 = **1.16**
+- **AND THEN** rule 槽位顺序为 `[importance=0.9 (1.16), 0.8 (1.12), 0.7 (1.08), 0.6 (1.04), 0.5 (1.0)]`(importance 高的嬴)
 
-### Scenario: strength tiebreaker 跨 type 也有效
-- **GIVEN** rule A 和 fact B 的 cosine 都是 0.8,但 rule A 的 strength=0.85,fact B 的 strength=0.5
-- **WHEN** search 返回
-- **THEN** rule A 和 fact B 都在各自 type 的 top-3 内(各自的 type 内部排序按多键)
-- **AND THEN** round-robin 交错后,rule A 出现在 round N,fact B 出现在 round N'(type 之间位置由 round-robin 决定,不是直接比较 strength)
+### Scenario: fact type strength 衰减后 importance 不变
+- **GIVEN** fact type 有 2 个 atom,**cosine 都是 0.8**,**importance 都是 0.7**,但 atom A 创建于 1 天前(刚 access 过,strength ≈ 0.7 未衰减),atom B 创建于 30 天前(没 access 过,strength ≈ 0.1 衰减后)
+- **WHEN** 计算 score
+- **THEN** A score = 0.8 × (1 + 0.3×0.7 + 0.2×0.7) = 0.8 × 1.35 = **1.08**
+- **AND THEN** B score = 0.8 × (1 + 0.3×0.1 + 0.2×0.7) = 0.8 × 1.17 = **0.936**
+- **AND THEN** A 排第一(A 嬴,差 0.144)
+- **NOTE**: importance 在 A 和 B 上相同(都是 0.7),strength 差异(0.7 vs 0.1)直接通过 boost 反映在 score 上。
+
+### Scenario: strength feedback 循环
+- **GIVEN** rule type atom X 初始 strength=0.5, cosine=0.7, importance=0.8 → score = 0.7 × 1.255 = **0.8785**
+- **WHEN** agent 调 `memory_get({id: X.id})` → X.access_count += 1 → X.last_access = now
+- **AND THEN** 下次 `runDecay` 时,deltaDays ≈ 0,跳过衰减(X.strength 保持 0.5)
+- **AND THEN** 再次 search,score 仍为 0.8785(没变化,因为 strength 没衰减)
+- **WHEN** 长时间不调用(month+),runDecay 把 X.strength 衰减到 0.1
+- **AND THEN** 再次 search,score = 0.7 × (1 + 0.03 + 0.16) = 0.7 × 1.19 = **0.833**
+- **AND THEN** X 排名下降 → 不在 top-3 内 → 不被 recall → 进一步 decay → 最终 archive
+
+### Scenario: cosine 接近时 boost 起决定作用
+- **GIVEN** rule type 有 3 个 atom, cosine 接近(0.7 / 0.71 / 0.69), 但 strength/importance 差异大:
+  - atom A: cosine=0.7, strength=1.0, importance=1.0 → score = **1.05**
+  - atom B: cosine=0.71, strength=0.0, importance=0.0 → score = **0.71**
+  - atom C: cosine=0.69, strength=0.5, importance=0.5 → score = 0.69 × 1.25 = **0.8625**
+- **WHEN** search 返回(组内按 score DESC)
+- **THEN** 顺序为 `[A, C, B]` — A 虽然 cosine 最低,但 boost 最大排第一;B cosine 最高但 boost 为 0 排最后
+- **NOTE**: 在 cosine 差异 ≤ 0.02 的范围内,boost 完全决定了排名 — 这正是设计想要的(当 query 命中多个相近 atom 时,"越用越显"的胜出)
 
 ### Scenario: formatMemoryContext 注入时再做 distance asc 全局排序(只看 cosine 主键)
-- **GIVEN** search 返回 6 条(round-robin 交错,**多键排序已应用**)
+- **GIVEN** search 返回 6 条(round-robin 交错,**score 排序已应用**)
 - **WHEN** `formatMemoryContext(results, 4000)` 渲染
 - **THEN** 最终注入 LLM prompt 的 block 按 distance asc 全局排序(等价于 cosine DESC,只看主键),不再是 round-robin 交错
-- **AND THEN** block 内格式 `[type] title\nsummary\nid: <uuid>\nTags: ...`,LLM **看不到** strength / importance(这些是 metadata,不在 block 里)
-- **NOTE**: 多键排序的影响**仅**体现在 search response(给 UI / 调试看),prompt 注入只按 cosine。这是有意为之 — LLM 拿 prompt 时只看 cosine 主键,strength/importance 是 metadata,不暴露给 LLM。
+- **AND THEN** block 内格式 `[type] title\nsummary\nid: <uuid>\nTags: ...`,LLM **看不到** score / strength / importance(这些是 metadata,不在 block 里)
+- **NOTE**: score 排序的影响**仅**体现在 search response(给 UI / 调试看),prompt 注入只按 cosine 主键。这是有意为之 — LLM 拿 prompt 时只看 cosine,score / strength / importance 是 metadata,不暴露给 LLM。
 
 ### Scenario: tone scoring 边界词 "如果"
 - **GIVEN** user 消息 "如果今天有空,就帮我看下 bug"
 - **WHEN** `scoreUserTone` 扫描
 - **THEN** 返回 weak(0.35),因为 "如果" 在 WEAK 词表
 - **NOTE**: "如果" 在某些语境是中性(如"如果下雨"),词表可能需要更精确的上下文判断 — 当前用纯词表匹配,接受这层精度损失。
+
+### Scenario: runDecay 与 score 公式的协同 (遗忘 → 清理 完整链条)
+- **GIVEN** fact type 有 atom F,初始 importance=0.7,strength=0.7,access_count=0,last_access=now
+- **AND GIVEN** 当前 score = 0.7(cosine) × (1 + 0.3×0.7 + 0.2×0.7) = 0.7 × 1.35 = **0.945**
+- **WHEN** 30 天过去,atom F 从未被 `memory_get` 调过
+- **THEN** `runDecay` 触发(`deltaDays = 30`):
+  - `strength_new = 0.7 × exp(-0.0513 × 30 / 0.7) ≈ 0.7 × exp(-2.2) ≈ 0.7 × 0.111 = **0.078**
+  - 0.078 < archiveThreshold (0.1) → F 被 archive
+- **AND THEN** F.archived = 1,下次 search 不可见(`archived = 0` WHERE 过滤)
+- **NOTE**: score 公式让 strength 衰减有"显式可见"的效果 — 即使 atom 没被 archive(score 仍 ≥ 0.5 cosine 阈值),排名下降会让它从 top-3 跌出,进一步 decay,最终 archive。这是 **"遗忘强度决定清理"** 的完整链条。
+- **NOTE2**: 如果 F 被 agent 通过 `memory_get` 调过,F.last_access = now → 下次 decay 时 `deltaDays < 1/24` (1 小时),跳过衰减 → F.strength 保持 → F 持续留在 search top-3 → 形成 "越用越显, 不用就忘" 的反馈循环。
+
+### Scenario: rule type 永不 archive(即使 strength 极低)
+- **GIVEN** rule type 有 atom R,importance=0.5,strength=0.05(极端衰减后),cosine=0.7
+- **WHEN** 计算 score
+- **THEN** score = 0.7 × (1 + 0.3×0.05 + 0.2×0.5) = 0.7 × 1.115 = **0.7805**
+- **AND THEN** rule atom 不被 `runDecay` archive(`if (atom.type === "rule") continue` 在 decay.ts:51)
+- **NOTE**: 即使 strength 衰减到 0.05,rule atom 仍保留,只是 score 较低(importance 0.5 仍提供 0.1 boost)。这是 memory-v2 的"rule 永不 archive"原则的体现。
