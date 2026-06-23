@@ -14,6 +14,7 @@
 ### Changed
 
 - `POST /api/memory/search` response is now discovery-only: `{results: [{id, type, title, summary, tags, file_path, distance, cosine}], recallTimeMs}` — no `tier` / `formattedText` / `tokenBudgetUsed`. The agent reads full content on demand via the standard `read` tool on `file_path`. The MemorySearchTester UI now shows each result's `file_path` directly.
+- SearchTester shows `score` (weighted formula) instead of file path. Search response from server drops `file_path` and adds `score`. `GET /api/memory/:id` is preview-only — does not bump `access_count`.
 
 ### Fixed
 
