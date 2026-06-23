@@ -1121,7 +1121,7 @@ describe("POST /api/memory/search", () => {
 		expect(res.data.results).toEqual([]);
 	});
 
-	it("returns results with file_path for valid query (discovery-only contract)", async () => {
+	it("returns results with id+score for valid query (discovery-only contract)", async () => {
 		await insertAtom({ content: "test content alpha distinct keywords here" });
 		const res = await fetchAt("/api/memory/search", {
 			query: "alpha content keywords",
@@ -1129,21 +1129,21 @@ describe("POST /api/memory/search", () => {
 		expect(res.status).toBe(200);
 		const results = res.data.results as Array<Record<string, unknown>>;
 		expect(results.length).toBeGreaterThan(0);
-		// Result shape contract: id/type/title/summary/tags/file_path/distance/cosine
+		// Result shape contract: id/type/title/summary/tags/distance/cosine/score
+		// (no file_path — full content fetched via memory_get(id))
 		const first = results[0] as Record<string, unknown>;
 		expect(typeof first.id).toBe("string");
 		expect(typeof first.type).toBe("string");
 		expect(typeof first.distance).toBe("number");
 		expect(typeof first.cosine).toBe("number");
-		expect(typeof first.file_path).toBe("string");
+		expect(typeof first.score).toBe("number");
+		expect(first.score as number).toBeGreaterThanOrEqual(0);
+		// file_path removed from response — LLM uses memory_get(id) for full content
+		expect(first.file_path).toBeUndefined();
 		// Discovery-only: no tier / no formattedText / no tokenBudgetUsed.
 		expect(first.tier).toBeUndefined();
 		expect(res.data.formattedText).toBeUndefined();
 		expect(res.data.tokenBudgetUsed).toBeUndefined();
-		// file_path resolves to atomsDir/<type>/<id>.md on disk.
-		const fp = first.file_path as string;
-		expect(fp.startsWith(path.join(atomsDir, first.type as string))).toBe(true);
-		expect(fp.endsWith(".md")).toBe(true);
 	});
 
 	it("respects type filter", async () => {
