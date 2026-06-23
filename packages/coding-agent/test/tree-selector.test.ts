@@ -10,6 +10,7 @@ import type {
 } from "../src/core/session-manager.ts";
 import { TreeSelectorComponent } from "../src/modes/interactive/components/tree-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 beforeAll(() => {
 	initTheme("dark");
@@ -269,6 +270,52 @@ describe("TreeSelectorComponent", () => {
 			expect(plain).toContain("label time");
 			expect(plain).not.toContain("...");
 			expect(plainLines.every((line) => visibleWidth(line) <= 30)).toBe(true);
+		});
+	});
+
+	describe("context usage", () => {
+		test("renders context usage percentage right-aligned", () => {
+			const entries = [
+				userMessage("user-1", null, "hello"),
+				assistantMessage("asst-1", "user-1", "a very long response that should leave room for the percent"),
+			];
+			const tree = buildTree(entries);
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				undefined,
+				(entryId) => ({ percent: entryId === "user-1" ? 12.3 : 45.6 }),
+			);
+
+			const lines = selector.getTreeList().render(60).map(stripAnsi);
+			expect(lines[0]).toMatch(/12\.3%$/);
+			expect(lines[1]).toMatch(/45\.6%$/);
+		});
+
+		test("renders unknown context usage as question mark", () => {
+			const entries = [userMessage("user-1", null, "hello")];
+			const tree = buildTree(entries);
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"user-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				undefined,
+				() => ({ percent: null }),
+			);
+
+			const lines = selector.getTreeList().render(60).map(stripAnsi);
+			expect(lines[0]).toMatch(/\?%$/);
 		});
 	});
 

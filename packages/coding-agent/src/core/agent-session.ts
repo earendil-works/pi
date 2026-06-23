@@ -84,8 +84,13 @@ import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
-import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
+import {
+	buildSessionContext,
+	CURRENT_SESSION_VERSION,
+	getLatestCompactionEntry,
+	type SessionHeader,
+} from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -2989,6 +2994,23 @@ export class AgentSession {
 	}
 
 	getContextUsage(): ContextUsage | undefined {
+		return this.calculateContextUsage(this.sessionManager.getBranch(), this.messages);
+	}
+
+	getContextUsageForEntry(entryId: string): ContextUsage | undefined {
+		const targetEntry = this.sessionManager.getEntry(entryId);
+		if (!targetEntry) return undefined;
+		const leafId =
+			(targetEntry.type === "message" && targetEntry.message.role === "user") ||
+			targetEntry.type === "custom_message"
+				? targetEntry.parentId
+				: entryId;
+		const entries = this.sessionManager.getEntries();
+		const context = buildSessionContext(entries, leafId);
+		return this.calculateContextUsage(leafId !== null ? this.sessionManager.getBranch(leafId) : [], context.messages);
+	}
+
+	private calculateContextUsage(branchEntries: SessionEntry[], messages: AgentMessage[]): ContextUsage | undefined {
 		const model = this.model;
 		if (!model) return undefined;
 
@@ -2998,7 +3020,6 @@ export class AgentSession {
 		// After compaction, the last assistant usage reflects pre-compaction context size.
 		// We can only trust usage from an assistant that responded after the latest compaction.
 		// If no such assistant exists, context token count is unknown until the next LLM response.
-		const branchEntries = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
 
 		if (latestCompaction) {
@@ -3024,7 +3045,7 @@ export class AgentSession {
 			}
 		}
 
-		const estimate = estimateContextTokens(this.messages);
+		const estimate = estimateContextTokens(messages);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {

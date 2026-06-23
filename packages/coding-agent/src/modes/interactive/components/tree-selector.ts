@@ -103,6 +103,10 @@ interface ToolCallInfo {
 	arguments: Record<string, unknown>;
 }
 
+interface TreeContextUsage {
+	percent: number | null;
+}
+
 class TreeList implements Component {
 	private flatNodes: FlatNode[] = [];
 	private filteredNodes: FlatNode[] = [];
@@ -119,6 +123,7 @@ class TreeList implements Component {
 	private visibleChildrenMap: Map<string | null, string[]> = new Map();
 	private lastSelectedId: string | null = null;
 	private foldedNodes: Set<string> = new Set();
+	private getContextUsage?: (entryId: string) => TreeContextUsage | undefined;
 
 	public onSelect?: (entryId: string) => void;
 	public onCancel?: () => void;
@@ -130,10 +135,12 @@ class TreeList implements Component {
 		maxVisibleLines: number,
 		initialSelectedId?: string,
 		initialFilterMode?: FilterMode,
+		getContextUsage?: (entryId: string) => TreeContextUsage | undefined,
 	) {
 		this.currentLeafId = currentLeafId;
 		this.maxVisibleLines = maxVisibleLines;
 		this.filterMode = initialFilterMode ?? "default";
+		this.getContextUsage = getContextUsage;
 		this.multipleRoots = tree.length > 1;
 		this.flatNodes = this.flattenTree(tree);
 		this.buildActivePath();
@@ -737,10 +744,20 @@ class TreeList implements Component {
 					? theme.fg("muted", `${this.formatLabelTimestamp(flatNode.node.labelTimestamp)} `)
 					: "";
 			const content = this.getEntryDisplayText(flatNode.node, isSelected);
+			const rightPart = this.getContextUsageText(entry.id);
 			const prefixPart = theme.fg("dim", prefix) + foldMarker + pathMarker;
 			const anchorCol = visibleWidth(prefixPart);
 			let gutter = cursor;
-			let body = prefixPart + label + labelTimestamp + content;
+			const bodyPrefix = prefixPart + label + labelTimestamp;
+			let body = bodyPrefix + content;
+			if (rightPart) {
+				const viewportWidth = Math.max(0, width - TREE_GUTTER_WIDTH);
+				const rightWidth = visibleWidth(rightPart) + 2;
+				const availableForContent = viewportWidth - visibleWidth(bodyPrefix) - rightWidth;
+				const leftPart = bodyPrefix + truncateToWidth(content, Math.max(10, availableForContent), "…");
+				const spacing = Math.max(1, viewportWidth - visibleWidth(leftPart) - visibleWidth(rightPart));
+				body = leftPart + " ".repeat(spacing) + rightPart;
+			}
 			if (isSelected) {
 				gutter = theme.bg("selectedBg", gutter);
 				body = theme.bg("selectedBg", body);
@@ -757,6 +774,17 @@ class TreeList implements Component {
 		);
 
 		return lines;
+	}
+
+	private getContextUsageText(entryId: string): string {
+		const contextUsage = this.getContextUsage?.(entryId);
+		if (!contextUsage) return "";
+		const percent = contextUsage.percent === null ? "?" : contextUsage.percent.toFixed(1);
+		const display = `${percent}%`;
+		const value = contextUsage.percent ?? 0;
+		if (value > 90) return theme.fg("error", display);
+		if (value > 70) return theme.fg("warning", display);
+		return theme.fg("dim", display);
 	}
 
 	private getEntryDisplayText(node: SessionTreeNode, isSelected: boolean): string {
@@ -1315,13 +1343,21 @@ export class TreeSelectorComponent extends Container implements Focusable {
 		onLabelChange?: (entryId: string, label: string | undefined) => void,
 		initialSelectedId?: string,
 		initialFilterMode?: FilterMode,
+		getContextUsage?: (entryId: string) => TreeContextUsage | undefined,
 	) {
 		super();
 
 		this.onLabelChangeCallback = onLabelChange;
 		const maxVisibleLines = Math.max(5, Math.floor(terminalHeight / 2));
 
-		this.treeList = new TreeList(tree, currentLeafId, maxVisibleLines, initialSelectedId, initialFilterMode);
+		this.treeList = new TreeList(
+			tree,
+			currentLeafId,
+			maxVisibleLines,
+			initialSelectedId,
+			initialFilterMode,
+			getContextUsage,
+		);
 		this.treeList.onSelect = onSelect;
 		this.treeList.onCancel = onCancel;
 		this.treeList.onLabelEdit = (entryId, currentLabel) => this.showLabelInput(entryId, currentLabel);

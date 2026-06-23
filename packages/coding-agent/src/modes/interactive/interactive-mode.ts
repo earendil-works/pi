@@ -4539,6 +4539,7 @@ export class InteractiveMode {
 				},
 				initialSelectedId,
 				initialFilterMode,
+				(entryId) => this.session.getContextUsageForEntry(entryId),
 			);
 			return { component: selector, focus: selector };
 		});
