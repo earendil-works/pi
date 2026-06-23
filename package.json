@@ -64,6 +64,11 @@
 		"@modelcontextprotocol/sdk": "1.29.0",
 		"@testing-library/jest-dom": "6.9.1",
 		"@testing-library/react": "16.3.2",
-		"jsdom": "29.1.1"
+		"better-sqlite3": "12.11.1",
+		"jsdom": "29.1.1",
+		"sqlite-vec": "0.1.9"
+	},
+	"allowScripts": {
+		"better-sqlite3@12.11.1": true
 	}
 }

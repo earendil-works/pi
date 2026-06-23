@@ -8,7 +8,7 @@
     "dev": "tsx watch server/index.ts",
     "dev:webui": "bash scripts/dev-webui.sh",
     "build:web": "cd web && npm run build",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/server.bundle.js --external:express --external:ws --external:helmet --external:chokidar --external:async-mutex --external:cross-spawn --external:node:sqlite --external:bun:sqlite --external:vite",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/server.bundle.js --external:express --external:ws --external:helmet --external:chokidar --external:async-mutex --external:cross-spawn --external:node:sqlite --external:bun:sqlite --external:vite --external:better-sqlite3 --external:sqlite-vec",
     "build": "npm run build:web && npm run build:server",
     "test": "vitest"
   },
