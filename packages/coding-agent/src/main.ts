@@ -5,6 +5,8 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -142,6 +144,7 @@ type ResolvedSession =
 	| { type: "path"; path: string } // Direct file path
 	| { type: "local"; path: string } // Found in current project
 	| { type: "global"; path: string; cwd: string } // Found in different project
+	| { type: "daemon"; path: string } // Found via agent identity daemon
 	| { type: "not_found"; arg: string }; // Not found anywhere
 
 /**
@@ -156,6 +159,78 @@ async function findLocalSessionByExactId(
 	const localSessions = await SessionManager.list(cwd, sessionDir);
 	const localMatch = localSessions.find((s) => s.id === sessionId);
 	return localMatch ? { type: "local", path: localMatch.path } : undefined;
+}
+
+/** Agent identity daemon socket path (matches pi-agent-identity extension) */
+const AGENT_DAEMON_SOCKET = "/tmp/agent-identity-daemon.sock";
+
+/**
+ * Query the agent-identity daemon to resolve an agent name to a session file.
+ * Returns the session file path or null if not found / daemon not running.
+ */
+async function resolveFromAgentIdentityDaemon(agentName: string): Promise<string | null> {
+	if (!existsSync(AGENT_DAEMON_SOCKET)) return null;
+
+	return new Promise((resolve) => {
+		const sock = createConnection(AGENT_DAEMON_SOCKET);
+		let buffer = "";
+
+		const timeout = setTimeout(() => {
+			try {
+				sock.destroy();
+			} catch {}
+			resolve(null);
+		}, 2000);
+
+		sock.on("connect", () => {
+			sock.write(`${JSON.stringify({ type: "lookup_agent", agentName })}
+`);
+		});
+
+		sock.on("data", (data: Buffer) => {
+			buffer += data.toString();
+			const lines = buffer.split("\n");
+			buffer = lines.pop() ?? "";
+
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === "agent_found" && msg.sessionFile) {
+						clearTimeout(timeout);
+						try {
+							sock.destroy();
+						} catch {}
+						resolve(msg.sessionFile as string);
+						return;
+					}
+					if (msg.type === "agent_not_found") {
+						clearTimeout(timeout);
+						try {
+							sock.destroy();
+						} catch {}
+						resolve(null);
+						return;
+					}
+				} catch {
+					/* ignore parse errors */
+				}
+			}
+		});
+
+		sock.on("error", () => {
+			clearTimeout(timeout);
+			try {
+				sock.destroy();
+			} catch {}
+			resolve(null);
+		});
+
+		sock.on("close", () => {
+			clearTimeout(timeout);
+			resolve(null);
+		});
+	});
 }
 
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
@@ -180,6 +255,12 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	if (globalMatch) {
 		return { type: "global", path: globalMatch.path, cwd: globalMatch.cwd };
+	}
+
+	// Try agent identity daemon as last resort (resolves agent names like "swift-koala-42")
+	const daemonSessionFile = await resolveFromAgentIdentityDaemon(sessionArg);
+	if (daemonSessionFile) {
+		return { type: "daemon", path: daemonSessionFile };
 	}
 
 	// Not found anywhere
@@ -275,6 +356,7 @@ async function createSessionManager(
 			case "path":
 			case "local":
 			case "global":
+			case "daemon":
 				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
 
 			case "not_found":
@@ -289,6 +371,7 @@ async function createSessionManager(
 		switch (resolved.type) {
 			case "path":
 			case "local":
+			case "daemon":
 				return SessionManager.open(resolved.path, sessionDir);
 
 			case "global": {
