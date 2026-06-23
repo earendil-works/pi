@@ -65,6 +65,10 @@ type HookHandler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown;
 interface MockPi {
 	hooks: Map<string, HookHandler>;
 	on: (hookName: string, handler: HookHandler) => void;
+	// `memory_get` tool registration (Task 5.1) — this suite focuses on
+	// the hook surface, not the tool, so we only need a no-op to keep
+	// `registerMemory` happy when it calls `pi.registerTool`.
+	registerTool: (tool: unknown) => void;
 }
 
 function createMockPi(): MockPi {
@@ -73,6 +77,9 @@ function createMockPi(): MockPi {
 		hooks,
 		on: (hookName, handler) => {
 			hooks.set(hookName, handler);
+		},
+		registerTool: () => {
+			// no-op — tool assertions live in test/memory-tool.test.ts
 		},
 	};
 }
