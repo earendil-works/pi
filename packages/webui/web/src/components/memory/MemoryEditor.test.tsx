@@ -5,21 +5,19 @@ import type { MemoryAtom } from "../../lib/api";
 
 const ATOM: MemoryAtom = {
   id: "a-1",
-  type: "preference",
+  type: "rule",
   title: "Original title",
   summary: "orig summary",
   tags: ["orig"],
   importance: 0.5,
   strength: 0.7,
   access_count: 0,
-  last_access: "",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
+  last_access: null,
+  created_at: 1735689600000,
+  updated_at: 1735689600000,
   version: 1,
   archived: false,
   content: "# orig",
-  file_path: "",
-  content_hash: "",
 };
 
 describe("MemoryEditor", () => {
@@ -84,62 +82,26 @@ describe("MemoryEditor", () => {
     expect(screen.getByText(/importance 0\.50/)).toBeDefined();
   });
 
-  it("renders <memory-error> placeholder when content='' and file_path set", () => {
+  it("renders <memory-error> placeholder when content is empty (v2: hash_mismatch collapsed into content=='')", () => {
     const atom: MemoryAtom = {
       ...ATOM,
       content: "",
-      file_path: "/tmp/x.md",
-      hash_mismatch: true,
     };
     render(<MemoryEditor atom={atom} onSave={vi.fn()} onArchive={vi.fn()} />);
     expect(screen.getByTestId("memory-error")).toBeDefined();
-    expect(screen.getByText(/file hash mismatch/)).toBeDefined();
-  });
-
-  it("shows memory-error banner only when atom.hash_mismatch is true (task 7.3)", () => {
-    const mismatched: MemoryAtom = {
-      ...ATOM,
-      content: "",
-      file_path: "/tmp/x.md",
-      hash_mismatch: true,
-    };
-    const { unmount } = render(
-      <MemoryEditor atom={mismatched} onSave={vi.fn()} onArchive={vi.fn()} />,
-    );
-    expect(screen.getByTestId("memory-error")).toBeDefined();
-    expect(screen.getByText(/file hash mismatch/)).toBeDefined();
-    unmount();
-
-    const clearedBody: MemoryAtom = {
-      ...ATOM,
-      content: "",
-      file_path: "/tmp/x.md",
-    };
-    render(<MemoryEditor atom={clearedBody} onSave={vi.fn()} onArchive={vi.fn()} />);
-    expect(screen.queryByTestId("memory-error")).toBeNull();
+    expect(screen.getByText(/empty body/)).toBeDefined();
   });
 
   it("does NOT render <memory-error> when content is non-empty", () => {
     const atom: MemoryAtom = {
       ...ATOM,
       content: "# body",
-      file_path: "/tmp/x.md",
     };
     render(<MemoryEditor atom={atom} onSave={vi.fn()} onArchive={vi.fn()} />);
     expect(screen.queryByTestId("memory-error")).toBeNull();
   });
 
-  it("does NOT render <memory-error> when file_path is empty", () => {
-    const atom: MemoryAtom = { ...ATOM, content: "", file_path: "" };
-    render(<MemoryEditor atom={atom} onSave={vi.fn()} onArchive={vi.fn()} />);
-    expect(screen.queryByTestId("memory-error")).toBeNull();
-  });
-
-  it("renders 'bug' as an option in the type <select> (8th type)", () => {
-    // Production data has 1 atom with type='bug' (out-of-band from the
-    // documented 7-type set). Without this option the editor's <select>
-    // defaults to "constraint" on PATCH and silently changes the atom's
-    // type. See task 6.7 / review-fail MEDIUM.
+  it("type <select> exposes the v2 3-type set (rule / fact / process)", () => {
     const { container } = render(
       <MemoryEditor atom={ATOM} onSave={vi.fn()} onArchive={vi.fn()} />,
     );
@@ -148,6 +110,6 @@ describe("MemoryEditor", () => {
     const optionTexts = Array.from(select!.children).map(
       (o) => (o as HTMLOptionElement).value,
     );
-    expect(optionTexts).toContain("bug");
+    expect(optionTexts).toEqual(expect.arrayContaining(["rule", "fact", "process"]));
   });
 });

@@ -4,18 +4,18 @@ import { MemoryList } from "./MemoryList";
 import type { MemoryAtom } from "../../lib/api";
 
 const ATOMS: MemoryAtom[] = [
-  { id: "a-1", type: "preference", title: "Use tabs", summary: "tabs not spaces",
-    tags: ["editor"], importance: 0.8, strength: 0.9, access_count: 0, last_access: "",
-    created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-02T00:00:00Z", version: 1, archived: false,
-    content: "", file_path: "", content_hash: "" },
-  { id: "a-2", type: "workflow", title: "Run tests first", summary: "test policy",
-    tags: [], importance: 0.5, strength: 0.7, access_count: 0, last_access: "",
-    created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-03T00:00:00Z", version: 1, archived: true,
-    content: "", file_path: "", content_hash: "" },
-  { id: "a-3", type: "preference", title: "Dark mode", summary: "ui",
-    tags: ["ui"], importance: 0.3, strength: 0.5, access_count: 0, last_access: "",
-    created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", version: 1, archived: false,
-    content: "", file_path: "", content_hash: "" },
+  { id: "a-1", type: "rule", title: "Use tabs", summary: "tabs not spaces",
+    tags: ["editor"], importance: 0.8, strength: 0.9, access_count: 0, last_access: null,
+    created_at: 1735689600000, updated_at: 1735776000000, version: 1, archived: false,
+    content: "" },
+  { id: "a-2", type: "process", title: "Run tests first", summary: "test policy",
+    tags: [], importance: 0.5, strength: 0.7, access_count: 0, last_access: null,
+    created_at: 1735689600000, updated_at: 1735862400000, version: 1, archived: true,
+    content: "" },
+  { id: "a-3", type: "rule", title: "Dark mode", summary: "ui",
+    tags: ["ui"], importance: 0.3, strength: 0.5, access_count: 0, last_access: null,
+    created_at: 1735689600000, updated_at: 1735689600000, version: 1, archived: false,
+    content: "" },
 ];
 
 describe("MemoryList", () => {
@@ -42,10 +42,10 @@ describe("MemoryList", () => {
   it("filters by type when chip toggled", () => {
     const onFilterChange = vi.fn();
     render(<MemoryList atoms={ATOMS} onSelect={vi.fn()} onArchive={vi.fn()} filters={{ types: [], archived: "all", tag: "", q: "" }} onFilterChange={onFilterChange} onRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "preference" }));
+    fireEvent.click(screen.getByRole("button", { name: "rule" }));
     expect(onFilterChange).toHaveBeenCalled();
     const called = onFilterChange.mock.calls[0][0];
-    expect(called.types).toContain("preference");
+    expect(called.types).toContain("rule");
   });
 
   it("calls onArchive when archive button clicked", () => {

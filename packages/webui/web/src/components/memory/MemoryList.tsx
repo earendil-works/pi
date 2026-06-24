@@ -22,8 +22,8 @@ interface MemoryListProps {
 
 const TYPES: MemoryAtomType[] = ["rule", "fact", "process"];
 
-function timeAgo(iso: string): string {
-  if (!iso) return "—";
+function timeAgo(iso: string | number | null | undefined): string {
+  if (iso === null || iso === undefined || iso === "") return "—";
   const diffMs = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(diffMs)) return "—";
   const hours = Math.floor(diffMs / 3_600_000);

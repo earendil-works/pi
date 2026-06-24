@@ -155,15 +155,14 @@ export function MemoryEditor({ atom, onSave, onArchive, onFlush }: MemoryEditorP
       </div>
       {/* body editor */}
       <div className="flex-1 flex flex-col min-h-0">
-        {atom.hash_mismatch && (
+        {atom.content === "" && (
           <div
             data-testid="memory-error"
             className="bg-red-50 border-b border-red-200 px-3 py-2 text-xs text-red-800"
           >
-            <strong>file hash mismatch</strong> — another atom with the same
-            title overwrote this file. The original body is no longer
-            recoverable; restoring requires manual git/recovery of the
-            underlying markdown.
+            <strong>empty body</strong> — file was overwritten by another atom
+            sharing the same title, or the underlying markdown is missing.
+            Restoring requires manual git/recovery of the original file.
           </div>
         )}
         <div className="flex gap-1 border-b border-gray-200 px-3 py-1 text-xs">

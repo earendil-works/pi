@@ -4,18 +4,9 @@ import { MemoryTypeBadge } from "./MemoryTypeBadge";
 import type { MemoryAtomType } from "../../lib/api";
 
 const CASES: Array<{ type: MemoryAtomType; bgClass: string; textClass: string }> = [
-  { type: "constraint", bgClass: "bg-red-100", textClass: "text-red-800" },
-  { type: "preference", bgClass: "bg-blue-100", textClass: "text-blue-800" },
-  { type: "workflow",   bgClass: "bg-purple-100", textClass: "text-purple-800" },
-  { type: "knowledge",  bgClass: "bg-green-100", textClass: "text-green-800" },
-  { type: "event",      bgClass: "bg-amber-100", textClass: "text-amber-800" },
-  { type: "solution",   bgClass: "bg-indigo-100", textClass: "text-indigo-800" },
-  { type: "insight",    bgClass: "bg-pink-100", textClass: "text-pink-800" },
-  // 8th type — production data has 1 atom with type='bug' (out-of-band from
-  // the documented 7-type set). Without an entry here the badge would render
-  // nothing and the editor's <select> would silently default to "constraint"
-  // on PATCH. See task 6.7 / review-fail MEDIUM.
-  { type: "bug",        bgClass: "bg-yellow-100", textClass: "text-yellow-800" },
+  { type: "rule",    bgClass: "bg-blue-100", textClass: "text-blue-800" },
+  { type: "fact",    bgClass: "bg-green-100", textClass: "text-green-800" },
+  { type: "process", bgClass: "bg-amber-100", textClass: "text-amber-800" },
 ];
 
 describe("MemoryTypeBadge", () => {

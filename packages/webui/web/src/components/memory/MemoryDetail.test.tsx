@@ -20,21 +20,19 @@ vi.mock("../../lib/api", async (importOriginal) => {
 
 const ATOM: MemoryAtom = {
   id: "a-1",
-  type: "preference",
+  type: "rule",
   title: "Test title",
   summary: "summary",
   tags: [],
   importance: 0.5,
   strength: 0.7,
   access_count: 0,
-  last_access: "",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
+  last_access: null,
+  created_at: 1735689600000,
+  updated_at: 1735689600000,
   version: 1,
   archived: false,
   content: "# body",
-  file_path: "/tmp/a.md",
-  content_hash: "abc",
 };
 
 describe("MemoryDetail", () => {

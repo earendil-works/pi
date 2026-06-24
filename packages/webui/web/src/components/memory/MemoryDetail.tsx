@@ -9,8 +9,8 @@ interface MemoryDetailProps {
   onListRefresh: () => void;
 }
 
-function timeAgo(iso: string): string {
-  if (!iso) return "—";
+function timeAgo(iso: string | number | null | undefined): string {
+  if (iso === null || iso === undefined || iso === "") return "—";
   const diffMs = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(diffMs)) return "—";
   const sec = Math.floor(diffMs / 1000);
@@ -123,7 +123,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
             {status === "idle" && "idle"}
             {status === "saving" && "Saving..."}
             {status === "saved" &&
-              `Saved ${timeAgo(savedValue?.updated_at ?? "")}`}
+              `Saved ${timeAgo(savedValue?.updated_at)}`}
             {status === "error" && `error: ${error?.message ?? "unknown"}`}
           </span>
           <button
