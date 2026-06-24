@@ -202,11 +202,30 @@ function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Pr
         "No text content in LLM response (response was a thinking block only; model may have run out of tokens before writing the answer)",
       );
     }
-    // Neither text nor thinking blocks. Log the content types we saw and
-    // the stopReason so the next failure isn't a mystery.
+    // Neither text nor thinking blocks. Log the full raw response so we
+    // can tell whether this is a content_filter (finish_reason mapped
+    // to stopReason=error, content=[]), a network/HTTP error, or some
+    // other provider quirk. Truncate each field to keep log size sane.
+    const safe = (v: unknown): string => {
+      try {
+        return JSON.stringify(v).slice(0, 500);
+      } catch {
+        return String(v).slice(0, 500);
+      }
+    };
+    const r = result as unknown as Record<string, unknown>;
     console.warn(
-      `[memory-extract] no usable content (finishReason=${result.stopReason ?? "unknown"}, ` +
-        `contentTypes=[${seenTypes.join(",")}], blockCount=${result.content.length})`,
+      `[memory-extract] no usable content ` +
+        `(model=${provider}/${modelId}, ` +
+        `promptChars=${prompt.length}, ` +
+        `maxTokens=${extractionMaxTokens}, ` +
+        `stopReason=${result.stopReason ?? "unknown"}, ` +
+        `finishReason=${safe(r.finishReason ?? r.finish_reason)}, ` +
+        `contentTypes=[${seenTypes.join(",")}], ` +
+        `blockCount=${result.content.length}, ` +
+        `usage=${safe(r.usage)}, ` +
+        `error=${safe(r.error)}, ` +
+        `raw=${safe(r)})`,
     );
     throw new Error(`No text content in LLM response (content types: [${seenTypes.join(",")}])`);
   };
