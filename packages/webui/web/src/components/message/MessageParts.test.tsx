@@ -222,21 +222,14 @@ describe("MessageParts", () => {
   });
 
   describe("StepHeader (via MessageParts)", () => {
-    // TDD RED: these tests describe the post-implementation contract for the
-    // StepHeader wrapper around assistant turns. `isStreaming` and `timestamp`
-    // props don't exist on MessageParts yet (1.2 will add them), so we cast
-    // the props to `any` here. Once 1.2 lands, the cast is a no-op.
-    //
-    // Current behavior baseline (pre-1.2): no StepHeader exists. The 4 cases
-    // asserting new behavior (2,3,4,5) MUST fail here. Case 1 is a regression
-    // guard — it asserts that pure-text turns do NOT gain a step header. It
-    // happens to pass pre-1.2 (vacuously, since no header exists) and must
-    // continue to pass post-1.2 (genuinely, because the implementation
-    // branches on hasStepContent).
+    // These tests cover the StepHeader wrapper around assistant turns.
+    // Case 1 is a regression guard — it asserts that pure-text turns do
+    // NOT gain a step header. Cases 2-5 cover the streaming / collapsed
+    // / user-toggle / auto-collapse contract.
 
     it("renders no step header for a pure-text turn", () => {
       const parts: Part[] = [{ type: "text", text: "hi" }];
-      render(<MessageParts {...({ parts, isStreaming: false } as any)} />);
+      render(<MessageParts parts={parts} isStreaming={false} />);
       // Regression guard: no "Executing" / "Completed" text → no step header.
       expect(screen.queryByText(/Execut|Completed/i)).toBeNull();
     });
@@ -246,7 +239,7 @@ describe("MessageParts", () => {
         { type: "thinking", text: "x" },
         { type: "text", text: "y" },
       ];
-      render(<MessageParts {...({ parts, isStreaming: true } as any)} />);
+      render(<MessageParts parts={parts} isStreaming={true} />);
       // Step header shows "● Executing (Xs) ▼"
       expect(screen.getByText(/Executing/i)).toBeTruthy();
       // Body is expanded by default when isStreaming=true → text "y" visible
@@ -257,7 +250,7 @@ describe("MessageParts", () => {
       const parts: Part[] = [
         { type: "toolCall", id: "t1", name: "read", args: { path: "/x" } },
       ];
-      render(<MessageParts {...({ parts, isStreaming: false } as any)} />);
+      render(<MessageParts parts={parts} isStreaming={false} />);
       // Step header shows "✓ Completed (Xs) ▲"
       expect(screen.getByText(/Completed/i)).toBeTruthy();
       // Body is collapsed by default when isStreaming=false → "/x" not in DOM
@@ -269,7 +262,7 @@ describe("MessageParts", () => {
         { type: "toolCall", id: "t1", name: "read", args: { path: "/x" } },
       ];
       const { container } = render(
-        <MessageParts {...({ parts, isStreaming: false } as any)} />,
+        <MessageParts parts={parts} isStreaming={false} />,
       );
       // Pre-click: body collapsed
       expect(screen.queryByText("/x")).toBeNull();
@@ -289,13 +282,13 @@ describe("MessageParts", () => {
         { type: "text", text: "y" },
       ];
       const { rerender } = render(
-        <MessageParts {...({ parts, isStreaming: true } as any)} />,
+        <MessageParts parts={parts} isStreaming={true} />,
       );
       // While streaming, body is expanded → text "y" visible
       expect(screen.getByText("y")).toBeTruthy();
       // Transition to not streaming (same instance, same parts)
       rerender(
-        <MessageParts {...({ parts, isStreaming: false } as any)} />,
+        <MessageParts parts={parts} isStreaming={false} />,
       );
       // Body auto-collapses → "y" no longer in the DOM
       expect(screen.queryByText("y")).toBeNull();

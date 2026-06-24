@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import {
   Brain, Database, Terminal, Globe, FolderOpen, ListTodo,
   Wrench, Image as ImageIcon, ChevronRight, Wrench as ToolsIcon
@@ -260,18 +260,62 @@ function ToolGroup({
   );
 }
 
+// StepHeader: status row above the body. Shows streaming/completed icon,
+// status text, elapsed seconds (ticks every 1s), and a chevron. Clicking
+// the header toggles the body's visibility; the parent decides how to
+// interpret the toggle.
+interface StepHeaderProps {
+  isStreaming: boolean;
+  startedAt: Date;
+  open: boolean;
+  onToggle: () => void;
+}
+
+function StepHeader({ isStreaming, startedAt, open, onToggle }: StepHeaderProps) {
+  const [, forceTick] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    const id = setInterval(forceTick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+  const icon = isStreaming ? "\u25CF" : "\u2713";
+  const iconColor = isStreaming ? "text-blue-500" : "text-green-600";
+  const statusText = isStreaming ? "Executing" : "Completed";
+  const chevron = open ? "\u25BC" : "\u25B2";
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-gray-50 rounded"
+    >
+      <span className={`font-bold ${iconColor}`}>{icon}</span>
+      <span className="font-medium">{statusText}</span>
+      <span className="text-gray-500">({seconds}s)</span>
+      <span className="ml-auto text-gray-400">{chevron}</span>
+    </button>
+  );
+}
+
 // Main exported component: render parts in chronological order so the
 // user sees: thinking → text → toolCall → toolResult → thinking → text
 // → toolCall → toolResult → ... → final text. Consecutive tool-related
 // parts (toolCall + toolResult + image) are wrapped in a single bordered
 // box via ToolGroup for visual cohesion.
+//
+// When the turn contains step-shaped content (thinking, tool calls,
+// tool results, or images), the whole thing is wrapped in a collapsible
+// step container with a StepHeader above the body. Pure-text turns skip
+// the wrapper so a plain reply doesn't gain visual chrome.
 export function MessageParts({
   parts,
+  isStreaming = true,
+  timestamp,
   cardStates,
   onCardSubmit,
   onCardCancel,
 }: {
   parts: Part[];
+  isStreaming?: boolean;
+  timestamp?: string;
   cardStates?: Map<string, CardState>;
   onCardSubmit?: (id: string, value: string) => void;
   onCardCancel?: (id: string) => void;
@@ -279,6 +323,31 @@ export function MessageParts({
   if (parts.length === 0) {
     return <div className="text-xs text-gray-400 italic">(empty turn)</div>;
   }
+
+  const hasStepContent = parts.some(
+    (p) =>
+      p.type === "thinking" ||
+      p.type === "toolCall" ||
+      p.type === "toolResult" ||
+      p.type === "image",
+  );
+  if (!hasStepContent) {
+    return (
+      <div className="flex flex-col gap-2">
+        {parts.map((p, i) =>
+          p.type === "text" ? <TextItem key={i} part={p} /> : null,
+        )}
+      </div>
+    );
+  }
+
+  // `userOverride` is the user's last click on the header. Null means
+  // "follow isStreaming". This makes the body auto-collapse when the
+  // stream ends (isStreaming → false) without losing a deliberate user
+  // expansion: a clicked-open step stays open across stream transitions.
+  const [userOverride, setUserOverride] = useState<boolean | null>(null);
+  const open = userOverride ?? isStreaming;
+  const startedAt = timestamp ? new Date(timestamp) : new Date();
 
   // Walk parts and build a list of "chunks" — each chunk is either
   // (a) a single thinking/text item, or
@@ -313,28 +382,38 @@ export function MessageParts({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {chunks.map((chunk, i) => {
-        if (chunk.kind === "tools") {
-          return (
-            <ToolGroup
-              key={`tg-${i}`}
-              parts={chunk.parts}
-              cardStates={cardStates}
-              onCardSubmit={onCardSubmit}
-              onCardCancel={onCardCancel}
-            />
-          );
-        }
-        const p = chunk.part;
-        if (p.type === "thinking") {
-          return <ThinkingItem key={`th-${i}`} part={p} />;
-        }
-        if (p.type === "text") {
-          return <TextItem key={`tx-${i}`} part={p} />;
-        }
-        return null;
-      })}
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col gap-2">
+      <StepHeader
+        isStreaming={isStreaming}
+        startedAt={startedAt}
+        open={open}
+        onToggle={() => setUserOverride(!open)}
+      />
+      {open && (
+        <div className="flex flex-col gap-2 border-t border-gray-100 pt-2">
+          {chunks.map((chunk, i) => {
+            if (chunk.kind === "tools") {
+              return (
+                <ToolGroup
+                  key={`tg-${i}`}
+                  parts={chunk.parts}
+                  cardStates={cardStates}
+                  onCardSubmit={onCardSubmit}
+                  onCardCancel={onCardCancel}
+                />
+              );
+            }
+            const p = chunk.part;
+            if (p.type === "thinking") {
+              return <ThinkingItem key={`th-${i}`} part={p} />;
+            }
+            if (p.type === "text") {
+              return <TextItem key={`tx-${i}`} part={p} />;
+            }
+            return null;
+          })}
+        </div>
+      )}
     </div>
   );
 }
