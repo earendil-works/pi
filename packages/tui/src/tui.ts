@@ -250,6 +250,14 @@ type ActiveOverlayFocusRestoreState = EligibleOverlayFocusRestoreState | Blocked
 type OverlayFocusRestoreState = { status: "inactive" } | ActiveOverlayFocusRestoreState;
 type OverlayFocusRestorePolicy = "clear" | "preserve";
 
+/** Configuration for horizontal split-layout mode */
+export interface SplitLayoutConfig {
+	/** Component to render in the right panel */
+	rightPanel: Component;
+	/** Fraction of terminal width for the left panel (0.0-1.0, default: 0.6) */
+	ratio: number;
+}
+
 /**
  * Container - a component that contains other components
  */
@@ -324,6 +332,15 @@ export class TUI extends Container {
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
+	private splitConfig: SplitLayoutConfig | null = null;
+	// Cache for applySplitToViewport — avoids redundant rendering on every doRender cycle
+	private splitViewportCache: {
+		key: string;
+		viewportStart: number;
+		leftWidth: number;
+		rightWidth: number;
+		result: string[];
+	} | null = null;
 
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
@@ -361,6 +378,97 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	/**
+	 * Enable horizontal split-layout mode.
+	 * The terminal is divided at `ratio` (left proportion, default 0.6).
+	 * Existing children render in the left panel; `rightPanel` renders on the right.
+	 */
+	setSplitLayout(ratio: number, rightPanel: Component): void {
+		this.splitConfig = { rightPanel, ratio };
+		this.splitViewportCache = null;
+		this.invalidate();
+		this.requestRender(true);
+	}
+
+	/** Disable split-layout mode and restore full-width rendering. */
+	clearSplitLayout(): void {
+		this.splitConfig = null;
+		this.splitViewportCache = null;
+		this.invalidate();
+		this.requestRender(true);
+	}
+
+	/**
+	 * Apply horizontal split layout only to the visible viewport lines.
+	 * The right panel is anchored to the screen area, not to the full content
+	 * height, so it stays visible regardless of scroll position on the left side.
+	 */
+	private applySplitToViewport(lines: string[], termWidth: number, termHeight: number): string[] {
+		const { rightPanel, ratio } = this.splitConfig!;
+		const divider = "│";
+		const dividerWidth = visibleWidth(divider);
+		const leftWidth = Math.floor(termWidth * ratio);
+		const rightWidth = termWidth - leftWidth - dividerWidth;
+
+		if (leftWidth < 10 || rightWidth < 10) {
+			return lines;
+		}
+
+		const viewportStart = Math.max(0, lines.length - termHeight);
+
+		// Build a lightweight cache key: first character of each viewport line
+		// This is a fast heuristic — if any viewport line's first char changed,
+		// we re-merge. If nothing changed, we skip all processing.
+		let cacheKey = "";
+		const viewportEnd = Math.min(lines.length, viewportStart + termHeight);
+		for (let i = viewportStart; i < viewportEnd; i++) {
+			const line = lines[i];
+			cacheKey += line ? (line[0] ?? "") : "";
+		}
+
+		if (
+			this.splitViewportCache &&
+			this.splitViewportCache.key === cacheKey &&
+			this.splitViewportCache.viewportStart === viewportStart &&
+			this.splitViewportCache.leftWidth === leftWidth &&
+			this.splitViewportCache.rightWidth === rightWidth
+		) {
+			return this.splitViewportCache.result;
+		}
+
+		// Render right panel
+		const rightLines = rightPanel.render(rightWidth);
+
+		// Copy only the viewport rows, not the entire lines array
+		const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+		const result = lines.slice(); // shallow copy
+
+		for (let i = 0; i < termHeight && viewportStart + i < lines.length; i++) {
+			const lineIdx = viewportStart + i;
+			const left = lines[lineIdx];
+			const right = i < rightLines.length ? rightLines[i] : "";
+
+			// Fast path: if left line fits within leftWidth, just pad with spaces
+			const leftVisWidth = visibleWidth(left);
+			const leftPadded =
+				leftVisWidth < leftWidth
+					? left + " ".repeat(leftWidth - leftVisWidth)
+					: leftVisWidth > leftWidth
+						? sliceByColumn(left, 0, leftWidth, true)
+						: left;
+
+			// Truncate right content to rightWidth
+			const rightSafe = visibleWidth(right) <= rightWidth ? right : sliceByColumn(right, 0, rightWidth, true);
+
+			result[lineIdx] = leftPadded + SEGMENT_RESET + divider + rightSafe;
+		}
+
+		// Update cache
+		this.splitViewportCache = { key: cacheKey, viewportStart, leftWidth, rightWidth, result };
+
+		return result;
 	}
 
 	setFocus(component: Component | null): void {
@@ -629,6 +737,7 @@ export class TUI extends Container {
 
 	override invalidate(): void {
 		super.invalidate();
+		this.splitConfig?.rightPanel.invalidate?.();
 		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
 	}
 
@@ -1269,6 +1378,13 @@ export class TUI extends Container {
 
 		// Render all components to get new lines
 		let newLines = this.render(width);
+
+		// Apply split layout to viewport only (right panel stays anchored to screen,
+		// not to the full content — avoids the right panel content being "scrolled away"
+		// when the left side has many more lines than the right panel).
+		if (this.splitConfig) {
+			newLines = this.applySplitToViewport(newLines, width, height);
+		}
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {

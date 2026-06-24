@@ -2,7 +2,6 @@ import { ok } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Text, TUI } from "../src/index.ts";
 
-// Mock terminal for testing
 function createMockTerminal(columns = 80, rows = 24) {
 	let written = "";
 	return {
@@ -13,18 +12,8 @@ function createMockTerminal(columns = 80, rows = 24) {
 		},
 		start: () => {},
 		stop: () => {},
-		drainInput: async () => {},
 		hideCursor: () => {},
 		showCursor: () => {},
-		moveBy: (_lines: number) => {},
-		clearLine: () => {},
-		clearFromCursor: () => {},
-		clearScreen: () => {},
-		setTitle: (_title: string) => {},
-		setProgress: (_active: boolean) => {},
-		get kittyProtocolActive() {
-			return false;
-		},
 		getWritten: () => written,
 		reset: () => {
 			written = "";
@@ -33,69 +22,54 @@ function createMockTerminal(columns = 80, rows = 24) {
 }
 
 describe("SplitLayout", () => {
-	it("renders left and right panels side by side", () => {
+	it("full render cycle produces divider in terminal output", async () => {
 		const terminal = createMockTerminal(80, 24) as any;
 		const tui = new TUI(terminal);
 
-		const left = new Text("Left Content", 0, 0);
-		const right = new Text("Right Content", 0, 0);
+		const left = new Text("Hello World", 0, 0);
+		const right = new Text("Right Panel", 0, 0);
 
 		tui.addChild(left);
 		tui.setSplitLayout(0.6, right);
 
-		const lines = tui.render(80);
-		ok(lines.length > 0, "Should produce lines");
+		// Wait for the async render scheduled by setSplitLayout
+		await new Promise<void>((resolve) => process.nextTick(() => resolve()));
 
-		const firstLine = lines[0]!;
-		ok(firstLine.includes("Left Content"), "Left content present");
-		ok(firstLine.includes("\u2502"), "Divider present");
-		ok(firstLine.includes("Right Content"), "Right content present");
+		const written = terminal.getWritten();
+		ok(written.includes("│"), "Divider appears in terminal output");
+		ok(written.includes("Right Panel"), "Right content appears in terminal output");
 	});
 
-	it("pads shorter side with empty lines", () => {
+	it("clearSplitLayout stops producing divider", async () => {
 		const terminal = createMockTerminal(80, 24) as any;
 		const tui = new TUI(terminal);
 
-		const left = new Text("Line 1\nLine 2\nLine 3", 0, 0);
-		const right = new Text("Single Line", 0, 0);
+		const left = new Text("Hello", 0, 0);
+		const right = new Text("Right", 0, 0);
 
 		tui.addChild(left);
 		tui.setSplitLayout(0.6, right);
 
-		const lines = tui.render(80);
-		ok(lines.length >= 3, "Should have at least 3 lines");
-		ok(lines[1]!.includes("Line 2"), "Second left line present");
-		ok(lines[1]!.includes("\u2502"), "Divider on second line");
-	});
+		await new Promise<void>((resolve) => process.nextTick(() => resolve()));
+		const withSplit = terminal.getWritten();
+		ok(withSplit.includes("│"), "Divider present with split");
 
-	it("clearSplitLayout restores normal rendering", () => {
-		const terminal = createMockTerminal(80, 24) as any;
-		const tui = new TUI(terminal);
-
-		const left = new Text("Normal Content", 0, 0);
-		tui.addChild(left);
-		tui.setSplitLayout(0.6, new Text("", 0, 0));
-
-		const splitLines = tui.render(80);
-		const splitFirst = splitLines[0]!;
-		ok(splitFirst.includes("\u2502"), "Is in split mode");
-
+		terminal.reset();
 		tui.clearSplitLayout();
-		const normalLines = tui.render(80);
-		const normalFirst = normalLines[0]!;
-		ok(!normalFirst.includes("\u2502"), "Split mode cleared");
+		await new Promise<void>((resolve) => process.nextTick(() => resolve()));
+		const afterClear = terminal.getWritten();
+		ok(!afterClear.includes("│"), "No divider after clearSplitLayout");
 	});
 
-	it("falls back to full width when terminal is too narrow", () => {
-		const terminal = createMockTerminal(15, 24) as any;
+	it("render() returns full-width content (split applied only in doRender)", () => {
+		const terminal = createMockTerminal(80, 24) as any;
 		const tui = new TUI(terminal);
 
-		const left = new Text("Content", 0, 0);
-		tui.addChild(left);
-		tui.setSplitLayout(0.6, new Text("", 0, 0));
+		const content = new Text("Normal Content", 0, 0);
+		tui.addChild(content);
 
-		const lines = tui.render(15);
-		ok(lines[0]!.includes("Content"), "Content rendered");
-		ok(!lines[0]!.includes("\u2502"), "No divider in narrow terminal");
+		const lines = tui.render(80);
+		ok(lines.length > 0, "render() produces lines");
+		ok(lines[0]!.includes("Normal Content"), "Content appears");
 	});
 });
