@@ -10,11 +10,13 @@ export function MessageBubble({
   cardStates,
   onCardSubmit,
   onCardCancel,
+  isStreaming = false,
 }: {
   message: Message;
   cardStates?: Map<string, CardState>;
   onCardSubmit?: (id: string, value: string) => void;
   onCardCancel?: (id: string) => void;
+  isStreaming?: boolean;
 }): JSX.Element | null {
   if (message.role === "user") {
     const textParts = message.parts.filter((p) => p.type === "text");
@@ -59,6 +61,8 @@ export function MessageBubble({
           cardStates={cardStates}
           onCardSubmit={onCardSubmit}
           onCardCancel={onCardCancel}
+          isStreaming={isStreaming}
+          timestamp={message.timestamp}
         />
         <MessageFooter usage={message.usage} />
       </div>

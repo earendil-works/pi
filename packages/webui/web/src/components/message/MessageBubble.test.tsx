@@ -133,7 +133,6 @@ describe("MessageBubble", () => {
       ],
       timestamp: "2026-06-24T15:00:00.000Z",
     };
-    // @ts-expect-error -- `isStreaming` prop is added in Task 2.2 (GREEN).
     render(<MessageBubble message={message} isStreaming={true} />);
     const stub = screen.getByTestId("mp");
     expect(stub.getAttribute("data-streaming")).toBe("true");
