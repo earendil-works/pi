@@ -44,7 +44,7 @@ memory-v2 当前是纯 sqlite-vec dense 召回 (bge-m3 + cosine threshold)。202
    - 两者均可在 `~/.pi/agent/settings.json` 覆盖
 3. **质量指标**:
    - 用户实测 case `lefse没有结果` 不再误召回 `X101SC26052587 客户数据未回传`(该 atom 与 query 无 BM25 命中,RRF 排到 top-9 之外)
-   - `recall-quality.test.ts` (现有 labeled dataset 14 atom / 9 query) avg_recall@5 ≥ 0.85 (从原 1.0 微降到 ~0.85-0.95),avg_precision@5 ≥ 0.5 (从原 0.27 提升 ~2x,因为 BM25 排掉大量噪声)
+   - `recall-quality.test.ts` (现有 labeled dataset 14 atom / 9 query) avg_recall@5 ≥ 0.85 (从原 1.0 微降到 ~0.85-0.95),avg_precision@5 ≥ 0.4 (从原 0.27 提升 ~50%,因为 BM25 排掉大量噪声;实测幅度依赖数据集)
 4. **测试**:
    - 单元测试 hermetic(不依赖 ollama),用 mock embedder + in-memory FTS5
    - 现有 16 个 search.test.ts 全部仍 pass

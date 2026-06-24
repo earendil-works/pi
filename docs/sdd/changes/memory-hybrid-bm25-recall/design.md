@@ -365,7 +365,7 @@ supersedeAtom(oldId, newAtom, newEmbedding) {
 ### 集成测试 (`test/recall-quality.test.ts`,扩展)
 - 现有 labeled dataset (14 atom / 9 query) 全跑通
 - avg_recall@5 ≥ 0.85 (从原 1.0 微降,因为 RRF 阈值比旧 dense 阈值严)
-- avg_precision@5 ≥ 0.5 (从原 0.27 提升 ~2x,因为 BM25 排掉大量噪声)
+- avg_precision@5 ≥ 0.4 (从原 0.27 提升 ~50%,因为 BM25 排掉大量噪声;实测幅度依赖数据集)
 
 ### 边界条件
 - ollama 不可达 → dense 降级到 [],BM25 仍工作

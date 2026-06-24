@@ -36,20 +36,20 @@
 
 - [ ] 1.3 **Sync memory_fts on insertAtom (within transaction)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
-  - **内容**: In `insertAtom(atom, embedding)`, wrap the existing memory_index + memory_vectors INSERT in `db.transaction(() => { ... })()` and add `INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)`. Note: `tags` is stored as JSON-encoded string in `memory_index.tags`, but for FTS5 we want a space-separated string of tags — derive via `JSON.parse(atom.tags).join(' ')` (or use `atom.tags` directly if it's already an array). If `tags` is empty string, pass empty string `''` to FTS5.
+  - **内容**: In `insertAtom(atom, embedding)` at line 125, the existing `this.db.transaction(() => { ... })()` already wraps the INSERT into `memory_index` and `memory_vectors` (lines 127-146). Add an INSERT into `memory_fts` inside the same transaction body, after the memory_vectors INSERT: `this.db.prepare(\`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)\`).run(atom.id, atom.title, atom.summary, atom.content, atom.tags.join(' '));`. Note: `atom.tags` is `string[]` (see types.ts), so `join(' ')` produces space-separated tokens for FTS5; if `atom.tags` is empty, this is an empty string, which FTS5 handles fine.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("insertAtom writes memory_fts row")` passes: after insert, `SELECT count(*) FROM memory_fts WHERE id = ?` returns 1.
   - **依赖**: 1.1
 
-- [ ] 1.4 **Sync memory_fts on archiveAtom (delete FTS5 row)**
+- [ ] 1.4 **Sync memory_fts on markArchived (delete FTS5 row)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
-  - **内容**: In the existing archive path (the SQL update that sets `archived = 1` for an atom id), wrap the existing UPDATE + DELETE FROM memory_vectors in `db.transaction()` and add `DELETE FROM memory_fts WHERE id = ?`. Look up the existing method name (e.g., `archiveAtom(id)` or inline SQL) and add the FTS5 sync there.
-  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("archiveAtom deletes memory_fts row")` passes: insert atom, archive, then `SELECT count(*) FROM memory_fts WHERE id = ?` returns 0.
+  - **内容**: In `markArchived(id)` at line 526, the existing `this.db.transaction(() => { ... })()` wraps the UPDATE on `memory_index` and the audit insert (lines 527-530). Note: this method does NOT currently delete the vector row — `deleteVector(id)` is a separate caller-driven step. Add `this.db.prepare(\`DELETE FROM memory_fts WHERE id = ?\`).run(id);` inside the same transaction body, after the existing UPDATE. The vector deletion path (caller invokes `deleteVector` separately) is unchanged — we do NOT couple FTS5 deletion to vector deletion because the vector delete is a GC decision, not an archive decision.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("markArchived deletes memory_fts row")` passes: insert atom, markArchived(id), then `SELECT count(*) FROM memory_fts WHERE id = ?` returns 0.
   - **依赖**: 1.3
 
-- [ ] 1.5 **Sync memory_fts on supersedeAtom (delete old + insert new)**
+- [ ] 1.5 **Sync memory_fts on markSupersededTx (delete old + insert new)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
-  - **内容**: In the existing supersede path (UPDATE memory_index is_latest=0 for old atom + INSERT new atom), wrap in `db.transaction()` and add `DELETE FROM memory_fts WHERE id = ?` for the old atom's id, plus `INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)` for the new atom. Match the tag-encoding logic from 1.3.
-  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("supersedeAtom replaces memory_fts row")` passes: after supersede, old id has 0 FTS5 rows, new id has 1 FTS5 row.
+  - **内容**: In `markSupersededTx(oldId, newAtom, newEmbedding)` at line 346, the existing `this.db.transaction(() => { ... })()` (line 367) already wraps: UPDATE memory_index for old (is_latest=0), INSERT memory_index for new, INSERT memory_vectors for new, and the two audit inserts (lines 367-419). Add inside the same transaction body, after the memory_vectors INSERT and before the audit inserts: (a) `this.db.prepare(\`DELETE FROM memory_fts WHERE id = ?\`).run(oldId);` and (b) `this.db.prepare(\`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)\`).run(transferredAtom.id, transferredAtom.title, transferredAtom.summary, transferredAtom.content, transferredAtom.tags.join(' '));`. Use `transferredAtom` (the merged new atom) for the FTS5 row content, NOT the raw `newAtom`, so the FTS5 row reflects the actual stored atom.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("markSupersededTx swaps memory_fts row")` passes: after supersede, old id has 0 FTS5 rows, new id has 1 FTS5 row with the merged atom's content.
   - **依赖**: 1.3
 
 ## 2. RecallResult type — add rrfScore
@@ -96,7 +96,7 @@
 
 - [ ] 4.2 **Wire config.recall into before_agent_start recallAtoms call**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
-  - **内容**: In the `before_agent_start` hook (around the `recallAtoms(index, userMessage, { topK: 10 })` call), change to `recallAtoms(index, userMessage, { topK: 10, rrfK: config.memory?.recall?.rrfK, recallThreshold: config.memory?.recall?.recallThreshold })`. Note: topK=10 from before stays (existing topK parameter for per-type KNN, now effective for both dense and BM25 channels). Add a one-line comment explaining the wiring.
+  - **内容**: In the `before_agent_start` hook (around the `recallAtoms(index, userMessage, { topK: 10 })` call), change to `recallAtoms(index, userMessage, { topK: 20, rrfK: config.memory?.recall?.rrfK, recallThreshold: config.memory?.recall?.recallThreshold })`. `topK: 20` matches the per-channel KNN candidate count from design.md Decision 2 (each of dense + BM25 returns up to 20 candidates per type, then RRF takes top-3 per type after fusion). Add a one-line comment explaining the wiring.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/before-agent-start.test.ts` — existing tests still pass (no behavior change assertion since recallAtoms is mocked).
   - **依赖**: 4.1, 3.3
 
