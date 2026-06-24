@@ -497,4 +497,52 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 		// Compact proceeds normally when extraction succeeds.
 		expect(result).toBeUndefined();
 	});
+
+	it("emits start + completion info notifies on the happy path", async () => {
+		// The compact path was historically a black box — the user had
+		// no way to tell whether a /compact even attempted extraction.
+		// Loud start/end notifies on the TUI status line turn the hook
+		// into a debuggable event: start tells the user which model
+		// is being called, completion tells them what landed.
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([
+			makeUserMessage("hi"),
+			makeAssistantMessage("hello back"),
+		]);
+
+		await compactHandler(event, mockCtx);
+
+		const infoCalls = mockCtx.notifyCalls.filter((c) => c.type === "info");
+		expect(infoCalls.length).toBeGreaterThanOrEqual(2);
+		expect(infoCalls[0].msg).toMatch(/memory: extracting from 2 messages/i);
+		expect(infoCalls[0].msg).toMatch(/anthropic\/claude-haiku-4-5/);
+		expect(infoCalls[infoCalls.length - 1].msg).toMatch(
+			/memory: extraction complete/i,
+		);
+	});
+
+	it("emits a 'skipping' info notify when compact has no messages", async () => {
+		// Empty /compact (fresh session, no user messages) used to
+		// silently no-op. Surface that as a TUI info so the user
+		// knows compact fired and found nothing to extract.
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([]);
+
+		const result = await compactHandler(event, mockCtx);
+
+		expect(result).toBeUndefined();
+		expect(mockCtx.notifyCalls).toHaveLength(1);
+		expect(mockCtx.notifyCalls[0].type).toBe("info");
+		expect(mockCtx.notifyCalls[0].msg).toMatch(
+			/memory: compact has no messages to extract/i,
+		);
+	});
 });

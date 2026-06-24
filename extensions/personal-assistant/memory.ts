@@ -98,6 +98,24 @@ const DEFAULT_DB_PATH = join(homedir(), ".pi", "agent", "memory", "memory.db");
 const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
 
 /**
+ * TUI notify that swallows errors. Some ctx shapes (rpc/print backends)
+ * have no `notify` at all, or it can throw if the user has dismissed the
+ * TUI. Treat every notify as best-effort — never let a UI hiccup affect
+ * the compact pipeline.
+ */
+function notifySafely(
+	ctx: { ui?: { notify?: (msg: string, type?: "info" | "warning" | "error") => void } },
+	message: string,
+	type: "info" | "warning" | "error" = "info",
+): void {
+	try {
+		ctx.ui?.notify?.(message, type);
+	} catch {
+		// best-effort, see comment above
+	}
+}
+
+/**
  * Flatten an AgentMessage into the {role, content: string} shape that
  * `extractMemoriesWithCallLlm` consumes. Returns null for messages we can't
  * flatten (no text content — e.g. image-only user messages, tool-only
@@ -295,14 +313,11 @@ export function registerMemory(pi: ExtensionAPI): void {
 				"[memory-v2] session_before_compact: extraction failed, cancelling compact:",
 				msg,
 			);
-			try {
-				ctx.ui?.notify?.(
-					`memory: extraction failed, compact cancelled — ${msg}`,
-					"error",
-				);
-			} catch {
-				// notify is best-effort; some ctx shapes (rpc/print) lack it
-			}
+			notifySafely(
+				ctx,
+				`memory: extraction failed, compact cancelled — ${msg}`,
+				"error",
+			);
 			return { cancel: true };
 		}
 	});
@@ -361,7 +376,10 @@ export function registerMemory(pi: ExtensionAPI): void {
 			...(Array.isArray(prep.messagesToSummarize) ? prep.messagesToSummarize : []),
 			...(Array.isArray(prep.turnPrefixMessages) ? prep.turnPrefixMessages : []),
 		];
-		if (rawMessages.length === 0) return;
+		if (rawMessages.length === 0) {
+			notifySafely(ctx, "memory: compact has no messages to extract — skipping", "info");
+			return;
+		}
 
 		// Convert AgentMessage → the simple {role, content: string} shape
 		// that extractMemoriesWithCallLlm expects. User messages may be
@@ -371,7 +389,25 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const messages = (rawMessages as unknown[])
 			.map((m) => agentMessageToExtractionMessage(m as AgentMessage))
 			.filter((m): m is { role: string; content: string } => m !== null);
-		if (messages.length === 0) return;
+		if (messages.length === 0) {
+			notifySafely(
+				ctx,
+				`memory: ${rawMessages.length} messages but none have extractable text — skipping`,
+				"info",
+			);
+			return;
+		}
+
+		// Loud start notification — the user has been bitten by silent
+		// compact-without-extract before, so tell them the moment we
+		// start. Including message count + extraction model name so the
+		// fix-it-up path (settings.json / models.json) is obvious if it
+		// fails.
+		notifySafely(
+			ctx,
+			`memory: extracting from ${messages.length} messages (model: ${extractionCfg.provider}/${extractionCfg.model})...`,
+			"info",
+		);
 
 		// 4. Build the callLlm closure. Auth header convention is decided
 		// by the model.api, not the provider name (provider name = "opencode"
@@ -422,6 +458,21 @@ export function registerMemory(pi: ExtensionAPI): void {
 				model: `${extractionCfg.provider}/${extractionCfg.model}`,
 			});
 			await writeExtractionReport(result.plan);
+			// Completion notify — user can immediately see whether the
+			// extraction produced atoms or was a no-op (LLM returned 0
+			// items, or all items were duplicates of existing atoms).
+			// "skipping" counts cover the duplicate-suppression path.
+			const created = result.created.length;
+			const superseded = result.superseded.length;
+			const skipped = result.skipped.length;
+			const total = created + superseded + skipped;
+			notifySafely(
+				ctx,
+				total === 0
+					? "memory: extraction complete — 0 atoms (nothing new to remember)"
+					: `memory: extraction complete — ${created} new, ${superseded} updated, ${skipped} unchanged (of ${result.plan.items.length} proposed)`,
+				"info",
+			);
 		} finally {
 			index.close();
 		}
