@@ -18,7 +18,7 @@
 
 ## 1. StepHeader 内部组件 + MessageParts 接口扩展
 
-- [ ] 1.1 **StepHeader 组件写测试 (RED)**
+- [x] 1.1 **StepHeader 组件写测试 (RED)**
   - **文件**: `packages/webui/web/src/components/message/MessageParts.test.tsx` (Modify)
   - **内容**: 在文件末尾新增 `describe("StepHeader (via MessageParts)", ...)` 块,5 个 case:
     1. 纯 text parts `[{type:"text", text:"hi"}]` → query `getByText(/Execut|Completed/i)` 为 null (无 step header)
@@ -29,7 +29,7 @@
   - **验证**: `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 5 个新 case 全 FAIL
   - **依赖**: 无
 
-- [ ] 1.2 **StepHeader 组件 + MessageParts 改 chunks (GREEN)**
+- [x] 1.2 **StepHeader 组件 + MessageParts 改 chunks (GREEN)**
   - **文件**: `packages/webui/web/src/components/message/MessageParts.tsx` (Modify)
   - **内容**:
     1. imports 加 `useEffect, useReducer, useState` (已有 useState)
@@ -55,7 +55,7 @@
 
 ## 2. MessageBubble prop 透传
 
-- [ ] 2.1 **MessageBubble 写测试 (RED)**
+- [x] 2.1 **MessageBubble 写测试 (RED)**
   - **文件**: `packages/webui/web/src/components/message/MessageBubble.test.tsx` (Modify)
   - **内容**: 新增 case "forwards isStreaming prop to MessageParts":
     - mock MessageParts with `vi.mock("../message/MessageParts", () => ({ MessageParts: (props: any) => <div data-testid="mp" data-streaming={props.isStreaming} data-ts={props.timestamp} /> }))`
@@ -64,7 +64,7 @@
   - **验证**: `cd packages/webui/web && npx vitest --run src/components/message/MessageBubble.test.tsx` 新 case FAIL
   - **依赖**: 1.2 (需要 MessageParts 已经接 isStreaming/timestamp props)
 
-- [ ] 2.2 **MessageBubble 加 prop 转发 (GREEN)**
+- [x] 2.2 **MessageBubble 加 prop 转发 (GREEN)**
   - **文件**: `packages/webui/web/src/components/message/MessageBubble.tsx` (Modify)
   - **内容**:
     1. `MessageBubbleProps` interface 加 `isStreaming?: boolean`
@@ -75,7 +75,7 @@
 
 ## 3. ChatPage 算 isLastMessageStreaming + 透传
 
-- [ ] 3.1 **ChatPage 写测试 (RED): isLastMessageStreaming 只传给最后一条 message**
+- [x] 3.1 **ChatPage 写测试 (RED): isLastMessageStreaming 只传给最后一条 message**
   - **文件**: `packages/webui/web/src/pages/ChatPage.test.tsx` (Modify)
   - **内容**: 找文件中已存在的多 message 测试 pattern(看 `ChatPage.test.tsx` 第 1021 行附近的 `// The msg container is the ChatMessages component's outer div,` 注释),在文件末尾新增 case "isLastMessageStreaming only applies to the last message":
     - mock `useIsThinking` (或 `isThinking` 来源 hook) 返回 `true`
@@ -85,7 +85,7 @@
   - **验证**: `cd packages/webui/web && npx vitest --run src/pages/ChatPage.test.tsx` 新 case FAIL (因为 ChatPage 还没算 isLastMessageStreaming,所有 bubble 的 data-is-streaming 都会是 undefined)
   - **依赖**: 2.2
 
-- [ ] 3.2 **ChatPage 算 isLastMessageStreaming (GREEN)**
+- [x] 3.2 **ChatPage 算 isLastMessageStreaming (GREEN)**
   - **文件**: `packages/webui/web/src/pages/ChatPage.tsx` (Modify)
   - **内容**:
     1. 在 `ChatPage` 函数体内、`return (...)` 之前(在 `messages` 定义附近),加:
@@ -96,6 +96,43 @@
   - **验证**: `cd packages/webui/web && npx vitest --run src/pages/ChatPage.test.tsx` 新 case + 现有 case 全 PASS
   - **依赖**: 3.1
   - **前置阅读**: ChatPage.tsx 第 600-650 行 (确认 ChatMessages 调用位置)
+
+## 3.5 MessageParts: force-open step body when an active AskUserQuestionCard is present
+
+> **Why added (after 3.2):** discovered 9 ChatPage Card integration regressions in 4.1. Root cause: when agent pauses on `ask_user_question`, `isThinking=false` → `isStreaming=false` → step body collapses → card invisible. Fix: when any toolCall part has a `cardStates` entry, force `open=true` so the active card is always visible. This is a 1-line change but warrants its own TDD step.
+
+- [ ] 3.3 **MessageParts 写测试 (RED): force-open step when active card exists**
+  - **文件**: `packages/webui/web/src/components/message/MessageParts.test.tsx` (Modify)
+  - **内容**: 在 `describe("StepHeader (via MessageParts)", ...)` 块末尾新增 case "force-opens the body when an active AskUserQuestionCard is present":
+    - `parts = [{type:"toolCall", id:"tc1", name:"ask_user_question", args:{}}]`
+    - `cardStates = new Map([["tc1", {question:"Color?", options:[...], multiSelect:false, status:"active"}]])`
+    - `isStreaming = false` (simulating "agent paused waiting for user input")
+    - expect `screen.getByText("Color?")` 可见 (card rendered AND step body open)
+  - **验证**: `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 新 case FAIL (因为当前实现没考虑 cardStates)
+  - **依赖**: 3.2
+
+- [ ] 3.4 **MessageParts force-open 实现 (GREEN)**
+  - **文件**: `packages/webui/web/src/components/message/MessageParts.tsx` (Modify)
+  - **内容**:
+    1. 在 `MessageParts` 函数体内、`hasStepContent` 计算之后加:
+       `const hasActiveCard = parts.some(p => p.type === "toolCall" && cardStates?.has(p.id));`
+    2. 改 `open` 计算: `const open = hasActiveCard ? true : (userOverride ?? isStreaming);`
+    3. **不要** 把 force-open 用 `userOverride` 状态保存;每次 render 重新计算 (card active → open, card not active → 跟随 userOverride/isStreaming)
+  - **验证**:
+    - `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` (21 PASS: 19 现有 + 2 新 — stepHeader case 1 仍是纯 text guard, 新的 force-open case + 已有的 1 个 streaming case)
+    - `cd packages/webui/web && npx vitest --run src/pages/ChatPage.test.tsx` (9 个 Card integration 失败变 PASS,1 个 isLastMessageStreaming test 仍 PASS)
+  - **依赖**: 3.3
+  - **前置阅读**: AskUserQuestionCard 用法见 MessageParts.tsx 第 230-249 行;CardState interface 见 AskUserQuestionCard.tsx
+
+- [ ] 3.5 **spec + design 更新**
+  - **文件**:
+    - `docs/sdd/changes/webui-collapsible-thinking-step/specs/chat-message-rendering/spec.md` (Modify)
+    - `docs/sdd/changes/webui-collapsible-thinking-step/design.md` (Modify)
+  - **内容**:
+    1. spec.md: 在 "Requirement: Step Body Collapsible" 下新增 1 个 scenario (force-open when card active)
+    2. design.md: Decision 3 末尾补 1 句: "若 parts 里有 toolCall 出现在 cardStates map 中,force open=true,覆盖 userOverride 行为"
+  - **验证**: 重新读 spec.md / design.md,确认新 scenario + 决策记录在位
+  - **依赖**: 3.4
 
 ## 4. 最终验证
 

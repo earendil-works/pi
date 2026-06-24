@@ -40,11 +40,12 @@
 - 全局 zustand/jotai store → 项目未引入,本次不开新依赖
 
 ### 3. collapsed 状态用 userOverride pattern
-**Decision**: `StepHeader` 内部 `useState<boolean | null>(null)`,`open = userOverride ?? isStreaming`
-**Rationale**: 用户点击一次后,该 turn 的折叠状态锁定,不被 `isStreaming` 后续变化覆盖;新 message 拿到新 StepHeader 实例,override=null 重置为跟随流状态
+**Decision**: `StepHeader` 内部 `useState<boolean | null>(null)`,`open = userOverride ?? isStreaming`。**追加规则**: 若 parts 里有 toolCall 出现在 cardStates map 中(active AskUserQuestionCard),force `open=true`,覆盖 userOverride 行为,确保 active card 始终可见。
+**Rationale**: 用户点击一次后,该 turn 的折叠状态锁定,不被 `isStreaming` 后续变化覆盖;新 message 拿到新 StepHeader 实例,override=null 重置为跟随流状态。Force-open 是必要的: agent 在 ask_user_question 上 pause 等用户输入时 `isThinking=false` → `isStreaming=false` → body 会折叠 → 用户看不到 card → 卡住。Active card 时无视 collapse 是数据驱动的决策。
 **Alternatives considered**:
 - 只用 `useState<boolean>` → 首次 `isStreaming=false` 时 step 永远折叠,user 展开后下次 `isStreaming` 变 true 会被打回原形
 - localStorage 持久化 → 跨刷新状态保留,本次不做
+- 不 force-open 而是在 card active 时不包 step → 失去 step header 在 long turn 中的视觉锚点
 
 ### 4. duration 用 setInterval 1s tick 触发 re-render
 **Decision**: `useReducer` + `useEffect` + `setInterval(forceTick, 1000)`,duration = `Math.floor((Date.now() - startedAt) / 1000)`

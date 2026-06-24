@@ -89,6 +89,11 @@ The step body SHALL be visible (expanded) by default when `isStreaming=true` and
 - **WHEN** the step body renders (either initially expanded or user-expanded)
 - **THEN** the inner ToolGroup still applies its existing `>4` collapse-to-summary rule; the step wrapper does not interfere
 
+#### Scenario: 推理中或完成后有 active card 时 step 强制展开
+- **GIVEN** a step with `parts=[{type:"toolCall", id:"tc1", name:"ask_user_question", ...}]` and `cardStates.get("tc1")` exists (active card state for this tool call)
+- **WHEN** the step renders (regardless of `isStreaming` value)
+- **THEN** the step body is visible (force-opened) so the active card is always shown to the user. User's `userOverride` (if set) is ignored while a card is active. Once the card is removed from `cardStates` (user responds / `tool_execution_end` arrives), normal `userOverride ?? isStreaming` logic resumes
+
 ### Requirement: Streaming State Propagation
 
 The webui ChatPage component SHALL compute `isLastMessageStreaming = isThinking && lastMessage?.role === "assistant"` and pass it as the `isStreaming` prop to the last message's `MessageBubble` (and recursively to `MessageParts`). When `isThinking` is `false`, all messages SHALL be rendered with `isStreaming=false`. Older messages in the same list SHALL always be rendered with `isStreaming=false` even if `isThinking` is `true`.
