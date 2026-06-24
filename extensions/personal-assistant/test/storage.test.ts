@@ -521,6 +521,69 @@ describe("MemoryIndex", () => {
 			expect(oldAudit.some((a) => a.action === "superseded")).toBe(true);
 			expect(newAudit.some((a) => a.action === "created_from_supersede")).toBe(true);
 		});
+
+		it("markSupersededTx swaps memory_fts row", async () => {
+			// Scenario "supersedeAtom swaps the memory_fts row": when A is
+			// superseded by B inside markSupersededTx, the memory_fts row
+			// for A must be deleted and the row for B inserted in the same
+			// transaction. Use pure-alnum tokens (no hyphens, no special
+			// chars) so a bm25 MATCH hits ONLY the intended row — the FTS5
+			// unicode61 tokenizer splits on hyphens, and a hyphenated query
+			// like "title-A-oldunique" would be parsed as column syntax
+			// rather than a literal term.
+			const old = sampleAtom({
+				id: "A",
+				title: "titleoldxyz",
+				summary: "summaryoldxyz",
+				content: "contentoldxyz",
+				tags: ["tagoldxyz"],
+			});
+			await index.insertAtom(old, dummyEmbedding());
+
+			// Pre-condition sanity: insertAtom writes memory_fts row for A.
+			// If this fails, the test premise (A has a row to delete) is
+			// invalid and the rest of the assertions are meaningless.
+			const db = index.getRawDb();
+			const preOldCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("A") as { c: number };
+			expect(preOldCount.c).toBe(1);
+
+			const newAtom = sampleAtom({
+				id: "B",
+				title: "titlenewxyz",
+				summary: "summarynewxyz",
+				content: "contentnewxyz",
+				tags: ["tagnewxyz"],
+			});
+			index.markSupersededTx("A", newAtom, dummyEmbedding());
+
+			// 1. Old atom's memory_fts row is gone (transaction DELETEd it).
+			const oldCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("A") as { c: number };
+			expect(oldCount.c).toBe(0);
+
+			// 2. New atom's memory_fts row is present (transaction INSERTed it).
+			const newCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("B") as { c: number };
+			expect(newCount.c).toBe(1);
+
+			// 3. bm25Search for old atom's tokens must NOT return A. The
+			// is_latest filter alone would block A, but this assertion is
+			// the visible behaviour contract — prove the row is truly gone
+			// (the count check above is the structural assertion; this is
+			// the user-facing one).
+			const oldHits = index.bm25Search("titleoldxyz", 10);
+			expect(oldHits.map((r) => r.id)).not.toContain("A");
+
+			// 4. bm25Search for new atom's tokens MUST return B. This proves
+			// the new FTS5 row landed AND is searchable — not just present
+			// in count(*) terms.
+			const newHits = index.bm25Search("titlenewxyz", 10);
+			expect(newHits.map((r) => r.id)).toContain("B");
+		});
 	});
 
 	describe("access and decay", () => {
@@ -595,6 +658,53 @@ describe("MemoryIndex", () => {
 			expect(index.getAtom("a")?.archived).toBe(1);
 			const audit = index.getAudit("a");
 			expect(audit.some((a) => a.action === "archived")).toBe(true);
+		});
+
+		it("markArchived deletes memory_fts row", async () => {
+			// Scenario "archiveAtom removes the memory_fts row": when an atom
+			// is archived, the FTS5 mirror row must be dropped in the same
+			// transaction so a subsequent bm25Search cannot surface an
+			// archived atom. Principle: "archive / supersede 立即让 FTS5 行失效".
+			//
+			// The bm25Search query uses a pure alnum token — FTS5 unicode61
+			// tokenizes on whitespace + punctuation, and the escapeFtsQuery
+			// helper only strips `"()*:[]`. A hyphenated term like
+			// "title-arc-unique" would be parsed as a column-restricted
+			// query (`title-arc`) and fail with "no such column: arc"; an
+			// alnum suffix is the safe cross-test pattern (see the sibling
+			// "markSupersededTx swaps memory_fts row" test).
+			const atom = sampleAtom({
+				id: "arc-1",
+				title: "titlearcunique",
+				summary: "summaryarcunique",
+				content: "contentarcunique",
+				tags: ["tagarcunique"],
+			});
+			await index.insertAtom(atom, dummyEmbedding());
+
+			// Pre-condition sanity: insertAtom wrote the FTS5 row. If this
+			// fails, the test premise (a row exists to delete) is invalid
+			// and the rest of the assertions are meaningless.
+			const db = index.getRawDb();
+			const preCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("arc-1") as { c: number };
+			expect(preCount.c).toBe(1);
+
+			index.markArchived("arc-1");
+
+			// 1. FTS5 row count for the archived atom is zero — the structural
+			// assertion that the row was DELETEd in the same transaction.
+			const postCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("arc-1") as { c: number };
+			expect(postCount.c).toBe(0);
+
+			// 2. bm25Search for the archived atom's tokens must NOT return
+			// the id. This is the user-facing behaviour contract: prove the
+			// row is truly gone (not just hidden by the is_latest filter).
+			const hits = index.bm25Search("titlearcunique", 10);
+			expect(hits.map((r) => r.id)).not.toContain("arc-1");
 		});
 
 		it("markUnarchived restores archived=0 (no audit)", async () => {

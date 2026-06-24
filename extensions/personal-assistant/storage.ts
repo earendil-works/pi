@@ -543,6 +543,24 @@ export class MemoryIndex {
 				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
 				.run(transferredAtom.id, new Float32Array(newEmbedding));
 
+			// FTS5 mirror must follow the supersede: drop the old atom's row so
+			// it cannot match BM25, then insert the new atom's row (using the
+			// transferred fields, not the raw newAtom — same rationale as the
+			// memory_index INSERT above). Inside the same transaction so a
+			// failed FTS5 write rolls back the supersede atomically.
+			this.db.prepare(`DELETE FROM memory_fts WHERE id = ?`).run(oldId);
+			this.db
+				.prepare(
+					`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(
+					transferredAtom.id,
+					transferredAtom.title,
+					transferredAtom.summary,
+					transferredAtom.content,
+					transferredAtom.tags.join(" "),
+				);
+
 			// Audit: both atoms get an entry describing the supersede link.
 			this.insertAudit(oldId, "superseded", {
 				newId: transferredAtom.id,
@@ -662,6 +680,13 @@ export class MemoryIndex {
 	markArchived(id: string): void {
 		this.db.transaction(() => {
 			this.db.prepare(`UPDATE memory_index SET archived = 1 WHERE id = ?`).run(id);
+			// FTS5 mirror must drop the row in the same transaction so a
+			// subsequent bm25Search cannot return an archived atom (principle
+			// "archive / supersede 立即让 FTS5 行失效"). Vector GC is a
+			// separate caller-driven step (deleteVector) and intentionally
+			// NOT coupled here — the FTS5 sync is an archive invariant, the
+			// vector delete is a storage-GC decision.
+			this.db.prepare(`DELETE FROM memory_fts WHERE id = ?`).run(id);
 			this.insertAudit(id, "archived", null);
 		})();
 	}
