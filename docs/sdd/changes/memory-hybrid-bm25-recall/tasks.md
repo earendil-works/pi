@@ -94,7 +94,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/types.test.ts` — new test `it("PersonalAssistantConfig.memory.recall is optional")` passes: build a config literal with `recall: { rrfK: 30 }` and assert type compat.
   - **依赖**: 无
 
-- [ ] 4.2 **Wire config.recall into before_agent_start recallAtoms call**
+- [x] 4.2 **Wire config.recall into before_agent_start recallAtoms call**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: In the `before_agent_start` hook (around the `recallAtoms(index, userMessage, { topK: 10 })` call), change to `recallAtoms(index, userMessage, { topK: 20, rrfK: config.memory?.recall?.rrfK, recallThreshold: config.memory?.recall?.recallThreshold })`. `topK: 20` matches the per-channel KNN candidate count from design.md Decision 2 (each of dense + BM25 returns up to 20 candidates per type, then RRF takes top-3 per type after fusion). Add a one-line comment explaining the wiring.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/before-agent-start.test.ts` — existing tests still pass (no behavior change assertion since recallAtoms is mocked).
@@ -122,13 +122,13 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — all 5 RRF tests pass.
   - **依赖**: 3.1
 
-- [ ] 6.2 **hybrid-recall.test.ts — recallAtoms end-to-end hybrid scenarios**
+- [x] 6.2 **hybrid-recall.test.ts — recallAtoms end-to-end hybrid scenarios**
   - **文件**: `extensions/personal-assistant/test/hybrid-recall.test.ts` (Modify — append to file from 6.1)
   - **内容**: Add end-to-end tests using `MemoryIndex(":memory:")` + mock embedder (charBag) + real FTS5. Tests: (a) `it("BM25-only hit recalled even when dense cosine below floor")` — insert atom "amplicon data backflow" with vector that has low cosine to query "amplicon data backflow"; assert atom surfaces via BM25 channel; (b) `it("dense-only hit recalled even when BM25 zero hits")` — query "qwertyuiop" (no atom matches lexically) against atoms with high cosine; assert surfaces; (c) `it("double-channel hit ranks above single-channel")` — insert 3 atoms; one matched both channels, one dense only, one BM25 only; assert both-channel atom first; (d) `it("recallThreshold filters low-fused-score atoms")` — set recallThreshold=0.5, verify low-confidence hits dropped; (e) `it("recallAtoms degrades gracefully when embedText returns null")` — mock embedText null; verify BM25 still surfaces relevant atoms; (f) `it("recallAtoms returns [] when both channels empty")` — empty index, query anything → `[]`; (g) `it("per-type round-robin after RRF fusion preserves type diversity")` — insert 5 rule + 5 fact, verify final list has both types interleaved.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — all 7 end-to-end tests pass (total 12 in the file).
   - **依赖**: 3.3, 1.2
 
-- [ ] 6.3 **hybrid-recall.test.ts — storage-level FTS5 sync**
+- [x] 6.3 **hybrid-recall.test.ts — storage-level FTS5 sync**
   - **文件**: `extensions/personal-assistant/test/hybrid-recall.test.ts` (Modify — append to file from 6.2)
   - **内容**: Storage-level tests using `MemoryIndex`: (a) `it("init creates memory_fts table")`; (b) `it("init is idempotent — second init does not duplicate rows")`; (c) `it("init backfills active atoms on existing DB without memory_fts")` — manually create memory_index without memory_fts, then init; verify backfill; (d) `it("insertAtom writes matching memory_fts row")`; (e) `it("archiveAtom removes memory_fts row")`; (f) `it("supersedeAtom swaps memory_fts row")`; (g) `it("bm25Search escapes special chars in query")` — query with `"`, `(`, `*` characters; verify no SQL error.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — all 7 storage tests pass (total 19 in the file).
@@ -136,18 +136,18 @@
 
 ## 7. Verification
 
-- [ ] 7.1 **Full test suite green**
+- [x] 7.1 **Full test suite green**
   - **验证**: `cd /home/qjh/workspace/personal/pi/extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run` — all tests in the package pass (existing 85 + ~19 new = ~104 tests).
   - **依赖**: 1.5, 2.1, 3.4, 4.2, 5.2, 6.3
 
-- [ ] 7.2 **npm run check clean**
+- [x] 7.2 **npm run check clean**
   - **验证**: `cd /home/qjh/workspace/personal/pi && npm run check` — no new errors, warnings, or infos introduced by this change.
   - **依赖**: 7.1
 
-- [ ] 7.3 **Smoke test: real DB migration**
+- [x] 7.3 **Smoke test: real DB migration**
   - **验证**: Manual / scripted — back up `/home/qjh/.pi/agent/memory/memory.db` to `/tmp/memory.db.bak`, then start a pi session that triggers `MemoryIndex.init()`. Confirm: (a) DB file unchanged size +/- small growth for new table; (b) `sqlite3 ~/.pi/agent/memory/memory.db "SELECT count(*) FROM memory_fts"` returns the active atom count; (c) `recallAtoms` against a known keyword returns the right atom. Restore backup after.
   - **依赖**: 1.5
 
-- [ ] 7.4 **Lefse regression — user's reported case**
+- [x] 7.4 **Lefse regression — user's reported case**
   - **验证**: Scripted test — with the user's actual 8-atom corpus, call `recallAtoms(index, "这个先不管,这个项目路径下lefse没有结果,你看下正常吗", {rrfK:60, recallThreshold:1/60})`. Assert: returned atoms do NOT include any of the 2 `X101SC26052587-Z01-J002` customer-data atoms (they should be filtered because BM25 has zero hit + dense cosine 0.55 < fused threshold). This is the user-reported recall failure that motivated this change.
   - **依赖**: 7.1
