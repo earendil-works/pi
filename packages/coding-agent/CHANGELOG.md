@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- System prompt: added guideline instructing the model to batch independent operations into a single response instead of issuing them one at a time, so the parallel tool executor can run them concurrently.
+
 ### Fixed
 
 - Fixed auto-retry for provider stream errors that explicitly tell callers to retry the request ([#6019](https://github.com/earendil-works/pi/issues/6019)).

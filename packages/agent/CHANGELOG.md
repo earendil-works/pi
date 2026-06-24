@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `runParallelAgentTasks`: run N independent agent loops concurrently and collect results. Each task gets its own isolated loop; failures are captured per-task rather than thrown. Intended for extensions and harness integrations that have already identified independent work items.
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed

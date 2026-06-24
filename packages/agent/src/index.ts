@@ -38,6 +38,7 @@ export * from "./harness/system-prompt.ts";
 export * from "./harness/types.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
+export * from "./parallel.ts";
 // Proxy utilities
 export * from "./proxy.ts";
 // Types

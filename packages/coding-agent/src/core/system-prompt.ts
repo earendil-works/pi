@@ -124,6 +124,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	// Always include these
 	addGuideline("Be concise in your responses");
 	addGuideline("Show file paths clearly when working with files");
+	addGuideline(
+		"When you have several independent operations (reading multiple files, calling separate APIs, processing unrelated items), issue all of them as tool calls in a single response instead of one at a time — the runtime executes independent calls in parallel",
+	);
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
