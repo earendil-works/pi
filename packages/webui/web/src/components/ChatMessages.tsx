@@ -7,6 +7,7 @@ interface ChatMessagesProps {
   cardStates?: Map<string, CardState>;
   onCardSubmit?: (id: string, value: string) => void;
   onCardCancel?: (id: string) => void;
+  isLastMessageStreaming?: boolean;
 }
 
 /**
@@ -96,7 +97,7 @@ function groupTurns(messages: Message[]): Message[] {
   return out;
 }
 
-export default function ChatMessages({ messages, cardStates, onCardSubmit, onCardCancel }: ChatMessagesProps) {
+export default function ChatMessages({ messages, cardStates, onCardSubmit, onCardCancel, isLastMessageStreaming }: ChatMessagesProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-stone-400">
@@ -110,13 +111,14 @@ export default function ChatMessages({ messages, cardStates, onCardSubmit, onCar
 
   return (
     <div className="flex flex-col">
-      {turns.map((message) => (
+      {turns.map((message, i) => (
         <MessageBubble
           key={message.id}
           message={message}
           cardStates={cardStates}
           onCardSubmit={onCardSubmit}
           onCardCancel={onCardCancel}
+          isStreaming={Boolean(isLastMessageStreaming) && i === turns.length - 1}
         />
       ))}
     </div>

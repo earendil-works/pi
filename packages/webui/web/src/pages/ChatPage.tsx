@@ -600,6 +600,13 @@ export default function ChatPage() {
 
   if (!id) return <div className="flex items-center justify-center h-full"><p>Session not found</p></div>;
 
+  // Compute streaming state for the LATEST message only. Older messages in the
+  // same list always render with isStreaming=false even while the model is
+  // still producing the next reply — this prevents the StepHeader in old
+  // assistant turns from flashing "● Executing" forever during a long turn.
+  const lastMessage = messages[messages.length - 1];
+  const isLastMessageStreaming = isThinking && lastMessage?.role === "assistant";
+
   return (
     <div className="flex flex-col h-full">
       {/* Topbar - sticky */}
@@ -628,6 +635,7 @@ export default function ChatPage() {
           cardStates={cardStates}
           onCardSubmit={handleCardSubmit}
           onCardCancel={handleCardCancel}
+          isLastMessageStreaming={isLastMessageStreaming}
         />
         {isThinking && <ThinkingIndicator />}
         <div ref={messagesEndRef} />
