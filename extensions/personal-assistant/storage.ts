@@ -59,6 +59,26 @@ const BetterSqlite3 = requireCJS("better-sqlite3") as new (
 const sqliteVec = requireCJS("sqlite-vec") as SqliteVecModule;
 
 /**
+ * Strip FTS5 query syntax characters from a user-supplied search string before
+ * binding it as the `MATCH` parameter of a `memory_fts MATCH ?` query.
+ *
+ * FTS5 reserves `"`, `(`, `)`, `*`, `:`, `[`, `]` for phrase / NEAR / column
+ * queries and a stray unescaped character raises "fts5: syntax error".
+ * Stripping to space (rather than doubling `"`) is the simplest and safest
+ * transformation: the literal token content is preserved, special-char noise
+ * is gone, and an all-special input collapses to an empty (no-match) query
+ * rather than throwing. The result is trimmed so a query consisting entirely
+ * of special characters becomes the empty string; bm25Search short-circuits
+ * on empty rather than running `MATCH ''` (which would also error).
+ *
+ * Module-level (not a class method) because it is pure — no DB access — and
+ * has no business depending on `this`.
+ */
+export function escapeFtsQuery(s: string): string {
+	return s.replace(/["()*:\[\]]/g, " ").trim();
+}
+
+/**
  * Wraps a single better-sqlite3 connection that has the sqlite-vec extension
  * loaded and the v2 memory schema applied. Designed to be constructed once
  * per process and shared across handlers.
@@ -187,6 +207,17 @@ export class MemoryIndex {
 			this.db
 				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
 				.run(atom.id, new Float32Array(embedding));
+			// FTS5 mirror must stay in lock-step with memory_index. Wrapped in
+			// the same db.transaction so a failure here rolls back the
+			// memory_index + memory_vectors writes above (atomicity contract
+			// for principle "FTS5 行同步在 storage 层原子化"). tags is
+			// space-joined so the unicode61 tokenizer indexes each tag as a
+			// distinct token; an empty array → "" which FTS5 accepts fine.
+			this.db
+				.prepare(
+					`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(atom.id, atom.title, atom.summary, atom.content, atom.tags.join(" "));
 		})();
 	}
 
@@ -313,6 +344,67 @@ export class MemoryIndex {
 		params.push(k);
 
 		type Row = { id: string; distance: number };
+		const rows = this.db.prepare(sql).all(...params) as Row[];
+		return rows;
+	}
+
+	/**
+	 * BM25 keyword ranking against the FTS5 mirror `memory_fts`, joined back to
+	 * `memory_index` so the standard active filters (archived / superseded /
+	 * type) can be applied identically to `vectorSearch`. The default
+	 * behaviour is to return only the active + latest atoms; the caller can
+	 * opt into other rows with the `filter` argument.
+	 *
+	 * FTS5's `bm25(memory_fts)` ranking function returns NEGATIVE values
+	 * where smaller (more negative) = more relevant; we `ORDER BY bm25 ASC`
+	 * directly so the most-relevant hit comes first. Do not normalise to a
+	 * positive score here — RRF fusion (search.ts) operates on ranks, not on
+	 * raw scores, and converting the sign would couple the two layers for no
+	 * gain.
+	 *
+	 * The user query is run through `escapeFtsQuery` before binding as the
+	 * MATCH parameter so that FTS5 syntax characters (`"`, `(`, `)`, `*`,
+	 * `:`, `[`, `]`) cannot raise an SQL parse error. If the escape collapses
+	 * the query to the empty string, we short-circuit with `[]` rather than
+	 * running `MATCH ''` — both because the empty MATCH itself errors and
+	 * because no atoms could possibly match anyway.
+	 */
+	bm25Search(
+		query: string,
+		k: number,
+		filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean },
+	): Array<{ id: string; bm25: number }> {
+		const escaped = escapeFtsQuery(query);
+		if (escaped === "") {
+			// Defensive short-circuit: an all-special query like `"*("` would
+			// collapse to empty after escape. Returning [] is the same answer
+			// MATCH would give on an empty string, without the parse error.
+			return [];
+		}
+
+		const whereClauses: string[] = ["archived = 0"];
+		if (filter?.type) whereClauses.push("type = ?");
+		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
+		if (filter?.archived === true) {
+			// explicit override — include archived too
+			whereClauses.length = 0;
+		}
+
+		const sql = `
+			SELECT v.id, bm25(memory_fts) AS bm25
+			FROM memory_fts v
+			INNER JOIN memory_index i ON v.id = i.id
+			WHERE ${whereClauses.join(" AND ")}
+			AND memory_fts MATCH ?
+			ORDER BY bm25
+			LIMIT ?
+		`;
+		const params: (string | number)[] = [];
+		if (filter?.type) params.push(filter.type);
+		params.push(escaped);
+		params.push(k);
+
+		type Row = { id: string; bm25: number };
 		const rows = this.db.prepare(sql).all(...params) as Row[];
 		return rows;
 	}
@@ -658,12 +750,17 @@ CREATE INDEX IF NOT EXISTS idx_memory_audit_atom
 // FTS5 mirror of memory_index for keyword recall. The schema is fixed
 // (Decision 1 in memory-v2-refactor / design.md): exactly five fields
 // (id UNINDEXED, title, summary, content, tags) using the unicode61
-// tokenizer with diacritics stripped. `content = ''` puts the table in
-// external-content mode — only the inverted index is stored in FTS5;
-// the source-of-truth text lives in memory_index and is JOINed back at
-// query time. This keeps memory_fts lean (no content duplication) while
-// still letting the FTS5 MATCH operator work over title / summary /
-// content / tags.
+// tokenizer with diacritics stripped.
+//
+// We deliberately do NOT use external-content mode (`content=''`):
+// external-content FTS5 tables return NULL for every column on SELECT —
+// including the UNINDEXED `id` column — which would break the
+// `memory_fts v INNER JOIN memory_index i ON v.id = i.id` pattern that
+// bm25Search (and any future keyword-side ranking) depends on to recover
+// the atom id from a MATCH hit. The cost of this choice is that
+// memory_fts duplicates the title/summary/content/tags text already
+// stored in memory_index; for a personal-assistant scale (thousands of
+// atoms) that is negligible compared to the join-correctness benefit.
 //
 // `tags` is the JSON-encoded TEXT column from memory_index. The unicode61
 // tokenizer splits on whitespace + punctuation including `[` `]` `"`
@@ -678,8 +775,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
   summary,
   content,
   tags,
-  tokenize='unicode61 remove_diacritics 2',
-  content=''
+  tokenize='unicode61 remove_diacritics 2'
 )
 `;
 

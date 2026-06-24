@@ -695,8 +695,10 @@ describe("MemoryIndex", () => {
 
 			const db = idx.getRawDb();
 			// FTS5 virtual tables show up in sqlite_master with the original
-			// CREATE VIRTUAL TABLE statement. Verify the fields, the tokenizer,
-			// and the external-content mode (`content=''`).
+			// CREATE VIRTUAL TABLE statement. Verify the fields and the
+			// tokenizer; deliberately do NOT assert external-content mode
+			// (`content=''`) because we need column values (notably `id`) to
+			// be retrievable on SELECT for bm25Search's JOIN to work.
 			const row = db.prepare(
 				"SELECT sql FROM sqlite_master WHERE name = 'memory_fts'",
 			).get() as SqlRow | undefined;
@@ -710,9 +712,11 @@ describe("MemoryIndex", () => {
 			expect(sql).toContain("content");
 			expect(sql).toContain("tags");
 			expect(sql).toContain("unicode61");
-			// External-content mode: text is NOT stored in FTS5, only indexed.
-			// Matches both `content=''` and `content = ''` (with optional spaces).
-			expect(sql).toMatch(/content\s*=\s*''/);
+			// memory_fts must NOT use external-content mode: that mode makes
+			// every column (including the UNINDEXED `id`) return NULL on
+			// SELECT, which would break `bm25Search`'s
+			// `INNER JOIN memory_index i ON v.id = i.id` join key.
+			expect(sql).not.toMatch(/content\s*=\s*''/);
 		});
 
 		it("init backfills active atoms on existing DB without memory_fts", async () => {
@@ -997,6 +1001,292 @@ describe("MemoryIndex", () => {
 
 			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
 			expect(count.c).toBe(0);
+		});
+	});
+
+	describe("bm25 search", () => {
+		// Hybrid recall: bm25Search is the keyword half of RRF fusion (see
+		// search.ts). Mirrors vectorSearch's filter handling (archived / type /
+		// isLatestOnly) but ranks by FTS5 bm25() instead of sqlite-vec distance.
+		// Per "召回对单 channel 降级鲁棒": bm25Search must never throw on user
+		// input — special FTS5 chars (`"`, `(`, `)`, `*`, `:`, `[`, `]`) are
+		// stripped from the query before it is bound as the MATCH parameter.
+		let index: MemoryIndex;
+
+		beforeEach(async () => {
+			index = new MemoryIndex(":memory:");
+			await index.init();
+		});
+
+		afterEach(() => {
+			index.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "t",
+			content: "c",
+			summary: "s",
+			tags: ["a"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: randomUUID().slice(0, 16),
+			source_session: null,
+			...overrides,
+		});
+
+		const dummyEmbedding = (): number[] => new Array(1024).fill(0.1);
+
+		// Seed an atom + mirror it into memory_fts. insertAtom only writes to
+		// memory_index + memory_vectors; FTS5 sync (insert into memory_fts) is
+		// a separate concern owned by a later phase (see the file header on
+		// storage.ts). For BM25 search tests we explicitly mirror the row so
+		// bm25Search has something to MATCH against.
+		const insertWithFts = async (
+			atom: MemoryAtom,
+			text: { title: string; summary: string; content: string; tags: string[] },
+		): Promise<void> => {
+			await index.insertAtom(atom, dummyEmbedding());
+			index
+				.getRawDb()
+				.prepare(
+					"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
+				)
+				.run(atom.id, text.title, text.summary, text.content, JSON.stringify(text.tags));
+		};
+
+		it("bm25Search returns ranked hits for keyword query", async () => {
+			// Three atoms with distinct keyword vocab. Query for "amplicon" —
+			// only the amplicon atom should match, at rank 1, with a finite
+			// (negative) BM25 score.
+			const a1 = sampleAtom({ id: "amplicon-atom", content_fingerprint: "fp-amp" });
+			const a2 = sampleAtom({ id: "rna-atom", content_fingerprint: "fp-rna" });
+			const a3 = sampleAtom({ id: "lefse-atom", content_fingerprint: "fp-lefse" });
+
+			await insertWithFts(a1, {
+				title: "amplicon data",
+				summary: "amplicon sequencing overview",
+				content: "amplicon data analysis pipeline",
+				tags: ["amplicon", "biomarker"],
+			});
+			await insertWithFts(a2, {
+				title: "rna virus",
+				summary: "rna virus detection",
+				content: "rna virus sequencing",
+				tags: ["rna", "virus"],
+			});
+			await insertWithFts(a3, {
+				title: "lefse biomarker",
+				summary: "lefse biomarker discovery",
+				content: "lefse biomarker analysis",
+				tags: ["lefse", "biomarker"],
+			});
+
+			const results = index.bm25Search("amplicon", 10);
+
+			expect(results.length).toBeGreaterThan(0);
+			expect(results[0]!.id).toBe("amplicon-atom");
+			// FTS5 bm25() returns a negative number; lower (more negative) =
+			// more relevant. We only assert it is a finite number here.
+			expect(typeof results[0]!.bm25).toBe("number");
+			expect(Number.isFinite(results[0]!.bm25)).toBe(true);
+		});
+
+		it("bm25Search escapes FTS5 special chars in query", async () => {
+			// Atom contains Chinese tokens `没有` and `结果` plus `lefse`.
+			// We send a query that mixes these literal tokens with FTS5
+			// syntax chars (`"`, `(`, `*`, `:`). Without escape, SQLite would
+			// raise "fts5: syntax error"; with escape, the chars are stripped
+			// to spaces and the literal tokens survive. All three post-escape
+			// tokens (`lefse`, `没有`, `结果`) must be present in the atom
+			// because FTS5 default MATCH treats whitespace-separated tokens
+			// as implicit AND.
+			const atom = sampleAtom({
+				id: "lefse-cn",
+				type: "fact",
+				content_fingerprint: "fp-lefse-cn",
+			});
+
+			await insertWithFts(atom, {
+				title: "lefse 没有 结果",
+				summary: "lefse 没有 结果 summary",
+				content: "lefse 没有 结果 content with details",
+				tags: ["lefse"],
+			});
+
+			const query = 'lefse "没有" 结果';
+
+			// Must NOT throw — escape is the safety net for arbitrary user input.
+			expect(() => index.bm25Search(query, 10)).not.toThrow();
+
+			const results = index.bm25Search(query, 10);
+
+			// Even after escape, the literal tokens `lefse`, `没有`, `结果`
+			// still match the seeded atom — proving the escape is content-
+			// preserving, not just syntactic sugar.
+			expect(results.length).toBeGreaterThan(0);
+			expect(results[0]!.id).toBe("lefse-cn");
+		});
+	});
+
+	describe("insertAtom sync to memory_fts", () => {
+		// insertAtom is the only write path that produces new active atoms
+		// (supersede transactions route through updateAtom + the
+		// markSupersededTx flow). It must keep memory_fts in lock-step with
+		// memory_index inside a single db.transaction so a failed FTS5 write
+		// rolls back the index/vector writes too. See principle
+		// "FTS5 行同步在 storage 层原子化,与 memory_index 同事务".
+		let idx: MemoryIndex;
+
+		beforeEach(async () => {
+			idx = new MemoryIndex(":memory:");
+			await idx.init();
+		});
+
+		afterEach(() => {
+			idx.close();
+		});
+
+		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
+			id: randomUUID(),
+			type: "rule",
+			title: "title1alpha",
+			content: "content1alpha",
+			summary: "summary1alpha",
+			tags: ["tag1alpha", "tag2alpha"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: randomUUID().slice(0, 16),
+			source_session: null,
+			...overrides,
+		});
+
+		const dummyEmbedding = (): number[] => new Array(1024).fill(0.01);
+
+		it("insertAtom writes memory_fts row", async () => {
+			// Scenario: insertAtom writes a matching memory_fts row. Each of
+			// the four indexed fields (title / summary / content / tags) gets
+			// a unique alnum token so MATCH returns exactly 1 row per field —
+			// proving each landed in the FTS5 index, not just that the count
+			// happens to be 1.
+			const atom = sampleAtom();
+			await idx.insertAtom(atom, dummyEmbedding());
+
+			const db = idx.getRawDb();
+
+			const count = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get(atom.id) as { c: number };
+			expect(count.c).toBe(1);
+
+			const match = (term: string): number =>
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all(term) as Array<{ rowid: number }>
+				).length;
+
+			expect(match("title1alpha")).toBe(1);
+			expect(match("summary1alpha")).toBe(1);
+			expect(match("content1alpha")).toBe(1);
+			// tags.join(" ") → "tag1alpha tag2alpha" — both tokens indexed.
+			expect(match("tag1alpha")).toBe(1);
+			expect(match("tag2alpha")).toBe(1);
+		});
+
+		it("insertAtom writes memory_fts atomically with memory_index and memory_vectors", async () => {
+			// Inject a failure on the memory_fts INSERT to verify that all
+			// three writes inside the transaction roll back together. The
+			// atomicity contract: a partial write to memory_fts MUST NOT
+			// leave dangling memory_index / memory_vectors rows.
+			//
+			// We shadow `prepare` on the live better-sqlite3 handle for the
+			// duration of this test. The handler is the same object that
+			// `insertAtom` calls `this.db.prepare` on, so the shadow is
+			// observed inside the transaction body. Restore in `finally` so
+			// afterEach / idx.close() still work.
+			const db = idx.getRawDb() as unknown as {
+				prepare: (sql: string) => unknown;
+			};
+			const origPrepare = db.prepare.bind(db);
+			db.prepare = (sql: string): unknown => {
+				if (sql.includes("INSERT INTO memory_fts")) {
+					throw new Error("FTS5 inject failure");
+				}
+				return origPrepare(sql);
+			};
+
+			try {
+				const atom = sampleAtom();
+				await expect(idx.insertAtom(atom, dummyEmbedding())).rejects.toThrow();
+
+				// All three tables must have zero rows for this atom id —
+				// the transaction rolled back as a unit.
+				const dbAfter = idx.getRawDb();
+				expect(
+					dbAfter
+						.prepare("SELECT COUNT(*) AS c FROM memory_index WHERE id = ?")
+						.get(atom.id),
+				).toEqual({ c: 0 });
+				expect(
+					dbAfter
+						.prepare("SELECT COUNT(*) AS c FROM memory_vectors WHERE id = ?")
+						.get(atom.id),
+				).toEqual({ c: 0 });
+				expect(
+					dbAfter
+						.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+						.get(atom.id),
+				).toEqual({ c: 0 });
+			} finally {
+				// Restore so afterEach / idx.close() work normally.
+				(db as { prepare: typeof origPrepare }).prepare = origPrepare;
+			}
+		});
+
+		it("insertAtom handles empty tags array in memory_fts (empty string is fine for FTS5)", async () => {
+			// Edge case: `atom.tags` is `[]` → `tags.join(" ")` → "" (empty
+			// string). FTS5 accepts an empty string for a TEXT column and
+			// indexes the row with no tokens in the tags column.
+			const atom = sampleAtom({ tags: [] });
+			await idx.insertAtom(atom, dummyEmbedding());
+
+			const db = idx.getRawDb();
+			const count = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get(atom.id) as { c: number };
+			expect(count.c).toBe(1);
+
+			// The other three fields are still indexed (only tags is empty).
+			const match = (term: string): number =>
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all(term) as Array<{ rowid: number }>
+				).length;
+
+			expect(match("title1alpha")).toBe(1);
+			expect(match("summary1alpha")).toBe(1);
+			expect(match("content1alpha")).toBe(1);
 		});
 	});
 });
