@@ -136,6 +136,24 @@ function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Pr
   }
   const { model, apiKey, authHeader } = found;
 
+  // maxTokens budget for the extraction response. Same pattern as
+  // /compact (harness/compaction/compaction.ts: `min(0.8 * reserveTokens,
+  // model.maxTokens)`): scale with the model's own maxTokens so reasoning
+  // models (deepseek-v4-flash 8k, minimax M3 131k) get budget
+  // proportional to their capability, while a hard 8192 ceiling stops the
+  // worst-case model from being asked to write 100k tokens of JSON. The
+  // previous hardcoded 2048 truncated reasoning models mid-think and made
+  // them look like "no text content" failures.
+  //
+  // 8192 covers a generous extraction (40+ atoms with full content +
+  // tags) and matches the upper bound pi core uses for /compact summaries.
+  // Fallback 4096 if model.maxTokens is missing (custom / local models
+  // that don't populate it in models.json).
+  const extractionMaxTokens = Math.min(
+    model.maxTokens > 0 ? Math.floor(0.8 * model.maxTokens) : 4096,
+    8192,
+  );
+
   // Build callLlm using completeSimple
   return async (prompt: string): Promise<string> => {
     const headers: Record<string, string> = { ...(model.headers ?? {}) };
@@ -145,17 +163,36 @@ function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Pr
     const result = await completeSimple(
       model,
       { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-      { apiKey: apiKey ?? undefined, headers, maxTokens: 2048 },
+      { apiKey: apiKey ?? undefined, headers, maxTokens: extractionMaxTokens },
     );
     if (!result.content) throw new Error("No content in LLM response");
+    // Collect text blocks first, then fall back to thinking blocks.
+    // Reasoning models (deepseek-v4-flash) sometimes put the answer in
+    // the thinking block with an empty content field when finish_reason
+    // hits the maxTokens limit mid-think. The thinking-block fallback
+    // strips a leading <think>...</think> prefix so parseExtractionJson
+    // sees the trailing JSON.
     const textParts: string[] = [];
+    const thinkingParts: string[] = [];
     for (const c of result.content) {
       if (c.type === "text" && "text" in c) {
         textParts.push(c.text);
+      } else if (c.type === "thinking" && "thinking" in c) {
+        thinkingParts.push(c.thinking);
       }
     }
-    if (textParts.length === 0) throw new Error("No text content in LLM response");
-    return textParts.join("");
+    if (textParts.length > 0) {
+      return textParts.join("");
+    }
+    if (thinkingParts.length > 0) {
+      const raw = thinkingParts.join("");
+      const stripped = raw.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+      if (stripped.length > 0) return stripped;
+      throw new Error(
+        "No text content in LLM response (response was a thinking block only; model may have run out of tokens before writing the answer)",
+      );
+    }
+    throw new Error("No text content in LLM response");
   };
 }
 
