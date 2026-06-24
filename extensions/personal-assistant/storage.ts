@@ -120,31 +120,58 @@ export class MemoryIndex {
 		// for Phase 2.2.
 		this.db.exec(SCHEMA_SQL);
 
-		// FTS5 setup — idempotent. On a fresh DB, memory_fts does not yet
-		// exist: we create it via MEMORY_FTS_SCHEMA and one-shot backfill
-		// from every active atom (archived = 0 AND is_latest = 1) so the
-		// FTS5 index is in lock-step with memory_index on first open.
+		// FTS5 mirror — build if missing, repair if broken.
+		//
+		// On a fresh DB, memory_fts does not yet exist: we create it via
+		// MEMORY_FTS_SCHEMA and one-shot backfill from every active atom
+		// (archived = 0 AND is_latest = 1) so the FTS5 index is in
+		// lock-step with memory_index on first open.
 		//
 		// On subsequent re-opens, memory_fts already exists — we deliberately
-		// do NOT re-create it nor re-backfill. That keeps init() strictly
-		// idempotent (same DB opened twice MUST NOT produce duplicate rows)
-		// and avoids an unnecessary full-table scan on every startup. Per-write
-		// sync is the responsibility of insertAtom / updateAtom /
-		// markArchived / markSupersededTx in later phases; the init-time
-		// backfill only handles the "upgrade" case where a DB existed
-		// before memory_fts was introduced.
+		// do NOT re-create it nor re-backfill in the healthy case. That
+		// keeps init() strictly idempotent (same DB opened twice MUST NOT
+		// produce duplicate rows) and avoids an unnecessary full-table scan
+		// on every startup. Per-write sync is the responsibility of
+		// insertAtom / updateAtom / markArchived / markSupersededTx in
+		// later phases; the init-time backfill only handles the "upgrade"
+		// case where a DB existed before memory_fts was introduced.
 		//
-		// The CREATE + INSERT run inside a single db.transaction so a failure
-		// in the backfill (e.g. duplicate id) rolls back the empty FTS5
-		// table — leaving a half-built schema would silently break keyword
-		// recall later.
+		// Defensive repair: an earlier session may have left behind a
+		// memory_fts that has rows but ALL `id` columns are NULL — e.g.
+		// the table was created in contentless mode (content='') which
+		// does not populate the UNINDEXED id column on INSERT. Such a
+		// table silently breaks every bm25Search JOIN (`v.id IS NULL`
+		// never matches `i.id`). Detect by counting NULL-id rows and
+		// rebuild — same CREATE + backfill as the cold-start path,
+		// with an extra DROP first. The repair is:
+		//   1. Idempotent — only fires when broken state is detected.
+		//   2. Atomic — DROP + CREATE + backfill in a single transaction;
+		//      a failed backfill rolls back the empty FTS5 table rather
+		//      than leaving a half-built schema.
+		//   3. Safe for new DBs — no rows → no NULL-id rows → no repair.
+		//   4. Safe for correctly-built memory_fts — no NULL-id rows → no
+		//      repair, table is left untouched.
+		// The trade-off: a broken memory_fts (silent BM25 failure) is
+		// worse than a brief startup-time rebuild — principle
+		// "宁可漏召不可误召" favours a one-shot repair over persisting
+		// the broken state.
 		const ftsExists = this.db
 			.prepare(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
 			)
 			.get();
-		if (!ftsExists) {
+		const needsBuild = !ftsExists;
+		const needsRepair =
+			!!ftsExists &&
+			(this.db
+				.prepare(`SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL`)
+				.get() as { c: number }).c > 0;
+
+		if (needsBuild || needsRepair) {
 			this.db.transaction(() => {
+				if (needsRepair) {
+					this.db.prepare(`DROP TABLE memory_fts`).run();
+				}
 				this.db.exec(MEMORY_FTS_SCHEMA);
 				this.db
 					.prepare(

@@ -1112,6 +1112,245 @@ describe("MemoryIndex", () => {
 			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
 			expect(count.c).toBe(0);
 		});
+
+		it("init repairs broken memory_fts (NULL ids)", async () => {
+			// Task 7.3 smoke test: the user's real ~/.pi/agent/memory/memory.db
+			// has memory_fts with rows but ALL id columns are NULL — leftover
+			// from an earlier parallel session that created the table in
+			// contentless mode (content=''), which didn't populate the
+			// UNINDEXED id column on INSERT. Such a table silently breaks
+			// every bm25Search JOIN (`v.id IS NULL` never matches `i.id`).
+			// init() must detect the broken state and rebuild memory_fts
+			// from memory_index — same backfill SQL as the cold-start path.
+			const db = idx.getRawDb();
+			await idx.init();
+
+			// Drop the auto-created memory_fts and re-create a "broken"
+			// version. We use the same column shape as the production
+			// schema (id UNINDEXED, title, summary, content, tags) but
+			// INSERT 2 rows with explicit id=NULL. UNINDEXED columns in
+			// FTS5 accept NULL (stored, not indexed); the resulting table
+			// mirrors the user's failure mode at the row level: row exists,
+			// id is NULL.
+			db.exec("DROP TABLE memory_fts");
+			db.exec(`
+				CREATE VIRTUAL TABLE memory_fts USING fts5(
+					id UNINDEXED,
+					title,
+					summary,
+					content,
+					tags,
+					tokenize='unicode61 remove_diacritics 2'
+				)
+			`);
+			db.prepare(
+				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (NULL, ?, ?, ?, ?)",
+			).run("broken1", "broken1", "broken1", "broken1");
+			db.prepare(
+				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (NULL, ?, ?, ?, ?)",
+			).run("broken2", "broken2", "broken2", "broken2");
+
+			// Pre-condition sanity: 2 NULL-id rows confirmed (broken state).
+			// If this fails, the test premise is invalid — the broken
+			// state must be visible to init()'s detection query.
+			const brokenCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
+				.get() as { c: number };
+			expect(brokenCount.c).toBe(2);
+
+			// Seed memory_index with 2 active atoms that the repair
+			// backfill can recover into the rebuilt memory_fts. The
+			// tag-token uses pure alnum chars (no hyphens) so FTS5 MATCH
+			// parses it cleanly — FTS5 treats `-` as a NOT operator.
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+			for (let i = 1; i <= 2; i++) {
+				insertAtom.run({
+					id: `repairomicron${i}`,
+					type: "fact",
+					title: `repairtitle${i}`,
+					summary: `repairsummary${i}`,
+					content: `repaircontent${i}`,
+					tags: JSON.stringify([`repairtag${i}`]),
+					importance: 0.5,
+					strength: 0.5,
+					access_count: 0,
+					version: 1,
+					is_latest: 1,
+					parent_id: null,
+					superseded_at: null,
+					archived: 0,
+					created_at: 1000 + i,
+					updated_at: 1000 + i,
+					last_access: null,
+					content_fingerprint: `fp-repair-${i}`,
+					source_session: null,
+				});
+				insertVec.run(`repairomicron${i}`, new Float32Array(1024));
+			}
+
+			// init() should detect the broken state and rebuild.
+			await idx.init();
+
+			// After init: 0 NULL-id rows (the broken rows are gone).
+			const stillBroken = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
+				.get() as { c: number };
+			expect(stillBroken.c).toBe(0);
+
+			// Total row count matches the 2 active atoms (backfill worked).
+			const countWithId = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NOT NULL")
+				.get() as { c: number };
+			expect(countWithId.c).toBe(2);
+
+			// Per-atom assertion: the rebuilt memory_fts has the right
+			// ids (not just any 2 rows) — match each unique title token
+			// against memory_fts and verify the id is the active atom.
+			const hit1 = db
+				.prepare("SELECT id FROM memory_fts WHERE memory_fts MATCH ?")
+				.all("repairtitle1") as Array<{ id: string }>;
+			expect(hit1.map((r) => r.id)).toEqual(["repairomicron1"]);
+			const hit2 = db
+				.prepare("SELECT id FROM memory_fts WHERE memory_fts MATCH ?")
+				.all("repairtitle2") as Array<{ id: string }>;
+			expect(hit2.map((r) => r.id)).toEqual(["repairomicron2"]);
+
+			// End-to-end behaviour: bm25Search for a token from a seeded
+			// atom now returns it. Before the repair this would silently
+			// return [] because the JOIN key (v.id) was NULL.
+			const bmHits = idx.bm25Search("repairtitle1", 10);
+			expect(bmHits.map((r) => r.id)).toContain("repairomicron1");
+		});
+
+		it("init does not touch valid memory_fts (no false repair)", async () => {
+			// Negative test: a healthy memory_fts (no NULL-id rows) must
+			// not be dropped or rebuilt by init(). The defensive repair
+			// should only fire when broken state is detected. If init()
+			// incorrectly triggered a repair, the existing valid rows
+			// would be replaced by a backfill from memory_index — the
+			// "valid1" / "valid2" ids would be lost and a phantom
+			// "wouldbeinserted" row would appear.
+			const db = idx.getRawDb();
+			await idx.init();
+
+			// Drop the auto-created memory_fts and create a healthy one
+			// with 2 valid rows. Captures the rowids up front so we can
+			// prove the SAME rows survive init() — a DROP+CREATE would
+			// reassign rowids and the assertion would fail.
+			db.exec("DROP TABLE memory_fts");
+			db.exec(`
+				CREATE VIRTUAL TABLE memory_fts USING fts5(
+					id UNINDEXED,
+					title,
+					summary,
+					content,
+					tags,
+					tokenize='unicode61 remove_diacritics 2'
+				)
+			`);
+			db.prepare(
+				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
+			).run("valid1", "validtitle1", "validsummary1", "validcontent1", "validtag1");
+			db.prepare(
+				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
+			).run("valid2", "validtitle2", "validsummary2", "validcontent2", "validtag2");
+
+			const before1 = db
+				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
+				.get("valid1") as { rowid: number };
+			const before2 = db
+				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
+				.get("valid2") as { rowid: number };
+
+			// Also insert an active atom into memory_index. If init()
+			// wrongly triggered a repair, the backfill would insert this
+			// atom into memory_fts — proving the false-positive path.
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+			insertAtom.run({
+				id: "wouldbeinserted",
+				type: "fact",
+				title: "wouldbetitle",
+				summary: "wouldbesummary",
+				content: "wouldbecontent",
+				tags: JSON.stringify(["wouldbetag"]),
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: 1000,
+				updated_at: 1000,
+				last_access: null,
+				content_fingerprint: "fp-would",
+				source_session: null,
+			});
+			insertVec.run("wouldbeinserted", new Float32Array(1024));
+
+			// init() should be a no-op for the healthy memory_fts.
+			await idx.init();
+
+			// The original 2 valid rows must still exist with the SAME
+			// rowids — a DROP+CREATE would reassign rowids, so this
+			// catches any false repair.
+			const after1 = db
+				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
+				.get("valid1") as { rowid: number };
+			const after2 = db
+				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
+				.get("valid2") as { rowid: number };
+			expect(after1.rowid).toBe(before1.rowid);
+			expect(after2.rowid).toBe(before2.rowid);
+
+			// The "wouldbeinserted" atom must NOT have been backfilled —
+			// a false repair would have replaced the valid rows with a
+			// backfill from memory_index, surfacing this id.
+			const wouldbeCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+				.get("wouldbeinserted") as { c: number };
+			expect(wouldbeCount.c).toBe(0);
+
+			// Total count is still 2 (no additions, no removals).
+			const totalCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts")
+				.get() as { c: number };
+			expect(totalCount.c).toBe(2);
+
+			// And of course, no NULL-id rows (the trigger condition
+			// is absent, so the repair branch must not fire).
+			const nullCount = db
+				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
+				.get() as { c: number };
+			expect(nullCount.c).toBe(0);
+		});
 	});
 
 	describe("bm25 search", () => {
