@@ -40,7 +40,7 @@ memory-v2 当前是纯 sqlite-vec dense 召回 (bge-m3 + cosine threshold)。202
    - `RecallResult` 加 `rrfScore` 字段 (UI / 调试用),`score` 保留乘法 boost (兼容性)
 2. **配置化**:
    - `personalAssistant.memory.recall.rrfK` 默认 60 (RRF 标准)
-   - `personalAssistant.memory.recall.recallThreshold` 默认 0.0167 (≈ `1/(60+1)`)
+   - `personalAssistant.memory.recall.recallThreshold` 默认 `1/rrfK` ≈ 0.01667 (strict:单 channel rank=1 贡献 0.01639 < 0.01667,不足以过阈值)
    - 两者均可在 `~/.pi/agent/settings.json` 覆盖
 3. **质量指标**:
    - 用户实测 case `lefse没有结果` 不再误召回 `X101SC26052587 客户数据未回传`(该 atom 与 query 无 BM25 命中,RRF 排到 top-9 之外)

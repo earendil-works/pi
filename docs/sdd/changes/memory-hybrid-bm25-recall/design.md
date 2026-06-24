@@ -82,9 +82,11 @@ function rrf(denseRanks: Array<{id: string}>, bm25Ranks: Array<{id: string}>, k:
 **Rationale**:
 - rrfK=60 是 Elasticsearch / OpenSearch / Qdrant 默认,业界事实标准
 - threshold = 1/rrfK = 1/60 ≈ 0.01667 强制双 channel 或单 channel 多 rank 命中 — 解决 dense-only 噪声问题
-- 单 channel rank=1 单独贡献 0.01639 < 0.0167,**不足以**过阈值,必须有第二信号
-- 用户的 "lefse没有结果" case:BM25 返回 0 hit,dense rank=1 贡献 0.01639,过滤掉 ✓
+- 单 channel rank=1 (0-indexed) 单独贡献 1/(60+0+1) = 1/61 ≈ 0.01639 < 0.01667,**不足以**过阈值,必须有第二信号
+- 用户的 "lefse没有结果" case:BM25 返回 0 hit,dense rank=1 贡献 0.01639,过滤掉 ✓ (这个是 strict 默认的核心收益)
 - 用户的 "工时估算" case:BM25 rank=1 + dense rank=1 = 0.03278,过阈值 ✓
+- **Trade-off (有意取舍)**: strict 1/60 默认下,BM25-only rank=1 (没有 dense 支持) 也被过滤 — 这是"宁可漏召不可误召"原则的数值表达,保护 dense noise case 胜于 BM25-only 召回
+- **User opt-in**: 用户可设 `recallThreshold: 0` (test/dev 模式) 让 BM25-only / dense-only 单 channel 召回,生产推荐保留 strict 默认
 - rank 从 1 开始计数 (而非 0),与 RRF 标准文献一致
 
 **Alternatives considered**:

@@ -40,13 +40,13 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("insertAtom writes memory_fts row")` passes: after insert, `SELECT count(*) FROM memory_fts WHERE id = ?` returns 1.
   - **依赖**: 1.1
 
-- [ ] 1.4 **Sync memory_fts on markArchived (delete FTS5 row)**
+- [x] 1.4 **Sync memory_fts on markArchived (delete FTS5 row)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: In `markArchived(id)` at line 526, the existing `this.db.transaction(() => { ... })()` wraps the UPDATE on `memory_index` and the audit insert (lines 527-530). Note: this method does NOT currently delete the vector row — `deleteVector(id)` is a separate caller-driven step. Add `this.db.prepare(\`DELETE FROM memory_fts WHERE id = ?\`).run(id);` inside the same transaction body, after the existing UPDATE. The vector deletion path (caller invokes `deleteVector` separately) is unchanged — we do NOT couple FTS5 deletion to vector deletion because the vector delete is a GC decision, not an archive decision.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("markArchived deletes memory_fts row")` passes: insert atom, markArchived(id), then `SELECT count(*) FROM memory_fts WHERE id = ?` returns 0.
   - **依赖**: 1.3
 
-- [ ] 1.5 **Sync memory_fts on markSupersededTx (delete old + insert new)**
+- [x] 1.5 **Sync memory_fts on markSupersededTx (delete old + insert new)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: In `markSupersededTx(oldId, newAtom, newEmbedding)` at line 346, the existing `this.db.transaction(() => { ... })()` (line 367) already wraps: UPDATE memory_index for old (is_latest=0), INSERT memory_index for new, INSERT memory_vectors for new, and the two audit inserts (lines 367-419). Add inside the same transaction body, after the memory_vectors INSERT and before the audit inserts: (a) `this.db.prepare(\`DELETE FROM memory_fts WHERE id = ?\`).run(oldId);` and (b) `this.db.prepare(\`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)\`).run(transferredAtom.id, transferredAtom.title, transferredAtom.summary, transferredAtom.content, transferredAtom.tags.join(' '));`. Use `transferredAtom` (the merged new atom) for the FTS5 row content, NOT the raw `newAtom`, so the FTS5 row reflects the actual stored atom.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("markSupersededTx swaps memory_fts row")` passes: after supersede, old id has 0 FTS5 rows, new id has 1 FTS5 row with the merged atom's content.
@@ -68,19 +68,19 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — new test `it("rrfFuse sums contributions from both channels")` passes: denseRanks=[{id:'a'},{id:'b'}], bm25Ranks=[{id:'b'},{id:'c'}], rrfK=60 → a=1/61, b=1/61+1/62, c=1/62; assert exact values within 1e-9.
   - **依赖**: 无
 
-- [ ] 3.2 **Add bm25Search call + RRF fusion in recallAtoms**
+- [x] 3.2 **Add bm25Search call + RRF fusion in recallAtoms**
   - **文件**: `extensions/personal-assistant/search.ts` (Modify)
   - **内容**: Rewrite `recallAtoms(index, query, options)` to: (a) call `embedText(query)`, return `[]` on null; (b) `Promise.all([densePromise, bm25Promise])` where densePromise = `index.vectorSearch(queryEmbedding, topK, {isLatestOnly:true, archived:false, type})` for each of the 3 types (per-type fan-out, but now topK=20 default not 3); bm25Promise = `index.bm25Search(query, topK, {isLatestOnly:true, archived:false, type})` per type; (c) for each type, fuse via `rrfFuse(denseHits, bm25Hits, rrfK)` and filter `rrfScore >= recallThreshold`; (d) sort fused per-type list by rrfScore desc, take top-3 (per-type cap unchanged); (e) collect into perTypeResults array of arrays; (f) round-robin interleave for `min(topK, 9)` iterations to produce final 9 results. For each result: `index.getAtom(id)` → fetch atom → `cosine = 1 - distance²/2` (keep this for backwards compat) → `score = cosine × (1 + 0.3 × strength + 0.2 × importance)` (keep) → `rrfScore = (fused map)[id]` (new). Update `DEFAULT_THRESHOLD` doc to note it's now `recallThreshold` default `1/rrfK = 0.01667`, and the old `threshold` option is renamed to a dense-channel cosine floor (default 0.65, kept for backwards compat but documented as "dense-only floor, not the recall gate").
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — new test `it("recallAtoms fuses dense + BM25 via RRF")` passes: insert 3 atoms (one matched by both, one by dense only, one by BM25 only); query touches both channels; assert all 3 surface with rrfScore populated.
   - **依赖**: 1.2, 2.1, 3.1
 
-- [ ] 3.3 **Add new RecallOptions fields (rrfK, recallThreshold)**
+- [x] 3.3 **Add new RecallOptions fields (rrfK, recallThreshold)**
   - **文件**: `extensions/personal-assistant/search.ts` (Modify)
   - **内容**: Extend `RecallOptions` interface: add `rrfK?: number;` and `recallThreshold?: number;` after the existing `threshold?: number;`. Add constants `const DEFAULT_RRF_K = 60;` and `const DEFAULT_RECALL_THRESHOLD = 1 / DEFAULT_RRF_K;` (≈ 0.01667). In `recallAtoms`, resolve: `const rrfK = options.rrfK ?? DEFAULT_RRF_K;` and `const recallThreshold = options.recallThreshold ?? DEFAULT_RECALL_THRESHOLD;`.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — new test `it("RecallOptions accepts rrfK and recallThreshold")` passes: pass `{rrfK: 30, recallThreshold: 0.01}`, verify the values flow through (mock-friendly: insert 1 atom, check the rrfScore is calculated with rrfK=30 → 1/(30+1) = 0.0323).
   - **依赖**: 3.2
 
-- [ ] 3.4 **Update RecallResult construction in search.ts to populate rrfScore**
+- [x] 3.4 **Update RecallResult construction in search.ts to populate rrfScore**
   - **文件**: `extensions/personal-assistant/search.ts` (Modify)
   - **内容**: In the scored-result push, change `scored.push({ atom, distance, cosine, score });` to `scored.push({ atom, distance, cosine, score, rrfScore: ...rrfScore from fused map });`. Thread the fused rrf score map into the per-type inner loop closure.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — new test `it("RecallResult.rrfScore is populated")` passes: results[0].rrfScore is a number > 0.
@@ -102,13 +102,13 @@
 
 ## 5. Test updates — adjust existing tests for new threshold
 
-- [ ] 5.1 **Update search.test.ts to use recallThreshold: 0 (skip RRF filter)**
+- [x] 5.1 **Update search.test.ts to use recallThreshold: 0 (skip RRF filter)**
   - **文件**: `extensions/personal-assistant/test/search.test.ts` (Modify)
   - **内容**: In each test that currently relies on the old `threshold` option (e.g., test (k) at line 351, test (n) at line 401), add `recallThreshold: 0` to the recallAtoms options. The `threshold: 0.65` dense floor can stay or be removed depending on what the test exercises — read each test's intent and adjust minimally. The goal: every existing search.test.ts test continues to PASS without changing the expected behavior.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/search.test.ts` — all 16 existing tests pass.
   - **依赖**: 3.3
 
-- [ ] 5.2 **Update recall-quality.test.ts to use recallThreshold: 0**
+- [x] 5.2 **Update recall-quality.test.ts to use recallThreshold: 0**
   - **文件**: `extensions/personal-assistant/test/recall-quality.test.ts` (Modify)
   - **内容**: In the two `recallAtoms(index, q.query, { topK: 10, threshold: 0 })` calls (lines 240 and 264), add `recallThreshold: 0` and remove the deprecated `threshold: 0` (or keep both — `threshold: 0` is the dense floor and is also 0, so no conflict). Run the aggregate metrics test — assert avg_recall@5 ≥ 0.7 (may drop slightly from 1.0 due to RRF requiring more signals), avg_recall@10 ≥ 0.85, avg_precision@5 ≥ 0.4 (should IMPROVE because BM25 reduces noise). If any threshold fails, report the actual numbers in the verification output and let the user decide whether to accept.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/recall-quality.test.ts` — all 14 existing tests pass; aggregate metrics print clearly with the new precision number.

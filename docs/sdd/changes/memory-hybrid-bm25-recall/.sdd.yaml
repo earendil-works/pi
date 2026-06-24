@@ -4,8 +4,8 @@ change: memory-hybrid-bm25-recall
 created_at: 2026-06-24
 base_ref: 0968b9d47cf88c1904392e95da4d18f8f3a77adf
 tasks_total: 21
-tasks_done: 7
+tasks_done: 10
 isolation: branch
 verify_result: null
-last_review_sha: 9bb66fafb56e80d44bdf8c8bb7b9aae6ec57b7ec
+last_review_sha: f0019d6af24e4ad9762ddc1c7b583e16084ecaaa
 archived: false

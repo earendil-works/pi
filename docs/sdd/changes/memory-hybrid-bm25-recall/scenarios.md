@@ -22,13 +22,16 @@
 - **AND** 总 rrf_score = 0.01639 + 0.01471 = 0.03110 ≥ threshold
 - **AND** atom 仍进入 top-9(dense 单路命中即足够)
 
-### 场景: BM25 单路命中 (keyword-only query)
-- **GIVEN** DB 有 atom 含 "X101SC26052587-Z01-J002 客户数据未回传" + "amplicon" 标签
-- **WHEN** recallAtoms(query="X101SC26052587 数据回传")
-- **THEN** dense cosine = 0.50(超出 recallThreshold 0.0167,但 < 旧 dense threshold 0.65)
-- **AND** BM25 通道:title 和 content 包含完整项目 ID "X101SC26052587" + "回传",rank=1, rrf_score = 0.01639
-- **AND** RRF 总分 ≥ threshold,atom 进入 top-9
-- **NOTE**: 这正是 dense-only 失败的 case (cosine 0.50 < 0.65),BM25 救了回来
+### 场景: BM25 单路命中在 strict 1/60 默认下被过滤,但 `recallThreshold: 0` 时可召回 (设计取舍)
+- **GIVEN** DB 有 atom "X101SC26052587-Z01-J002 客户数据未回传" + tags 含 amplicon
+- **AND** query "X101SC26052587 数据回传" 在 dense 通道 cosine=0.50 (低于 floor 0.65),BM25 通道 rank=1
+- **WHEN** recallAtoms(query, {}) (默认 strict 1/60 threshold)
+- **THEN** dense 返回 [] (cosine 0.50 < 0.65 floor)
+- **AND** BM25 返回该 atom rank=1
+- **AND** fused rrfScore = 0.01639 < 默认 recallThreshold 0.01667
+- **AND** atom 在默认配置下被过滤掉 (宁可漏召不可误召)
+- **NOTE**: 这是 strict 默认的有意取舍 — 设计选择保护 dense 噪声场景 (用户的 lefse case) 胜于 BM25-only 召回
+- **NOTE2**: 用户可设 `recallThreshold: 0` (test/dev 模式) 让 BM25-only 召回;生产推荐保留 strict 默认
 
 ### 场景: RRF 融合后的 per-type round-robin
 - **GIVEN** RRF fused top-9 包含:4 rule + 3 fact + 2 process
@@ -104,18 +107,19 @@
 - **AND** 后续 recallAtoms 时 dense 通道自然降级到 []
 - **NOTE**: FTS5 构建不需要 embedText,只在 recall 时调
 
-### 场景: 阈值默认值 0.0167 数值边界
-- **GIVEN** recallThreshold 默认 0.0167 ≈ 1/(60+1)
+### 场景: 阈值默认值 1/60 数值边界 (strict 严格)
+- **GIVEN** recallThreshold 默认 1/60 ≈ 0.01667
 - **AND** rrfK 默认 60
-- **THEN** 单 channel rank=1 命中即贡献 0.01639 < 0.0167
-- **AND** 必须双 channel 都 rank=1 命中 OR 单 channel rank=1 + 另一 channel rank≤3 才能过阈值
-- **NOTE**: 0.0167 的设计是"OR-AND 平衡点"——单 channel 高 rank 过,OR 双 channel 任意 rank 都部分加权凑过
-- **NOTE2**: 用户可调低 threshold(更宽松)或调高 rrfK(更平滑)
+- **THEN** 单 channel rank=1 (0-indexed) 命中贡献 = 1/(60+0+1) = 1/61 ≈ 0.01639
+- **AND** 0.01639 < 0.01667,**单 channel rank=1 不足以过阈值** — 必须双 channel 都有贡献 OR 单 channel rank=0 + 另一 channel 弱贡献才能凑过
+- **NOTE**: 这是设计取舍"宁可漏召不可误召"的数值表达 — 单 channel dense noise 召回 (用户的 lefse case) 必然被过滤,保护了 dense 召回质量
+- **NOTE2**: 用户可设 `recallThreshold: 0` (test/dev 模式) 让单 channel rank=1 通过;生产推荐保留 strict 1/60 默认
+- **NOTE3**: 或调低 threshold (e.g. 0.01) 让单 channel rank=1 贡献 (0.0164) 通过 — 但会引入 dense noise回归,默认严格更好
 
 ### 场景: config 缺失 recall 块
 - **GIVEN** `~/.pi/agent/settings.json` 没有 `personalAssistant.memory.recall`
 - **WHEN** MemoryIndex 加载配置
-- **THEN** recallAtoms 用默认 `rrfK = 60`, `recallThreshold = 0.0167`
+- **THEN** recallAtoms 用默认 `rrfK = 60`, `recallThreshold = 1/60 ≈ 0.01667`
 - **NOTE**: 配置完全可选,跟现有 `decay` / `injection` 块同样的 fallback 语义
 
 ### 场景: storage bge-m3 cosine 与 BM25 RRF score 量纲不可比
