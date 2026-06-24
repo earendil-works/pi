@@ -13,7 +13,18 @@
 //     multiplicative structure guarantees cosine is the absolute ranking key
 //     — strength/importance cannot rescue an unrelated atom past a relevant
 //     one, but they meaningfully reorder ties and near-ties.
-//   - Default cosine threshold = 0.5 (filtered AFTER vectorSearch returns).
+//   - Default cosine threshold = 0.65 (filtered AFTER vectorSearch returns).
+//     Empirically tuned against bge-m3 on Chinese-Chinese pairs: the dense
+//     noise floor sits at ~0.55 (any pair of unrelated Chinese texts scores
+//     ≥ 0.5), so a 0.5 threshold surfaces irrelevant atoms as recall hits.
+//     0.65 cleanly separates signal from noise — verified against the live
+//     corpus: truly-relevant matches land 0.74-0.81, irrelevant atoms stay
+//     ≤ 0.55. 0.65 (not 0.7) keeps a comfortable margin over Float32-precision
+//     noise (sqlite-vec L2 distance computation can produce cosines like
+//     0.69999998 for an intended 0.7 boundary case). Pure-dense recall is
+//     fundamentally limited (signal/noise gap is only ~0.1); the right
+//     long-term fix is hybrid FTS5 + dense (tracked separately), but raising
+//     this threshold is the cheap, immediate fix.
 //   - Search is DISCOVERY ONLY. Does NOT bump `access_count` — strength
 //     feedback is recorded exclusively by the agent's `memory_get` tool
 //     (R-search-cheap, R-feedback-loop). Results carry `atom.id` plus the
@@ -30,8 +41,9 @@ import type { MemoryAtom, MemoryAtomType, RecallResult } from "./types.ts";
 const DEFAULT_TOP_K = 3;
 
 /** Default minimum cosine similarity (post-filter). Overridable per-call via
- *  `RecallOptions.threshold` for hermetic tests that use a weaker mock embedder. */
-const DEFAULT_THRESHOLD = 0.5;
+ *  `RecallOptions.threshold` for hermetic tests that use a weaker mock embedder.
+ *  See file header for the empirical rationale behind 0.65 vs bge-m3's noise floor. */
+const DEFAULT_THRESHOLD = 0.65;
 
 /** Multiplicative boost weights for the score formula (Decision 8). */
 const STRENGTH_WEIGHT = 0.3;
@@ -44,14 +56,14 @@ const TYPES: readonly MemoryAtomType[] = ["rule", "fact", "process"];
  * Options for `recallAtoms`. `topK` controls the per-type KNN candidate
  * count (default 3, Decision 2). The per-type result cap is fixed at 3
  * (Decision 2 hard ceiling — sparse types degrade below this). `threshold`
- * is the cosine minimum (default 0.5, Decision 8); hermetic tests with
+ * is the cosine minimum (default 0.65, Decision 8); hermetic tests with
  * weaker mock embedders can dial it down. `filter` narrows the search to
  * a single atom type.
  */
 export interface RecallOptions {
 	/** Per-type KNN candidate count (Decision 2). Default 3. */
 	topK?: number;
-	/** Minimum cosine similarity (post-filter). Default 0.5 (Decision 8). */
+	/** Minimum cosine similarity (post-filter). Default 0.65 (Decision 8). */
 	threshold?: number;
 	/** Restrict KNN to a single atom type. */
 	filter?: { type?: MemoryAtom["type"] };

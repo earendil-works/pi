@@ -100,10 +100,12 @@ Search MUST rank recall results within each type by `score = cosine × (1 + 0.3 
 - **THEN** 3 results are returned: `[rule@0, process@0, process@1]` — the fact slot is skipped, not padded with other types
 
 #### Scenario: sub-threshold atoms are dropped
-- **GIVEN** some rule-type candidates have `cosine < 0.5`
+- **GIVEN** some rule-type candidates have `cosine < 0.65`
 - **WHEN** `recallAtoms` returns
 - **THEN** those candidates do not appear in results
 - **AND THEN** the rule slice has at most `min(3, post-filter count)` entries
+
+> **Threshold revised 2026-06-24**: previously 0.5; raised to 0.65 because bge-m3 dense-only on Chinese pairs has a noise floor at ~0.55. With 0.5 the system surfaces irrelevant atoms as recall hits (verified empirically: a "lefse" query returned a customer-data atom at cosine 0.55). 0.65 cleanly separates signal from noise with a 0.1 margin for sqlite-vec's Float32 distance precision — verified against the live corpus where truly-relevant matches land 0.74-0.81 and irrelevant atoms stay ≤ 0.55. (Note: 0.7 was rejected because Float32 precision turns a "true 0.7" cosine into 0.69999998, mistakenly dropping borderline relevant atoms.) Pure-dense recall is fundamentally limited (signal/noise gap ≈ 0.1); the long-term fix is hybrid FTS5 + dense retrieval (separate change). This requirement only documents the current default; tests can override via `RecallOptions.threshold`.
 
 ### Requirement: search does not mutate access state
 `recallAtoms` MUST NOT call `updateAccess` for any returned atom. Strength-feedback is recorded exclusively by the agent's `memory_get` tool and the webui `GET /api/memory/:id` preview endpoint.

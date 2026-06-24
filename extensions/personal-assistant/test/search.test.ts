@@ -6,7 +6,7 @@
 //   - Per-type lists sorted by score DESC, then interleaved round-robin so
 //     each type gets a turn. Sparse types skip their slot (never pad with
 //     cross-type items or placeholders).
-//   - cosine < 0.5 is dropped after the KNN returns.
+//   - cosine < 0.65 is dropped after the KNN returns.
 //   - Results carry `{ atom, distance, cosine, score }` — no `file_path`.
 //   - Search is DISCOVERY ONLY: does NOT bump `access_count`. Programmatic
 //     strength feedback is the responsibility of the agent's `memory_get`
@@ -347,8 +347,8 @@ describe("recallAtoms", () => {
 		expect(results[2]?.atom.type).toBe("process");
 	});
 
-	// (k) NEW — cosine < 0.5 is dropped after vectorSearch returns.
-	it("cosine below threshold (0.5) is dropped", async () => {
+	// (k) NEW — cosine below threshold is dropped after vectorSearch returns.
+	it("cosine below threshold (0.65) is dropped", async () => {
 		installControlledMock();
 		const a = sampleAtom({
 			content: "__COS:0.4 below threshold atom rho signal",

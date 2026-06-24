@@ -121,10 +121,20 @@ score = cosine * (1 + 0.3 * strength + 0.2 * importance)
 ```
 
 **组内(per-type)**: 每个 type 独立 `vectorSearch`,然后:
-1. cosine ≥ 0.5 过滤(全局 threshold)
+1. cosine ≥ 0.65 过滤(全局 threshold,见下面 "Threshold 取值依据")
 2. 计算 `score = cosine * (1 + 0.3 * strength + 0.2 * importance)`
 3. 按 score DESC 排序,取前 3 条(稀疏 type 自动降到 1)
 4. `score` 字段写入 `RecallResult`(给 UI / 调试用)
+
+**Threshold 取值依据 (revised 2026-06-24)**: 初版定为 0.5,实测发现 bge-m3 dense-only 在中文场景的噪声底约 0.55 —— 任何一对不相关的中文文本都会得到 0.5+ 的 cosine,导致 0.5 阈值召回大量噪声。经验测量(用户 8 atom 语料 + bge-m3 本地服务):
+
+| 查询类型 | 最佳匹配 | cosine |
+|---|---|---|
+| 真正相关(强语义重叠) | 规则 / 流程 / 工时相关 atom | 0.74 - 0.81 |
+| 不相关(lefse 查询召回客户数据) | X101SC26052587 阻塞 atom | 0.55 |
+| 完全无关(Kubernetes / Python 类型 / 随机问题) | 任意中文 atom | 0.41 - 0.46 |
+
+0.65 是干净的分界点(不是 0.7):真正相关查询全部 ≥ 0.74,所有噪声全部 ≤ 0.55。**为什么不是 0.7?** sqlite-vec 用 Float32 存向量,L2 distance 计算有微小误差:一个本应 cosine=0.7 的边界向量,实际计算出来是 0.69999998(< 0.7),被 0.7 阈值误过滤。0.65 留出 Float32 precision 余量,确保信号全部通过、噪声全部拦下。**注意**: 这是 pure-dense 召回的精度天花板 —— 信号和噪声之间 gap 只有 ~0.1,bi-encoder 的本质缺陷。终极解决方案是 hybrid retrieval (FTS5 BM25 + dense,RRF 融合),但那是单独的 change。本决策只把纯 dense 的 threshold 从 0.5 提到 0.65 做止血修复。
 
 **组间(cross-type)**: 三个 type 的 top-3 用 round-robin 交错拼接:
 - `[rule[0], fact[0], process[0], rule[1], fact[1], process[1], rule[2], fact[2], process[2]]`
@@ -149,13 +159,15 @@ score = cosine * (1 + 0.3 * strength + 0.2 * importance)
 **Alternatives considered**:
 - A. 多键排序 `cosine → strength → importance`(strict equality)— **拒绝**,在实际浮点 cosine 上 strict equality 几乎永远 true,等于纯 cosine
 - B. 线性加权 `α*cosine + β*strength + γ*importance` — 拒绝,strength=1.0 且 cosine=0.5 时 score=0.8,可能赢过 cosine=0.7 的 atom,违反"必须相关"原则
+- D. **threshold 维持 0.5** — **拒绝 (revised 2026-06-24)**,bge-m3 中文噪声底 ≈ 0.55,0.5 阈值会让所有不相关 query 召回无关 atom(实测用户的 lefse query 召回 X101SC26052587 客户数据 atom,cosine=0.55)。改 0.65 是最简单的止血。
+- E. **threshold 提到 0.7** — **拒绝 (revised 2026-06-24)**,信号区间 0.74-0.81 太贴边,sqlite-vec Float32 distance 计算精度 ~1e-7,会把边界 cosine 算成 0.69999998,误过滤掉真的相关 atom。0.65 留 0.1 余量给 Float32 precision,既压住所有噪声(< 0.55)又保住所有信号(≥ 0.74)。
 - C. **本方案:乘法 boost** — 选这个,cosine 是绝对的最小乘数,strength/importance 持续参与,formula 一行可解释
 
 **算法伪代码**:
 ```ts
 const TYPES = ["rule", "fact", "process"] as const;
 const DEFAULT_PER_TYPE_CAP = 3;     // Decision 2 (overridable via topK for tests)
-const DEFAULT_THRESHOLD = 0.5;       // Decision 8 (overridable via threshold for tests)
+const DEFAULT_THRESHOLD = 0.65;      // Decision 8 (revised 2026-06-24 from 0.5; see Threshold 取值依据 above)
 const STRENGTH_WEIGHT = 0.3;
 const IMPORTANCE_WEIGHT = 0.2;
 
@@ -391,7 +403,7 @@ LLM: search("lima 拆分有问题")
 recallAtoms(index, query, atomsDir)
    ↓
 3 × vectorSearch(embedding, topK*2, {type: X})
-   ↓ (per type: top-3 cosine ≥ 0.5)
+   ↓ (per type: top-3 cosine ≥ 0.65)
 9 RecallResult [{id, type, title, summary, tags, distance, cosine}]
    ↓
 POST /api/memory/search response

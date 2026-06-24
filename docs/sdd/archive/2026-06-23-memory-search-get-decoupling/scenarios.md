@@ -141,7 +141,7 @@
 - **AND THEN** 返回剩余 results,total 可能 < 9,但不报错
 
 ### Scenario: per-type top-3 排序按 round-robin 交错
-- **GIVEN** DB 中有 6 个 active atom(2 rule + 3 fact + 1 process),所有 cosine 都 ≥ 0.5
+- **GIVEN** DB 中有 6 个 active atom(2 rule + 3 fact + 1 process),所有 cosine 都 ≥ 0.65
 - **WHEN** search 返回
 - **THEN** 返回 6 个(2 rule + 3 fact + 1 process,稀疏 process 自动降到 1)
 - **AND THEN** 顺序是 round-robin 交错:`[rule[0], fact[0], process[0], rule[1], fact[1], process[1], fact[2]]`(注意 process 只 1 个,所以第 2 轮 process 槽位空,自动跳过;fact 第 2 轮 [1] 在 process[1] 空槽之后补上)
@@ -240,7 +240,7 @@
   - `strength_new = 0.7 × exp(-0.0513 × 30 / 0.7) ≈ 0.7 × exp(-2.2) ≈ 0.7 × 0.111 = **0.078**
   - 0.078 < archiveThreshold (0.1) → F 被 archive
 - **AND THEN** F.archived = 1,下次 search 不可见(`archived = 0` WHERE 过滤)
-- **NOTE**: score 公式让 strength 衰减有"显式可见"的效果 — 即使 atom 没被 archive(score 仍 ≥ 0.5 cosine 阈值),排名下降会让它从 top-3 跌出,进一步 decay,最终 archive。这是 **"遗忘强度决定清理"** 的完整链条。
+- **NOTE**: score 公式让 strength 衰减有"显式可见"的效果 — 即使 atom 没被 archive(score 仍 ≥ 0.65 cosine 阈值),排名下降会让它从 top-3 跌出,进一步 decay,最终 archive。这是 **"遗忘强度决定清理"** 的完整链条。
 - **NOTE2**: 如果 F 被 agent 通过 `memory_get` 调过,F.last_access = now → 下次 decay 时 `deltaDays < 1/24` (1 小时),跳过衰减 → F.strength 保持 → F 持续留在 search top-3 → 形成 "越用越显, 不用就忘" 的反馈循环。
 
 ### Scenario: rule type 永不 archive(即使 strength 极低)
