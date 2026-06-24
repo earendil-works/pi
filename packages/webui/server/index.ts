@@ -18,7 +18,7 @@ import { SessionPool } from "./session-pool";
 import { attachWsHandler } from "./ws/handler";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
-import { type PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
+import { type PersonalAssistantConfig, DEFAULT_DB_PATH, DEFAULT_ATOMS_DIR } from "@earendil-works/pi-personal-assistant";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -238,8 +238,15 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   // Cron REST API endpoints - mounted BEFORE static catch-all
   mountCronRoutes(app, cronStore);
 
-  // Session REST API endpoints - mounted BEFORE static catch-all
-  mountSessionsRoutes(app, sessionPool, { callLlm, settings });
+  // Session REST API endpoints - mounted BEFORE static catch-all.
+  // dbPath / atomsDir must be passed so DELETE /api/sessions/:id can extract
+  // atoms into the same memory.db the rest of the system reads from.
+  // Without these, runMemoryExtraction's MemoryIndex constructor throws on
+  // dirname(undefined) and the warning "Memory extraction failed, proceeding
+  // with deletion" fires silently — losing memories on session delete.
+  const dbPath = settings?.memory?.dbPath ?? DEFAULT_DB_PATH;
+  const atomsDir = settings?.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+  mountSessionsRoutes(app, sessionPool, { callLlm, settings, dbPath, atomsDir });
 
   // Models REST API endpoint - mounted BEFORE static catch-all
   mountModelsRoutes(app);

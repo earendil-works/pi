@@ -92,10 +92,10 @@ export interface PersonalAssistantConfig {
 // ---------------------------------------------------------------------------
 
 /** Default sqlite database path. Override via config.memory.dbPath. */
-const DEFAULT_DB_PATH = join(homedir(), ".pi", "agent", "memory", "memory.db");
+export const DEFAULT_DB_PATH = join(homedir(), ".pi", "agent", "memory", "memory.db");
 
 /** Default atom file directory. Override via config.memory.atomsDir. */
-const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
+export const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atoms");
 
 /**
  * TUI notify that swallows errors. Some ctx shapes (rpc/print backends)
