@@ -1047,11 +1047,12 @@ describe("MemoryIndex", () => {
 
 		const dummyEmbedding = (): number[] => new Array(1024).fill(0.1);
 
-		// Seed an atom + mirror it into memory_fts. insertAtom only writes to
-		// memory_index + memory_vectors; FTS5 sync (insert into memory_fts) is
-		// a separate concern owned by a later phase (see the file header on
-		// storage.ts). For BM25 search tests we explicitly mirror the row so
-		// bm25Search has something to MATCH against.
+		// Seed an atom. insertAtom now writes memory_fts in the same
+		// transaction (see storage.ts); we still mirror manually here so the
+		// bm25Search tests can control the exact FTS5 text payload (the
+		// production sync uses `atom.tags.join(' ')'` for tags, while the
+		// bm25Search fixtures need verbatim tokens like `["amplicon"]` to
+		// MATCH cleanly).
 		const insertWithFts = async (
 			atom: MemoryAtom,
 			text: { title: string; summary: string; content: string; tags: string[] },
