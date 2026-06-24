@@ -256,6 +256,8 @@ export interface SplitLayoutConfig {
 	rightPanel: Component;
 	/** Fraction of terminal width for the left panel (0.0-1.0, default: 0.6) */
 	ratio: number;
+	/** Optional callback for the right panel to trigger TUI re-render */
+	requestRender?: () => void;
 }
 
 /**
@@ -333,15 +335,6 @@ export class TUI extends Container {
 	private overlayStack: OverlayStackEntry[] = [];
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 	private splitConfig: SplitLayoutConfig | null = null;
-	// Cache for applySplitToViewport — avoids redundant rendering on every doRender cycle
-	private splitViewportCache: {
-		key: string;
-		viewportStart: number;
-		leftWidth: number;
-		rightWidth: number;
-		result: string[];
-	} | null = null;
-
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
 		this.terminal = terminal;
@@ -385,9 +378,8 @@ export class TUI extends Container {
 	 * The terminal is divided at `ratio` (left proportion, default 0.6).
 	 * Existing children render in the left panel; `rightPanel` renders on the right.
 	 */
-	setSplitLayout(ratio: number, rightPanel: Component): void {
-		this.splitConfig = { rightPanel, ratio };
-		this.splitViewportCache = null;
+	setSplitLayout(ratio: number, rightPanel: Component, requestRender?: () => void): void {
+		this.splitConfig = { rightPanel, ratio, requestRender };
 		this.invalidate();
 		this.requestRender(true);
 	}
@@ -395,7 +387,6 @@ export class TUI extends Container {
 	/** Disable split-layout mode and restore full-width rendering. */
 	clearSplitLayout(): void {
 		this.splitConfig = null;
-		this.splitViewportCache = null;
 		this.invalidate();
 		this.requestRender(true);
 	}
@@ -417,26 +408,6 @@ export class TUI extends Container {
 		}
 
 		const viewportStart = Math.max(0, lines.length - termHeight);
-
-		// Build a lightweight cache key: first character of each viewport line
-		// This is a fast heuristic — if any viewport line's first char changed,
-		// we re-merge. If nothing changed, we skip all processing.
-		let cacheKey = "";
-		const viewportEnd = Math.min(lines.length, viewportStart + termHeight);
-		for (let i = viewportStart; i < viewportEnd; i++) {
-			const line = lines[i];
-			cacheKey += line ? (line[0] ?? "") : "";
-		}
-
-		if (
-			this.splitViewportCache &&
-			this.splitViewportCache.key === cacheKey &&
-			this.splitViewportCache.viewportStart === viewportStart &&
-			this.splitViewportCache.leftWidth === leftWidth &&
-			this.splitViewportCache.rightWidth === rightWidth
-		) {
-			return this.splitViewportCache.result;
-		}
 
 		// Render right panel
 		const rightLines = rightPanel.render(rightWidth);
@@ -464,9 +435,6 @@ export class TUI extends Container {
 
 			result[lineIdx] = leftPadded + SEGMENT_RESET + divider + rightSafe;
 		}
-
-		// Update cache
-		this.splitViewportCache = { key: cacheKey, viewportStart, leftWidth, rightWidth, result };
 
 		return result;
 	}
