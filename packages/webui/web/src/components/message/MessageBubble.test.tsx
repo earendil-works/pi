@@ -1,7 +1,31 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type React from "react";
 import { MessageBubble } from "./MessageBubble";
 import type { Message } from "../../lib/api";
+
+// Task 2.1 RED: stub MessageParts so we can assert prop forwarding without
+// depending on the real component's internal rendering. We wrap the real
+// MessageParts with a side-car stub div (data-testid="mp") that exposes
+// `isStreaming` and `timestamp` as data-attributes. The wrapper keeps the
+// real rendering for the existing tests (e.g. "assistant message renders
+// header + parts + footer") so the mock is scoped to prop inspection only.
+vi.mock("./MessageParts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./MessageParts")>();
+  const Original = actual.MessageParts;
+  type Props = React.ComponentProps<typeof Original>;
+  const Wrapped = (props: Props) => (
+    <>
+      <Original {...props} />
+      <div
+        data-testid="mp"
+        data-streaming={String(props.isStreaming)}
+        data-ts={props.timestamp}
+      />
+    </>
+  );
+  return { MessageParts: Wrapped };
+});
 
 describe("MessageBubble", () => {
   const baseUserMessage: Message = {
@@ -94,5 +118,25 @@ describe("MessageBubble", () => {
     expect(() => render(<MessageBubble message={message} />)).not.toThrow();
     const text = screen.getByText(/tc1.*result/);
     expect(text).toBeTruthy();
+  });
+
+  // Test 7: forwards isStreaming and timestamp to MessageParts (Task 2.1 RED)
+  // MessageBubble must accept `isStreaming` and forward both `isStreaming`
+  // and `message.timestamp` to MessageParts, so StepHeader can render the
+  // "● Executing (Xs) ▼" status + duration when streaming.
+  it("forwards isStreaming and timestamp to MessageParts", () => {
+    const message: Message = {
+      ...baseAssistantMessage,
+      parts: [
+        { type: "thinking", text: "Let me think..." },
+        { type: "text", text: "Done." },
+      ],
+      timestamp: "2026-06-24T15:00:00.000Z",
+    };
+    // @ts-expect-error -- `isStreaming` prop is added in Task 2.2 (GREEN).
+    render(<MessageBubble message={message} isStreaming={true} />);
+    const stub = screen.getByTestId("mp");
+    expect(stub.getAttribute("data-streaming")).toBe("true");
+    expect(stub.getAttribute("data-ts")).toBe("2026-06-24T15:00:00.000Z");
   });
 });
