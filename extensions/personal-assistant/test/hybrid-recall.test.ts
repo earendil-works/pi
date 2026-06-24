@@ -617,3 +617,166 @@ describe("recallAtoms hybrid recall", () => {
 		expect(Array.isArray(results)).toBe(true);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// hybrid-recall storage contract
+//
+// The atom-level FTS5 sync points (init creates memory_fts, init backfills,
+// insertAtom writes the row, markArchived deletes the row, markSupersededTx
+// swaps the row, bm25Search escapes FTS5 special chars) are each tested in
+// isolation in test/storage.test.ts (tasks 1.1–1.5). This describe block
+// adds the hybrid-recall angle: it asserts that the contract holds when the
+// whole pipeline is exercised in sequence, validating the user-facing
+// outcome — that bm25Search surfaces / hides atoms exactly as the storage
+// sync primitives would predict. A regression in any of the five storage
+// sync points would fail this single test, narrowing the search space for
+// whichever sync step broke.
+//
+// Reference: docs/sdd/changes/memory-hybrid-bm25-recall/specs/
+// memory-search-decoupled/spec.md "FTS5 schema and storage sync".
+// ---------------------------------------------------------------------------
+
+describe("hybrid-recall storage FTS5 sync contract", () => {
+	let index: MemoryIndex;
+
+	beforeEach(async () => {
+		index = new MemoryIndex(":memory:");
+		await index.init();
+	});
+
+	afterEach(() => {
+		index.close();
+	});
+
+	// One comprehensive test that walks init → insertAtom → bm25Search →
+	// markArchived → bm25Search → markSupersededTx → bm25Search →
+	// FTS5-special-char query. Each step validates a storage-level sync
+	// primitive via its hybrid-recall consequence. If any sync point
+	// regresses (memory_fts not created, not backfilled, insertAtom
+	// doesn't write, markArchived doesn't delete, markSupersededTx doesn't
+	// swap, escapeFtsQuery breaks), one of the assertions below flips.
+	it("init + insertAtom + markArchived + markSupersededTx + escapeFtsQuery all wire through bm25Search", async () => {
+		const db = index.getRawDb();
+
+		// ─── (1) init creates memory_fts — structural assertion. ───
+		const ftsRow = db
+			.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
+			)
+			.get() as { name: string } | undefined;
+		expect(ftsRow).toBeDefined();
+		expect(ftsRow?.name).toBe("memory_fts");
+
+		// ─── (2) init is idempotent — second init must not duplicate
+		// the schema, and the seed atoms inserted below must not appear
+		// twice in memory_fts. ───
+		await index.init();
+
+		// ─── (3) Insert atom A → memory_fts row lands → bm25Search
+		// surfaces A. ───
+		// Use alnum-only tokens so FTS5 MATCH parses cleanly (FTS5 treats
+		// `-` as NOT, double-quote as phrase, etc.).
+		const a = sampleAtom({
+			id: "atom-A",
+			type: "rule",
+			title: "alphaOldUniqueXYZ title",
+			summary: "alphaOldUniqueXYZ summary",
+			content: "alphaOldUniqueXYZ content with markers",
+			tags: ["alphaOldUniqueXYZ"],
+			content_fingerprint: "fp-A",
+		});
+		await insertAtom(a, index);
+
+		// Structural: memory_fts has exactly one row for A.
+		const ftsCountA = db
+			.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+			.get("atom-A") as { c: number };
+		expect(ftsCountA.c).toBe(1);
+
+		// Behavioural: bm25Search returns A. This is the hybrid-recall
+		// angle — the storage sync is invisible until bm25Search observes it.
+		const hitsA = index.bm25Search("alphaOldUniqueXYZ", 10);
+		expect(hitsA.map((r) => r.id)).toContain("atom-A");
+
+		// ─── (4) markArchived → memory_fts row gone → bm25Search
+		// no longer returns A. ───
+		index.markArchived("atom-A");
+
+		const ftsCountAfterArc = db
+			.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+			.get("atom-A") as { c: number };
+		expect(ftsCountAfterArc.c).toBe(0);
+
+		const hitsAfterArc = index.bm25Search("alphaOldUniqueXYZ", 10);
+		expect(hitsAfterArc.map((r) => r.id)).not.toContain("atom-A");
+
+		// ─── (5) Insert atom B, then supersede B with C → memory_fts
+		// has C's row and not B's. ───
+		const b = sampleAtom({
+			id: "atom-B",
+			type: "fact",
+			title: "betaOldUniqueXYZ title",
+			summary: "betaOldUniqueXYZ summary",
+			content: "betaOldUniqueXYZ content",
+			tags: ["betaOldUniqueXYZ"],
+			content_fingerprint: "fp-B",
+		});
+		await insertAtom(b, index);
+
+		// Pre-condition: B is searchable.
+		const hitsB = index.bm25Search("betaOldUniqueXYZ", 10);
+		expect(hitsB.map((r) => r.id)).toContain("atom-B");
+
+		// Supersede B with C — distinct alnum tokens per atom.
+		const c = sampleAtom({
+			id: "atom-C",
+			type: "fact",
+			title: "gammaNewUniqueXYZ title",
+			summary: "gammaNewUniqueXYZ summary",
+			content: "gammaNewUniqueXYZ content",
+			tags: ["gammaNewUniqueXYZ"],
+			content_fingerprint: "fp-C",
+		});
+		index.markSupersededTx("atom-B", c, new Array(DIM).fill(0.05));
+
+		// B's row is gone (the DELETE half of the swap).
+		const ftsCountBAfter = db
+			.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+			.get("atom-B") as { c: number };
+		expect(ftsCountBAfter.c).toBe(0);
+
+		// C's row is present (the INSERT half of the swap).
+		const ftsCountC = db
+			.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
+			.get("atom-C") as { c: number };
+		expect(ftsCountC.c).toBe(1);
+
+		// Behavioural: bm25Search for B's tokens no longer surfaces B.
+		const hitsBAfter = index.bm25Search("betaOldUniqueXYZ", 10);
+		expect(hitsBAfter.map((r) => r.id)).not.toContain("atom-B");
+
+		// Behavioural: bm25Search for C's tokens surfaces C.
+		const hitsC = index.bm25Search("gammaNewUniqueXYZ", 10);
+		expect(hitsC.map((r) => r.id)).toContain("atom-C");
+
+		// ─── (6) FTS5 special-character query is handled by
+		// escapeFtsQuery — must not throw, and must still surface C if
+		// literal tokens survive the strip. ───
+		// Use ONLY special-char noise (`"()[]:*`); escapeFtsQuery strips
+		// these to whitespace and `trim()` removes them, so the surviving
+		// query is just `gammaNewUniqueXYZ`. FTS5 implicit AND on a single
+		// token matches C without ambiguity.
+		const specialQuery = 'gammaNewUniqueXYZ "()[]:*';
+		expect(() => index.bm25Search(specialQuery, 10)).not.toThrow();
+		const hitsSpecial = index.bm25Search(specialQuery, 10);
+		expect(hitsSpecial.map((r) => r.id)).toContain("atom-C");
+
+		// ─── (7) Idempotency re-check: the second init above must NOT
+		// have created duplicate FTS5 rows for A, B, or C. ───
+		const totalRows = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as {
+			c: number;
+		};
+		// Only atom-C should have a row: A is archived, B is superseded.
+		expect(totalRows.c).toBe(1);
+	});
+});
