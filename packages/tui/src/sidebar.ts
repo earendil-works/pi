@@ -102,3 +102,85 @@ export class SidebarContainer implements Component {
         return line;
     }
 }
+
+export class SettingsPanel implements Component {
+    private container: SidebarContainer;
+    private requestRender: () => void;
+    private items: { id: string; label: string; enabled: boolean }[] = [];
+    private cursor = 0;
+
+    constructor(container: SidebarContainer, requestRender: () => void) {
+        this.container = container;
+        this.requestRender = requestRender;
+        this.refreshItems();
+    }
+
+    refreshItems(): void {
+        const registered = SidebarRegistry.getAll();
+        this.items = registered.map((r) => ({
+            id: r.id,
+            label: r.label,
+            enabled: true,
+        }));
+        this.cursor = 0;
+    }
+
+    handleInput(data: string): void {
+        if (data === "\x1b[A" || data === "k") {
+            this.cursor = Math.max(0, this.cursor - 1);
+            this.invalidate();
+            this.requestRender();
+        } else if (data === "\x1b[B" || data === "j") {
+            this.cursor = Math.min(this.items.length - 1, this.cursor + 1);
+            this.invalidate();
+            this.requestRender();
+        } else if (data === " ") {
+            const item = this.items[this.cursor];
+            if (item) item.enabled = !item.enabled;
+            this.invalidate();
+            this.requestRender();
+        } else if (data === "\r") {
+            this.apply();
+        }
+    }
+
+    private apply(): void {
+        const enabled = this.items.filter((i) => i.enabled);
+        const tabs: TabDefinition[] = [];
+        for (const item of enabled) {
+            const reg = SidebarRegistry.get(item.id);
+            if (reg) {
+                const component = reg.create();
+                tabs.push({ id: reg.id, label: reg.label, component });
+            }
+        }
+        this.container.updateConfig(tabs);
+        this.requestRender();
+    }
+
+    invalidate(): void {}
+
+    render(width: number): string[] {
+        const lines: string[] = [];
+        lines.push(" Sidebar Settings ");
+        lines.push("");
+        if (this.items.length === 0) {
+            lines.push(" No panels available.");
+            return lines;
+        }
+        for (let i = 0; i < this.items.length; i++) {
+            const item = this.items[i]!;
+            const marker = item.enabled ? "\u2611" : "\u2610";
+            const cursor = i === this.cursor ? "\u25B6 " : "  ";
+            const label = `${cursor}${marker} ${item.label}`;
+            if (i === this.cursor) {
+                lines.push(`\x1b[7m ${label} \x1b[27m`);
+            } else {
+                lines.push(` ${label} `);
+            }
+        }
+        lines.push("");
+        lines.push(" [Space] toggle  [Enter] apply  [Esc] cancel");
+        return lines;
+    }
+}
