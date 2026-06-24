@@ -5,6 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import type { InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -257,6 +258,80 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+	});
+
+	it("does not report streamingBehavior to input handlers while idle", async () => {
+		const inputEvents: InputEvent[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+
+		await harness.session.prompt("idle", { streamingBehavior: "followUp" });
+
+		expect(inputEvents).toHaveLength(1);
+		expect(inputEvents[0]?.streamingBehavior).toBeUndefined();
+	});
+
+	it("reports streamingBehavior to input handlers while streaming", async () => {
+		let releaseToolExecution: (() => void) | undefined;
+		const toolRelease = new Promise<void>((resolve) => {
+			releaseToolExecution = resolve;
+		});
+		const inputEvents: InputEvent[] = [];
+		const waitTool: AgentTool = {
+			name: "wait",
+			label: "Wait",
+			description: "Wait for release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await toolRelease;
+				return {
+					content: [{ type: "text", text: "released" }],
+					details: {},
+				};
+			},
+		};
+		const harness = await createHarness({
+			tools: [waitTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		const sawToolStart = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		const promptPromise = harness.session.prompt("start");
+		await sawToolStart;
+		await harness.session.prompt("queued", { streamingBehavior: "followUp" });
+
+		expect(inputEvents.map((event) => event.streamingBehavior)).toEqual([undefined, "followUp"]);
+
+		releaseToolExecution?.();
+		await promptPromise;
 	});
 
 	it("throws when prompted during streaming without a streamingBehavior", async () => {

@@ -2,6 +2,7 @@
 import { matchesKey } from "../src/keys.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
 import { type Component, TUI } from "../src/tui.ts";
+import { truncateToWidth } from "../src/utils.ts";
 
 /**
  * Simple key code logger component
@@ -10,9 +11,11 @@ class KeyLogger implements Component {
 	private log: string[] = [];
 	private maxLines = 20;
 	private tui: TUI;
+	private terminal: ProcessTerminal;
 
-	constructor(tui: TUI) {
+	constructor(tui: TUI, terminal: ProcessTerminal) {
 		this.tui = tui;
+		this.terminal = terminal;
 	}
 
 	handleInput(data: string): void {
@@ -52,18 +55,29 @@ class KeyLogger implements Component {
 		// No cached state to invalidate currently
 	}
 
+	private protocolName(): string {
+		if (this.terminal.kittyProtocolActive) return "kitty";
+		if (this.terminal.modifyOtherKeysActive) return "modifyOtherKeys";
+		return "legacy";
+	}
+
+	private fit(line: string, width: number): string {
+		return truncateToWidth(line, width).padEnd(width);
+	}
+
 	render(width: number): string[] {
 		const lines: string[] = [];
 
 		// Title
 		lines.push("=".repeat(width));
-		lines.push("Key Code Tester - Press keys to see their codes (Ctrl+C to exit)".padEnd(width));
+		lines.push(this.fit("Key Code Tester - Press keys to see their codes (Ctrl+C to exit)", width));
+		lines.push(this.fit(`Protocol: ${this.protocolName()}`, width));
 		lines.push("=".repeat(width));
 		lines.push("");
 
 		// Log entries
 		for (const entry of this.log) {
-			lines.push(entry.padEnd(width));
+			lines.push(this.fit(entry, width));
 		}
 
 		// Fill remaining space
@@ -74,12 +88,12 @@ class KeyLogger implements Component {
 
 		// Footer
 		lines.push("=".repeat(width));
-		lines.push("Test these:".padEnd(width));
-		lines.push("  - Shift + Enter (should show: \\x1b[13;2u with Kitty protocol)".padEnd(width));
-		lines.push("  - Alt/Option + Enter".padEnd(width));
-		lines.push("  - Option/Alt + Backspace".padEnd(width));
-		lines.push("  - Cmd/Ctrl + Backspace".padEnd(width));
-		lines.push("  - Regular Backspace".padEnd(width));
+		lines.push(this.fit("Test these:", width));
+		lines.push(this.fit("  - Shift + Enter (should show: \\x1b[13;2u with Kitty protocol)", width));
+		lines.push(this.fit("  - Alt/Option + Enter", width));
+		lines.push(this.fit("  - Option/Alt + Backspace", width));
+		lines.push(this.fit("  - Cmd/Ctrl + Backspace", width));
+		lines.push(this.fit("  - Regular Backspace", width));
 		lines.push("=".repeat(width));
 
 		return lines;
@@ -89,7 +103,7 @@ class KeyLogger implements Component {
 // Set up TUI
 const terminal = new ProcessTerminal();
 const tui = new TUI(terminal);
-const logger = new KeyLogger(tui);
+const logger = new KeyLogger(tui, terminal);
 
 tui.addChild(logger);
 tui.setFocus(logger);
@@ -103,3 +117,7 @@ process.on("SIGINT", () => {
 
 // Start the TUI
 tui.start();
+
+// Protocol negotiation completes asynchronously after the first render.
+// Refresh briefly/continuously so the displayed protocol state is not stale.
+setInterval(() => tui.requestRender(), 100);

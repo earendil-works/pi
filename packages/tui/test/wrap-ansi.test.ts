@@ -111,6 +111,30 @@ describe("wrapTextWithAnsi", () => {
 			}
 		});
 
+		it("should break CJK runs at grapheme boundaries after Latin text", () => {
+			const text = "This is an example 中文汉字测试段落内容中文汉字测试段落内容.";
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.deepStrictEqual(wrapped, ["This is an example 中文汉字测试段落内容", "中文汉字测试段落内容."]);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
+			}
+		});
+
+		it("should preserve color codes when wrapping CJK runs", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+			const text = `${red}This is an example 中文汉字测试段落内容中文汉字测试段落内容.${reset}`;
+			const wrapped = wrapTextWithAnsi(text, 40);
+
+			assert.strictEqual(wrapped.length, 2);
+			assert.strictEqual(wrapped[0], `${red}This is an example 中文汉字测试段落内容`);
+			assert.strictEqual(wrapped[1], `${red}中文汉字测试段落内容.${reset}`);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 40);
+			}
+		});
+
 		it("should ignore OSC 133 semantic markers in visible width", () => {
 			const text = "\x1b]133;A\x07hello\x1b]133;B\x07";
 			assert.strictEqual(visibleWidth(text), 5);

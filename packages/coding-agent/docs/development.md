@@ -1,6 +1,6 @@
 # Development
 
-See [AGENTS.md](../../../AGENTS.md) for additional guidelines.
+See [AGENTS.md](https://github.com/earendil-works/pi-mono/blob/main/AGENTS.md) for additional guidelines.
 
 ## Setup
 

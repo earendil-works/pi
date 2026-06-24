@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
-import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
+import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import { getModel } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;

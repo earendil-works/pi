@@ -100,6 +100,40 @@ describe("Input component", () => {
 			assert.strictEqual(input.getValue(), "bazfoo bar ");
 		});
 
+		it("Ctrl+W preserves ASCII punctuation boundaries", () => {
+			const input = new Input();
+
+			input.setValue("foo.bar");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x17"); // Ctrl+W - deletes "bar"
+			assert.strictEqual(input.getValue(), "foo.");
+
+			input.setValue("foo:bar");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x17"); // Ctrl+W - deletes "bar"
+			assert.strictEqual(input.getValue(), "foo:");
+		});
+
+		it("Ctrl+W handles Unicode word boundaries", () => {
+			const input = new Input();
+
+			// "你好世界。你好，世界" segments as: 你好|世界|。|你好|，|世界
+			input.setValue("你好世界。你好，世界");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x17"); // Ctrl+W - deletes "世界"
+			assert.strictEqual(input.getValue(), "你好世界。你好，");
+			input.handleInput("\x17"); // Ctrl+W - deletes "，"
+			assert.strictEqual(input.getValue(), "你好世界。你好");
+			input.handleInput("\x17"); // Ctrl+W - deletes "你好"
+			assert.strictEqual(input.getValue(), "你好世界。");
+			input.handleInput("\x17"); // Ctrl+W - deletes "。"
+			assert.strictEqual(input.getValue(), "你好世界");
+			input.handleInput("\x17"); // Ctrl+W - deletes "世界"
+			assert.strictEqual(input.getValue(), "你好");
+			input.handleInput("\x17"); // Ctrl+W - deletes "你好"
+			assert.strictEqual(input.getValue(), "");
+		});
+
 		it("Ctrl+U saves deleted text to kill ring", () => {
 			const input = new Input();
 
@@ -311,6 +345,39 @@ describe("Input component", () => {
 			// Yank should get accumulated text
 			input.handleInput("\x19"); // Ctrl+Y
 			assert.strictEqual(input.getValue(), "hello world test");
+		});
+
+		it("Alt+D preserves ASCII punctuation boundaries", () => {
+			const input = new Input();
+
+			input.setValue("foo.bar baz");
+			input.handleInput("\x01"); // Ctrl+A
+			input.handleInput("\x1bd"); // Alt+D - deletes "foo"
+			assert.strictEqual(input.getValue(), ".bar baz");
+			input.handleInput("\x1bd"); // Alt+D - deletes "."
+			assert.strictEqual(input.getValue(), "bar baz");
+			input.handleInput("\x1bd"); // Alt+D - deletes "bar"
+			assert.strictEqual(input.getValue(), " baz");
+		});
+
+		it("Alt+D handles Unicode word boundaries", () => {
+			const input = new Input();
+
+			// "你好世界。你好，世界" segments as: 你好|世界|。|你好|，|世界
+			input.setValue("你好世界。你好，世界");
+			input.handleInput("\x01"); // Ctrl+A
+			input.handleInput("\x1bd"); // Alt+D - deletes "你好"
+			assert.strictEqual(input.getValue(), "世界。你好，世界");
+			input.handleInput("\x1bd"); // Alt+D - deletes "世界"
+			assert.strictEqual(input.getValue(), "。你好，世界");
+			input.handleInput("\x1bd"); // Alt+D - deletes "。"
+			assert.strictEqual(input.getValue(), "你好，世界");
+			input.handleInput("\x1bd"); // Alt+D - deletes "你好"
+			assert.strictEqual(input.getValue(), "，世界");
+			input.handleInput("\x1bd"); // Alt+D - deletes "，"
+			assert.strictEqual(input.getValue(), "世界");
+			input.handleInput("\x1bd"); // Alt+D - deletes "世界"
+			assert.strictEqual(input.getValue(), "");
 		});
 
 		it("handles yank in middle of text", () => {

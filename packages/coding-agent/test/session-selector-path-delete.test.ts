@@ -282,6 +282,45 @@ describe("session selector path/delete interactions", () => {
 		expect(output).toContain("└─ Child");
 	});
 
+	it("sorts threaded sessions by latest activity in their subtree", async () => {
+		const parentOne = makeSession({
+			id: "parent-one",
+			name: "Parent one",
+			modified: new Date("2026-01-02T00:00:00.000Z"),
+		});
+		const parentTwo = makeSession({
+			id: "parent-two",
+			name: "Parent two",
+			modified: new Date("2026-01-01T00:00:00.000Z"),
+		});
+		const childTwo = makeSession({
+			id: "child-two",
+			name: "Child two",
+			parentSessionPath: parentTwo.path,
+			modified: new Date("2026-01-03T00:00:00.000Z"),
+		});
+
+		const selector = new SessionSelectorComponent(
+			async () => [parentOne, parentTwo, childTwo],
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+
+		const output = stripAnsi(selector.render(120).join("\n"));
+		const parentTwoIndex = output.indexOf("Parent two");
+		const childTwoIndex = output.indexOf("└─ Child two");
+		const parentOneIndex = output.indexOf("Parent one");
+
+		expect(parentTwoIndex).toBeGreaterThanOrEqual(0);
+		expect(childTwoIndex).toBeGreaterThan(parentTwoIndex);
+		expect(parentOneIndex).toBeGreaterThan(childTwoIndex);
+	});
+
 	it("treats the current session as active across symlink aliases", async () => {
 		const paths = createSymlinkedSessionPaths();
 		tempDirs.push(paths.baseDir);

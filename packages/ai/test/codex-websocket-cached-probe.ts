@@ -10,13 +10,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Type } from "typebox";
 import { AuthStorage } from "../../coding-agent/src/core/auth-storage.ts";
-import { getModel } from "../src/models.ts";
 import {
 	closeOpenAICodexWebSocketSessions,
 	getOpenAICodexWebSocketDebugStats,
 	resetOpenAICodexWebSocketDebugStats,
-	streamOpenAICodexResponses,
-} from "../src/providers/openai-codex-responses.ts";
+	stream as streamOpenAICodexResponses,
+} from "../src/api/openai-codex-responses.ts";
+import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
 
 type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";

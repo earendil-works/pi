@@ -104,6 +104,42 @@ describe("Markdown component", () => {
 			assert.ok(plainLines.some((line) => line.includes("2. Second")));
 		});
 
+		it("should normalize ordered list markers by default", () => {
+			const markdown = new Markdown("1. alpha\n1. beta\n1. gamma", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["1. alpha", "2. beta", "3. gamma"]);
+		});
+
+		it("should preserve source list markers when configured", () => {
+			const markdown = new Markdown(
+				"  4. forth\n  3. third\n\n10) ten\n7) seven\n\n+ plus\n* star\n- minus\n+",
+				0,
+				0,
+				defaultMarkdownTheme,
+				undefined,
+				{
+					preserveOrderedListMarkers: true,
+				},
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [
+				"4. forth",
+				"3. third",
+				"",
+				"10) ten",
+				"7) seven",
+				"",
+				"+ plus",
+				"* star",
+				"- minus",
+				"+",
+			]);
+		});
+
 		it("should render mixed ordered and unordered nested lists", () => {
 			const markdown = new Markdown(
 				`1. Ordered item
@@ -122,6 +158,37 @@ describe("Markdown component", () => {
 			assert.ok(plainLines.some((line) => line.includes("1. Ordered item")));
 			assert.ok(plainLines.some((line) => line.includes("    - Unordered nested")));
 			assert.ok(plainLines.some((line) => line.includes("2. Second ordered")));
+		});
+
+		it("should render blank lines between loose list items", () => {
+			const markdown = new Markdown(
+				`1. Lorem ipsum dolor sit amet.
+
+   Ut enim ad minim veniam.
+
+2. Duis aute irure dolor.
+
+   Excepteur sint occaecat cupidatat.
+
+3. Beep boop`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [
+				"1. Lorem ipsum dolor sit amet.",
+				"",
+				"   Ut enim ad minim veniam.",
+				"",
+				"2. Duis aute irure dolor.",
+				"",
+				"   Excepteur sint occaecat cupidatat.",
+				"",
+				"3. Beep boop",
+			]);
 		});
 
 		it("should render task list markers", () => {
@@ -1307,6 +1374,49 @@ bar`,
 				joinedPlain.includes("<div>") && joinedPlain.includes("</div>"),
 				"Should render HTML in code blocks",
 			);
+		});
+	});
+
+	describe("Streaming code fences", () => {
+		it("stabilizes partial closing fence rendering", () => {
+			const cases = [
+				{
+					input: "```ts\nconst x = 1;\n``",
+					expected: ["```ts", "  const x = 1;", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```",
+					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+				},
+				{
+					input: "```ts\n``",
+					expected: ["```ts", "", "```"],
+				},
+				{
+					input: "````\n```",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "~~~~~\n~~~~",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
+					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+				},
+			];
+
+			for (const { input, expected } of cases) {
+				const markdown = new Markdown(input, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+				assert.deepStrictEqual(lines, expected);
+			}
+
+			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
+
+			assert.strictEqual(partial.render(80).length, complete.render(80).length);
 		});
 	});
 });

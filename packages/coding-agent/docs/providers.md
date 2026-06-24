@@ -49,9 +49,11 @@ pi
 | Provider | Environment Variable | `auth.json` key |
 |----------|----------------------|------------------|
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic` |
+| Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
+| NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
@@ -61,7 +63,8 @@ pi
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
-| ZAI | `ZAI_API_KEY` | `zai` |
+| ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
+| ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
 | Hugging Face | `HF_TOKEN` | `huggingface` |
@@ -84,8 +87,10 @@ Store credentials in `~/.pi/agent/auth.json`:
 ```json
 {
   "anthropic": { "type": "api_key", "key": "sk-ant-..." },
+  "ant-ling": { "type": "api_key", "key": "..." },
   "openai": { "type": "api_key", "key": "sk-..." },
   "deepseek": { "type": "api_key", "key": "sk-..." },
+  "nvidia": { "type": "api_key", "key": "nvapi-..." },
   "google": { "type": "api_key", "key": "..." },
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." },
@@ -99,22 +104,48 @@ Store credentials in `~/.pi/agent/auth.json`:
 
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
 
+API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
+
+```json
+{
+  "cloudflare-ai-gateway": {
+    "type": "api_key",
+    "key": "$CLOUDFLARE_API_KEY",
+    "env": {
+      "CLOUDFLARE_API_KEY": "...",
+      "CLOUDFLARE_ACCOUNT_ID": "account-id",
+      "CLOUDFLARE_GATEWAY_ID": "gateway-id"
+    }
+  }
+}
+```
+
+Use this when pi should use different provider settings than the project shell environment.
+
 ### Key Resolution
 
-The `key` field supports three formats:
+The `key` field supports command execution, environment interpolation, and literals:
 
-- **Shell command:** `"!command"` executes and uses stdout (cached for process lifetime)
+- **Shell command:** `"!command"` at the start executes the whole value as a command and uses stdout (cached for process lifetime)
   ```json
   { "type": "api_key", "key": "!security find-generic-password -ws 'anthropic'" }
   { "type": "api_key", "key": "!op read 'op://vault/item/credential'" }
   ```
-- **Environment variable:** Uses the value of the named variable
+- **Environment interpolation:** `"$ENV_VAR"` or `"${ENV_VAR}"` uses the value of the named variable. Interpolation works inside larger literals.
   ```json
-  { "type": "api_key", "key": "MY_ANTHROPIC_KEY" }
+  { "type": "api_key", "key": "$MY_ANTHROPIC_KEY" }
+  { "type": "api_key", "key": "${KEY_PREFIX}_${KEY_SUFFIX}" }
   ```
-- **Literal value:** Used directly
+  `$FOO_BAR` is the variable `FOO_BAR`; use `${FOO}_BAR` when `BAR` is literal text. Missing environment variables make the value unresolved.
+- **Escapes:** `"$$"` emits a literal `"$"`; `"$!"` emits a literal `"!"` without triggering command execution.
+  ```json
+  { "type": "api_key", "key": "$$literal-dollar-prefix" }
+  { "type": "api_key", "key": "$!literal-bang-prefix" }
+  ```
+- **Literal value:** Used directly. Plain uppercase strings such as `MY_API_KEY` are literals; use `$MY_API_KEY` for environment variables.
   ```json
   { "type": "api_key", "key": "sk-ant-..." }
+  { "type": "api_key", "key": "public" }
   ```
 
 OAuth credentials are also stored here after `/login` and managed automatically.
@@ -181,7 +212,7 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 
 ### Cloudflare AI Gateway
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug must be set as environment variables.
+`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug can be set as environment variables or in the API key credential's `env` object in `auth.json`.
 
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
@@ -205,7 +236,7 @@ For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires
 
 ### Cloudflare Workers AI
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` must be set as an environment variable.
+`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` can be set as an environment variable or in the API key credential's `env` object in `auth.json`.
 
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login

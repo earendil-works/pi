@@ -14,8 +14,7 @@
 import type { ChildProcess } from "child_process";
 import { execSync, spawn } from "child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getModel } from "../src/models.ts";
-import { complete } from "../src/stream.ts";
+import { complete, getModel, getModels } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
@@ -120,15 +119,15 @@ describe("Context overflow error handling", () => {
 
 	// =============================================================================
 	// GitHub Copilot (OAuth)
-	// Tests both OpenAI and Anthropic models via Copilot
+	// Tests both Google and Anthropic models via Copilot
 	// =============================================================================
 
 	describe("GitHub Copilot (OAuth)", () => {
-		// OpenAI model via Copilot
+		// Google model via Copilot
 		it.skipIf(!githubCopilotToken)(
-			"gpt-4o - should detect overflow via isContextOverflow",
+			"gemini-2.5-pro - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getModel("github-copilot", "gpt-4o");
+				const model = getModel("github-copilot", "gemini-2.5-pro");
 				const result = await testContextOverflow(model, githubCopilotToken!);
 				logResult(result);
 
@@ -297,8 +296,15 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras", () => {
-		it("qwen-3-235b - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("cerebras", "qwen-3-235b-a22b-instruct-2507");
+		it("available model - should detect overflow via isContextOverflow", async () => {
+			const preferredCerebrasModelIds: string[] = ["gpt-oss-120b", "zai-glm-4.7", "llama3.1-8b"];
+			const cerebrasModels = getModels("cerebras");
+			const model =
+				cerebrasModels.find((candidate) => preferredCerebrasModelIds.includes(candidate.id)) ?? cerebrasModels[0];
+			if (!model) {
+				throw new Error("No Cerebras models available");
+			}
+
 			const result = await testContextOverflow(model, process.env.CEREBRAS_API_KEY!);
 			logResult(result);
 

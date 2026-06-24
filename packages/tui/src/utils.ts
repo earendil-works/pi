@@ -1,13 +1,21 @@
 import { eastAsianWidth } from "get-east-asian-width";
 
-// Grapheme segmenter (shared instance)
-const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// segmenters (shared instance)
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 /**
  * Get the shared grapheme segmenter instance.
  */
-export function getSegmenter(): Intl.Segmenter {
-	return segmenter;
+export function getGraphemeSegmenter(): Intl.Segmenter {
+	return graphemeSegmenter;
+}
+
+/**
+ * Get the shared word segmenter instance.
+ */
+export function getWordSegmenter(): Intl.Segmenter {
+	return wordSegmenter;
 }
 
 /**
@@ -37,6 +45,9 @@ const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
 const WIDTH_CACHE_SIZE = 512;
 const widthCache = new Map<string, number>();
 
+export const cjkBreakRegex =
+	/[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
+
 function isPrintableAscii(str: string): boolean {
 	for (let i = 0; i < str.length; i++) {
 		const code = str.charCodeAt(i);
@@ -62,7 +73,7 @@ function truncateFragmentToWidth(text: string, maxWidth: number): { text: string
 	if (!hasAnsi && !hasTabs) {
 		let result = "";
 		let width = 0;
-		for (const { segment } of segmenter.segment(text)) {
+		for (const { segment } of graphemeSegmenter.segment(text)) {
 			const w = graphemeWidth(segment);
 			if (width + w > maxWidth) {
 				break;
@@ -109,7 +120,7 @@ function truncateFragmentToWidth(text: string, maxWidth: number): { text: string
 			end++;
 		}
 
-		for (const { segment } of segmenter.segment(text.slice(i, end))) {
+		for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
 			const w = graphemeWidth(segment);
 			if (width + w > maxWidth) {
 				return { text: result, width };
@@ -154,6 +165,10 @@ function finalizeTruncatedResult(
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
+	if (segment === "\t") {
+		return 3;
+	}
+
 	// Zero-width clusters
 	if (zeroWidthRegex.test(segment)) {
 		return 0;
@@ -239,7 +254,7 @@ export function visibleWidth(str: string): number {
 
 	// Calculate width
 	let width = 0;
-	for (const { segment } of segmenter.segment(clean)) {
+	for (const { segment } of graphemeSegmenter.segment(clean)) {
 		width += graphemeWidth(segment);
 	}
 
@@ -593,8 +608,17 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 	const tokens: string[] = [];
 	let current = "";
 	let pendingAnsi = ""; // ANSI codes waiting to be attached to next visible content
-	let inWhitespace = false;
+	let currentKind: "space" | "word" | null = null;
 	let i = 0;
+
+	const flushCurrent = (): void => {
+		if (!current) {
+			return;
+		}
+		tokens.push(current);
+		current = "";
+		currentKind = null;
+	};
 
 	while (i < text.length) {
 		const ansiResult = extractAnsiCode(text, i);
@@ -605,29 +629,48 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 			continue;
 		}
 
-		const char = text[i];
-		const charIsSpace = char === " ";
-
-		if (charIsSpace !== inWhitespace && current) {
-			// Switching between whitespace and non-whitespace, push current token
-			tokens.push(current);
-			current = "";
+		let end = i;
+		while (end < text.length && !extractAnsiCode(text, end)) {
+			end++;
 		}
 
-		// Attach any pending ANSI codes to this visible character
-		if (pendingAnsi) {
-			current += pendingAnsi;
-			pendingAnsi = "";
+		for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
+			const segmentIsSpace = segment === " ";
+			if (!segmentIsSpace && cjkBreakRegex.test(segment)) {
+				flushCurrent();
+				const token = pendingAnsi + segment;
+				pendingAnsi = "";
+				tokens.push(token);
+				continue;
+			}
+
+			const segmentKind = segmentIsSpace ? "space" : "word";
+			if (current && currentKind !== segmentKind) {
+				flushCurrent();
+			}
+
+			// Attach any pending ANSI codes to this visible character
+			if (pendingAnsi) {
+				current += pendingAnsi;
+				pendingAnsi = "";
+			}
+
+			currentKind = segmentKind;
+			current += segment;
 		}
 
-		inWhitespace = charIsSpace;
-		current += char;
-		i++;
+		i = end;
 	}
 
 	// Handle any remaining pending ANSI codes (attach to last token)
 	if (pendingAnsi) {
-		current += pendingAnsi;
+		if (current) {
+			current += pendingAnsi;
+		} else if (tokens.length > 0) {
+			tokens[tokens.length - 1] += pendingAnsi;
+		} else {
+			current = pendingAnsi;
+		}
 	}
 
 	if (current) {
@@ -662,7 +705,10 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	for (const inputLine of inputLines) {
 		// Prepend active ANSI codes from previous lines (except for first line)
 		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
-		result.push(...wrapSingleLine(prefix + inputLine, width));
+		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
+		for (const wrappedLine of wrappedLines) {
+			result.push(wrappedLine);
+		}
 		// Update tracker with codes from this line for next iteration
 		updateTrackerFromText(inputLine, tracker);
 	}
@@ -706,7 +752,9 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 			// Break long token - breakLongWord handles its own resets
 			const broken = breakLongWord(token, width, tracker);
-			wrapped.push(...broken.slice(0, -1));
+			for (let i = 0; i < broken.length - 1; i++) {
+				wrapped.push(broken[i]!);
+			}
 			currentLine = broken[broken.length - 1];
 			currentVisibleLength = visibleWidth(currentLine);
 			continue;
@@ -749,7 +797,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
 }
 
-const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
+export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
 
 /**
  * Check if a character is whitespace.
@@ -790,7 +838,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 			}
 			// Segment this non-ANSI portion into graphemes
 			const textPortion = word.slice(i, end);
-			for (const seg of segmenter.segment(textPortion)) {
+			for (const seg of graphemeSegmenter.segment(textPortion)) {
 				segments.push({ type: "grapheme", value: seg.segment });
 			}
 			i = end;
@@ -912,7 +960,7 @@ export function truncateToWidth(
 	const hasTabs = text.includes("\t");
 
 	if (!hasAnsi && !hasTabs) {
-		for (const { segment } of segmenter.segment(text)) {
+		for (const { segment } of graphemeSegmenter.segment(text)) {
 			const width = graphemeWidth(segment);
 			if (keepContiguousPrefix && keptWidth + width <= targetWidth) {
 				result += segment;
@@ -967,7 +1015,7 @@ export function truncateToWidth(
 				end++;
 			}
 
-			for (const { segment } of segmenter.segment(text.slice(i, end))) {
+			for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
 				const width = graphemeWidth(segment);
 				if (keepContiguousPrefix && keptWidth + width <= targetWidth) {
 					if (pendingAnsi) {
@@ -1037,7 +1085,7 @@ export function sliceWithWidth(
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
 
-		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
+		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
 			const inRange = currentCol >= startCol && currentCol < endCol;
 			const fits = !strict || currentCol + w <= endCol;
@@ -1105,10 +1153,10 @@ export function extractSegments(
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
 
-		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
+		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
 
-			if (currentCol < beforeEnd) {
+			if (currentCol < beforeEnd && currentCol + w <= beforeEnd) {
 				if (pendingAnsiBefore) {
 					before += pendingAnsiBefore;
 					pendingAnsiBefore = "";

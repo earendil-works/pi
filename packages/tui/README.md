@@ -116,8 +116,20 @@ handle.setHidden(true);     // Temporarily hide (can show again)
 handle.setHidden(false);    // Show again after hiding
 handle.isHidden();          // Check if temporarily hidden
 handle.focus();             // Focus and bring to visual front
-handle.unfocus();           // Release focus to previous target
+handle.unfocus();           // Release focus to normal fallback
+handle.unfocus({ target: baseComponent }); // Release this overlay to a specific component
+handle.unfocus({ target: null });   // Release this overlay and leave focus empty
 handle.isFocused();         // Check if overlay has focus
+
+handle.unfocus();
+// Overlay loses focus; TUI falls back to another visible capturing overlay or the previous focus target.
+
+handle.unfocus({ target: null });
+// Overlay loses focus; no component receives input until focus is set again.
+
+// A focused visible overlay reclaims keyboard input after temporary replacement UI
+// releases focus. If you want a specific component to receive input while overlays remain
+// visible, call handle.unfocus({ target: component }).
 
 // Hide topmost overlay
 tui.hideOverlay();
@@ -176,9 +188,9 @@ When a `Focusable` component has focus, TUI:
 1. Sets `focused = true` on the component
 2. Scans rendered output for `CURSOR_MARKER` (a zero-width APC escape sequence)
 3. Positions the hardware terminal cursor at that location
-4. Shows the hardware cursor
+4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-This enables IME candidate windows to appear at the correct position for CJK input methods. The `Editor` and `Input` built-in components already implement this interface.
+The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the `TUI` constructor option, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 

@@ -613,6 +613,18 @@
           .replace(/'/g, '&#39;');
       }
 
+      function sanitizeMarkdownUrl(value) {
+        const href = String(value || '').trim().replace(/[\x00-\x1f\x7f]/g, '');
+        if (!href) return href;
+
+        const scheme = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
+        if (scheme && !/^(https?|mailto|tel|ftp)$/i.test(scheme[1])) {
+          return null;
+        }
+
+        return href;
+      }
+
       /**
        * Truncate string to maxLen chars, append "..." if truncated.
        */
@@ -1569,10 +1581,11 @@
           }
         },
         renderer: {
-          // Sanitize link URLs to prevent javascript:/vbscript:/data: XSS
+          // Sanitize link URLs with a scheme allow-list. Browsers strip C0
+          // controls from schemes, so strip them before checking and emitting.
           link(token) {
-            const href = (token.href || '').trim();
-            if (/^\s*(javascript|vbscript|data):/i.test(href)) {
+            const href = sanitizeMarkdownUrl(token.href);
+            if (href === null) {
               return this.parser.parseInline(token.tokens);
             }
             let out = '<a href="' + escapeHtml(href) + '"';
@@ -1582,10 +1595,10 @@
             out += '>' + this.parser.parseInline(token.tokens) + '</a>';
             return out;
           },
-          // Sanitize image src URLs
+          // Sanitize image src URLs with the same scheme allow-list.
           image(token) {
-            const href = (token.href || '').trim();
-            if (/^\s*(javascript|vbscript|data):/i.test(href)) {
+            const href = sanitizeMarkdownUrl(token.href);
+            if (href === null) {
               return escapeHtml(token.text || '');
             }
             let out = '<img src="' + escapeHtml(href) + '" alt="' + escapeHtml(token.text || '') + '"';

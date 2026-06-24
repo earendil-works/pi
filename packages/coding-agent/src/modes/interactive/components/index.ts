@@ -13,6 +13,11 @@ export { DynamicBorder } from "./dynamic-border.ts";
 export { ExtensionEditorComponent } from "./extension-editor.ts";
 export { ExtensionInputComponent } from "./extension-input.ts";
 export { ExtensionSelectorComponent } from "./extension-selector.ts";
+export {
+	FirstTimeSetupComponent,
+	type FirstTimeSetupOptions,
+	type FirstTimeSetupResult,
+} from "./first-time-setup.ts";
 export { FooterComponent } from "./footer.ts";
 export { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 export { LoginDialogComponent } from "./login-dialog.ts";
@@ -27,6 +32,7 @@ export { ThemeSelectorComponent } from "./theme-selector.ts";
 export { ThinkingSelectorComponent } from "./thinking-selector.ts";
 export { ToolExecutionComponent, type ToolExecutionOptions } from "./tool-execution.ts";
 export { TreeSelectorComponent } from "./tree-selector.ts";
+export { TrustSelectorComponent } from "./trust-selector.ts";
 export { UserMessageComponent } from "./user-message.ts";
 export { UserMessageSelectorComponent } from "./user-message-selector.ts";
 export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";

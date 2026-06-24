@@ -1,4 +1,4 @@
-import type { ImageContent, Model, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
 import type { Session } from "./session/session.ts";
 
@@ -240,22 +240,6 @@ export interface FileInfo {
 	mtimeMs: number;
 }
 
-/** Options for {@link Shell.exec}. */
-export interface ExecutionEnvExecOptions {
-	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
-	cwd?: string;
-	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
-	env?: Record<string, string>;
-	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
-	timeout?: number;
-	/** Abort signal used to terminate the command. Defaults to no abort signal. */
-	abortSignal?: AbortSignal;
-	/** Called with stdout chunks as they are produced. */
-	onStdout?: (chunk: string) => void;
-	/** Called with stderr chunks as they are produced. */
-	onStderr?: (chunk: string) => void;
-}
-
 /**
  * Filesystem capability used by the harness.
  *
@@ -317,12 +301,28 @@ export interface FileSystem {
 	cleanup(): Promise<void>;
 }
 
+/** Options for {@link Shell.exec}. */
+export interface ShellExecOptions {
+	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
+	cwd?: string;
+	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
+	env?: Record<string, string>;
+	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
+	timeout?: number;
+	/** Abort signal used to terminate the command. Defaults to no abort signal. */
+	abortSignal?: AbortSignal;
+	/** Called with stdout chunks as they are produced. */
+	onStdout?: (chunk: string) => void;
+	/** Called with stderr chunks as they are produced. */
+	onStderr?: (chunk: string) => void;
+}
+
 /** Shell execution capability used by the harness. */
 export interface Shell {
 	/** Execute a shell command in {@link FileSystem.cwd} unless `options.cwd` is provided. */
 	exec(
 		command: string,
-		options?: ExecutionEnvExecOptions,
+		options?: ShellExecOptions,
 	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>>;
 	/** Release shell resources. Must be best-effort and must not throw or reject. */
 	cleanup(): Promise<void>;
@@ -352,6 +352,11 @@ export interface ModelChangeEntry extends SessionTreeEntryBase {
 	type: "model_change";
 	provider: string;
 	modelId: string;
+}
+
+export interface ActiveToolsChangeEntry extends SessionTreeEntryBase {
+	type: "active_tools_change";
+	activeToolNames: string[];
 }
 
 export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
@@ -405,6 +410,7 @@ export type SessionTreeEntry =
 	| MessageEntry
 	| ThinkingLevelChangeEntry
 	| ModelChangeEntry
+	| ActiveToolsChangeEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
@@ -417,6 +423,7 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
+	activeToolNames: string[] | null;
 }
 
 export interface SessionMetadata {
@@ -593,17 +600,26 @@ export interface SessionTreeEvent {
 	fromHook?: boolean;
 }
 
-export interface ModelSelectEvent {
-	type: "model_select";
+export interface ModelUpdateEvent {
+	type: "model_update";
 	model: Model<any>;
 	previousModel: Model<any> | undefined;
 	source: "set" | "restore";
 }
 
-export interface ThinkingLevelSelectEvent {
-	type: "thinking_level_select";
+export interface ThinkingLevelUpdateEvent {
+	type: "thinking_level_update";
 	level: ThinkingLevel;
 	previousLevel: ThinkingLevel;
+}
+
+export interface ToolsUpdateEvent {
+	type: "tools_update";
+	toolNames: string[];
+	previousToolNames: string[];
+	activeToolNames: string[];
+	previousActiveToolNames: string[];
+	source: "set" | "restore";
 }
 
 export interface ResourcesUpdateEvent<
@@ -634,9 +650,10 @@ export type AgentHarnessOwnEvent<
 	| SessionCompactEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent
-	| ModelSelectEvent
-	| ThinkingLevelSelectEvent
-	| ResourcesUpdateEvent<TSkill, TPromptTemplate>;
+	| ModelUpdateEvent
+	| ThinkingLevelUpdateEvent
+	| ResourcesUpdateEvent<TSkill, TPromptTemplate>
+	| ToolsUpdateEvent;
 
 export type AgentHarnessEvent<TSkill extends Skill = Skill, TPromptTemplate extends PromptTemplate = PromptTemplate> =
 	| AgentEvent
@@ -696,9 +713,10 @@ export type AgentHarnessEventResultMap = {
 	session_compact: undefined;
 	session_before_tree: SessionBeforeTreeResult | undefined;
 	session_tree: undefined;
-	model_select: undefined;
-	thinking_level_select: undefined;
+	model_update: undefined;
+	thinking_level_update: undefined;
 	resources_update: undefined;
+	tools_update: undefined;
 	queue_update: undefined;
 	save_point: undefined;
 	abort: undefined;
@@ -784,6 +802,12 @@ export interface AgentHarnessOptions<
 > {
 	env: ExecutionEnv;
 	session: Session;
+	/**
+	 * Provider collection used for all model requests (turn streaming,
+	 * compaction, branch summarization). Auth resolves through the providers'
+	 * auth.
+	 */
+	models: Models;
 	tools?: TTool[];
 	/**
 	 * Concrete resources available to explicit invocation methods and system-prompt callbacks.
@@ -800,9 +824,6 @@ export interface AgentHarnessOptions<
 				activeTools: TTool[];
 				resources: AgentHarnessResources<TSkill, TPromptTemplate>;
 		  }) => string | Promise<string>);
-	getApiKeyAndHeaders?: (
-		model: Model<any>,
-	) => Promise<{ apiKey: string; headers?: Record<string, string> } | undefined>;
 	/** Curated stream/provider request options. Snapshotted at turn start. */
 	streamOptions?: AgentHarnessStreamOptions;
 	model: Model<any>;

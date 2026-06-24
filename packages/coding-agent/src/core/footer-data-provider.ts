@@ -1,5 +1,5 @@
 import { type ExecFileException, execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, readFileSync, statSync, unwatchFile, watchFile } from "fs";
+import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
 
@@ -80,6 +80,18 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 	});
 }
 
+function isWslEnvironment(): boolean {
+	return process.platform === "linux" && !!(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP);
+}
+
+function isWindowsMountedRepoPath(repoDir: string): boolean {
+	return /^\/mnt\/[a-z](?:\/|$)/i.test(repoDir);
+}
+
+function shouldPollGitHead(repoDir: string): boolean {
+	return isWslEnvironment() && isWindowsMountedRepoPath(repoDir);
+}
+
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
  * Token stats, model info available via ctx.sessionManager and ctx.model.
@@ -92,6 +104,8 @@ export class FooterDataProvider {
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
+	private headWatchFilePath: string | null = null;
+	private headWatchFileListener: ((current: Stats, previous: Stats) => void) | null = null;
 	private reftableWatcher: FSWatcher | null = null;
 	private reftableTablesListWatcher: FSWatcher | null = null;
 	private reftableTablesListPath: string | null = null;
@@ -255,6 +269,11 @@ export class FooterDataProvider {
 	private clearGitWatchers(): void {
 		closeWatcher(this.headWatcher);
 		this.headWatcher = null;
+		if (this.headWatchFilePath && this.headWatchFileListener) {
+			unwatchFile(this.headWatchFilePath, this.headWatchFileListener);
+			this.headWatchFilePath = null;
+			this.headWatchFileListener = null;
+		}
 		closeWatcher(this.reftableWatcher);
 		this.reftableWatcher = null;
 		closeWatcher(this.reftableTablesListWatcher);
@@ -289,6 +308,8 @@ export class FooterDataProvider {
 		this.clearGitWatchers();
 		if (!this.gitPaths) return;
 
+		const pollGitHead = shouldPollGitHead(this.gitPaths.repoDir);
+
 		// Watch the directory containing HEAD, not HEAD itself.
 		// Git uses atomic writes (write temp, rename over HEAD), which changes the inode.
 		// fs.watch on a file stops working after the inode changes.
@@ -301,7 +322,20 @@ export class FooterDataProvider {
 			},
 			() => this.handleGitWatcherError(),
 		);
-		if (!this.headWatcher) {
+		if (pollGitHead) {
+			this.headWatchFilePath = this.gitPaths.headPath;
+			this.headWatchFileListener = (current, previous) => {
+				if (
+					current.mtimeMs !== previous.mtimeMs ||
+					current.ctimeMs !== previous.ctimeMs ||
+					current.size !== previous.size
+				) {
+					this.scheduleRefresh();
+				}
+			};
+			watchFile(this.headWatchFilePath, { interval: 1000 }, this.headWatchFileListener);
+		}
+		if (!this.headWatcher && !pollGitHead) {
 			return;
 		}
 

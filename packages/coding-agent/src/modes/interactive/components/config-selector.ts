@@ -73,7 +73,7 @@ function formatBaseDir(baseDir: string): string {
 	return displayPath.endsWith("/") ? displayPath : `${displayPath}/`;
 }
 
-function getGroupLabel(metadata: PathMetadata): string {
+function getGroupLabel(metadata: PathMetadata, agentDir: string): string {
 	if (metadata.origin === "package") {
 		return `${metadata.source} (${metadata.scope})`;
 	}
@@ -84,12 +84,12 @@ function getGroupLabel(metadata: PathMetadata): string {
 				? `User (${formatBaseDir(metadata.baseDir)})`
 				: `Project (${formatBaseDir(metadata.baseDir)})`;
 		}
-		return metadata.scope === "user" ? "User (~/.pi/agent/)" : "Project (.pi/)";
+		return metadata.scope === "user" ? `User (${formatBaseDir(agentDir)})` : `Project (${CONFIG_DIR_NAME}/)`;
 	}
 	return metadata.scope === "user" ? "User settings" : "Project settings";
 }
 
-function buildGroups(resolved: ResolvedPaths): ResourceGroup[] {
+function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[] {
 	const groupMap = new Map<string, ResourceGroup>();
 
 	const addToGroup = (resources: ResolvedResource[], resourceType: ResourceType) => {
@@ -100,7 +100,7 @@ function buildGroups(resolved: ResolvedPaths): ResourceGroup[] {
 			if (!groupMap.has(groupKey)) {
 				groupMap.set(groupKey, {
 					key: groupKey,
-					label: getGroupLabel(metadata),
+					label: getGroupLabel(metadata, agentDir),
 					scope: metadata.scope,
 					origin: metadata.origin,
 					source: metadata.source,
@@ -601,7 +601,7 @@ export class ConfigSelectorComponent extends Container implements Focusable {
 	) {
 		super();
 
-		const groups = buildGroups(resolvedPaths);
+		const groups = buildGroups(resolvedPaths, agentDir);
 
 		// Add header
 		this.addChild(new Spacer(1));

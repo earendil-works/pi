@@ -12,15 +12,16 @@
 import {
 	type Api,
 	type AssistantMessageEventStream,
+	anthropicMessagesApi,
 	type Context,
 	createAssistantMessageEventStream,
 	type Model,
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
+	openAIResponsesApi,
 	type SimpleStreamOptions,
-	streamSimpleAnthropic,
-	streamSimpleOpenAIResponses,
-} from "@earendil-works/pi-ai";
+	type ThinkingLevelMap,
+} from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // =============================================================================
@@ -49,6 +50,7 @@ interface GitLabModel {
 	backend: Backend;
 	baseUrl: string;
 	reasoning: boolean;
+	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow: number;
@@ -58,11 +60,36 @@ interface GitLabModel {
 export const MODELS: GitLabModel[] = [
 	// Anthropic
 	{
+		id: "claude-opus-4-8",
+		name: "Claude Opus 4.8",
+		backend: "anthropic",
+		baseUrl: ANTHROPIC_PROXY_URL,
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "max" },
+		input: ["text", "image"],
+		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	},
+	{
+		id: "claude-sonnet-4-6",
+		name: "Claude Sonnet 4.6",
+		backend: "anthropic",
+		baseUrl: ANTHROPIC_PROXY_URL,
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "max" },
+		input: ["text", "image"],
+		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+		contextWindow: 1000000,
+		maxTokens: 64000,
+	},
+	{
 		id: "claude-opus-4-5-20251101",
 		name: "Claude Opus 4.5",
 		backend: "anthropic",
 		baseUrl: ANTHROPIC_PROXY_URL,
 		reasoning: true,
+		thinkingLevelMap: { xhigh: "max" },
 		input: ["text", "image"],
 		cost: { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
 		contextWindow: 200000,
@@ -74,6 +101,7 @@ export const MODELS: GitLabModel[] = [
 		backend: "anthropic",
 		baseUrl: ANTHROPIC_PROXY_URL,
 		reasoning: true,
+		thinkingLevelMap: { xhigh: "max" },
 		input: ["text", "image"],
 		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 		contextWindow: 200000,
@@ -85,12 +113,24 @@ export const MODELS: GitLabModel[] = [
 		backend: "anthropic",
 		baseUrl: ANTHROPIC_PROXY_URL,
 		reasoning: true,
+		thinkingLevelMap: { xhigh: "max" },
 		input: ["text", "image"],
 		cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 		contextWindow: 200000,
 		maxTokens: 8192,
 	},
 	// OpenAI (all use Responses API)
+	{
+		id: "gpt-5.5-2026-04-23",
+		name: "GPT-5.5",
+		backend: "openai",
+		baseUrl: OPENAI_PROXY_URL,
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+		contextWindow: 272000,
+		maxTokens: 128000,
+	},
 	{
 		id: "gpt-5.1-2025-11-13",
 		name: "GPT-5.1",
@@ -285,8 +325,22 @@ export function streamGitLabDuo(
 
 			const innerStream =
 				cfg.backend === "anthropic"
-					? streamSimpleAnthropic(modelWithBaseUrl as Model<"anthropic-messages">, context, streamOptions)
-					: streamSimpleOpenAIResponses(modelWithBaseUrl as Model<"openai-responses">, context, streamOptions);
+					? anthropicMessagesApi().streamSimple(
+							{
+								...(modelWithBaseUrl as Model<"anthropic-messages">),
+								compat: {
+									...(modelWithBaseUrl as Model<"anthropic-messages">).compat,
+									forceAdaptiveThinking: true,
+								},
+							},
+							context,
+							streamOptions,
+						)
+					: openAIResponsesApi().streamSimple(
+							modelWithBaseUrl as Model<"openai-responses">,
+							context,
+							streamOptions,
+						);
 
 			for await (const event of innerStream) stream.push(event);
 			stream.end();
@@ -327,12 +381,13 @@ export function streamGitLabDuo(
 export default function (pi: ExtensionAPI) {
 	pi.registerProvider("gitlab-duo", {
 		baseUrl: AI_GATEWAY_URL,
-		apiKey: "GITLAB_TOKEN",
+		apiKey: "$GITLAB_TOKEN",
 		api: "gitlab-duo-api",
-		models: MODELS.map(({ id, name, reasoning, input, cost, contextWindow, maxTokens }) => ({
+		models: MODELS.map(({ id, name, reasoning, thinkingLevelMap, input, cost, contextWindow, maxTokens }) => ({
 			id,
 			name,
 			reasoning,
+			thinkingLevelMap,
 			input,
 			cost,
 			contextWindow,

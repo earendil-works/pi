@@ -23,7 +23,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Play DOOM as an overlay. Q to pause and exit.",
 
 		handler: async (args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("DOOM requires interactive mode", "error");
 				return;
 			}

@@ -3,9 +3,10 @@ import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
+import { getGraphemeSegmenter, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
+import { findWordBackward, findWordForward } from "../word-navigation.ts";
 
-const segmenter = getSegmenter();
+const segmenter = getGraphemeSegmenter();
 
 interface InputState {
 	value: string;
@@ -347,72 +348,15 @@ export class Input implements Component, Focusable {
 	}
 
 	private moveWordBackwards(): void {
-		if (this.cursor === 0) {
-			return;
-		}
-
+		if (this.cursor === 0) return;
 		this.lastAction = null;
-		const textBeforeCursor = this.value.slice(0, this.cursor);
-		const graphemes = [...segmenter.segment(textBeforeCursor)];
-
-		// Skip trailing whitespace
-		while (graphemes.length > 0 && isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "")) {
-			this.cursor -= graphemes.pop()?.segment.length || 0;
-		}
-
-		if (graphemes.length > 0) {
-			const lastGrapheme = graphemes[graphemes.length - 1]?.segment || "";
-			if (isPunctuationChar(lastGrapheme)) {
-				// Skip punctuation run
-				while (graphemes.length > 0 && isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")) {
-					this.cursor -= graphemes.pop()?.segment.length || 0;
-				}
-			} else {
-				// Skip word run
-				while (
-					graphemes.length > 0 &&
-					!isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "") &&
-					!isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")
-				) {
-					this.cursor -= graphemes.pop()?.segment.length || 0;
-				}
-			}
-		}
+		this.cursor = findWordBackward(this.value, this.cursor);
 	}
 
 	private moveWordForwards(): void {
-		if (this.cursor >= this.value.length) {
-			return;
-		}
-
+		if (this.cursor >= this.value.length) return;
 		this.lastAction = null;
-		const textAfterCursor = this.value.slice(this.cursor);
-		const segments = segmenter.segment(textAfterCursor);
-		const iterator = segments[Symbol.iterator]();
-		let next = iterator.next();
-
-		// Skip leading whitespace
-		while (!next.done && isWhitespaceChar(next.value.segment)) {
-			this.cursor += next.value.segment.length;
-			next = iterator.next();
-		}
-
-		if (!next.done) {
-			const firstGrapheme = next.value.segment;
-			if (isPunctuationChar(firstGrapheme)) {
-				// Skip punctuation run
-				while (!next.done && isPunctuationChar(next.value.segment)) {
-					this.cursor += next.value.segment.length;
-					next = iterator.next();
-				}
-			} else {
-				// Skip word run
-				while (!next.done && !isWhitespaceChar(next.value.segment) && !isPunctuationChar(next.value.segment)) {
-					this.cursor += next.value.segment.length;
-					next = iterator.next();
-				}
-			}
-		}
+		this.cursor = findWordForward(this.value, this.cursor);
 	}
 
 	private handlePaste(pastedText: string): void {

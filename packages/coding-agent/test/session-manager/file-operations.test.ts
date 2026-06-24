@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { constants as bufferConstants } from "buffer";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -63,6 +64,35 @@ describe("loadEntriesFromFile", () => {
 		const entries = loadEntriesFromFile(file);
 		expect(entries).toHaveLength(2);
 	});
+
+	it("opens session files larger than Node's max string length", () => {
+		const file = join(tempDir, "large.jsonl");
+		writeFileSync(
+			file,
+			'{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n',
+		);
+
+		const fd = openSync(file, "r+");
+		try {
+			const newline = Buffer.from("\n");
+			const stride = 16 * 1024 * 1024;
+			for (let offset = stride; offset <= bufferConstants.MAX_STRING_LENGTH + stride; offset += stride) {
+				writeSync(fd, newline, 0, newline.length, offset);
+			}
+		} finally {
+			closeSync(fd);
+		}
+
+		appendFileSync(
+			file,
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}\n',
+		);
+
+		const sessionManager = SessionManager.open(file, tempDir);
+		expect(sessionManager.getSessionId()).toBe("abc");
+		expect(sessionManager.getEntries()).toHaveLength(1);
+		expect(sessionManager.buildSessionContext().messages).toEqual([{ role: "user", content: "hi", timestamp: 1 }]);
+	});
 });
 
 describe("findMostRecentSession", () => {
@@ -123,6 +153,86 @@ describe("findMostRecentSession", () => {
 		writeFileSync(valid, '{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n');
 
 		expect(findMostRecentSession(tempDir)).toBe(valid);
+	});
+
+	it("filters most recent session by cwd", async () => {
+		const projectA = join(tempDir, "project-a");
+		const projectB = join(tempDir, "project-b");
+		const fileA = join(tempDir, "a.jsonl");
+		const fileB = join(tempDir, "b.jsonl");
+
+		writeFileSync(
+			fileA,
+			`${JSON.stringify({ type: "session", id: "a", timestamp: "2025-01-01T00:00:00Z", cwd: projectA })}\n`,
+		);
+		await new Promise((r) => setTimeout(r, 10));
+		writeFileSync(
+			fileB,
+			`${JSON.stringify({ type: "session", id: "b", timestamp: "2025-01-01T00:00:00Z", cwd: projectB })}\n`,
+		);
+
+		expect(findMostRecentSession(tempDir, projectA)).toBe(fileA);
+		expect(findMostRecentSession(tempDir, projectB)).toBe(fileB);
+	});
+});
+
+describe("SessionManager custom flat session directory", () => {
+	let tempDir: string;
+	let projectA: string;
+	let projectB: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `session-test-${Date.now()}`);
+		projectA = join(tempDir, "project-a");
+		projectB = join(tempDir, "project-b");
+		mkdirSync(projectA, { recursive: true });
+		mkdirSync(projectB, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	function createPersistedSession(cwd: string, label: string): string {
+		const session = SessionManager.create(cwd, tempDir);
+		session.appendMessage({ role: "user", content: label, timestamp: Date.now() });
+		session.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: `reply to ${label}` }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+		const sessionFile = session.getSessionFile();
+		if (!sessionFile) {
+			throw new Error("Expected persisted session file");
+		}
+		return sessionFile;
+	}
+
+	it("scopes current-folder APIs by cwd while listing all flat sessions", async () => {
+		const sessionA = createPersistedSession(projectA, "from A");
+		await new Promise((r) => setTimeout(r, 10));
+		const sessionB = createPersistedSession(projectB, "from B");
+
+		const currentA = await SessionManager.list(projectA, tempDir);
+		expect(currentA.map((session) => session.path)).toEqual([sessionA]);
+
+		const all = await SessionManager.listAll(tempDir);
+		expect(new Set(all.map((session) => session.path))).toEqual(new Set([sessionA, sessionB]));
+
+		const continuedA = SessionManager.continueRecent(projectA, tempDir);
+		expect(continuedA.getSessionFile()).toBe(sessionA);
 	});
 });
 

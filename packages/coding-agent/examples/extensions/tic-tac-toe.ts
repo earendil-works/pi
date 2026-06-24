@@ -779,7 +779,7 @@ Decide the target cell first, then dump every action for the turn in one go.
 		description: "Play tic-tac-toe against the agent",
 
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("Tic-tac-toe requires interactive mode", "error");
 				return;
 			}

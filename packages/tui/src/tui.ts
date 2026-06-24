@@ -8,29 +8,54 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
+import {
+	isOsc11BackgroundColorResponse,
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type RgbColor,
+	type TerminalColorScheme,
+} from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
-function extractKittyImageIds(line: string): number[] {
+interface KittyImageHeader {
+	ids: number[];
+	rows: number;
+}
+
+function parseKittyImageHeader(line: string): KittyImageHeader | undefined {
 	const sequenceStart = line.indexOf(KITTY_SEQUENCE_PREFIX);
-	if (sequenceStart === -1) return [];
+	if (sequenceStart === -1) return undefined;
 
 	const paramsStart = sequenceStart + KITTY_SEQUENCE_PREFIX.length;
 	const paramsEnd = line.indexOf(";", paramsStart);
-	if (paramsEnd === -1) return [];
+	if (paramsEnd === -1) return undefined;
 
+	const ids: number[] = [];
+	let rows = 1;
 	const params = line.slice(paramsStart, paramsEnd);
 	for (const param of params.split(",")) {
 		const [key, value] = param.split("=", 2);
-		if (key !== "i" || value === undefined) continue;
-		const id = Number(value);
-		if (Number.isInteger(id) && id > 0 && id <= 0xffffffff) {
-			return [id];
+		if (value === undefined) continue;
+		const numberValue = Number(value);
+		if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > 0xffffffff) continue;
+		if (key === "i") {
+			ids.push(numberValue);
+		} else if (key === "r") {
+			rows = numberValue;
 		}
 	}
-	return [];
+	return { ids, rows };
+}
+
+function extractKittyImageIds(line: string): number[] {
+	return parseKittyImageHeader(line)?.ids ?? [];
+}
+
+function extractKittyImageRows(line: string): number {
+	return parseKittyImageHeader(line)?.rows ?? 1;
 }
 
 /**
@@ -64,6 +89,11 @@ export interface Component {
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 type InputListener = (data: string) => InputListenerResult;
+type PendingOsc11BackgroundQuery = {
+	settled: boolean;
+	resolve: ((rgb: RgbColor | undefined) => void) | undefined;
+	timer: NodeJS.Timeout | undefined;
+};
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -176,6 +206,12 @@ export interface OverlayOptions {
 	nonCapturing?: boolean;
 }
 
+/** Options for {@link OverlayHandle.unfocus}. */
+export interface OverlayUnfocusOptions {
+	/** Explicit target to focus after releasing this overlay. */
+	target: Component | null;
+}
+
 /**
  * Handle returned by showOverlay for controlling the overlay
  */
@@ -188,11 +224,31 @@ export interface OverlayHandle {
 	isHidden(): boolean;
 	/** Focus this overlay and bring it to the visual front */
 	focus(): void;
-	/** Release focus to the previous target */
-	unfocus(): void;
+	/** Release focus to the next visible capturing overlay or previous target, or to an explicit target when provided */
+	unfocus(options?: OverlayUnfocusOptions): void;
 	/** Check if this overlay currently has focus */
 	isFocused(): boolean;
 }
+
+type OverlayStackEntry = {
+	component: Component;
+	options?: OverlayOptions;
+	preFocus: Component | null;
+	hidden: boolean;
+	focusOrder: number;
+};
+
+type OverlayBlockedFocusResume = { status: "restore-overlay" } | { status: "focus-target"; target: Component | null };
+type EligibleOverlayFocusRestoreState = { status: "eligible"; overlay: OverlayStackEntry };
+type BlockedOverlayFocusRestoreState = {
+	status: "blocked";
+	overlay: OverlayStackEntry;
+	blockedBy: Component;
+	resume: OverlayBlockedFocusResume;
+};
+type ActiveOverlayFocusRestoreState = EligibleOverlayFocusRestoreState | BlockedOverlayFocusRestoreState;
+type OverlayFocusRestoreState = { status: "inactive" } | ActiveOverlayFocusRestoreState;
+type OverlayFocusRestorePolicy = "clear" | "preserve";
 
 /**
  * Container - a component that contains other components
@@ -259,16 +315,15 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private pendingOsc11BackgroundReplies = 0;
+	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
+	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
+	private terminalColorSchemeNotificationsEnabled = false;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
-	private overlayStack: {
-		component: Component;
-		options?: OverlayOptions;
-		preFocus: Component | null;
-		hidden: boolean;
-		focusOrder: number;
-	}[] = [];
+	private overlayStack: OverlayStackEntry[] = [];
+	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
@@ -309,17 +364,126 @@ export class TUI extends Container {
 	}
 
 	setFocus(component: Component | null): void {
-		// Clear focused flag on old component
+		this.setFocusInternal({ component, overlayFocusRestore: "clear" });
+	}
+
+	private setFocusInternal({
+		component,
+		overlayFocusRestore,
+	}: {
+		component: Component | null;
+		overlayFocusRestore: OverlayFocusRestorePolicy;
+	}): void {
+		const previousFocus = this.focusedComponent;
+		let nextFocus = component;
+		const previousFocusedOverlay = previousFocus
+			? this.overlayStack.find((entry) => entry.component === previousFocus && this.isOverlayVisible(entry))
+			: undefined;
+		const nextFocusIsOverlay = nextFocus ? this.overlayStack.some((entry) => entry.component === nextFocus) : false;
+		const restoreState = this.getVisibleOverlayFocusRestore();
+		if (nextFocus && !nextFocusIsOverlay) {
+			if (restoreState.status === "blocked" && restoreState.blockedBy === previousFocus) {
+				if (restoreState.resume.status === "focus-target" || !this.isComponentMounted(restoreState.blockedBy)) {
+					nextFocus = this.resolveBlockedOverlayFocusResume(restoreState);
+				} else {
+					this.overlayFocusRestore = {
+						status: "blocked",
+						overlay: restoreState.overlay,
+						blockedBy: nextFocus,
+						resume: restoreState.resume,
+					};
+				}
+			} else if (
+				previousFocusedOverlay &&
+				restoreState.status !== "inactive" &&
+				restoreState.overlay === previousFocusedOverlay &&
+				!this.isOverlayFocusAncestor(previousFocusedOverlay, nextFocus)
+			) {
+				this.overlayFocusRestore = {
+					status: "blocked",
+					overlay: previousFocusedOverlay,
+					blockedBy: nextFocus,
+					resume: { status: "restore-overlay" },
+				};
+			}
+		} else if (nextFocus === null) {
+			if (restoreState.status === "blocked" && restoreState.blockedBy === previousFocus) {
+				nextFocus = this.resolveBlockedOverlayFocusResume(restoreState);
+			} else if (overlayFocusRestore === "clear") {
+				this.clearOverlayFocusRestore();
+			}
+		}
+
 		if (isFocusable(this.focusedComponent)) {
 			this.focusedComponent.focused = false;
 		}
 
-		this.focusedComponent = component;
+		this.focusedComponent = nextFocus;
 
-		// Set focused flag on new component
-		if (isFocusable(component)) {
-			component.focused = true;
+		if (isFocusable(nextFocus)) {
+			nextFocus.focused = true;
 		}
+
+		const focusedOverlay = nextFocus
+			? this.overlayStack.find((entry) => entry.component === nextFocus && this.isOverlayVisible(entry))
+			: undefined;
+		if (focusedOverlay) {
+			this.overlayFocusRestore = { status: "eligible", overlay: focusedOverlay };
+		}
+	}
+
+	private clearOverlayFocusRestore(): void {
+		this.overlayFocusRestore = { status: "inactive" };
+	}
+
+	private clearOverlayFocusRestoreFor(overlay: OverlayStackEntry): void {
+		if (this.overlayFocusRestore.status !== "inactive" && this.overlayFocusRestore.overlay === overlay) {
+			this.clearOverlayFocusRestore();
+		}
+	}
+
+	private resolveBlockedOverlayFocusResume(restoreState: BlockedOverlayFocusRestoreState): Component | null {
+		if (restoreState.resume.status === "restore-overlay") return restoreState.overlay.component;
+		this.clearOverlayFocusRestore();
+		return restoreState.resume.target;
+	}
+
+	private getVisibleOverlayFocusRestore(): OverlayFocusRestoreState {
+		const restoreState = this.overlayFocusRestore;
+		if (restoreState.status === "inactive") return restoreState;
+		if (!this.overlayStack.includes(restoreState.overlay) || !this.isOverlayVisible(restoreState.overlay)) {
+			return { status: "inactive" };
+		}
+		return restoreState;
+	}
+
+	private isOverlayFocusAncestor(entry: OverlayStackEntry, component: Component): boolean {
+		const visited = new Set<Component>();
+		let current = entry.preFocus;
+		while (current && !visited.has(current)) {
+			visited.add(current);
+			if (current === component) return true;
+			current = this.overlayStack.find((overlay) => overlay.component === current)?.preFocus ?? null;
+		}
+		return false;
+	}
+
+	private retargetOverlayPreFocus(removed: OverlayStackEntry): void {
+		for (const overlay of this.overlayStack) {
+			if (overlay !== removed && overlay.preFocus === removed.component) {
+				overlay.preFocus = removed.preFocus;
+			}
+		}
+	}
+
+	private isComponentMounted(component: Component): boolean {
+		return this.children.some((child) => this.containsComponent(child, component));
+	}
+
+	private containsComponent(root: Component, target: Component): boolean {
+		if (root === target) return true;
+		if (!(root instanceof Container)) return false;
+		return root.children.some((child) => this.containsComponent(child, target));
 	}
 
 	/**
@@ -327,9 +491,9 @@ export class TUI extends Container {
 	 * Returns a handle to control the overlay's visibility.
 	 */
 	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle {
-		const entry = {
+		const entry: OverlayStackEntry = {
 			component,
-			options,
+			...(options === undefined ? {} : { options }),
 			preFocus: this.focusedComponent,
 			hidden: false,
 			focusOrder: ++this.focusOrderCounter,
@@ -347,6 +511,8 @@ export class TUI extends Container {
 			hide: () => {
 				const index = this.overlayStack.indexOf(entry);
 				if (index !== -1) {
+					this.clearOverlayFocusRestoreFor(entry);
+					this.retargetOverlayPreFocus(entry);
 					this.overlayStack.splice(index, 1);
 					// Restore focus if this overlay had focus
 					if (this.focusedComponent === component) {
@@ -362,6 +528,7 @@ export class TUI extends Container {
 				entry.hidden = hidden;
 				// Update focus when hiding/showing
 				if (hidden) {
+					this.clearOverlayFocusRestoreFor(entry);
 					// If this overlay had focus, move focus to next visible or preFocus
 					if (this.focusedComponent === component) {
 						const topVisible = this.getTopmostVisibleOverlay();
@@ -379,16 +546,39 @@ export class TUI extends Container {
 			isHidden: () => entry.hidden,
 			focus: () => {
 				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry)) return;
-				if (this.focusedComponent !== component) {
-					this.setFocus(component);
-				}
 				entry.focusOrder = ++this.focusOrderCounter;
+				this.setFocus(component);
 				this.requestRender();
 			},
-			unfocus: () => {
-				if (this.focusedComponent !== component) return;
-				const topVisible = this.getTopmostVisibleOverlay();
-				this.setFocus(topVisible && topVisible !== entry ? topVisible.component : entry.preFocus);
+			unfocus: (unfocusOptions) => {
+				const isFocused = this.focusedComponent === component;
+				const restoreState = this.overlayFocusRestore;
+				const hasPendingRestore = restoreState.status !== "inactive" && restoreState.overlay === entry;
+				if (!isFocused && !hasPendingRestore) return;
+				if (
+					restoreState.status === "blocked" &&
+					restoreState.overlay === entry &&
+					this.focusedComponent === restoreState.blockedBy
+				) {
+					if (unfocusOptions) {
+						this.overlayFocusRestore = {
+							status: "blocked",
+							overlay: entry,
+							blockedBy: restoreState.blockedBy,
+							resume: { status: "focus-target", target: unfocusOptions.target },
+						};
+					} else {
+						this.clearOverlayFocusRestore();
+					}
+					this.requestRender();
+					return;
+				}
+				this.clearOverlayFocusRestoreFor(entry);
+				if (isFocused || unfocusOptions) {
+					const topVisible = this.getTopmostVisibleOverlay();
+					const fallbackTarget = topVisible && topVisible !== entry ? topVisible.component : entry.preFocus;
+					this.setFocus(unfocusOptions ? unfocusOptions.target : fallbackTarget);
+				}
 				this.requestRender();
 			},
 			isFocused: () => this.focusedComponent === component,
@@ -397,8 +587,11 @@ export class TUI extends Container {
 
 	/** Hide the topmost overlay and restore previous focus. */
 	hideOverlay(): void {
-		const overlay = this.overlayStack.pop();
+		const overlay = this.overlayStack[this.overlayStack.length - 1];
 		if (!overlay) return;
+		this.clearOverlayFocusRestoreFor(overlay);
+		this.retargetOverlayPreFocus(overlay);
+		this.overlayStack.pop();
 		if (this.focusedComponent === overlay.component) {
 			// Find topmost visible overlay, or fall back to preFocus
 			const topVisible = this.getTopmostVisibleOverlay();
@@ -414,7 +607,7 @@ export class TUI extends Container {
 	}
 
 	/** Check if an overlay entry is currently visible */
-	private isOverlayVisible(entry: (typeof this.overlayStack)[number]): boolean {
+	private isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;
 		if (entry.options?.visible) {
 			return entry.options.visible(this.terminal.columns, this.terminal.rows);
@@ -422,15 +615,16 @@ export class TUI extends Container {
 		return true;
 	}
 
-	/** Find the topmost visible capturing overlay, if any */
-	private getTopmostVisibleOverlay(): (typeof this.overlayStack)[number] | undefined {
-		for (let i = this.overlayStack.length - 1; i >= 0; i--) {
-			if (this.overlayStack[i].options?.nonCapturing) continue;
-			if (this.isOverlayVisible(this.overlayStack[i])) {
-				return this.overlayStack[i];
+	/** Find the visual-frontmost visible capturing overlay, if any */
+	private getTopmostVisibleOverlay(): OverlayStackEntry | undefined {
+		let topmost: OverlayStackEntry | undefined;
+		for (const overlay of this.overlayStack) {
+			if (overlay.options?.nonCapturing || !this.isOverlayVisible(overlay)) continue;
+			if (!topmost || overlay.focusOrder > topmost.focusOrder) {
+				topmost = overlay;
 			}
 		}
-		return undefined;
+		return topmost;
 	}
 
 	override invalidate(): void {
@@ -445,6 +639,9 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		if (this.terminalColorSchemeNotificationsEnabled) {
+			this.terminal.write("\x1b[?2031h");
+		}
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -458,6 +655,23 @@ export class TUI extends Container {
 
 	removeInputListener(listener: InputListener): void {
 		this.inputListeners.delete(listener);
+	}
+
+	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void {
+		this.terminalColorSchemeListeners.add(listener);
+		return () => {
+			this.terminalColorSchemeListeners.delete(listener);
+		};
+	}
+
+	setTerminalColorSchemeNotifications(enabled: boolean): void {
+		if (this.terminalColorSchemeNotificationsEnabled === enabled) {
+			return;
+		}
+		this.terminalColorSchemeNotificationsEnabled = enabled;
+		if (!this.stopped) {
+			this.terminal.write(enabled ? "\x1b[?2031h" : "\x1b[?2031l");
+		}
 	}
 
 	private queryCellSize(): void {
@@ -475,6 +689,9 @@ export class TUI extends Container {
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
+		}
+		if (this.terminalColorSchemeNotificationsEnabled) {
+			this.terminal.write("\x1b[?2031l");
 		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
@@ -542,6 +759,13 @@ export class TUI extends Container {
 	}
 
 	private handleInput(data: string): void {
+		if (this.consumeOsc11BackgroundResponse(data)) {
+			return;
+		}
+		if (this.consumeTerminalColorSchemeReport(data)) {
+			return;
+		}
+
 		if (this.inputListeners.size > 0) {
 			let current = data;
 			for (const listener of this.inputListeners) {
@@ -579,8 +803,22 @@ export class TUI extends Container {
 			if (topVisible) {
 				this.setFocus(topVisible.component);
 			} else {
-				// No visible overlays, restore to preFocus
-				this.setFocus(focusedOverlay.preFocus);
+				this.setFocusInternal({ component: focusedOverlay.preFocus, overlayFocusRestore: "preserve" });
+			}
+		}
+
+		const focusIsOverlay = this.overlayStack.some((o) => o.component === this.focusedComponent);
+		if (!focusIsOverlay) {
+			const restoreState = this.getVisibleOverlayFocusRestore();
+			if (restoreState.status === "eligible") {
+				this.setFocus(restoreState.overlay.component);
+			} else if (restoreState.status === "blocked" && restoreState.blockedBy !== this.focusedComponent) {
+				if (restoreState.resume.status === "restore-overlay") {
+					this.setFocus(restoreState.overlay.component);
+				} else {
+					this.clearOverlayFocusRestore();
+					this.setFocus(restoreState.resume.target);
+				}
 			}
 		}
 
@@ -594,6 +832,42 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(data);
 			this.requestRender();
 		}
+	}
+
+	private consumeOsc11BackgroundResponse(data: string): boolean {
+		if (this.pendingOsc11BackgroundReplies <= 0) {
+			return false;
+		}
+
+		if (!isOsc11BackgroundColorResponse(data)) {
+			return false;
+		}
+
+		const rgb = parseOsc11BackgroundColor(data);
+		this.pendingOsc11BackgroundReplies -= 1;
+		const query = this.pendingOsc11BackgroundQueries.shift();
+		if (query && !query.settled) {
+			query.settled = true;
+			if (query.timer) {
+				clearTimeout(query.timer);
+				query.timer = undefined;
+			}
+			query.resolve?.(rgb);
+			query.resolve = undefined;
+		}
+		return true;
+	}
+
+	private consumeTerminalColorSchemeReport(data: string): boolean {
+		const scheme = parseTerminalColorSchemeReport(data);
+		if (!scheme) {
+			return false;
+		}
+
+		for (const listener of this.terminalColorSchemeListeners) {
+			listener(scheme);
+		}
+		return true;
 	}
 
 	private consumeCellSizeResponse(data: string): boolean {
@@ -847,14 +1121,41 @@ export class TUI extends Container {
 		return buffer;
 	}
 
-	private expandLastChangedForKittyImages(firstChanged: number, lastChanged: number): number {
-		let expandedLastChanged = lastChanged;
-		for (let i = firstChanged; i < this.previousLines.length; i++) {
-			if (extractKittyImageIds(this.previousLines[i]).length > 0) {
-				expandedLastChanged = Math.max(expandedLastChanged, i);
-			}
+	private getKittyImageReservedRows(lines: string[], index: number, maxIndex = lines.length - 1): number {
+		const rows = extractKittyImageRows(lines[index] ?? "");
+		if (rows <= 1) return 1;
+
+		const maxRows = Math.min(rows, maxIndex - index + 1, lines.length - index);
+		let reservedRows = 1;
+		while (reservedRows < maxRows) {
+			const line = lines[index + reservedRows] ?? "";
+			if (isImageLine(line) || visibleWidth(line) > 0) break;
+			reservedRows++;
 		}
-		return expandedLastChanged;
+		return reservedRows;
+	}
+
+	private expandChangedRangeForKittyImages(
+		firstChanged: number,
+		lastChanged: number,
+		newLines: string[],
+	): { firstChanged: number; lastChanged: number } {
+		let expandedFirstChanged = firstChanged;
+		let expandedLastChanged = lastChanged;
+		const expandForLines = (lines: string[]): void => {
+			for (let i = 0; i < lines.length; i++) {
+				if (extractKittyImageIds(lines[i]).length === 0) continue;
+				const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
+				if (i >= firstChanged || (i <= lastChanged && blockEnd >= firstChanged)) {
+					expandedFirstChanged = Math.min(expandedFirstChanged, i);
+					expandedLastChanged = Math.max(expandedLastChanged, blockEnd);
+				}
+			}
+		};
+
+		expandForLines(this.previousLines);
+		expandForLines(newLines);
+		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
 	}
 
 	private deleteChangedKittyImages(firstChanged: number, lastChanged: number): string {
@@ -989,7 +1290,20 @@ export class TUI extends Container {
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
+				const line = newLines[i];
+				const isImage = isImageLine(line);
+				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
+				if (imageReservedRows > 1 && imageReservedRows <= height) {
+					for (let row = 1; row < imageReservedRows; row++) {
+						buffer += "\r\n";
+					}
+					buffer += `\x1b[${imageReservedRows - 1}A`;
+					buffer += line;
+					buffer += `\x1b[${imageReservedRows - 1}B`;
+					i += imageReservedRows - 1;
+					continue;
+				}
+				buffer += line;
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
@@ -1073,7 +1387,9 @@ export class TUI extends Container {
 			lastChanged = newLines.length - 1;
 		}
 		if (firstChanged !== -1) {
-			lastChanged = this.expandLastChangedForKittyImages(firstChanged, lastChanged);
+			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
+			firstChanged = expandedRange.firstChanged;
+			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
@@ -1108,15 +1424,17 @@ export class TUI extends Container {
 					fullRender(true);
 					return;
 				}
-				if (extraLines > 0) {
-					buffer += "\x1b[1B";
+				const clearStartOffset = newLines.length === 0 ? 0 : 1;
+				if (extraLines > 0 && clearStartOffset > 0) {
+					buffer += `\x1b[${clearStartOffset}B`;
 				}
 				for (let i = 0; i < extraLines; i++) {
 					buffer += "\r\x1b[2K";
 					if (i < extraLines - 1) buffer += "\x1b[1B";
 				}
-				if (extraLines > 0) {
-					buffer += `\x1b[${extraLines}A`;
+				const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
+				if (moveBack > 0) {
+					buffer += `\x1b[${moveBack}A`;
 				}
 				buffer += "\x1b[?2026l";
 				this.terminal.write(buffer);
@@ -1174,9 +1492,31 @@ export class TUI extends Container {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			buffer += "\x1b[2K"; // Clear current line
 			const line = newLines[i];
 			const isImage = isImageLine(line);
+			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
+			if (imageReservedRows > 1) {
+				const imageStartScreenRow = i - viewportTop;
+				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
+					logRedraw(
+						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+					);
+					fullRender(true);
+					return;
+				}
+
+				buffer += "\x1b[2K";
+				for (let row = 1; row < imageReservedRows; row++) {
+					buffer += "\r\n\x1b[2K";
+				}
+				buffer += `\x1b[${imageReservedRows - 1}A`;
+				buffer += line;
+				buffer += `\x1b[${imageReservedRows - 1}B`;
+				i += imageReservedRows - 1;
+				continue;
+			}
+
+			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(os.homedir(), ".pi", "agent", "pi-crash.log");
@@ -1315,5 +1655,60 @@ export class TUI extends Container {
 		} else {
 			this.terminal.hideCursor();
 		}
+	}
+
+	/**
+	 * Query the terminal's default background color with OSC 11 (`ESC ] 11 ; ? BEL`).
+	 * @param timeoutMs Query timeout in milliseconds.
+	 * @returns Promise containing the parsed RGB color, or undefined if it times out or fails to parse.
+	 */
+	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined> {
+		return new Promise((resolve) => {
+			const query: PendingOsc11BackgroundQuery = {
+				settled: false,
+				resolve,
+				timer: undefined,
+			};
+
+			query.timer = setTimeout(() => {
+				if (query.settled) {
+					return;
+				}
+				query.settled = true;
+				query.timer = undefined;
+				query.resolve?.(undefined);
+				query.resolve = undefined;
+			}, timeoutMs);
+			this.pendingOsc11BackgroundQueries.push(query);
+			this.pendingOsc11BackgroundReplies += 1;
+			this.terminal.write("\x1b]11;?\x07");
+		});
+	}
+
+	/**
+	 * Query the terminal's color-scheme preference with DSR (`CSI ? 996 n`).
+	 * Terminals that support the color palette notification protocol reply with
+	 * `CSI ? 997 ; 1 n` for dark or `CSI ? 997 ; 2 n` for light.
+	 */
+	queryTerminalColorScheme({ timeoutMs }: { timeoutMs: number }): Promise<TerminalColorScheme | undefined> {
+		return new Promise((resolve) => {
+			let settled = false;
+			let timer: NodeJS.Timeout | undefined;
+			let unsubscribe: () => void = () => {};
+			const settle = (scheme: TerminalColorScheme | undefined) => {
+				if (settled) return;
+				settled = true;
+				if (timer) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
+				unsubscribe();
+				resolve(scheme);
+			};
+
+			unsubscribe = this.onTerminalColorSchemeChange(settle);
+			timer = setTimeout(() => settle(undefined), timeoutMs);
+			this.terminal.write("\x1b[?996n");
+		});
 	}
 }

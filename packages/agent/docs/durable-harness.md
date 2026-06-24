@@ -14,6 +14,8 @@ A fully durable `AgentHarness` is not realistic by itself because important depe
 - resource loaders
 - system-prompt callbacks/modifiers
 
+Tool registries are runtime dependencies. The harness should persist serializable tool configuration, such as active tool names, but not concrete tool implementations.
+
 The practical target is a semi-durable harness:
 
 - session is the durable append-only state tree
@@ -29,6 +31,7 @@ Existing session state already includes harness state:
 
 - model changes
 - thinking-level changes
+- active-tool changes
 - leaf entries
 - labels
 - compactions and branch summaries
@@ -50,10 +53,38 @@ The app must recreate compatible runtime dependencies:
 
 Harness can validate stable IDs/versions/hashes when available, but it cannot serialize these dependencies itself.
 
+## Runtime configuration and restore
+
+Constructor options remain explicit runtime configuration and do not read session state. Hidden async restore in a constructor would make failure handling ambiguous.
+
+A future async builder/factory should own durable restore:
+
+```ts
+const harness = await AgentHarness.builder()
+  .env(env)
+  .session(session)
+  .model(defaultModel)
+  .tools(runtimeTools)
+  .defaultActiveTools(["read", "edit"])
+  .restore({ missingActiveTools: "fail" });
+```
+
+`restore()` should read the active branch, reduce durable harness configuration, apply defaults for missing entries, validate against app-supplied runtime dependencies, construct the harness, and optionally emit `source: "restore"` update events after construction.
+
+For active tools:
+
+- `active_tools_change` entries are branch-scoped durable config.
+- If no `active_tools_change` exists on the branch, restore uses builder defaults, or all registered tools if no default active names were supplied.
+- Active tool names must be unique.
+- Tool registry names must be unique.
+- Missing restored active tool names should fail restore by default; permissive drop/disable policies can be added explicitly later.
+- Concrete tools are never restored from session; the host app must provide compatible tools.
+
 ## What harness should persist
 
 Minimum useful durability entries:
 
+- branch-scoped active tool names
 - queued steer/followUp/nextTurn messages
 - queue consumption tied to a turn
 - pending session writes accepted during active operations
@@ -93,11 +124,11 @@ On startup:
 3. Harness reduces session entries into:
    - current leaf
    - conversation branch
-   - harness config
+   - harness config, including active tool names
    - queues
    - pending writes
    - active operation/turn/tool state
-4. Harness validates required runtime dependencies.
+4. Harness validates required runtime dependencies, including restored active tool names against the app-provided tool registry.
 5. Harness reconciles unfinished operation state.
 
 Provider streams are not resumable. Recovery can only retry from a durable boundary or mark the operation interrupted.
@@ -173,7 +204,7 @@ recovery: "mark_interrupted" | "retry_unfinished"
 
 ## Open questions
 
-- Which harness config entries should move into session first: tools, active tools, resources, stream options, system prompt refs?
+- Which remaining harness config entries should move into session first: resources, stream options, system prompt refs?
 - Should resolved system prompt text be snapshotted per turn for audit/debug?
 - Do we require strict dependency ID/version matching on resume?
 - How much provider request data should be journaled?

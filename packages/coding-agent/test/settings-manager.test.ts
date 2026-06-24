@@ -198,6 +198,24 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("theme setting", () => {
+		it("stores slash-separated automatic theme settings separately from fixed theme names", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "light/dark" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTheme()).toBeUndefined();
+			expect(manager.getThemeSetting()).toBe("light/dark");
+
+			manager.setTheme("solarized-light/tokyo-night");
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.theme).toBe("solarized-light/tokyo-night");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");
@@ -211,6 +229,61 @@ describe("SettingsManager", () => {
 			expect(errors).toHaveLength(2);
 			expect(errors.map((e) => e.scope).sort()).toEqual(["global", "project"]);
 			expect(manager.drainErrors()).toEqual([]);
+		});
+	});
+
+	describe("project trust", () => {
+		it("should skip project settings when project is not trusted", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "global" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ theme: "project" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+
+			expect(manager.isProjectTrusted()).toBe(false);
+			expect(manager.getTheme()).toBe("global");
+			expect(manager.getProjectSettings()).toEqual({});
+		});
+
+		it("should reload project settings after trust changes to true", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "global" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ theme: "project" }));
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+
+			manager.setProjectTrusted(true);
+
+			expect(manager.isProjectTrusted()).toBe(true);
+			expect(manager.getTheme()).toBe("project");
+		});
+
+		it("should fail project settings writes when project is not trusted", async () => {
+			const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+			writeFileSync(projectSettingsPath, JSON.stringify({ packages: ["npm:existing"] }));
+			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: false });
+
+			expect(() => manager.setProjectPackages(["npm:new"])).toThrow(
+				"Project is not trusted; refusing to write project settings",
+			);
+			await manager.flush();
+
+			expect(manager.getProjectSettings()).toEqual({});
+			expect(JSON.parse(readFileSync(projectSettingsPath, "utf-8"))).toEqual({ packages: ["npm:existing"] });
+		});
+
+		it("should read default project trust from global settings only", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultProjectTrust: "never" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultProjectTrust()).toBe("always");
+		});
+
+		it("should default invalid project trust settings to ask", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "sometimes" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultProjectTrust()).toBe("ask");
 		});
 	});
 

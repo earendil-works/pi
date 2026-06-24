@@ -2,6 +2,7 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
+	ActiveToolsChangeEntry,
 	BranchSummaryEntry,
 	CompactionEntry,
 	CustomEntry,
@@ -21,6 +22,7 @@ import { SessionError } from "../types.ts";
 export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
+	let activeToolNames: string[] | null = null;
 	let compaction: CompactionEntry | null = null;
 
 	for (const entry of pathEntries) {
@@ -30,6 +32,8 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 			model = { provider: entry.provider, modelId: entry.modelId };
 		} else if (entry.type === "message" && entry.message.role === "assistant") {
 			model = { provider: entry.message.provider, modelId: entry.message.model };
+		} else if (entry.type === "active_tools_change") {
+			activeToolNames = [...entry.activeToolNames];
 		} else if (entry.type === "compaction") {
 			compaction = entry;
 		}
@@ -72,7 +76,7 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 		}
 	}
 
-	return { messages, thinkingLevel, model };
+	return { messages, thinkingLevel, model, activeToolNames };
 }
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
@@ -156,6 +160,16 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		} satisfies ModelChangeEntry);
 	}
 
+	async appendActiveToolsChange(activeToolNames: string[]): Promise<string> {
+		return this.appendTypedEntry({
+			type: "active_tools_change",
+			id: await this.storage.createEntryId(),
+			parentId: await this.storage.getLeafId(),
+			timestamp: new Date().toISOString(),
+			activeToolNames: [...activeToolNames],
+		} satisfies ActiveToolsChangeEntry);
+	}
+
 	async appendCompaction<T = unknown>(
 		summary: string,
 		firstKeptEntryId: string,
@@ -220,12 +234,13 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async appendSessionName(name: string): Promise<string> {
+		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		return this.appendTypedEntry({
 			type: "session_info",
 			id: await this.storage.createEntryId(),
 			parentId: await this.storage.getLeafId(),
 			timestamp: new Date().toISOString(),
-			name: name.trim(),
+			name: sanitizedName,
 		} satisfies SessionInfoEntry);
 	}
 

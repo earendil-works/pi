@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.75.5",
+	"version": "0.80.2",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -15,16 +15,13 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		},
-		"./hooks": {
-			"types": "./dist/core/hooks/index.d.ts",
-			"import": "./dist/core/hooks/index.js"
 		}
 	},
 	"files": [
 		"dist",
 		"docs",
 		"examples",
+		"containerization.md",
 		"CHANGELOG.md",
 		"npm-shrinkwrap.json"
 	],
@@ -39,9 +36,9 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.75.5",
-		"@earendil-works/pi-ai": "^0.75.5",
-		"@earendil-works/pi-tui": "^0.75.5",
+		"@earendil-works/pi-agent-core": "^0.80.2",
+		"@earendil-works/pi-ai": "^0.80.2",
+		"@earendil-works/pi-tui": "^0.80.2",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
@@ -53,8 +50,9 @@
 		"jiti": "2.7.0",
 		"minimatch": "10.2.5",
 		"proper-lockfile": "4.1.2",
+		"semver": "7.8.0",
 		"typebox": "1.1.38",
-		"undici": "8.3.0",
+		"undici": "8.5.0",
 		"yaml": "2.9.0"
 	},
 	"overrides": {
@@ -64,7 +62,7 @@
 		}
 	},
 	"optionalDependencies": {
-		"@mariozechner/clipboard": "0.3.6"
+		"@mariozechner/clipboard": "0.3.9"
 	},
 	"devDependencies": {
 		"@types/cross-spawn": "6.0.6",
@@ -73,9 +71,10 @@
 		"@types/ms": "2.1.0",
 		"@types/node": "24.12.4",
 		"@types/proper-lockfile": "4.1.4",
+		"@types/semver": "7.7.1",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
-		"vitest": "3.2.4"
+		"vitest": "4.1.9"
 	},
 	"keywords": [
 		"coding-agent",
@@ -89,7 +88,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi-mono.git",
+		"url": "git+https://github.com/earendil-works/pi.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

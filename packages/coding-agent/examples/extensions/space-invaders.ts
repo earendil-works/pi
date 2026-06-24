@@ -529,7 +529,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Play Space Invaders!",
 
 		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				ctx.ui.notify("Space Invaders requires interactive mode", "error");
 				return;
 			}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
-import { streamAzureOpenAIResponses } from "../src/providers/azure-openai-responses.ts";
+import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 
 interface CapturedAzureClientOptions {
@@ -13,6 +13,7 @@ interface CapturedAzureClientOptions {
 
 interface CapturedAzureResponsesPayload {
 	prompt_cache_key?: string;
+	store?: boolean;
 }
 
 const azureMock = vi.hoisted(() => ({
@@ -142,6 +143,16 @@ describe("azure-openai-responses base URL normalization", () => {
 		}).result();
 
 		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
+	});
+
+	it("disables server-side response storage", async () => {
+		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		await streamAzureOpenAIResponses(model, context, {
+			apiKey: "test-api-key",
+			azureBaseUrl: "https://my-resource.openai.azure.com",
+		}).result();
+
+		expect(azureMock.lastParams?.store).toBe(false);
 	});
 
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {

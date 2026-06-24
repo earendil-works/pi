@@ -1,6 +1,6 @@
-import { streamBedrock, streamSimpleBedrock } from "./providers/amazon-bedrock.ts";
+import { stream, streamSimple } from "./api/bedrock-converse-stream.ts";
 
 export const bedrockProviderModule = {
-	streamBedrock,
-	streamSimpleBedrock,
+	stream,
+	streamSimple,
 };

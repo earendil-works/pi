@@ -136,6 +136,7 @@ Sessions are saved automatically:
 ```bash
 pi -c                  # Continue most recent session
 pi -r                  # Browse previous sessions
+pi --name "my task"    # Set session display name at startup
 pi --session <path|id> # Open a specific session
 ```
 

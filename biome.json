@@ -31,6 +31,7 @@
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
+			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
 			"!!**/node_modules"
 		]

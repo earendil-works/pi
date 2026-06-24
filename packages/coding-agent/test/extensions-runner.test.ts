@@ -7,9 +7,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
-import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.ts";
+import { createExtensionRuntime, discoverAndLoadExtensions, loadExtensions } from "../src/core/extensions/loader.ts";
+import { ExtensionRunner, emitProjectTrustEvent } from "../src/core/extensions/runner.ts";
+import type {
+	ExtensionActions,
+	ExtensionContextActions,
+	ExtensionUIContext,
+	ProviderConfig,
+} from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -36,7 +41,7 @@ describe("ExtensionRunner", () => {
 
 	const providerModelConfig: ProviderConfig = {
 		baseUrl: "https://provider.test/v1",
-		apiKey: "PROVIDER_TEST_KEY",
+		apiKey: "provider-test-key",
 		api: "openai-completions",
 		models: [
 			{
@@ -71,6 +76,7 @@ describe("ExtensionRunner", () => {
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
 		isIdle: () => true,
+		isProjectTrusted: () => true,
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
@@ -79,6 +85,45 @@ describe("ExtensionRunner", () => {
 		compact: () => {},
 		getSystemPrompt: () => "",
 	};
+
+	describe("project_trust", () => {
+		it("continues past undecided handlers and returns the first yes/no decision", async () => {
+			const undecidedPath = path.join(extensionsDir, "undecided.ts");
+			const decidedPath = path.join(extensionsDir, "decided.ts");
+			fs.writeFileSync(
+				undecidedPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "undecided", remember: true }));
+}`,
+			);
+			fs.writeFileSync(
+				decidedPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "no", remember: true }));
+}`,
+			);
+
+			const extensionsResult = await loadExtensions([undecidedPath, decidedPath], tempDir);
+			const result = await emitProjectTrustEvent(
+				extensionsResult,
+				{ type: "project_trust", cwd: tempDir },
+				{
+					cwd: tempDir,
+					mode: "tui",
+					hasUI: false,
+					ui: {
+						select: async () => undefined,
+						confirm: async () => false,
+						input: async () => undefined,
+						notify: () => {},
+					},
+				},
+			);
+
+			expect(result.result).toEqual({ trusted: "no", remember: true });
+			expect(result.errors).toEqual([]);
+		});
+	});
 
 	describe("shortcut conflicts", () => {
 		it("warns when extension shortcut conflicts with built-in", async () => {
@@ -440,6 +485,50 @@ describe("ExtensionRunner", () => {
 
 			controller.abort();
 			expect(ctx.signal?.aborted).toBe(true);
+		});
+
+		it("exposes print mode and hasUI false by default", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("print");
+			expect(ctx.hasUI).toBe(false);
+		});
+
+		it("exposes project trust state on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				isProjectTrusted: () => false,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.isProjectTrusted()).toBe(false);
+		});
+
+		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, "rpc");
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("rpc");
+			expect(ctx.hasUI).toBe(true);
+		});
+
+		it("exposes tui mode with hasUI true when a TUI UI context is provided", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, "tui");
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("tui");
+			expect(ctx.hasUI).toBe(true);
 		});
 	});
 

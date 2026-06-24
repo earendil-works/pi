@@ -86,6 +86,12 @@ async function runSessionSuite(
 			expect(context.messages[1]?.role).toBe("custom");
 		});
 
+		it("normalizes session names", async () => {
+			const session = new Session(await createStorage());
+			await session.appendSessionName(" hello\nworld\r\nagain ");
+			expect(await session.getSessionName()).toBe("hello world again");
+		});
+
 		it("supports labels and session info entries without affecting context", async () => {
 			const session = new Session(await createStorage());
 			const user1 = await session.appendMessage(createUserMessage("one"));

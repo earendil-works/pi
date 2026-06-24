@@ -11,6 +11,8 @@ body:
 
         Keep this short. If it doesn't fit on one screen, it's too long. Write in your own voice.
 
+        **Important:** before reporting an issue in core, please validate first with `pi -ne` that this is not caused by an extension you loaded.
+
   - type: textarea
     id: description
     attributes:

@@ -1,6 +1,6 @@
 import { getOAuthProviders, type OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import { exec } from "child_process";
+import { openBrowser } from "../../../utils/open-browser.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -56,7 +56,9 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.input = new Input();
 		this.input.onSubmit = () => {
 			if (this.inputResolver) {
-				this.inputResolver(this.input.getValue());
+				const value = this.input.getValue();
+				this.replaceInputWithSubmittedText(value);
+				this.inputResolver(value);
 				this.inputResolver = undefined;
 				this.inputRejecter = undefined;
 			}
@@ -73,6 +75,12 @@ export class LoginDialogComponent extends Container implements Focusable {
 		return this.abortController.signal;
 	}
 
+	private replaceInputWithSubmittedText(value: string): void {
+		this.contentContainer.children = this.contentContainer.children.map((child) =>
+			child === this.input ? new Text(`> ${value}`, 0, 0) : child,
+		);
+	}
+
 	private cancel(): void {
 		this.abortController.abort();
 		if (this.inputRejecter) {
@@ -86,7 +94,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	/**
 	 * Called by onAuth callback - show URL and optional instructions
 	 */
-	showAuth(url: string, instructions?: string, options: { autoOpenBrowser?: boolean } = {}): void {
+	showAuth(url: string, instructions?: string): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
@@ -101,9 +109,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		if (options.autoOpenBrowser ?? true) {
-			this.openUrl(url);
-		}
+		openBrowser(url);
 		this.tui.requestRender();
 	}
 
@@ -122,23 +128,14 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
 
-		this.openUrl(info.verificationUri);
 		this.tui.requestRender();
-	}
-
-	private openUrl(url: string): void {
-		const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-		try {
-			exec(`${openCmd} "${url}"`, () => {});
-		} catch {
-			// Ignore browser launch failures. The URL remains visible for manual opening/copying.
-		}
 	}
 
 	/**
 	 * Show input for manual code/URL entry (for callback server providers)
 	 */
 	showManualInput(prompt: string): Promise<string> {
+		this.input.setValue("");
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", prompt), 1, 0));
 		this.contentContainer.addChild(this.input);

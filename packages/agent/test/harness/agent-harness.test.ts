@@ -1,5 +1,13 @@
-import { fauxAssistantMessage, fauxToolCall, getModel, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+	createModels,
+	type FauxProviderHandle,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type RegisterFauxProviderOptions,
+} from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
+import { describe, expect, it } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
@@ -17,11 +25,15 @@ interface AppPromptTemplate extends PromptTemplate {
 	source: "project" | "user";
 }
 
-interface AppTool extends AgentTool {
-	source: "builtin" | "extension";
-}
+/** Shared collection; each faux provider gets a unique id so coexisting fakes route correctly. */
+const models = createModels();
+let fauxCount = 0;
 
-const registrations: Array<{ unregister(): void }> = [];
+function newFaux(options: RegisterFauxProviderOptions = {}): FauxProviderHandle {
+	const faux = fauxProvider({ provider: `faux-${++fauxCount}`, ...options });
+	models.setProvider(faux.provider);
+	return faux;
+}
 
 function textFromUserMessages(messages: Array<{ role: string; content: unknown }>): string[] {
 	return messages.flatMap((message) => {
@@ -48,18 +60,13 @@ function getReasoning(options: unknown): unknown {
 	return options.reasoning;
 }
 
-afterEach(() => {
-	for (const registration of registrations.splice(0)) {
-		registration.unregister();
-	}
-});
-
 describe("AgentHarness", () => {
 	it("constructs directly and exposes queue modes", () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const initialModel = getModel("anthropic", "claude-sonnet-4-5");
 		const harness = new AgentHarness({
+			models,
 			env,
 			session,
 			model: initialModel,
@@ -80,8 +87,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("drains one queued steering message at a time and emits queue updates", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		const userCounts: number[] = [];
 		registration.setResponses([
 			(context) => {
@@ -98,6 +104,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -123,8 +130,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("appends before_agent_start messages and persists them", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		let requestText: string[] = [];
 		registration.setResponses([
 			(context) => {
@@ -134,6 +140,7 @@ describe("AgentHarness", () => {
 		]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -155,8 +162,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		let releaseFirstResponse: (() => void) | undefined;
 		let abortedSignal: AbortSignal | undefined;
 		const firstResponseReleased = new Promise<void>((resolve) => {
@@ -175,6 +181,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -210,8 +217,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("drains follow-up messages one at a time after the agent would otherwise stop", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		const userCounts: number[] = [];
 		registration.setResponses([
 			(context) => {
@@ -228,6 +234,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -253,11 +260,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("settles thrown hook failures with persisted assistant error messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("should not be used")]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -284,13 +291,12 @@ describe("AgentHarness", () => {
 	});
 
 	it("refreshes model, thinking level, resources, system prompt, and active tools at save points", async () => {
-		const registration = registerFauxProvider({
+		const registration = newFaux({
 			models: [
 				{ id: "first", reasoning: true },
 				{ id: "second", reasoning: true },
 			],
 		});
-		registrations.push(registration);
 		const secondModel = registration.getModel("second");
 		if (!secondModel) throw new Error("missing second faux model");
 		const captured: Array<{ modelId: string; reasoning: unknown; systemPrompt: string; tools: string[] }> = [];
@@ -317,6 +323,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness<Skill, PromptTemplate, AgentTool>({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -349,11 +356,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("orders pending listener session writes after agent-emitted messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("ok")]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -380,11 +387,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("waitForIdle waits for external run settlement and awaited listeners", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("ok")]);
 		const barrier = deferred();
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -412,8 +419,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("runs tool_call and tool_result hooks through the direct loop", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([
 			() =>
 				fauxAssistantMessage(fauxToolCall("calculate", { expression: "2 + 2" }, { id: "call-1" }), {
@@ -422,6 +428,7 @@ describe("AgentHarness", () => {
 		]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -458,11 +465,114 @@ describe("AgentHarness", () => {
 		});
 	});
 
+	it("preserves app tool types for getters and update events", async () => {
+		const session = new Session(new InMemorySessionStorage());
+		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		type AppTool = AgentTool<typeof calculateTool.parameters, undefined> & { source: "builtin" | "extension" };
+		const inspectTool: AppTool = { ...calculateTool, name: "inspect", source: "builtin" };
+		const searchTool: AppTool = { ...calculateTool, name: "search", source: "extension" };
+		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AppTool>({
+			models,
+			env,
+			session,
+			model,
+			tools: [inspectTool, searchTool],
+			activeToolNames: ["inspect"],
+		});
+		const updates: Array<{
+			toolNames: string[];
+			previousToolNames: string[];
+			activeToolNames: string[];
+			previousActiveToolNames: string[];
+			source: "set" | "restore";
+		}> = [];
+		harness.subscribe((event) => {
+			if (event.type === "tools_update") {
+				updates.push({
+					toolNames: event.toolNames,
+					previousToolNames: event.previousToolNames,
+					activeToolNames: event.activeToolNames,
+					previousActiveToolNames: event.previousActiveToolNames,
+					source: event.source,
+				});
+				expect(harness.getActiveTools().map((tool) => tool.name)).toEqual(event.activeToolNames);
+			}
+		});
+
+		const tools = harness.getTools();
+		const activeTools = harness.getActiveTools();
+		tools.pop();
+		activeTools.pop();
+		expect(harness.getTools().map((tool) => tool.name)).toEqual(["inspect", "search"]);
+		expect(harness.getActiveTools().map((tool) => tool.source)).toEqual(["builtin"]);
+
+		await harness.setActiveTools(["search"]);
+		await harness.setTools([searchTool], ["search"]);
+		await expect(harness.setActiveTools(["missing"])).rejects.toMatchObject({ code: "invalid_argument" });
+		await expect(harness.setActiveTools(["search", "search"])).rejects.toMatchObject({ code: "invalid_argument" });
+		await expect(harness.setTools([inspectTool])).rejects.toMatchObject({ code: "invalid_argument" });
+		await expect(harness.setTools([inspectTool, inspectTool], ["inspect"])).rejects.toMatchObject({
+			code: "invalid_argument",
+		});
+
+		expect(updates).toEqual([
+			{
+				toolNames: ["inspect", "search"],
+				previousToolNames: ["inspect", "search"],
+				activeToolNames: ["search"],
+				previousActiveToolNames: ["inspect"],
+				source: "set",
+			},
+			{
+				toolNames: ["search"],
+				previousToolNames: ["inspect", "search"],
+				activeToolNames: ["search"],
+				previousActiveToolNames: ["search"],
+				source: "set",
+			},
+		]);
+		expect(harness.getTools().map((tool) => tool.source)).toEqual(["extension"]);
+		expect(harness.getActiveTools().map((tool) => tool.name)).toEqual(["search"]);
+		expect((await session.buildContext()).activeToolNames).toEqual(["search"]);
+	});
+
+	it("validates constructor tool names", () => {
+		const session = new Session(new InMemorySessionStorage());
+		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		expect(
+			() => new AgentHarness({ env, session, models, model, tools: [calculateTool], activeToolNames: ["missing"] }),
+		).toThrow(/Unknown tool/);
+		expect(
+			() =>
+				new AgentHarness({
+					models,
+					env,
+					session,
+					model,
+					tools: [calculateTool, calculateTool],
+					activeToolNames: [calculateTool.name],
+				}),
+		).toThrow(/Duplicate tool/);
+		expect(
+			() =>
+				new AgentHarness({
+					models,
+					env,
+					session,
+					model,
+					tools: [calculateTool],
+					activeToolNames: [calculateTool.name, calculateTool.name],
+				}),
+		).toThrow(/Duplicate active tool/);
+	});
+
 	it("preserves app resource types for getters and update events", async () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AppTool>({ env, session, model });
+		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AgentTool>({ env, session, models, model });
 		const skill: AppSkill = {
 			name: "inspect",
 			description: "Inspect things",

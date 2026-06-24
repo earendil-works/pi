@@ -111,9 +111,17 @@ jobs:
               body: message,
             });
 
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['untriaged'],
+            });
+
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               state: 'closed',
+              state_reason: 'not_planned',
             });
