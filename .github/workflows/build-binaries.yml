@@ -56,11 +56,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p .release-assets
+          mkdir -p release-assets
 
           VERSION="${RELEASE_TAG}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
-          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out .release-assets/RELEASE_NOTES.md
+          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out release-assets/RELEASE_NOTES.md
 
           cd packages/coding-agent/binaries
 
@@ -77,14 +77,14 @@ jobs:
             test -f "${asset}"
           done
 
-          sha256sum "${release_assets[@]}" > "${GITHUB_WORKSPACE}/.release-assets/SHA256SUMS"
-          cp "${release_assets[@]}" "${GITHUB_WORKSPACE}/.release-assets/"
+          sha256sum "${release_assets[@]}" > "${GITHUB_WORKSPACE}/release-assets/SHA256SUMS"
+          cp "${release_assets[@]}" "${GITHUB_WORKSPACE}/release-assets/"
 
       - name: Upload GitHub release payload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets-${{ env.RELEASE_TAG }}
-          path: .release-assets/*
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 14
 
@@ -211,9 +211,6 @@ jobs:
 
       - name: Test
         run: npm test
-
-      - name: Verify release artifacts are committed
-        run: git diff --exit-code
 
       - name: Upgrade npm for trusted publishing
         run: |

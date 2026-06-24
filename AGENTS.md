@@ -1,5 +1,11 @@
 # Development Rules
 
+## Fork Focus
+
+本 fork 专注于 `packages/tui` 的扩展和改进。
+**未经明确许可，不得修改 `packages/tui` 以外的任何内容。**
+这包括但不限于：CI/CD 配置、CHANGELOG、其他包的源代码、构建脚本等。
+
 ## Conversational Style
 
 - Keep answers short and concise
