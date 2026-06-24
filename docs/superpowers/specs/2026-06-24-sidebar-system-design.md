@@ -164,7 +164,7 @@ SidebarRegistry  ← 扩展注册面板
        ↓ updateConfig()
 SidebarContainer  ← 开始渲染
        ↓ (SettingsPanel 作为内置 tab 加入)
-用户点击 ⚙️ 设置 → switchTo("__settings__")
+用户切换到 ⚙️ 设置 → switchTo("__settings__")
        ↓
 SettingsPanel.render()  ← 显示配置界面
        ↓ 用户修改 → 更新配置
@@ -254,7 +254,7 @@ Caller reads this, resolves enabled ids against `SidebarRegistry`, creates Compo
   Caller → tui.setSplitLayout(ratio, container, callback)
 
 运行时:
-  User clicks Tab → container.switchTo(id) → invalidate → TUI重绘
+  用户切换 Tab → container.switchTo(id) → invalidate → TUI重绘
   Panel有新数据 → panel.requestRender?.() → 回调链 → TUI重绘
   用户打开设置 → switchTo("__settings__") → 修改 → updateConfig → TUI重绘
 
@@ -295,7 +295,7 @@ Caller reads this, resolves enabled ids against `SidebarRegistry`, creates Compo
 
 ## Future Considerations
 
-- **Drag-to-reorder tabs**: The SettingsPanel could support drag/arrow-key reordering
+- **Arrow-key reorder**: The SettingsPanel could support arrow-key reordering of tabs
 - **Per-panel persistent state**: Each panel could store its own state across sessions
 - **Panel lifecycle hooks**: `onActivate`/`onDeactivate` callbacks when switching tabs
 - **Nested tabs**: Sub-tabs within a panel (unlikely needed)
