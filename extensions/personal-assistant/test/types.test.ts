@@ -9,6 +9,7 @@ import type {
 	MemoryAtomRow,
 } from "../types.ts";
 import { rowToAtom, atomToRow } from "../types.ts";
+import type { PersonalAssistantConfig } from "../memory.ts";
 
 // Helper factory for a complete MemoryAtom sample used in many tests.
 function makeAtom(overrides: Partial<MemoryAtom> = {}): MemoryAtom {
@@ -131,12 +132,15 @@ describe("types", () => {
 		expect(back.is_latest).toBe(0);
 	});
 
-	it("shapes RecallResult with distance, cosine, score (no file_path)", () => {
+	it("shapes RecallResult with distance, cosine, score, rrfScore (no file_path)", () => {
 		const result: RecallResult = {
 			atom: makeAtom(),
 			distance: 0.42,
 			cosine: 0.79,
 			score: 0.79 * (1 + 0.3 * 0.7 + 0.2 * 0.7), // = 0.79 × 1.35 = 1.0665
+			// Non-hybrid callers (rare; mostly tests) populate rrfScore with the
+			// rank-weighted score, so rrfScore === score in this case.
+			rrfScore: 0.79 * (1 + 0.3 * 0.7 + 0.2 * 0.7),
 		};
 		expect(result.score).toBeGreaterThan(0);
 		expect(result.score).toBeLessThanOrEqual(1.5); // max boost scenario
@@ -149,8 +153,68 @@ describe("types", () => {
 	it("score field follows the multiplicative formula", () => {
 		// cosine × (1 + 0.3 × strength + 0.2 × importance)
 		const atom = makeAtom({ strength: 1.0, importance: 1.0 });
-		const result: RecallResult = { atom, distance: 0.1, cosine: 0.99, score: 0.99 * 1.5 };
+		const result: RecallResult = {
+			atom,
+			distance: 0.1,
+			cosine: 0.99,
+			score: 0.99 * 1.5,
+			rrfScore: 0.99 * 1.5, // equals score for non-hybrid callers
+		};
 		expect(result.score).toBeCloseTo(1.485);
+	});
+
+	it("RecallResult has rrfScore field of type number", () => {
+		// Build a literal with rrfScore and assert the type accepts it.
+		// If the field is missing from the interface, this assignment fails
+		// to compile — the runtime assertions below confirm the field shape.
+		const result: RecallResult = {
+			atom: makeAtom(),
+			distance: 0.3,
+			cosine: 0.85,
+			score: 0.85 * (1 + 0.3 * 0.7 + 0.2 * 0.7),
+			rrfScore: 0.032,
+		};
+		expect(typeof result.rrfScore).toBe("number");
+		// Runtime check via hasOwnProperty — confirms the field is on the
+		// instance, not just on the type.
+		expect(Object.prototype.hasOwnProperty.call(result, "rrfScore")).toBe(true);
+	});
+
+	it("rrfScore is >= 0 for hybrid recall results", () => {
+		// Delta Spec scenario: rrfScore is the sum of 1/(rrfK + rank) over
+		// channels that returned the atom, so it is always non-negative.
+		const rrfK = 60;
+		const denseRank = 0; // top dense hit
+		const bm25Rank = 2; // lower BM25 hit
+		const expectedRrfScore = 1 / (rrfK + denseRank + 1) + 1 / (rrfK + bm25Rank + 1);
+		const result: RecallResult = {
+			atom: makeAtom(),
+			distance: 0.4,
+			cosine: 0.7,
+			score: 0.7 * (1 + 0.3 * 0.7 + 0.2 * 0.7),
+			rrfScore: expectedRrfScore,
+		};
+		expect(result.rrfScore).toBeGreaterThanOrEqual(0);
+		expect(result.rrfScore).toBeCloseTo(expectedRrfScore, 9);
+	});
+
+	it("existing score field is preserved alongside rrfScore", () => {
+		// Delta Spec scenario: with strength=0.7, importance=0.8, cosine=0.78,
+		// score = 0.78 × (1 + 0.3×0.7 + 0.2×0.8) = 0.78 × 1.37 = 1.0686
+		// (the spec text says ≈ 1.222 but that value is arithmetically
+		// inconsistent with the documented formula; the contract is the
+		// formula, not the typo).
+		const result: RecallResult = {
+			atom: makeAtom({ strength: 0.7, importance: 0.8 }),
+			distance: 0.45,
+			cosine: 0.78,
+			score: 0.78 * (1 + 0.3 * 0.7 + 0.2 * 0.8),
+			rrfScore: 0.0167, // hypothetical RRF contribution
+		};
+		// score contract unchanged: backwards compat with webui + memory_get.
+		expect(result.score).toBeCloseTo(1.0686, 3);
+		// rrfScore is independent — typically much smaller than score.
+		expect(result.rrfScore).toBeLessThan(result.score);
 	});
 
 	it("shapes ExtractionItem with the 6 fields", () => {
@@ -268,5 +332,23 @@ describe("types", () => {
 		const atom = makeAtom({ tags: ["a", "b"] });
 		const row = atomToRow(atom);
 		expect(row.tags).toBe('["a","b"]');
+	});
+
+	it("PersonalAssistantConfig.memory.recall is optional", () => {
+		// recall block is fully optional: missing block, empty memory, and full
+		// recall sub-config all type-check and round-trip cleanly.
+		const c1: PersonalAssistantConfig = { memory: { recall: { rrfK: 30 } } };
+		const c2: PersonalAssistantConfig = {
+			memory: { recall: { rrfK: 60, recallThreshold: 1 / 60 } },
+		};
+		const c3: PersonalAssistantConfig = { memory: {} };
+		const c4: PersonalAssistantConfig = {};
+
+		expect(c1.memory?.recall?.rrfK).toBe(30);
+		expect(c1.memory?.recall?.recallThreshold).toBeUndefined();
+		expect(c2.memory?.recall?.rrfK).toBe(60);
+		expect(c2.memory?.recall?.recallThreshold).toBeCloseTo(1 / 60);
+		expect(c3.memory?.recall).toBeUndefined();
+		expect(c4.memory).toBeUndefined();
 	});
 });
