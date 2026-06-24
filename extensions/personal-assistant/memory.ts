@@ -422,24 +422,52 @@ export function registerMemory(pi: ExtensionAPI): void {
 		}
 
 		const callLlm = async (prompt: string): Promise<string> => {
+			// maxTokens: 4096 (was 2048). Reasoning models like deepseek-v4-flash
+			// burn ~1500 tokens of thinking + ~500 tokens of answer for an
+			// extraction JSON. 2048 truncates them mid-answer and produces
+			// responses with only a thinking block, no text block — which
+			// the next loop sees as "no text content" and throws. 4096 keeps
+			// enough headroom for the JSON output while staying well under
+			// the 131072 max of typical models. The previous 2048 was a
+			// legacy budget from v1 and predates reasoning-model support.
 			const response = await completeSimple(
 				model,
 				{ messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-				{ apiKey: auth.apiKey, headers, maxTokens: 2048 },
+				{ apiKey: auth.apiKey, headers, maxTokens: 4096 },
 			);
 			if (!response.content) {
 				throw new Error("No content in LLM response");
 			}
 			const textParts: string[] = [];
+			const thinkingParts: string[] = [];
 			for (const c of response.content) {
 				if (c.type === "text" && "text" in c) {
 					textParts.push(c.text);
+				} else if (c.type === "thinking" && "thinking" in c) {
+					// Fallback: some reasoning models (deepseek-v4-flash
+					// when finish_reason=length truncates the answer) put
+					// the full response in the thinking block and leave
+					// content empty. Treat that as a last-resort source so
+					// the extraction can still get a parseable JSON.
+					thinkingParts.push(c.thinking);
 				}
 			}
-			if (textParts.length === 0) {
-				throw new Error("No text content in LLM response");
+			if (textParts.length > 0) {
+				return textParts.join("");
 			}
-			return textParts.join("");
+			if (thinkingParts.length > 0) {
+				// Some reasoning-only responses include a final answer
+				// after the closing </think> tag. Strip any leading
+				// <think>...</think> block so parseExtractionJson sees a
+				// raw JSON string instead of a thinking-prefixed one.
+				const raw = thinkingParts.join("");
+				const stripped = raw.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+				if (stripped.length > 0) return stripped;
+				throw new Error(
+					"No text content in LLM response (response was a thinking block only; model may have run out of tokens before writing the answer)",
+				);
+			}
+			throw new Error("No text content in LLM response");
 		};
 
 		// 5. Run extraction. MemoryIndex self-heals its parent dir
