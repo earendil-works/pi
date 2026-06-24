@@ -101,7 +101,7 @@
 
 > **Why added (after 3.2):** discovered 9 ChatPage Card integration regressions in 4.1. Root cause: when agent pauses on `ask_user_question`, `isThinking=false` → `isStreaming=false` → step body collapses → card invisible. Fix: when any toolCall part has a `cardStates` entry, force `open=true` so the active card is always visible. This is a 1-line change but warrants its own TDD step.
 
-- [ ] 3.3 **MessageParts 写测试 (RED): force-open step when active card exists**
+- [x] 3.3 **MessageParts 写测试 (RED): force-open step when active card exists**
   - **文件**: `packages/webui/web/src/components/message/MessageParts.test.tsx` (Modify)
   - **内容**: 在 `describe("StepHeader (via MessageParts)", ...)` 块末尾新增 case "force-opens the body when an active AskUserQuestionCard is present":
     - `parts = [{type:"toolCall", id:"tc1", name:"ask_user_question", args:{}}]`
@@ -111,7 +111,7 @@
   - **验证**: `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 新 case FAIL (因为当前实现没考虑 cardStates)
   - **依赖**: 3.2
 
-- [ ] 3.4 **MessageParts force-open 实现 (GREEN)**
+- [x] 3.4 **MessageParts force-open 实现 (GREEN)**
   - **文件**: `packages/webui/web/src/components/message/MessageParts.tsx` (Modify)
   - **内容**:
     1. 在 `MessageParts` 函数体内、`hasStepContent` 计算之后加:
@@ -124,7 +124,7 @@
   - **依赖**: 3.3
   - **前置阅读**: AskUserQuestionCard 用法见 MessageParts.tsx 第 230-249 行;CardState interface 见 AskUserQuestionCard.tsx
 
-- [ ] 3.5 **spec + design 更新**
+- [x] 3.5 **spec + design 更新**
   - **文件**:
     - `docs/sdd/changes/webui-collapsible-thinking-step/specs/chat-message-rendering/spec.md` (Modify)
     - `docs/sdd/changes/webui-collapsible-thinking-step/design.md` (Modify)
@@ -136,19 +136,19 @@
 
 ## 4. 最终验证
 
-- [ ] 4.1 **全量 webui 测试**
+- [x] 4.1 **全量 webui 测试**
   - **文件**: 无
   - **内容**: 跑全量 webui test
   - **验证**: `cd packages/webui/web && npx vitest --run` 期望 `Tests 269+ passed` (原 265 + 4 新 MessageParts + 1 新 MessageBubble - 老覆盖 case 调整)
   - **依赖**: 3.1
 
-- [ ] 4.2 **lint + type check**
+- [x] 4.2 **lint + type check**
   - **文件**: 无
   - **内容**: 跑 biome + tsgo
   - **验证**: `npm run check` 期望 exit 0 (pre-existing LSP warnings 不算)
   - **依赖**: 4.1
 
-- [ ] 4.3 **手动浏览器 smoke test**
+- [x] 4.3 **手动浏览器 smoke test**
   - **文件**: 无
   - **内容**: 浏览器开 `http://127.0.0.1:8741`,用 minimax(M3) 走一次完整 turn(含 thinking + tool + final text),确认:
     1. 推理中 step 展开,header 显示 `● Executing (Xs) ▼` (Xs 1s tick)
@@ -159,6 +159,6 @@
   - **依赖**: 4.1
 
 ## Verification
-- [ ] 全量测试: `cd packages/webui/web && npx vitest --run`
-- [ ] Lint: `npm run check` (exit 0)
-- [ ] Manual smoke: tmux attach pi-web 浏览器手测 4 case
+- [x] 全量测试: `cd packages/webui/web && npx vitest --run`
+- [x] Lint: `npm run check` (exit 0)
+- [x] Manual smoke: tmux attach pi-web 浏览器手测 4 case
