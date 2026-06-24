@@ -391,7 +391,10 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY);
+		// recallThreshold: 0 bypasses the strict default 1/rrfK gate so this
+		// single-channel dense-only rank=1 hit (rrfScore 0.0164) surfaces.
+		// This test isolates the score-formula math from the recall gate.
+		const results = await recallAtoms(index, QRY, { recallThreshold: 0 });
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.5, 5);
@@ -408,7 +411,10 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, QRY);
+		// recallThreshold: 0 bypasses the strict default 1/rrfK gate so this
+		// single-channel dense-only rank=1 hit (rrfScore 0.0164) surfaces.
+		// This test isolates the score-formula math from the recall gate.
+		const results = await recallAtoms(index, QRY, { recallThreshold: 0 });
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.05, 5);
