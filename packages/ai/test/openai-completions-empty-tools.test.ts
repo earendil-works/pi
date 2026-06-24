@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { streamSimple } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
-import { streamSimple } from "../src/stream.ts";
 
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
 // backends (e.g. DashScope / Aliyun Qwen via compatible-mode) reject the request with
@@ -161,6 +161,31 @@ describe("openai-completions empty tools handling", () => {
 		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/compat");
 		expect(clientOptions.defaultHeaders?.Authorization).toBeNull();
 		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test");
+	});
+
+	it("uses provider env before process.env for Cloudflare AI Gateway base URL", async () => {
+		process.env.CLOUDFLARE_ACCOUNT_ID = "process-account";
+		process.env.CLOUDFLARE_GATEWAY_ID = "process-gateway";
+		const model = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				env: {
+					CLOUDFLARE_ACCOUNT_ID: "provider-account",
+					CLOUDFLARE_GATEWAY_ID: "provider-gateway",
+				},
+			},
+		).result();
+
+		const clientOptions = mockState.lastClientOptions as { baseURL?: string };
+		expect(clientOptions.baseURL).toBe(
+			"https://gateway.ai.cloudflare.com/v1/provider-account/provider-gateway/compat",
+		);
 	});
 
 	it("preserves inline upstream Authorization for Cloudflare AI Gateway BYOK requests", async () => {

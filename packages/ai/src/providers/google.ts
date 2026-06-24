@@ -4,6 +4,7 @@ import {
 	GoogleGenAI,
 	type ThinkingConfig,
 } from "@google/genai";
+import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -315,6 +316,14 @@ export const streamSimpleGoogle: StreamFunction<"google-generative-ai", SimpleSt
 	} satisfies GoogleOptions);
 };
 
+export function register(): void {
+	registerApiProvider({
+		api: "google-generative-ai",
+		stream: streamGoogle,
+		streamSimple: streamSimpleGoogle,
+	});
+}
+
 function createClient(
 	model: Model<"google-generative-ai">,
 	apiKey?: string,
@@ -406,7 +415,8 @@ function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
 }
 
 function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
-	return /gemini-3(?:\.\d+)?-flash/.test(model.id.toLowerCase());
+	const id = model.id.toLowerCase();
+	return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 
 function getDisabledThinkingConfig(model: Model<"google-generative-ai">): ThinkingConfig {

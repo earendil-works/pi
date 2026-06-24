@@ -69,6 +69,15 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high"]);
 	});
 
+	it("excludes thinking off for Moonshot Kimi K2.7 Code models", () => {
+		const cases = [getModel("moonshotai", "kimi-k2.7-code"), getModel("moonshotai-cn", "kimi-k2.7-code")];
+
+		for (const model of cases) {
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(["minimal", "low", "medium", "high"]);
+		}
+	});
+
 	it("includes only high for OpenCode Grok Build", () => {
 		const model = getModel("opencode", "grok-build-0.1");
 		expect(model).toBeDefined();

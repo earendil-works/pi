@@ -1,0 +1,142 @@
+name: Issue Triage Labels
+
+on:
+  issues:
+    types: [reopened, labeled]
+
+jobs:
+  update-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Update triage labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const UNTRIAGED_LABEL = 'untriaged';
+            const NO_ACTION_LABEL = 'no-action';
+            const LAST_READ_LABEL = 'last-read';
+            const TO_DISCUSS_LABEL = 'to-discuss';
+            const INPROGRESS_LABEL = 'inprogress';
+
+            function issueHasLabel(issue, labelName) {
+              return (issue.labels ?? []).some((label) => label.name === labelName);
+            }
+
+            async function removeLabelIfPresent(issueNumber, issue, labelName) {
+              if (!issueHasLabel(issue, labelName)) {
+                console.log(`Issue #${issueNumber} does not have ${labelName}`);
+                return;
+              }
+
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: labelName,
+                });
+                console.log(`Removed ${labelName} from #${issueNumber}`);
+              } catch (error) {
+                if (error.status === 404) {
+                  console.log(`Label ${labelName} was already absent from #${issueNumber}`);
+                  return;
+                }
+                throw error;
+              }
+            }
+
+            if (context.payload.action === 'reopened') {
+              await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
+              await removeLabelIfPresent(context.issue.number, context.payload.issue, NO_ACTION_LABEL);
+              return;
+            }
+
+            if (context.payload.action === 'labeled' && context.payload.label?.name === NO_ACTION_LABEL) {
+              await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
+              return;
+            }
+
+            if (context.payload.action !== 'labeled' || context.payload.label?.name !== LAST_READ_LABEL) {
+              console.log('Not a last-read label event');
+              return;
+            }
+
+            const currentIssueNumber = context.issue.number;
+            const lastReadIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: LAST_READ_LABEL,
+              per_page: 100,
+            });
+
+            const previousIssueNumbers = lastReadIssues
+              .filter((issue) => !issue.pull_request)
+              .map((issue) => issue.number)
+              .filter((issueNumber) => issueNumber !== currentIssueNumber);
+
+            if (previousIssueNumbers.length === 0) {
+              console.log('No previous last-read issue found');
+              return;
+            }
+
+            const previousIssueNumber = Math.max(...previousIssueNumbers);
+            if (currentIssueNumber <= previousIssueNumber) {
+              console.log(
+                `Last-read was added to old issue #${currentIssueNumber}; latest last-read is #${previousIssueNumber}`,
+              );
+              return;
+            }
+
+            const untriagedIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: UNTRIAGED_LABEL,
+              per_page: 100,
+            });
+
+            const issuesToMark = untriagedIssues
+              .filter((issue) => !issue.pull_request)
+              .filter((issue) => issue.number >= previousIssueNumber && issue.number <= currentIssueNumber)
+              .sort((a, b) => a.number - b.number);
+
+            if (issuesToMark.length === 0) {
+              console.log(`No untriaged issues found from #${previousIssueNumber} to #${currentIssueNumber}`);
+              return;
+            }
+
+            for (const issue of issuesToMark) {
+              if (issueHasLabel(issue, TO_DISCUSS_LABEL)) {
+                console.log(`Skipped ${NO_ACTION_LABEL} for #${issue.number} because it has ${TO_DISCUSS_LABEL}`);
+              } else {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: [NO_ACTION_LABEL],
+                });
+                console.log(`Added ${NO_ACTION_LABEL} to #${issue.number}`);
+              }
+
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+              console.log(`Closed #${issue.number} as not planned`);
+
+              await removeLabelIfPresent(issue.number, issue, INPROGRESS_LABEL);
+
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: UNTRIAGED_LABEL,
+              });
+              console.log(`Removed ${UNTRIAGED_LABEL} from #${issue.number}`);
+            }

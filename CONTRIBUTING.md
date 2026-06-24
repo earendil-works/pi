@@ -95,3 +95,8 @@ AI can help group duplicates, summarize reports, and spot missing information. I
 ### Is this hostile to contributors?
 
 No. It is a guardrail against burnout and tracker spam. Short, concrete, reproducible issues are welcome. Thoughtful contributions are welcome. Automated slop, entitlement, and large volumes of low-effort reports are not.
+
+## Where can I learn about plans?
+
+Earendil uses RFCs to discuss larger changes.  Not all of them are public, but
+quite a few are.  They can be found at [rfc.earendil.com](https://rfc.earendil.com/keyword/pi/).

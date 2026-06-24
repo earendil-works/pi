@@ -374,10 +374,13 @@ Response:
     "summary": "Summary of conversation...",
     "firstKeptEntryId": "abc123",
     "tokensBefore": 150000,
+    "estimatedTokensAfter": 32000,
     "details": {}
   }
 }
 ```
+
+`estimatedTokensAfter` is a heuristic estimate over the rebuilt message context immediately after compaction, not a provider-exact token count.
 
 #### set_auto_compaction
 
@@ -924,6 +927,7 @@ The `reason` field is `"manual"`, `"threshold"`, or `"overflow"`.
     "summary": "Summary of conversation...",
     "firstKeptEntryId": "abc123",
     "tokensBefore": 150000,
+    "estimatedTokensAfter": 32000,
     "details": {}
   },
   "aborted": false,

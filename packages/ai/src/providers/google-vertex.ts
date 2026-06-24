@@ -7,6 +7,7 @@ import {
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
+import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -14,6 +15,7 @@ import type {
 	Context,
 	Model,
 	ThinkingLevel as PiThinkingLevel,
+	ProviderEnv,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -23,6 +25,7 @@ import type {
 	ToolCall,
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
@@ -91,7 +94,7 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 			// Create the client using either a Vertex API key, if provided, or ADC with project and location
 			const client = apiKey
 				? createClientWithApiKey(model, apiKey, options?.headers)
-				: createClient(model, resolveProject(options), resolveLocation(options), options?.headers);
+				: createClient(model, resolveProject(options), resolveLocation(options), options?.headers, options?.env);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -328,17 +331,28 @@ export const streamSimpleGoogleVertex: StreamFunction<"google-vertex", SimpleStr
 	} satisfies GoogleVertexOptions);
 };
 
+export function register(): void {
+	registerApiProvider({
+		api: "google-vertex",
+		stream: streamGoogleVertex,
+		streamSimple: streamSimpleGoogleVertex,
+	});
+}
+
 function createClient(
 	model: Model<"google-vertex">,
 	project: string,
 	location: string,
 	optionsHeaders?: Record<string, string>,
+	env?: ProviderEnv,
 ): GoogleGenAI {
+	const googleAuthOptions = buildGoogleAuthOptions(env);
 	return new GoogleGenAI({
 		vertexai: true,
 		project,
 		location,
 		apiVersion: API_VERSION,
+		...(googleAuthOptions ? { googleAuthOptions } : {}),
 		httpOptions: buildHttpOptions(model, optionsHeaders),
 	});
 }
@@ -394,6 +408,11 @@ function baseUrlIncludesApiVersion(baseUrl: string): boolean {
 	}
 }
 
+function buildGoogleAuthOptions(env?: ProviderEnv): { keyFilename: string } | undefined {
+	const keyFilename = getProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env);
+	return keyFilename ? { keyFilename } : undefined;
+}
+
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 	const apiKey = options?.apiKey?.trim();
 	if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
@@ -407,7 +426,10 @@ function isPlaceholderApiKey(apiKey: string): boolean {
 }
 
 function resolveProject(options?: GoogleVertexOptions): string {
-	const project = options?.project || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+	const project =
+		options?.project ||
+		getProviderEnvValue("GOOGLE_CLOUD_PROJECT", options?.env) ||
+		getProviderEnvValue("GCLOUD_PROJECT", options?.env);
 	if (!project) {
 		throw new Error(
 			"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.",
@@ -417,7 +439,7 @@ function resolveProject(options?: GoogleVertexOptions): string {
 }
 
 function resolveLocation(options?: GoogleVertexOptions): string {
-	const location = options?.location || process.env.GOOGLE_CLOUD_LOCATION;
+	const location = options?.location || getProviderEnvValue("GOOGLE_CLOUD_LOCATION", options?.env);
 	if (!location) {
 		throw new Error("Vertex AI requires a location. Set GOOGLE_CLOUD_LOCATION or pass location in options.");
 	}
@@ -490,7 +512,8 @@ function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
 }
 
 function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
-	return /gemini-3(?:\.\d+)?-flash/.test(model.id.toLowerCase());
+	const id = model.id.toLowerCase();
+	return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 
 function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfig {

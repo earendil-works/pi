@@ -694,7 +694,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private allSessions: SessionInfo[] | null = null;
 	private currentSessionsLoader: SessionsLoader;
 	private allSessionsLoader: SessionsLoader;
-	private onCancel: () => void;
 	private requestRender: () => void;
 	private renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 	private currentLoading = false;
@@ -751,7 +750,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.keybindings = options?.keybindings ?? KeybindingsManager.create();
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
-		this.onCancel = onCancel;
 		this.requestRender = requestRender;
 		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
 		const renameSession = options?.renameSession;
@@ -948,10 +946,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.header.setLoading(false);
 			this.sessionList.setSessions(sessions, showCwd);
 			this.requestRender();
-
-			if (scope === "all" && sessions.length === 0 && (this.currentSessions?.length ?? 0) === 0) {
-				this.onCancel();
-			}
 		} catch (err) {
 			if (scope === "current") {
 				this.currentLoading = false;

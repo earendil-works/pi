@@ -9,7 +9,6 @@ import {
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
-	estimateContextTokens,
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
@@ -396,7 +395,7 @@ describe("buildSessionContext", () => {
 });
 
 describe("prepareCompaction with previous compaction", () => {
-	it("should preserve kept messages across repeated compactions when they still fit", () => {
+	it("should skip repeated compactions when kept messages still fit", () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1 (summarized by compaction1)"));
 		const a1 = createMessageEntry(createAssistantMessage("assistant msg 1"));
 		const u2 = createMessageEntry(createUserMessage("user msg 2 - kept by compaction1"));
@@ -408,29 +407,9 @@ describe("prepareCompaction with previous compaction", () => {
 		const a4 = createMessageEntry(createAssistantMessage("assistant msg 4", createMockUsage(8000, 2000)));
 
 		const pathEntries = [u1, a1, u2, a2, u3, a3, compaction1, u4, a4];
-		const contextBefore = buildSessionContext(pathEntries);
 		const preparation = prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS);
 
-		expect(preparation).toBeDefined();
-		expect(preparation!.firstKeptEntryId).toBe(u2.id);
-		expect(preparation!.previousSummary).toBe("First summary");
-		expect(extractText(preparation!.messagesToSummarize)).not.toContain("First summary");
-		expect(preparation!.tokensBefore).toBe(estimateContextTokens(contextBefore.messages).tokens);
-
-		const compaction2: CompactionEntry = {
-			type: "compaction",
-			id: "compaction2-id",
-			parentId: a4.id,
-			timestamp: new Date().toISOString(),
-			summary: "Second summary",
-			firstKeptEntryId: preparation!.firstKeptEntryId,
-			tokensBefore: preparation!.tokensBefore,
-		};
-		const contextAfter = buildSessionContext([...pathEntries, compaction2]);
-		const contextAfterText = extractText(contextAfter.messages);
-
-		expect(contextAfterText).toContain("user msg 2 - kept by compaction1");
-		expect(contextAfterText).toContain("user msg 3 - kept by compaction1");
+		expect(preparation).toBeUndefined();
 	});
 
 	it("should re-summarize previously kept messages when the recent window moves past them", () => {

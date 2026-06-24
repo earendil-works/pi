@@ -4,6 +4,10 @@
  * Bun compiled binaries have an empty `process.env` when running inside
  * sandbox environments (e.g. nono on Linux/macOS). On Linux we can recover
  * the environment from `/proc/self/environ`.
+ *
+ * Keep this in sync with getBunSandboxEnvValue() in
+ * packages/ai/src/utils/provider-env.ts. The ai package duplicates the lookup
+ * for direct consumers that do not go through this coding-agent entrypoint.
  */
 
 import { readFileSync } from "node:fs";

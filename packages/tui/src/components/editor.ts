@@ -390,6 +390,10 @@ export class Editor implements Component, Focusable {
 		}
 	}
 
+	private isEditorEmpty(): boolean {
+		return this.state.lines.length === 1 && this.state.lines[0] === "";
+	}
+
 	private isOnFirstVisualLine(): boolean {
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
@@ -803,7 +807,10 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
-			if (this.isOnFirstVisualLine() && this.history.length > 0) {
+			if (
+				this.isOnFirstVisualLine() &&
+				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
+			) {
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
 				// Already at top - jump to start of line

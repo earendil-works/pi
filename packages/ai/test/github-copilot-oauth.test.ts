@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loginGitHubCopilot } from "../src/utils/oauth/github-copilot.ts";
+import { getModels } from "../src/models.ts";
+import {
+	githubCopilotOAuthProvider,
+	loginGitHubCopilot,
+	refreshGitHubCopilotToken,
+} from "../src/utils/oauth/github-copilot.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -29,6 +34,57 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.useRealTimers();
 	});
 
+	it("filters models to the authenticated account picker catalog", async () => {
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+
+			if (url.includes("/copilot_internal/v2/token")) {
+				return jsonResponse({
+					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+					expires_at: 9999999999,
+				});
+			}
+
+			if (url === "https://api.individual.githubcopilot.com/models") {
+				expect(init?.headers).toMatchObject({
+					Authorization: "Bearer tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+				});
+				return jsonResponse({
+					data: [
+						{
+							id: "gpt-4.1",
+							model_picker_enabled: true,
+							capabilities: { supports: { tool_calls: true } },
+						},
+						{
+							id: "claude-opus-4.7",
+							model_picker_enabled: true,
+							policy: { state: "disabled" },
+							capabilities: { supports: { tool_calls: true } },
+						},
+						{
+							id: "gpt-5.4-nano",
+							model_picker_enabled: false,
+							capabilities: { supports: { tool_calls: true } },
+						},
+					],
+				});
+			}
+
+			throw new Error(`Unexpected fetch URL: ${url}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await refreshGitHubCopilotToken("ghu_refresh_token");
+		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
+
+		const modifiedModels = githubCopilotOAuthProvider.modifyModels?.(getModels("github-copilot"), credentials) ?? [];
+		expect(modifiedModels.filter((model) => model.provider === "github-copilot").map((model) => model.id)).toEqual([
+			"gpt-4.1",
+		]);
+	});
+
 	it("reports device-code details through onDeviceCode", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
@@ -55,6 +111,10 @@ describe("GitHub Copilot OAuth device flow", () => {
 					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
 					expires_at: 9999999999,
 				});
+			}
+
+			if (url.endsWith("/models")) {
+				return jsonResponse({ data: [] });
 			}
 
 			if (url.includes("/models/") && url.endsWith("/policy")) {
@@ -146,6 +206,10 @@ describe("GitHub Copilot OAuth device flow", () => {
 				});
 			}
 
+			if (url.endsWith("/models")) {
+				return jsonResponse({ data: [] });
+			}
+
 			if (url.includes("/models/") && url.endsWith("/policy")) {
 				return new Response("", { status: 200 });
 			}
@@ -229,6 +293,10 @@ describe("GitHub Copilot OAuth device flow", () => {
 					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
 					expires_at: 9999999999,
 				});
+			}
+
+			if (url.endsWith("/models")) {
+				return jsonResponse({ data: [] });
 			}
 
 			if (url.includes("/models/") && url.endsWith("/policy")) {

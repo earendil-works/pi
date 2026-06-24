@@ -24,6 +24,7 @@ import { resolveConfigValue } from "./resolve-config-value.ts";
 export type ApiKeyCredential = {
 	type: "api_key";
 	key: string;
+	env?: Record<string, string>;
 };
 
 export type OAuthCredential = {
@@ -304,6 +305,14 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Get provider-scoped environment values for an API key credential.
+	 */
+	getProviderEnv(provider: string): Record<string, string> | undefined {
+		const cred = this.data[provider];
+		return cred?.type === "api_key" && cred.env ? { ...cred.env } : undefined;
+	}
+
+	/**
 	 * Set credential for a provider.
 	 */
 	set(provider: string, credential: AuthCredential): void {
@@ -471,7 +480,7 @@ export class AuthStorage {
 		const cred = this.data[providerId];
 
 		if (cred?.type === "api_key") {
-			return resolveConfigValue(cred.key);
+			return resolveConfigValue(cred.key, cred.env);
 		}
 
 		if (cred?.type === "oauth") {

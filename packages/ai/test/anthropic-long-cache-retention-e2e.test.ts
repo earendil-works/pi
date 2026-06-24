@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
+import { complete } from "../src/index.ts";
 import { getModels, getProviders } from "../src/models.ts";
-import { complete } from "../src/stream.ts";
 import type { Api, KnownProvider, Model, ProviderStreamOptions } from "../src/types.ts";
 import { resolveApiKey } from "./oauth.ts";
 

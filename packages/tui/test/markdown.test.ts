@@ -1376,4 +1376,47 @@ bar`,
 			);
 		});
 	});
+
+	describe("Streaming code fences", () => {
+		it("stabilizes partial closing fence rendering", () => {
+			const cases = [
+				{
+					input: "```ts\nconst x = 1;\n``",
+					expected: ["```ts", "  const x = 1;", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```",
+					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+				},
+				{
+					input: "```ts\n``",
+					expected: ["```ts", "", "```"],
+				},
+				{
+					input: "````\n```",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "~~~~~\n~~~~",
+					expected: ["```", "", "```"],
+				},
+				{
+					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
+					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+				},
+			];
+
+			for (const { input, expected } of cases) {
+				const markdown = new Markdown(input, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+				assert.deepStrictEqual(lines, expected);
+			}
+
+			const partial = new Markdown("```ts\nconst x = 1;\n``", 0, 0, defaultMarkdownTheme);
+			const complete = new Markdown("```ts\nconst x = 1;\n```", 0, 0, defaultMarkdownTheme);
+
+			assert.strictEqual(partial.render(80).length, complete.render(80).length);
+		});
+	});
 });

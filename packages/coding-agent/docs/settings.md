@@ -69,6 +69,18 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 
+### Network
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `httpProxy` | string | - | HTTP proxy URL applied as `HTTP_PROXY` and `HTTPS_PROXY`. Global setting only. |
+
+```json
+{
+  "httpProxy": "http://127.0.0.1:7890"
+}
+```
+
 ### Warnings
 
 | Setting | Type | Default | Description |

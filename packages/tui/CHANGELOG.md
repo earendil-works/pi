@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.79.10] - 2026-06-22
+
+## [0.79.9] - 2026-06-20
+
+### Fixed
+
+- Fixed Markdown streaming code fence rendering so partial closing fences no longer make code blocks shrink or flicker while content streams ([#5846](https://github.com/earendil-works/pi/pull/5846) by [@xl0](https://github.com/xl0)).
+
+## [0.79.8] - 2026-06-19
+
+## [0.79.7] - 2026-06-18
+
+### Added
+
+- Added terminal color-scheme query and notification support for light/dark appearance detection (`TUI.queryTerminalColorScheme()`, `TUI.onTerminalColorSchemeChange()`, and `TUI.setTerminalColorSchemeNotifications()`) ([#5874](https://github.com/earendil-works/pi/pull/5874)).
+- Added Warp terminal detection for Kitty graphics inline image support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
+- Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
+
+## [0.79.6] - 2026-06-16
+
+## [0.79.5] - 2026-06-16
+
+### Changed
+
+- Updated Markdown parsing to `marked` 18.0.5.
+
+### Fixed
+
+- Fixed editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history ([#5789](https://github.com/earendil-works/pi/pull/5789) by [@4h9fbZ](https://github.com/4h9fbZ)).
+
 ## [0.79.4] - 2026-06-15
 
 ### Added

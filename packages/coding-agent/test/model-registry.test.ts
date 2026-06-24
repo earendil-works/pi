@@ -434,6 +434,43 @@ describe("ModelRegistry", () => {
 			expect(compat?.cacheControlFormat).toBe("anthropic");
 		});
 
+		test("compat schema accepts chat template thinking configuration", () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://example.com/v1",
+					apiKey: "DEMO_KEY",
+					api: "openai-completions",
+					models: [
+						{
+							id: "demo-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+							compat: {
+								thinkingFormat: "chat-template",
+								chatTemplateKwargs: {
+									preserve_thinking: true,
+									thinking: { $var: "thinking.enabled" },
+								},
+							},
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const compat = registry.find("demo", "demo-model")?.compat as OpenAICompletionsCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.thinkingFormat).toBe("chat-template");
+			expect(compat?.chatTemplateKwargs).toEqual({
+				preserve_thinking: true,
+				thinking: { $var: "thinking.enabled" },
+			});
+		});
+
 		test("compat schema accepts Anthropic eager tool input streaming flag", () => {
 			writeRawModelsJson({
 				demo: {
@@ -891,6 +928,38 @@ describe("ModelRegistry", () => {
 				],
 			});
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
+		});
+
+		test("stored API key env propagates to request auth and resolves headers", async () => {
+			authStorage.set("cloudflare-ai-gateway", {
+				type: "api_key",
+				key: "$CLOUDFLARE_API_KEY",
+				env: {
+					CLOUDFLARE_API_KEY: "stored-cf-token",
+					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+				},
+			});
+			writeRawModelsJson({
+				"cloudflare-ai-gateway": {
+					headers: { "x-account": "$CLOUDFLARE_ACCOUNT_ID" },
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.getAll().find((m) => m.provider === "cloudflare-ai-gateway");
+			expect(model).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(model!);
+
+			expect(auth).toEqual({
+				ok: true,
+				apiKey: "stored-cf-token",
+				headers: { "x-account": "stored-account" },
+				env: {
+					CLOUDFLARE_API_KEY: "stored-cf-token",
+					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+				},
+			});
 		});
 
 		test("registerProvider treats uppercase apiKey and headers as literals", async () => {
@@ -1635,6 +1704,25 @@ describe("ModelRegistry", () => {
 				expect(available.some((m) => m.provider === "custom-provider")).toBe(true);
 				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
 				expect(count).toBe(0);
+			});
+
+			test("getAvailable filters GitHub Copilot OAuth models to account picker availability", () => {
+				authStorage.set("github-copilot", {
+					type: "oauth",
+					refresh: "github-access-token",
+					access: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+					expires: Date.now() + 60_000,
+					availableModelIds: ["gpt-4.1"],
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				expect(
+					registry
+						.getAvailable()
+						.filter((m) => m.provider === "github-copilot")
+						.map((m) => m.id),
+				).toEqual(["gpt-4.1"]);
 			});
 
 			test("getApiKeyAndHeaders resolves authHeader on every request", async () => {

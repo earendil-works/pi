@@ -96,6 +96,13 @@ const ThinkingLevelMapSchema = Type.Object({
 	xhigh: Type.Optional(ThinkingLevelMapValueSchema),
 });
 
+const ChatTemplateKwargScalarSchema = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+const ChatTemplateKwargVariableSchema = Type.Object({
+	$var: Type.Union([Type.Literal("thinking.enabled"), Type.Literal("thinking.effort")]),
+	omitWhenOff: Type.Optional(Type.Boolean()),
+});
+const ChatTemplateKwargSchema = Type.Union([ChatTemplateKwargScalarSchema, ChatTemplateKwargVariableSchema]);
+
 const OpenAICompletionsCompatSchema = Type.Object({
 	supportsStore: Type.Optional(Type.Boolean()),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
@@ -114,9 +121,13 @@ const OpenAICompletionsCompatSchema = Type.Object({
 			Type.Literal("deepseek"),
 			Type.Literal("zai"),
 			Type.Literal("qwen"),
+			Type.Literal("chat-template"),
 			Type.Literal("qwen-chat-template"),
+			Type.Literal("string-thinking"),
+			Type.Literal("ant-ling"),
 		]),
 	),
+	chatTemplateKwargs: Type.Optional(Type.Record(Type.String(), ChatTemplateKwargSchema)),
 	cacheControlFormat: Type.Optional(Type.Literal("anthropic")),
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
 	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
@@ -240,6 +251,7 @@ export type ResolvedRequestAuth =
 			ok: true;
 			apiKey?: string;
 			headers?: Record<string, string>;
+			env?: Record<string, string>;
 	  }
 	| {
 			ok: false;
@@ -285,6 +297,13 @@ function mergeCompat(
 		mergedCompletions.vercelGatewayRouting = {
 			...baseCompletions?.vercelGatewayRouting,
 			...overrideCompletions.vercelGatewayRouting,
+		};
+	}
+
+	if (baseCompletions?.chatTemplateKwargs || overrideCompletions.chatTemplateKwargs) {
+		mergedCompletions.chatTemplateKwargs = {
+			...baseCompletions?.chatTemplateKwargs,
+			...overrideCompletions.chatTemplateKwargs,
 		};
 	}
 
@@ -684,17 +703,27 @@ export class ModelRegistry {
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
+			const providerEnv = this.authStorage.getProviderEnv(model.provider);
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 			const apiKey =
 				apiKeyFromAuthStorage ??
 				(providerConfig?.apiKey
-					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
+					? resolveConfigValueOrThrow(
+							providerConfig.apiKey,
+							`API key for provider "${model.provider}"`,
+							providerEnv,
+						)
 					: undefined);
 
-			const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
+			const providerHeaders = resolveHeadersOrThrow(
+				providerConfig?.headers,
+				`provider "${model.provider}"`,
+				providerEnv,
+			);
 			const modelHeaders = resolveHeadersOrThrow(
 				this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
 				`model "${model.provider}/${model.id}"`,
+				providerEnv,
 			);
 
 			let headers =
@@ -713,6 +742,7 @@ export class ModelRegistry {
 				ok: true,
 				apiKey,
 				headers: headers && Object.keys(headers).length > 0 ? headers : undefined,
+				env: providerEnv && Object.keys(providerEnv).length > 0 ? providerEnv : undefined,
 			};
 		} catch (error) {
 			return {
@@ -777,7 +807,9 @@ export class ModelRegistry {
 		}
 
 		const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
-		return providerApiKey ? resolveConfigValueUncached(providerApiKey) : undefined;
+		return providerApiKey
+			? resolveConfigValueUncached(providerApiKey, this.authStorage.getProviderEnv(provider))
+			: undefined;
 	}
 
 	/**

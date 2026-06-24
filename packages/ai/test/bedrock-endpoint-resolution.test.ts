@@ -45,7 +45,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { getModel } from "../src/models.ts";
-import { streamBedrock } from "../src/providers/amazon-bedrock.ts";
+import { type BedrockOptions, streamBedrock } from "../src/providers/amazon-bedrock.ts";
 import type { Context, Model } from "../src/types.ts";
 
 const context: Context = {
@@ -83,8 +83,12 @@ afterEach(() => {
 	}
 });
 
-async function captureClientConfig(model: Model<"bedrock-converse-stream">): Promise<Record<string, unknown>> {
-	await streamBedrock(model, context, { cacheRetention: "none" }).result();
+async function captureClientConfig(
+	model: Model<"bedrock-converse-stream">,
+	options: BedrockOptions = {},
+): Promise<Record<string, unknown>> {
+	bedrockMock.constructorCalls.length = 0;
+	await streamBedrock(model, context, { cacheRetention: "none", ...options }).result();
 	expect(bedrockMock.constructorCalls).toHaveLength(1);
 	return bedrockMock.constructorCalls[0];
 }
@@ -113,6 +117,29 @@ describe("bedrock endpoint resolution", () => {
 
 		expect(config.endpoint).toBe("https://bedrock-runtime.eu-central-1.amazonaws.com");
 		expect(config.region).toBe("eu-central-1");
+	});
+
+	it("handles missing regions for explicit, scoped, and ambient profiles", async () => {
+		const model = getModel("amazon-bedrock", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0");
+
+		let config = await captureClientConfig(model, { profile: "bedrock-profile" });
+
+		expect(config.profile).toBe("bedrock-profile");
+		expect(config.endpoint).toBe("https://bedrock-runtime.eu-central-1.amazonaws.com");
+		expect(config.region).toBe("eu-central-1");
+
+		config = await captureClientConfig(model, { env: { AWS_PROFILE: "scoped-bedrock-profile" } });
+
+		expect(config.profile).toBe("scoped-bedrock-profile");
+		expect(config.endpoint).toBe("https://bedrock-runtime.eu-central-1.amazonaws.com");
+		expect(config.region).toBe("eu-central-1");
+
+		process.env.AWS_PROFILE = "ambient-bedrock-profile";
+		config = await captureClientConfig(model);
+
+		expect(config.profile).toBe("ambient-bedrock-profile");
+		expect(config.endpoint).toBeUndefined();
+		expect(config.region).toBeUndefined();
 	});
 
 	it("still passes custom Bedrock endpoints through to the SDK client", async () => {

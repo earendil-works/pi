@@ -144,12 +144,25 @@ async function findBashOnPath(): Promise<string | null> {
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
 }
 
-async function getShellConfig(
-	customShellPath?: string,
-): Promise<Result<{ shell: string; args: string[] }, ExecutionError>> {
+interface ShellConfig {
+	shell: string;
+	args: string[];
+	commandTransport?: "argv" | "stdin";
+}
+
+function isLegacyWslBashPath(path: string): boolean {
+	const normalized = path.replace(/\//g, "\\").toLowerCase();
+	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
+}
+
+function getBashShellConfig(shell: string): ShellConfig {
+	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+}
+
+async function getShellConfig(customShellPath?: string): Promise<Result<ShellConfig, ExecutionError>> {
 	if (customShellPath) {
 		if (await pathExists(customShellPath)) {
-			return ok({ shell: customShellPath, args: ["-c"] });
+			return ok(getBashShellConfig(customShellPath));
 		}
 		return err(new ExecutionError("shell_unavailable", `Custom shell path not found: ${customShellPath}`));
 	}
@@ -161,22 +174,22 @@ async function getShellConfig(
 		if (programFilesX86) candidates.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
 		for (const candidate of candidates) {
 			if (await pathExists(candidate)) {
-				return ok({ shell: candidate, args: ["-c"] });
+				return ok(getBashShellConfig(candidate));
 			}
 		}
 		const bashOnPath = await findBashOnPath();
 		if (bashOnPath) {
-			return ok({ shell: bashOnPath, args: ["-c"] });
+			return ok(getBashShellConfig(bashOnPath));
 		}
 		return err(new ExecutionError("shell_unavailable", "No bash shell found"));
 	}
 
 	if (await pathExists("/bin/bash")) {
-		return ok({ shell: "/bin/bash", args: ["-c"] });
+		return ok(getBashShellConfig("/bin/bash"));
 	}
 	const bashOnPath = await findBashOnPath();
 	if (bashOnPath) {
-		return ok({ shell: bashOnPath, args: ["-c"] });
+		return ok(getBashShellConfig(bashOnPath));
 	}
 	return ok({ shell: "sh", args: ["-c"] });
 }
@@ -274,13 +287,22 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			};
 
 			try {
-				child = spawn(shellConfig.value.shell, [...shellConfig.value.args, command], {
-					cwd,
-					detached: process.platform !== "win32",
-					env: getShellEnv(this.shellEnv, options?.env),
-					stdio: ["ignore", "pipe", "pipe"],
-					windowsHide: true,
-				});
+				const commandFromStdin = shellConfig.value.commandTransport === "stdin";
+				child = spawn(
+					shellConfig.value.shell,
+					commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command],
+					{
+						cwd,
+						detached: process.platform !== "win32",
+						env: getShellEnv(this.shellEnv, options?.env),
+						stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+						windowsHide: true,
+					},
+				);
+				if (commandFromStdin) {
+					child.stdin?.on("error", () => {});
+					child.stdin?.end(command);
+				}
 			} catch (error) {
 				const cause = toError(error);
 				settle(err(new ExecutionError("spawn_error", cause.message, cause)));

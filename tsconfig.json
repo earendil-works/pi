@@ -6,6 +6,7 @@
 			"*": ["./*"],
 			"@earendil-works/pi-ai": ["./packages/ai/src/index.ts"],
 			"@earendil-works/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
+			"@earendil-works/pi-ai/openrouter-images": ["./packages/ai/src/providers/images/openrouter.ts"],
 			"@earendil-works/pi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
 			"@earendil-works/pi-ai/dist/*": ["./packages/ai/src/*"],
 			"@earendil-works/pi-agent-core": ["./packages/agent/src/index.ts"],

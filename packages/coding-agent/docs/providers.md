@@ -104,6 +104,24 @@ Store credentials in `~/.pi/agent/auth.json`:
 
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
 
+API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
+
+```json
+{
+  "cloudflare-ai-gateway": {
+    "type": "api_key",
+    "key": "$CLOUDFLARE_API_KEY",
+    "env": {
+      "CLOUDFLARE_API_KEY": "...",
+      "CLOUDFLARE_ACCOUNT_ID": "account-id",
+      "CLOUDFLARE_GATEWAY_ID": "gateway-id"
+    }
+  }
+}
+```
+
+Use this when pi should use different provider settings than the project shell environment.
+
 ### Key Resolution
 
 The `key` field supports command execution, environment interpolation, and literals:
@@ -194,7 +212,7 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 
 ### Cloudflare AI Gateway
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug must be set as environment variables.
+`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug can be set as environment variables or in the API key credential's `env` object in `auth.json`.
 
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
@@ -218,7 +236,7 @@ For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires
 
 ### Cloudflare Workers AI
 
-`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` must be set as an environment variable.
+`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` can be set as an environment variable or in the API key credential's `env` object in `auth.json`.
 
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
