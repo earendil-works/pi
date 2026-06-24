@@ -1048,5 +1048,76 @@ describe("ChatPage", () => {
     });
   });
 
+  describe("isLastMessageStreaming propagation", () => {
+    // Task 3.1 RED: ChatPage must compute
+    //   isLastMessageStreaming = isThinking && lastMessage?.role === "assistant"
+    // and pass it as `isStreaming` ONLY to the last assistant message's
+    // MessageBubble. Older messages (including older assistant messages)
+    // must always get isStreaming=false.
+    //
+    // Before Task 3.2 lands, ChatPage doesn't compute isLastMessageStreaming
+    // at all and passes nothing to ChatMessages → MessageBubble → MessageParts,
+    // so EVERY bubble (including the latest assistant) gets
+    // data-is-streaming="false" (the default from MessageBubble). The latest
+    // assertion below therefore FAILS until 3.2 wires up the propagation.
+    it("isLastMessageStreaming only applies to the last message", async () => {
+      // Render with 4 messages: [user u1, assistant a-old, user u2, assistant a-latest].
+      // The lastMessage is assistant, so isLastMessageStreaming should be true.
+      await renderChatPage("test-session-1", {
+        messages: [
+          { id: "u1", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "first prompt" }], timestamp: "2026-01-01T00:00:00.000Z" },
+          { id: "a-old", sessionId: "test-session-1", role: "assistant", parts: [{ type: "text", text: "older reply" }], timestamp: "2026-01-01T00:00:01.000Z" },
+          { id: "u2", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "second prompt" }], timestamp: "2026-01-01T00:00:02.000Z" },
+          { id: "a-latest", sessionId: "test-session-1", role: "assistant", parts: [{ type: "thinking", text: "hmm..." }, { type: "text", text: "latest reply" }], timestamp: "2026-01-01T00:00:03.000Z" },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // Flip isThinking=true by emitting session_status_changed("running").
+      // ChatPage's session_event handler routes this through
+      //   setSessionStatus("running"); setIsThinking(true)
+      // (see ChatPage.tsx session_status_changed branch).
+      const handler = capturedHandlers.get("session_event");
+      expect(handler).toBeDefined();
+      act(() => {
+        handler!({
+          sessionId: "test-session-1",
+          event: { type: "session_status_changed", status: "running" },
+        });
+      });
+
+      // DOM order is the ChatMessages groupTurns output: one bubble per
+      // message in this fixture (no toolResults to absorb, no two assistant
+      // messages adjacent). 4 messages → 4 MessageBubble divs with
+      // data-testid="bubble".
+      await waitFor(() => {
+        expect(document.querySelectorAll('[data-testid="bubble"]').length).toBe(4);
+      });
+
+      const bubbles = Array.from(document.querySelectorAll('[data-testid="bubble"]')) as HTMLElement[];
+      // bubbles[0] = user u1, bubbles[1] = assistant a-old,
+      // bubbles[2] = user u2, bubbles[3] = assistant a-latest.
+      const aOld = bubbles[1];
+      const aLatest = bubbles[3];
+      const u1 = bubbles[0];
+      const u2 = bubbles[2];
+
+      // Older assistant bubble: must NOT be streaming, even though
+      // isThinking is true. This protects StepHeader in older turns
+      // from flashing "● Executing" forever.
+      expect(aOld.getAttribute("data-is-streaming")).toBe("false");
+      // Latest assistant bubble (the one with thinking): IS streaming.
+      // This assertion FAILS RED until Task 3.2 wires up
+      //   const isLastMessageStreaming = isThinking && lastMessage?.role === "assistant"
+      // and threads the prop through ChatMessages → MessageBubble.
+      expect(aLatest.getAttribute("data-is-streaming")).toBe("true");
+      // Sanity: user bubbles carry isStreaming=false too.
+      expect(u1.getAttribute("data-is-streaming")).toBe("false");
+      expect(u2.getAttribute("data-is-streaming")).toBe("false");
+    });
+  });
+
 
 });
