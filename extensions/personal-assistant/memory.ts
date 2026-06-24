@@ -399,7 +399,13 @@ export function registerMemory(pi: ExtensionAPI): void {
 		try {
 			const result = await extractMemoriesWithCallLlm(callLlm, messages, index, {
 				atomsDir,
-				model: config.memory?.embedding?.model,
+				// `model` here is the audit label written to
+				// extraction-report.json as `modelUsed` — it must name the
+				// chat completion model that actually produced the
+				// extraction, not the embedding model (bge-m3) we use for
+				// vector recall. Mislabeling made a /compact look like it
+				// ran on the wrong model in the log.
+				model: `${extractionCfg.provider}/${extractionCfg.model}`,
 			});
 			await writeExtractionReport(result.plan);
 		} finally {
