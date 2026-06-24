@@ -421,19 +421,27 @@ export function registerMemory(pi: ExtensionAPI): void {
 			headers[authHeader] = authHeader === "Authorization" ? `Bearer ${auth.apiKey}` : auth.apiKey;
 		}
 
+		// maxTokens budget for the extraction response. Same pattern pi core
+		// uses for /compact (harness/compaction/compaction.ts: `min(0.8 *
+		// reserveTokens, model.maxTokens)`): scale with the model's own
+		// maxTokens so reasoning models (deepseek-v4-flash 8k, minimax M3
+		// 131k) get budget proportional to their capability, while a hard
+		// 8192 ceiling stops the worst-case model from being asked to write
+		// 100k tokens of JSON. The previous hardcoded 2048 was a v1
+		// leftover that truncated reasoning models mid-think.
+		//
+		// 8192 covers a generous extraction (40+ atoms with full content +
+		// tags) and stays well under any model's maxTokens.
+		const extractionMaxTokens = Math.min(
+			model.maxTokens > 0 ? Math.floor(0.8 * model.maxTokens) : 4096,
+			8192,
+		);
+
 		const callLlm = async (prompt: string): Promise<string> => {
-			// maxTokens: 4096 (was 2048). Reasoning models like deepseek-v4-flash
-			// burn ~1500 tokens of thinking + ~500 tokens of answer for an
-			// extraction JSON. 2048 truncates them mid-answer and produces
-			// responses with only a thinking block, no text block — which
-			// the next loop sees as "no text content" and throws. 4096 keeps
-			// enough headroom for the JSON output while staying well under
-			// the 131072 max of typical models. The previous 2048 was a
-			// legacy budget from v1 and predates reasoning-model support.
 			const response = await completeSimple(
 				model,
 				{ messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-				{ apiKey: auth.apiKey, headers, maxTokens: 4096 },
+				{ apiKey: auth.apiKey, headers, maxTokens: extractionMaxTokens },
 			);
 			if (!response.content) {
 				throw new Error("No content in LLM response");
