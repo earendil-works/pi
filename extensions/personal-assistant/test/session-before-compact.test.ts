@@ -1,31 +1,32 @@
-// session_before_compact hook — TDD v1.
+// session_before_compact hook — config-driven extraction.
 //
-// Contract under test (from memory.ts session_before_compact hook):
-//   - The hook reads messages from event.preparation.messagesToSummarize
-//     (NOT event.messages — that field doesn't exist on this event).
-//   - The hook skips when messages are empty (early-return, no DB open).
-//   - The hook builds a real LLM caller via ctx.model + ctx.modelRegistry,
-//     not a stub. Mirrors the webui buildCallLlm pattern
-//     (packages/webui/server/index.ts).
-//   - On a successful LLM response, the hook runs the real extraction
-//     pipeline (extractMemoriesWithCallLlm) and writes an extraction
-//     report. Plan items become atoms.
+// Contract under test (memory.ts runCompactExtraction):
+//   - Reads extraction model from settings.json
+//     (personalAssistant.memory.extraction.{provider,model}), NOT from
+//     ctx.model. Decoupling lets users run a cheap local model for
+//     extraction while keeping a strong cloud model for the agent loop.
+//   - Throws (and ctx.ui.notify) if the config is missing, the model is
+//     not registered, or auth fails — surfacing the error to the user
+//     BEFORE compact proceeds.
+//   - On a successful callLlm response, runs the real extraction pipeline
+//     and writes an extraction report.
 //
-// Why this test file:
-//   The compact path was previously broken in 3 ways (wrong event field,
-//   stub callLlm, no return). The fix wires a real LLM caller and reads
-//   the right event field. We assert both: messages flow from
-//   preparation.messagesToSummarize (NOT event.messages), and the
-//   extractor sees them.
+// Why this test file: the compact path was previously broken in 3 ways
+// (wrong event field, stub callLlm, used ctx.model instead of config).
+// This suite locks down the new contract: config-driven model + loud
+// failure surfacing.
 //
-// Mocking strategy: reuse the module-mock pattern — mock search.ts /
-// format.ts / storage.ts so the hook body is hermetic. We also mock
-// @earendil-works/pi-ai so we can assert the callLlm contract without
-// a real network call. The AgentMessage shape is constructed inline to
-// exercise the conversion helper.
+// Test strategy: write a real settings.json to a tmp HOME and use
+// vi.stubEnv("HOME", ...) so the *real* loadConfig reads it. Mocking
+// loadConfig via vi.mock("../memory.ts") would replace the entire module
+// under test (including registerMemory itself), which is not what we
+// want.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 vi.mock("../search.ts", () => ({
@@ -36,11 +37,10 @@ vi.mock("../format.ts", () => ({
 	formatMemoryContext: vi.fn(() => ({ text: "", used: 0, included: 0 })),
 }));
 
-// Mock extraction.ts so we don't need a fully-fleshed MemoryIndex fake.
-// The session_before_compact contract we're verifying here is that the
-// right messages reach the extractor — executePlan itself is exercised in
-// other suites (extraction.test.ts). Importantly, this mock DOES call the
-// callLlm parameter so the test can assert what the hook passes through.
+// Mock extraction.ts so the contract under test is the LLM wiring
+// (right model, right auth, right headers), not the extraction algorithm
+// itself (extraction.test.ts covers that). The mock DOES invoke callLlm
+// so the hook's completeSimple path is exercised.
 vi.mock("../extraction.ts", async () => {
 	const actual = await vi.importActual<typeof import("../extraction.ts")>(
 		"../extraction.ts",
@@ -52,8 +52,6 @@ vi.mock("../extraction.ts", async () => {
 				callLlm: (prompt: string) => Promise<string>,
 				messages: Array<{ role: string; content: string }>,
 			) => {
-				// Build the same prompt the real extractor would, then call
-				// callLlm so the hook's LLM wiring is exercised end-to-end.
 				const prompt = `Mock extractor — ${messages.length} messages`;
 				const response = await callLlm(prompt);
 				return {
@@ -87,27 +85,13 @@ vi.mock("../storage.ts", () => ({
 	},
 }));
 
-// Use vi.hoisted to share state between the (hoisted) vi.mock factory and
-// the test bodies. This is the supported way to share mock references.
-const { completeSimpleMock, getEnvApiKeyMock } = vi.hoisted(() => {
-	const extractionJson = JSON.stringify({
-		items: [
-			{
-				type: "rule",
-				title: "Test rule from extraction",
-				content: "Test content",
-				summary: "Test summary",
-				tags: ["test"],
-				importance: 0.7,
-			},
-		],
-	});
-	const completeSimpleMock = vi.fn(async () => ({
+const completeSimpleMock = vi.hoisted(() =>
+	vi.fn(async () => ({
 		role: "assistant" as const,
-		content: [{ type: "text" as const, text: extractionJson }],
+		content: [{ type: "text" as const, text: JSON.stringify({ items: [] }) }],
 		api: "anthropic-messages" as const,
 		provider: "anthropic" as const,
-		model: "test-model",
+		model: "extraction-model",
 		usage: {
 			input: 0,
 			output: 0,
@@ -118,10 +102,8 @@ const { completeSimpleMock, getEnvApiKeyMock } = vi.hoisted(() => {
 		},
 		stopReason: "stop",
 		timestamp: Date.now(),
-	}));
-	const getEnvApiKeyMock = vi.fn(() => undefined as string | undefined);
-	return { completeSimpleMock, getEnvApiKeyMock };
-});
+	})),
+);
 
 vi.mock("@earendil-works/pi-ai", async () => {
 	const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
@@ -130,13 +112,11 @@ vi.mock("@earendil-works/pi-ai", async () => {
 	return {
 		...actual,
 		completeSimple: completeSimpleMock,
-		getEnvApiKey: getEnvApiKeyMock,
 	};
 });
 
-import { completeSimple, getEnvApiKey } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai";
 import { registerMemory } from "../memory.ts";
-import type { SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
 
 type HookHandler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown;
 
@@ -159,38 +139,62 @@ function createMockPi(): MockPi {
 	};
 }
 
-function createMockCtx(opts: { modelApi?: string; hasModel?: boolean; hasUi?: boolean } = {}) {
-	const effectiveApi = opts.modelApi ?? "anthropic-messages";
-	const apiKey = effectiveApi === "anthropic-messages" ? "sk-ant-test" : "sk-openai-test";
-	const apiKeyCalls: string[] = [];
-	const getApiKeyForProvider = vi.fn(async (provider: string) => {
-		apiKeyCalls.push(provider);
-		return apiKey;
+interface MockCtxOptions {
+	extractionModel?: { id: string; provider: string; api: string };
+	authOk?: boolean;
+	authError?: string;
+	authHeaders?: Record<string, string>;
+}
+
+function createMockCtx(opts: MockCtxOptions = {}) {
+	const extractionModelId = opts.extractionModel?.id ?? "claude-haiku-4-5";
+	const extractionProvider = opts.extractionModel?.provider ?? "anthropic";
+	const extractionApi = opts.extractionModel?.api ?? "anthropic-messages";
+	const authOk = opts.authOk ?? true;
+	const authError = opts.authError ?? "no api key";
+	const authHeaders = opts.authHeaders ?? {};
+
+	const notifyCalls: Array<{ msg: string; type: string }> = [];
+
+	const find = vi.fn((provider: string, modelId: string) => {
+		if (provider === extractionProvider && modelId === extractionModelId) {
+			return {
+				id: extractionModelId,
+				name: extractionModelId,
+				api: extractionApi,
+				provider: extractionProvider,
+				baseUrl: "https://api.test",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 2048,
+			};
+		}
+		return undefined;
 	});
+
+	const getApiKeyAndHeaders = vi.fn(async () => {
+		if (authOk) {
+			return { ok: true as const, apiKey: "sk-test-key", headers: authHeaders };
+		}
+		return { ok: false as const, error: authError };
+	});
+
 	return {
 		ui: {
 			setStatus: () => {
-				// no-op (memory-status.test.ts covers this contract)
+				// no-op
+			},
+			notify: (msg: string, type: string) => {
+				notifyCalls.push({ msg, type });
 			},
 		},
-		model: opts.hasModel === false
-			? undefined
-			: {
-					id: "test-model",
-					name: "Test",
-					api: opts.modelApi ?? "anthropic-messages",
-					provider: "anthropic",
-					baseUrl: "https://api.test",
-					reasoning: false,
-					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: 8192,
-					maxTokens: 2048,
-				},
 		modelRegistry: {
-			getApiKeyForProvider,
+			find,
+			getApiKeyAndHeaders,
 		},
-		apiKeyCalls,
+		notifyCalls,
 	};
 }
 
@@ -234,35 +238,48 @@ function makeCompactEvent(messages: AgentMessage[]): SessionBeforeCompactEvent {
 	};
 }
 
-describe("session_before_compact hook", () => {
+function writeSettings(
+	tmpHome: string,
+	overrides: {
+		extractionProvider?: string;
+		extractionModel?: string;
+		noExtraction?: boolean;
+	},
+) {
+	const extraction =
+		overrides.noExtraction || !overrides.extractionProvider
+			? undefined
+			: { provider: overrides.extractionProvider, model: overrides.extractionModel };
+	const personalAssistant = {
+		memory: extraction
+			? { enabled: true, extraction }
+			: { enabled: true },
+	};
+	const agentDir = join(tmpHome, ".pi", "agent");
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ personalAssistant }, null, 2),
+	);
+}
+
+describe("session_before_compact hook (config-driven extraction)", () => {
 	let mockPi: MockPi;
 	let compactHandler: HookHandler;
+	let tmpHome: string;
 
 	beforeEach(() => {
+		tmpHome = mkdtempSync(join(tmpdir(), "memory-compact-test-"));
+		vi.stubEnv("HOME", tmpHome);
+
 		mockPi = createMockPi();
 		vi.mocked(completeSimple).mockClear();
 		vi.mocked(completeSimple).mockResolvedValue({
 			role: "assistant" as const,
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						items: [
-							{
-								type: "rule",
-								title: "Test rule from extraction",
-								content: "Test content",
-								summary: "Test summary",
-								tags: ["test"],
-								importance: 0.7,
-							},
-						],
-					}),
-				},
-			],
+			content: [{ type: "text" as const, text: JSON.stringify({ items: [] }) }],
 			api: "anthropic-messages" as const,
 			provider: "anthropic" as const,
-			model: "test-model",
+			model: "extraction-model",
 			usage: {
 				input: 0,
 				output: 0,
@@ -274,7 +291,6 @@ describe("session_before_compact hook", () => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		} as Awaited<ReturnType<typeof import("@earendil-works/pi-ai").completeSimple>>);
-		vi.stubEnv("HOME", "/tmp");
 
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const handler = mockPi.hooks.get("session_before_compact");
@@ -284,11 +300,41 @@ describe("session_before_compact hook", () => {
 
 	afterEach(() => {
 		vi.unstubAllEnvs();
+		rmSync(tmpHome, { recursive: true, force: true });
 		vi.clearAllMocks();
 	});
 
-	// Reads messages from preparation.messagesToSummarize.
-	it("reads messages from event.preparation.messagesToSummarize (not event.messages)", async () => {
+	it("looks up the configured extraction model in the registry, not ctx.model", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "local",
+			extractionModel: "qwen2.5:3b-instruct-q4_0",
+		});
+		const mockCtx = createMockCtx({
+			extractionModel: {
+				id: "qwen2.5:3b-instruct-q4_0",
+				provider: "local",
+				api: "openai-completions",
+			},
+		});
+		const event = makeCompactEvent([makeUserMessage("hi")]);
+
+		await compactHandler(event, mockCtx);
+
+		expect(mockCtx.modelRegistry.find).toHaveBeenCalledWith(
+			"local",
+			"qwen2.5:3b-instruct-q4_0",
+		);
+		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
+		const [model] = vi.mocked(completeSimple).mock.calls[0]!;
+		expect(model.id).toBe("qwen2.5:3b-instruct-q4_0");
+		expect(model.provider).toBe("local");
+	});
+
+	it("reads messages from event.preparation.messagesToSummarize", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
 		const mockCtx = createMockCtx();
 		const event = makeCompactEvent([
 			makeUserMessage("user says something"),
@@ -297,23 +343,17 @@ describe("session_before_compact hook", () => {
 
 		await compactHandler(event, mockCtx);
 
-		// completeSimple must have been called — proves the hook reached the
-		// real-LLM code path with non-empty messages.
 		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
-		const [model, ctxArg, optsArg] = vi.mocked(completeSimple).mock.calls[0]!;
-		expect(model.id).toBe("test-model");
-		expect(ctxArg.messages).toHaveLength(1);
-		// The mock extractor passes its own sentinel prompt; verify the
-		// real path passes the messages length through (the real extractor
-		// would build a much longer prompt — that's exercised in extraction.test.ts).
+		const [, ctxArg] = vi.mocked(completeSimple).mock.calls[0]!;
 		const prompt = ctxArg.messages[0].content as string;
 		expect(prompt).toMatch(/2 messages/);
-		// Authorization header convention for anthropic-messages.
-		expect(optsArg?.headers?.["x-api-key"]).toBe("sk-ant-test");
 	});
 
-	// Empty messages → no LLM call.
 	it("does NOT call the LLM when messagesToSummarize is empty", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
 		const mockCtx = createMockCtx();
 		const event = makeCompactEvent([]);
 
@@ -322,52 +362,88 @@ describe("session_before_compact hook", () => {
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 	});
 
-	// No model in ctx → skip (rpc/print mode or no session model yet).
-	it("does NOT call the LLM when ctx.model is undefined", async () => {
-		const mockCtx = createMockCtx({ hasModel: false });
-		const event = makeCompactEvent([makeUserMessage("hi")]);
-
-		await compactHandler(event, mockCtx);
-
-		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
-	});
-
-	// OpenAI-compat API uses Authorization: Bearer.
-	it("uses Authorization Bearer header for non-anthropic APIs", async () => {
-		const mockCtx = createMockCtx({ modelApi: "openai-completions" });
-		(
-			mockCtx.modelRegistry.getApiKeyForProvider as unknown as ReturnType<
-				typeof vi.fn
-			>
-		).mockResolvedValue("sk-openai-test");
+	it("uses x-api-key header for anthropic-messages extraction", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx();
 		const event = makeCompactEvent([makeUserMessage("hi")]);
 
 		await compactHandler(event, mockCtx);
 
 		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
 		const [, , optsArg] = vi.mocked(completeSimple).mock.calls[0]!;
-		expect(optsArg?.headers?.["Authorization"]).toBe("Bearer sk-openai-test");
+		expect(optsArg?.headers?.["x-api-key"]).toBe("sk-test-key");
+		expect(optsArg?.headers?.["Authorization"]).toBeUndefined();
+	});
+
+	it("uses Authorization Bearer header for non-anthropic extraction APIs", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "local",
+			extractionModel: "qwen2.5:3b-instruct-q4_0",
+		});
+		const mockCtx = createMockCtx({
+			extractionModel: {
+				id: "qwen2.5:3b-instruct-q4_0",
+				provider: "local",
+				api: "openai-completions",
+			},
+		});
+		const event = makeCompactEvent([makeUserMessage("hi")]);
+
+		await compactHandler(event, mockCtx);
+
+		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
+		const [, , optsArg] = vi.mocked(completeSimple).mock.calls[0]!;
+		expect(optsArg?.headers?.["Authorization"]).toBe("Bearer sk-test-key");
 		expect(optsArg?.headers?.["x-api-key"]).toBeUndefined();
 	});
 
-	// API key resolution: env first, then modelRegistry fallback.
-	it("resolves API key via env first, then modelRegistry.getApiKeyForProvider", async () => {
-		// Override getEnvApiKey mock to return a value.
-		const envApiKey = await import("@earendil-works/pi-ai");
-		const spy = vi.spyOn(envApiKey, "getEnvApiKey").mockReturnValue("sk-from-env");
-		try {
-			const mockCtx = createMockCtx();
-			const event = makeCompactEvent([makeUserMessage("hi")]);
-			await compactHandler(event, mockCtx);
+	it("surfaces a config error via ctx.ui.notify when extraction config is missing", async () => {
+		writeSettings(tmpHome, { noExtraction: true });
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([makeUserMessage("hi")]);
 
-			expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
-			const [, , optsArg] = vi.mocked(completeSimple).mock.calls[0]!;
-			expect(optsArg?.apiKey).toBe("sk-from-env");
-			// modelRegistry.getApiKeyForProvider should NOT have been called
-			// when env provided the key.
-			expect(mockCtx.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
-		} finally {
-			spy.mockRestore();
-		}
+		await compactHandler(event, mockCtx);
+
+		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
+		expect(mockCtx.notifyCalls).toHaveLength(1);
+		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/no extraction model configured/i);
+	});
+
+	it("surfaces a registry error when the configured model is not registered", async () => {
+		// Settings point at a model the mock registry does NOT have (default
+		// mock only knows claude-haiku-4-5). find() returns undefined.
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "unknown-model",
+		});
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([makeUserMessage("hi")]);
+
+		await compactHandler(event, mockCtx);
+
+		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
+		expect(mockCtx.notifyCalls).toHaveLength(1);
+		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/not in registry/i);
+	});
+
+	it("surfaces an auth error when the extraction provider has no API key", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx({ authOk: false, authError: "no api key for anthropic" });
+		const event = makeCompactEvent([makeUserMessage("hi")]);
+
+		await compactHandler(event, mockCtx);
+
+		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
+		expect(mockCtx.notifyCalls).toHaveLength(1);
+		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/no api key for anthropic/i);
 	});
 });

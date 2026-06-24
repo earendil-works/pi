@@ -42,9 +42,10 @@
 
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Type, completeSimple, getEnvApiKey } from "@earendil-works/pi-ai";
+import { Type, completeSimple } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { runDecay } from "./decay.ts";
 import { MemoryIndex } from "./storage.ts";
 import {
@@ -65,9 +66,22 @@ import type { MemoryAtomType, RecallResult } from "./types.ts";
  */
 export interface PersonalAssistantConfig {
 	memory?: {
+		enabled?: boolean;
 		dbPath?: string;
 		atomsDir?: string;
-		embedding?: { ollamaUrl?: string; model?: string };
+		/** Provider + model id used by `session_before_compact` to extract
+		 *  atoms from the conversation. Distinct from `embedding.model` —
+		 *  extraction is a chat completion (large context, JSON-mode-ish
+		 *  output), embedding is a vector encoder. Defaults fall back to
+		 *  the session model when omitted. */
+		extraction?: { provider: string; model: string };
+		/** Provider + model used by `before_agent_start` to rewrite the
+		 *  user prompt into a search-friendly query. Local-only by default
+		 *  (qwen2.5:3b) — cheap and avoids round-tripping the main agent. */
+		queryRewrite?: { provider: string; model: string };
+		embedding?: { ollamaUrl?: string; model?: string; provider?: string };
+		decay?: { baseDecay?: number; archiveThreshold?: number };
+		injection?: { maxCount?: number };
 		autoDecay?: boolean;
 		autoExtract?: boolean;
 	};
@@ -188,12 +202,23 @@ export type { RunMemoryExtractionOptions, RunMemoryExtractionResult } from "./ex
 // ---------------------------------------------------------------------------
 
 /**
- * Read personal-assistant config from disk. v2 keeps this as a thin stub —
- * the real config wiring is owned by SettingsManager / webui. Returning {}
- * on any failure keeps hook bodies from throwing on missing config files.
+ * Read personal-assistant config from disk. Mirrors webui server's
+ * `loadSettings()` (packages/webui/server/index.ts:63) — both consumers
+ * need the same `~/.pi/agent/settings.json` shape. Returning {} on any
+ * failure keeps hook bodies from throwing on missing config files; hook
+ * bodies are responsible for treating a missing/empty config as
+ * "extraction not configured" and surfacing that to the user.
  */
 export function loadConfig(): PersonalAssistantConfig {
-	return {};
+	try {
+		const settingsPath = join(homedir(), ".pi", "agent", "settings.json");
+		if (!existsSync(settingsPath)) return {};
+		const raw = readFileSync(settingsPath, "utf-8");
+		const settings = JSON.parse(raw) as { personalAssistant?: PersonalAssistantConfig };
+		return settings.personalAssistant ?? {};
+	} catch {
+		return {};
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -238,63 +263,107 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// messages — so we use `completeSimple` with a single user-role message
 	// carrying the prompt, matching how the webui server routes manual
 	// extraction (`packages/webui/server/index.ts` buildCallLlm).
+	//
+	// The LLM caller is **config-driven** (settings.json
+	// `personalAssistant.memory.extraction.{provider,model}`), NOT the
+	// session's ctx.model. This is the same pattern the webui server
+	// buildCallLlm uses, and it decouples extraction cost/quality from the
+	// session's main model — the user can run a cheap local qwen2.5 for
+	// extraction while keeping a strong Anthropic/GPT model for the agent
+	// loop. If the config is missing, the model is unknown to the registry,
+	// or auth is unavailable, the hook surfaces the error to the user via
+	// ctx.ui.notify (loud) AND returns — compact still proceeds so the
+	// session is not stranded, but the user sees the missing configuration
+	// and can fix it before the next /compact.
 	pi.on("session_before_compact", async (event, ctx) => {
 		// Wrap the entire body: a broken memory pipeline must NEVER block
 		// compaction (compact is critical for long sessions). The runtime's
-		// emit() catches and logs via the extension error channel, but we
-		// also console.warn here so the user sees the failure in the TUI.
-		// MemoryIndex itself self-heals its parent directory (storage.ts),
-		// so a missing ~/.pi/agent/memory/ no longer turns extraction into a
-		// silent no-op.
+		// emit() also catches errors and routes them through the extension
+		// error channel; our outer try/catch adds ctx.ui.notify so the user
+		// sees the failure in the TUI, not just in the dev-only log.
 		try {
+			await runCompactExtraction(event, ctx);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			// eslint-disable-next-line no-console
+			console.warn("[memory-v2] session_before_compact: extraction failed:", msg);
+			try {
+				ctx.ui?.notify?.(`memory: extraction failed — ${msg}`, "error");
+			} catch {
+				// notify is best-effort; some ctx shapes (rpc/print) lack it
+			}
+		}
+	});
+
+	// Compact extraction — config-driven model + loud error surfacing.
+	// Extracted from the hook body so the try/catch wrap above stays
+	// readable and the resolver logic doesn't drown in indentation.
+	async function runCompactExtraction(event: unknown, ctx: any): Promise<void> {
 		const config = loadConfig();
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
-		const rawMessages = event.preparation?.messagesToSummarize ?? [];
-		if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
-
-		// Convert AgentMessage → the simple {role, content} shape that
-		// extractMemoriesWithCallLlm expects. User messages may be string or
-		// (TextContent | ImageContent)[]; assistant messages are arrays of
-		// TextContent/ThinkingContent/ToolCall. We flatten to text only —
-		// images and tool calls don't help the extraction LLM.
-		const messages = rawMessages
-			.map(agentMessageToExtractionMessage)
-			.filter((m): m is { role: string; content: string } => m !== null);
-
-		if (messages.length === 0) return;
-
-		const model = ctx.model;
-		if (!model) {
-			// eslint-disable-next-line no-console
-			console.warn(
-				"[memory-v2] session_before_compact: no model in ctx (rpc/print mode?), skipping extraction",
+		// 1. Resolve the configured extraction model. If the user has not
+		// configured `personalAssistant.memory.extraction`, this is a
+		// config error — surface it loudly so they can fix settings.json
+		// before the next /compact, instead of wondering why memory stopped
+		// growing.
+		const extractionCfg = config.memory?.extraction;
+		if (!extractionCfg?.provider || !extractionCfg?.model) {
+			throw new Error(
+				"no extraction model configured: set personalAssistant.memory.extraction.{provider,model} in settings.json",
 			);
-			return;
 		}
 
-		// API key resolution mirrors pi's normal agent flow: env first, then
-		// the auth storage the agent itself uses. This keeps extraction on
-		// the same auth path as the running session.
-		const envApiKey = getEnvApiKey(model.provider);
-		const apiKey = envApiKey ?? (await ctx.modelRegistry.getApiKeyForProvider(model.provider));
+		const model = ctx.modelRegistry?.find?.(extractionCfg.provider, extractionCfg.model);
+		if (!model) {
+			throw new Error(
+				`extraction model not in registry: ${extractionCfg.provider}/${extractionCfg.model} (check ` +
+					`~/.pi/agent/settings.json and ~/.pi/agent/models.json)`,
+			);
+		}
 
-		// Auth header convention differs by API family — anthropic uses
-		// `x-api-key: <key>` (no Bearer), everything else uses
-		// `Authorization: Bearer <key>`. Mirrors packages/webui/server/index.ts
-		// buildCallLlm (line 110).
+		// 2. Auth via the same modelRegistry path pi's agent loop uses. This
+		// honours the auth storage, env vars, and provider config overrides
+		// uniformly. Throws with a specific error if the provider has no key
+		// (e.g. user ran /login but never finished).
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+		if (!auth.ok) {
+			throw new Error(`extraction model auth: ${auth.error}`);
+		}
+
+		// 3. Source messages — real field on SessionBeforeCompactEvent.
+		const rawMessages = (event as { preparation?: { messagesToSummarize?: unknown[] } })
+			.preparation?.messagesToSummarize ?? [];
+		if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+
+		// Convert AgentMessage → the simple {role, content: string} shape
+		// that extractMemoriesWithCallLlm expects. User messages may be
+		// string or (TextContent|ImageContent)[]; assistant messages are
+		// arrays of TextContent/ThinkingContent/ToolCall. We flatten to text
+		// only — images and tool calls don't help the extraction LLM.
+		const messages = (rawMessages as unknown[])
+			.map((m) => agentMessageToExtractionMessage(m as AgentMessage))
+			.filter((m): m is { role: string; content: string } => m !== null);
+		if (messages.length === 0) return;
+
+		// 4. Build the callLlm closure. Auth header convention is decided
+		// by the model.api, not the provider name (provider name = "opencode"
+		// could route through anthropic-messages or openai-completions).
 		const authHeader = model.api === "anthropic-messages" ? "x-api-key" : "Authorization";
-		const headers: Record<string, string> = { ...(model.headers ?? {}) };
-		if (apiKey) {
-			headers[authHeader] = authHeader === "Authorization" ? `Bearer ${apiKey}` : apiKey;
+		const headers: Record<string, string> = {
+			...(model.headers ?? {}),
+			...(auth.headers ?? {}),
+		};
+		if (auth.apiKey) {
+			headers[authHeader] = authHeader === "Authorization" ? `Bearer ${auth.apiKey}` : auth.apiKey;
 		}
 
 		const callLlm = async (prompt: string): Promise<string> => {
 			const response = await completeSimple(
 				model,
 				{ messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-				{ apiKey: apiKey ?? undefined, headers, maxTokens: 2048 },
+				{ apiKey: auth.apiKey, headers, maxTokens: 2048 },
 			);
 			if (!response.content) {
 				throw new Error("No content in LLM response");
@@ -311,6 +380,8 @@ export function registerMemory(pi: ExtensionAPI): void {
 			return textParts.join("");
 		};
 
+		// 5. Run extraction. MemoryIndex self-heals its parent dir
+		// (storage.ts) so a fresh ~/.pi/agent/memory/ works.
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
@@ -322,14 +393,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 		} finally {
 			index.close();
 		}
-		} catch (err) {
-			// eslint-disable-next-line no-console
-			console.warn(
-				"[memory-v2] session_before_compact: extraction failed:",
-				err instanceof Error ? err.message : String(err),
-			);
-		}
-	});
+	}
 
 	// session_start — throttled decay run. The first session in a process
 	// always runs decay; subsequent session_start events within the
