@@ -17,6 +17,7 @@ import {
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
+import { applySplitToViewport } from "./split-viewport.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
@@ -389,54 +390,6 @@ export class TUI extends Container {
 		this.splitConfig = null;
 		this.invalidate();
 		this.requestRender(true);
-	}
-
-	/**
-	 * Apply horizontal split layout only to the visible viewport lines.
-	 * The right panel is anchored to the screen area, not to the full content
-	 * height, so it stays visible regardless of scroll position on the left side.
-	 */
-	private applySplitToViewport(lines: string[], termWidth: number, termHeight: number): string[] {
-		const { rightPanel, ratio } = this.splitConfig!;
-		const divider = "│";
-		const dividerWidth = visibleWidth(divider);
-		const leftWidth = Math.floor(termWidth * ratio);
-		const rightWidth = termWidth - leftWidth - dividerWidth;
-
-		if (leftWidth < 10 || rightWidth < 10) {
-			return lines;
-		}
-
-		const viewportStart = Math.max(0, lines.length - termHeight);
-
-		// Render right panel
-		const rightLines = rightPanel.render(rightWidth);
-
-		// Copy only the viewport rows, not the entire lines array
-		const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
-		const result = lines.slice(); // shallow copy
-
-		for (let i = 0; i < termHeight && viewportStart + i < lines.length; i++) {
-			const lineIdx = viewportStart + i;
-			const left = lines[lineIdx];
-			const right = i < rightLines.length ? rightLines[i] : "";
-
-			// Fast path: if left line fits within leftWidth, just pad with spaces
-			const leftVisWidth = visibleWidth(left);
-			const leftPadded =
-				leftVisWidth < leftWidth
-					? left + " ".repeat(leftWidth - leftVisWidth)
-					: leftVisWidth > leftWidth
-						? sliceByColumn(left, 0, leftWidth, true)
-						: left;
-
-			// Truncate right content to rightWidth
-			const rightSafe = visibleWidth(right) <= rightWidth ? right : sliceByColumn(right, 0, rightWidth, true);
-
-			result[lineIdx] = leftPadded + SEGMENT_RESET + divider + rightSafe;
-		}
-
-		return result;
 	}
 
 	setFocus(component: Component | null): void {
@@ -1351,7 +1304,7 @@ export class TUI extends Container {
 		// not to the full content — avoids the right panel content being "scrolled away"
 		// when the left side has many more lines than the right panel).
 		if (this.splitConfig) {
-			newLines = this.applySplitToViewport(newLines, width, height);
+			newLines = applySplitToViewport(newLines, this.splitConfig.rightPanel, this.splitConfig.ratio, width, height);
 		}
 
 		// Composite overlays into the rendered lines (before differential compare)
