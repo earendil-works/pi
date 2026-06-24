@@ -1,9 +1,13 @@
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import type { AssistantMessage, AssistantMessageEvent, Context, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+
+const mockState = vi.hoisted(() => ({
+	lastClientOptions: undefined as unknown,
+}));
 
 vi.mock("openai", () => {
 	async function* createMockResponsesStream(): AsyncIterable<ResponseStreamEvent> {
@@ -29,6 +33,10 @@ vi.mock("openai", () => {
 	}
 
 	class FakeOpenAI {
+		constructor(options: unknown) {
+			mockState.lastClientOptions = options;
+		}
+
 		responses = {
 			create: () => {
 				const responseStream = createMockResponsesStream();
@@ -154,6 +162,25 @@ async function* createFailedEvents(): AsyncIterable<ResponseStreamEvent> {
 }
 
 describe("OpenAI Responses terminal event handling", () => {
+	beforeEach(() => {
+		mockState.lastClientOptions = undefined;
+	});
+
+	it("passes custom fetch to the OpenAI client", async () => {
+		const model = createModel();
+		const context: Context = {
+			systemPrompt: "",
+			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
+			tools: [],
+		};
+		const fetch = vi.fn(async () => new Response(null));
+
+		await streamOpenAIResponses(model, context, { apiKey: "test", fetch }).result();
+
+		const clientOptions = mockState.lastClientOptions as { fetch?: unknown };
+		expect(clientOptions.fetch).toBe(fetch);
+	});
+
 	it("rejects streams that end before a terminal response event", async () => {
 		const model = createModel();
 		const output = createOutput(model);

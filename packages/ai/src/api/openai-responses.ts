@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { type ClientOptions } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
@@ -87,6 +87,11 @@ function formatOpenAIResponsesError(error: unknown): string {
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
+	/**
+	 * Custom fetch implementation used by the OpenAI SDK client.
+	 * Use this for proxies, custom transports, or request instrumentation.
+	 */
+	fetch?: ClientOptions["fetch"];
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
@@ -127,7 +132,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, options?.fetch);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -196,6 +201,7 @@ function createClient(
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	sessionId?: string,
+	fetch?: ClientOptions["fetch"],
 ) {
 	const compat = getCompat(model);
 	const headers: ProviderHeaders = { ...model.headers };
@@ -225,6 +231,7 @@ function createClient(
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
+		fetch,
 	});
 }
 

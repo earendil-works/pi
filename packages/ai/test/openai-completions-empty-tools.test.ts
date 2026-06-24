@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel, streamSimple } from "../src/compat.ts";
 
 // Empty tools arrays must NOT be serialized as `tools: []` — some OpenAI-compatible
@@ -74,6 +75,23 @@ describe("openai-completions empty tools handling", () => {
 
 		const params = mockState.lastParams as { tools?: unknown };
 		expect("tools" in (params as object)).toBe(false);
+	});
+
+	it("passes custom fetch to the OpenAI client", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const fetch = vi.fn(async () => new Response(null));
+
+		await streamOpenAICompletions(
+			model,
+			{
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test", fetch },
+		).result();
+
+		const clientOptions = mockState.lastClientOptions as { fetch?: unknown };
+		expect(clientOptions.fetch).toBe(fetch);
 	});
 
 	it("omits tools field when context.tools is undefined", async () => {

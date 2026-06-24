@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { type ClientOptions } from "openai";
 import type {
 	ChatCompletionAssistantMessageParam,
 	ChatCompletionChunk,
@@ -107,6 +107,11 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
+	/**
+	 * Custom fetch implementation used by the OpenAI SDK client.
+	 * Use this for proxies, custom transports, or request instrumentation.
+	 */
+	fetch?: ClientOptions["fetch"];
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 }
@@ -179,7 +184,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const compat = getCompat(model);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.fetch);
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -501,6 +506,7 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+	fetch?: ClientOptions["fetch"],
 ) {
 	const headers: ProviderHeaders = { ...model.headers };
 	if (model.provider === "github-copilot") {
@@ -528,6 +534,7 @@ function createClient(
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
+		fetch,
 	});
 }
 
