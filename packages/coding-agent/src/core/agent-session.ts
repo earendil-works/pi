@@ -2500,9 +2500,17 @@ export class AgentSession {
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
 		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
-			err,
-		);
+		if (
+			/overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+				err,
+			)
+		)
+			return true;
+		// Narrow fallback for transient errors that carry none of the signals above —
+		// e.g. an unmodeled Bedrock stream exception ("...unexpected error during
+		// processing. Try your request again."). The billing/quota veto runs first, so
+		// this never overrides a genuine usage-limit error.
+		return /unexpected error during processing|try (?:your )?request again/i.test(err);
 	}
 
 	/**

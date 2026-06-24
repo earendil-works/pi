@@ -28,11 +28,13 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { createConnectTimeout, resolveTimeoutMs, withStreamIdleTimeout } from "../utils/stream-timeouts.ts";
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -449,6 +451,11 @@ async function* iterateAnthropicEvents(
 	}
 }
 
+// Idle window for the SSE read loop and connect window for the pre-stream phase; both
+// default-on and overridable via streamIdleTimeoutMs / connectTimeoutMs (0 disables).
+const DEFAULT_ANTHROPIC_STREAM_IDLE_TIMEOUT_MS = 240_000;
+const DEFAULT_ANTHROPIC_CONNECT_TIMEOUT_MS = 30_000;
+
 export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -523,14 +530,43 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: options?.maxRetries ?? 0,
 			};
-			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+			// Abort the request if response headers don't arrive in time (pre-stream phase only).
+			const connectTimeoutMs = resolveTimeoutMs(options?.connectTimeoutMs, DEFAULT_ANTHROPIC_CONNECT_TIMEOUT_MS);
+			const connectTimeout = createConnectTimeout(connectTimeoutMs);
+			const connectSignals = combineAbortSignals([options?.signal, connectTimeout.signal]);
+			let response: Response;
+			try {
+				response = await client.messages
+					.create({ ...params, stream: true }, { ...requestOptions, signal: connectSignals.signal })
+					.asResponse();
+			} catch (error) {
+				if (connectTimeout.signal.aborted && !options?.signal?.aborted) {
+					throw new Error(`Anthropic connect/first-byte timeout after ${connectTimeoutMs}ms`);
+				}
+				throw error;
+			} finally {
+				connectTimeout.clearTimeout();
+				connectSignals.cleanup();
+			}
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
 			const blocks = output.content as Block[];
 
-			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+			const streamIdleTimeoutMs = resolveTimeoutMs(
+				options?.streamIdleTimeoutMs,
+				DEFAULT_ANTHROPIC_STREAM_IDLE_TIMEOUT_MS,
+			);
+			const eventSource =
+				streamIdleTimeoutMs > 0
+					? withStreamIdleTimeout(
+							iterateAnthropicEvents(response, options?.signal),
+							streamIdleTimeoutMs,
+							() => new Error(`Anthropic stream idle timeout after ${streamIdleTimeoutMs}ms`),
+						)
+					: iterateAnthropicEvents(response, options?.signal);
+			for await (const event of eventSource) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event

@@ -13,6 +13,7 @@ import {
 	type ContentBlockStopEvent,
 	ConversationRole,
 	ConverseStreamCommand,
+	type ConverseStreamCommandOutput,
 	type ConverseStreamMetadataEvent,
 	ImageFormat,
 	type Message,
@@ -47,11 +48,13 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { createConnectTimeout, resolveTimeoutMs, withStreamIdleTimeout } from "../utils/stream-timeouts.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -94,6 +97,11 @@ export interface BedrockOptions extends StreamOptions {
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+
+// Idle window for the stream read loop and connect window for the pre-stream phase; both
+// default-on and overridable via streamIdleTimeoutMs / connectTimeoutMs (0 disables).
+const DEFAULT_BEDROCK_STREAM_IDLE_TIMEOUT_MS = 240_000;
+const DEFAULT_BEDROCK_CONNECT_TIMEOUT_MS = 30_000;
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -227,7 +235,22 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const command = new ConverseStreamCommand(commandInput);
 
-			const response = await client.send(command, { abortSignal: options.signal });
+			// Abort the request if response headers don't arrive in time (pre-stream phase only).
+			const connectTimeoutMs = resolveTimeoutMs(options.connectTimeoutMs, DEFAULT_BEDROCK_CONNECT_TIMEOUT_MS);
+			const connectTimeout = createConnectTimeout(connectTimeoutMs);
+			const connectSignals = combineAbortSignals([options.signal, connectTimeout.signal]);
+			let response: ConverseStreamCommandOutput;
+			try {
+				response = await client.send(command, { abortSignal: connectSignals.signal });
+			} catch (error) {
+				if (connectTimeout.signal.aborted && !options?.signal?.aborted) {
+					throw new Error(`Bedrock connect/first-byte timeout after ${connectTimeoutMs}ms`);
+				}
+				throw error;
+			} finally {
+				connectTimeout.clearTimeout();
+				connectSignals.cleanup();
+			}
 			if (response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
@@ -236,7 +259,19 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
 			}
 
-			for await (const item of response.stream!) {
+			const streamIdleTimeoutMs = resolveTimeoutMs(
+				options.streamIdleTimeoutMs,
+				DEFAULT_BEDROCK_STREAM_IDLE_TIMEOUT_MS,
+			);
+			const streamSource =
+				streamIdleTimeoutMs > 0
+					? withStreamIdleTimeout(
+							response.stream!,
+							streamIdleTimeoutMs,
+							() => new Error(`Bedrock stream idle timeout after ${streamIdleTimeoutMs}ms`),
+						)
+					: response.stream!;
+			for await (const item of streamSource) {
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
 						throw new Error("Unexpected assistant message start but got user message start instead");
@@ -325,6 +360,14 @@ function formatBedrockError(error: unknown): string {
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
+		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
+		return `${prefix}: ${message}${dataRetentionHint}`;
+	}
+	// Unmodeled stream exceptions are thrown by the Smithy unmarshaller as a plain
+	// `Error` (not a BedrockRuntimeServiceException), so without this branch they reach
+	// the caller with no category prefix and defeat the retry classifier. Apply the same
+	// prefix convention using the wire exception type on `.name`.
+	if (error instanceof Error && typeof error.name === "string" && error.name && error.name !== "Error") {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
 		return `${prefix}: ${message}${dataRetentionHint}`;
 	}
