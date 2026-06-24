@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { MessageParts } from "./MessageParts";
 import type { Part } from "../../lib/api";
+import type { CardState } from "../AskUserQuestionCard";
 
 // Mock scrollIntoView for JSDOM
 Element.prototype.scrollIntoView = vi.fn();
@@ -292,6 +293,39 @@ describe("MessageParts", () => {
       );
       // Body auto-collapses → "y" no longer in the DOM
       expect(screen.queryByText("y")).toBeNull();
+    });
+
+    // Regression: when the agent pauses on ask_user_question, the
+    // isStreaming flag goes false → step body would auto-collapse → the
+    // active AskUserQuestionCard becomes invisible to the user. The
+    // card question only renders if the body is open, so this assertion
+    // covers both "card rendered" and "body was forced open".
+    it("force-opens the body when an active AskUserQuestionCard is present", () => {
+      const parts: Part[] = [
+        { type: "toolCall", id: "tc1", name: "ask_user_question", args: {} },
+      ];
+      const cardStates = new Map<string, CardState>([
+        [
+          "tc1",
+          {
+            id: "tc1",
+            sessionId: "s1",
+            question: "Color?",
+            options: [{ label: "Red" }, { label: "Blue" }],
+            multiSelect: false,
+            status: "active",
+          },
+        ],
+      ]);
+      // isStreaming=false simulates the agent having paused waiting for
+      // the user to answer the question.
+      render(
+        <MessageParts parts={parts} isStreaming={false} cardStates={cardStates} />,
+      );
+      // Without force-open, the body collapses (open = userOverride ?? isStreaming
+      // = null ?? false = false) and "Color?" is not in the DOM. With the fix,
+      // presence of cardStates.get("tc1") forces open=true and the card renders.
+      expect(screen.getByText("Color?")).toBeTruthy();
     });
   });
 });
