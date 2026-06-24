@@ -663,4 +663,340 @@ describe("MemoryIndex", () => {
 			}
 		});
 	});
+
+	describe("memory_fts FTS5 table", () => {
+		// memory_fts is the FTS5 mirror of memory_index used for keyword recall.
+		// It is created and backfilled in init() on first run; subsequent inits
+		// are no-ops (idempotent). See docs/sdd/changes/memory-v2-refactor
+		// (FTS5 schema and storage sync requirement).
+		let idx: MemoryIndex;
+
+		beforeEach(() => {
+			idx = freshIndex();
+		});
+
+		afterEach(() => {
+			idx.close();
+		});
+
+		it("init creates memory_fts table", async () => {
+			await idx.init();
+
+			const db = idx.getRawDb();
+			const row = db.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
+			).get() as NameRow | undefined;
+			expect(row).toBeDefined();
+			expect(row?.name).toBe("memory_fts");
+		});
+
+		it("init creates memory_fts virtual table with fts5 schema", async () => {
+			await idx.init();
+
+			const db = idx.getRawDb();
+			// FTS5 virtual tables show up in sqlite_master with the original
+			// CREATE VIRTUAL TABLE statement. Verify the fields, the tokenizer,
+			// and the external-content mode (`content=''`).
+			const row = db.prepare(
+				"SELECT sql FROM sqlite_master WHERE name = 'memory_fts'",
+			).get() as SqlRow | undefined;
+			expect(row).toBeDefined();
+			const sql = row?.sql ?? "";
+			expect(sql).toContain("VIRTUAL TABLE");
+			expect(sql).toContain("fts5");
+			expect(sql).toContain("id UNINDEXED");
+			expect(sql).toContain("title");
+			expect(sql).toContain("summary");
+			expect(sql).toContain("content");
+			expect(sql).toContain("tags");
+			expect(sql).toContain("unicode61");
+			// External-content mode: text is NOT stored in FTS5, only indexed.
+			// Matches both `content=''` and `content = ''` (with optional spaces).
+			expect(sql).toMatch(/content\s*=\s*''/);
+		});
+
+		it("init backfills active atoms on existing DB without memory_fts", async () => {
+			const db = idx.getRawDb();
+
+			// Apply the base schema, then drop memory_fts so the next init()
+			// must re-create it AND backfill. This simulates the upgrade path:
+			// a DB that already has memory_index rows but never had memory_fts.
+			await idx.init();
+			db.exec("DROP TABLE memory_fts");
+			expect(
+				db.prepare("SELECT name FROM sqlite_master WHERE name='memory_fts'").get(),
+			).toBeUndefined();
+
+			// Insert 8 active atoms directly via raw SQL (bypassing insertAtom
+			// so we control the exact pre-init state of memory_index).
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+
+			// Each atom gets a unique tag token (`tag0` … `tag7`) so we can
+			// verify per-atom indexing via FTS5 MATCH. With `content=''`
+			// (external-content mode), the FTS5 table does not store the
+			// `id` column (UNINDEXED returns null on SELECT), so we cannot
+			// join back to memory_index by id from the FTS5 side. MATCH on
+			// a unique token is the reliable per-atom assertion.
+			const tokens: string[] = [];
+			for (let i = 0; i < 8; i++) {
+				const id = `atom-${i}`;
+				const token = `tag${i}`;
+				insertAtom.run({
+					id,
+					type: "fact",
+					title: `Title ${i}`,
+					summary: `Summary ${i}`,
+					content: `Content body ${i}`,
+					tags: JSON.stringify([token, "common"]),
+					importance: 0.5,
+					strength: 0.5,
+					access_count: 0,
+					version: 1,
+					is_latest: 1,
+					parent_id: null,
+					superseded_at: null,
+					archived: 0,
+					created_at: 1000 + i,
+					updated_at: 1000 + i,
+					last_access: null,
+					content_fingerprint: `fp-${i}`,
+					source_session: null,
+				});
+				insertVec.run(id, new Float32Array(1024));
+				tokens.push(token);
+			}
+
+			// Now call init — should create memory_fts and backfill all 8 active atoms.
+			await idx.init();
+
+			// Total row count matches the 8 active atoms.
+			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
+			expect(count.c).toBe(8);
+
+			// Every atom's unique tag is findable via MATCH — proves each
+			// atom's row landed in the FTS5 index (not just that the count
+			// happened to be 8).
+			for (const token of tokens) {
+				const rows = db
+					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+					.all(token) as Array<{ rowid: number }>;
+				expect(rows.length).toBe(1);
+			}
+		});
+
+		it("init backfill filters out archived and superseded atoms", async () => {
+			// Principles: "FTS5 行只描述 active 文本层(不含 embedding)" —
+			// only active atoms (archived = 0 AND is_latest = 1) belong in
+			// memory_fts.
+			const db = idx.getRawDb();
+
+			await idx.init();
+			db.exec("DROP TABLE memory_fts");
+
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+
+			const seed = (
+				id: string,
+				fp: string,
+				overrides: { is_latest?: number; archived?: number; token?: string } = {},
+			): void => {
+				// Default to a unique tag token so each atom is MATCH-findable.
+				// Use a single alnum token (no hyphens) — FTS5 query syntax
+				// treats `-` as a NOT operator, so hyphenated tokens break MATCH.
+				const token = overrides.token ?? `${id}token`;
+				insertAtom.run({
+					id,
+					type: "fact",
+					title: id,
+					summary: `s-${id}`,
+					content: `c-${id}`,
+					tags: JSON.stringify([token]),
+					importance: 0.5,
+					strength: 0.5,
+					access_count: 0,
+					version: 1,
+					is_latest: overrides.is_latest ?? 1,
+					parent_id: null,
+					superseded_at: overrides.is_latest === 0 ? Date.now() : null,
+					archived: overrides.archived ?? 0,
+					created_at: 1000,
+					updated_at: 1000,
+					last_access: null,
+					content_fingerprint: fp,
+					source_session: null,
+				});
+				insertVec.run(id, new Float32Array(1024));
+			};
+
+			// 2 active, 1 archived, 1 superseded → backfill must include only the 2 active.
+			seed("active1", "fp-act-1", { token: "active1token" });
+			seed("active2", "fp-act-2", { token: "active2token" });
+			seed("archived1", "fp-arc", { archived: 1, token: "archived1token" });
+			seed("superseded1", "fp-sup", { is_latest: 0, token: "superseded1token" });
+
+			await idx.init();
+
+			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
+			expect(count.c).toBe(2);
+
+			// Active atoms are findable.
+			expect(
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all("active1token") as Array<{ rowid: number }>
+				).length,
+			).toBe(1);
+			expect(
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all("active2token") as Array<{ rowid: number }>
+				).length,
+			).toBe(1);
+
+			// Archived + superseded atoms are NOT findable.
+			expect(
+				db
+					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+					.all("archived1token"),
+			).toEqual([]);
+			expect(
+				db
+					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+					.all("superseded1token"),
+			).toEqual([]);
+		});
+
+		it("init is idempotent — second init does not duplicate rows", async () => {
+			const db = idx.getRawDb();
+
+			// First init on a fresh DB creates all tables including memory_fts.
+			// memory_fts is empty here because memory_index has 0 active rows.
+			await idx.init();
+
+			// Drop memory_fts and seed 2 atoms. The next init() must create
+			// memory_fts and backfill those 2 atoms. A subsequent init() must
+			// NOT re-create or re-backfill (idempotent — same DB opened twice
+			// should not produce duplicate rows).
+			db.exec("DROP TABLE memory_fts");
+
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+
+			const seed = (id: string, fp: string): void => {
+				// Tag token is alnum-only so FTS5 MATCH parses it cleanly
+				// (FTS5 treats `-` as a NOT operator).
+				insertAtom.run({
+					id,
+					type: "fact",
+					title: id,
+					summary: `s-${id}`,
+					content: `c-${id}`,
+					tags: JSON.stringify([`${id}token`]),
+					importance: 0.5,
+					strength: 0.5,
+					access_count: 0,
+					version: 1,
+					is_latest: 1,
+					parent_id: null,
+					superseded_at: null,
+					archived: 0,
+					created_at: 1000,
+					updated_at: 1000,
+					last_access: null,
+					content_fingerprint: fp,
+					source_session: null,
+				});
+				insertVec.run(id, new Float32Array(1024));
+			};
+			seed("a1", "fp-1");
+			seed("a2", "fp-2");
+
+			// First init after seeding → backfills 2 atoms.
+			await idx.init();
+			const countAfterFirst = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as {
+				c: number;
+			};
+			expect(countAfterFirst.c).toBe(2);
+
+			// Second init → no change (memory_fts already exists, no re-create, no re-backfill).
+			await idx.init();
+			const countAfterSecond = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as {
+				c: number;
+			};
+			expect(countAfterSecond.c).toBe(2);
+
+			// And per-atom MATCH still finds exactly 1 row each — proving
+			// no duplicates were inserted on the second init.
+			expect(
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all("a1token") as Array<{ rowid: number }>
+				).length,
+			).toBe(1);
+			expect(
+				(
+					db
+						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
+						.all("a2token") as Array<{ rowid: number }>
+				).length,
+			).toBe(1);
+		});
+
+		it("init creates empty memory_fts on fresh DB with no active atoms", async () => {
+			// Edge case: DB with the base schema applied but zero atoms in
+			// memory_index. init() must still create memory_fts (table exists,
+			// zero rows).
+			await idx.init();
+
+			const db = idx.getRawDb();
+			const exists = db.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
+			).get();
+			expect(exists).toBeDefined();
+
+			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
+			expect(count.c).toBe(0);
+		});
+	});
 });

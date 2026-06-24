@@ -11,6 +11,13 @@
 //   - WAL mode for concurrent readers; foreign_keys ON for future FKs.
 //   - vec0 dimension = 1024 (bge-m3 embeddings).
 //   - Tags stored as a JSON string in a single TEXT column.
+//   - FTS5 mirror `memory_fts` (memory-v2-refactor; FTS5 schema and storage
+//     sync requirement): created and one-shot backfilled in init() from
+//     active atoms only (`archived = 0 AND is_latest = 1`). The init-time
+//     backfill is the only place we read FTS5's source — per-write sync
+//     (insertAtom / updateAtom / markArchived / markSupersededTx) is added
+//     in a later phase and will keep memory_fts in lock-step with
+//     memory_index transactionally.
 
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
@@ -92,6 +99,43 @@ export class MemoryIndex {
 		// filesystem checks or async migrations; the body stays synchronous
 		// for Phase 2.2.
 		this.db.exec(SCHEMA_SQL);
+
+		// FTS5 setup — idempotent. On a fresh DB, memory_fts does not yet
+		// exist: we create it via MEMORY_FTS_SCHEMA and one-shot backfill
+		// from every active atom (archived = 0 AND is_latest = 1) so the
+		// FTS5 index is in lock-step with memory_index on first open.
+		//
+		// On subsequent re-opens, memory_fts already exists — we deliberately
+		// do NOT re-create it nor re-backfill. That keeps init() strictly
+		// idempotent (same DB opened twice MUST NOT produce duplicate rows)
+		// and avoids an unnecessary full-table scan on every startup. Per-write
+		// sync is the responsibility of insertAtom / updateAtom /
+		// markArchived / markSupersededTx in later phases; the init-time
+		// backfill only handles the "upgrade" case where a DB existed
+		// before memory_fts was introduced.
+		//
+		// The CREATE + INSERT run inside a single db.transaction so a failure
+		// in the backfill (e.g. duplicate id) rolls back the empty FTS5
+		// table — leaving a half-built schema would silently break keyword
+		// recall later.
+		const ftsExists = this.db
+			.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
+			)
+			.get();
+		if (!ftsExists) {
+			this.db.transaction(() => {
+				this.db.exec(MEMORY_FTS_SCHEMA);
+				this.db
+					.prepare(
+						`INSERT INTO memory_fts(id, title, summary, content, tags)
+						 SELECT id, title, summary, content, COALESCE(tags, '')
+						 FROM memory_index
+						 WHERE archived = 0 AND is_latest = 1`,
+					)
+					.run();
+			})();
+		}
 	}
 
 	close(): void {
@@ -609,6 +653,34 @@ CREATE TABLE IF NOT EXISTS memory_audit (
 
 CREATE INDEX IF NOT EXISTS idx_memory_audit_atom
   ON memory_audit(atom_id, created_at DESC);
+`;
+
+// FTS5 mirror of memory_index for keyword recall. The schema is fixed
+// (Decision 1 in memory-v2-refactor / design.md): exactly five fields
+// (id UNINDEXED, title, summary, content, tags) using the unicode61
+// tokenizer with diacritics stripped. `content = ''` puts the table in
+// external-content mode — only the inverted index is stored in FTS5;
+// the source-of-truth text lives in memory_index and is JOINed back at
+// query time. This keeps memory_fts lean (no content duplication) while
+// still letting the FTS5 MATCH operator work over title / summary /
+// content / tags.
+//
+// `tags` is the JSON-encoded TEXT column from memory_index. The unicode61
+// tokenizer splits on whitespace + punctuation including `[` `]` `"`
+// `,`, so `["amplicon","biomarker"]` tokenizes to amplicon + biomarker —
+// callers searching by tag query the literal tag value and FTS5 matches.
+// Do NOT add more fields here; the schema is the contract for downstream
+// search code.
+const MEMORY_FTS_SCHEMA = `
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+  id UNINDEXED,
+  title,
+  summary,
+  content,
+  tags,
+  tokenize='unicode61 remove_diacritics 2',
+  content=''
+)
 `;
 
 // re-export the row helpers so callers that only import from storage.ts do
