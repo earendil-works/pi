@@ -405,12 +405,14 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 		const mockCtx = createMockCtx();
 		const event = makeCompactEvent([makeUserMessage("hi")]);
 
-		await compactHandler(event, mockCtx);
+		const result = await compactHandler(event, mockCtx);
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
 		expect(mockCtx.notifyCalls[0].type).toBe("error");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/no extraction model configured/i);
+		// Hard gate: extraction failure cancels compact.
+		expect(result).toEqual({ cancel: true });
 	});
 
 	it("surfaces a registry error when the configured model is not registered", async () => {
@@ -423,12 +425,13 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 		const mockCtx = createMockCtx();
 		const event = makeCompactEvent([makeUserMessage("hi")]);
 
-		await compactHandler(event, mockCtx);
+		const result = await compactHandler(event, mockCtx);
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
 		expect(mockCtx.notifyCalls[0].type).toBe("error");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/not in registry/i);
+		expect(result).toEqual({ cancel: true });
 	});
 
 	it("surfaces an auth error when the extraction provider has no API key", async () => {
@@ -439,11 +442,29 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 		const mockCtx = createMockCtx({ authOk: false, authError: "no api key for anthropic" });
 		const event = makeCompactEvent([makeUserMessage("hi")]);
 
-		await compactHandler(event, mockCtx);
+		const result = await compactHandler(event, mockCtx);
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
 		expect(mockCtx.notifyCalls[0].type).toBe("error");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/no api key for anthropic/i);
+		expect(result).toEqual({ cancel: true });
+	});
+
+	it("returns undefined (proceed) when extraction succeeds", async () => {
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([makeUserMessage("hi")]);
+
+		const result = await compactHandler(event, mockCtx);
+
+		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
+		// No error notify on the happy path.
+		expect(mockCtx.notifyCalls.filter((c) => c.type === "error")).toHaveLength(0);
+		// Compact proceeds normally when extraction succeeds.
+		expect(result).toBeUndefined();
 	});
 });

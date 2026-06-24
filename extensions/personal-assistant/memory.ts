@@ -270,28 +270,40 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// buildCallLlm uses, and it decouples extraction cost/quality from the
 	// session's main model — the user can run a cheap local qwen2.5 for
 	// extraction while keeping a strong Anthropic/GPT model for the agent
-	// loop. If the config is missing, the model is unknown to the registry,
-	// or auth is unavailable, the hook surfaces the error to the user via
-	// ctx.ui.notify (loud) AND returns — compact still proceeds so the
-	// session is not stranded, but the user sees the missing configuration
-	// and can fix it before the next /compact.
+	// loop.
+	//
+	// Extraction is a **hard gate** for compact: if extraction throws (no
+	// config, model not in registry, no auth, LLM call failed), the hook
+	// returns `{cancel: true}` so compact does NOT proceed. The rationale
+	// is that compact discards messages — discarding without preserving
+	// the learnings in memory would silently degrade the memory subsystem
+	// over the session's lifetime. Better to fail loudly: ctx.ui.notify
+	// surfaces the specific error, the user fixes the config (or retries
+	// /compact after a transient network blip clears), and the next
+	// compact succeeds. Early-return paths inside runCompactExtraction
+	// (empty messagesToSummarize, all messages filter out as no-text) do
+	// NOT throw — they return normally, and the hook returns undefined,
+	// so compact proceeds when there is genuinely nothing to extract.
 	pi.on("session_before_compact", async (event, ctx) => {
-		// Wrap the entire body: a broken memory pipeline must NEVER block
-		// compaction (compact is critical for long sessions). The runtime's
-		// emit() also catches errors and routes them through the extension
-		// error channel; our outer try/catch adds ctx.ui.notify so the user
-		// sees the failure in the TUI, not just in the dev-only log.
 		try {
 			await runCompactExtraction(event, ctx);
+			return undefined;
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			// eslint-disable-next-line no-console
-			console.warn("[memory-v2] session_before_compact: extraction failed:", msg);
+			console.warn(
+				"[memory-v2] session_before_compact: extraction failed, cancelling compact:",
+				msg,
+			);
 			try {
-				ctx.ui?.notify?.(`memory: extraction failed — ${msg}`, "error");
+				ctx.ui?.notify?.(
+					`memory: extraction failed, compact cancelled — ${msg}`,
+					"error",
+				);
 			} catch {
 				// notify is best-effort; some ctx shapes (rpc/print) lack it
 			}
+			return { cancel: true };
 		}
 	});
 
