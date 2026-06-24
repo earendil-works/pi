@@ -187,7 +187,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 
       // Read session content for extraction (non-blocking)
       const jsonlContent = await readFile(filePath, "utf-8");
-      void extractAtomsSafely(jsonlContent, deps).catch((err) => {
+      void extractAtomsSafely(jsonlContent, deps, id).catch((err) => {
         console.error("Background atom extraction failed:", err);
       });
 
