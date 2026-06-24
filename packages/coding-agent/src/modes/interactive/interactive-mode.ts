@@ -4766,7 +4766,7 @@ export class InteractiveMode {
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
 						this.showStatus(message);
 					} catch (error: unknown) {
-						this.showError(`Logout failed: ${error instanceof Error ? error.message : String(error)}`);
+						this.showError(`Failed to log out: ${error instanceof Error ? error.message : String(error)}`);
 					}
 				},
 				() => {
