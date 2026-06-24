@@ -616,6 +616,93 @@ describe("recallAtoms hybrid recall", () => {
 		expect(results).toBeDefined();
 		expect(Array.isArray(results)).toBe(true);
 	});
+
+	// (j) `recallThreshold` (default = 1/rrfK) filters low-fused-score atoms.
+	// A single-channel BM25-only rank-0 hit has rrfScore = 1/(rrfK+1) ≈
+	// 0.01639, which is strictly below the default threshold 1/rrfK ≈
+	// 0.01667 — this is the design's "宁可漏召不可误召" conservative stance.
+	// With `recallThreshold: 0` the gate is bypassed and the BM25-only
+	// rescue surfaces. Test (b) above verifies the bypass path; THIS test
+	// pins the strict default behaviour — the same atom is rejected without
+	// the bypass opt-in. Both directions must hold: gate filters when on,
+	// gate does not filter when off.
+	it("recallThreshold filters low-fused-score atoms (strict default)", async () => {
+		installControlledMock();
+		// Single-channel BM25-only hit. The controlled V_COS_04 embedding
+		// shares no index-0/1 mass with the charBag of "amplicon data
+		// backflow" (different character codes mod 1024), so cosine ≈ 0 and
+		// the dense channel drops the atom at the 0.65 floor. BM25 finds the
+		// atom via token overlap on "amplicon" / "data" / "backflow".
+		const a = sampleAtom({
+			type: "rule",
+			content: "__COS:0.4 amplicon data backflow marker unique phrase",
+		});
+		await insertAtom(a, index);
+
+		// Default recallThreshold = 1/rrfK = 0.01667 blocks the rank-0
+		// BM25-only contribution (1/61 ≈ 0.01639 < 0.01667).
+		const resultsDefault = await recallAtoms(index, "amplicon data backflow");
+		expect(resultsDefault.find((r) => r.atom.id === a.id)).toBeUndefined();
+
+		// With `recallThreshold: 0`, the gate is bypassed and the BM25-only
+		// rescue surfaces. Same bypass used by tests (b) / (c) / (e) — what
+		// distinguishes THIS test is the assertion that the strict default
+		// ALSO rejects the same atom.
+		const resultsBypass = await recallAtoms(index, "amplicon data backflow", {
+			recallThreshold: 0,
+		});
+		expect(resultsBypass.find((r) => r.atom.id === a.id)).toBeDefined();
+	});
+
+	// (k) Per-type round-robin after RRF fusion strictly interleaves
+	// adjacent types. The existing test (g) above only checks that both
+	// types are PRESENT in the final list — a "preserves type diversity"
+	// assertion that a non-interleaving implementation could still pass
+	// (e.g. "all rules first, then all facts"). This test pins the
+	// stricter contract: with 5 rule + 5 fact candidates and no process
+	// atoms, the final 6-result list must strictly alternate
+	// (rule, fact, rule, fact, rule, fact). The controlled-mock embedder
+	// (`__COS:1`) makes every atom maximally dense-relevant (cosine 1.0
+	// with the QRY query) so all 10 surface as dense-only rank-0 hits —
+	// per-type cap of 3 then yields the deterministic 3+3=6 interleave
+	// pattern.
+	it("per-type round-robin after RRF fusion strictly alternates adjacent types", async () => {
+		installControlledMock();
+		// Insert 5 rule + 5 fact atoms, all maximally relevant to the query.
+		for (let i = 0; i < 5; i++) {
+			await insertAtom(
+				sampleAtom({
+					type: "rule",
+					content: `__COS:1 ruleShared${i} token content unique`,
+				}),
+				index,
+			);
+			await insertAtom(
+				sampleAtom({
+					type: "fact",
+					content: `__COS:1 factShared${i} token content unique`,
+				}),
+				index,
+			);
+		}
+
+		const results = await recallAtoms(index, QRY, { recallThreshold: 0 });
+		// Per-type cap of 3 yields 3 rule + 3 fact = 6 total (no process
+		// atoms inserted → the process slot is empty for every round).
+		expect(results.length).toBe(6);
+		const types = results.map((r) => r.atom.type);
+		const ruleCount = types.filter((t) => t === "rule").length;
+		const factCount = types.filter((t) => t === "fact").length;
+		expect(ruleCount).toBeLessThanOrEqual(3);
+		expect(factCount).toBeLessThanOrEqual(3);
+		// Round-robin: adjacent entries must have DIFFERENT types. This is
+		// the strict-alternation check that test (g) above does not assert
+		// — it is the load-bearing contract for the per-type interleaving
+		// in `recallAtoms` (search.ts lines 296–307).
+		for (let i = 0; i < results.length - 1; i++) {
+			expect(results[i]?.atom.type).not.toBe(results[i + 1]?.atom.type);
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
