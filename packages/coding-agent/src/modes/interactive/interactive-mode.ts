@@ -127,6 +127,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { setupSidebar } from "./sidebar-setup.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -722,6 +723,7 @@ export class InteractiveMode {
 
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
+		setupSidebar(this.ui);
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
