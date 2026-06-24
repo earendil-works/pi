@@ -113,11 +113,11 @@ export {
 // Sidebar
 
 export {
-	PanelRegistration,
 	SidebarRegistry,
 	type TabDefinition,
 	SidebarContainer,
 	SettingsPanel,
 } from "./sidebar.ts";
+export type { PanelRegistration } from "./sidebar.ts";
 // Utilities
 export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
