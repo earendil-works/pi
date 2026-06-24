@@ -174,7 +174,9 @@ function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Pr
     // sees the trailing JSON.
     const textParts: string[] = [];
     const thinkingParts: string[] = [];
+    const seenTypes: string[] = [];
     for (const c of result.content) {
+      seenTypes.push(c.type);
       if (c.type === "text" && "text" in c) {
         textParts.push(c.text);
       } else if (c.type === "thinking" && "thinking" in c) {
@@ -188,11 +190,25 @@ function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Pr
       const raw = thinkingParts.join("");
       const stripped = raw.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
       if (stripped.length > 0) return stripped;
+      // Thinking block present but empty after stripping <think> wrappers:
+      // dump the first 200 chars of the raw thinking so the log shows what
+      // the model actually produced (don't include the full thing — it
+      // can be 10k+ tokens of chain-of-thought).
+      console.warn(
+        `[memory-extract] thinking-block-only response (finishReason=${result.stopReason ?? "unknown"}); ` +
+          `raw thinking preview: ${JSON.stringify(raw.slice(0, 200))}`,
+      );
       throw new Error(
         "No text content in LLM response (response was a thinking block only; model may have run out of tokens before writing the answer)",
       );
     }
-    throw new Error("No text content in LLM response");
+    // Neither text nor thinking blocks. Log the content types we saw and
+    // the stopReason so the next failure isn't a mystery.
+    console.warn(
+      `[memory-extract] no usable content (finishReason=${result.stopReason ?? "unknown"}, ` +
+        `contentTypes=[${seenTypes.join(",")}], blockCount=${result.content.length})`,
+    );
+    throw new Error(`No text content in LLM response (content types: [${seenTypes.join(",")}])`);
   };
 }
 
