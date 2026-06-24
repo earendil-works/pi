@@ -234,6 +234,8 @@ function makeCompactEvent(messages: AgentMessage[]): SessionBeforeCompactEvent {
 			},
 		},
 		branchEntries: [],
+		reason: "manual",
+		willRetry: false,
 		signal: new AbortController().signal,
 	};
 }
