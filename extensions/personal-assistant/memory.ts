@@ -82,6 +82,18 @@ export interface PersonalAssistantConfig {
 		embedding?: { ollamaUrl?: string; model?: string; provider?: string };
 		decay?: { baseDecay?: number; archiveThreshold?: number };
 		injection?: { maxCount?: number };
+		/**
+		 * Hybrid recall (BM25 + dense + RRF) configuration. Both fields
+		 * optional — missing config falls back to defaults in `search.ts`.
+		 * Exposed here purely so settings.json can override them; no other
+		 * recall knobs are surfaced.
+		 */
+		recall?: {
+			/** RRF smoothing constant k. Default: 60 (industry standard). */
+			rrfK?: number;
+			/** Min fused RRF score to keep an atom. Default: 1/rrfK ≈ 0.0167. */
+			recallThreshold?: number;
+		};
 		autoDecay?: boolean;
 		autoExtract?: boolean;
 	};
