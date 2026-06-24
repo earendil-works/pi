@@ -220,4 +220,85 @@ describe("MessageParts", () => {
       expect(img?.className).toMatch(/max-h-96/);
     });
   });
+
+  describe("StepHeader (via MessageParts)", () => {
+    // TDD RED: these tests describe the post-implementation contract for the
+    // StepHeader wrapper around assistant turns. `isStreaming` and `timestamp`
+    // props don't exist on MessageParts yet (1.2 will add them), so we cast
+    // the props to `any` here. Once 1.2 lands, the cast is a no-op.
+    //
+    // Current behavior baseline (pre-1.2): no StepHeader exists. The 4 cases
+    // asserting new behavior (2,3,4,5) MUST fail here. Case 1 is a regression
+    // guard — it asserts that pure-text turns do NOT gain a step header. It
+    // happens to pass pre-1.2 (vacuously, since no header exists) and must
+    // continue to pass post-1.2 (genuinely, because the implementation
+    // branches on hasStepContent).
+
+    it("renders no step header for a pure-text turn", () => {
+      const parts: Part[] = [{ type: "text", text: "hi" }];
+      render(<MessageParts {...({ parts, isStreaming: false } as any)} />);
+      // Regression guard: no "Executing" / "Completed" text → no step header.
+      expect(screen.queryByText(/Execut|Completed/i)).toBeNull();
+    });
+
+    it("shows Executing header and expands the body when streaming a thinking+text turn", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "x" },
+        { type: "text", text: "y" },
+      ];
+      render(<MessageParts {...({ parts, isStreaming: true } as any)} />);
+      // Step header shows "● Executing (Xs) ▼"
+      expect(screen.getByText(/Executing/i)).toBeTruthy();
+      // Body is expanded by default when isStreaming=true → text "y" visible
+      expect(screen.getByText("y")).toBeTruthy();
+    });
+
+    it("shows Completed header with the body collapsed when not streaming a tool call turn", () => {
+      const parts: Part[] = [
+        { type: "toolCall", id: "t1", name: "read", args: { path: "/x" } },
+      ];
+      render(<MessageParts {...({ parts, isStreaming: false } as any)} />);
+      // Step header shows "✓ Completed (Xs) ▲"
+      expect(screen.getByText(/Completed/i)).toBeTruthy();
+      // Body is collapsed by default when isStreaming=false → "/x" not in DOM
+      expect(screen.queryByText("/x")).toBeNull();
+    });
+
+    it("expands the body when the user clicks the Completed step header", () => {
+      const parts: Part[] = [
+        { type: "toolCall", id: "t1", name: "read", args: { path: "/x" } },
+      ];
+      const { container } = render(
+        <MessageParts {...({ parts, isStreaming: false } as any)} />,
+      );
+      // Pre-click: body collapsed
+      expect(screen.queryByText("/x")).toBeNull();
+      // Find the step header button via its "Completed" label
+      const headerButton = screen.getByText(/Completed/i).closest("button");
+      expect(headerButton).toBeTruthy();
+      fireEvent.click(headerButton!);
+      // Post-click: body expanded → "/x" appears in the DOM
+      expect(screen.queryByText("/x")).not.toBeNull();
+      // sanity: still has the read tool name rendered
+      expect(container.textContent).toContain("read");
+    });
+
+    it("auto-collapses the body when isStreaming transitions from true to false", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "x" },
+        { type: "text", text: "y" },
+      ];
+      const { rerender } = render(
+        <MessageParts {...({ parts, isStreaming: true } as any)} />,
+      );
+      // While streaming, body is expanded → text "y" visible
+      expect(screen.getByText("y")).toBeTruthy();
+      // Transition to not streaming (same instance, same parts)
+      rerender(
+        <MessageParts {...({ parts, isStreaming: false } as any)} />,
+      );
+      // Body auto-collapses → "y" no longer in the DOM
+      expect(screen.queryByText("y")).toBeNull();
+    });
+  });
 });
