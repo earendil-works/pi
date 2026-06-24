@@ -362,6 +362,36 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 	});
 
+	it("reads BOTH messagesToSummarize and turnPrefixMessages (split-turn fix)", async () => {
+		// Regression: previously the hook only read messagesToSummarize,
+		// but in split-turn compactions (the common case for /compact and
+		// auto-compact-mid-turn), the actual conversation content lives
+		// in turnPrefixMessages. messagesToSummarize is empty for a
+		// fresh-session split turn, so the hook early-returned and the
+		// user got zero atoms despite /compact succeeding. The fix reads
+		// both fields. Verify extraction still fires when ONLY
+		// turnPrefixMessages has content.
+		writeSettings(tmpHome, {
+			extractionProvider: "anthropic",
+			extractionModel: "claude-haiku-4-5",
+		});
+		const mockCtx = createMockCtx();
+		const event = makeCompactEvent([]);
+		(event as { preparation: { turnPrefixMessages: AgentMessage[] } }).preparation.turnPrefixMessages = [
+			makeUserMessage("user said something mid-turn"),
+			makeAssistantMessage("assistant replied"),
+		];
+
+		await compactHandler(event, mockCtx);
+
+		// Extraction must have fired — the LLM saw the turn-prefix
+		// content even though messagesToSummarize was empty.
+		expect(vi.mocked(completeSimple)).toHaveBeenCalledTimes(1);
+		const [, ctxArg] = vi.mocked(completeSimple).mock.calls[0]!;
+		const prompt = ctxArg.messages[0].content as string;
+		expect(prompt).toMatch(/2 messages/);
+	});
+
 	it("uses x-api-key header for anthropic-messages extraction", async () => {
 		writeSettings(tmpHome, {
 			extractionProvider: "anthropic",

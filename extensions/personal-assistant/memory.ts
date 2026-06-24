@@ -344,10 +344,24 @@ export function registerMemory(pi: ExtensionAPI): void {
 			throw new Error(`extraction model auth: ${auth.error}`);
 		}
 
-		// 3. Source messages — real field on SessionBeforeCompactEvent.
-		const rawMessages = (event as { preparation?: { messagesToSummarize?: unknown[] } })
-			.preparation?.messagesToSummarize ?? [];
-		if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+		// 3. Source messages — real fields on SessionBeforeCompactEvent.
+		// BOTH messagesToSummarize (history being summarised) and
+		// turnPrefixMessages (the split-turn prefix, the older messages
+		// of the current turn when compaction cut inside an in-progress
+		// turn) are fed to extraction. Compaction is split-turn whenever
+		// /compact or auto-compact fires mid-turn — the only messages
+		// worth extracting live in turnPrefixMessages in that case, and
+		// skipping them silently drops the only conversation content of
+		// the session. Reading only messagesToSummarize is the bug that
+		// made split-turn compactions produce no atoms.
+		const prep = (event as {
+			preparation?: { messagesToSummarize?: unknown[]; turnPrefixMessages?: unknown[] };
+		}).preparation ?? {};
+		const rawMessages = [
+			...(Array.isArray(prep.messagesToSummarize) ? prep.messagesToSummarize : []),
+			...(Array.isArray(prep.turnPrefixMessages) ? prep.turnPrefixMessages : []),
+		];
+		if (rawMessages.length === 0) return;
 
 		// Convert AgentMessage → the simple {role, content: string} shape
 		// that extractMemoriesWithCallLlm expects. User messages may be
