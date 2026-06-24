@@ -1192,11 +1192,9 @@ describe("Sessions REST API Endpoints", () => {
 
 			// Minimal settings config
 			const mockSettings = {
-				personalAssistant: {
-					memory: {
-						enabled: true,
-						extraction: { provider: "minimax", model: "MiniMax-M3" },
-					},
+				memory: {
+					enabled: true,
+					extraction: { provider: "minimax", model: "MiniMax-M3" },
 				},
 			};
 
@@ -1248,7 +1246,9 @@ describe("Sessions REST API Endpoints", () => {
 			expect(runMemoryExtractionSpy).toHaveBeenCalled();
 			const callArgs = runMemoryExtractionSpy.mock.calls[0][0];
 			expect(callArgs.callLlm).toBe(mockCallLlm);
-			expect(callArgs.config).toBe(mockSettings);
+			// config is the extraction model name (audit label for
+			// extraction-report.json), not the full PersonalAssistantConfig.
+			expect(callArgs.config).toEqual({ model: "MiniMax-M3" });
 			expect(callArgs.dbPath).toBe(tempDbPath);
 			expect(callArgs.atomsDir).toBe(tempAtomsDir);
 			expect(Array.isArray(callArgs.messages)).toBe(true);
@@ -1273,9 +1273,7 @@ describe("Sessions REST API Endpoints", () => {
 			await fs.mkdir(testSessionDir, { recursive: true });
 
 			const mockSettings = {
-				personalAssistant: {
-					memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
-				},
+				memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
 			};
 
 			// Mount routes with deps
@@ -1334,9 +1332,7 @@ describe("Sessions REST API Endpoints", () => {
 			await fs.mkdir(testSessionDir, { recursive: true });
 
 			const mockSettings = {
-				personalAssistant: {
-					memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
-				},
+				memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
 			};
 
 			// Mount routes with deps
@@ -1492,11 +1488,9 @@ describe("Sessions REST API Endpoints", () => {
 
 			// Minimal settings config
 			const mockSettings = {
-				personalAssistant: {
-					memory: {
-						enabled: true,
-						extraction: { provider: "minimax", model: "MiniMax-M3" },
-					},
+				memory: {
+					enabled: true,
+					extraction: { provider: "minimax", model: "MiniMax-M3" },
 				},
 			};
 
@@ -1573,7 +1567,9 @@ describe("Sessions REST API Endpoints", () => {
 			expect(runMemoryExtractionSpy).toHaveBeenCalled();
 			const callArgs = runMemoryExtractionSpy.mock.calls[0][0];
 			expect(callArgs.callLlm).toBe(mockCallLlm);
-			expect(callArgs.config).toBe(mockSettings);
+			// config is the extraction model name (audit label for
+			// extraction-report.json), not the full PersonalAssistantConfig.
+			expect(callArgs.config).toEqual({ model: "MiniMax-M3" });
 			expect(callArgs.dbPath).toBe(tempDbPath);
 			expect(callArgs.atomsDir).toBe(tempAtomsDir);
 			expect(Array.isArray(callArgs.messages)).toBe(true);
@@ -1599,11 +1595,9 @@ describe("Sessions REST API Endpoints", () => {
 
 			// Minimal settings config
 			const mockSettings = {
-				personalAssistant: {
-					memory: {
-						enabled: true,
-						extraction: { provider: "minimax", model: "MiniMax-M3" },
-					},
+				memory: {
+					enabled: true,
+					extraction: { provider: "minimax", model: "MiniMax-M3" },
 				},
 			};
 

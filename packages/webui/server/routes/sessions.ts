@@ -3,7 +3,11 @@ import { createReadStream } from "node:fs";
 import { readdir, unlink, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionPool, SessionHeader } from "../session-pool";
-import { runMemoryExtraction } from "@earendil-works/pi-personal-assistant";
+import {
+	runMemoryExtraction,
+	DEFAULT_DB_PATH,
+	DEFAULT_ATOMS_DIR,
+} from "@earendil-works/pi-personal-assistant";
 import type { RunMemoryExtractionOptions, PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
 import { spawnPiNewSession } from "../lib/new-session";
 import { extractUsage } from "../lib/usage-parser";
@@ -261,28 +265,74 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
  * LLM client is available. Errors are logged but never thrown so deletion
  * can proceed.
  */
-async function extractAtomsSafely(jsonlContent: string, deps?: SessionsDeps): Promise<number> {
-  if (!deps?.callLlm || !deps?.settings) return 0;
+async function extractAtomsSafely(
+	jsonlContent: string,
+	deps?: SessionsDeps,
+	sessionId?: string,
+): Promise<number> {
+	if (!deps?.callLlm || !deps?.settings) return 0;
 
-  try {
-    // Parse JSONL and extract messages
-    const messages = parseMessagesFromJsonl(jsonlContent);
-    if (messages.length === 0) return 0;
+	// Parse JSONL and extract messages
+	const messages = parseMessagesFromJsonl(jsonlContent);
+	if (messages.length === 0) {
+		console.log(
+			`[memory] session ${sessionId ?? "<unknown>"}: no extractable messages — skipping`,
+		);
+		return 0;
+	}
 
-    const opts: RunMemoryExtractionOptions = {
-      callLlm: deps.callLlm,
-      config: deps.settings,
-      messages,
-      dbPath: deps.dbPath,
-      atomsDir: deps.atomsDir,
-    };
+	const startedAt = Date.now();
+	console.log(
+		`[memory] session ${sessionId ?? "<unknown>"}: extracting from ${messages.length} messages...`,
+	);
 
-    const result = await runMemoryExtraction(opts);
-    return result.atomsWritten;
-  } catch (llmErr) {
-    console.warn("Memory extraction failed, proceeding with deletion:", llmErr);
-    return 0;
-  }
+	try {
+		// SessionsDeps.dbPath / atomsDir are optional in the type because
+		// tests may mount the route without them and mock runMemoryExtraction
+		// to short-circuit before MemoryIndex is ever constructed. In
+		// production, createApp() always provides both (see server/index.ts).
+		// Fall back to the extension defaults if a caller forgets — the
+		// TUI's session_before_compact hook reads the same paths.
+		const opts: RunMemoryExtractionOptions = {
+			callLlm: deps.callLlm,
+			config: { model: deps.settings.memory?.extraction?.model },
+			messages: messages.map((m) => ({
+				role: m.role,
+				content: typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""),
+			})),
+			dbPath: deps.dbPath ?? DEFAULT_DB_PATH,
+			atomsDir: deps.atomsDir ?? DEFAULT_ATOMS_DIR,
+		};
+
+		const result = await runMemoryExtraction(opts);
+		const elapsedMs = Date.now() - startedAt;
+		// RunMemoryExtractionResult exposes created/superseded/skipped; sum
+		// the first two to get the "atomsWritten" semantic the caller (and
+		// the existing webui test mocks) expects. The TUI side gets the
+		// per-bucket breakdown via ctx.ui.notify, but we keep atomsWritten
+		// here for the same return-value contract the DELETE handler
+		// already advertises.
+		const created = result.created.length;
+		const superseded = result.superseded.length;
+		const skipped = result.skipped.length;
+		const atomsWritten = created + superseded;
+		const itemsProposed = result.plan?.items.length ?? 0;
+		console.log(
+			`[memory] session ${sessionId ?? "<unknown>"}: extraction complete — ` +
+				`${atomsWritten} atoms written ` +
+				`(${created} new, ${superseded} updated, ${skipped} unchanged; ` +
+				`${itemsProposed} proposed) in ${elapsedMs}ms`,
+		);
+		return atomsWritten;
+	} catch (llmErr) {
+		const elapsedMs = Date.now() - startedAt;
+		console.warn(
+			`[memory] session ${sessionId ?? "<unknown>"}: extraction failed after ${elapsedMs}ms, ` +
+				`proceeding with deletion:`,
+			llmErr,
+		);
+		return 0;
+	}
 }
 
 /**
