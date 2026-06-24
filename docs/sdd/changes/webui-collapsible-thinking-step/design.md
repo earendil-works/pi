@@ -69,18 +69,20 @@ ChatPage
   └─ ChatMessages (turn grouping, 已有)
        └─ MessageBubble  *+isStreaming?: boolean
             ├─ MessageHeader (不变)
-            ├─ MessageParts  *+isStreaming?: boolean  *new algorithm
-            │    └─ StepContainer (新,条件渲染)
-            │         ├─ *StepHeader  (新组件,isStreaming + startedAt props)
+            ├─ MessageParts  *+isStreaming?: boolean  *+timestamp?: string  *new algorithm
+            │    └─ (条件渲染) <div className="rounded-lg border ...">
+            │         ├─ *StepHeader  (新组件,在 MessageParts.tsx 同文件)
             │         │    ├─ useState<boolean|null>(userOverride)
             │         │    ├─ useEffect + setInterval 1s
             │         │    └─ 渲染: status icon + text + (Xs) + chevron
-            │         └─ StepBody (新,内部用原 chunks 算法)
+            │         └─ (条件渲染) <div> body = chunks (用原算法)
             │              ├─ ThinkingItem (已有,不变)
             │              ├─ TextItem (已有,不变)
             │              └─ ToolGroup (已有,不变)
             └─ MessageFooter (不变)
 ```
+
+注意: `StepContainer` / `StepBody` 是**伪组件名**用来描述 step 包裹的视觉层次,实际实现是 `MessageParts` 内的内联 `<div>` + `{open && <div>...chunks...</div>}`,不抽成独立组件。`StepHeader` 才是真组件。
 
 **关键 type / interface**:
 
@@ -93,6 +95,7 @@ interface MessagePartsProps {
   onCardCancel?: (id: string) => void;
   // 新增
   isStreaming?: boolean;
+  timestamp?: string;  // ISO string from message.timestamp
 }
 
 // StepHeader (新)
@@ -153,14 +156,13 @@ function StepHeader({ isStreaming, startedAt }: StepHeaderProps) {
 **`MessageParts` chunks 新算法**:
 
 ```ts
-export function MessageParts({ parts, isStreaming = false, cardStates, onCardSubmit, onCardCancel }: MessagePartsProps) {
+export function MessageParts({ parts, isStreaming = false, timestamp, cardStates, onCardSubmit, onCardCancel }: MessagePartsProps) {
   if (parts.length === 0) {
     return <div className="text-xs text-gray-400 italic">(empty turn)</div>;
   }
   const hasStepContent = parts.some(
     (p) => p.type === "thinking" || p.type === "toolCall" || p.type === "toolResult" || p.type === "image"
   );
-  const startedAt = ...; // 从 message.timestamp (在 MessageBubble 传,或这里 props 加 timestamp)
 
   if (!hasStepContent) {
     // 原 path: 纯 text 直接渲染
@@ -171,6 +173,7 @@ export function MessageParts({ parts, isStreaming = false, cardStates, onCardSub
     );
   }
   // 有 step content: 包裹
+  const startedAt = timestamp ? new Date(timestamp) : new Date();
   return (
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col gap-2">
       <StepHeader isStreaming={isStreaming} startedAt={startedAt} />
