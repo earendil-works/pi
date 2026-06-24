@@ -51,7 +51,7 @@
 ### 场景: FTS5 query parse 失败 (e.g., 包含 sqlite fts5 reserved chars)
 - **GIVEN** user query 含未转义的 `"`(FTS5 phrase query delimiter)
 - **WHEN** recallAtoms(query='lefse "没有" 结果')
-- **THEN** `storage.bm25Search` 用 escapeQuotes 转义 user input
+- **THEN** `storage.bm25Search` 用 escapeFtsQuery 把 `"()*:[]` 替换成空格 (非 doubling `"`)
 - **AND** 不抛 SQL parse error
 - **AND** 返回 BM25 top-20
 

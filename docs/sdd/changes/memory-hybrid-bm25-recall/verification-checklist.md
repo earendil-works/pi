@@ -39,7 +39,7 @@
 |---|------|------|----------|---------|------|
 | R1 | hybrid retrieval via FTS5 BM25 + dense KNN, fused by RRF | spec.md ADDED #1 | unit-test | test/hybrid-recall.test.ts 包含 4 个 scenario 测试 (BM25-only, dense-only, double-channel, threshold filter) | [ ] |
 | R2 | FTS5 schema and storage sync | spec.md ADDED #2 | unit-test + code-review | storage.ts:init() 创建 memory_fts; insertAtom/archiveAtom/supersedeAtom 同事务同步 FTS5 行(7 个 storage-level 测试) | [ ] |
-| R3 | bm25Search escapes FTS5 special characters | spec.md ADDED #3 | unit-test | storage.ts:bm25Search 内部 escapeQuotes/escapeFtsQuery,test 7 个 case 覆盖 " ( ) * : | [ ] |
+| R3 | bm25Search escapes FTS5 special characters | spec.md ADDED #3 | unit-test | storage.ts:bm25Search 内部 escapeFtsQuery 把 `"()*:[]` 替换成空格,test 7 个 case 覆盖 " ( ) * : | [ ] |
 | R4 | rrfK and recallThreshold are configurable | spec.md ADDED #4 | unit-test + code-review | memory.ts:PersonalAssistantConfig.memory.recall.{rrfK, recallThreshold}; 默认值 60 / 1/60; test 3 个 scenario (missing/tighten/loosen) | [ ] |
 | R5 | RecallResult carries rrfScore alongside score | spec.md ADDED #5 | unit-test + code-review | types.ts:RecallResult 加 rrfScore: number; search.ts: RecallResult 构造时填充; formatMemoryBlock 不暴露 | [ ] |
 | R6 | recallAtoms returns top-K sorted by RRF, per-type round-robin (MODIFIED) | spec.md MODIFIED #1 | unit-test | search.ts:recallAtoms per-type RRF + round-robin; test (g)(j)(n) 仍 pass | [ ] |

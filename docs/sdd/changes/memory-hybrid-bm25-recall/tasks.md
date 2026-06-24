@@ -20,21 +20,21 @@
 
 ## 1. Storage layer — FTS5 schema + sync
 
-- [ ] 1.1 **Add `memory_fts` schema to MemoryIndex.init() (with idempotent backfill)**
+- [x] 1.1 **Add `memory_fts` schema to MemoryIndex.init() (with idempotent backfill)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: Add a CREATE-statement constant `MEMORY_FTS_SCHEMA` for `CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, title, summary, content, tags, tokenize='unicode61 remove_diacritics 2', content='')`. In `init()`, after the existing CREATE INDEX statements, check whether `memory_fts` exists via `db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'").get()` — if absent, run the CREATE then execute `INSERT INTO memory_fts(id, title, summary, content, tags) SELECT id, title, summary, content, COALESCE(..., '') FROM memory_index WHERE archived = 0 AND is_latest = 1`. Wrap the backfill in a single `db.transaction(() => { ... })()`. Document the rationale (init-time idempotent, no separate migrate route).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("init builds memory_fts idempotently + backfills active atoms")` passes; running init twice does not duplicate rows.
   - **依赖**: 无
   - **前置阅读**: `extensions/personal-assistant/storage.ts:120-160` (init method), `:540-618` (SCHEMA constant block)
 
-- [ ] 1.2 **Add `MemoryIndex.bm25Search` method**
+- [x] 1.2 **Add `MemoryIndex.bm25Search` method**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
-  - **内容**: Add method `bm25Search(query: string, k: number, filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean }): Array<{ id: string; bm25: number }>`. SQL: `SELECT v.id, v.bm25(memory_fts) AS bm25 FROM memory_fts v INNER JOIN memory_index i ON v.id = i.id WHERE ${whereClauses.join(' AND ')} AND memory_fts MATCH ? ORDER BY bm25 LIMIT ?`. `whereClauses` mirrors `vectorSearch` (`archived = 0` default, `is_latest = 1` default, optional `type`). Escape user query via a helper `escapeFtsQuery(s: string): string` that wraps unescaped double quotes (`"` → `""`) and removes/parens/brackets that FTS5 parses specially (replace `'"', '(', ')', '*', ':'` with space to avoid syntax errors). Run escape on the query string before passing as the MATCH parameter.
+  - **内容**: Add method `bm25Search(query: string, k: number, filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean }): Array<{ id: string; bm25: number }>`. SQL: `SELECT v.id, v.bm25(memory_fts) AS bm25 FROM memory_fts v INNER JOIN memory_index i ON v.id = i.id WHERE ${whereClauses.join(' AND ')} AND memory_fts MATCH ? ORDER BY bm25 LIMIT ?`. `whereClauses` mirrors `vectorSearch` (`archived = 0` default, `is_latest = 1` default, optional `type`). Escape user query via a helper `escapeFtsQuery(s: string): string` that strips FTS5 syntax characters (`"`, `(`, `)`, `*`, `:`, `[`, `]`) to space (simpler and safer than doubling `"`; an all-special query collapses to empty string and short-circuits to `[]`). Run escape on the query string before passing as the MATCH parameter.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("bm25Search returns ranked hits for keyword query")` passes: insert 3 atoms with distinct tokens ("amplicon data", "rna virus", "lefse biomarker"), query "amplicon", expect the first atom at rank 1 with non-null bm25 score.
   - **依赖**: 1.1
   - **前置阅读**: `extensions/personal-assistant/storage.ts:244-274` (vectorSearch — mirror this method's shape), `:103-122` (MemoryIndex class header)
 
-- [ ] 1.3 **Sync memory_fts on insertAtom (within transaction)**
+- [x] 1.3 **Sync memory_fts on insertAtom (within transaction)**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify)
   - **内容**: In `insertAtom(atom, embedding)` at line 125, the existing `this.db.transaction(() => { ... })()` already wraps the INSERT into `memory_index` and `memory_vectors` (lines 127-146). Add an INSERT into `memory_fts` inside the same transaction body, after the memory_vectors INSERT: `this.db.prepare(\`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)\`).run(atom.id, atom.title, atom.summary, atom.content, atom.tags.join(' '));`. Note: `atom.tags` is `string[]` (see types.ts), so `join(' ')` produces space-separated tokens for FTS5; if `atom.tags` is empty, this is an empty string, which FTS5 handles fine.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` — new test `it("insertAtom writes memory_fts row")` passes: after insert, `SELECT count(*) FROM memory_fts WHERE id = ?` returns 1.
@@ -54,7 +54,7 @@
 
 ## 2. RecallResult type — add rrfScore
 
-- [ ] 2.1 **Add rrfScore field to RecallResult type**
+- [x] 2.1 **Add rrfScore field to RecallResult type**
   - **文件**: `extensions/personal-assistant/types.ts` (Modify)
   - **内容**: In the `RecallResult` interface, add `rrfScore: number;` after the existing `score: number;` field. Update the JSDoc above the interface to mention that `rrfScore` is the RRF fusion score (sum of `1/(rrfK + rank)` contributions from each channel that returned the atom), populated only when the recall used RRF fusion; for non-hybrid callers (rare; mostly tests) it equals the rank-weighted score.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/types.test.ts` — add `it("RecallResult has rrfScore field")` passing: build a minimal RecallResult literal with `rrfScore: 0.032`, assert the field is present and typed as number.
@@ -62,7 +62,7 @@
 
 ## 3. Search layer — RRF fusion
 
-- [ ] 3.1 **Add RRF helper function in search.ts**
+- [x] 3.1 **Add RRF helper function in search.ts**
   - **文件**: `extensions/personal-assistant/search.ts` (Modify)
   - **内容**: Add a pure helper `rrfFuse(denseRanks: Array<{id: string}>, bm25Ranks: Array<{id:string}>, rrfK: number): Array<{id: string; rrfScore: number}>` that returns atoms sorted by fused score descending. Algorithm: `const m = new Map<string, number>(); for (let rank = 0; rank < denseRanks.length; rank++) m.set(denseRanks[rank].id, (m.get(denseRanks[rank].id) ?? 0) + 1/(rrfK + rank + 1));` — mirror for bm25; then `return [...m.entries()].map(([id, rrfScore]) => ({id, rrfScore})).sort((a, b) => b.rrfScore - a.rrfScore);`. Export the function for testing.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — new test `it("rrfFuse sums contributions from both channels")` passes: denseRanks=[{id:'a'},{id:'b'}], bm25Ranks=[{id:'b'},{id:'c'}], rrfK=60 → a=1/61, b=1/61+1/62, c=1/62; assert exact values within 1e-9.
@@ -88,7 +88,7 @@
 
 ## 4. Config wiring
 
-- [ ] 4.1 **Add PersonalAssistantConfig.memory.recall block**
+- [x] 4.1 **Add PersonalAssistantConfig.memory.recall block**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: Extend `PersonalAssistantConfig.memory` with `recall?: { rrfK?: number; recallThreshold?: number; };`. Add JSDoc explaining both fields, their defaults (60 and 1/rrfK), and that they're optional (config entirely optional, defaults in search.ts).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/types.test.ts` — new test `it("PersonalAssistantConfig.memory.recall is optional")` passes: build a config literal with `recall: { rrfK: 30 }` and assert type compat.
@@ -116,7 +116,7 @@
 
 ## 6. New tests — hybrid recall coverage
 
-- [ ] 6.1 **hybrid-recall.test.ts — RRF algorithm correctness**
+- [x] 6.1 **hybrid-recall.test.ts — RRF algorithm correctness**
   - **文件**: `extensions/personal-assistant/test/hybrid-recall.test.ts` (Create)
   - **内容**: Import `rrfFuse` from `../search.ts`. Tests: (a) `it("rrfFuse with no overlap")` — disjoint dense/bm25 ranks → each id gets one contribution only; (b) `it("rrfFuse with full overlap")` — same 5 ids in both → each gets 2 contributions; (c) `it("rrfFuse ranks by fused score descending")` — assert sort order; (d) `it("rrfFuse k=0 collapses to rank-weighted sum")` — boundary case; (e) `it("rrfFuse handles empty channels")` — both empty → returns `[]`; one empty → still works.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` — all 5 RRF tests pass.

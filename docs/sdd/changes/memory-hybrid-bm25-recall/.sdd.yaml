@@ -2,10 +2,10 @@ phase: develop
 workflow: full
 change: memory-hybrid-bm25-recall
 created_at: 2026-06-24
-base_ref: 31f5b151b6c16209d35d2247a5fe7ab7b0cb4b52
-tasks_total: 0
-tasks_done: 0
-isolation: null
+base_ref: 0968b9d47cf88c1904392e95da4d18f8f3a77adf
+tasks_total: 21
+tasks_done: 7
+isolation: branch
 verify_result: null
-last_review_sha: null
+last_review_sha: 9bb66fafb56e80d44bdf8c8bb7b9aae6ec57b7ec
 archived: false

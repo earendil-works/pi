@@ -31,7 +31,7 @@ memory-v2 当前 `recallAtoms` 只走 sqlite-vec dense KNN (bge-m3 + cosine),`DE
 
 ## Decisions
 
-### 1. FTS5 schema: 索引 title + summary + content + tags,unicode61 tokenizer
+### 1. FTS5 schema: 索引 title + summary + content + tags,unicode61 tokenizer (internal content mode)
 
 **Decision**: `memory_fts` 虚表 4 字段与 `embed.ts` 的 `buildEmbeddableText` 完全对齐。
 
@@ -42,8 +42,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
   summary,
   content,
   tags,
-  tokenize = 'unicode61 remove_diacritics 2',
-  content = ''
+  tokenize = 'unicode61 remove_diacritics 2'
 );
 ```
 
@@ -51,12 +50,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 - 与 dense embedding 同一文本,公平对比 (channel 对称)
 - unicode61 处理 ASCII + Latin 扩展 + 数字;中文按 unicode codepoint 切分 (单字粒度,bge-m3 dense 同等)
 - `remove_diacritics 2` 处理中文拼音 (例如 "café" vs "cafe" — 对中文 corpus 无影响,保留以兼容英文 atom)
-- `content = ''` 是 external content 模式 (不在 FTS5 表里重复存 text,只存 index + rowid);行内容从 `memory_index` JOIN 取,避免双写浪费磁盘
+- **internal content mode** (不使用 `content=''`):external-content 模式下 FTS5 对所有 column 返回 NULL,包括 `id UNINDEXED`,破坏 `bm25Search` 的 `memory_fts v INNER JOIN memory_index i ON v.id = i.id` JOIN 模式。代价是 `memory_fts` 重复存储 title/summary/content/tags 文本(几千 atom 级别可忽略),换来 JOIN 正确性。
 
 **Alternatives considered**:
 - A. 只索引 title + content (省 summary) — 拒绝,summary 是 content 摘要,某些 atom summary 才是核心表达
 - B. 加 trigram tokenizer 处理 CJK — 拒绝,需要预生成 trigram 列,加 schema 复杂度;unicode61 在中文 corpus 实测够用 (用户 8 atom 全部召回预期 ok)
 - C. porter tokenizer — 拒绝,纯 stem,中文不需要
+- D. 保留 `content=''` external-content 模式,bm25Search 用 rowid JOIN — 拒绝,`id UNINDEXED` 在 external-content 模式下不可靠,SQL 模式难维护
 
 ### 2. RRF 融合,`rrfK = 60` 默认,`recallThreshold = 1/rrfK` 默认
 
@@ -399,7 +399,7 @@ supersedeAtom(oldId, newAtom, newEmbedding) {
 
 ### Gotchas
 - FTS5 `bm25()` 返回负值 (越小越相关),不是直接 score;RRF 用 rank,不在意 BM25 score 符号
-- FTS5 query string 需要 escape (双引号、特殊字符);`storage.bm25Search` 内部 escapeQuotes
+- FTS5 query string 需要 escape (双引号、特殊字符);`storage.bm25Search` 内部 `escapeFtsQuery` 把 `"()*:[]` 替换成空格(非 doubling `"`),全特殊字符 query 短路返回 `[]`
 - `rrfK=60` 是 smoothing constant,不是 channel-specific — 调整它会影响所有召回排序,不要随便改
 - `recallThreshold = 1/rrfK` 默认下,单 channel rank=1 不够 — 用户调低 threshold (e.g. 0.01) 可让单 channel rank=1 通过,但会引入 dense noise
 - 旧 threshold: 0.65 (cosine) 是新 `threshold` 选项的 hard floor,作用于 dense 单 channel 召回结果;RRF 融合后再过 `recallThreshold` (RRF score)。两层阈值,各管一段
