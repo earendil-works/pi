@@ -53,6 +53,47 @@ const IMPORTANCE_WEIGHT = 0.2;
 const TYPES: readonly MemoryAtomType[] = ["rule", "fact", "process"];
 
 /**
+ * Reciprocal Rank Fusion — fuse two rank lists (dense KNN + BM25) into a
+ * single ranked list. Pure function: only the array ORDER of the inputs
+ * matters; raw cosine / BM25 scores are discarded (the principle is
+ * "召回融合默认走 RRF,不归一化 BM25 与 cosine,只取 rank 加权").
+ *
+ * Contribution per rank: `1 / (rrfK + rank + 1)`. Code uses 0-indexed rank
+ * (rank=0 → `1/(rrfK+1)`), which matches RRF literature's 1-indexed
+ * convention (rank=1 → `1/(rrfK+1)`). Same id appearing in both channels
+ * gets BOTH contributions summed, so a double-channel hit always outranks
+ * a single-channel hit at the same rank position (design.md Decision 2).
+ *
+ * `rrfK` is the smoothing constant. Industry default 60 (Elasticsearch /
+ * OpenSearch / Qdrant). Same value is used for both channels; the function
+ * itself does not hardcode it — the caller passes whatever knob the config
+ * exposes.
+ *
+ * @param denseRanks Ranked dense-channel results (only `id` and order).
+ * @param bm25Ranks  Ranked BM25-channel results (only `id` and order).
+ * @param rrfK       Smoothing constant (typical: 60).
+ * @returns          `Array<{id, rrfScore}>` sorted by `rrfScore` DESC.
+ */
+export function rrfFuse(
+	denseRanks: Array<{ id: string }>,
+	bm25Ranks: Array<{ id: string }>,
+	rrfK: number,
+): Array<{ id: string; rrfScore: number }> {
+	const map = new Map<string, number>();
+	for (let rank = 0; rank < denseRanks.length; rank++) {
+		const id = denseRanks[rank].id;
+		map.set(id, (map.get(id) ?? 0) + 1 / (rrfK + rank + 1));
+	}
+	for (let rank = 0; rank < bm25Ranks.length; rank++) {
+		const id = bm25Ranks[rank].id;
+		map.set(id, (map.get(id) ?? 0) + 1 / (rrfK + rank + 1));
+	}
+	return [...map.entries()]
+		.map(([id, rrfScore]) => ({ id, rrfScore }))
+		.sort((a, b) => b.rrfScore - a.rrfScore);
+}
+
+/**
  * Options for `recallAtoms`. `topK` controls the per-type KNN candidate
  * count (default 3, Decision 2). The per-type result cap is fixed at 3
  * (Decision 2 hard ceiling — sparse types degrade below this). `threshold`
