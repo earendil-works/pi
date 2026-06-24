@@ -124,17 +124,22 @@ const isLastMessageStreaming =
 <MessageBubble message={...} isStreaming={isLastMessageStreaming} ... />
 ```
 
-**`StepHeader` 实现关键代码**:
+**`StepHeader` 实现关键代码** (受控组件, parent owns `userOverride` state):
 
 ```ts
-function StepHeader({ isStreaming, startedAt }: StepHeaderProps) {
-  const [userOverride, setUserOverride] = useState<boolean | null>(null);
+interface StepHeaderProps {
+  isStreaming: boolean;
+  startedAt: Date;
+  open: boolean;
+  onToggle: () => void;
+}
+
+function StepHeader({ isStreaming, startedAt, open, onToggle }: StepHeaderProps) {
   const [, forceTick] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const id = setInterval(forceTick, 1000);
     return () => clearInterval(id);
   }, []);
-  const open = userOverride ?? isStreaming;
   const seconds = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
   const icon = isStreaming ? "●" : "✓";
   const iconColor = isStreaming ? "text-blue-500" : "text-green-600";
@@ -142,7 +147,8 @@ function StepHeader({ isStreaming, startedAt }: StepHeaderProps) {
   const chevron = open ? "▼" : "▲";
   return (
     <button
-      onClick={() => setUserOverride(!open)}
+      onClick={onToggle}
+      aria-expanded={open}
       className={`w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-gray-50 rounded ${iconColor}`}
     >
       <span className="font-bold">{icon}</span>
@@ -152,6 +158,23 @@ function StepHeader({ isStreaming, startedAt }: StepHeaderProps) {
     </button>
   );
 }
+```
+
+Parent (`MessageParts`) owns the override state and force-open rule:
+
+```ts
+const [userOverride, setUserOverride] = useState<boolean | null>(null);
+const hasActiveCard = parts.some(
+  (p) => p.type === "toolCall" && cardStates?.has(p.id),
+);
+const open = hasActiveCard ? true : (userOverride ?? isStreaming);
+// ...
+<StepHeader
+  isStreaming={isStreaming}
+  startedAt={startedAt}
+  open={open}
+  onToggle={() => setUserOverride(!open)}
+/>
 ```
 
 **`MessageParts` chunks 新算法**:

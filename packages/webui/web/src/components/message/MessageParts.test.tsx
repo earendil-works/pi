@@ -327,5 +327,94 @@ describe("MessageParts", () => {
       // presence of cardStates.get("tc1") forces open=true and the card renders.
       expect(screen.getByText("Color?")).toBeTruthy();
     });
+
+    // Spec scenario: 用户点击后 isStreaming 变化不覆盖. Once the user
+    // manually expands the body, subsequent isStreaming changes must NOT
+    // override that choice. Implementation: `open = userOverride ?? isStreaming`,
+    // so userOverride=true wins over isStreaming=true (true) and over
+    // isStreaming=false (would be true because userOverride wins).
+    it("preserves user override when isStreaming flips after a click", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "x" },
+        { type: "text", text: "y" },
+      ];
+      const { rerender } = render(
+        <MessageParts parts={parts} isStreaming={false} />,
+      );
+      // Pre-click: body collapsed
+      expect(screen.queryByText("y")).toBeNull();
+      // User clicks header to expand
+      const headerButton = screen.getByText(/Completed/i).closest("button")!;
+      fireEvent.click(headerButton);
+      // Body now visible
+      expect(screen.getByText("y")).toBeTruthy();
+      // isStreaming transitions false → true. User override must win.
+      rerender(<MessageParts parts={parts} isStreaming={true} />);
+      expect(screen.getByText("y")).toBeTruthy();
+      // isStreaming transitions true → false. User override STILL wins.
+      rerender(<MessageParts parts={parts} isStreaming={false} />);
+      expect(screen.getByText("y")).toBeTruthy();
+    });
+
+    // Spec scenario: 多 text 中间夹 tool 顺序保留. Five parts in mixed
+    // order: thinking, text(interim), toolCall, toolResult, text(final).
+    // The chunks algorithm must walk them in order; the final text is
+    // INSIDE the step body, not extracted. Note: the thinking text is
+    // collapsed by default in ThinkingItem (defaultOpen=false), so the
+    // assertion only checks the parts that are visible without user
+    // interaction: interim text, tool name, tool result first line,
+    // final text. The presence of "final-text" inside the step body
+    // confirms the spec rule "final text is INSIDE the step body,
+    // not extracted".
+    it("preserves the chronological order of 5 mixed parts in the step body", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "thinking-co-t" },
+        { type: "text", text: "interim-text" },
+        { type: "toolCall", id: "tc1", name: "bash", args: { command: "ls" } },
+        { type: "toolResult", toolCallId: "tc1", content: "file1\nfile2" },
+        { type: "text", text: "final-text" },
+      ];
+      render(<MessageParts parts={parts} isStreaming={true} />);
+      // The 4 parts that are visible by default render in this order:
+      // thinking-button (collapsed) → interim-text → bash → file1 (toolResult
+      // first line) → final-text. "final-text" being inside the step body
+      // (not extracted) is the key spec assertion.
+      expect(screen.getByText("思考")).toBeTruthy();
+      expect(screen.getByText("interim-text")).toBeTruthy();
+      expect(screen.getByText("bash")).toBeTruthy();
+      expect(screen.getByText("file1")).toBeTruthy();
+      expect(screen.getByText("final-text")).toBeTruthy();
+      // Order verification: indexOf positions must be monotonically increasing
+      const text = document.body.textContent ?? "";
+      const positions = [
+        "思考",
+        "interim-text",
+        "bash",
+        "file1",
+        "final-text",
+      ].map((t) => text.indexOf(t));
+      const sorted = [...positions].sort((a, b) => a - b);
+      expect(positions).toEqual(sorted);
+    });
+
+    // Spec scenario: 1h+ 旧 turn 显示 elapsed 时间. timestamp = 1 hour ago,
+    // isStreaming=false. StepHeader should display seconds count ≥ 3595
+    // (allowing for setInterval drift / test wall-clock variance).
+    it("renders the elapsed-since-timestamp seconds for an old completed turn", () => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const parts: Part[] = [
+        { type: "thinking", text: "x" },
+        { type: "text", text: "y" },
+      ];
+      render(
+        <MessageParts parts={parts} isStreaming={false} timestamp={oneHourAgo} />,
+      );
+      // Header shows "(Ns)" with N >= 3595
+      const text = document.body.textContent ?? "";
+      const match = text.match(/\((\d+)s\)/);
+      expect(match).not.toBeNull();
+      const seconds = Number(match![1]);
+      expect(seconds).toBeGreaterThanOrEqual(3595);
+    });
   });
 });
