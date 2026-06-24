@@ -346,7 +346,16 @@ export function MessageParts({
   // stream ends (isStreaming → false) without losing a deliberate user
   // expansion: a clicked-open step stays open across stream transitions.
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
-  const open = userOverride ?? isStreaming;
+  // If any toolCall in this step has an active AskUserQuestionCard state,
+  // force the body open so the card stays visible. When the agent pauses
+  // on `ask_user_question`, isStreaming is false (waiting for user input),
+  // and without this override the body would auto-collapse, hiding the
+  // card. Re-evaluated on every render: when the card leaves cardStates
+  // (user answered or tool_execution_end arrived), normal behavior resumes.
+  const hasActiveCard = parts.some(
+    (p) => p.type === "toolCall" && cardStates?.has(p.id),
+  );
+  const open = hasActiveCard ? true : (userOverride ?? isStreaming);
   const startedAt = timestamp ? new Date(timestamp) : new Date();
 
   // Walk parts and build a list of "chunks" — each chunk is either
