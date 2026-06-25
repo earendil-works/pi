@@ -81,12 +81,13 @@
 ### Requirement: bm25Search escapes FTS5 special characters
 `MemoryIndex.bm25Search` SHALL escape double quotes, parens, asterisks, and colons in the user-provided query string before passing it as the `MATCH` parameter, so that queries containing FTS5 syntax characters do not raise SQL parse errors.
 
-#### Scenario: query with double quote is escaped
-- **GIVEN** a user query `lefse "没有" 结果`
+#### Scenario: query with FTS5 special characters is sanitised
+- **GIVEN** a user query `lefse "没有" 结果` containing `"`, `(`, `)`, `*`, `:`, `[`, `]` characters
 - **WHEN** `bm25Search(query, 10, ...)` is called
-- **THEN** the internal `MATCH` parameter is `lefse ""没有"" 结果` (each `"` doubled)
+- **THEN** the internal `MATCH` parameter has each special character replaced with a space (e.g., `lefse  没有  结果`); no doubling or escaping of `"` is performed
 - **AND** no SQL error is raised
 - **AND** atoms matching the literal phrase are returned
+- **AND** a query consisting entirely of special characters short-circuits to `[]` rather than running `MATCH ''`
 
 ### Requirement: rrfK and recallThreshold are configurable
 The recall configuration MUST be readable from `~/.pi/agent/settings.json` under `personalAssistant.memory.recall.{rrfK, recallThreshold}`, and MUST fall back to defaults (`rrfK = 60`, `recallThreshold = 1/60`) when the block is absent.

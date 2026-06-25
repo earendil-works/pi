@@ -11,6 +11,13 @@
 //   - WAL mode for concurrent readers; foreign_keys ON for future FKs.
 //   - vec0 dimension = 1024 (bge-m3 embeddings).
 //   - Tags stored as a JSON string in a single TEXT column.
+//   - FTS5 mirror `memory_fts` (memory-v2-refactor; FTS5 schema and storage
+//     sync requirement): created and one-shot backfilled in init() from
+//     active atoms only (`archived = 0 AND is_latest = 1`). The init-time
+//     backfill is the only place we read FTS5's source — per-write sync
+//     (insertAtom / updateAtom / markArchived / markSupersededTx) is added
+//     in a later phase and will keep memory_fts in lock-step with
+//     memory_index transactionally.
 
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
@@ -50,6 +57,30 @@ const BetterSqlite3 = requireCJS("better-sqlite3") as new (
 ) => BetterSqlite3Database;
 
 const sqliteVec = requireCJS("sqlite-vec") as SqliteVecModule;
+
+/**
+ * Strip FTS5 query syntax characters from a user-supplied search string before
+ * binding it as the `MATCH` parameter of a `memory_fts MATCH ?` query.
+ *
+ * FTS5 reserves `"`, `(`, `)`, `*`, `:`, `[`, `]`, `,` for phrase / NEAR /
+ * column queries and a stray unescaped character raises "fts5: syntax error".
+ * The comma in particular is the NEAR separator (`a, b` = "a NEAR b") and is
+ * the most surprising of the set — natural-language user queries like
+ * `这个先不管,这个项目路径下lefse没有结果` contain ASCII commas and would
+ * otherwise throw. Stripping to space (rather than doubling `"`) is the
+ * simplest and safest transformation: the literal token content is preserved,
+ * special-char noise is gone, and an all-special input collapses to an empty
+ * (no-match) query rather than throwing. The result is trimmed so a query
+ * consisting entirely of special characters becomes the empty string;
+ * bm25Search short-circuits on empty rather than running `MATCH ''` (which
+ * would also error).
+ *
+ * Module-level (not a class method) because it is pure — no DB access — and
+ * has no business depending on `this`.
+ */
+export function escapeFtsQuery(s: string): string {
+	return s.replace(/["()*:\[\],]/g, " ").trim();
+}
 
 /**
  * Wraps a single better-sqlite3 connection that has the sqlite-vec extension
@@ -92,6 +123,70 @@ export class MemoryIndex {
 		// filesystem checks or async migrations; the body stays synchronous
 		// for Phase 2.2.
 		this.db.exec(SCHEMA_SQL);
+
+		// FTS5 mirror — build if missing, repair if broken.
+		//
+		// On a fresh DB, memory_fts does not yet exist: we create it via
+		// MEMORY_FTS_SCHEMA and one-shot backfill from every active atom
+		// (archived = 0 AND is_latest = 1) so the FTS5 index is in
+		// lock-step with memory_index on first open.
+		//
+		// On subsequent re-opens, memory_fts already exists — we deliberately
+		// do NOT re-create it nor re-backfill in the healthy case. That
+		// keeps init() strictly idempotent (same DB opened twice MUST NOT
+		// produce duplicate rows) and avoids an unnecessary full-table scan
+		// on every startup. Per-write sync is the responsibility of
+		// insertAtom / updateAtom / markArchived / markSupersededTx in
+		// later phases; the init-time backfill only handles the "upgrade"
+		// case where a DB existed before memory_fts was introduced.
+		//
+		// Defensive repair: an earlier session may have left behind a
+		// memory_fts that has rows but ALL `id` columns are NULL — e.g.
+		// the table was created in contentless mode (content='') which
+		// does not populate the UNINDEXED id column on INSERT. Such a
+		// table silently breaks every bm25Search JOIN (`v.id IS NULL`
+		// never matches `i.id`). Detect by counting NULL-id rows and
+		// rebuild — same CREATE + backfill as the cold-start path,
+		// with an extra DROP first. The repair is:
+		//   1. Idempotent — only fires when broken state is detected.
+		//   2. Atomic — DROP + CREATE + backfill in a single transaction;
+		//      a failed backfill rolls back the empty FTS5 table rather
+		//      than leaving a half-built schema.
+		//   3. Safe for new DBs — no rows → no NULL-id rows → no repair.
+		//   4. Safe for correctly-built memory_fts — no NULL-id rows → no
+		//      repair, table is left untouched.
+		// The trade-off: a broken memory_fts (silent BM25 failure) is
+		// worse than a brief startup-time rebuild — principle
+		// "宁可漏召不可误召" favours a one-shot repair over persisting
+		// the broken state.
+		const ftsExists = this.db
+			.prepare(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
+			)
+			.get();
+		const needsBuild = !ftsExists;
+		const needsRepair =
+			!!ftsExists &&
+			(this.db
+				.prepare(`SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL`)
+				.get() as { c: number }).c > 0;
+
+		if (needsBuild || needsRepair) {
+			this.db.transaction(() => {
+				if (needsRepair) {
+					this.db.prepare(`DROP TABLE memory_fts`).run();
+				}
+				this.db.exec(MEMORY_FTS_SCHEMA);
+				this.db
+					.prepare(
+						`INSERT INTO memory_fts(id, title, summary, content, tags)
+						 SELECT id, title, summary, content, COALESCE(tags, '')
+						 FROM memory_index
+						 WHERE archived = 0 AND is_latest = 1`,
+					)
+					.run();
+			})();
+		}
 	}
 
 	close(): void {
@@ -143,6 +238,17 @@ export class MemoryIndex {
 			this.db
 				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
 				.run(atom.id, new Float32Array(embedding));
+			// FTS5 mirror must stay in lock-step with memory_index. Wrapped in
+			// the same db.transaction so a failure here rolls back the
+			// memory_index + memory_vectors writes above (atomicity contract
+			// for principle "FTS5 行同步在 storage 层原子化"). tags is
+			// space-joined so the unicode61 tokenizer indexes each tag as a
+			// distinct token; an empty array → "" which FTS5 accepts fine.
+			this.db
+				.prepare(
+					`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(atom.id, atom.title, atom.summary, atom.content, atom.tags.join(" "));
 		})();
 	}
 
@@ -269,6 +375,70 @@ export class MemoryIndex {
 		params.push(k);
 
 		type Row = { id: string; distance: number };
+		const rows = this.db.prepare(sql).all(...params) as Row[];
+		return rows;
+	}
+
+	/**
+	 * BM25 keyword ranking against the FTS5 mirror `memory_fts`, joined back to
+	 * `memory_index` so the standard active filters (archived / superseded /
+	 * type) can be applied identically to `vectorSearch`. The default
+	 * behaviour is to return only the active + latest atoms; the caller can
+	 * opt into other rows with the `filter` argument.
+	 *
+	 * FTS5's `bm25(memory_fts)` ranking function returns NEGATIVE values
+	 * where smaller (more negative) = more relevant; we `ORDER BY bm25 ASC`
+	 * directly so the most-relevant hit comes first. Do not normalise to a
+	 * positive score here — RRF fusion (search.ts) operates on ranks, not on
+	 * raw scores, and converting the sign would couple the two layers for no
+	 * gain.
+	 *
+	 * The user query is run through `escapeFtsQuery` before binding as the
+	 * MATCH parameter so that FTS5 syntax characters (`"`, `(`, `)`, `*`,
+	 * `:`, `[`, `]`, `,`) cannot raise an SQL parse error. The comma is
+	 * the FTS5 NEAR separator and is the most surprising of the set — user
+	 * queries like `这个先不管,这个项目路径下lefse没有结果` contain ASCII
+	 * commas and would otherwise throw "fts5: syntax error near ','". If
+	 * the escape collapses the query to the empty string, we short-circuit
+	 * with `[]` rather than running `MATCH ''` — both because the empty
+	 * MATCH itself errors and because no atoms could possibly match anyway.
+	 */
+	bm25Search(
+		query: string,
+		k: number,
+		filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean },
+	): Array<{ id: string; bm25: number }> {
+		const escaped = escapeFtsQuery(query);
+		if (escaped === "") {
+			// Defensive short-circuit: an all-special query like `"*("` would
+			// collapse to empty after escape. Returning [] is the same answer
+			// MATCH would give on an empty string, without the parse error.
+			return [];
+		}
+
+		const whereClauses: string[] = ["archived = 0"];
+		if (filter?.type) whereClauses.push("type = ?");
+		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
+		if (filter?.archived === true) {
+			// explicit override — include archived too
+			whereClauses.length = 0;
+		}
+
+		const sql = `
+			SELECT v.id, bm25(memory_fts) AS bm25
+			FROM memory_fts v
+			INNER JOIN memory_index i ON v.id = i.id
+			WHERE ${whereClauses.join(" AND ")}
+			AND memory_fts MATCH ?
+			ORDER BY bm25
+			LIMIT ?
+		`;
+		const params: (string | number)[] = [];
+		if (filter?.type) params.push(filter.type);
+		params.push(escaped);
+		params.push(k);
+
+		type Row = { id: string; bm25: number };
 		const rows = this.db.prepare(sql).all(...params) as Row[];
 		return rows;
 	}
@@ -407,6 +577,24 @@ export class MemoryIndex {
 				.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
 				.run(transferredAtom.id, new Float32Array(newEmbedding));
 
+			// FTS5 mirror must follow the supersede: drop the old atom's row so
+			// it cannot match BM25, then insert the new atom's row (using the
+			// transferred fields, not the raw newAtom — same rationale as the
+			// memory_index INSERT above). Inside the same transaction so a
+			// failed FTS5 write rolls back the supersede atomically.
+			this.db.prepare(`DELETE FROM memory_fts WHERE id = ?`).run(oldId);
+			this.db
+				.prepare(
+					`INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(
+					transferredAtom.id,
+					transferredAtom.title,
+					transferredAtom.summary,
+					transferredAtom.content,
+					transferredAtom.tags.join(" "),
+				);
+
 			// Audit: both atoms get an entry describing the supersede link.
 			this.insertAudit(oldId, "superseded", {
 				newId: transferredAtom.id,
@@ -526,6 +714,13 @@ export class MemoryIndex {
 	markArchived(id: string): void {
 		this.db.transaction(() => {
 			this.db.prepare(`UPDATE memory_index SET archived = 1 WHERE id = ?`).run(id);
+			// FTS5 mirror must drop the row in the same transaction so a
+			// subsequent bm25Search cannot return an archived atom (principle
+			// "archive / supersede 立即让 FTS5 行失效"). Vector GC is a
+			// separate caller-driven step (deleteVector) and intentionally
+			// NOT coupled here — the FTS5 sync is an archive invariant, the
+			// vector delete is a storage-GC decision.
+			this.db.prepare(`DELETE FROM memory_fts WHERE id = ?`).run(id);
 			this.insertAudit(id, "archived", null);
 		})();
 	}
@@ -609,6 +804,38 @@ CREATE TABLE IF NOT EXISTS memory_audit (
 
 CREATE INDEX IF NOT EXISTS idx_memory_audit_atom
   ON memory_audit(atom_id, created_at DESC);
+`;
+
+// FTS5 mirror of memory_index for keyword recall. The schema is fixed
+// (Decision 1 in memory-v2-refactor / design.md): exactly five fields
+// (id UNINDEXED, title, summary, content, tags) using the unicode61
+// tokenizer with diacritics stripped.
+//
+// We deliberately do NOT use external-content mode (`content=''`):
+// external-content FTS5 tables return NULL for every column on SELECT —
+// including the UNINDEXED `id` column — which would break the
+// `memory_fts v INNER JOIN memory_index i ON v.id = i.id` pattern that
+// bm25Search (and any future keyword-side ranking) depends on to recover
+// the atom id from a MATCH hit. The cost of this choice is that
+// memory_fts duplicates the title/summary/content/tags text already
+// stored in memory_index; for a personal-assistant scale (thousands of
+// atoms) that is negligible compared to the join-correctness benefit.
+//
+// `tags` is the JSON-encoded TEXT column from memory_index. The unicode61
+// tokenizer splits on whitespace + punctuation including `[` `]` `"`
+// `,`, so `["amplicon","biomarker"]` tokenizes to amplicon + biomarker —
+// callers searching by tag query the literal tag value and FTS5 matches.
+// Do NOT add more fields here; the schema is the contract for downstream
+// search code.
+const MEMORY_FTS_SCHEMA = `
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+  id UNINDEXED,
+  title,
+  summary,
+  content,
+  tags,
+  tokenize='unicode61 remove_diacritics 2'
+)
 `;
 
 // re-export the row helpers so callers that only import from storage.ts do

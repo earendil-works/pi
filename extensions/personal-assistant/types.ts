@@ -86,6 +86,23 @@ export interface RecallResult {
 	 * for full content.
 	 */
 	score: number;
+	/**
+	 * RRF fusion score: the sum of `1 / (rrfK + rank)` contributions across
+	 * every recall channel that returned the atom (dense vector rank and/or
+	 * BM25 keyword rank). Populated only when the recall used RRF fusion,
+	 * which is the default for hybrid recall. Always ≥ 0; the typical order
+	 * of magnitude is `~1 / rrfK` (≈0.0167 with rrfK=60) for a single top-rank
+	 * hit and grows when the same atom appears in multiple channels.
+	 *
+	 * For non-hybrid callers (rare; mostly tests) this field is set equal to
+	 * the rank-weighted `score`, preserving the prior single-channel contract.
+	 *
+	 * `rrfScore` is the public surface of the "召回融合默认走 RRF" principle —
+	 * downstream consumers (webui, debug surfaces) use it to inspect fusion
+	 * behavior, while `score` continues to carry the multiplicative boost
+	 * that the existing memory_get path depends on.
+	 */
+	rrfScore?: number;
 }
 
 // ---------------------------------------------------------------------------

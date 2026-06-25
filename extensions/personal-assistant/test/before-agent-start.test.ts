@@ -14,6 +14,9 @@
 //     sqlite-vec). Instead we mock the dynamic imports recallAtoms +
 //     formatMemoryContext so the hook body is hermetic.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -239,5 +242,117 @@ describe("before_agent_start + context hooks", () => {
 		expect(result).toBe(event);
 		// recallAtoms was never called.
 		expect(vi.mocked(recallAtoms)).not.toHaveBeenCalled();
+	});
+
+	// Task 4.2 — recall config wiring.
+	//
+	// recallAtoms options passed by before_agent_start must reflect:
+	//   - topK: 20 (Decision 2 — per-channel KNN candidate count)
+	//   - rrfK + recallThreshold: from settings.json
+	//     `personalAssistant.memory.recall.{rrfK, recallThreshold}` when
+	//     present, undefined otherwise (search.ts falls back to defaults).
+	//
+	// "config block missing → defaults used" — when settings.json has no
+	// `personalAssistant.memory.recall`, the options object should carry
+	// `rrfK: undefined, recallThreshold: undefined` so search.ts applies
+	// its DEFAULT_RRF_K (60) / DEFAULT_RECALL_THRESHOLD (1/60) defaults.
+	it("recallAtoms is called with topK: 20 and undefined recall knobs when config is missing", async () => {
+		// Existing beforeEach already stubs HOME=/tmp with no settings.json,
+		// so loadConfig() returns {} — exactly the "config block missing"
+		// scenario we need.
+		registerMemory(mockPi as unknown as ExtensionAPI);
+		const beforeHandler = mockPi.hooks.get("before_agent_start");
+		const ctxHandler = mockPi.hooks.get("context");
+		expect(beforeHandler).toBeDefined();
+		expect(ctxHandler).toBeDefined();
+
+		// before_agent_start fires-and-forgets the IIFE; await the context
+		// handler so the pending search promise (which contains the
+		// recallAtoms call) completes before the assertion.
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
+		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
+
+		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
+		// Third positional arg is the options object. We use
+		// objectContaining so the assertion stays focused on the recall
+		// contract; the test does not care if the implementation adds
+		// future knobs.
+		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+		expect(thirdArg).toBeDefined();
+		expect(thirdArg).toMatchObject({
+			topK: 20,
+			rrfK: undefined,
+			recallThreshold: undefined,
+		});
+	});
+});
+
+describe("before_agent_start recall config wiring (Task 4.2)", () => {
+	let mockPi: MockPi;
+	let tmpHome: string;
+
+	// Write a real settings.json to a tmp HOME and stub HOME so the *real*
+	// loadConfig() picks it up. (vi.mock("../memory.ts") would replace the
+	// module under test; vi.spyOn on the live ESM binding is fragile across
+	// vitest versions. The disk-based pattern is what session-before-compact
+	// already uses for the same reason.)
+	function writeSettings(content: object): void {
+		const agentDir = join(tmpHome, ".pi", "agent");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify(content, null, 2));
+	}
+
+	beforeEach(() => {
+		tmpHome = mkdtempSync(join(tmpdir(), "memory-recall-cfg-"));
+		vi.stubEnv("HOME", tmpHome);
+
+		mockPi = createMockPi();
+		vi.mocked(recallAtoms).mockReset();
+		vi.mocked(formatMemoryContext).mockReset();
+		vi.mocked(recallAtoms).mockResolvedValue([]);
+		vi.mocked(formatMemoryContext).mockReturnValue({ text: "", used: 0, included: 0 });
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.clearAllMocks();
+		rmSync(tmpHome, { recursive: true, force: true });
+	});
+
+	// "user tightens recallThreshold" — config.recall.recallThreshold flows
+	// through to the recallAtoms call as the third-arg option. The test
+	// sets both rrfK and recallThreshold so we also cover the joint-wiring
+	// case (both knobs read in the same option object).
+	it("recallAtoms is called with config.recall.rrfK + recallThreshold when present in settings.json", async () => {
+		writeSettings({
+			personalAssistant: {
+				memory: {
+					recall: {
+						rrfK: 30,
+						recallThreshold: 0.01,
+					},
+				},
+			},
+		});
+
+		registerMemory(mockPi as unknown as ExtensionAPI);
+		const beforeHandler = mockPi.hooks.get("before_agent_start");
+		const ctxHandler = mockPi.hooks.get("context");
+		expect(beforeHandler).toBeDefined();
+		expect(ctxHandler).toBeDefined();
+
+		// Same fire-and-forget pattern as the other suite — await the
+		// context handler to drain the pending search before asserting.
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
+		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
+
+		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
+		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+		expect(thirdArg).toBeDefined();
+		expect(thirdArg).toMatchObject({
+			topK: 20,
+			rrfK: 30,
+			recallThreshold: 0.01,
+		});
 	});
 });

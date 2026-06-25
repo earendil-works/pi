@@ -73,8 +73,17 @@ describe("integration: extraction → embedding → recall", () => {
     const index = new MemoryIndex(dbPath);
     await index.init();
     try {
-      // threshold: 0 to work around position-sensitive char-bigram mock embed
-      const recall = await recallAtoms(index, "图片提取", { topK: 5, threshold: 0 });
+      // threshold: 0 to work around position-sensitive char-bigram mock embed.
+      // recallThreshold: 0 to bypass the strict 1/rrfK gate (mock embedder
+      // produces a single-channel BM25-only or dense-only hit that the
+      // default gate would filter). This is the same pattern as the
+      // recall-quality tests — measure pure channel ranking without the
+      // recall gate interfering.
+      const recall = await recallAtoms(index, "图片提取", {
+        topK: 5,
+        threshold: 0,
+        recallThreshold: 0,
+      });
       const ids = recall.map(r => r.atom.id);
       expect(ids).toContain(createdAtom.id);
     } finally {
