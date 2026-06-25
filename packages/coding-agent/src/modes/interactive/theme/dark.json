@@ -12,11 +12,12 @@
 		"dimGray": "#666666",
 		"darkGray": "#505050",
 		"accent": "#8abeb7",
+		"bg": "#1e1e2e",
 		"selectedBg": "#3a3a4a",
 		"userMsgBg": "#343541",
 		"toolPendingBg": "#282832",
-		"toolSuccessBg": "#283228",
-		"toolErrorBg": "#3c2828",
+		"toolSuccessBg": "#b5bd6826",
+		"toolErrorBg": "#cc666626",
 		"customMsgBg": "#2d2838"
 	},
 	"colors": {

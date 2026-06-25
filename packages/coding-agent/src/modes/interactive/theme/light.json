@@ -11,11 +11,12 @@
 		"mediumGray": "#6c6c6c",
 		"dimGray": "#767676",
 		"lightGray": "#b0b0b0",
+		"bg": "#ffffff",
 		"selectedBg": "#d0d0e0",
 		"userMsgBg": "#e8e8e8",
 		"toolPendingBg": "#e8e8f0",
-		"toolSuccessBg": "#e8f0e8",
-		"toolErrorBg": "#f0e8e8",
+		"toolSuccessBg": "#58845826",
+		"toolErrorBg": "#aa555526",
 		"customMsgBg": "#ede7f6"
 	},
 	"colors": {

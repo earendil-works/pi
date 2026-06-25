@@ -21,7 +21,7 @@ import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts"
 // ============================================================================
 
 const ColorValueSchema = Type.Union([
-	Type.String(), // hex "#ff0000", var ref "primary", or empty ""
+	Type.String(), // hex "#ff0000" / "#ff000080" (with alpha), var ref "primary", or empty ""
 	Type.Integer({ minimum: 0, maximum: 255 }), // 256-color index
 ]);
 
@@ -165,18 +165,51 @@ type ColorMode = "truecolor" | "256color";
 // Color Utilities
 // ============================================================================
 
+interface RgbaColor {
+	r: number;
+	g: number;
+	b: number;
+	a: number;
+}
+
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
+	const { r, g, b } = hexToRgba(hex);
+	return { r, g, b };
+}
+
+function hexToRgba(hex: string): RgbaColor {
 	const cleaned = hex.replace("#", "");
-	if (cleaned.length !== 6) {
-		throw new Error(`Invalid hex color: ${hex}`);
+	if (cleaned.length !== 6 && cleaned.length !== 8) {
+		throw new Error(`Invalid hex color: ${hex} (expected #RRGGBB or #RRGGBBAA)`);
 	}
 	const r = parseInt(cleaned.substring(0, 2), 16);
 	const g = parseInt(cleaned.substring(2, 4), 16);
 	const b = parseInt(cleaned.substring(4, 6), 16);
-	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+	const a = cleaned.length === 8 ? parseInt(cleaned.substring(6, 8), 16) / 255 : 1.0;
+	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b) || Number.isNaN(a)) {
 		throw new Error(`Invalid hex color: ${hex}`);
 	}
-	return { r, g, b };
+	return { r, g, b, a };
+}
+
+function hasAlpha(hex: string): boolean {
+	const cleaned = hex.replace("#", "");
+	return cleaned.length === 8;
+}
+
+function blendWithBackground(color: RgbaColor, background: { r: number; g: number; b: number }): string {
+	if (color.a >= 1.0) {
+		return `#${color.r.toString(16).padStart(2, "0")}${color.g.toString(16).padStart(2, "0")}${color.b.toString(16).padStart(2, "0")}`;
+	}
+	if (color.a <= 0.0) {
+		// Fully transparent - return background as-is
+		return `#${background.r.toString(16).padStart(2, "0")}${background.g.toString(16).padStart(2, "0")}${background.b.toString(16).padStart(2, "0")}`;
+	}
+	const blend = (fg: number, bg: number, alpha: number) => Math.round(bg * (1 - alpha) + fg * alpha);
+	const r = blend(color.r, background.r, color.a);
+	const g = blend(color.g, background.g, color.a);
+	const b = blend(color.b, background.b, color.a);
+	return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
 // The 6x6x6 color cube channel values (indices 0-5)
@@ -313,6 +346,31 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 	for (const [key, value] of Object.entries(colors)) {
 		resolved[key] = resolveVarRefs(value, vars);
 	}
+
+	// Blend any #RRGGBBAA colors with the theme background.
+	// If a color has alpha < 1.0, it is composited against the background
+	// to produce an opaque #RRGGBB color (since terminals don't support alpha).
+	// The background is determined from the "bg" var, falling back to the
+	// resolved selectedBg color, then a dark default (#1e1e2e).
+	let background: { r: number; g: number; b: number } | undefined;
+	for (const [key, value] of Object.entries(resolved)) {
+		if (typeof value === "string" && value.startsWith("#") && hasAlpha(value)) {
+			if (!background) {
+				// Resolve background: "bg" var > selectedBg > dark default
+				const bgValue = vars.bg !== undefined ? resolveVarRefs(vars.bg, vars) : resolved.selectedBg;
+				if (typeof bgValue === "string" && bgValue.startsWith("#")) {
+					const bgRgba = hexToRgba(bgValue);
+					background = { r: bgRgba.r, g: bgRgba.g, b: bgRgba.b };
+				} else {
+					// Fallback: dark background
+					background = { r: 0x1e, g: 0x1e, b: 0x2e };
+				}
+			}
+			const rgba = hexToRgba(value);
+			resolved[key] = blendWithBackground(rgba, background);
+		}
+	}
+
 	return resolved as Record<keyof T, string | number>;
 }
 
@@ -1056,11 +1114,32 @@ export function getThemeExportColors(themeName?: string): {
 		if (!exportSection) return {};
 
 		const vars = themeJson.vars ?? {};
+		// Get background for alpha blending
+		let blendBg: { r: number; g: number; b: number } | undefined;
 		const resolve = (value: ColorValue | undefined): string | undefined => {
 			if (value === undefined) return undefined;
 			const resolved = resolveVarRefs(value, vars);
 			if (typeof resolved === "number") return ansi256ToHex(resolved);
 			if (resolved === "") return undefined;
+			if (hasAlpha(resolved)) {
+				if (!blendBg) {
+					let bgValue: string | number | undefined;
+					if (vars.bg !== undefined) {
+						bgValue = resolveVarRefs(vars.bg, vars);
+					} else {
+						// Fall back to selectedBg from colors
+						const colors = themeJson.colors;
+						bgValue = colors.selectedBg ? resolveVarRefs(colors.selectedBg, vars) : undefined;
+					}
+					if (typeof bgValue === "string" && bgValue.startsWith("#")) {
+						const bgRgba = hexToRgba(bgValue);
+						blendBg = { r: bgRgba.r, g: bgRgba.g, b: bgRgba.b };
+					} else {
+						blendBg = { r: 0x1e, g: 0x1e, b: 0x2e };
+					}
+				}
+				return blendWithBackground(hexToRgba(resolved), blendBg);
+			}
 			return resolved;
 		};
 
