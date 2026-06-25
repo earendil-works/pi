@@ -1819,6 +1819,14 @@ export class InteractiveMode {
 		removeExisting(this.extensionWidgetsBelow);
 
 		if (content === undefined) {
+			const above = this.extensionWidgetsAbove as any;
+			const below = this.extensionWidgetsBelow as any;
+			if (above.__orderedKeys) {
+				above.__orderedKeys = above.__orderedKeys.filter((k: string) => k !== key);
+			}
+			if (below.__orderedKeys) {
+				below.__orderedKeys = below.__orderedKeys.filter((k: string) => k !== key);
+			}
 			this.renderWidgets();
 			return;
 		}
@@ -1840,7 +1848,17 @@ export class InteractiveMode {
 			component = content(this.ui, theme);
 		}
 
-		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
+		const targetMap = (placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove) as any;
+		if (!targetMap.__orderedKeys) {
+			targetMap.__orderedKeys = [];
+		}
+		const stack = new Error().stack || "";
+		const isUserTriggered = stack.includes("_tryExecuteExtensionCommand") || stack.includes("prompt") || stack.includes("executeSlashCommand");
+		
+		if (isUserTriggered || !targetMap.__orderedKeys.includes(key)) {
+			targetMap.__orderedKeys = [key, ...targetMap.__orderedKeys.filter((k: string) => k !== key)];
+		}
+
 		targetMap.set(key, component);
 		this.renderWidgets();
 	}
@@ -1919,8 +1937,12 @@ export class InteractiveMode {
 		if (leadingSpacer) {
 			container.addChild(new Spacer(1));
 		}
-		for (const component of widgets.values()) {
-			container.addChild(component);
+		const ordered = (widgets as any).__orderedKeys || Array.from(widgets.keys());
+		for (const key of ordered) {
+			const component = widgets.get(key);
+			if (component) {
+				container.addChild(component);
+			}
 		}
 	}
 
