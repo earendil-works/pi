@@ -122,6 +122,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Always include these
+	addGuideline("Guard against overeager actions: pay careful attention to the scope of the user's request. Do what they ask, but no more. Do not improve, comment, fix, or modify unrelated parts of the code in any way.");
 	addGuideline("Be concise in your responses");
 	addGuideline("Show file paths clearly when working with files");
 
