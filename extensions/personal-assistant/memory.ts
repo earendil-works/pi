@@ -42,7 +42,7 @@
 
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Type, completeSimple } from "@earendil-works/pi-ai";
+import { Type, completeSimple } from "@earendil-works/pi-ai/compat";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";

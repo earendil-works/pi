@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { complete } from "../src/index.ts";
+import { complete } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
 import type { Model } from "../src/types.ts";
 

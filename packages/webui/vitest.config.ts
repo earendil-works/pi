@@ -64,12 +64,13 @@ export default defineConfig({
   },
   plugins: [sqliteBuiltinPlugin],
   resolve: {
-    alias: {
-      "@earendil-works/pi-ai": resolve(repoRoot, "packages/ai/src/index.ts"),
-      "@earendil-works/pi-ai/oauth": resolve(repoRoot, "packages/ai/src/oauth.ts"),
-      "@earendil-works/pi-agent-core": resolve(repoRoot, "packages/agent/src/index.ts"),
-      "@earendil-works/pi-coding-agent": resolve(repoRoot, "packages/coding-agent/src/index.ts"),
-      "@earendil-works/pi-personal-assistant": resolve(__dirname, "../../extensions/personal-assistant/index.ts"),
-    },
+    alias: [
+      { find: "@earendil-works/pi-ai/compat", replacement: resolve(repoRoot, "packages/ai/src/compat.ts") },
+      { find: "@earendil-works/pi-ai/oauth", replacement: resolve(repoRoot, "packages/ai/src/oauth.ts") },
+      { find: "@earendil-works/pi-ai", replacement: resolve(repoRoot, "packages/ai/src/index.ts") },
+      { find: "@earendil-works/pi-agent-core", replacement: resolve(repoRoot, "packages/agent/src/index.ts") },
+      { find: "@earendil-works/pi-coding-agent", replacement: resolve(repoRoot, "packages/coding-agent/src/index.ts") },
+      { find: "@earendil-works/pi-personal-assistant", replacement: resolve(__dirname, "../../extensions/personal-assistant/index.ts") },
+    ],
   },
 });

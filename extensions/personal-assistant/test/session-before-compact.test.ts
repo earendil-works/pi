@@ -105,9 +105,9 @@ const completeSimpleMock = vi.hoisted(() =>
 	})),
 );
 
-vi.mock("@earendil-works/pi-ai", async () => {
-	const actual = await vi.importActual<typeof import("@earendil-works/pi-ai")>(
-		"@earendil-works/pi-ai",
+vi.mock("@earendil-works/pi-ai/compat", async () => {
+	const actual = await vi.importActual<typeof import("@earendil-works/pi-ai/compat")>(
+		"@earendil-works/pi-ai/compat",
 	);
 	return {
 		...actual,
@@ -115,7 +115,7 @@ vi.mock("@earendil-works/pi-ai", async () => {
 	};
 });
 
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { registerMemory } from "../memory.ts";
 
 type HookHandler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown;
@@ -292,7 +292,7 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 			},
 			stopReason: "stop",
 			timestamp: Date.now(),
-		} as Awaited<ReturnType<typeof import("@earendil-works/pi-ai").completeSimple>>);
+		} as Awaited<ReturnType<typeof import("@earendil-works/pi-ai/compat").completeSimple>>);
 
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const handler = mockPi.hooks.get("session_before_compact");

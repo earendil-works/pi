@@ -3,6 +3,7 @@ import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalBackgroundTheme,
+	detectTerminalThemeForAuto,
 	initTheme,
 	parseAutoThemeSetting,
 	resolveThemeSetting,
@@ -37,7 +38,7 @@ export class InteractiveThemeController {
 		const themeSetting = this.settingsManager.getThemeSetting();
 		const autoTheme = parseAutoThemeSetting(themeSetting);
 		if (autoTheme) {
-			this.terminalTheme = await this.detectTerminalThemeForAuto();
+			this.terminalTheme = await detectTerminalThemeForAuto({ ui: this.ui, timeoutMs: 100 });
 			this.setAutoSync(true);
 			this.applyThemeName(this.terminalTheme === "light" ? autoTheme.lightTheme : autoTheme.darkTheme, true);
 			return;
@@ -107,16 +108,6 @@ export class InteractiveThemeController {
 		if (this.autoSyncEnabled === enabled) return;
 		this.autoSyncEnabled = enabled;
 		this.ui.setTerminalColorSchemeNotifications(enabled);
-	}
-
-	private async detectTerminalThemeForAuto(): Promise<TerminalTheme> {
-		try {
-			const colorScheme = await this.ui.queryTerminalColorScheme({ timeoutMs: 100 });
-			if (colorScheme) return colorScheme;
-		} catch {
-			// Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR is unsupported.
-		}
-		return (await detectTerminalBackgroundTheme({ ui: this.ui, timeoutMs: 100 })).theme;
 	}
 
 	private applyTerminalTheme(terminalTheme: TerminalTheme): void {

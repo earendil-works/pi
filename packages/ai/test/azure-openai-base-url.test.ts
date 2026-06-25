@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
-import { streamAzureOpenAIResponses } from "../src/providers/azure-openai-responses.ts";
+import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 
 interface CapturedAzureClientOptions {

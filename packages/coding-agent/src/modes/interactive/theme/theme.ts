@@ -680,8 +680,17 @@ export interface TerminalBackgroundThemeDetector {
 	queryTerminalBackgroundColor({ timeoutMs }: { timeoutMs: number }): Promise<RgbColor | undefined>;
 }
 
+export interface TerminalAutoThemeDetector extends TerminalBackgroundThemeDetector {
+	queryTerminalColorScheme?({ timeoutMs }: { timeoutMs: number }): Promise<TerminalTheme | undefined>;
+}
+
 export interface TerminalBackgroundThemeDetectionOptions extends TerminalThemeDetectionOptions {
 	ui: TerminalBackgroundThemeDetector;
+	timeoutMs: number;
+}
+
+export interface TerminalAutoThemeDetectionOptions extends TerminalThemeDetectionOptions {
+	ui: TerminalAutoThemeDetector;
 	timeoutMs: number;
 }
 
@@ -753,6 +762,20 @@ export async function detectTerminalBackgroundTheme({
 	}
 
 	return detectTerminalBackgroundFromEnv({ env });
+}
+
+export async function detectTerminalThemeForAuto({
+	ui,
+	timeoutMs,
+	env,
+}: TerminalAutoThemeDetectionOptions): Promise<TerminalTheme> {
+	try {
+		const colorScheme = await ui.queryTerminalColorScheme?.({ timeoutMs });
+		if (colorScheme) return colorScheme;
+	} catch {
+		// Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR is unsupported.
+	}
+	return (await detectTerminalBackgroundTheme({ ui, timeoutMs, env })).theme;
 }
 
 export function getDefaultTheme(): string {

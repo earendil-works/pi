@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { SettingsManager } from "./settings-manager.ts";
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
 
@@ -92,9 +92,9 @@ export function mergeProviderAttributionHeaders(
 	model: Model<Api>,
 	settingsManager: SettingsManager,
 	sessionId: string | undefined,
-	...headerSources: Array<Record<string, string> | undefined>
-): Record<string, string> | undefined {
-	const merged = {
+	...headerSources: Array<ProviderHeaders | undefined>
+): ProviderHeaders | undefined {
+	const merged: ProviderHeaders = {
 		...getSessionHeaders(model, sessionId),
 		...getDefaultAttributionHeaders(model, settingsManager),
 	};

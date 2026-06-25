@@ -17,11 +17,17 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: build-binaries-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  # Keep the public GitHub Release publication last. Binary assets are staged in
+  # a draft release first; cleanup removes the draft if later publishing fails.
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
       SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
@@ -46,17 +52,16 @@ jobs:
       - name: Build binaries
         run: ./scripts/build-binaries.sh
 
-      - name: Extract changelog for this version
-        id: changelog
+      - name: Prepare GitHub release payload
         run: |
+          set -euo pipefail
+
+          mkdir -p .release-assets
+
           VERSION="${RELEASE_TAG}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
-          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out /tmp/release-notes.md
+          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out .release-assets/RELEASE_NOTES.md
 
-      - name: Create GitHub Release and upload binaries
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
           cd packages/coding-agent/binaries
 
           release_assets=(
@@ -67,24 +72,107 @@ jobs:
             pi-windows-x64.zip
             pi-windows-arm64.zip
           )
-          sha256sum "${release_assets[@]}" > SHA256SUMS
-          release_assets+=(SHA256SUMS)
 
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release edit "${RELEASE_TAG}" \
-              --title "${RELEASE_TAG}" \
-              --notes-file /tmp/release-notes.md
-            gh release upload "${RELEASE_TAG}" "${release_assets[@]}" --clobber
-          else
-            gh release create "${RELEASE_TAG}" \
-              --title "${RELEASE_TAG}" \
-              --notes-file /tmp/release-notes.md \
-              "${release_assets[@]}"
+          for asset in "${release_assets[@]}"; do
+            test -f "${asset}"
+          done
+
+          sha256sum "${release_assets[@]}" > "${GITHUB_WORKSPACE}/.release-assets/SHA256SUMS"
+          cp "${release_assets[@]}" "${GITHUB_WORKSPACE}/.release-assets/"
+
+      - name: Upload GitHub release payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets-${{ env.RELEASE_TAG }}
+          path: .release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  stage-github-release:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Download GitHub release payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets-${{ env.RELEASE_TAG }}
+          path: release-assets
+
+      - name: Validate GitHub release payload
+        run: |
+          set -euo pipefail
+
+          cd release-assets
+
+          expected_assets=(
+            pi-darwin-arm64.tar.gz
+            pi-darwin-x64.tar.gz
+            pi-linux-x64.tar.gz
+            pi-linux-arm64.tar.gz
+            pi-windows-x64.zip
+            pi-windows-arm64.zip
+            SHA256SUMS
+            RELEASE_NOTES.md
+          )
+
+          for asset in "${expected_assets[@]}"; do
+            test -f "${asset}"
+          done
+
+          sha256sum -c SHA256SUMS
+
+      - name: Create draft GitHub Release and upload binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          cd release-assets
+
+          release_assets=(
+            pi-darwin-arm64.tar.gz
+            pi-darwin-x64.tar.gz
+            pi-linux-x64.tar.gz
+            pi-linux-arm64.tar.gz
+            pi-windows-x64.zip
+            pi-windows-arm64.zip
+            SHA256SUMS
+          )
+
+          existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing_release}" == "false" ]]; then
+            echo "::error::GitHub Release ${RELEASE_TAG} is already published. Refusing to mutate a public release."
+            exit 1
+          fi
+          if [[ "${existing_release}" == "true" ]]; then
+            gh release delete "${RELEASE_TAG}" --yes
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --draft \
+            --title "${RELEASE_TAG}" \
+            --notes-file RELEASE_NOTES.md \
+            "${release_assets[@]}"
+
+          expected_asset_names="$(printf '%s\n' "${release_assets[@]}" | sort)"
+          actual_asset_names="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)"
+
+          if [[ "${actual_asset_names}" != "${expected_asset_names}" ]]; then
+            echo "::error::Draft GitHub Release asset set does not match expected files."
+            diff -u <(printf '%s\n' "${expected_asset_names}") <(printf '%s\n' "${actual_asset_names}") || true
+            exit 1
           fi
 
   publish-npm:
     runs-on: ubuntu-latest
-    needs: build
+    needs: stage-github-release
     environment: npm-publish
     permissions:
       contents: read
@@ -134,3 +222,57 @@ jobs:
 
       - name: Publish npm packages
         run: node scripts/publish.mjs
+
+  publish-github-release:
+    runs-on: ubuntu-latest
+    needs:
+      - stage-github-release
+      - publish-npm
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Publish staged GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing_release}" == "" ]]; then
+            echo "::error::Draft GitHub Release ${RELEASE_TAG} does not exist."
+            exit 1
+          fi
+          if [[ "${existing_release}" == "false" ]]; then
+            echo "::error::GitHub Release ${RELEASE_TAG} is already published."
+            exit 1
+          fi
+
+          gh release edit "${RELEASE_TAG}" --draft=false
+
+  cleanup-draft-github-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - stage-github-release
+      - publish-npm
+      - publish-github-release
+    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.publish-github-release.result != 'success') }}
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Delete draft GitHub Release after failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          existing_release="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing_release}" == "true" ]]; then
+            gh release delete "${RELEASE_TAG}" --yes
+          fi

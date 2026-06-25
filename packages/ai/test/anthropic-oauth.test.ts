@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loginAnthropic, refreshAnthropicToken } from "../src/utils/oauth/anthropic.ts";
+import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
+import { anthropicOAuth, loginAnthropic, refreshAnthropicToken } from "../src/utils/oauth/anthropic.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -95,5 +96,39 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("anthropicOAuth.login resolves through the manual_code prompt and aborts it after settling", async () => {
+		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+			const url = typeof input === "string" ? input : String(input);
+			if (url.includes("/oauth/token")) {
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const events: AuthEvent[] = [];
+		const prompts: AuthPrompt[] = [];
+		let manualSignal: AbortSignal | undefined;
+
+		const credential = await anthropicOAuth.login({
+			notify: (event) => events.push(event),
+			prompt: async (prompt) => {
+				prompts.push(prompt);
+				if (prompt.type === "manual_code") {
+					manualSignal = prompt.signal;
+					return "the-code";
+				}
+				throw new Error(`Unexpected prompt: ${prompt.type}`);
+			},
+		});
+
+		expect(credential.type).toBe("oauth");
+		expect(credential.access).toBe("access");
+		expect(events.some((e) => e.type === "auth_url")).toBe(true);
+		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
+		// the prompt's signal is aborted once login settles, so UIs can dismiss it
+		expect(manualSignal?.aborted).toBe(true);
 	});
 });

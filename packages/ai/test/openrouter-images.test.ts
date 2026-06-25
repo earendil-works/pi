@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/images.ts";
-import { clearImagesApiProviders, getImagesApiProvider } from "../src/images-api-registry.ts";
-import { register as registerOpenRouterImages } from "../src/providers/images/openrouter.ts";
-import { registerBuiltInImagesApiProviders } from "../src/providers/register-builtins.ts";
 import type { ImagesContext, ImagesModel } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -65,15 +62,6 @@ describe("openrouter images", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 		mockState.lastRequestOptions = undefined;
-		clearImagesApiProviders();
-		registerBuiltInImagesApiProviders();
-	});
-
-	it("registers the direct OpenRouter images transport explicitly", () => {
-		clearImagesApiProviders();
-		expect(getImagesApiProvider("openrouter-images")).toBeUndefined();
-		registerOpenRouterImages();
-		expect(getImagesApiProvider("openrouter-images")?.api).toBe("openrouter-images");
 	});
 
 	it("returns text plus images in final output", async () => {

@@ -1,11 +1,4 @@
-import {
-	type AssistantMessage,
-	completeSimple,
-	type ImageContent,
-	type Model,
-	type TextContent,
-	type Usage,
-} from "@earendil-works/pi-ai/base";
+import type { AssistantMessage, ImageContent, Model, Models, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import {
 	convertToLlm,
@@ -128,14 +121,19 @@ export function calculateContextTokens(usage: Usage): number {
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {
 	if (msg.role === "assistant" && "usage" in msg) {
 		const assistantMsg = msg as AssistantMessage;
-		if (assistantMsg.stopReason !== "aborted" && assistantMsg.stopReason !== "error" && assistantMsg.usage) {
+		if (
+			assistantMsg.stopReason !== "aborted" &&
+			assistantMsg.stopReason !== "error" &&
+			assistantMsg.usage &&
+			calculateContextTokens(assistantMsg.usage) > 0
+		) {
 			return assistantMsg.usage;
 		}
 	}
 	return undefined;
 }
 
-/** Return usage from the last successful assistant message in session entries. */
+/** Return usage from the last valid assistant message in session entries. */
 export function getLastAssistantUsage(entries: SessionTreeEntry[]): Usage | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
@@ -461,10 +459,9 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 /** Generate or update a conversation summary for compaction. */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
+	models: Models,
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string,
-	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
@@ -496,10 +493,10 @@ export async function generateSummary(
 
 	const completionOptions =
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers };
+			? { maxTokens, signal, reasoning: thinkingLevel }
+			: { maxTokens, signal };
 
-	const response = await completeSimple(
+	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
@@ -632,9 +629,8 @@ export { serializeConversation } from "./utils.ts";
 /** Generate compaction summary data from prepared session history. */
 export async function compact(
 	preparation: CompactionPreparation,
+	models: Models,
 	model: Model<any>,
-	apiKey: string,
-	headers?: Record<string, string>,
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
@@ -661,25 +657,16 @@ export async function compact(
 			messagesToSummarize.length > 0
 				? generateSummary(
 						messagesToSummarize,
+						models,
 						model,
 						settings.reserveTokens,
-						apiKey,
-						headers,
 						signal,
 						customInstructions,
 						previousSummary,
 						thinkingLevel,
 					)
 				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
-			generateTurnPrefixSummary(
-				turnPrefixMessages,
-				model,
-				settings.reserveTokens,
-				apiKey,
-				headers,
-				signal,
-				thinkingLevel,
-			),
+			generateTurnPrefixSummary(turnPrefixMessages, models, model, settings.reserveTokens, signal, thinkingLevel),
 		]);
 		if (!historyResult.ok) return err(historyResult.error);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
@@ -687,10 +674,9 @@ export async function compact(
 	} else {
 		const summaryResult = await generateSummary(
 			messagesToSummarize,
+			models,
 			model,
 			settings.reserveTokens,
-			apiKey,
-			headers,
 			signal,
 			customInstructions,
 			previousSummary,
@@ -712,10 +698,9 @@ export async function compact(
 }
 async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
+	models: Models,
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string,
-	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 ): Promise<Result<string, CompactionError>> {
@@ -734,12 +719,12 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
-	const response = await completeSimple(
+	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers },
+			? { maxTokens, signal, reasoning: thinkingLevel }
+			: { maxTokens, signal },
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));

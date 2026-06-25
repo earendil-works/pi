@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { getModel, getSupportedThinkingLevels } from "../src/models.ts";
-import { streamAnthropic } from "../src/providers/anthropic.ts";
+import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { getModel } from "../src/compat.ts";
+import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Context } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({

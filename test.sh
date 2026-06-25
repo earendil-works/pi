@@ -25,6 +25,8 @@ export PI_NO_LOCAL_LLM=1
 # Unset API keys (see packages/ai/src/stream.ts getEnvApiKey)
 unset ANTHROPIC_API_KEY
 unset ANTHROPIC_OAUTH_TOKEN
+unset ANT_LING_API_KEY
+unset NVIDIA_API_KEY
 unset OPENAI_API_KEY
 unset AZURE_OPENAI_API_KEY
 unset DEEPSEEK_API_KEY

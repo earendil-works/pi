@@ -1,7 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { complete, getEnvApiKey } from "../src/index.ts";
-import { getModel } from "../src/models.ts";
+import { complete, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, Message, Tool, ToolCall } from "../src/types.ts";
 
 const testToolSchema = Type.Object({

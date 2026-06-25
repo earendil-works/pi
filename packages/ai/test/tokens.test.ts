@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stream } from "../src/index.ts";
-import { getModel, getModels } from "../src/models.ts";
+import { getModel, getModels, stream } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;

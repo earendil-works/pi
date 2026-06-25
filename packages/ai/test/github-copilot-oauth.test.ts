@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModels } from "../src/models.ts";
+import { getModels } from "../src/compat.ts";
 import {
 	githubCopilotOAuthProvider,
 	loginGitHubCopilot,

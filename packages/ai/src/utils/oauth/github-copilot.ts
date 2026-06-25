@@ -2,7 +2,8 @@
  * GitHub Copilot OAuth flow
  */
 
-import { getModels } from "../../models.ts";
+import type { OAuthAuth, OAuthCredential } from "../../auth/types.ts";
+import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts";
 import type { Api, Model } from "../../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import type { OAuthCredentials, OAuthDeviceCodeInfo, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
@@ -328,7 +329,7 @@ async function enableAllGitHubCopilotModels(
 	enterpriseDomain?: string,
 	onProgress?: (model: string, success: boolean) => void,
 ): Promise<void> {
-	const models = getModels("github-copilot");
+	const models = Object.values(GITHUB_COPILOT_MODELS);
 	await Promise.all(
 		models.map(async (model) => {
 			const success = await enableGitHubCopilotModel(token, model.id, enterpriseDomain);
@@ -390,6 +391,42 @@ export async function loginGitHubCopilot(options: {
 		availableModelIds: await fetchAvailableGitHubCopilotModelIds(credentials.access, enterpriseDomain ?? undefined),
 	};
 }
+
+function copilotEnterpriseDomain(credential: OAuthCredential): string | undefined {
+	const enterpriseUrl = credential.enterpriseUrl;
+	if (typeof enterpriseUrl !== "string" || !enterpriseUrl) return undefined;
+	return normalizeDomain(enterpriseUrl) ?? undefined;
+}
+
+export const githubCopilotOAuth: OAuthAuth = {
+	name: "GitHub Copilot",
+
+	async login(callbacks) {
+		const credentials = await loginGitHubCopilot({
+			onDeviceCode: (info) => callbacks.notify({ type: "device_code", ...info }),
+			onPrompt: (prompt) =>
+				callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
+			onProgress: (message) => callbacks.notify({ type: "progress", message }),
+			signal: callbacks.signal,
+		});
+		return { ...credentials, type: "oauth" };
+	},
+
+	async refresh(credential) {
+		return {
+			...(await refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential))),
+			type: "oauth",
+		};
+	},
+
+	/** Per-credential baseUrl from the token's proxy endpoint replaces the old `modifyModels` rewriting. */
+	async toAuth(credential) {
+		return {
+			apiKey: credential.access,
+			baseUrl: getGitHubCopilotBaseUrl(credential.access, copilotEnterpriseDomain(credential)),
+		};
+	},
+};
 
 export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 	id: "github-copilot",

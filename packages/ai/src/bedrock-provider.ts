@@ -1,8 +1,6 @@
-import { register, streamBedrock, streamSimpleBedrock } from "./providers/amazon-bedrock.ts";
-
-export { register };
+import { stream, streamSimple } from "./api/bedrock-converse-stream.ts";
 
 export const bedrockProviderModule = {
-	streamBedrock,
-	streamSimpleBedrock,
+	stream,
+	streamSimple,
 };

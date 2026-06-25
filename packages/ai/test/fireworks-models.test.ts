@@ -2,9 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { getModel, getModels } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
-import { getModel, getModels } from "../src/models.ts";
-import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
 const originalFireworksApiKey = process.env.FIREWORKS_API_KEY;
@@ -79,7 +79,16 @@ const tool: Tool = {
 	parameters: Type.Object({ value: Type.String() }),
 };
 
-function createFireworksModel(compat?: Model<"anthropic-messages">["compat"]): Model<"anthropic-messages"> {
+const FIREWORKS_ANTHROPIC_COMPAT = {
+	sendSessionAffinityHeaders: true,
+	supportsEagerToolInputStreaming: false,
+	supportsCacheControlOnTools: false,
+	supportsLongCacheRetention: false,
+} satisfies NonNullable<Model<"anthropic-messages">["compat"]>;
+
+function createFireworksModel(
+	compat: Model<"anthropic-messages">["compat"] = FIREWORKS_ANTHROPIC_COMPAT,
+): Model<"anthropic-messages"> {
 	return {
 		id: "accounts/fireworks/models/kimi-k2p6",
 		name: "Kimi K2.6",

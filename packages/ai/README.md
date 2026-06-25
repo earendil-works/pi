@@ -1,6 +1,6 @@
 # @earendil-works/pi-ai
 
-Unified LLM API with automatic model discovery, provider configuration, token and cost tracking, and simple context persistence and hand-off to other models mid-session.
+Unified LLM API with provider collections, automatic auth resolution, token and cost tracking, and simple context persistence and hand-off to other models mid-session.
 
 **Note**: This library only includes models that support tool calling (function calling), as this is essential for agentic workflows.
 
@@ -8,8 +8,17 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 
 - [Supported Providers](#supported-providers)
 - [Installation](#installation)
-- [Base Entry Point](#base-entry-point)
 - [Quick Start](#quick-start)
+- [Providers and Models](#providers-and-models)
+  - [Provider Factories](#provider-factories)
+  - [All Built-in Providers](#all-built-in-providers)
+  - [Querying Models](#querying-models)
+  - [Static Catalog Reads](#static-catalog-reads)
+  - [Dynamic Providers](#dynamic-providers)
+- [Auth](#auth)
+  - [How Auth Resolves](#how-auth-resolves)
+  - [Credential Store](#credential-store)
+  - [Environment Variables](#environment-variables)
 - [Tools](#tools)
   - [Defining Tools](#defining-tools)
   - [Handling Tool Calls](#handling-tool-calls)
@@ -18,8 +27,6 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Complete Event Reference](#complete-event-reference)
 - [Image Input](#image-input)
 - [Image Generation](#image-generation)
-  - [Basic Image Generation](#basic-image-generation)
-  - [Notes and Limitations](#notes-and-limitations)
 - [Thinking/Reasoning](#thinkingreasoning)
   - [Unified Interface](#unified-interface-streamsimplecompletesimple)
   - [Provider-Specific Options](#provider-specific-options-streamcomplete)
@@ -28,26 +35,22 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - [Error Handling](#error-handling)
   - [Aborting Requests](#aborting-requests)
   - [Continuing After Abort](#continuing-after-abort)
-- [APIs, Models, and Providers](#apis-models-and-providers)
-  - [Providers and Models](#providers-and-models)
-  - [Querying Providers and Models](#querying-providers-and-models)
-  - [Custom Models](#custom-models)
+  - [Debugging Provider Payloads](#debugging-provider-payloads)
+- [Custom Providers](#custom-providers)
+  - [createProvider()](#createprovider)
+  - [Calling API Implementations Directly](#calling-api-implementations-directly)
   - [OpenAI Compatibility Settings](#openai-compatibility-settings)
-  - [Type Safety](#type-safety)
+- [Faux Provider for Tests](#faux-provider-for-tests)
 - [Cross-Provider Handoffs](#cross-provider-handoffs)
 - [Context Serialization](#context-serialization)
 - [Browser Usage](#browser-usage)
-  - [Browser Compatibility Notes](#browser-compatibility-notes)
-  - [Environment Variables](#environment-variables-nodejs-only)
-  - [Provider-Scoped Environment Overrides](#provider-scoped-environment-overrides)
-  - [Checking Environment Variables](#checking-environment-variables)
+- [Bundling and Tree Shaking](#bundling-and-tree-shaking)
 - [OAuth Providers](#oauth-providers)
   - [Vertex AI](#vertex-ai)
   - [CLI Login](#cli-login)
   - [Programmatic OAuth](#programmatic-oauth)
-  - [Login Flow Example](#login-flow-example)
-  - [Using OAuth Tokens](#using-oauth-tokens)
-  - [Provider Notes](#provider-notes)
+- [Migrating from the Old Global API](#migrating-from-the-old-global-api)
+- [Development](#development)
 - [License](#license)
 
 ## Supported Providers
@@ -69,16 +72,18 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **xAI**
 - **OpenRouter**
 - **Vercel AI Gateway**
-- **ZAI** (with separate Coding Plan China provider)
-- **MiniMax**
+- **ZAI Coding Plan (Global)** (with separate China provider)
+- **MiniMax** (with separate China provider)
 - **Together AI**
+- **Hugging Face**
+- **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
 - **Amazon Bedrock**
 - **OpenCode Zen**
 - **OpenCode Go**
-- **Fireworks** (uses Anthropic-compatible API)
-- **Kimi For Coding** (Moonshot AI, uses Anthropic-compatible API)
-- **Xiaomi MiMo** (uses Anthropic-compatible API; defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
+- **Fireworks** (uses OpenAI- and Anthropic-compatible APIs)
+- **Kimi For Coding** (Moonshot AI subscription endpoint, uses Anthropic-compatible API)
+- **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
 - **Any OpenAI-compatible API**: Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -89,37 +94,19 @@ npm install @earendil-works/pi-ai
 
 TypeBox exports are re-exported from `@earendil-works/pi-ai`: `Type`, `Static`, and `TSchema`.
 
-## Base Entry Point
-
-Use `@earendil-works/pi-ai/base` when a bundler should include only explicitly selected transport implementations. The base entry point exposes model discovery, registries, generic dispatch, environment-key helpers, and provider-neutral utilities without registering built-in transports during module initialization. Generic dispatch still resolves configured environment keys when called.
-
-Import each selected transport directly and call its `register()` function:
-
-```typescript
-import { getModel, streamSimple } from '@earendil-works/pi-ai/base';
-import { register as registerAnthropic } from '@earendil-works/pi-ai/anthropic';
-
-registerAnthropic();
-
-const model = getModel('anthropic', 'claude-sonnet-4-6');
-const response = await streamSimple(model, {
-  messages: [{ role: 'user', content: 'Hello!' }]
-}, {
-  apiKey: process.env.ANTHROPIC_API_KEY
-}).result();
-```
-
-Direct transport imports bundle their implementation and SDK code. Register only the transports used by the application. For example, OpenRouter, Groq, xAI, and DeepSeek chat models share the `@earendil-works/pi-ai/openai-completions` transport.
-
-Use `@earendil-works/pi-ai` for the batteries-included behavior. The root entry point remains backward-compatible: it registers lazy wrappers for all built-in transports and resolves environment API keys automatically during dispatch.
-
 ## Quick Start
 
-```typescript
-import { Type, getModel, stream, complete, Context, Tool, StringEnum } from '@earendil-works/pi-ai';
+You build a `Models` collection of providers and stream through it. The quickest start registers every built-in provider; apps that care about bundle size register individual providers instead (see [Provider Factories](#provider-factories) and [Bundling and Tree Shaking](#bundling-and-tree-shaking)).
 
-// Fully typed with auto-complete support for both providers and models
-const model = getModel('openai', 'gpt-4o-mini');
+```typescript
+import { Type, type Context, type Tool } from '@earendil-works/pi-ai';
+import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+
+// A Models collection with every built-in provider registered
+const models = builtinModels();
+
+// Sync lookup against the collection
+const model = models.getModel('openai', 'gpt-4o-mini')!;
 
 // Define tools with TypeBox schemas for type safety and validation
 const tools: Tool[] = [{
@@ -133,12 +120,13 @@ const tools: Tool[] = [{
 // Build a conversation context (easily serializable and transferable between models)
 const context: Context = {
   systemPrompt: 'You are a helpful assistant.',
-  messages: [{ role: 'user', content: 'What time is it?' }],
+  messages: [{ role: 'user', content: 'What time is it?', timestamp: Date.now() }],
   tools
 };
 
-// Option 1: Streaming with all event types
-const s = stream(model, context);
+// Option 1: Streaming with all event types.
+// Auth resolves through the provider (OPENAI_API_KEY from the environment here).
+const s = models.stream(model, context);
 
 for await (const event of s) {
   switch (event.type) {
@@ -181,7 +169,7 @@ for await (const event of s) {
       console.log(`\nFinished: ${event.reason}`);
       break;
     case 'error':
-      console.error(`Error: ${event.error}`);
+      console.error(`Error: ${event.error.errorMessage}`);
       break;
   }
 }
@@ -193,7 +181,6 @@ context.messages.push(finalMessage);
 // Handle tool calls if any
 const toolCalls = finalMessage.content.filter(b => b.type === 'toolCall');
 for (const call of toolCalls) {
-  // Execute the tool
   const result = call.name === 'get_time'
     ? new Date().toLocaleString('en-US', {
         timeZone: call.arguments.timezone || 'UTC',
@@ -215,7 +202,7 @@ for (const call of toolCalls) {
 
 // Continue if there were tool calls
 if (toolCalls.length > 0) {
-  const continuation = await complete(model, context);
+  const continuation = await models.complete(model, context);
   context.messages.push(continuation);
   console.log('After tool execution:', continuation.content);
 }
@@ -224,7 +211,7 @@ console.log(`Total tokens: ${finalMessage.usage.input} in, ${finalMessage.usage.
 console.log(`Cost: $${finalMessage.usage.cost.total.toFixed(4)}`);
 
 // Option 2: Get complete response without streaming
-const response = await complete(model, context);
+const response = await models.complete(model, context);
 
 for (const block of response.content) {
   if (block.type === 'text') {
@@ -235,6 +222,198 @@ for (const block of response.content) {
 }
 ```
 
+Snippets in the rest of this README assume a `models` collection set up like this (with the relevant providers registered).
+
+## Providers and Models
+
+A **provider** is the runtime unit: it owns its model catalog, its auth (API key resolution, OAuth flows), and its stream behavior. A `Models` collection holds providers and routes every request to the provider that owns the model.
+
+Providers internally share **API implementations** (the wire protocols): Anthropic models use `anthropic-messages`, OpenAI uses `openai-responses`, while xAI, Groq, Cerebras, OpenRouter, and most others share `openai-completions`. Mixed-API providers (GitHub Copilot, OpenCode Zen) dispatch per model.
+
+### Provider Factories
+
+For apps that only need specific providers, there is one factory per built-in provider, each a subpath import that pulls only that provider's catalog:
+
+```typescript
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
+import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
+import { amazonBedrockProvider } from '@earendil-works/pi-ai/providers/amazon-bedrock';
+// ...one module per provider in the Supported Providers list
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+models.setProvider(openrouterProvider());
+```
+
+Provider factories import their model catalog and a lazy API wrapper. They do not import other providers. With bundler code splitting, SDK implementations (`@anthropic-ai/sdk`, `openai`, `@google/genai`, etc.) stay in lazy chunks loaded on the first request to a model of that API.
+
+### All Built-in Providers
+
+For apps that want everything (as in Quick Start):
+
+```typescript
+import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+
+const models = builtinModels(); // a Models collection with every built-in provider registered
+```
+
+This imports all catalogs and every built-in provider factory. It is the heavy, explicit entrypoint. `builtinModels()` accepts the same options as `createModels()` (`credentials`, `authContext`); `builtinProviders()` returns the provider array if you want to register them on your own collection.
+
+### Querying Models
+
+Reads are synchronous and return the last-known lists:
+
+```typescript
+const providers = models.getProviders();           // registered Provider objects
+const provider = models.getProvider('anthropic');  // one provider
+
+const all = models.getModels();                    // every model across providers
+const anthropicModels = models.getModels('anthropic');
+const model = models.getModel('anthropic', 'claude-sonnet-4-5');
+
+for (const m of anthropicModels) {
+  console.log(`${m.id}: ${m.name}`);
+  console.log(`  API: ${m.api}`);
+  console.log(`  Context: ${m.contextWindow} tokens`);
+  console.log(`  Vision: ${m.input.includes('image')}`);
+  console.log(`  Reasoning: ${m.reasoning}`);
+}
+```
+
+Dynamically listed models are typed `Model<Api>`. Narrow with the `hasApi()` guard when you need API-specific option typing:
+
+```typescript
+import { hasApi } from '@earendil-works/pi-ai';
+
+const m = models.getModel('anthropic', 'claude-sonnet-4-5');
+if (m && hasApi(m, 'anthropic-messages')) {
+  // m: Model<'anthropic-messages'> — stream options fully typed
+  models.stream(m, context, { thinkingEnabled: true, thinkingBudgetTokens: 2048 });
+}
+```
+
+### Static Catalog Reads
+
+For tooling that wants the generated built-in catalog with full literal typing (provider and model IDs auto-complete), independent of any collection:
+
+```typescript
+import { getBuiltinModel, getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
+
+const model = getBuiltinModel('openai', 'gpt-4o-mini'); // typed Model<'openai-responses'>
+const providers = getBuiltinProviders();
+const anthropic = getBuiltinModels('anthropic');
+```
+
+### Dynamic Providers
+
+Providers may have dynamic model lists (a llama.cpp server, a live OpenRouter listing). Reads stay sync; fetching is an explicit async verb:
+
+```typescript
+// getModels() returns the last-known list (empty before the first refresh)
+await models.refresh('llamacpp');        // fetch one provider's list; rejects on failure
+await models.refresh();                  // refresh all providers concurrently, best-effort
+const fresh = models.getModel('llamacpp', 'qwen3-30b');
+```
+
+Static built-in providers are no-ops for `refresh()`. See [createProvider()](#createprovider) for building a dynamic provider.
+
+## Auth
+
+Every provider owns its auth: how API keys resolve (stored credentials, environment variables, ambient sources like AWS profiles or gcloud ADC) and, where supported, OAuth login/refresh flows.
+
+### How Auth Resolves
+
+When you call `models.stream()`, the collection resolves auth through the owning provider and merges it into the request. Explicit per-request values always win:
+
+```typescript
+// Resolved through the provider (env var, stored credential, OAuth token):
+await models.complete(model, context);
+
+// Explicit key wins over anything the provider would resolve:
+await models.complete(model, context, { apiKey: 'sk-explicit' });
+```
+
+You can inspect resolution without making a request — useful for status UIs:
+
+```typescript
+const auth = await models.getAuth(model);
+if (auth) {
+  console.log(`configured via ${auth.source}`); // e.g. "ANTHROPIC_API_KEY", "OAuth", "stored credential"
+} else {
+  console.log('not configured');
+}
+```
+
+`getAuth()` resolves `undefined` for unconfigured providers and rejects with `ModelsError` when something is actually broken (`"oauth"`: token refresh failed, credential preserved for re-login; `"auth"`: key resolution or credential store failure). Request paths surface the same failures as stream errors.
+
+### Credential Store
+
+Stored credentials (API keys entered interactively, OAuth tokens) live in a `CredentialStore` — one type-tagged credential per provider. pi-ai ships an in-memory default; apps inject persistent storage:
+
+```typescript
+import { createModels, type CredentialStore } from '@earendil-works/pi-ai';
+
+const models = createModels({ credentials: myFileBackedStore });
+// builtinModels() takes the same options:
+// const models = builtinModels({ credentials: myFileBackedStore });
+```
+
+The contract is small: `read(providerId)`, `modify(providerId, fn)` (the only write path — a serialized read-modify-write), and `delete(providerId)`. OAuth token refresh runs inside `modify`, so concurrent requests and processes cannot double-refresh a rotated token. A stored credential *owns* its provider: environment variables are only consulted when nothing is stored, and a failed refresh never silently falls back to an env key.
+
+API-key credentials use the same discriminator as pi's `auth.json` and can carry provider-scoped env/config values:
+
+```typescript
+const credential = {
+  type: 'api_key',
+  key: '...',
+  env: {
+    CLOUDFLARE_ACCOUNT_ID: 'account-id',
+    CLOUDFLARE_GATEWAY_ID: 'gateway-id'
+  }
+} as const;
+```
+
+### Environment Variables
+
+Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` explicitly):
+
+| Provider | Environment Variable(s) |
+|----------|------------------------|
+| OpenAI | `OPENAI_API_KEY` |
+| Ant Ling | `ANT_LING_API_KEY` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` (e.g. `https://{resource}.openai.azure.com`) or `AZURE_OPENAI_RESOURCE_NAME`. Supports `*.openai.azure.com` and `*.cognitiveservices.azure.com`; root endpoints auto-normalize to `/openai/v1`. Optional: `AZURE_OPENAI_API_VERSION` (default `v1`), `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`. |
+| Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| NVIDIA NIM | `NVIDIA_API_KEY` |
+| Google | `GEMINI_API_KEY` |
+| Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
+| Mistral | `MISTRAL_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Cerebras | `CEREBRAS_API_KEY` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
+| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
+| xAI | `XAI_API_KEY` |
+| Fireworks | `FIREWORKS_API_KEY` |
+| Together AI | `TOGETHER_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
+| ZAI Coding Plan (Global) | `ZAI_API_KEY` |
+| ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
+| MiniMax (Global) | `MINIMAX_API_KEY` |
+| MiniMax (China) | `MINIMAX_CN_API_KEY` |
+| Moonshot AI / Moonshot AI (China) | `MOONSHOT_API_KEY` |
+| Hugging Face | `HF_TOKEN` |
+| OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |
+| Kimi For Coding | `KIMI_API_KEY` |
+| Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
+| Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
+| Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
+| Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+| GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
+
+Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens). Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location.
+
 ## Tools
 
 Tools enable LLMs to interact with external systems. This library uses TypeBox schemas for type-safe tool definitions with automatic validation using TypeBox's built-in validator and value conversion utilities. TypeBox schemas can be serialized and deserialized as plain JSON, making them ideal for distributed systems.
@@ -242,7 +421,7 @@ Tools enable LLMs to interact with external systems. This library uses TypeBox s
 ### Defining Tools
 
 ```typescript
-import { Type, Tool, StringEnum } from '@earendil-works/pi-ai';
+import { Type, type Tool, StringEnum } from '@earendil-works/pi-ai';
 
 // Define tool parameters with TypeBox
 const weatherTool: Tool = {
@@ -277,11 +456,11 @@ Tool results use content blocks and can include both text and images:
 import { readFileSync } from 'fs';
 
 const context: Context = {
-  messages: [{ role: 'user', content: 'What is the weather in London?' }],
+  messages: [{ role: 'user', content: 'What is the weather in London?', timestamp: Date.now() }],
   tools: [weatherTool]
 };
 
-const response = await complete(model, context);
+const response = await models.complete(model, context);
 
 // Check for tool calls in the response
 for (const block of response.content) {
@@ -322,7 +501,7 @@ context.messages.push({
 During streaming, tool call arguments are progressively parsed as they arrive. This enables real-time UI updates before the complete arguments are available:
 
 ```typescript
-const s = stream(model, context);
+const s = models.stream(model, context);
 
 for await (const event of s) {
   if (event.type === 'toolcall_delta') {
@@ -363,15 +542,13 @@ for await (const event of s) {
 
 ### Validating Tool Arguments
 
-When using `agentLoop`, tool arguments are automatically validated against your TypeBox schemas before execution. If validation fails, the error is returned to the model as a tool result, allowing it to retry.
-
-When implementing your own tool execution loop with `stream()` or `complete()`, use `validateToolCall` to validate arguments before passing them to your tools:
+When implementing your own tool execution loop, use `validateToolCall` to validate arguments before passing them to your tools:
 
 ```typescript
-import { stream, validateToolCall, Tool } from '@earendil-works/pi-ai';
+import { validateToolCall, type Tool } from '@earendil-works/pi-ai';
 
 const tools: Tool[] = [weatherTool, calculatorTool];
-const s = stream(model, { messages, tools });
+const s = models.stream(model, { messages, tools });
 
 for await (const event of s) {
   if (event.type === 'toolcall_end') {
@@ -424,9 +601,8 @@ Models with vision capabilities can process images. You can check if a model sup
 
 ```typescript
 import { readFileSync } from 'fs';
-import { getModel, complete } from '@earendil-works/pi-ai';
 
-const model = getModel('openai', 'gpt-4o-mini');
+const model = models.getModel('openai', 'gpt-4o-mini')!;
 
 // Check if model supports images
 if (model.input.includes('image')) {
@@ -436,13 +612,14 @@ if (model.input.includes('image')) {
 const imageBuffer = readFileSync('image.png');
 const base64Image = imageBuffer.toString('base64');
 
-const response = await complete(model, {
+const response = await models.complete(model, {
   messages: [{
     role: 'user',
     content: [
       { type: 'text', text: 'What is in this image?' },
       { type: 'image', data: base64Image, mimeType: 'image/png' }
-    ]
+    ],
+    timestamp: Date.now()
   }]
 });
 
@@ -456,21 +633,21 @@ for (const block of response.content) {
 
 ## Image Generation
 
-Image generation uses a separate API surface from text/chat generation. Use `getImageModel()` / `getImageModels()` / `getImageProviders()` to discover image-generation models, and `generateImages()` to get the final result.
-
-Do not use `stream()` or `complete()` for image generation. Image generation is a one-shot API: `generateImages()` waits for the provider response and returns the final `AssistantImages` result.
+Image generation uses a separate API surface from text/chat generation, mirroring the chat-side design: an `ImagesModels` collection holds `ImagesProvider`s, reads are sync, and auth resolves through the owning provider. Image generation is a one-shot API: `generateImages()` waits for the provider response and returns the final `AssistantImages` result — do not use the chat/stream APIs for it.
 
 ### Basic Image Generation
 
 ```typescript
-import { getImageModel, generateImages } from '@earendil-works/pi-ai';
+import { builtinImagesModels } from '@earendil-works/pi-ai/providers/all';
 
-const model = getImageModel('openrouter', 'google/gemini-2.5-flash-image');
+// Every built-in image-generation provider; accepts the same options as createModels()
+const imagesModels = builtinImagesModels();
 
-const result = await generateImages(model, {
+const model = imagesModels.getModel('openrouter', 'google/gemini-2.5-flash-image')!;
+
+// Auth resolves through the provider (OPENROUTER_API_KEY here); explicit apiKey wins
+const result = await imagesModels.generateImages(model, {
   input: [{ type: 'text', text: 'Generate a red circle on a plain white background.' }]
-}, {
-  apiKey: process.env.OPENROUTER_API_KEY
 });
 
 for (const block of result.output) {
@@ -483,19 +660,32 @@ for (const block of result.output) {
 }
 ```
 
+Like the chat side, you can build the collection from parts: `createImagesModels({ credentials?, authContext? })`, the `openrouterImagesProvider()` factory from `@earendil-works/pi-ai/providers/openrouter-images`, and `createImagesProvider({ id, auth, models, refreshModels?, api })` for custom image providers (with `imagesModels.refresh(provider?)` for dynamic lists). Failures never reject — they return an `AssistantImages` with `stopReason: "error"`. The collection's `getAuth(model)` works exactly like the chat-side one.
+
+The old global API (`getImageModel()` / `getImageModels()` / `getImageProviders()` / `generateImages()`) remains available on the [compat entrypoint](#migrating-from-the-old-global-api):
+
+```typescript
+import { getImageModel, generateImages } from '@earendil-works/pi-ai/compat';
+
+const model = getImageModel('openrouter', 'google/gemini-2.5-flash-image');
+const result = await generateImages(model, {
+  input: [{ type: 'text', text: 'Generate a red circle on a plain white background.' }]
+}, {
+  apiKey: process.env.OPENROUTER_API_KEY
+});
+```
+
 Some models also support image input:
 
 ```typescript
 import { readFileSync } from 'fs';
 
 const imageBuffer = readFileSync('input.png');
-const result = await generateImages(model, {
+const result = await imagesModels.generateImages(model, {
   input: [
     { type: 'text', text: 'Create a variation of this image with a blue background.' },
     { type: 'image', data: imageBuffer.toString('base64'), mimeType: 'image/png' }
   ]
-}, {
-  apiKey: process.env.OPENROUTER_API_KEY
 });
 ```
 
@@ -508,14 +698,14 @@ console.log(model.output);  // ['image'] or ['image', 'text']
 
 ### Notes and Limitations
 
-- Use `getImageModel(...)`, not `getModel(...)`.
-- Use `generateImages()`, not `stream()` / `complete()`.
+- Image models live in `ImagesModels` collections, chat models in `Models` collections; the two are separate surfaces.
+- Use `generateImages()`, not the chat/stream APIs.
 - Image-generation models do not participate in tool calling.
 - Outputs are returned in `AssistantImages.output` and can include both base64-encoded `ImageContent` blocks and `TextContent` blocks.
 - Some models return only images, others return images plus text. Check `model.output`.
 - Some models accept image input, others are text-to-image only. Check `model.input`.
 - Like the streaming APIs, image generation supports options such as `apiKey`, `signal`, `headers`, `onPayload`, and `onResponse`, and results may include `stopReason`, `responseId`, and `usage`.
-- If you want a model to analyze images in a conversation or call tools, use the regular `stream()` / `complete()` APIs with a model that supports image input.
+- If you want a model to analyze images in a conversation or call tools, use the regular chat APIs with a model that supports image input.
 - At the moment, image generation is available through only one provider, OpenRouter.
 
 ## Thinking/Reasoning
@@ -525,16 +715,11 @@ Many models support thinking/reasoning capabilities where they can show their in
 ### Unified Interface (streamSimple/completeSimple)
 
 ```typescript
-import { getModel, streamSimple, completeSimple } from '@earendil-works/pi-ai';
-
 // Many models across providers support thinking/reasoning
-const model = getModel('anthropic', 'claude-sonnet-4-20250514');
-// or getModel('openai', 'gpt-5-mini');
-// or getModel('google', 'gemini-2.5-flash');
-// or getModel('xai', 'grok-code-fast-1');
-// or getModel('groq', 'openai/gpt-oss-20b');
-// or getModel('cerebras', 'gpt-oss-120b');
-// or getModel('openrouter', 'z-ai/glm-4.5v');
+const model = models.getModel('anthropic', 'claude-sonnet-4-5')!;
+// or models.getModel('openai', 'gpt-5-mini');
+// or models.getModel('google', 'gemini-2.5-flash');
+// or models.getModel('xai', 'grok-code-fast-1');
 
 // Check if model supports reasoning
 if (model.reasoning) {
@@ -542,8 +727,8 @@ if (model.reasoning) {
 }
 
 // Use the simplified reasoning option
-const response = await completeSimple(model, {
-  messages: [{ role: 'user', content: 'Solve: 2x + 5 = 13' }]
+const response = await models.completeSimple(model, {
+  messages: [{ role: 'user', content: 'Solve: 2x + 5 = 13', timestamp: Date.now() }]
 }, {
   reasoning: 'medium'  // 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 });
@@ -560,33 +745,39 @@ for (const block of response.content) {
 
 ### Provider-Specific Options (stream/complete)
 
-For fine-grained control, use the provider-specific options:
+`models.stream()`/`complete()` accept the owning API's full option set. Use `hasApi()` to narrow a dynamically looked-up model to its API for full option typing:
 
 ```typescript
-import { getModel, complete } from '@earendil-works/pi-ai';
+import { hasApi } from '@earendil-works/pi-ai';
 
 // OpenAI Reasoning (o1, o3, gpt-5)
-const openaiModel = getModel('openai', 'gpt-5-mini');
-await complete(openaiModel, context, {
-  reasoningEffort: 'medium',
-  reasoningSummary: 'detailed'  // OpenAI Responses API only
-});
+const openaiModel = models.getModel('openai', 'gpt-5-mini')!;
+if (hasApi(openaiModel, 'openai-responses')) {
+  await models.complete(openaiModel, context, {
+    reasoningEffort: 'medium',
+    reasoningSummary: 'detailed'  // OpenAI Responses API only
+  });
+}
 
-// Anthropic Thinking (Claude Sonnet 4)
-const anthropicModel = getModel('anthropic', 'claude-sonnet-4-20250514');
-await complete(anthropicModel, context, {
-  thinkingEnabled: true,
-  thinkingBudgetTokens: 8192  // Optional token limit
-});
+// Anthropic Thinking
+const anthropicModel = models.getModel('anthropic', 'claude-sonnet-4-5')!;
+if (hasApi(anthropicModel, 'anthropic-messages')) {
+  await models.complete(anthropicModel, context, {
+    thinkingEnabled: true,
+    thinkingBudgetTokens: 8192  // Optional token limit
+  });
+}
 
 // Google Gemini Thinking
-const googleModel = getModel('google', 'gemini-2.5-flash');
-await complete(googleModel, context, {
-  thinking: {
-    enabled: true,
-    budgetTokens: 8192  // -1 for dynamic, 0 to disable
-  }
-});
+const googleModel = models.getModel('google', 'gemini-2.5-flash')!;
+if (hasApi(googleModel, 'google-generative-ai')) {
+  await models.complete(googleModel, context, {
+    thinking: {
+      enabled: true,
+      budgetTokens: 8192  // -1 for dynamic, 0 to disable
+    }
+  });
+}
 ```
 
 ### Streaming Thinking Content
@@ -594,7 +785,7 @@ await complete(googleModel, context, {
 When streaming, thinking content is delivered through specific events:
 
 ```typescript
-const s = streamSimple(model, context, { reasoning: 'high' });
+const s = models.streamSimple(model, context, { reasoning: 'high' });
 
 for await (const event of s) {
   switch (event.type) {
@@ -625,11 +816,11 @@ Every `AssistantMessage` includes a `stopReason` field that indicates how the ge
 
 ## Error Handling
 
-When a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event:
+Request failures never throw out of the stream functions: when a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event and the final message carries the details:
 
 ```typescript
 // In streaming
-for await (const event of stream) {
+for await (const event of s) {
   if (event.type === 'error') {
     // event.reason is either "error" or "aborted"
     // event.error is the AssistantMessage with partial content
@@ -639,7 +830,7 @@ for await (const event of stream) {
 }
 
 // The final message will have the error details
-const message = await stream.result();
+const message = await s.result();
 if (message.stopReason === 'error' || message.stopReason === 'aborted') {
   console.error('Request failed:', message.errorMessage);
   // message.content contains any partial content received before the error
@@ -647,21 +838,20 @@ if (message.stopReason === 'error' || message.stopReason === 'aborted') {
 }
 ```
 
+Auth failures (no key configured, OAuth refresh failed, unknown provider) surface the same way: as a stream error with `stopReason: "error"`.
+
 ### Aborting Requests
 
 The abort signal allows you to cancel in-progress requests. Aborted requests have `stopReason === 'aborted'`:
 
 ```typescript
-import { getModel, stream } from '@earendil-works/pi-ai';
-
-const model = getModel('openai', 'gpt-4o-mini');
 const controller = new AbortController();
 
 // Abort after 2 seconds
 setTimeout(() => controller.abort(), 2000);
 
-const s = stream(model, {
-  messages: [{ role: 'user', content: 'Write a long story' }]
+const s = models.stream(model, {
+  messages: [{ role: 'user', content: 'Write a long story', timestamp: Date.now() }]
 }, {
   signal: controller.signal
 });
@@ -691,7 +881,7 @@ Aborted messages can be added to the conversation context and continued in subse
 ```typescript
 const context = {
   messages: [
-    { role: 'user', content: 'Explain quantum computing in detail' }
+    { role: 'user', content: 'Explain quantum computing in detail', timestamp: Date.now() }
   ]
 };
 
@@ -699,14 +889,14 @@ const context = {
 const controller1 = new AbortController();
 setTimeout(() => controller1.abort(), 2000);
 
-const partial = await complete(model, context, { signal: controller1.signal });
+const partial = await models.complete(model, context, { signal: controller1.signal });
 
 // Add the partial response to context
 context.messages.push(partial);
-context.messages.push({ role: 'user', content: 'Please continue' });
+context.messages.push({ role: 'user', content: 'Please continue', timestamp: Date.now() });
 
 // Continue the conversation
-const continuation = await complete(model, context);
+const continuation = await models.complete(model, context);
 ```
 
 ### Debugging Provider Payloads
@@ -714,7 +904,7 @@ const continuation = await complete(model, context);
 Use the `onPayload` callback to inspect the request payload sent to the provider. This is useful for debugging request formatting issues or provider validation errors.
 
 ```typescript
-const response = await complete(model, context, {
+const response = await models.complete(model, context, {
   onPayload: (payload) => {
     console.log('Provider payload:', JSON.stringify(payload, null, 2));
   }
@@ -723,147 +913,16 @@ const response = await complete(model, context, {
 
 The callback is supported by `stream`, `complete`, `streamSimple`, and `completeSimple`.
 
-## APIs, Models, and Providers
+## Custom Providers
 
-The library uses a registry of API implementations. Built-in APIs include:
+### createProvider()
 
-- **`anthropic-messages`**: Anthropic Messages API (`streamAnthropic`, `AnthropicOptions`)
-- **`google-generative-ai`**: Google Generative AI API (`streamGoogle`, `GoogleOptions`)
-- **`google-vertex`**: Google Vertex AI API (`streamGoogleVertex`, `GoogleVertexOptions`)
-- **`mistral-conversations`**: Mistral Conversations API (`streamMistral`, `MistralOptions`)
-- **`openai-completions`**: OpenAI Chat Completions API (`streamOpenAICompletions`, `OpenAICompletionsOptions`)
-- **`openai-responses`**: OpenAI Responses API (`streamOpenAIResponses`, `OpenAIResponsesOptions`)
-- **`openai-codex-responses`**: OpenAI Codex Responses API (`streamOpenAICodexResponses`, `OpenAICodexResponsesOptions`)
-- **`azure-openai-responses`**: Azure OpenAI Responses API (`streamAzureOpenAIResponses`, `AzureOpenAIResponsesOptions`)
-- **`bedrock-converse-stream`**: Amazon Bedrock Converse API (`streamBedrock`, `BedrockOptions`)
-
-### Faux provider for tests
-
-`registerFauxProvider()` registers a temporary in-memory provider for tests and demos. It is opt-in and not part of the built-in provider set.
+`createProvider()` builds a provider from parts: identity, auth, a model list, and an API implementation. Use it for local inference servers, proxies, or any OpenAI/Anthropic-compatible endpoint:
 
 ```typescript
-import {
-  complete,
-  fauxAssistantMessage,
-  fauxText,
-  fauxThinking,
-  fauxToolCall,
-  registerFauxProvider,
-  stream,
-} from '@earendil-works/pi-ai';
+import { createModels, createProvider, envApiKeyAuth, type Model } from '@earendil-works/pi-ai';
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 
-const registration = registerFauxProvider({
-  tokensPerSecond: 50 // optional
-});
-
-const model = registration.getModel();
-const context = {
-  messages: [{ role: 'user', content: 'Summarize package.json and then call echo', timestamp: Date.now() }]
-};
-
-registration.setResponses([
-  fauxAssistantMessage([
-    fauxThinking('Need to inspect package metadata first.'),
-    fauxToolCall('echo', { text: 'package.json' })
-  ], { stopReason: 'toolUse' })
-]);
-
-const first = await complete(model, context, {
-  sessionId: 'session-1',
-  cacheRetention: 'short'
-});
-context.messages.push(first);
-
-context.messages.push({
-  role: 'toolResult',
-  toolCallId: first.content.find((block) => block.type === 'toolCall')!.id,
-  toolName: 'echo',
-  content: [{ type: 'text', text: 'package.json contents here' }],
-  isError: false,
-  timestamp: Date.now()
-});
-
-registration.setResponses([
-  fauxAssistantMessage([
-    fauxThinking('Now I can summarize the tool output.'),
-    fauxText('Here is the summary.')
-  ])
-]);
-
-const s = stream(model, context);
-for await (const event of s) {
-  console.log(event.type);
-}
-
-// Optional: register multiple faux models for model-switching tests
-const multiModel = registerFauxProvider({
-  models: [
-    { id: 'faux-fast', reasoning: false },
-    { id: 'faux-thinker', reasoning: true }
-  ]
-});
-const thinker = multiModel.getModel('faux-thinker');
-
-console.log(thinker?.reasoning);
-console.log(registration.getPendingResponseCount());
-console.log(registration.state.callCount);
-registration.unregister();
-multiModel.unregister();
-```
-
-Notes:
-- Responses are consumed from a queue in request start order.
-- If the queue is empty, the faux provider returns an assistant error message with `errorMessage: "No more faux responses queued"`.
-- Use `registration.setResponses([...])` to replace the remaining queue and `registration.appendResponses([...])` to add more responses.
-- `registration.models` exposes all registered faux models. `registration.getModel()` returns the first one, and `registration.getModel(id)` returns a specific one.
-- Use `fauxAssistantMessage(...)` for scripted assistant replies. Use `fauxText(...)`, `fauxThinking(...)`, and `fauxToolCall(...)` to build content blocks without filling in low-level fields manually.
-- `registration.unregister()` removes the temporary provider from the global API registry.
-- Usage is estimated at roughly 1 token per 4 characters. When `sessionId` is present and `cacheRetention` is not `"none"`, prompt cache reads and writes are simulated automatically.
-- Tool call arguments stream incrementally via `toolcall_delta` chunks.
-- By default, each streamed chunk is emitted on its own microtask. Set `tokensPerSecond` to pace chunk delivery in real time.
-- The intended use is one deterministic scripted flow per registration. If you need independent concurrent flows, register separate faux providers.
-
-### Providers and Models
-
-A **provider** offers models through a specific API. For example:
-- **Anthropic** models use the `anthropic-messages` API
-- **Google** models use the `google-generative-ai` API
-- **OpenAI** models use the `openai-responses` API
-- **Mistral** models use the `mistral-conversations` API
-- **xAI, Cerebras, Groq, NVIDIA NIM, Together AI, etc.** models use the `openai-completions` API (OpenAI-compatible)
-
-### Querying Providers and Models
-
-```typescript
-import { getProviders, getModels, getModel } from '@earendil-works/pi-ai';
-
-// Get all available providers
-const providers = getProviders();
-console.log(providers); // ['openai', 'anthropic', 'google', 'xai', 'groq', ...]
-
-// Get all models from a provider (fully typed)
-const anthropicModels = getModels('anthropic');
-for (const model of anthropicModels) {
-  console.log(`${model.id}: ${model.name}`);
-  console.log(`  API: ${model.api}`); // 'anthropic-messages'
-  console.log(`  Context: ${model.contextWindow} tokens`);
-  console.log(`  Vision: ${model.input.includes('image')}`);
-  console.log(`  Reasoning: ${model.reasoning}`);
-}
-
-// Get a specific model (both provider and model ID are auto-completed in IDEs)
-const model = getModel('openai', 'gpt-4o-mini');
-console.log(`Using ${model.name} via ${model.api} API`);
-```
-
-### Custom Models
-
-You can create custom models for local inference servers or custom endpoints:
-
-```typescript
-import { Model, stream } from '@earendil-works/pi-ai';
-
-// Example: Ollama using OpenAI-compatible API
 const ollamaModel: Model<'openai-completions'> = {
   id: 'llama-3.1-8b',
   name: 'Llama 3.1 8B (Ollama)',
@@ -877,52 +936,70 @@ const ollamaModel: Model<'openai-completions'> = {
   maxTokens: 32000
 };
 
-// Example: LiteLLM proxy with explicit compat settings
-const litellmModel: Model<'openai-completions'> = {
-  id: 'gpt-4o',
-  name: 'GPT-4o (via LiteLLM)',
-  api: 'openai-completions',
-  provider: 'litellm',
-  baseUrl: 'http://localhost:4000/v1',
-  reasoning: false,
-  input: ['text', 'image'],
-  cost: { input: 2.5, output: 10, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 128000,
-  maxTokens: 16384,
-  compat: {
-    supportsStore: false,  // LiteLLM doesn't support the store field
-  }
-};
+const ollama = createProvider({
+  id: 'ollama',
+  name: 'Ollama',
+  baseUrl: 'http://localhost:11434/v1',
+  // Every provider declares auth; keyless local servers resolve as configured with no key.
+  auth: { apiKey: { name: 'Ollama', resolve: async () => ({ auth: {} }) } },
+  models: [ollamaModel],
+  api: openAICompletionsApi(),
+});
 
-// Example: Custom endpoint with headers (bypassing Cloudflare bot detection)
-const proxyModel: Model<'anthropic-messages'> = {
-  id: 'claude-sonnet-4',
-  name: 'Claude Sonnet 4 (Proxied)',
-  api: 'anthropic-messages',
-  provider: 'custom-proxy',
-  baseUrl: 'https://proxy.example.com/v1',
-  reasoning: true,
-  input: ['text', 'image'],
-  cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  contextWindow: 200000,
-  maxTokens: 8192,
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-    'X-Custom-Auth': 'bearer-token-here'
-  }
-};
+const models = createModels();
+models.setProvider(ollama);
 
-// Use the custom model
-const response = await stream(ollamaModel, context, {
-  apiKey: 'dummy' // Ollama doesn't need a real key
+await models.complete(models.getModel('ollama', 'llama-3.1-8b')!, context);
+```
+
+For providers with real keys, `envApiKeyAuth(displayName, envVars)` gives the standard behavior (stored credential wins, then the first set env var):
+
+```typescript
+const proxy = createProvider({
+  id: 'my-proxy',
+  auth: { apiKey: envApiKeyAuth('My proxy API key', ['MY_PROXY_API_KEY']) },
+  models: [/* ... */],
+  api: openAICompletionsApi(),
 });
 ```
 
-Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so the system prompt is sent as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
+Mixed-API providers pass a map keyed by `model.api`; each model dispatches to its API's implementation:
+
+```typescript
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
+
+const gateway = createProvider({
+  id: 'my-gateway',
+  auth: { apiKey: envApiKeyAuth('Gateway key', ['GATEWAY_API_KEY']) },
+  models: [/* models with api: 'anthropic-messages' or 'openai-responses' */],
+  api: {
+    'anthropic-messages': anthropicMessagesApi(),
+    'openai-responses': openAIResponsesApi(),
+  },
+});
+```
+
+Dynamic model lists use `refreshModels`; the provider lists empty until the first `models.refresh()`:
+
+```typescript
+const llamacpp = createProvider({
+  id: 'llamacpp',
+  auth: { apiKey: { name: 'llama.cpp', resolve: async () => ({ auth: {} }) } },
+  models: [],
+  refreshModels: async () => fetchModelsFromServer('http://localhost:8080'),
+  api: openAICompletionsApi(),
+});
+
+models.setProvider(llamacpp);
+await models.refresh('llamacpp');
+```
+
+Custom models can carry `headers` (e.g. proxies behind bot detection) and `compat` flags — see [OpenAI Compatibility Settings](#openai-compatibility-settings).
+
+Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so the system prompt is sent as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
 
 Use model-level `thinkingLevelMap` to describe model-specific thinking controls. Keys are pi thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). Missing keys use provider defaults, string values are sent to the provider, and `null` marks a level unsupported.
-
-This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers. You can set `compat` at the provider level or per model.
 
 ```typescript
 const ollamaReasoningModel: Model<'openai-completions'> = {
@@ -949,6 +1026,36 @@ const ollamaReasoningModel: Model<'openai-completions'> = {
   }
 };
 ```
+
+### Calling API Implementations Directly
+
+The API implementations are importable on their own. Each module exports exactly `stream` and `streamSimple` with that API's full option typing. Direct calls bypass provider auth — pass `apiKey` explicitly:
+
+```typescript
+import { stream } from '@earendil-works/pi-ai/api/anthropic-messages';
+
+const s = stream(claudeModel, context, {
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  thinkingEnabled: true,
+  thinkingBudgetTokens: 2048,
+});
+```
+
+Built-in API implementations live under `./api/<api-id>`:
+
+| API id | Options type |
+|--------|--------------|
+| `anthropic-messages` | `AnthropicOptions` |
+| `openai-completions` | `OpenAICompletionsOptions` |
+| `openai-responses` | `OpenAIResponsesOptions` |
+| `openai-codex-responses` | `OpenAICodexResponsesOptions` |
+| `azure-openai-responses` | `AzureOpenAIResponsesOptions` |
+| `google-generative-ai` | `GoogleOptions` |
+| `google-vertex` | `GoogleVertexOptions` |
+| `mistral-conversations` | `MistralOptions` |
+| `bedrock-converse-stream` | `BedrockOptions` |
+
+Importing an implementation module loads its SDK. The `./api/<id>.lazy` wrappers (used by the provider factories) defer that load to the first request when the runtime or bundler supports dynamic import chunking. Legacy raw API subpaths from older releases (`./anthropic`, `./google`, `./mistral`, `./openai-completions`, ...) were removed; use `@earendil-works/pi-ai/api/<api-id>`.
 
 ### OpenAI Compatibility Settings
 
@@ -987,29 +1094,96 @@ If `compat` is not set, the library falls back to URL-based detection. If `compa
 - **Custom inference servers**: May use non-standard field names
 - **Self-hosted endpoints**: May have different feature support
 
-### Type Safety
+## Faux Provider for Tests
 
-Models are typed by their API, which keeps the model metadata accurate. Provider-specific option types are enforced when you call the provider functions directly. The generic `stream` and `complete` functions accept `StreamOptions` with additional provider fields.
+`fauxProvider()` builds an in-memory provider with scripted responses for tests and demos:
 
 ```typescript
-import { streamAnthropic, type AnthropicOptions } from '@earendil-works/pi-ai';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxThinking,
+  fauxToolCall,
+} from '@earendil-works/pi-ai';
 
-// TypeScript knows this is an Anthropic model
-const claude = getModel('anthropic', 'claude-sonnet-4-20250514');
+const faux = fauxProvider({
+  tokensPerSecond: 50 // optional
+});
 
-const options: AnthropicOptions = {
-  thinkingEnabled: true,
-  thinkingBudgetTokens: 2048
+const models = createModels();
+models.setProvider(faux.provider);
+
+const model = faux.getModel();
+const context = {
+  messages: [{ role: 'user', content: 'Summarize package.json and then call echo', timestamp: Date.now() }]
 };
 
-await streamAnthropic(claude, context, options);
+faux.setResponses([
+  fauxAssistantMessage([
+    fauxThinking('Need to inspect package metadata first.'),
+    fauxToolCall('echo', { text: 'package.json' })
+  ], { stopReason: 'toolUse' })
+]);
+
+const first = await models.complete(model, context, {
+  sessionId: 'session-1',
+  cacheRetention: 'short'
+});
+context.messages.push(first);
+
+context.messages.push({
+  role: 'toolResult',
+  toolCallId: first.content.find((block) => block.type === 'toolCall')!.id,
+  toolName: 'echo',
+  content: [{ type: 'text', text: 'package.json contents here' }],
+  isError: false,
+  timestamp: Date.now()
+});
+
+faux.setResponses([
+  fauxAssistantMessage([
+    fauxThinking('Now I can summarize the tool output.'),
+    fauxText('Here is the summary.')
+  ])
+]);
+
+const s = models.stream(model, context);
+for await (const event of s) {
+  console.log(event.type);
+}
+
+// Optional: multiple faux models for model-switching tests
+const multiModel = fauxProvider({
+  provider: 'faux-multi',
+  models: [
+    { id: 'faux-fast', reasoning: false },
+    { id: 'faux-thinker', reasoning: true }
+  ]
+});
+models.setProvider(multiModel.provider);
+const thinker = multiModel.getModel('faux-thinker');
+
+console.log(thinker?.reasoning);
+console.log(faux.getPendingResponseCount());
+console.log(faux.state.callCount);
 ```
+
+Notes:
+- Responses are consumed from a queue in request start order.
+- If the queue is empty, the faux provider returns an assistant error message with `errorMessage: "No more faux responses queued"`.
+- Use `faux.setResponses([...])` to replace the remaining queue and `faux.appendResponses([...])` to add more responses.
+- `faux.models` exposes all faux models. `faux.getModel()` returns the first one, and `faux.getModel(id)` returns a specific one.
+- Use `fauxAssistantMessage(...)` for scripted assistant replies. Use `fauxText(...)`, `fauxThinking(...)`, and `fauxToolCall(...)` to build content blocks without filling in low-level fields manually.
+- Usage is estimated at roughly 1 token per 4 characters. When `sessionId` is present and `cacheRetention` is not `"none"`, prompt cache reads and writes are simulated automatically.
+- Tool call arguments stream incrementally via `toolcall_delta` chunks.
+- By default, each streamed chunk is emitted on its own microtask. Set `tokensPerSecond` to pace chunk delivery in real time.
+- The intended use is one deterministic scripted flow per handle. If you need independent concurrent flows, create separate faux providers with distinct `provider` ids.
 
 ## Cross-Provider Handoffs
 
 The library supports seamless handoffs between different LLM providers within the same conversation. This allows you to switch models mid-conversation while preserving context, including thinking blocks, tool calls, and tool results.
-
-### How It Works
 
 When messages from one provider are sent to a different provider, the library automatically transforms them for compatibility:
 
@@ -1018,98 +1192,86 @@ When messages from one provider are sent to a different provider, the library au
 - **Assistant messages from different providers** have their thinking blocks converted to text with `<thinking>` tags
 - **Tool calls and regular text** are preserved unchanged
 
-### Example: Multi-Provider Conversation
-
 ```typescript
-import { getModel, complete, Context } from '@earendil-works/pi-ai';
+import { createModels, type Context } from '@earendil-works/pi-ai';
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
+import { googleProvider } from '@earendil-works/pi-ai/providers/google';
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+models.setProvider(openaiProvider());
+models.setProvider(googleProvider());
+
+const context: Context = { messages: [] };
 
 // Start with Claude
-const claude = getModel('anthropic', 'claude-sonnet-4-20250514');
-const context: Context = {
-  messages: []
-};
-
-context.messages.push({ role: 'user', content: 'What is 25 * 18?' });
-const claudeResponse = await complete(claude, context, {
-  thinkingEnabled: true
-});
-context.messages.push(claudeResponse);
+const claude = models.getModel('anthropic', 'claude-sonnet-4-5')!;
+context.messages.push({ role: 'user', content: 'What is 25 * 18?', timestamp: Date.now() });
+context.messages.push(await models.completeSimple(claude, context, { reasoning: 'medium' }));
 
 // Switch to GPT-5 - it will see Claude's thinking as <thinking> tagged text
-const gpt5 = getModel('openai', 'gpt-5-mini');
-context.messages.push({ role: 'user', content: 'Is that calculation correct?' });
-const gptResponse = await complete(gpt5, context);
-context.messages.push(gptResponse);
+const gpt5 = models.getModel('openai', 'gpt-5-mini')!;
+context.messages.push({ role: 'user', content: 'Is that calculation correct?', timestamp: Date.now() });
+context.messages.push(await models.complete(gpt5, context));
 
 // Switch to Gemini
-const gemini = getModel('google', 'gemini-2.5-flash');
-context.messages.push({ role: 'user', content: 'What was the original question?' });
-const geminiResponse = await complete(gemini, context);
+const gemini = models.getModel('google', 'gemini-2.5-flash')!;
+context.messages.push({ role: 'user', content: 'What was the original question?', timestamp: Date.now() });
+const geminiResponse = await models.complete(gemini, context);
 ```
 
-### Provider Compatibility
-
-All providers can handle messages from other providers, including:
-- Text content
-- Tool calls and tool results (including images in tool results)
-- Thinking/reasoning blocks (transformed to tagged text for cross-provider compatibility)
-- Aborted messages with partial content
-
-This enables flexible workflows where you can:
-- Start with a fast model for initial responses
-- Switch to a more capable model for complex reasoning
-- Use specialized models for specific tasks
-- Maintain conversation continuity across provider outages
+All providers can handle messages from other providers — text, tool calls and results (including images), thinking blocks (transformed to tagged text), and aborted messages with partial content. This enables flexible workflows: start with a fast model, switch to a more capable one for complex reasoning, or maintain continuity across provider outages.
 
 ## Context Serialization
 
 The `Context` object can be easily serialized and deserialized using standard JSON methods, making it simple to persist conversations, implement chat history, or transfer contexts between services:
 
 ```typescript
-import { Context, getModel, complete } from '@earendil-works/pi-ai';
-
-// Create and use a context
 const context: Context = {
   systemPrompt: 'You are a helpful assistant.',
   messages: [
-    { role: 'user', content: 'What is TypeScript?' }
+    { role: 'user', content: 'What is TypeScript?', timestamp: Date.now() }
   ]
 };
 
-const model = getModel('openai', 'gpt-4o-mini');
-const response = await complete(model, context);
+const model = models.getModel('openai', 'gpt-4o-mini')!;
+const response = await models.complete(model, context);
 context.messages.push(response);
 
 // Serialize the entire context
 const serialized = JSON.stringify(context);
-console.log('Serialized context size:', serialized.length, 'bytes');
 
 // Save to database, localStorage, file, etc.
 localStorage.setItem('conversation', serialized);
 
 // Later: deserialize and continue the conversation
 const restored: Context = JSON.parse(localStorage.getItem('conversation')!);
-restored.messages.push({ role: 'user', content: 'Tell me more about its type system' });
+restored.messages.push({ role: 'user', content: 'Tell me more about its type system', timestamp: Date.now() });
 
 // Continue with any model
-const newModel = getModel('anthropic', 'claude-3-5-haiku-20241022');
-const continuation = await complete(newModel, restored);
+const newModel = models.getModel('anthropic', 'claude-3-5-haiku-20241022')!;
+const continuation = await models.complete(newModel, restored);
 ```
+
+Models are plain serializable data too — no functions or implementations attached — so persisting "which model was this conversation using" is a `JSON.stringify` away.
 
 > **Note**: If the context contains images (encoded as base64 as shown in the Image Input section), those will also be serialized.
 
 ## Browser Usage
 
-The library supports browser environments. You must pass the API key explicitly since environment variables are not available in browsers:
+The library supports browser environments. The core entrypoint and provider factories are side-effect free and bundle cleanly. Environment variables are not available in browsers, so pass API keys explicitly — or inject a `CredentialStore` (e.g. localStorage-backed) and let provider auth resolve from stored credentials:
 
 ```typescript
-import { getModel, complete } from '@earendil-works/pi-ai';
+import { createModels } from '@earendil-works/pi-ai';
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 
-// API key must be passed explicitly in browser
-const model = getModel('anthropic', 'claude-3-5-haiku-20241022');
+const models = createModels();
+models.setProvider(anthropicProvider());
 
-const response = await complete(model, {
-  messages: [{ role: 'user', content: 'Hello!' }]
+const model = models.getModel('anthropic', 'claude-3-5-haiku-20241022')!;
+const response = await models.complete(model, {
+  messages: [{ role: 'user', content: 'Hello!', timestamp: Date.now() }]
 }, {
   apiKey: 'your-api-key'
 });
@@ -1117,70 +1279,75 @@ const response = await complete(model, {
 
 > **Security Warning**: Exposing API keys in frontend code is dangerous. Anyone can extract and abuse your keys. Only use this approach for internal tools or demos. For production applications, use a backend proxy that keeps your API keys secure.
 
-### Browser Compatibility Notes
+Browser compatibility notes:
 
-- Amazon Bedrock (`bedrock-converse-stream`) is not supported in browser environments.
-- OAuth login flows are not supported in browser environments. Use the `@earendil-works/pi-ai/oauth` entry point in Node.js.
-- In browser builds, Bedrock can still appear in model lists. Calls to Bedrock models fail at runtime.
+- Amazon Bedrock (`bedrock-converse-stream`) is not supported in browser environments. It can still appear in model lists; calls fail at runtime.
+- OAuth login flows are Node-only. They are lazy-loaded behind bundler-opaque imports, so registering an OAuth-capable provider does not pull Node-only code into a browser bundle — only actually logging in would.
 - Use a server-side proxy or backend service if you need Bedrock or OAuth-based auth from a web app.
-- Use `@earendil-works/pi-ai/base` plus explicit direct transport registration when a browser bundle should exclude unused provider SDK implementations.
 
-### Environment Variables (Node.js only)
+## Bundling and Tree Shaking
 
-In Node.js environments, you can set environment variables to avoid passing API keys:
-
-| Provider | Environment Variable(s) |
-|----------|------------------------|
-| OpenAI | `OPENAI_API_KEY` |
-| Ant Ling | `ANT_LING_API_KEY` |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` (e.g. `https://{resource}.openai.azure.com`) or `AZURE_OPENAI_RESOURCE_NAME`. Supports `*.openai.azure.com` and `*.cognitiveservices.azure.com`; root endpoints auto-normalize to `/openai/v1`. Optional: `AZURE_OPENAI_API_VERSION` (default `v1`), `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`. |
-| Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
-| DeepSeek | `DEEPSEEK_API_KEY` |
-| NVIDIA NIM | `NVIDIA_API_KEY` |
-| Google | `GEMINI_API_KEY` |
-| Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
-| Mistral | `MISTRAL_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| Cerebras | `CEREBRAS_API_KEY` |
-| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
-| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
-| xAI | `XAI_API_KEY` |
-| Fireworks | `FIREWORKS_API_KEY` |
-| Together AI | `TOGETHER_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-| Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
-| zAI | `ZAI_API_KEY` |
-| ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
-| MiniMax | `MINIMAX_API_KEY` |
-| OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |
-| Kimi For Coding | `KIMI_API_KEY` |
-| Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
-| Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
-| Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
-| Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
-| GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
-
-When set, the library automatically uses these keys:
+For small bundles, import only the providers you need:
 
 ```typescript
-// Uses OPENAI_API_KEY from environment
-const model = getModel('openai', 'gpt-4o-mini');
-const response = await complete(model, context);
+import { createModels } from '@earendil-works/pi-ai';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 
-// Or override with explicit key
-const response = await complete(model, context, {
-  apiKey: 'sk-different-key'
-});
+const models = createModels();
+models.setProvider(openaiProvider());
 ```
+
+Rules:
+
+- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, provider factories, or SDK implementations.
+- `@earendil-works/pi-ai/providers/<provider>` imports that provider's catalog and lazy API wrapper only.
+- `@earendil-works/pi-ai/providers/all` imports every built-in provider factory and all catalogs. Use it only when you want the full built-in set.
+- With code splitting, provider SDKs stay in lazy chunks and load on first request.
+- Without code splitting, bundlers fold reachable lazy API implementations into the single bundle. A single-provider bundle then includes that provider's SDK; `providers/all` includes all statically visible SDKs. Bedrock is the exception: its AWS SDK implementation is loaded through a bundler-opaque Node-only import.
+- Importing `@earendil-works/pi-ai/api/<api-id>` directly loads that API implementation and its SDK immediately.
+
+Avoid `@earendil-works/pi-ai/compat` in new bundled apps; it preserves the old global API and imports the full built-in catalog surface.
+
+For single-file Node ESM bundles, some SDK dependencies may still use dynamic CommonJS `require()` internally. If you see errors such as `Dynamic require of "child_process" is not supported`, add a Node `require` shim to the bundle. With esbuild:
+
+```bash
+esbuild app.js --bundle --platform=node --format=esm \
+  --banner:js='import { createRequire } from "module";const require = createRequire(import.meta.url);' \
+  --outfile=app.bundle.js
+```
+
+This is only for Node bundles; it is not a browser or Cloudflare Workers workaround.
+
+Bedrock is Node-only. Add it like any other provider:
+
+```typescript
+import { createModels } from '@earendil-works/pi-ai';
+import { amazonBedrockProvider } from '@earendil-works/pi-ai/providers/amazon-bedrock';
+
+const models = createModels();
+models.setProvider(amazonBedrockProvider());
+```
+
+In normal Node package usage and code-split bundles, Bedrock loads its AWS SDK implementation lazily. For a standalone single-file bundle that must include Bedrock support, register the implementation module explicitly:
+
+```typescript
+import { setBedrockProviderModule } from '@earendil-works/pi-ai/api/bedrock-converse-stream.lazy';
+import { bedrockProviderModule } from '@earendil-works/pi-ai/bedrock-provider';
+
+setBedrockProviderModule(bedrockProviderModule);
+```
+
+That explicit override bundles the AWS SDK. Without it, Bedrock's opaque runtime import expects the package's Bedrock implementation file to be available at runtime.
 
 ### Provider-Scoped Environment Overrides
 
-Pass `env` in stream options to scope provider configuration to a request. Values in `env` are used before process environment variables for API key discovery and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
+Pass `env` in stream options to scope provider configuration to a request. Values in `env` are used before process environment variables for provider auth and configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 
 ```typescript
-const model = getModel('cloudflare-ai-gateway', 'workers-ai/@cf/moonshotai/kimi-k2.6');
+const models = builtinModels();
+const model = models.getModel('cloudflare-ai-gateway', 'workers-ai/@cf/moonshotai/kimi-k2.6')!;
 
-const response = await complete(model, context, {
+const response = await models.complete(model, context, {
   env: {
     CLOUDFLARE_API_KEY: '...',
     CLOUDFLARE_ACCOUNT_ID: 'account-id',
@@ -1191,24 +1358,47 @@ const response = await complete(model, context, {
 
 Use this when one process needs different provider settings per request, or when ambient environment variables should not leak into a provider call.
 
-### Checking Environment Variables
-
-```typescript
-import { getEnvApiKey } from '@earendil-works/pi-ai';
-
-// Check if an API key is set in environment variables
-const key = getEnvApiKey('openai');  // checks OPENAI_API_KEY
-```
-
 ## OAuth Providers
 
-Several providers require OAuth authentication instead of static API keys:
+Several providers support OAuth authentication instead of static API keys:
 
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 
-For paid Cloud Code Assist subscriptions, set `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID` to your project ID.
+Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(callbacks)` runs the interactive flow and returns a credential, `refresh(credential)` exchanges the refresh token, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Refresh is automatic: `models.getAuth()` and the request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh.
+
+```typescript
+import { createModels } from '@earendil-works/pi-ai';
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
+
+const models = createModels({ credentials: myStore }); // persistent CredentialStore
+models.setProvider(anthropicProvider());
+
+// Login: drive the flow with prompt()/notify() callbacks, persist the credential
+const provider = models.getProvider('anthropic')!;
+const credential = await provider.auth.oauth!.login({
+  prompt: async (p) => {
+    // p.type: 'text' | 'secret' | 'select' | 'manual_code'
+    // manual_code prompts race a local callback server; p.signal aborts them when the server wins
+    return await askUser(p.message);
+  },
+  notify: (event) => {
+    // event.type: 'auth_url' | 'device_code' | 'progress'
+    if (event.type === 'auth_url') console.log(`Open: ${event.url}`);
+    if (event.type === 'device_code') console.log(`Code: ${event.userCode} at ${event.verificationUri}`);
+    if (event.type === 'progress') console.log(event.message);
+  },
+});
+await myStore.modify('anthropic', async () => credential);
+
+// From here on, requests resolve and refresh the token automatically
+const model = models.getModel('anthropic', 'claude-sonnet-4-5')!;
+await models.complete(model, context);
+
+// Logout
+await myStore.delete('anthropic');
+```
 
 ### Vertex AI
 
@@ -1220,8 +1410,6 @@ Vertex AI models support either a Google Cloud API key or Application Default Cr
 
 When using ADC, also set `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) and `GOOGLE_CLOUD_LOCATION`. You can also pass `project`/`location` in the call options. When using `GOOGLE_CLOUD_API_KEY`, `project` and `location` are not required.
 
-Example:
-
 ```bash
 # Local (uses your user credentials)
 gcloud auth application-default login
@@ -1230,23 +1418,6 @@ export GOOGLE_CLOUD_LOCATION="us-central1"
 
 # CI/Production (service account key file)
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-```
-
-```typescript
-import { getModel, complete } from '@earendil-works/pi-ai';
-
-(async () => {
-  const model = getModel('google-vertex', 'gemini-2.5-flash');
-  const response = await complete(model, {
-    messages: [{ role: 'user', content: 'Hello from Vertex AI' }]
-  }, {
-    apiKey: process.env.GOOGLE_CLOUD_API_KEY,
-  });
-
-  for (const block of response.content) {
-    if (block.type === 'text') console.log(block.text);
-  }
-})().catch(console.error);
 ```
 
 Official docs: [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
@@ -1265,76 +1436,9 @@ Credentials are saved to `auth.json` in the current directory.
 
 ### Programmatic OAuth
 
-The library provides login and token refresh functions via the `@earendil-works/pi-ai/oauth` entry point. Credential storage is the caller's responsibility.
+The legacy flow functions remain available via the `@earendil-works/pi-ai/oauth` entry point (`loginAnthropic`, `loginOpenAICodex`, `loginGitHubCopilot`, `refreshOAuthToken`, `getOAuthApiKey`); credential storage is the caller's responsibility there. New code should prefer the provider-owned `OAuthAuth` shown above — it composes with the credential store and gets locked auto-refresh for free.
 
-```typescript
-import {
-  // Login functions (return credentials, do not store)
-  loginAnthropic,
-  loginOpenAICodex,
-  loginGitHubCopilot,
-  loginGeminiCli,
-
-  // Token management
-  refreshOAuthToken,   // (provider, credentials) => new credentials
-  getOAuthApiKey,      // (provider, credentialsMap) => { newCredentials, apiKey } | null
-
-  // Types
-  type OAuthProvider,
-  type OAuthCredentials,
-} from '@earendil-works/pi-ai/oauth';
-```
-
-### Login Flow Example
-
-```typescript
-import { loginGitHubCopilot } from '@earendil-works/pi-ai/oauth';
-import { writeFileSync } from 'fs';
-
-const credentials = await loginGitHubCopilot({
-  onAuth: (url, instructions) => {
-    console.log(`Open: ${url}`);
-    if (instructions) console.log(instructions);
-  },
-  onPrompt: async (prompt) => {
-    return await getUserInput(prompt.message);
-  },
-  onProgress: (message) => console.log(message)
-});
-
-// Store credentials yourself
-const auth = { 'github-copilot': { type: 'oauth', ...credentials } };
-writeFileSync('auth.json', JSON.stringify(auth, null, 2));
-```
-
-### Using OAuth Tokens
-
-Use `getOAuthApiKey()` to get an API key, automatically refreshing if expired:
-
-```typescript
-import { getModel, complete } from '@earendil-works/pi-ai';
-import { getOAuthApiKey } from '@earendil-works/pi-ai/oauth';
-import { readFileSync, writeFileSync } from 'fs';
-
-// Load your stored credentials
-const auth = JSON.parse(readFileSync('auth.json', 'utf-8'));
-
-// Get API key (refreshes if expired)
-const result = await getOAuthApiKey('github-copilot', auth);
-if (!result) throw new Error('Not logged in');
-
-// Save refreshed credentials
-auth['github-copilot'] = { type: 'oauth', ...result.newCredentials };
-writeFileSync('auth.json', JSON.stringify(auth, null, 2));
-
-// Use the API key
-const model = getModel('github-copilot', 'gpt-4o');
-const response = await complete(model, {
-  messages: [{ role: 'user', content: 'Hello!' }]
-}, { apiKey: result.apiKey });
-```
-
-### Provider Notes
+Provider notes:
 
 **OpenAI Codex**: Requires a ChatGPT Plus or Pro subscription. Provides access to GPT-5.x Codex models with extended context windows and reasoning capabilities. The library automatically handles session-based prompt caching when `sessionId` is provided in stream options. You can set `transport` in stream options to `"sse"`, `"websocket"`, or `"auto"` for Codex Responses transport selection. When using WebSocket with a `sessionId`, connections are reused per session and expire after 5 minutes of inactivity.
 
@@ -1342,46 +1446,66 @@ const response = await complete(model, {
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
 
+## Migrating from the Old Global API
+
+Older versions exposed a global API: `stream()`/`complete()` dispatching on `model.api` via a global registry, sync `getModel()`/`getModels()`/`getProviders()` catalog reads, `registerApiProvider()`, `getEnvApiKey()`, and per-API lazy stream functions. That surface lives unchanged on the **compat entrypoint**:
+
+```typescript
+// Before
+import { getModel, complete } from '@earendil-works/pi-ai';
+
+// After (verbatim behavior, one import-path change)
+import { getModel, complete } from '@earendil-works/pi-ai/compat';
+```
+
+Compat is a strict superset of the root entrypoint, so a file can switch its import path wholesale. It will be removed in a future release; migrate to `createModels()` + provider factories:
+
+| Old | New |
+|-----|-----|
+| `getModel('openai', 'gpt-4o-mini')` | `models.getModel('openai', 'gpt-4o-mini')` or `getBuiltinModel()` from `providers/all` |
+| `getModels('anthropic')` / `getProviders()` | `models.getModels('anthropic')` / `models.getProviders()` or `getBuiltin*` |
+| `stream(model, ctx, opts)` (env-key injection) | `models.stream(model, ctx, opts)` (provider auth resolution) |
+| `registerApiProvider({ api, stream, streamSimple })` | `createProvider({ id, auth, models, api })` + `models.setProvider()` |
+| `getEnvApiKey('openai')` | `await models.getAuth(model)` |
+| `streamAnthropic(model, ctx, opts)` | `stream` from `@earendil-works/pi-ai/api/anthropic-messages`, or a provider in a collection |
+| `registerFauxProvider()` | `fauxProvider()` + `models.setProvider()` |
+
 ## Development
 
 ### Adding a New Provider
 
-Adding a new LLM provider requires changes across multiple files. This checklist covers all necessary steps:
+Adding a new LLM provider requires changes across multiple files. The layered layout: API implementations live in `src/api/`, provider factories in `src/providers/`, generated catalogs in `src/providers/<id>.models.ts`. This checklist covers all necessary steps:
 
 #### 1. Core Types (`src/types.ts`)
 
-- Add the API identifier to `KnownApi` (for example `"bedrock-converse-stream"`)
-- Create an options interface extending `StreamOptions` (for example `BedrockOptions`)
+- Add the API identifier to `KnownApi` (for example `"bedrock-converse-stream"`), if it is a new API
 - Add the provider name to `KnownProvider` (for example `"amazon-bedrock"`)
+- Add the options type to `ApiOptionsMap`
 
-#### 2. Provider Implementation (`src/providers/`)
+#### 2. API Implementation (`src/api/<api-id>.ts`, only for a new API)
 
-Create a new provider file (for example `amazon-bedrock.ts`) that exports:
+Create a new API implementation file (for example `bedrock-converse-stream.ts`) that exports exactly `stream` and `streamSimple`, plus:
 
-- `stream<Provider>()` function returning `AssistantMessageEventStream`
-- `streamSimple<Provider>()` for `SimpleStreamOptions` mapping
-- `register()` for explicit direct transport registration from `@earendil-works/pi-ai/base`
-- Provider-specific options interface
+- An options interface extending `StreamOptions` (for example `BedrockOptions`)
 - Message conversion functions to transform `Context` to provider format
 - Tool conversion if the provider supports tools
 - Response parsing to emit standardized events (`text`, `tool_call`, `thinking`, `usage`, `stop`)
 
-#### 3. API Registry Integration (`src/providers/register-builtins.ts`)
+Add a lazy wrapper `src/api/<api-id>.lazy.ts` (`<name>Api()` via `lazyApi()`) so providers can reference the implementation without importing its SDK. Add any root-level `export type` re-exports in `src/index.ts` that should remain available from `@earendil-works/pi-ai`.
 
-- Register the API with `registerApiProvider()`
-- Add a package subpath export in `package.json` for the provider module (`./dist/providers/<provider>.js`)
-- Add lazy loader wrappers in `src/providers/register-builtins.ts`, do not statically import provider implementation modules there
-- Add any root-level `export type` re-exports in `src/index.ts` and `src/base.ts` that should remain available from `@earendil-works/pi-ai` and `@earendil-works/pi-ai/base`
-- Keep `src/base.ts` free of built-in registration imports
-- Add credential detection in `env-api-keys.ts` for the new provider
-- Ensure `streamSimple` handles auth lookup via `getEnvApiKey()` or provider-specific auth
-
-#### 4. Model Generation (`scripts/generate-models.ts`, `scripts/generate-image-models.ts`)
+#### 3. Model Generation (`scripts/generate-models.ts`, `scripts/generate-image-models.ts`)
 
 - Add logic to fetch and parse models from the provider's source (e.g., models.dev API)
-- Map chat/tool-capable provider model data to the standardized `Model` interface via `scripts/generate-models.ts`
+- Map chat/tool-capable provider model data to the standardized `Model` interface via `scripts/generate-models.ts`; regeneration emits `src/providers/<id>.models.ts` and the aggregator
 - Map image-generation provider model data to the standardized `ImagesModel` interface via `scripts/generate-image-models.ts`
 - Handle provider-specific quirks (pricing format, capability flags, model ID transformations)
+
+#### 4. Provider Factory (`src/providers/<id>.ts`)
+
+- `createProvider()` wiring catalog + auth + the lazy API wrapper
+- Auth: `envApiKeyAuth` for standard key providers, a custom `ApiKeyAuth` for ambient auth (AWS profiles, ADC), `lazyOAuth` where an OAuth flow exists
+- Register the factory in `src/providers/all.ts`
+- If it is a new API: register it in the builtin list in `src/compat.ts` and add the package subpath export in `package.json`
 
 #### 5. Tests (`test/`)
 
@@ -1398,6 +1522,7 @@ Create or update test files to cover the new provider:
 - `image-tool-result.test.ts` - Images in tool results
 - `total-tokens.test.ts` - Token counting accuracy
 - `cross-provider-handoff.test.ts` - Cross-provider context replay
+- `providers.test.ts` - Provider listing and auth resolution
 
 For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If the provider exposes multiple model families (for example GPT and Claude), add at least one pair per family.
 

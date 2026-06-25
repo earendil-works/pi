@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModels, getProviders } from "../src/models.ts";
+import { getModels, getProviders } from "../src/compat.ts";
 import type { Api, Model } from "../src/types.ts";
 
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [

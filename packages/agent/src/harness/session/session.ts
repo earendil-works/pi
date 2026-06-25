@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai/base";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
@@ -234,12 +234,13 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async appendSessionName(name: string): Promise<string> {
+		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		return this.appendTypedEntry({
 			type: "session_info",
 			id: await this.storage.createEntryId(),
 			parentId: await this.storage.getLeafId(),
 			timestamp: new Date().toISOString(),
-			name: name.trim(),
+			name: sanitizedName,
 		} satisfies SessionInfoEntry);
 	}
 

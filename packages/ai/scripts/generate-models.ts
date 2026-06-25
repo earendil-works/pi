@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { writeFileSync } from "fs";
+import { readdirSync, rmSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -8,7 +8,7 @@ import {
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
-} from "../src/providers/cloudflare.ts";
+} from "../src/api/cloudflare.ts";
 import type { AnthropicMessagesCompat, Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -164,6 +164,14 @@ const ZAI_GLM52_THINKING_LEVEL_MAP = {
 	high: "high",
 	xhigh: "max",
 } as const;
+const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: null,
+	medium: null,
+	high: "high",
+	xhigh: "max",
+} as const;
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
 	"github-copilot:claude-sonnet-4",
@@ -269,8 +277,147 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
 }
 
+const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
+	supportsStore: true,
+	supportsDeveloperRole: true,
+	supportsReasoningEffort: true,
+	supportsUsageInStreaming: true,
+	maxTokensField: "max_completion_tokens",
+	requiresToolResultName: false,
+	requiresAssistantAfterToolResult: false,
+	requiresThinkingAsText: false,
+	requiresReasoningContentOnAssistantMessages: false,
+	thinkingFormat: "openai",
+	openRouterRouting: {},
+	vercelGatewayRouting: {},
+	chatTemplateKwargs: {},
+	zaiToolStream: false,
+	supportsStrictMode: true,
+	sendSessionAffinityHeaders: false,
+	supportsLongCacheRetention: true,
+} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat">> & {
+	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+};
+
+type OpenAICompletionsResolvedCompat = typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT & {
+	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+};
+
 function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {
 	model.compat = { ...(model.compat as AnthropicMessagesCompat | undefined), ...compat };
+}
+
+function detectOpenAICompletionsCompat(model: Model<"openai-completions">): OpenAICompletionsResolvedCompat {
+	const provider = model.provider;
+	const baseUrl = model.baseUrl;
+
+	const isZai =
+		provider === "zai" ||
+		provider === "zai-coding-cn" ||
+		baseUrl.includes("api.z.ai") ||
+		baseUrl.includes("open.bigmodel.cn");
+	const isTogether =
+		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
+	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
+	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
+	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
+	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
+	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
+	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
+
+	const isNonStandard =
+		isNvidia ||
+		provider === "cerebras" ||
+		baseUrl.includes("cerebras.ai") ||
+		provider === "xai" ||
+		baseUrl.includes("api.x.ai") ||
+		isTogether ||
+		baseUrl.includes("chutes.ai") ||
+		baseUrl.includes("deepseek.com") ||
+		isZai ||
+		isMoonshot ||
+		provider === "opencode" ||
+		baseUrl.includes("opencode.ai") ||
+		isCloudflareWorkersAI ||
+		isCloudflareAiGateway ||
+		isAntLing;
+
+	const useMaxTokens =
+		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
+
+	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
+	const isOpenRouterDeveloperRoleModel =
+		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
+	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+
+	return {
+		supportsStore: !isNonStandard,
+		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		supportsReasoningEffort:
+			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
+		supportsUsageInStreaming: true,
+		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
+		requiresToolResultName: false,
+		requiresAssistantAfterToolResult: false,
+		requiresThinkingAsText: false,
+		requiresReasoningContentOnAssistantMessages: isDeepSeek,
+		thinkingFormat: isDeepSeek
+			? "deepseek"
+			: isZai
+				? "zai"
+				: isTogether && !isTogetherReasoningOnly
+					? "together"
+					: isAntLing
+						? "ant-ling"
+						: isOpenRouter
+							? "openrouter"
+							: "openai",
+		openRouterRouting: {},
+		vercelGatewayRouting: {},
+		chatTemplateKwargs: {},
+		zaiToolStream: false,
+		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		...(cacheControlFormat ? { cacheControlFormat } : {}),
+		sendSessionAffinityHeaders: false,
+		supportsLongCacheRetention: !(
+			isTogether ||
+			isCloudflareWorkersAI ||
+			isCloudflareAiGateway ||
+			isNvidia ||
+			isAntLing
+		),
+	};
+}
+
+function isPlainEmptyObject(value: unknown): boolean {
+	return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0;
+}
+
+function openAICompletionsCompatDelta(compat: OpenAICompletionsResolvedCompat): OpenAICompletionsCompat {
+	const delta: OpenAICompletionsCompat = {};
+	for (const [key, value] of Object.entries(compat)) {
+		const defaultValue = OPENAI_COMPLETIONS_DEFAULT_COMPAT[key as keyof typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT];
+		if (isPlainEmptyObject(value) && isPlainEmptyObject(defaultValue)) continue;
+		if (value !== defaultValue) {
+			(delta as Record<string, unknown>)[key] = value;
+		}
+	}
+	return delta;
+}
+
+function mergeOpenAICompletionsCompat(model: Model<Api>, compat: OpenAICompletionsCompat): void {
+	model.compat = { ...(model.compat as OpenAICompletionsCompat | undefined), ...compat };
+}
+
+function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
+	if (model.api !== "openai-completions") return;
+	const detected = openAICompletionsCompatDelta(detectOpenAICompletionsCompat(model as Model<"openai-completions">));
+	model.compat = { ...detected, ...(model.compat as OpenAICompletionsCompat | undefined) };
+	if (Object.keys(model.compat).length === 0) {
+		delete model.compat;
+	}
 }
 
 function isGemini3ProModel(modelId: string): boolean {
@@ -379,6 +526,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.provider === "fireworks" && model.id === "accounts/fireworks/models/glm-5p2") {
 		mergeThinkingLevelMap(model, { off: "none", minimal: null, low: "high", medium: "high", xhigh: "max" });
+	}
+	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
+		mergeThinkingLevelMap(model, OPENCODE_GO_GLM52_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "opencode-go" && model.id === "kimi-k2.6") {
 		// OpenCode Go exposes Kimi K2.6 thinking as on/off, not distinct effort tiers.
@@ -843,9 +993,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					continue;
 				}
 
-				// workers-ai/* through the gateway forwards x-session-affinity to
-				// the underlying Workers AI runtime for prefix-cache routing.
-				const compat = upstream === "workers-ai" ? { sendSessionAffinityHeaders: true } : undefined;
+				// Gateway passthroughs forward session affinity headers to upstreams that
+				// use them for cache/routing affinity.
+				const compat =
+					upstream === "anthropic" || upstream === "workers-ai" ? { sendSessionAffinityHeaders: true } : undefined;
 
 				models.push({
 					id,
@@ -2085,6 +2236,7 @@ async function generateModels() {
 
 	for (const model of allModels) {
 		applyThinkingLevelMetadata(model);
+		applyOpenAICompletionsCompatMetadata(model);
 	}
 
 	// Group by provider and deduplicate by model ID
@@ -2100,62 +2252,80 @@ async function generateModels() {
 		}
 	}
 
-	// Generate TypeScript file
-	let output = `// This file is auto-generated by scripts/generate-models.ts
+	// Generate TypeScript files: one catalog per provider plus an aggregator
+	const generatedHeader = `// This file is auto-generated by scripts/generate-models.ts
 // Do not edit manually - run 'npm run generate-models' to update
 
-import type { Model } from "./types.ts";
-
-export const MODELS = {
 `;
+	const catalogConstName = (providerId: string) => `${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
 
-	// Generate provider sections (sorted for deterministic output)
-	const sortedProviderIds = Object.keys(providers).sort();
-	for (const providerId of sortedProviderIds) {
-		const models = providers[providerId];
-		output += `\t${JSON.stringify(providerId)}: {\n`;
-
-		const sortedModelIds = Object.keys(models).sort();
-		for (const modelId of sortedModelIds) {
-			const model = models[modelId];
-			output += `\t\t"${model.id}": {\n`;
-			output += `\t\t\tid: "${model.id}",\n`;
-			output += `\t\t\tname: "${model.name}",\n`;
-			output += `\t\t\tapi: "${model.api}",\n`;
-			output += `\t\t\tprovider: "${model.provider}",\n`;
-			if (model.baseUrl !== undefined) {
-				output += `\t\t\tbaseUrl: "${model.baseUrl}",\n`;
-			}
-			if (model.headers) {
-				output += `\t\t\theaders: ${JSON.stringify(model.headers)},\n`;
-			}
-			if (model.compat) {
-				output += `			compat: ${JSON.stringify(model.compat)},
-`;
-			}
-			output += `\t\t\treasoning: ${model.reasoning},\n`;
-			if (model.thinkingLevelMap) {
-				output += `\t\t\tthinkingLevelMap: ${JSON.stringify(model.thinkingLevelMap)},\n`;
-			}
-			output += `\t\t\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
-			output += `\t\t\tcost: {\n`;
-			output += `\t\t\t\tinput: ${model.cost.input},\n`;
-			output += `\t\t\t\toutput: ${model.cost.output},\n`;
-			output += `\t\t\t\tcacheRead: ${model.cost.cacheRead},\n`;
-			output += `\t\t\t\tcacheWrite: ${model.cost.cacheWrite},\n`;
-			output += `\t\t\t},\n`;
-			output += `\t\t\tcontextWindow: ${model.contextWindow},\n`;
-			output += `\t\t\tmaxTokens: ${model.maxTokens},\n`;
-			output += `\t\t} satisfies Model<"${model.api}">,\n`;
+	function emitModel(model: Model<any>, indent: string): string {
+		let output = `${indent}"${model.id}": {\n`;
+		output += `${indent}\tid: "${model.id}",\n`;
+		output += `${indent}\tname: "${model.name}",\n`;
+		output += `${indent}\tapi: "${model.api}",\n`;
+		output += `${indent}\tprovider: "${model.provider}",\n`;
+		if (model.baseUrl !== undefined) {
+			output += `${indent}\tbaseUrl: "${model.baseUrl}",\n`;
 		}
-
-		output += `\t},\n`;
+		if (model.headers) {
+			output += `${indent}\theaders: ${JSON.stringify(model.headers)},\n`;
+		}
+		if (model.compat) {
+			output += `${indent}\tcompat: ${JSON.stringify(model.compat)},\n`;
+		}
+		output += `${indent}\treasoning: ${model.reasoning},\n`;
+		if (model.thinkingLevelMap) {
+			output += `${indent}\tthinkingLevelMap: ${JSON.stringify(model.thinkingLevelMap)},\n`;
+		}
+		output += `${indent}\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
+		output += `${indent}\tcost: {\n`;
+		output += `${indent}\t\tinput: ${model.cost.input},\n`;
+		output += `${indent}\t\toutput: ${model.cost.output},\n`;
+		output += `${indent}\t\tcacheRead: ${model.cost.cacheRead},\n`;
+		output += `${indent}\t\tcacheWrite: ${model.cost.cacheWrite},\n`;
+		output += `${indent}\t},\n`;
+		output += `${indent}\tcontextWindow: ${model.contextWindow},\n`;
+		output += `${indent}\tmaxTokens: ${model.maxTokens},\n`;
+		output += `${indent}} satisfies Model<"${model.api}">,\n`;
+		return output;
 	}
 
-	output += `} as const;
-`;
+	const sortedProviderIds = Object.keys(providers).sort();
+	const providersDir = join(packageRoot, "src/providers");
 
-	// Write file
+	// Remove stale per-provider catalogs
+	for (const entry of readdirSync(providersDir)) {
+		if (entry.endsWith(".models.ts")) {
+			rmSync(join(providersDir, entry));
+		}
+	}
+
+	// Per-provider catalogs (sorted for deterministic output)
+	for (const providerId of sortedProviderIds) {
+		const models = providers[providerId];
+		let output = generatedHeader;
+		output += `import type { Model } from "../types.ts";\n\n`;
+		output += `export const ${catalogConstName(providerId)} = {\n`;
+		const sortedModelIds = Object.keys(models).sort();
+		for (const modelId of sortedModelIds) {
+			output += emitModel(models[modelId], "\t");
+		}
+		output += `} as const;\n`;
+		writeFileSync(join(providersDir, `${providerId}.models.ts`), output);
+	}
+	console.log(`Generated ${sortedProviderIds.length} catalogs under src/providers/`);
+
+	// Aggregator
+	let output = generatedHeader;
+	for (const providerId of sortedProviderIds) {
+		output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
+	}
+	output += `\nexport const MODELS = {\n`;
+	for (const providerId of sortedProviderIds) {
+		output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
+	}
+	output += `} as const;\n`;
 	writeFileSync(join(packageRoot, "src/models.generated.ts"), output);
 	console.log("Generated src/models.generated.ts");
 
