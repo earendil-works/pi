@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MemoryIndex } from "../storage.ts";
+import { escapeFtsQuery, MemoryIndex } from "../storage.ts";
 import type { MemoryAtom } from "../types.ts";
 
 // Minimal shape of rows returned by sqlite_master / PRAGMA queries.
@@ -1353,13 +1353,64 @@ describe("MemoryIndex", () => {
 		});
 	});
 
+	describe("escapeFtsQuery", () => {
+		// Pure-function tests for the FTS5-syntax-char stripper. The user-facing
+		// consequence lives in `bm25Search` (see that describe block for the
+		// integration assertions); this block pins the unit-level contract so
+		// regressions are caught at the smallest scope.
+		//
+		// Why `,` is in the strip set: FTS5 reserves the comma as the NEAR
+		// separator (e.g. `a, b` = "a NEAR b"). A stray unescaped comma in a
+		// MATCH query raises "fts5: syntax error" — the user's verbatim query
+		// `这个先不管,这个项目路径下lefse没有结果` tripped this regression.
+
+		it("strips FTS5 special chars (`\"`, `(`, `)`, `*`, `:`, `[`, `]`)", () => {
+			expect(escapeFtsQuery('"foo"')).toBe("foo");
+			expect(escapeFtsQuery("(foo)")).toBe("foo");
+			expect(escapeFtsQuery("foo*")).toBe("foo");
+			expect(escapeFtsQuery("foo:bar")).toBe("foo bar");
+			expect(escapeFtsQuery("[foo]")).toBe("foo");
+		});
+
+		it("strips ASCII comma (FTS5 NEAR separator)", () => {
+			expect(escapeFtsQuery("foo,bar")).toBe("foo bar");
+			expect(escapeFtsQuery("a,b,c")).toBe("a b c");
+			// Comma + literal Chinese tokens: this is the user's exact failure
+			// case (`这个先不管,这个项目路径下lefse没有结果`). Pre-fix, the
+			// `,` triggered "fts5: syntax error"; post-fix, it collapses to
+			// whitespace and the literal tokens survive the strip.
+			expect(escapeFtsQuery("这个先不管,这个项目路径下lefse没有结果")).toBe(
+				"这个先不管 这个项目路径下lefse没有结果",
+			);
+		});
+
+		it("trims leading/trailing whitespace after strip", () => {
+			// All-special input collapses to empty string; bm25Search short-
+			// circuits on empty (MATCH '' would also error).
+			expect(escapeFtsQuery("***")).toBe("");
+			expect(escapeFtsQuery('"()[]:*,')).toBe("");
+		});
+
+		it("preserves literal content (only strips FTS5-syntax chars)", () => {
+			// Negative test: non-reserved punctuation survives the strip.
+			// Otherwise the escape would erase real user content.
+			expect(escapeFtsQuery("foo.bar")).toBe("foo.bar");
+			expect(escapeFtsQuery("foo!bar?")).toBe("foo!bar?");
+			expect(escapeFtsQuery("hello world")).toBe("hello world");
+		});
+	});
+
 	describe("bm25 search", () => {
 		// Hybrid recall: bm25Search is the keyword half of RRF fusion (see
 		// search.ts). Mirrors vectorSearch's filter handling (archived / type /
 		// isLatestOnly) but ranks by FTS5 bm25() instead of sqlite-vec distance.
 		// Per "召回对单 channel 降级鲁棒": bm25Search must never throw on user
-		// input — special FTS5 chars (`"`, `(`, `)`, `*`, `:`, `[`, `]`) are
-		// stripped from the query before it is bound as the MATCH parameter.
+		// input — special FTS5 chars (`"`, `(`, `)`, `*`, `:`, `[`, `]`, `,`)
+		// are stripped from the query before it is bound as the MATCH parameter.
+		// `,` is included because FTS5 reserves it as the NEAR separator
+		// ("a, b" = "a NEAR b"); a stray unescaped comma raises
+		// "fts5: syntax error" (the user's verbatim query
+		// "这个先不管,这个项目路径下lefse没有结果" tripped this regression).
 		let index: MemoryIndex;
 
 		beforeEach(async () => {
@@ -1486,6 +1537,49 @@ describe("MemoryIndex", () => {
 			// preserving, not just syntactic sugar.
 			expect(results.length).toBeGreaterThan(0);
 			expect(results[0]!.id).toBe("lefse-cn");
+		});
+
+		it("bm25Search accepts ASCII comma in query (no FTS5 NEAR syntax error)", async () => {
+			// Regression: the user's verbatim query
+			// `这个先不管,这个项目路径下lefse没有结果` raised
+			// "fts5: syntax error near ','" because FTS5 reserves `,` as the
+			// NEAR separator. The fix extends escapeFtsQuery's strip set to
+			// include `,` so the comma collapses to whitespace and the
+			// surviving tokens (`lefse`, `没有`, `结果`) match the atom.
+			//
+			// This is the integration assertion that proves the regex change
+			// is wired through to bm25Search's MATCH binding — the unit test
+			// for escapeFtsQuery alone would not catch a missing-call
+			// regression.
+			const atom = sampleAtom({
+				id: "amplicon-biomarker",
+				type: "fact",
+				content_fingerprint: "fp-amp-bio",
+			});
+			await insertWithFts(atom, {
+				title: "amplicon biomarker data",
+				summary: "amplicon biomarker analysis",
+				content: "amplicon biomarker backflow customer data",
+				tags: ["amplicon", "biomarker"],
+			});
+
+			// The verbatim failure query: literal Chinese phrase with a
+			// comma separating clauses. Pre-fix, the `,` triggered the FTS5
+			// NEAR-parse path and raised a syntax error.
+			const query = "amplicon,biomarker";
+
+			// Must NOT throw — escape is the safety net for arbitrary user
+			// input including ASCII commas.
+			expect(() => index.bm25Search(query, 10)).not.toThrow();
+
+			const results = index.bm25Search(query, 10);
+
+			// Post-escape the query is "amplicon biomarker" (whitespace-
+			// separated AND of two tokens). Both tokens are present in the
+			// seeded atom, so the MATCH returns it — proving the comma strip
+			// is content-preserving, not just syntactic sugar.
+			expect(results.length).toBeGreaterThan(0);
+			expect(results[0]!.id).toBe("amplicon-biomarker");
 		});
 	});
 

@@ -62,20 +62,24 @@ const sqliteVec = requireCJS("sqlite-vec") as SqliteVecModule;
  * Strip FTS5 query syntax characters from a user-supplied search string before
  * binding it as the `MATCH` parameter of a `memory_fts MATCH ?` query.
  *
- * FTS5 reserves `"`, `(`, `)`, `*`, `:`, `[`, `]` for phrase / NEAR / column
- * queries and a stray unescaped character raises "fts5: syntax error".
- * Stripping to space (rather than doubling `"`) is the simplest and safest
- * transformation: the literal token content is preserved, special-char noise
- * is gone, and an all-special input collapses to an empty (no-match) query
- * rather than throwing. The result is trimmed so a query consisting entirely
- * of special characters becomes the empty string; bm25Search short-circuits
- * on empty rather than running `MATCH ''` (which would also error).
+ * FTS5 reserves `"`, `(`, `)`, `*`, `:`, `[`, `]`, `,` for phrase / NEAR /
+ * column queries and a stray unescaped character raises "fts5: syntax error".
+ * The comma in particular is the NEAR separator (`a, b` = "a NEAR b") and is
+ * the most surprising of the set — natural-language user queries like
+ * `这个先不管,这个项目路径下lefse没有结果` contain ASCII commas and would
+ * otherwise throw. Stripping to space (rather than doubling `"`) is the
+ * simplest and safest transformation: the literal token content is preserved,
+ * special-char noise is gone, and an all-special input collapses to an empty
+ * (no-match) query rather than throwing. The result is trimmed so a query
+ * consisting entirely of special characters becomes the empty string;
+ * bm25Search short-circuits on empty rather than running `MATCH ''` (which
+ * would also error).
  *
  * Module-level (not a class method) because it is pure — no DB access — and
  * has no business depending on `this`.
  */
 export function escapeFtsQuery(s: string): string {
-	return s.replace(/["()*:\[\]]/g, " ").trim();
+	return s.replace(/["()*:\[\],]/g, " ").trim();
 }
 
 /**
@@ -391,10 +395,13 @@ export class MemoryIndex {
 	 *
 	 * The user query is run through `escapeFtsQuery` before binding as the
 	 * MATCH parameter so that FTS5 syntax characters (`"`, `(`, `)`, `*`,
-	 * `:`, `[`, `]`) cannot raise an SQL parse error. If the escape collapses
-	 * the query to the empty string, we short-circuit with `[]` rather than
-	 * running `MATCH ''` — both because the empty MATCH itself errors and
-	 * because no atoms could possibly match anyway.
+	 * `:`, `[`, `]`, `,`) cannot raise an SQL parse error. The comma is
+	 * the FTS5 NEAR separator and is the most surprising of the set — user
+	 * queries like `这个先不管,这个项目路径下lefse没有结果` contain ASCII
+	 * commas and would otherwise throw "fts5: syntax error near ','". If
+	 * the escape collapses the query to the empty string, we short-circuit
+	 * with `[]` rather than running `MATCH ''` — both because the empty
+	 * MATCH itself errors and because no atoms could possibly match anyway.
 	 */
 	bm25Search(
 		query: string,
