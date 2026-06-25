@@ -577,13 +577,10 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const { formatMemoryContext } = await import("./format.ts");
 				let results: RecallResult[];
 				try {
-					// Recall config wired from settings.json
-					// (personalAssistant.memory.recall.rrfK + recallThreshold);
-					// undefined fields fall back to defaults in search.ts
-					// (DEFAULT_RRF_K=60, DEFAULT_RECALL_THRESHOLD=1/60).
-					// topK=20 matches design.md Decision 2 per-channel
-					// KNN candidate count (post-RRF cap stays at
-					// DEFAULT_TOP_K=3 per type).
+					// rrfK/recallThreshold fall back to search.ts defaults
+					// when omitted. topK=20 matches design.md Decision 2
+					// (per-channel KNN pool; the fused per-type cap is
+					// hard-coded at DEFAULT_TOP_K in search.ts).
 					results = await recallAtoms(index, userMessage, {
 						topK: 20,
 						rrfK: config.memory?.recall?.rrfK,

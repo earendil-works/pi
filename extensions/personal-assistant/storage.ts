@@ -164,29 +164,30 @@ export class MemoryIndex {
 				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
 			)
 			.get();
-		const needsBuild = !ftsExists;
-		const needsRepair =
-			!!ftsExists &&
+		// Skip the rebuild when the table is already present and healthy
+		// (no NULL-id rows). The `||` short-circuits the count query when
+		// the table is missing, avoiding a "no such table" error.
+		const needsRebuild =
+			!ftsExists ||
 			(this.db
 				.prepare(`SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL`)
 				.get() as { c: number }).c > 0;
+		if (!needsRebuild) return;
 
-		if (needsBuild || needsRepair) {
-			this.db.transaction(() => {
-				if (needsRepair) {
-					this.db.prepare(`DROP TABLE memory_fts`).run();
-				}
-				this.db.exec(MEMORY_FTS_SCHEMA);
-				this.db
-					.prepare(
-						`INSERT INTO memory_fts(id, title, summary, content, tags)
+		this.db.transaction(() => {
+			if (ftsExists) {
+				this.db.prepare(`DROP TABLE memory_fts`).run();
+			}
+			this.db.exec(MEMORY_FTS_SCHEMA);
+			this.db
+				.prepare(
+					`INSERT INTO memory_fts(id, title, summary, content, tags)
 						 SELECT id, title, summary, content, COALESCE(tags, '')
 						 FROM memory_index
 						 WHERE archived = 0 AND is_latest = 1`,
-					)
-					.run();
-			})();
-		}
+				)
+				.run();
+		})();
 	}
 
 	close(): void {
@@ -336,6 +337,32 @@ export class MemoryIndex {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Build the WHERE clause + prefix params for the standard
+	 * "active atoms only" filter shared by `vectorSearch` and
+	 * `bm25Search`. `archived: true` overrides the active-only
+	 * filter (includes both active and archived rows). The caller
+	 * appends its own MATCH / LIMIT bindings after `prefixParams`.
+	 */
+	private buildActiveFilter(filter?: {
+		type?: MemoryAtomType;
+		archived?: boolean;
+		isLatestOnly?: boolean;
+	}): { whereSql: string; prefixParams: (string | number)[] } {
+		const whereClauses: string[] = ["archived = 0"];
+		const prefixParams: (string | number)[] = [];
+		if (filter?.type) {
+			whereClauses.push("type = ?");
+			prefixParams.push(filter.type);
+		}
+		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
+		if (filter?.archived === true) {
+			// explicit override — include archived too
+			whereClauses.length = 0;
+		}
+		return { whereSql: whereClauses.join(" AND "), prefixParams };
+	}
+
+	/**
 	 * K-nearest-neighbour query against the sqlite-vec `memory_vectors`
 	 * virtual table, joined back to `memory_index` so the standard active
 	 * filters (archived / superseded / type) can be applied. Default
@@ -352,27 +379,21 @@ export class MemoryIndex {
 		k: number,
 		filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean },
 	): Array<{ id: string; distance: number }> {
-		const whereClauses: string[] = ["archived = 0"];
-		if (filter?.type) whereClauses.push("type = ?");
-		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
-		if (filter?.archived === true) {
-			// explicit override — include archived too
-			whereClauses.length = 0;
-		}
-
+		const { whereSql, prefixParams } = this.buildActiveFilter(filter);
 		const sql = `
 			SELECT v.id, v.distance
 			FROM memory_vectors v
 			INNER JOIN memory_index i ON v.id = i.id
-			WHERE ${whereClauses.join(" AND ")}
+			WHERE ${whereSql}
 			AND v.embedding MATCH ?
 			AND k = ?
 			ORDER BY v.distance
 		`;
-		const params: (string | number | Float32Array)[] = [];
-		if (filter?.type) params.push(filter.type);
-		params.push(new Float32Array(embedding));
-		params.push(k);
+		const params: (string | number | Float32Array)[] = [
+			...prefixParams,
+			new Float32Array(embedding),
+			k,
+		];
 
 		type Row = { id: string; distance: number };
 		const rows = this.db.prepare(sql).all(...params) as Row[];
@@ -416,27 +437,17 @@ export class MemoryIndex {
 			return [];
 		}
 
-		const whereClauses: string[] = ["archived = 0"];
-		if (filter?.type) whereClauses.push("type = ?");
-		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
-		if (filter?.archived === true) {
-			// explicit override — include archived too
-			whereClauses.length = 0;
-		}
-
+		const { whereSql, prefixParams } = this.buildActiveFilter(filter);
 		const sql = `
 			SELECT v.id, bm25(memory_fts) AS bm25
 			FROM memory_fts v
 			INNER JOIN memory_index i ON v.id = i.id
-			WHERE ${whereClauses.join(" AND ")}
+			WHERE ${whereSql}
 			AND memory_fts MATCH ?
 			ORDER BY bm25
 			LIMIT ?
 		`;
-		const params: (string | number)[] = [];
-		if (filter?.type) params.push(filter.type);
-		params.push(escaped);
-		params.push(k);
+		const params: (string | number)[] = [...prefixParams, escaped, k];
 
 		type Row = { id: string; bm25: number };
 		const rows = this.db.prepare(sql).all(...params) as Row[];
