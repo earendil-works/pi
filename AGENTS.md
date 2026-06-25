@@ -167,3 +167,41 @@ Attribution:
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.
+
+<!-- sddSpec:start -->
+# sddSpec — Spec-Driven Development
+
+This project uses **sddSpec** for structured changes through 6 phases:
+brainstorm → plan → develop → review → release → archive.
+
+## Commands
+
+| Phase | Command | Output |
+|-------|---------|--------|
+| Start | `/change <name>` | New change dir + `.sdd.yaml` state |
+| 1. Brainstorm | `/brainstorm <name>` | proposal / scenarios / principles / design |
+| 2. Plan | `/write_plan <name>` | tasks + delta spec + verification checklist |
+| 3. Develop | `/develop <name>` | TDD implementation via `@tdd-guide` |
+| 4. Review | `/review <name>` | Checklist verification + code review |
+| 5. Release | `/release <name>` | Simplify + security audit |
+| 6. Archive | `/archive <name>` | Spec merge + archive |
+| Quick fix | `/quickfix <name>` | Skip brainstorm for ≤3-file trivial fixes |
+| Bug hunt | `/debug <bug-name>` | Root cause analysis + TDD fix |
+| Auto | `/sdd <desc>` | Auto-detect current phase and route |
+
+## Core Rules
+
+- **Never write code** in brainstorm or write_plan — design first.
+- **Never self-write code** in develop — dispatch `@tdd-guide`.
+- **Never edit `.sdd.yaml` directly** — use `sdd-state.sh` or `sdd-guard.sh --apply`.
+- **Reuse existing code** — `design.md` must list reused symbols with `path:line`, or declare greenfield.
+- **GIVEN-WHEN-THEN** is mandatory for all scenarios.
+
+## Where Things Live
+
+- State: `docs/sdd/changes/<name>/.sdd.yaml`
+- Main spec: `docs/sdd/specs/spec.md` (never moved)
+- Change workdir: `docs/sdd/changes/<name>/`
+- Archived: `docs/sdd/archive/<name>/`
+
+<!-- sddSpec:end -->
