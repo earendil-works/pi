@@ -176,7 +176,7 @@ function buildAtomFromItem(item: ExtractionItem, fingerprint: string): MemoryAto
 		summary: item.summary,
 		tags: item.tags,
 		importance: item.importance,
-		strength: item.importance,
+		strength: 1.0,
 		access_count: 0,
 		version: 1,
 		is_latest: 1,
