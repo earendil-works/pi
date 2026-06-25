@@ -11,10 +11,11 @@
 
 ## Goals / Non-Goals
 - **Goals**:
-  - 整个 assistant turn 包裹成可折叠 step(thinking + tool + 全部 text)
+  - 推理过程(thinking + tool + image)包裹成可折叠 step
+  - 所有 text part(interim streaming delta + final reply)渲染在 fold **外**,始终可见 — 即使 fold 折叠,text 也不被隐藏
   - header 永远显示 `● Executing (Xs) ▼` / `✓ Completed (Xs) ▲`,点击 toggle
-  - streaming 时 body 默认展开,推理完自动折叠
-  - 纯 text turn 不裹,保持改动前视觉
+  - streaming 时 fold 默认展开,推理完自动折叠
+  - 纯 text turn 不裹 fold,保持改动前视觉
   - 纯前端,不动 JSONL / 后端 / TUI
 - **Non-Goals**:
   - TUI 不动 (pi TUI 已有 hideThinkingBlock,风格紧凑)
@@ -61,6 +62,14 @@
 - 所有 assistant message 都包 → 纯 text 回复也加 step 框,视觉冗余
 - 只包有 toolCall 的 → thinking-only turn 不包,违背 user 决策
 
+### 6. Text parts 渲染在 fold 外,始终可见
+**Decision**: `chunks` 数组构建后拆分为 `inferenceChunks` (tools 块 + thinking 块) 和 `textChunks` (text 块).Fold 容器只包 `inferenceChunks`;`textChunks` 作为 sibling 渲染在 fold 后面,DOM 顺序: fold 内容 → 所有 text part (interim + final, 按原序)
+**Rationale**: 用户反馈 final reply 在 streaming 结束后被 fold 隐藏,失去 UX 价值. 把 text 拆出 fold 后,推理过程(可折叠)与最终回复(始终可见)是两个独立信息层,符合用户心智模型: "推理是过程,回复是结果". 0 额外运行时成本,只多两个 `Array.filter` 调用
+**Alternatives considered**:
+- text 渲染在 fold **前** (above the fold): 顺序变成 text1 → fold → text2,失去"先思考后回复"的因果感
+- text 保持原 chronological 位置 (与 tool 交错): 需要按 part 顺序交替 fold/text,UX 复杂,实施时 fold 的 StepHeader 出现在 turn 中部也视觉奇怪
+- text 加自己的折叠/展开 toggle: 失去"text 始终可见"的核心要求,回到原问题
+
 ## Architecture
 
 **Component tree** (改动部分标 *):
@@ -71,19 +80,21 @@ ChatPage
        └─ MessageBubble  *+isStreaming?: boolean
             ├─ MessageHeader (不变)
             ├─ MessageParts  *+isStreaming?: boolean  *+timestamp?: string  *new algorithm
-            │    └─ (条件渲染) <div className="rounded-lg border ...">
-            │         ├─ *StepHeader  (新组件,在 MessageParts.tsx 同文件)
-            │         │    ├─ useState<boolean|null>(userOverride)
-            │         │    ├─ useEffect + setInterval 1s
-            │         │    └─ 渲染: status icon + text + (Xs) + chevron
-            │         └─ (条件渲染) <div> body = chunks (用原算法)
-            │              ├─ ThinkingItem (已有,不变)
-            │              ├─ TextItem (已有,不变)
-            │              └─ ToolGroup (已有,不变)
+            │    └─ <>  (Fragment, 新增, 拆出 fold + text)
+            │         ├─ (条件渲染) <div className="rounded-lg border ...">  *fold 只包 inference
+            │         │    ├─ *StepHeader  (新组件,在 MessageParts.tsx 同文件)
+            │         │    │    ├─ useState<boolean|null>(userOverride)
+            │         │    │    ├─ useEffect + setInterval 1s
+            │         │    │    └─ 渲染: status icon + text + (Xs) + chevron
+            │         │    └─ (条件渲染) <div> body = inferenceChunks (新 split 1)
+            │         │         ├─ ThinkingItem (已有,不变)
+            │         │         └─ ToolGroup (已有,不变)
+            │         └─ (条件渲染) textChunks (新 split 2, 在 fold 外)
+            │              └─ TextItem (已有,不变)
             └─ MessageFooter (不变)
 ```
 
-注意: `StepContainer` / `StepBody` 是**伪组件名**用来描述 step 包裹的视觉层次,实际实现是 `MessageParts` 内的内联 `<div>` + `{open && <div>...chunks...</div>}`,不抽成独立组件。`StepHeader` 才是真组件。
+注意: `StepContainer` / `StepBody` 是**伪组件名**用来描述 step 包裹的视觉层次,实际实现是 `MessageParts` 内的内联 `<div>` + `{open && <div>...inferenceChunks...</div>}`,不抽成独立组件。`StepHeader` 才是真组件。新增: `chunks` 数组在 `MessageParts` 内部拆为 `inferenceChunks` (包入 fold) 和 `textChunks` (渲染在 fold 外的 sibling),确保 text 始终可见,fold 只管可折叠的推理过程。
 
 **关键 type / interface**:
 
@@ -218,7 +229,8 @@ export function MessageParts({ parts, isStreaming = false, timestamp, cardStates
 | 过去 turn 的 duration 持续增长(几小时后显示"5h") | principles.md 已声明是 trade-off;用户接受 |
 | `isStreaming` prop 漏传 → step 永远折叠 | ChatPage 必传,默认 `false` 在 MessageParts/MessageBubble 都是 fallback |
 | Step 折叠时 polling 间隙不显示新 turn header | agent emit done 后 `isThinking=false`,几百 ms 内最后一条仍是上轮;新 message 一旦 poll 进来立刻有 header |
-| 多 text 中间夹 tool 看起来割裂 | step body 顺序保留原 `Part[]` 顺序,内容连贯 |
+| 推理过程中间 text (interim) 出现在 fold 下方,与 tool 调用在视觉上分离 | 接受 trade-off: fold 内是过程,fold 外是结果,用户明确要求 text 始终可见;design 6 决策 |
+| 中间 streaming text 与 tool 调用顺序割裂 (text 全部在 fold 后,而非原 chronological 位置) | 接受 trade-off: 5-part 测试已验证 fold content → text content 的顺序仍清晰; 用户对 "interim text 出现在 tool 之后" 反馈正面 |
 | setInterval 1s tick 浪费 CPU (用户在看旧 turn) | useEffect cleanup 在 unmount 时 clearInterval;长时间 tab inactive 时 React 会降低 timer 精度,自动节能 |
 
 ## Testing Strategy
@@ -241,12 +253,14 @@ export function MessageParts({ parts, isStreaming = false, timestamp, cardStates
   2. `MessageBubble.tsx` 加 `isStreaming` prop 转发
   3. `ChatPage.tsx` 算 `isLastMessageStreaming` + 透传
   4. `MessageParts.test.tsx` 新增 4 case
+  5. **(修订)** `MessageParts.tsx` 拆 chunks 为 `inferenceChunks` (fold 内) + `textChunks` (fold 外), text 始终可见
+  6. **(修订)** `MessageParts.test.tsx` 修订 transition / user-override / chronological-order 3 个 case + 新增 3 个 text-outside-fold case
 - **startedAt 来源**: Message interface 已有 `timestamp: string`,在 MessageParts 顶层 props 加 `timestamp?: string` 可选,或直接从 message 传。最简:在 MessageBubble 把 `message.timestamp` 传下去,`MessageParts` 接 `startedAt: string`,内部 `new Date(startedAt)` 转换
-- **关键点**: 不要在 chunks 算法里改 single/tools 分类,只把"是否要 step 包裹"的判断加在外层;chunks 算法保持不变
+- **关键点**: 不要在 chunks 算法里改 single/tools 分类,只把"是否要 step 包裹"的判断加在外层;chunks 算法保持不变。**修订后**: chunks 数组仍按原算法构建,仅在 JSX 渲染阶段拆为 inferenceChunks / textChunks 两个 sibling
 - **不要碰**:
   - `chat-message-rendering` spec 现有 `Part` 5 类型定义
   - `Message` interface
   - ToolGroup 内部逻辑
   - ChatMessages turn grouping
   - Markdown / AskUserQuestionCard
-- **commit message** 建议: `feat(webui): wrap assistant turn in collapsible step with status + duration`
+- **commit message** 建议: `feat(webui): wrap assistant turn in collapsible step with status + duration` (本变更追加) / `feat(webui): render text parts outside fold wrapper so final reply stays visible` (本次修订)

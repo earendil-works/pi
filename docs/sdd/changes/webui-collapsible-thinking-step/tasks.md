@@ -162,3 +162,53 @@
 - [x] 全量测试: `cd packages/webui/web && npx vitest --run`
 - [x] Lint: `npm run check` (exit 0)
 - [x] Manual smoke: tmux attach pi-web 浏览器手测 4 case
+
+## 5. Text parts 拆出 fold (修订)
+
+> **Why added (after 4.3):** user feedback: final reply text 在 fold 折叠后被隐藏, 失去 UX 价值. 修订: `chunks` 数组拆为 `inferenceChunks` (fold 内) + `textChunks` (fold 外, sibling 节点), text 始终可见. 推理过程 (thinking + tool) 仍可折叠.
+
+- [x] 5.1 **MessageParts.test.tsx 写失败测试 (RED): text 在 fold 外**
+  - **文件**: `packages/webui/web/src/components/message/MessageParts.test.tsx` (Modify)
+  - **内容**:
+    1. 新增 describe 块 "Text parts rendered OUTSIDE the fold wrapper" 含 3 个 case:
+       - "keeps text visible when fold is collapsed (thinking + text turn)" — `parts=[{thinking:"co-t-content"}, {text:"final-reply"}]`, `isStreaming=false` → fold 折叠 (思考 button 不在 DOM) + `final-reply` 可见
+       - "keeps text visible when fold is collapsed (toolCall + text turn)" — `parts=[{toolCall,name:"read",path:"/secret"}, {text:"user-visible-reply"}]`, `isStreaming=false` → fold 折叠 (read + /secret 不在 DOM) + `user-visible-reply` 可见
+       - "renders pure text turn as a plain TextItem, no fold wrapper at all" — `parts=[{text:"hello-world"}]`, `isStreaming=false` → text 可见 + 无 Execut/Completed + 无 思考 + 无 `div.rounded-lg.border`
+    2. 修订现有 "auto-collapses the body when isStreaming transitions from true to false" → "auto-collapses the fold when isStreaming transitions from true to false, but keeps text visible (outside fold)": `parts=[{thinking:"thinking-co"}, {text:"visible-reply"}]`, rerender `isStreaming=true→false`, 思考 button 消失, `visible-reply` 仍可见
+    3. 修订现有 "preserves user override when isStreaming flips after a click": 改用 `parts=[{toolCall,name:"read",path:"/x"}]` (而非 text), click 后 `/x` 出现 (fold 展开), flip isStreaming false→true→false 保持可见
+    4. 修订现有 "preserves the chronological order of 5 mixed parts in the step body" → "preserves the order of 5 mixed parts (inference in fold, text after fold)": 顺序改为 `[思考, bash, file1, interim-text, final-text]` (fold 内容先, text 后)
+    5. 修订现有 "auto-collapses the body when isStreaming transitions" (旧版被 5.1-2 替代) — 删除原 assertion `queryByText("y")` 为 null
+  - **验证**: `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 新增 3 case + 修订 3 case 全部 FAIL (current behavior 把 text 放 fold 内)
+  - **依赖**: 4.3
+
+- [x] 5.2 **MessageParts.tsx 拆 chunks (GREEN)**
+  - **文件**: `packages/webui/web/src/components/message/MessageParts.tsx` (Modify)
+  - **内容**:
+    1. 在 chunks 数组构建后, chunks.filter 拆为 `inferenceChunks` (`c.kind === "tools" || (c.kind === "single" && c.part.type === "thinking")`) 和 `textChunks` (`c.kind === "single" && c.part.type === "text"`)
+    2. 使用 type predicate 助手 (`isTextChunk`, `isThinkingChunk`) 保证 TS 类型 narrow
+    3. JSX 改为 `<>` Fragment: `{inferenceChunks.length > 0 && <div className="rounded-lg border...">fold with inferenceChunks</div>}` + `{textChunks.map(chunk => <TextItem>)}`
+  - **验证**:
+    - `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 27 case 全 PASS
+    - `cd packages/webui/web && npx vitest --run` 全 284+10 (pre-existing) PASS, 无新增 fail
+  - **依赖**: 5.1
+
+- [x] 5.3 **docs 同步更新**
+  - **文件**:
+    - `docs/sdd/changes/webui-collapsible-thinking-step/design.md` (Modify)
+    - `docs/sdd/changes/webui-collapsible-thinking-step/scenarios.md` (Modify)
+    - `docs/sdd/changes/webui-collapsible-thinking-step/principles.md` (Modify)
+    - `docs/sdd/changes/webui-collapsible-thinking-step/specs/chat-message-rendering/spec.md` (Modify)
+  - **内容**:
+    1. design.md: Goals 改为"推理过程包在 fold,text 在 fold 外";新增 Decision 6 (Text parts 渲染在 fold 外, 始终可见); Architecture 树更新 (新增 Fragment + textChunks sibling); Risks 新增 2 条 (interim text 视觉分离, 中间 text 与 tool 顺序割裂)
+    2. scenarios.md: 修订 "多个 text block 中间夹 tool" 场景 (fold 包 inference, text 在 fold 外);新增 4 个场景 (text 在 fold 外可见, fold 折叠后 text 仍可见, 纯 text turn 无 fold, 纯 inference turn 正常, 中间 streaming text 与 tool 顺序)
+    3. principles.md: 修订 "Step body 内容是完整 turn" 为 "Step body 只包 inference,text 在 fold 外"
+    4. spec.md: 修订 "Step Wrapper Trigger" 描述 (fold 包 inference, text 渲染为 sibling);修订 4 个 Scenario (含 thinking+tool+final, 多个 text 夹 tool);新增独立 "Requirement: Text Parts Outside Fold Wrapper" 块含 3 个 Scenario (展开时可见, 折叠后仍可见, 纯 text turn 无 fold);修订 "Step Body Collapsible" 描述 (text 不受 fold 状态影响)
+  - **验证**: 重新读所有文档, 描述与实现一致
+  - **依赖**: 5.2
+
+- [x] 5.4 **全量验证**
+  - **验证**:
+    - `cd packages/webui/web && npx vitest --run src/components/message/MessageParts.test.tsx` 27 case 全 PASS
+    - `cd packages/webui/web && npx vitest --run` 294 total (284 pass + 10 pre-existing fail), 无新增 fail
+    - `npm run check` exit 0 (无新 warning/error)
+  - **依赖**: 5.3

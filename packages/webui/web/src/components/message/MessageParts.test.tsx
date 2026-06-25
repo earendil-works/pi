@@ -277,22 +277,28 @@ describe("MessageParts", () => {
       expect(container.textContent).toContain("read");
     });
 
-    it("auto-collapses the body when isStreaming transitions from true to false", () => {
+    // Spec scenario: isStreaming 切到 false 后 fold 折叠, 但 text (在
+    // fold 外) 仍可见. 这是新行为: fold 只包 inference (thinking + tool),
+    // 任何 text part 渲染在 fold 外, 永远可见.
+    it("auto-collapses the fold when isStreaming transitions from true to false, but keeps text visible (outside fold)", () => {
       const parts: Part[] = [
-        { type: "thinking", text: "x" },
-        { type: "text", text: "y" },
+        { type: "thinking", text: "thinking-co" },
+        { type: "text", text: "visible-reply" },
       ];
       const { rerender } = render(
         <MessageParts parts={parts} isStreaming={true} />,
       );
-      // While streaming, body is expanded → text "y" visible
-      expect(screen.getByText("y")).toBeTruthy();
+      // While streaming, fold is open → thinking button "思考" + text "visible-reply" both visible
+      expect(screen.getByText(/思考/)).toBeTruthy();
+      expect(screen.getByText("visible-reply")).toBeTruthy();
       // Transition to not streaming (same instance, same parts)
       rerender(
         <MessageParts parts={parts} isStreaming={false} />,
       );
-      // Body auto-collapses → "y" no longer in the DOM
-      expect(screen.queryByText("y")).toBeNull();
+      // Fold auto-collapses → thinking button NOT in DOM
+      expect(screen.queryByText(/思考/)).toBeNull();
+      // But text "visible-reply" remains visible (it lives outside the fold)
+      expect(screen.getByText("visible-reply")).toBeTruthy();
     });
 
     // Regression: when the agent pauses on ask_user_question, the
@@ -329,44 +335,42 @@ describe("MessageParts", () => {
     });
 
     // Spec scenario: 用户点击后 isStreaming 变化不覆盖. Once the user
-    // manually expands the body, subsequent isStreaming changes must NOT
+    // manually expands the fold, subsequent isStreaming changes must NOT
     // override that choice. Implementation: `open = userOverride ?? isStreaming`,
     // so userOverride=true wins over isStreaming=true (true) and over
     // isStreaming=false (would be true because userOverride wins).
+    // Note: test uses a toolCall (not text) because text is rendered OUTSIDE
+    // the fold, so its visibility doesn't reflect fold state.
     it("preserves user override when isStreaming flips after a click", () => {
       const parts: Part[] = [
-        { type: "thinking", text: "x" },
-        { type: "text", text: "y" },
+        { type: "toolCall", id: "t1", name: "read", args: { path: "/x" } },
       ];
       const { rerender } = render(
         <MessageParts parts={parts} isStreaming={false} />,
       );
-      // Pre-click: body collapsed
-      expect(screen.queryByText("y")).toBeNull();
+      // Pre-click: fold collapsed, tool args not in DOM
+      expect(screen.queryByText("/x")).toBeNull();
       // User clicks header to expand
       const headerButton = screen.getByText(/Completed/i).closest("button")!;
       fireEvent.click(headerButton);
-      // Body now visible
-      expect(screen.getByText("y")).toBeTruthy();
+      // Fold now open, tool args visible
+      expect(screen.getByText("/x")).toBeTruthy();
       // isStreaming transitions false → true. User override must win.
       rerender(<MessageParts parts={parts} isStreaming={true} />);
-      expect(screen.getByText("y")).toBeTruthy();
+      expect(screen.getByText("/x")).toBeTruthy();
       // isStreaming transitions true → false. User override STILL wins.
       rerender(<MessageParts parts={parts} isStreaming={false} />);
-      expect(screen.getByText("y")).toBeTruthy();
+      expect(screen.getByText("/x")).toBeTruthy();
     });
 
     // Spec scenario: 多 text 中间夹 tool 顺序保留. Five parts in mixed
     // order: thinking, text(interim), toolCall, toolResult, text(final).
-    // The chunks algorithm must walk them in order; the final text is
-    // INSIDE the step body, not extracted. Note: the thinking text is
-    // collapsed by default in ThinkingItem (defaultOpen=false), so the
-    // assertion only checks the parts that are visible without user
-    // interaction: interim text, tool name, tool result first line,
-    // final text. The presence of "final-text" inside the step body
-    // confirms the spec rule "final text is INSIDE the step body,
-    // not extracted".
-    it("preserves the chronological order of 5 mixed parts in the step body", () => {
+    // With the new "text outside fold" behavior, all text parts
+    // (interim + final) are extracted and rendered as a group AFTER the
+    // fold. So the visible DOM order is: fold contents (thinking +
+    // ToolGroup with bash+file1) then text contents (interim-text +
+    // final-text). The fold still auto-collapses; text stays visible.
+    it("preserves the order of 5 mixed parts (inference in fold, text after fold)", () => {
       const parts: Part[] = [
         { type: "thinking", text: "thinking-co-t" },
         { type: "text", text: "interim-text" },
@@ -375,26 +379,51 @@ describe("MessageParts", () => {
         { type: "text", text: "final-text" },
       ];
       render(<MessageParts parts={parts} isStreaming={true} />);
-      // The 4 parts that are visible by default render in this order:
-      // thinking-button (collapsed) → interim-text → bash → file1 (toolResult
-      // first line) → final-text. "final-text" being inside the step body
-      // (not extracted) is the key spec assertion.
+      // Fold open during streaming → all 5 visible.
       expect(screen.getByText("思考")).toBeTruthy();
       expect(screen.getByText("interim-text")).toBeTruthy();
       expect(screen.getByText("bash")).toBeTruthy();
       expect(screen.getByText("file1")).toBeTruthy();
       expect(screen.getByText("final-text")).toBeTruthy();
-      // Order verification: indexOf positions must be monotonically increasing
+      // Order verification: fold content (思考, bash, file1) appears first,
+      // then text content (interim-text, final-text) below the fold.
       const text = document.body.textContent ?? "";
       const positions = [
         "思考",
-        "interim-text",
         "bash",
         "file1",
+        "interim-text",
         "final-text",
       ].map((t) => text.indexOf(t));
       const sorted = [...positions].sort((a, b) => a - b);
       expect(positions).toEqual(sorted);
+    });
+
+    // Spec scenario: 5-part mixed turn with fold collapsed — only the
+    // inference parts (thinking + tool) are hidden. All text parts
+    // (interim + final) are rendered OUTSIDE the fold and remain visible.
+    // This is the key "text outside fold" assertion: the agent's reply
+    // (both the streaming deltas and the final text) MUST stay visible
+    // when the fold auto-collapses.
+    it("keeps all text parts visible when fold auto-collapses after a 5-part mixed turn", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "thinking-co-t" },
+        { type: "text", text: "interim-text" },
+        { type: "toolCall", id: "tc1", name: "bash", args: { command: "ls" } },
+        { type: "toolResult", toolCallId: "tc1", content: "file1\nfile2" },
+        { type: "text", text: "final-text" },
+      ];
+      // isStreaming=false → fold collapsed
+      render(<MessageParts parts={parts} isStreaming={false} />);
+      // Fold content hidden: thinking button, tool name, tool result first
+      // line all NOT in DOM
+      expect(screen.queryByText("思考")).toBeNull();
+      expect(screen.queryByText("bash")).toBeNull();
+      expect(screen.queryByText("file1")).toBeNull();
+      // But BOTH text parts (interim and final) are OUTSIDE the fold,
+      // always visible
+      expect(screen.getByText("interim-text")).toBeTruthy();
+      expect(screen.getByText("final-text")).toBeTruthy();
     });
 
     // Spec scenario: 1h+ 旧 turn 显示 elapsed 时间. timestamp = 1 hour ago,
@@ -415,6 +444,64 @@ describe("MessageParts", () => {
       expect(match).not.toBeNull();
       const seconds = Number(match![1]);
       expect(seconds).toBeGreaterThanOrEqual(3595);
+    });
+  });
+
+  describe("Text parts rendered OUTSIDE the fold wrapper", () => {
+    // Spec scenario: thinking + text turn with isStreaming=false. The fold
+    // (which wraps thinking) auto-collapses, but the text part is rendered
+    // OUTSIDE the fold and remains visible. This is the core "text outside
+    // fold" assertion.
+    it("keeps text visible when fold is collapsed (thinking + text turn)", () => {
+      const parts: Part[] = [
+        { type: "thinking", text: "co-t-content" },
+        { type: "text", text: "final-reply" },
+      ];
+      render(<MessageParts parts={parts} isStreaming={false} />);
+      // Fold collapsed → thinking button NOT in DOM
+      expect(screen.queryByText(/思考/)).toBeNull();
+      expect(screen.queryByText("co-t-content")).toBeNull();
+      // But text "final-reply" is rendered outside the fold, visible
+      expect(screen.getByText("final-reply")).toBeTruthy();
+    });
+
+    // Spec scenario: toolCall + text turn with isStreaming=false. The fold
+    // (which wraps toolCall via ToolGroup) auto-collapses, but the text
+    // part is rendered OUTSIDE the fold and remains visible. This proves
+    // the fold wraps ONLY inference, not text.
+    it("keeps text visible when fold is collapsed (toolCall + text turn)", () => {
+      const parts: Part[] = [
+        { type: "toolCall", id: "t1", name: "read", args: { path: "/secret" } },
+        { type: "text", text: "user-visible-reply" },
+      ];
+      render(<MessageParts parts={parts} isStreaming={false} />);
+      // Fold collapsed → tool summary / args NOT in DOM
+      expect(screen.queryByText("read")).toBeNull();
+      expect(screen.queryByText("/secret")).toBeNull();
+      // But text "user-visible-reply" is outside the fold, visible
+      expect(screen.getByText("user-visible-reply")).toBeTruthy();
+    });
+
+    // Spec scenario: pure text turn never gains a fold wrapper. The text
+    // is rendered as a plain TextItem with no StepHeader and no border.
+    it("renders pure text turn as a plain TextItem, no fold wrapper at all", () => {
+      const parts: Part[] = [{ type: "text", text: "hello-world" }];
+      const { container } = render(
+        <MessageParts parts={parts} isStreaming={false} />,
+      );
+      // Text visible
+      expect(screen.getByText("hello-world")).toBeTruthy();
+      // No step header (no fold)
+      expect(screen.queryByText(/Execut|Completed/i)).toBeNull();
+      // No thinking button (no fold, no ThinkingItem)
+      expect(screen.queryByText(/思考/)).toBeNull();
+      // No fold border (the rounded-lg class is only applied to the fold wrapper)
+      // Pure text path returns <div className="flex flex-col gap-2"> which lacks
+      // the fold's "rounded-lg border border-gray-200 bg-white" classes.
+      const foldWrapper = container.querySelector(
+        "div.rounded-lg.border.border-gray-200.bg-white",
+      );
+      expect(foldWrapper).toBeNull();
     });
   });
 });
