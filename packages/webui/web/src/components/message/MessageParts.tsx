@@ -390,39 +390,62 @@ export function MessageParts({
     }
   }
 
+  // Split chunks into inference (wrapped in the fold) and text (rendered
+  // outside the fold, always visible). The fold still auto-collapses on
+  // `isStreaming=false` so the user can hide long CoT / tool chains, but
+  // the agent's reply text stays visible below the fold so it is never
+  // hidden inside a collapsed step.
+  type SingleChunk = { kind: "single"; part: Part };
+  const isThinkingChunk = (c: Chunk): c is SingleChunk =>
+    c.kind === "single" && c.part.type === "thinking";
+  const isTextChunk = (c: Chunk): c is SingleChunk =>
+    c.kind === "single" && c.part.type === "text";
+  const inferenceChunks = chunks.filter(
+    (c) => c.kind === "tools" || isThinkingChunk(c),
+  );
+  const textChunks = chunks.filter(isTextChunk);
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col gap-2">
-      <StepHeader
-        isStreaming={isStreaming}
-        startedAt={startedAt}
-        open={open}
-        onToggle={() => setUserOverride(!open)}
-      />
-      {open && (
-        <div className="flex flex-col gap-2 border-t border-gray-100 pt-2">
-          {chunks.map((chunk, i) => {
-            if (chunk.kind === "tools") {
-              return (
-                <ToolGroup
-                  key={`tg-${i}`}
-                  parts={chunk.parts}
-                  cardStates={cardStates}
-                  onCardSubmit={onCardSubmit}
-                  onCardCancel={onCardCancel}
-                />
-              );
-            }
-            const p = chunk.part;
-            if (p.type === "thinking") {
-              return <ThinkingItem key={`th-${i}`} part={p} />;
-            }
-            if (p.type === "text") {
-              return <TextItem key={`tx-${i}`} part={p} />;
-            }
-            return null;
-          })}
+    <>
+      {inferenceChunks.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col gap-2">
+          <StepHeader
+            isStreaming={isStreaming}
+            startedAt={startedAt}
+            open={open}
+            onToggle={() => setUserOverride(!open)}
+          />
+          {open && (
+            <div className="flex flex-col gap-2 border-t border-gray-100 pt-2">
+              {inferenceChunks.map((chunk, i) => {
+                if (chunk.kind === "tools") {
+                  return (
+                    <ToolGroup
+                      key={`tg-${i}`}
+                      parts={chunk.parts}
+                      cardStates={cardStates}
+                      onCardSubmit={onCardSubmit}
+                      onCardCancel={onCardCancel}
+                    />
+                  );
+                }
+                const p = chunk.part;
+                if (p.type === "thinking") {
+                  return <ThinkingItem key={`th-${i}`} part={p} />;
+                }
+                return null;
+              })}
+            </div>
+          )}
         </div>
       )}
-    </div>
+      {textChunks.map((chunk, i) => {
+        const p = chunk.part;
+        if (p.type === "text") {
+          return <TextItem key={`tx-${i}`} part={p} />;
+        }
+        return null;
+      })}
+    </>
   );
 }
