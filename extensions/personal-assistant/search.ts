@@ -295,10 +295,14 @@ export async function recallAtoms(
 
 	// Round-robin interleave: type[0], type[1], type[2], type[0], type[1], ...
 	// Sparse lists (length < DEFAULT_TOP_K) skip their slot — never pad with
-	// cross-type items or placeholders (Decision 2). Loop bound is
-	// `min(topK, 9)` (3 types × 3 per-type cap = 9 max results).
+	// cross-type items or placeholders (Decision 2). The loop bound is the
+	// per-type cap × type count (= 9: 3 types × 3 per-type cap), independent
+	// of `topK`. The previous `Math.min(topK, 9)` conflated per-channel
+	// candidate count (topK) with the result-list size — `topK` only bounds
+	// how many dense/BM25 candidates we ask each channel for; the actual
+	// result-list size is fixed at 9 by the per-type cap.
 	const results: RecallResult[] = [];
-	const slotCount = Math.min(topK, TYPES.length * DEFAULT_TOP_K);
+	const slotCount = TYPES.length * DEFAULT_TOP_K;
 	for (let i = 0; i < slotCount; i++) {
 		for (const list of perTypeResults) {
 			const item = list[i];
