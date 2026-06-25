@@ -1,4 +1,4 @@
-phase: review
+phase: develop
 workflow: full
 change: webui-collapsible-thinking-step
 created_at: 2026-06-24
@@ -6,6 +6,6 @@ base_ref: 6965fe18aa66a786dd1700c87aa299f2f52466c5
 tasks_total: 12
 tasks_done: 12
 isolation: branch
-verify_result: pending
+verify_result: null
 last_review_sha: null
 archived: false

@@ -58,8 +58,8 @@
 
 ### 场景: 多个 text block 中间有 tool
 - **GIVEN** parts 为 `[thinking, text(interim), toolCall, toolResult, text(final)]`
-- **WHEN** MessageParts 渲染
-- **THEN** step 包裹全部 5 个 part,body 内顺序: thinking(折叠) → interim text(markdown) → ToolGroup → final text(markdown)。step header `✓ Completed (Xs) ▲`
+- **WHEN** MessageParts 渲染 (`isStreaming=false` → fold 折叠)
+- **THEN** fold 包裹 thinking + ToolGroup,both text parts (interim + final) 渲染在 fold 外的 sibling 节点,均可见。fold 折叠时 DOM 顺序: StepHeader(折叠态) → interim text(markdown) → final text(markdown)。step header `✓ Completed (Xs) ▲`
 
 ### 场景: 空 parts
 - **GIVEN** assistant message,parts 为 `[]`
@@ -70,3 +70,28 @@
 - **GIVEN** messages 列表里有 2 小时前的 assistant turn,timestamp 是 2h ago
 - **WHEN** MessageParts 渲染
 - **THEN** step header 显示 `✓ Completed (7200s) ▲`(纯客户端 `Date.now() - timestamp` 算);user 知道这是近似值(可接受)
+
+### 场景: 推理过程展开时,最终 text 在 fold 外可见 (核心 spec)
+- **GIVEN** parts 为 `[thinking, toolCall, toolResult, text]`,`isStreaming=true`
+- **WHEN** MessageParts 渲染
+- **THEN** fold 展开,body 内显示 thinking + ToolGroup;fold 外显示 final text(markdown)。**text 不在 fold 内**
+
+### 场景: 推理过程自动折叠后,最终 text 仍可见 (核心 spec)
+- **GIVEN** 同上 turn,fold 展开 + text 外可见
+- **WHEN** `isStreaming` 变 `false`,fold 自动折叠
+- **THEN** fold 折叠 (thinking + ToolGroup 从 DOM 移除);**final text 仍可见**(在 fold 外的 sibling 节点)。user 不需要点击 step header 也能看到 agent 的最终回复
+
+### 场景: 纯 text turn 不出现 fold
+- **GIVEN** parts 为 `[text, text]` (多个纯 text,无 thinking/tool/image)
+- **WHEN** MessageParts 渲染
+- **THEN** 不出现 step header、不出现 fold 容器,直接渲染 `<div className="flex flex-col gap-2">` 包住所有 TextItem,DOM 中无 `rounded-lg border` 节点
+
+### 场景: 纯 inference turn (无 text) 正常包 fold
+- **GIVEN** parts 为 `[thinking]` 或 `[toolCall, toolResult]`,无 text
+- **WHEN** MessageParts 渲染
+- **THEN** fold 正常包 inference;textChunks 为空,fold 外无 sibling 节点
+
+### 场景: 中间 streaming text 与 tool 顺序: text 全部在 fold 后 (副作用 spec)
+- **GIVEN** parts 为 `[thinking, text("interim"), toolCall, toolResult, text("final")]`,`isStreaming=true`
+- **WHEN** MessageParts 渲染
+- **THEN** fold 内容 (thinking + ToolGroup) 先出现;fold 外依次出现 `interim-text` + `final-text` (原序)。interim text 不在 fold 内,而是与 final text 一同出现在 fold 之后
