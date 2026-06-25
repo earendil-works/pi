@@ -160,21 +160,15 @@ export function registerGetMemoryList(
 					10,
 				);
 
-				let atoms =
-					archived === "active"
-						? index.getActiveAtoms()
-						: archived === "archived"
-							? index.getActiveAtoms().filter((a) => a.archived === 1)
-							: index.getActiveAtoms(); // "all" — see JSDoc above
+			const archivedFilter: boolean | "all" | undefined =
+				archived === "all" ? "all" : archived === "archived" ? true : undefined;
+			let atoms = index.listAtoms({ archived: archivedFilter, type: type as any });
 
-				if (type && (type === "rule" || type === "fact" || type === "process")) {
-					atoms = atoms.filter((a) => a.type === type);
-				}
-				if (tag) {
-					atoms = atoms.filter((a) => a.tags.includes(tag));
-				}
-				atoms = atoms.slice(offset, offset + limit);
-				res.json(atoms);
+			if (tag) {
+				atoms = atoms.filter((a) => a.tags.includes(tag));
+			}
+			atoms = atoms.slice(offset, offset + limit);
+			res.json(atoms);
 			} finally {
 				index.close();
 			}

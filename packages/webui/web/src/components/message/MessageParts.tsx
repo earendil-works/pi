@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   Brain, Database, Terminal, Globe, FolderOpen, ListTodo,
   Wrench, Image as ImageIcon, ChevronRight, Wrench as ToolsIcon
@@ -272,12 +272,19 @@ interface StepHeaderProps {
 }
 
 function StepHeader({ isStreaming, startedAt, open, onToggle }: StepHeaderProps) {
+  const completedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isStreaming && completedAtRef.current === null) {
+      completedAtRef.current = Date.now();
+    }
+  }, [isStreaming]);
   const [, forceTick] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const id = setInterval(forceTick, 1000);
     return () => clearInterval(id);
   }, []);
-  const seconds = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+  const endMs = completedAtRef.current ?? Date.now();
+  const seconds = Math.max(0, Math.floor((endMs - startedAt.getTime()) / 1000));
   const icon = isStreaming ? "\u25CF" : "\u2713";
   const iconColor = isStreaming ? "text-blue-500" : "text-green-600";
   const statusText = isStreaming ? "Executing" : "Completed";

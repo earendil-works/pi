@@ -13,7 +13,7 @@ interface MemoryListProps {
   atoms: MemoryAtom[];
   selectedId?: string;
   onSelect: (id: string) => void;
-  onArchive: (id: string) => void;
+  onArchive: (id: string, currentlyArchived: boolean) => void;
   filters: MemoryListFilters;
   onFilterChange: (f: MemoryListFilters) => void;
   onRefresh: () => void;
@@ -144,7 +144,7 @@ export function MemoryList({ atoms, selectedId, onSelect, onArchive, filters, on
                 <span className="font-medium text-sm truncate flex-1">{a.title}</span>
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onArchive(a.id); }}
+                  onClick={(e) => { e.stopPropagation(); onArchive(a.id, a.archived); }}
                   className="text-xs text-red-600 hover:underline px-1"
                 >
                   {a.archived ? "Restore" : "Archive"}

@@ -76,15 +76,19 @@ export function MemoryPage() {
     setStats(s);
   };
 
-  const handleArchive = async (id: string) => {
+  const handleArchive = async (id: string, currentlyArchived: boolean) => {
+    const targetArchived = !currentlyArchived;
     try {
-      // optimistic: 立即从列表移除
-      setAtoms((prev) => prev.filter((a) => a.id !== id));
-      await api.memory.archive(id, true);
+      // Optimistic: toggle the atom's archived flag in-place so the list
+      // updates immediately without a full refetch. For unarchive, the
+      // atom stays in the list (its visibility is controlled by the filter).
+      setAtoms((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, archived: targetArchived } : a)),
+      );
+      await api.memory.archive(id, targetArchived);
       void api.memory.stats().then(setStats);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      // 失败回滚: 重新拉
       void refreshAll();
     }
   };

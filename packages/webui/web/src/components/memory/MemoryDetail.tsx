@@ -5,7 +5,7 @@ import { MemoryEditor } from "./MemoryEditor";
 
 interface MemoryDetailProps {
   id: string;
-  onArchive: (id: string) => void;
+  onArchive: (id: string, currentlyArchived: boolean) => void;
   onListRefresh: () => void;
 }
 
@@ -128,7 +128,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
           </span>
           <button
             type="button"
-            onClick={() => onArchive(atom.id)}
+            onClick={() => onArchive(atom.id, atom.archived)}
             className="border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-100"
           >
             {atom.archived ? "Restore" : "Archive"}
@@ -152,7 +152,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
         <MemoryEditor
           atom={localAtom}
           onSave={handleEditorSave}
-          onArchive={() => onArchive(atom.id)}
+          onArchive={() => onArchive(atom.id, atom.archived)}
           onFlush={flush}
         />
       </div>
