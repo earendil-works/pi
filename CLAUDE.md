@@ -90,3 +90,12 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - 召回配置只暴露 `rrfK` 和 `recallThreshold` 两个 knob,其他全部硬编码在 `search.ts` — 加 knob 等于让用户调自己不懂的参数,YAGNI
 - `recallThreshold` 默认 `1/rrfK` (= 1/60 ≈ 0.01667 with rrfK=60),意味着单 channel rank=1 (0-indexed, 贡献 1/(rrfK+0+1) = 1/61 ≈ 0.01639) 单独命中**不足以**过阈值,必须双 channel 都命中 OR 单 channel 极强 — 这是"宁可漏召不可误召"的保守姿态,保护 dense noise case (用户的 lefse 场景)
 - 召回对单 channel 降级鲁棒:dense 失败 → 纯 BM25 仍工作;BM25 返回 0 → 纯 dense 仍工作;两者都失败 → 返回 `[]`(同旧行为)
+
+## webui-collapsible-thinking-step 原则
+
+- **Step wrapper 是 webui-only 渲染抽象**: 把 assistant turn 包成可折叠 step 是 webui 的 UI 关注点,TUI / JSONL / 后端都不感知。Step 边界由 `MessageParts` 渲染层自己定,不动数据模型
+- **Step body 只包 inference (thinking + tool + image),text 在 fold 外**: fold 用于隐藏"过程"(可折叠 = 过程性、可隐藏),text 是"结果"(必须始终可见)。`chunks` 拆为 `inferenceChunks` + `textChunks`,fold 包前者,后者作为 sibling 渲染。Streaming 中间 text delta + 最终 reply 都走 textChunks 路径
+- **Step wrapper 触发条件:含 thinking 或 tool 或 image**: 纯 text turn 不裹 fold,保持改动前视觉。判断由 parts 的 type set 决定,0 运行时成本
+- **isStreaming 是单向上下文**: 父组件 (ChatPage) 知道 `isThinking`,通过 prop 透传到 MessageBubble → MessageParts。子组件不读 store / 不发请求
+- **Step collapsed/expanded 状态用 useState**: 用户点击 toggle 改变本地 state,无持久化、无 URL 参数。刷新页面后 step 默认按 `isStreaming` 决定(流中展开,流完折叠)
+- **Duration 显示冻结在完成时刻**: 用 `useRef<completedAt>` 记下 step 关闭的时间戳,header duration 算 `completedAt - startedAt` 而不是 `Date.now() - startedAt`。完成后不再 tick,旧 turn 看到的还是真实耗时,不是缓慢增长的"since-timestamp"近似

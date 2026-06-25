@@ -8,4 +8,4 @@ tasks_done: 16
 isolation: branch
 verify_result: pass
 last_review_sha: null
-archived: false
+archived: true

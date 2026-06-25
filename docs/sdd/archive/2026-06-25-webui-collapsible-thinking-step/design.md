@@ -264,3 +264,5 @@ export function MessageParts({ parts, isStreaming = false, timestamp, cardStates
   - ChatMessages turn grouping
   - Markdown / AskUserQuestionCard
 - **commit message** 建议: `feat(webui): wrap assistant turn in collapsible step with status + duration` (本变更追加) / `feat(webui): render text parts outside fold wrapper so final reply stays visible` (本次修订)
+
+<!-- archived-with: 2026-06-25-webui-collapsible-thinking-step | status: final -->
