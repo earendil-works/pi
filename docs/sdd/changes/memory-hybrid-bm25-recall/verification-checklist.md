@@ -1,7 +1,7 @@
 # Verification Checklist: memory-hybrid-bm25-recall
 
 > 生成时间: 2026-06-24 | 审查者必须逐项验证并附可追溯证据
-> 状态: [ ] 待验证 | [x] 通过 | [!] 失败（必须修复或记录偏差）
+> 状态标记: 待验证(空格括号) / 通过(x括号) / 失败(感叹号括号)
 
 ## 场景验证 (Scenarios)
 
@@ -12,7 +12,7 @@
 | S3 | BM25 单路命中 (keyword-only query) | scenarios.md:L28-37 | unit-test | `--run test/hybrid-recall.test.ts -t "BM25-only hit recalled"` | dense cosine 0.50 但 BM25 rank=1 的 atom 召回 | [x] | test passes with `recallThreshold: 0` opt-in; strict default 在 S7 单独验证 |
 | S4 | RRF fused 后的 per-type round-robin | scenarios.md:L39-44 | unit-test | `--run test/hybrid-recall.test.ts -t "per-type round-robin"` | 4 rule + 3 fact + 2 process 顺序按 type 槽位交错 | [x] | `per-type round-robin after RRF fusion strictly alternates adjacent types` 测试通过; result[i].type !== result[i+1].type 对所有相邻项成立 |
 | S5 | embedText null 降级到纯 BM25 | scenarios.md:L48-56 | unit-test | `--run test/hybrid-recall.test.ts -t "embedText null"` | dense 返回 [],BM25 仍召回相关 atom | [x] | `recallAtoms degrades gracefully when embedText returns null` 测试通过 |
-| S6 | FTS5 query 含 special chars 不报错 | scenarios.md:L58-64 | unit-test | `--run test/storage.test.ts -t "escapes FTS5 special chars"` | query 不抛 SQL error | [x] | `bm25Search escapes FTS5 special chars in query` 测试覆盖 7 个字符 ("( ) * : [ ]),全 pass |
+| S6 | FTS5 query 含 special chars 不报错 | scenarios.md:L58-64 | unit-test | `--run test/storage.test.ts -t "escapes FTS5 special chars"` | query 不抛 SQL error | [x] | `bm25Search escapes FTS5 special chars in query` 测试覆盖 7 个字符 (双引号、左右圆括号、星号、冒号、左右方括号),全 pass |
 | S7 | recallThreshold 超严时所有 atom 被截掉 | scenarios.md:L66-75 | unit-test | `--run test/hybrid-recall.test.ts -t "recallThreshold filters low-fused-score"` | fused rrfScore 全 < threshold,结果为 [] | [x] | `recallThreshold filters low-fused-score atoms (strict default)` 测试: 单 channel BM25-only rrfScore 0.01639 < 1/60=0.01667 → filtered; bypass mode 同 atom 通过 |
 | S8 | BM25 路径返回 0 结果 | scenarios.md:L77-85 | unit-test | `--run test/hybrid-recall.test.ts -t "empty query"` | 无匹配 → [] | [x] | `recallAtoms returns [] when both channels empty` 测试通过 |
 | S9 | 空字符串 query | scenarios.md:L89-95 | unit-test | `--run test/hybrid-recall.test.ts -t "empty"` | recallAtoms("") 返回 [] | [x] | 同 S8 覆盖(empty query 处理) |
