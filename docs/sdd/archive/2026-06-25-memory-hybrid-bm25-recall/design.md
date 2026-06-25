@@ -405,3 +405,4 @@ supersedeAtom(oldId, newAtom, newEmbedding) {
 - `rrfK=60` 是 smoothing constant,不是 channel-specific — 调整它会影响所有召回排序,不要随便改
 - `recallThreshold = 1/rrfK` 默认下,单 channel rank=1 不够 — 用户调低 threshold (e.g. 0.01) 可让单 channel rank=1 通过,但会引入 dense noise
 - 旧 threshold: 0.65 (cosine) 是新 `threshold` 选项的 hard floor,作用于 dense 单 channel 召回结果;RRF 融合后再过 `recallThreshold` (RRF score)。两层阈值,各管一段
+<!-- archived-with: 2026-06-25-memory-hybrid-bm25-recall | status: final -->
