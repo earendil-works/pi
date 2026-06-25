@@ -331,12 +331,62 @@ export function MessageParts({
       p.type === "toolResult" ||
       p.type === "image",
   );
+
+  // Walk parts and build a list of "chunks" — each chunk is either
+  // (a) a sequence of consecutive toolCall/toolResult/image parts, or
+  // (b) a single thinking or text item.
+  //
+  // Each `kind` narrows its payload so downstream consumers don't need
+  // runtime type checks: `chunk.kind === "text"` ⇒ `chunk.part: TextPart`,
+  // `chunk.kind === "thinking"` ⇒ `chunk.part: ThinkingPart`, etc.
+  type Chunk =
+    | { kind: "tools"; parts: Part[] }
+    | { kind: "thinking"; part: ThinkingPart }
+    | { kind: "text"; part: TextPart };
+  const chunks: Chunk[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const p = parts[i];
+    if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") {
+      const toolChunk: Part[] = [];
+      while (
+        i < parts.length &&
+        (parts[i].type === "toolCall" ||
+          parts[i].type === "toolResult" ||
+          parts[i].type === "image")
+      ) {
+        toolChunk.push(parts[i]);
+        i++;
+      }
+      chunks.push({ kind: "tools", parts: toolChunk });
+    } else if (p.type === "thinking") {
+      if (p.text.trim()) chunks.push({ kind: "thinking", part: p });
+      i++;
+    } else {
+      // p.type === "text" by elimination (Part = text | thinking | toolCall | toolResult | image)
+      chunks.push({ kind: "text", part: p });
+      i++;
+    }
+  }
+
+  // Split chunks into inference (wrapped in the fold) and text (rendered
+  // outside the fold, always visible). The fold auto-collapses on
+  // `isStreaming=false` so the user can hide long CoT / tool chains, but
+  // the agent's reply text stays visible below the fold so it is never
+  // hidden inside a collapsed step.
+  const inferenceChunks = chunks.filter(
+    (c): c is Exclude<Chunk, { kind: "text" }> => c.kind !== "text",
+  );
+  const textChunks = chunks.filter(
+    (c): c is Extract<Chunk, { kind: "text" }> => c.kind === "text",
+  );
+
   if (!hasStepContent) {
     return (
       <div className="flex flex-col gap-2">
-        {parts.map((p, i) =>
-          p.type === "text" ? <TextItem key={i} part={p} /> : null,
-        )}
+        {textChunks.map((chunk, i) => (
+          <TextItem key={`tx-${i}`} part={chunk.part} />
+        ))}
       </div>
     );
   }
@@ -358,53 +408,6 @@ export function MessageParts({
   const open = hasActiveCard ? true : (userOverride ?? isStreaming);
   const startedAt = timestamp ? new Date(timestamp) : new Date();
 
-  // Walk parts and build a list of "chunks" — each chunk is either
-  // (a) a single thinking/text item, or
-  // (b) a sequence of consecutive toolCall/toolResult/image parts.
-  type Chunk =
-    | { kind: "single"; part: Part }
-    | { kind: "tools"; parts: Part[] };
-  const chunks: Chunk[] = [];
-  let i = 0;
-  while (i < parts.length) {
-    const p = parts[i];
-    if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") {
-      const toolChunk: Part[] = [];
-      while (
-        i < parts.length &&
-        (parts[i].type === "toolCall" ||
-          parts[i].type === "toolResult" ||
-          parts[i].type === "image")
-      ) {
-        toolChunk.push(parts[i]);
-        i++;
-      }
-      chunks.push({ kind: "tools", parts: toolChunk });
-    } else if (p.type === "thinking") {
-      if (p.text.trim()) chunks.push({ kind: "single", part: p });
-      i++;
-    } else {
-      // text
-      chunks.push({ kind: "single", part: p });
-      i++;
-    }
-  }
-
-  // Split chunks into inference (wrapped in the fold) and text (rendered
-  // outside the fold, always visible). The fold still auto-collapses on
-  // `isStreaming=false` so the user can hide long CoT / tool chains, but
-  // the agent's reply text stays visible below the fold so it is never
-  // hidden inside a collapsed step.
-  type SingleChunk = { kind: "single"; part: Part };
-  const isThinkingChunk = (c: Chunk): c is SingleChunk =>
-    c.kind === "single" && c.part.type === "thinking";
-  const isTextChunk = (c: Chunk): c is SingleChunk =>
-    c.kind === "single" && c.part.type === "text";
-  const inferenceChunks = chunks.filter(
-    (c) => c.kind === "tools" || isThinkingChunk(c),
-  );
-  const textChunks = chunks.filter(isTextChunk);
-
   return (
     <>
       {inferenceChunks.length > 0 && (
@@ -417,35 +420,27 @@ export function MessageParts({
           />
           {open && (
             <div className="flex flex-col gap-2 border-t border-gray-100 pt-2">
-              {inferenceChunks.map((chunk, i) => {
-                if (chunk.kind === "tools") {
-                  return (
-                    <ToolGroup
-                      key={`tg-${i}`}
-                      parts={chunk.parts}
-                      cardStates={cardStates}
-                      onCardSubmit={onCardSubmit}
-                      onCardCancel={onCardCancel}
-                    />
-                  );
-                }
-                const p = chunk.part;
-                if (p.type === "thinking") {
-                  return <ThinkingItem key={`th-${i}`} part={p} />;
-                }
-                return null;
-              })}
+              {inferenceChunks.map((chunk, i) =>
+                chunk.kind === "tools" ? (
+                  <ToolGroup
+                    key={`tg-${i}`}
+                    parts={chunk.parts}
+                    cardStates={cardStates}
+                    onCardSubmit={onCardSubmit}
+                    onCardCancel={onCardCancel}
+                  />
+                ) : (
+                  // chunk.kind === "thinking" — inferenceChunks excludes text
+                  <ThinkingItem key={`th-${i}`} part={chunk.part} />
+                ),
+              )}
             </div>
           )}
         </div>
       )}
-      {textChunks.map((chunk, i) => {
-        const p = chunk.part;
-        if (p.type === "text") {
-          return <TextItem key={`tx-${i}`} part={p} />;
-        }
-        return null;
-      })}
+      {textChunks.map((chunk, i) => (
+        <TextItem key={`tx-${i}`} part={chunk.part} />
+      ))}
     </>
   );
 }
