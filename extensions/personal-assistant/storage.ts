@@ -356,8 +356,11 @@ export class MemoryIndex {
 		}
 		if (filter?.isLatestOnly !== false) whereClauses.push("is_latest = 1");
 		if (filter?.archived === true) {
-			// explicit override — include archived too
-			whereClauses.length = 0;
+			// explicit override — include archived + superseded too
+			// (preserve the `WHERE <something> AND` prefix; empty
+			// `whereClauses` would produce `WHERE  AND v.embedding MATCH ?`,
+			// which is a SQL syntax error)
+			return { whereSql: "1=1", prefixParams };
 		}
 		return { whereSql: whereClauses.join(" AND "), prefixParams };
 	}
