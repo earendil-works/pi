@@ -105,20 +105,43 @@ function readEmbedding(body: unknown): number[] | null {
 }
 
 /**
+ * Embeddable text version. Bump this when `buildEmbeddableText` changes its
+ * field set — `storage.init()` migrates any atoms whose stored version is
+ * lower by re-running `buildEmbeddableText` + `embedText` for them. This is
+ * how the "title+summary+content+tags → title+summary+tags" drop propagates
+ * to existing DBs without a manual re-index step.
+ *
+ * History:
+ *   1 — initial schema: title + summary + content + tags (Decision 6 full-text)
+ *   2 — drop `content`: title + summary + tags only. Recall is discovery-only
+ *       (results carry `atom.id`, full content is fetched by `memory_get`),
+ *       so embedding the long content is redundant and dilutes the signal —
+ *       a single incidental mention of a token in the verbose content shifts
+ *       the embedding direction and creates cross-concept false positives
+ *       during recall. Title + summary + tags are the curated "index card"
+ *       the agent uses to decide whether to fetch the full content; this is
+ *       the right granularity for dense retrieval.
+ */
+export const CURRENT_EMBEDDABLE_TEXT_VERSION = 2;
+
+/**
  * Build the text we send to the embedder for a given atom.
  *
- * Concatenates title, summary, content, and tags (space-joined) with "\n\n"
- * separators. Empty / whitespace-only fields are skipped so a thin atom with
- * no tags still produces a clean single-segment string. This is the full-text
- * path per Decision 6 — title-only embedding was rejected because it hurts
- * recall (especially for "process" atoms whose title is short and whose
- * content is the real signal).
+ * Concatenates title, summary, and tags (space-joined) with "\n\n"
+ * separators. `content` is deliberately NOT included — recall is
+ * discovery-only (results carry `atom.id`; full content is fetched by
+ * `memory_get` on demand), and embedding the long content dilutes the
+ * curated title/summary/tags signal with incidental token mentions. See
+ * `CURRENT_EMBEDDABLE_TEXT_VERSION = 2` for the design rationale.
+ *
+ * Empty / whitespace-only fields are skipped so a thin atom with no tags
+ * still produces a clean single-segment string.
  */
 export function buildEmbeddableText(
-	atom: Pick<MemoryAtom, "title" | "summary" | "content" | "tags">,
+	atom: Pick<MemoryAtom, "title" | "summary" | "tags">,
 ): string {
 	const tagText = atom.tags.join(" ");
-	return [atom.title, atom.summary, atom.content, tagText]
+	return [atom.title, atom.summary, tagText]
 		.filter((s) => s && s.trim().length > 0)
 		.join("\n\n");
 }

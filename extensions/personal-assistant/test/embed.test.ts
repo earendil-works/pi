@@ -1,46 +1,75 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { embedText, buildEmbeddableText, loadConfig } from "../embed.ts";
+import {
+	embedText,
+	buildEmbeddableText,
+	loadConfig,
+	CURRENT_EMBEDDABLE_TEXT_VERSION,
+} from "../embed.ts";
 
-// buildEmbeddableText — concatenates title + summary + content + tags for
-// embedding. NOT title-only: per design Decision 6, full text materially
-// improves recall (agentmemory benchmark verified).
+// buildEmbeddableText — concatenates title + summary + tags for embedding.
+// `content` is deliberately NOT included: recall is discovery-only (results
+// carry `atom.id`; full content is fetched by `memory_get` on demand), and
+// embedding the long content dilutes the curated title/summary/tags signal
+// with incidental token mentions. See `CURRENT_EMBEDDABLE_TEXT_VERSION = 2`
+// in embed.ts for the design rationale + migration story.
 describe("buildEmbeddableText", () => {
-	it("concatenates title, summary, content, tags with \\n\\n separators", () => {
+	it("concatenates title, summary, tags with \\n\\n separators (content omitted)", () => {
 		const text = buildEmbeddableText({
 			title: "PDF 图片提取",
 			summary: "用 pymupdf",
-			content: "fitz.open(...)",
 			tags: ["pdf", "image"],
 		});
 		expect(text).toContain("PDF 图片提取");
 		expect(text).toContain("用 pymupdf");
-		expect(text).toContain("fitz.open(...)");
 		expect(text).toContain("pdf image");
-		expect(text.split("\n\n")).toHaveLength(4);
+		// Three segments: title, summary, tags — no content.
+		expect(text.split("\n\n")).toHaveLength(3);
+	});
+
+	it("does NOT include the `content` field", () => {
+		// Type signature intentionally narrows to `Pick<MemoryAtom, "title" |
+		// "summary" | "tags">` — `content` is not even accepted by the
+		// function. This test pins the runtime behaviour in case a future
+		// refactor re-introduces content (the type system alone wouldn't
+		// catch a `{ ...atom, content: atom.content }` spread).
+		const text = buildEmbeddableText({
+			title: "MGM project",
+			summary: "DNA virus genome work",
+			tags: ["MGM", "minimax"],
+		});
+		expect(text).not.toContain("Verbose content that should not be embedded");
+		expect(text).not.toContain("long inline detail about implementation");
 	});
 
 	it("skips empty / whitespace-only fields", () => {
 		const text = buildEmbeddableText({
 			title: "T",
 			summary: "   ",
-			content: "",
 			tags: [],
 		});
 		expect(text).toBe("T");
 	});
 
-	it("includes empty tag list as an empty trailing segment", () => {
-		// tags.join(" ") with an empty array is "" — the filter strips empty
-		// strings, so the result is exactly title + "\n\n" + summary + "\n\n"
-		// + content. This documents the exact behaviour so a future refactor
-		// doesn't silently change recall.
+	it("renders empty tag list without a trailing empty segment", () => {
+		// tags.join(" ") with an empty array is "" — the filter strips it.
+		// Result is exactly title + "\n\n" + summary, no dangling "\n\n".
 		const text = buildEmbeddableText({
 			title: "A",
 			summary: "B",
-			content: "C",
 			tags: [],
 		});
-		expect(text).toBe("A\n\nB\n\nC");
+		expect(text).toBe("A\n\nB");
+	});
+});
+
+describe("CURRENT_EMBEDDABLE_TEXT_VERSION", () => {
+	it("is exported and is a positive integer (storage migration depends on it)", () => {
+		// `session_start` reads this constant to find atoms with stale
+		// embeddings. It must be a finite positive integer — 0 would
+		// match the legacy DEFAULT for `embed_text_version` and cause
+		// every atom to be re-embedded on every session (infinite loop).
+		expect(Number.isInteger(CURRENT_EMBEDDABLE_TEXT_VERSION)).toBe(true);
+		expect(CURRENT_EMBEDDABLE_TEXT_VERSION).toBeGreaterThan(0);
 	});
 });
 

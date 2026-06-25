@@ -91,7 +91,10 @@ export interface PersonalAssistantConfig {
 		recall?: {
 			/** RRF smoothing constant k. Default: 60 (industry standard). */
 			rrfK?: number;
-			/** Min fused RRF score to keep an atom. Default: 1/rrfK ≈ 0.0167. */
+			/** Min fused RRF score to keep an atom. Default: 1/(rrfK+1) ≈ 0.0164.
+			 *  Lets single-channel rank=0 hits through (= threshold) and filters
+			 *  rank≥1. Use `1/rrfK ≈ 0.0167` for strict mode (single-channel
+			 *  rank=0 also filtered). */
 			recallThreshold?: number;
 		};
 		autoDecay?: boolean;
@@ -526,10 +529,27 @@ export function registerMemory(pi: ExtensionAPI): void {
 		}
 	}
 
-	// session_start — throttled decay run. The first session in a process
-	// always runs decay; subsequent session_start events within the
-	// DECAY_INTERVAL_MS window skip. Errors are swallowed so a broken
-	// decay path does not block startup.
+	/**
+	 * Normalize decay config from settings.json, accepting both
+	 * camelCase (baseDecay, archiveThreshold) and snake_case
+	 * (base_decay, archive_threshold) key names.
+	 */
+	function normalizeDecayConfig(raw: Record<string, unknown> | undefined): {
+		baseDecay?: number;
+		archiveThreshold?: number;
+	} {
+		if (!raw) return {};
+		return {
+			baseDecay: (raw.baseDecay as number | undefined) ?? (raw.base_decay as number | undefined),
+			archiveThreshold:
+				(raw.archiveThreshold as number | undefined) ?? (raw.archive_threshold as number | undefined),
+		};
+	}
+
+	// session_start — throttled decay run + missing-vector backfill.
+	// The first session in a process always runs maintenance; subsequent
+	// session_start events within the DECAY_INTERVAL_MS window skip.
+	// Errors are swallowed so a broken path does not block startup.
 	pi.on("session_start", async (_event, _ctx) => {
 		const now = Date.now();
 		if (now - lastDecayAt < DECAY_INTERVAL_MS) return;
@@ -541,7 +561,74 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
-			await runDecay(index);
+			// 1. Decay (strength → archive)
+			await runDecay(index, normalizeDecayConfig(config.memory?.decay as Record<string, unknown> | undefined));
+
+			// 2. Missing-vector backfill: atoms that existed before the
+			//    vector schema was added have no memory_vectors row and
+			//    are invisible to the dense channel. Generate embeddings
+			//    and insert them. One-shot per atom — once inserted, no
+			//    future overhead.
+			const missingIds = index.listMissingVectorIds();
+			if (missingIds.length > 0) {
+				const { embedText, buildEmbeddableText } = await import("./embed.ts");
+				for (const id of missingIds) {
+					try {
+						const atom = index.getAtom(id);
+						if (!atom) continue;
+						const text = buildEmbeddableText(atom);
+						const embedding = await embedText(text);
+						if (embedding) {
+							index.upsertVector(id, embedding);
+						}
+					} catch {
+						// Swallow per-atom failures so one broken atom
+						// does not block the rest.
+					}
+				}
+			}
+
+			// 3. Embeddable-text version migration: atoms whose stored
+			//    `embed_text_version` is below the current version have
+			//    embeddings generated from an older `buildEmbeddableText`
+			//    (e.g. v1 included `content`, v2 dropped it). Re-embed
+			//    them with the current text set so the dense channel
+			//    direction reflects the current design. Incremental —
+			//    only stale atoms are returned, so once the migration
+			//    completes subsequent session_starts no-op on this step.
+			const { CURRENT_EMBEDDABLE_TEXT_VERSION } = await import("./embed.ts");
+			const staleIds = index.listStaleEmbedVersionIds(
+				CURRENT_EMBEDDABLE_TEXT_VERSION,
+			);
+			if (staleIds.length > 0) {
+				const { embedText, buildEmbeddableText } = await import("./embed.ts");
+				let migrated = 0;
+				for (const id of staleIds) {
+					try {
+						const atom = index.getAtom(id);
+						if (!atom) continue;
+						const text = buildEmbeddableText(atom);
+						const embedding = await embedText(text);
+						if (embedding) {
+							index.upsertVector(id, embedding);
+							index.setEmbedTextVersion(
+								id,
+								CURRENT_EMBEDDABLE_TEXT_VERSION,
+							);
+							migrated++;
+						}
+					} catch {
+						// Swallow per-atom failures so one broken atom
+						// does not block the rest. The atom stays at its
+						// stale version and is retried on the next session.
+					}
+				}
+				if (migrated > 0) {
+					console.log(
+						`[memory] re-embedded ${migrated} atom(s) for embed_text_version=${CURRENT_EMBEDDABLE_TEXT_VERSION}`,
+					);
+				}
+			}
 		} finally {
 			index.close();
 		}

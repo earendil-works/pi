@@ -79,7 +79,22 @@ const sqliteVec = requireCJS("sqlite-vec") as SqliteVecModule;
  * has no business depending on `this`.
  */
 export function escapeFtsQuery(s: string): string {
-	return s.replace(/["()*:\[\],]/g, " ").trim();
+	// Whitelist approach: keep ONLY ASCII letters, digits, underscore,
+	// and whitespace. Strip everything else (FTS5 syntax chars, file-path
+	// separators, CJK, fullwidth punctuation). The corpus's unicode61
+	// tokenizer with `remove_diacritics 2` indexes the same character
+	// class (alphanumeric + underscore ASCII + whitespace as separator),
+	// so this is the exact symmetric form for MATCH. CJK is stripped
+	// because unicode61 groups consecutive CJK into one token, making
+	// per-character MATCH fail; the dense channel handles semantic
+	// Chinese search. Enumerating the bad chars is fragile — `;`, `!`,
+	// `?`, `&`, `|`, `~`, `@`, `#`, `$`, `%`, `=`, `<`, `>`, `'`, `\`,
+	// `{`, `}`, `^` (when wrapped) all individually raise "fts5:
+	// syntax error" depending on context, and adding them one at a
+	// time as user queries surface them is an endless whack-a-mole.
+	// Inverting the regex to "keep only the safe class" is a closed
+	// enumeration of the corpus's unicode61 token alphabet.
+	return s.replace(/[^a-zA-Z0-9_\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -124,6 +139,25 @@ export class MemoryIndex {
 		// for Phase 2.2.
 		this.db.exec(SCHEMA_SQL);
 
+		// Column-level migration for `embed_text_version` (added when the
+		// embeddable text dropped `content`). New DBs get the column via
+		// SCHEMA_SQL with DEFAULT 0. Existing DBs that pre-date the column
+		// need an ALTER TABLE — `CREATE TABLE IF NOT EXISTS` is a no-op when
+		// the table already exists, so the column would otherwise be
+		// missing on upgraded DBs and every query referencing it would fail.
+		// Idempotent: re-running this on a DB that already has the column
+		// is a no-op.
+		const hasEmbedTextVersion = (
+			this.db
+				.prepare("PRAGMA table_info(memory_index)")
+				.all() as { name: string }[]
+		).some((c) => c.name === "embed_text_version");
+		if (!hasEmbedTextVersion) {
+			this.db.exec(
+				"ALTER TABLE memory_index ADD COLUMN embed_text_version INTEGER NOT NULL DEFAULT 0",
+			);
+		}
+
 		// FTS5 mirror — build if missing, repair if broken.
 		//
 		// On a fresh DB, memory_fts does not yet exist: we create it via
@@ -164,14 +198,36 @@ export class MemoryIndex {
 				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
 			)
 			.get();
-		// Skip the rebuild when the table is already present and healthy
-		// (no NULL-id rows). The `||` short-circuits the count query when
-		// the table is missing, avoiding a "no such table" error.
-		const needsRebuild =
-			!ftsExists ||
-			(this.db
-				.prepare(`SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL`)
-				.get() as { c: number }).c > 0;
+		// Rebuild when:
+		//   1. memory_fts is missing (cold-start / fresh upgrade), or
+		//   2. it has NULL-id rows (broken contentless-mode artifact), or
+		//   3. row count doesn't match active atoms (missing rows from
+		//      an earlier incomplete backfill — e.g. a prior init ran
+		//      before FTS5 support was fully rolled out).
+		// Must check active count FIRST so the `||` short-circuit works
+		// when the table is missing (SELECT on memory_fts would error).
+		const activeCount = (
+			this.db
+				.prepare(
+					"SELECT COUNT(*) AS c FROM memory_index WHERE archived = 0 AND is_latest = 1",
+				)
+				.get() as { c: number }
+		).c;
+		const ftsNullCount = ftsExists
+			? (
+					this.db
+						.prepare(`SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL`)
+						.get() as { c: number }
+				).c
+			: 0;
+		const ftsCount = ftsExists
+			? (
+					this.db
+						.prepare(`SELECT COUNT(*) AS c FROM memory_fts`)
+						.get() as { c: number }
+				).c
+			: 0;
+		const needsRebuild = !ftsExists || ftsNullCount > 0 || activeCount > ftsCount;
 		if (!needsRebuild) return;
 
 		this.db.transaction(() => {
@@ -330,6 +386,29 @@ export class MemoryIndex {
 	 */
 	getActiveAtomsByType(type: MemoryAtomType): MemoryAtom[] {
 		return this.getActiveAtoms(type);
+	}
+
+	/**
+	 * List atoms with flexible archive filtering. Default (no filter) returns
+	 * only active + latest atoms. Pass `archived: true` for only archived rows,
+	 * `archived: "all"` for both active and archived.
+	 */
+	listAtoms(filter?: { archived?: boolean | "all"; type?: MemoryAtomType }): MemoryAtom[] {
+		const where: string[] = [];
+		const params: unknown[] = [];
+		if (filter?.type) {
+			where.push("type = ?");
+			params.push(filter.type);
+		}
+		if (filter?.archived === true) {
+			where.push("archived = 1");
+		} else if (filter?.archived !== "all") {
+			where.push("archived = 0");
+		}
+		where.push("is_latest = 1");
+		const sql = `SELECT * FROM memory_index${where.length > 0 ? " WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC`;
+		const rows = this.db.prepare(sql).all(...params) as MemoryAtomRow[];
+		return rows.map(rowToAtom);
 	}
 
 	// -------------------------------------------------------------------------
@@ -740,13 +819,31 @@ export class MemoryIndex {
 	}
 
 	/**
-	 * Restore an archived atom to active state. Intentionally NOT wrapped
-	 * in a transaction with an audit row — the design says unarchive
-	 * should not recompute or audit, since the original archived audit
-	 * row is still present and sufficient to reconstruct history.
+	 * Restore an archived atom to active state. Re-inserts the
+	 * memory_fts row (which was deleted on archive) so BM25 search
+	 * recovers immediately — the init() count-based repair would
+	 * eventually fix it, but a manual unarchive should be instantly
+	 * visible in search results.
+	 *
+	 * Intentionally NOT wrapped in a transaction with an audit row —
+	 * the design says unarchive should not recompute or audit, since
+	 * the original archived audit row is still present and sufficient
+	 * to reconstruct history.
 	 */
 	markUnarchived(id: string): void {
-		this.db.prepare(`UPDATE memory_index SET archived = 0 WHERE id = ?`).run(id);
+		this.db.transaction(() => {
+			this.db.prepare(`UPDATE memory_index SET archived = 0 WHERE id = ?`).run(id);
+			// Re-insert the FTS5 row so BM25 search immediately surfaces
+			// the atom. INSERT OR REPLACE handles the edge case where the
+			// row somehow still exists.
+			this.db
+				.prepare(
+					`INSERT OR REPLACE INTO memory_fts(id, title, summary, content, tags)
+					 SELECT id, title, summary, content, COALESCE(tags, '')
+					 FROM memory_index WHERE id = ?`,
+				)
+				.run(id);
+		})();
 	}
 
 	/**
@@ -756,6 +853,78 @@ export class MemoryIndex {
 	 */
 	deleteVector(id: string): void {
 		this.db.prepare(`DELETE FROM memory_vectors WHERE id = ?`).run(id);
+	}
+
+	/**
+	 * Return ids of all active + latest atoms that lack a vector in
+	 * `memory_vectors`. These atoms cannot participate in the dense
+	 * channel and will be invisible to hybrid recall unless BM25
+	 * independently matches them.
+	 */
+	listMissingVectorIds(): string[] {
+		const rows = this.db
+			.prepare(
+				`SELECT i.id FROM memory_index i
+				 LEFT JOIN memory_vectors v ON i.id = v.id
+				 WHERE v.id IS NULL AND i.is_latest = 1 AND i.archived = 0`,
+			)
+			.all() as Array<{ id: string }>;
+		return rows.map((r) => r.id);
+	}
+
+	/**
+	 * Return ids of all active + latest atoms whose stored `embed_text_version`
+	 * is below `currentVersion`. These atoms have embeddings generated from a
+	 * previous version of `buildEmbeddableText` (e.g. v1 included `content`,
+	 * v2 dropped it) and need to be re-embedded to participate in recall with
+	 * the current dense channel — otherwise the embedding direction is
+	 * anchored to the old text set and can produce stale / cross-concept
+	 * false positives (see `embed.ts:buildEmbeddableText` rationale).
+	 *
+	 * Used by the `session_start` maintenance hook to migrate existing atoms
+	 * after a schema bump. The migration is incremental: only atoms whose
+	 * stored version is stale are returned, so subsequent session_starts are
+	 * no-ops once the migration completes.
+	 */
+	listStaleEmbedVersionIds(currentVersion: number): string[] {
+		const rows = this.db
+			.prepare(
+				`SELECT id FROM memory_index
+				 WHERE embed_text_version < ?
+				   AND is_latest = 1
+				   AND archived = 0`,
+			)
+			.all(currentVersion) as Array<{ id: string }>;
+		return rows.map((r) => r.id);
+	}
+
+	/**
+	 * Update the stored embed_text_version for an atom. Called by the
+	 * `session_start` migration hook after re-embedding succeeds so the atom
+	 * is no longer returned by `listStaleEmbedVersionIds` on the next run.
+	 */
+	setEmbedTextVersion(id: string, version: number): void {
+		this.db
+			.prepare(`UPDATE memory_index SET embed_text_version = ? WHERE id = ?`)
+			.run(version, id);
+	}
+
+	/**
+	 * Insert (or replace) the embedding vector for a single atom.
+	 * Caller is responsible for generating the embedding — storage
+	 * never touches the embedder.
+	 *
+	 * Note: `memory_vectors` is a sqlite-vec `vec0` virtual table which
+	 * does NOT honour `INSERT OR REPLACE` — the unique constraint fires
+	 * instead of deleting the prior row. We do an explicit DELETE before
+	 * the INSERT to keep the call site simple (`upsertVector(id, embedding)`
+	 * is idempotent regardless of whether a row already exists).
+	 */
+	upsertVector(id: string, embedding: number[]): void {
+		this.db.prepare(`DELETE FROM memory_vectors WHERE id = ?`).run(id);
+		this.db
+			.prepare(`INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)`)
+			.run(id, new Float32Array(embedding));
 	}
 }
 
@@ -785,7 +954,8 @@ CREATE TABLE IF NOT EXISTS memory_index (
   updated_at INTEGER NOT NULL,
   last_access INTEGER,
   content_fingerprint TEXT NOT NULL,
-  source_session TEXT
+  source_session TEXT,
+  embed_text_version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_active_fingerprint

@@ -91,8 +91,8 @@ export interface RecallResult {
 	 * every recall channel that returned the atom (dense vector rank and/or
 	 * BM25 keyword rank). Populated only when the recall used RRF fusion,
 	 * which is the default for hybrid recall. Always ≥ 0; the typical order
-	 * of magnitude is `~1 / rrfK` (≈0.0167 with rrfK=60) for a single top-rank
-	 * hit and grows when the same atom appears in multiple channels.
+	 * of magnitude is `~1 / (rrfK + 1)` (≈0.0164 with rrfK=60) for a single
+	 * top-rank hit and grows when the same atom appears in multiple channels.
 	 *
 	 * For non-hybrid callers (rare; mostly tests) this field is set equal to
 	 * the rank-weighted `score`, preserving the prior single-channel contract.

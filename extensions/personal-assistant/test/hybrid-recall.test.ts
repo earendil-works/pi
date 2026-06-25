@@ -617,16 +617,13 @@ describe("recallAtoms hybrid recall", () => {
 		expect(Array.isArray(results)).toBe(true);
 	});
 
-	// (j) `recallThreshold` (default = 1/rrfK) filters low-fused-score atoms.
-	// A single-channel BM25-only rank-0 hit has rrfScore = 1/(rrfK+1) ≈
-	// 0.01639, which is strictly below the default threshold 1/rrfK ≈
-	// 0.01667 — this is the design's "宁可漏召不可误召" conservative stance.
-	// With `recallThreshold: 0` the gate is bypassed and the BM25-only
-	// rescue surfaces. Test (b) above verifies the bypass path; THIS test
-	// pins the strict default behaviour — the same atom is rejected without
-	// the bypass opt-in. Both directions must hold: gate filters when on,
-	// gate does not filter when off.
-	it("recallThreshold filters low-fused-score atoms (strict default)", async () => {
+	// (j) `recallThreshold` default = 1/(rrfK+1) lets single-channel rank=0
+	// BM25-only hits through (= threshold, `>=` passes). Rank≥1 single-
+	// channel contributions are filtered. Strict mode (`recallThreshold:
+	// 1/rrfK`) additionally filters rank=0 single-channel — that is the
+	// opt-in "宁可漏召不可误召" path. The dense cosine floor (0.65) handles
+	// dense-noise separately and is NOT what this gate tests.
+	it("recallThreshold default lets single-channel rank=0 through; strict mode filters it", async () => {
 		installControlledMock();
 		// Single-channel BM25-only hit. The controlled V_COS_04 embedding
 		// shares no index-0/1 mass with the charBag of "amplicon data
@@ -639,22 +636,75 @@ describe("recallAtoms hybrid recall", () => {
 		});
 		await insertAtom(a, index);
 
-		// Default recallThreshold = 1/rrfK = 0.01667 blocks the rank-0
-		// BM25-only contribution (1/61 ≈ 0.01639 < 0.01667).
+		// DEFAULT gate (1/(rrfK+1) ≈ 0.01639) lets the rank-0 BM25-only
+		// contribution through (rrfScore = 1/(60+0+1) = 1/61 ≈ 0.01639,
+		// equals threshold and `>=` passes). This is the industry-standard
+		// RRF rank-only stance and the MGM-style keyword rescue contract.
 		const resultsDefault = await recallAtoms(index, "amplicon data backflow");
-		expect(resultsDefault.find((r) => r.atom.id === a.id)).toBeUndefined();
+		const hitDefault = resultsDefault.find((r) => r.atom.id === a.id);
+		expect(hitDefault).toBeDefined();
+		expect(hitDefault?.rrfScore).toBeCloseTo(1 / 61, 4);
 
-		// With `recallThreshold: 0`, the gate is bypassed and the BM25-only
-		// rescue surfaces. Same bypass used by tests (b) / (c) / (e) — what
-		// distinguishes THIS test is the assertion that the strict default
-		// ALSO rejects the same atom.
+		// STRICT mode (1/rrfK ≈ 0.01667) filters the same rank-0 single-
+		// channel contribution (1/61 < 1/60). This is the opt-in strict
+		// stance — users with weakened embeddings or who want maximum
+		// precision over recall can dial this in via config.
+		const resultsStrict = await recallAtoms(index, "amplicon data backflow", {
+			recallThreshold: 1 / 60,
+			threshold: 0, // bypass dense floor to isolate the gate
+		});
+		expect(resultsStrict.find((r) => r.atom.id === a.id)).toBeUndefined();
+
+		// `recallThreshold: 0` disables the gate entirely — same atom
+		// surfaces regardless. This is the test/dev escape hatch.
 		const resultsBypass = await recallAtoms(index, "amplicon data backflow", {
 			recallThreshold: 0,
 		});
 		expect(resultsBypass.find((r) => r.atom.id === a.id)).toBeDefined();
 	});
 
-	// (k) Per-type round-robin after RRF fusion strictly interleaves
+	// (k) Long mixed-query (file path + CJK description) does NOT split into
+// many segments. The user's full prompt — e.g. a delivery-check message
+// quoting a long file path plus a Chinese description — typically
+// produces 15-30 segments after `splitQuery`. OR-merging that many
+// dilutes specificity (recall probability 1-(1-p)ᴺ). `recallAtoms`
+// caps the segment split at 3; anything longer is treated as a single
+// segment. Combined with `escapeFtsQuery` stripping `-` / `.` (FTS5
+// query-parser trap: `IDENT-IDENT` → "no such column: IDENT"), a long
+// query reaches the BM25 channel with project ID + file path tokens
+// individually searchable, AND the dense channel with the full string
+// embedded for semantic matching.
+it("long mixed query does NOT split into segments; BM25 strips - and . cleanly", async () => {
+	const a = sampleAtom({
+		type: "fact",
+		title: "X101SC26052587 delivery note",
+		content: "Sample X101SC26052587-Z01-J002 from rnaVirus pipeline run.",
+	});
+	await insertAtom(a, index);
+
+	const LONG_Q =
+		"/TJPROJ8/GB_MICRO/PJ_GB/meta/5006/X101SC260410257-Z01-F001.metagenomics.20260617/data_release/result-X101SC260410257-Z01-F001 这个是个DNA病毒基因组的实际结果. 下面3,4,5部分的结果介绍(PDF)写的非常糟糕. 这里你可以先把PDF回传到本 地, 然后读取一下, 然后制";
+
+	// Sanity: splitQuery would explode this into 30+ segments, but
+	// recallAtoms caps the split at 3 and treats the whole string as a
+	// single segment. The single-segment run must complete without
+	// throwing (the previous version raised "no such column: Z01" from
+	// FTS5 because `-` in `X101SC260410257-Z01-F001` was interpreted as
+	// an implicit column-filter separator).
+	const results = await recallAtoms(index, LONG_Q);
+	expect(results).toBeDefined();
+	expect(Array.isArray(results)).toBe(true);
+	// BM25 now sees the project ID prefix `X101SC2604` after stripping
+	// `-` and `.`, and dense sees the full string — the matching atom
+	// (sharing the X101SC2605 project family via subword overlap) is
+	// expected to surface via the dense channel above the cosine floor
+	// OR via BM25 via the shared `X101SC2605` partial-token match (FTS5
+	// unicode61 tokenizes the same on insert and query).
+	const matched = results.find((r) => r.atom.id === a.id);
+	expect(matched).toBeDefined();
+});
+
+	// (l) Per-type round-robin after RRF fusion strictly interleaves
 	// adjacent types. The existing test (g) above only checks that both
 	// types are PRESENT in the final list — a "preserves type diversity"
 	// assertion that a non-interleaving implementation could still pass

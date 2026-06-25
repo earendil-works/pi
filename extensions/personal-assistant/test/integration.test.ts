@@ -22,8 +22,10 @@ function mockEmbed(text: string, dims = 1024): number[] {
 
 vi.mock("../embed.ts", () => ({
 	embedText: async (text: string) => mockEmbed(text),
-	buildEmbeddableText: (atom: any) => `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${(atom.tags || []).join(" ")}`,
+	buildEmbeddableText: (atom: any) =>
+		`${atom.title}\n\n${atom.summary}\n\n${(atom.tags || []).join(" ")}`,
 	loadConfig: () => ({}),
+	CURRENT_EMBEDDABLE_TEXT_VERSION: 2,
 }));
 
 describe("integration: extraction → embedding → recall", () => {
