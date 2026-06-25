@@ -62,7 +62,7 @@ const DEFAULT_TOP_K = 3;
  *  rationale behind 0.65 vs bge-m3's noise floor. Note: this is the
  *  dense-ONLY floor — it filters cosine hits from the dense channel before
  *  RRF fusion. The fused-recall gate is `recallThreshold` below. */
-const DEFAULT_THRESHOLD = 0.65;
+const DEFAULT_DENSE_COSINE_FLOOR = 0.65;
 
 /** Multiplicative boost weights for the score formula (Decision 8). */
 const STRENGTH_WEIGHT = 0.3;
@@ -189,7 +189,7 @@ export async function recallAtoms(
 ): Promise<RecallResult[]> {
 	const rrfK = options.rrfK ?? DEFAULT_RRF_K;
 	const recallThreshold = options.recallThreshold ?? DEFAULT_RECALL_THRESHOLD;
-	const cosineFloor = options.threshold ?? DEFAULT_THRESHOLD;
+	const cosineFloor = options.threshold ?? DEFAULT_DENSE_COSINE_FLOOR;
 
 	// Embed query for the dense channel. null means ollama is down —
 	// dense channel collapses to [] but BM25 still runs (graceful
