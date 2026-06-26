@@ -1,7 +1,7 @@
 # Verification Checklist: memory-pipeline-hardening
 
 > 生成时间: 2026-06-26 | 审查者必须逐项验证并附可追溯证据
-> 状态: [ ] 待验证 | [x] 通过 | [!] 失败(必须修复或记录偏差)
+> 状态符号: 待验证 / 通过(x) / 失败(!)
 
 ## 场景验证 (Scenarios)
 
