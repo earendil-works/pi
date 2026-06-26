@@ -151,7 +151,7 @@
   - **验证**: 任务命令运行该 describe 全绿。
   - **依赖**: 2.2
 
-- [ ] 5.3 **新增 SSE 集成测试**
+- [x] 5.3 **新增 SSE 集成测试**
   - **文件**: `packages/webui/server/test/memory-routes.test.ts` (Modify)
   - **内容**: 新增 `describe("GET /api/memory/:id/stream", ...)` 块:
     - 客户端 A 用 fetch + readable stream 解析 SSE
@@ -187,11 +187,11 @@
 
 ## 6. 最终验证
 
-- [ ] 6.1 **全量 type check + lint**
+- [x] 6.1 **全量 type check + lint**
   - **验证**: `npm run check`(全输出,无 tail)
   - **依赖**: 5.1, 5.2, 5.3, 5.4
 
-- [ ] 6.2 **server 集成测试**
+- [x] 6.2 **server 集成测试**
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts`(全绿)
   - **依赖**: 5.1, 5.2, 5.3
 
