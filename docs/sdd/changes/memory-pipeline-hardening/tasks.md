@@ -48,7 +48,7 @@
   - **验证**: `npm run check` 通过(类型层);既有测试不破坏。
   - **依赖**: 无
 
-- [ ] 1.5 **`extraction.executeItem` 重构调用 `supersedeIfSimilar`**
+- [x] 1.5 **`extraction.executeItem` 重构调用 `supersedeIfSimilar`**
   - **文件**: `extensions/personal-assistant/extraction.ts` (Modify, lines 122-162)
   - **内容**: 删除 `executeItem` 里 fingerprint + cosine dedup 的内联代码,改为调用 `dedup.ts` 的 `supersedeIfSimilar`。`executeItem` 保留 fingerprint check(extract 流程专属,cheap first),把 `embedding ?? new Array(1024).fill(0)` 之后的部分挪到新 helper。既有 `extraction.test.ts` / `run-extraction.test.ts` / `lefse-regression.test.ts` 全部必须继续通过。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts test/run-extraction.test.ts test/lefse-regression.test.ts` 全绿
@@ -66,7 +66,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "If-Match"` 全绿(测试文件由 5.1 任务添加)
   - **依赖**: 无(路由本身改动)
 
-- [ ] 2.2 **PATCH route 接入 supersede + tag 归一化**
+- [x] 2.2 **PATCH route 接入 supersede + tag 归一化**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify, lines 216-288)
   - **内容**: 在 If-Match 校验通过后、写入 DB 前:
     1. 调 `normalizeTags(req.body.tags ?? existing.tags, deps.settings?.memory?.tagAliases)` 得到合并后的 tags,覆盖 `mergedTags` 那行(当前 memory.ts:234-236 是 Set union,要改为先归一化再 union)
@@ -81,7 +81,7 @@
   - **验证**: 单测验证订阅表的 add/del/广播;集成测试由 5.3 任务添加。
   - **依赖**: 无
 
-- [ ] 2.4 **新增 SSE 路由 `GET /api/memory/:id/stream`**
+- [x] 2.4 **新增 SSE 路由 `GET /api/memory/:id/stream`**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: 新增 `registerStreamMemoryById(app, deps)`,handler 内 `res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders?.()`,然后调 `subscribeAtom(req.params.id, res)`,handler 末尾不 `res.end()`(保持连接)。在 `mountMemoryRoutes` 里挂载。
   - **验证**: `curl -N http://127.0.0.1:<port>/api/memory/<id>/stream` 收到 `: connected\n\n`,后续 PATCH 触发 `event: atom\n\n`。
@@ -107,7 +107,7 @@
   - **验证**: `cd packages/webui/web && node ../../../node_modules/vitest/dist/cli.js --run test/MemoryDetail.test.ts` 全绿(组件测试需更新 mock)
   - **依赖**: 无(独立)
 
-- [ ] 3.3 **`useAutoSave` 的 PATCH 调用带 `If-Match`**
+- [x] 3.3 **`useAutoSave` 的 PATCH 调用带 `If-Match`**
   - **文件**: `packages/webui/web/src/components/memory/MemoryDetail.tsx` (Modify, lines 80-89)
   - **内容**: `useAutoSave` 的 `onSave` callback 里 `api.memory.patch(id, diff)` 改为 `api.memory.patch(id, diff, {ifMatch: latest.version})`。catch 块识别 `err.status === 409` 时显示"远端已更新,正在刷新"并触发一次手动 `fetchAtom()` 拉新版本。
   - **验证**: MemoryDetail 测试覆盖 409 分支。
@@ -131,7 +131,7 @@
 
 ## 5. 测试与验证
 
-- [ ] 5.1 **新增 CAS 测试到 `memory-routes.test.ts`**
+- [x] 5.1 **新增 CAS 测试到 `memory-routes.test.ts`**
   - **文件**: `packages/webui/server/test/memory-routes.test.ts` (Modify)
   - **内容**: 在文件末尾新增 `describe("PATCH /api/memory/:id CAS", ...)` 块,覆盖:
     - 缺 `If-Match` 头 → 400 `{error:"missing_if_match"}`
@@ -161,25 +161,25 @@
   - **验证**: 任务命令运行该 describe 全绿。
   - **依赖**: 2.5
 
-- [ ] 5.4 **既有 `hybrid-recall.test.ts` score 断言调整**
+- [x] 5.4 **既有 `hybrid-recall.test.ts` score 断言调整**
   - **文件**: `extensions/personal-assistant/test/hybrid-recall.test.ts` (Modify)
   - **内容**: 既有断言形如 `expect(r.score).toBeCloseTo(0.85, 2)` 需要在 `tagOverlap=0, freshness ≈ 0.0001`(刚更新的 atom)时仍然近似。`freshness` 默认半衰期 30 天,刚更新的 atom `freshness ≈ exp(-0/30) = 1.0` → `0.05 * 1.0 = 0.05` 的额外贡献。**调整策略**: 测试 fixture 用 `updated_at = Date.now()`(默认新),所以 score 会增加 ~0.05。需把所有 score 断言的 `toBeCloseTo` 值上调 0.05(或者把 fixture 的 `updated_at` 设为 1 年前使 freshness ≈ 0 保留原值)。决定:加 fixture helper `makeAtomWithFreshness(updatedAt)` 控制测试场景。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/hybrid-recall.test.ts` 全绿。
   - **依赖**: 1.2
 
-- [ ] 5.5 **新单元测试 `tag-alias.test.ts`**
+- [x] 5.5 **新单元测试 `tag-alias.test.ts`**
   - **文件**: `extensions/personal-assistant/test/tag-alias.test.ts` (Create)
   - **内容**: 覆盖:输入 `[" 代码规范 ", "", "code-style"]` → `["代码规范","code-style"]`;alias map `{"代码规范":"code-style","coding-rule":"code-style"}` 输入 `["代码规范","coding-rule","code-style"]` → `["code-style"]`;aliases=undefined / null / 非对象时跳过折叠。
   - **验证**: 见 1.1 任务命令。
   - **依赖**: 1.1
 
-- [ ] 5.6 **新单元测试 `scoring.test.ts`**
+- [x] 5.6 **新单元测试 `scoring.test.ts`**
   - **文件**: `extensions/personal-assistant/test/scoring.test.ts` (Create)
   - **内容**: `computeTagOverlap`:query="code-style eslint",tags=["code-style","test"] → 0.5;tags=[] → 0;query="",tags=["x"] → 0;alias 折叠覆盖。`computeFreshness(updatedAt, now=Date.now())`:updatedAt=now → exp(0) = 1.0;updatedAt=30 天前 → exp(-1) ≈ 0.368;updatedAt=90 天前 → exp(-3) ≈ 0.050。
   - **验证**: 见 1.2 任务命令。
   - **依赖**: 1.2
 
-- [ ] 5.7 **新单元测试 `dedup.test.ts`**
+- [x] 5.7 **新单元测试 `dedup.test.ts`**
   - **文件**: `extensions/personal-assistant/test/dedup.test.ts` (Create)
   - **内容**: 用 charBag mock embedder,两个 atom 内容 cosine=1.0 时 supersede;cosine=0.5 时 create;embedding=null 时 create(graceful degradation);threshold 参数覆盖。
   - **验证**: 见 1.3 任务命令。
