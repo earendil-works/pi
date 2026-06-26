@@ -24,7 +24,7 @@
 //     fast enough that v2 doesn't need a shared connection; the explicit
 //     close in the finally block keeps WAL checkpoints small.
 
-import express from "express";
+import express, { type RequestHandler } from "express";
 import path from "node:path";
 import { MemoryIndex } from "../../../../extensions/personal-assistant/storage.ts";
 import {
@@ -48,6 +48,24 @@ import type { PersonalAssistantConfig, MemoryAtom } from "@earendil-works/pi-per
  */
 const subscribers = new Map<string, Set<express.Response>>();
 
+const MAX_SUBSCRIBERS_PER_ATOM = 50;
+const MAX_TOTAL_SUBSCRIBERS = 10_000;
+
+let errorCounter = 0;
+function nextErrorId(): string {
+	return `err_${Date.now().toString(36)}_${(++errorCounter).toString(36)}`;
+}
+
+function internalErrorResponse(
+	req: express.Request,
+	res: express.Response,
+	err: unknown,
+): void {
+	const id = nextErrorId();
+	console.error(`[memory ${id}] ${req.method} ${req.path}:`, err);
+	res.status(500).json({ error: "internal_error", id });
+}
+
 /**
  * Test-only handle that exposes the current subscriber count for a given
  * atom id. Lets the SSE integration test verify that `res.on('close')`
@@ -66,10 +84,26 @@ export const SSE_HEARTBEAT_MS = 25_000;
  * 客户端断开(res close)时自动从订阅表移除。
  */
 export function subscribeAtom(atomId: string, res: express.Response): void {
+	let total = 0;
+	for (const s of subscribers.values()) total += s.size;
+	if (total >= MAX_TOTAL_SUBSCRIBERS) {
+		try {
+			res.write(`event: error\ndata: ${JSON.stringify({ error: "server_busy" })}\n\n`);
+		} catch { /* ignore broken pipes */ }
+		res.end();
+		return;
+	}
 	let set = subscribers.get(atomId);
 	if (!set) {
 		set = new Set();
 		subscribers.set(atomId, set);
+	}
+	if (set.size >= MAX_SUBSCRIBERS_PER_ATOM) {
+		try {
+			res.write(`event: error\ndata: ${JSON.stringify({ error: "atom_congested" })}\n\n`);
+		} catch { /* ignore broken pipes */ }
+		res.end();
+		return;
 	}
 	set.add(res);
 	try { res.write(": connected\n\n"); } catch { /* ignore broken pipes */ }
@@ -117,6 +151,19 @@ export interface MemoryDeps {
 	settings: PersonalAssistantConfig;
 	callLlm: (prompt: string) => Promise<string>;
 	embedTimeoutMs?: number;
+}
+
+/**
+ * Optional rate-limit middlewares passed into mountMemoryRoutes. Wired by
+ * createApp (packages/webui/server/index.ts) so the same mountMemoryRoutes
+ * call works with or without rate limits (tests skip them, prod applies
+ * them). The fields are intentionally split by endpoint class so the
+ * cheaper limiter can be assigned per route without each register
+ * function needing to know the policy.
+ */
+export interface MemoryRateLimiters {
+	writeLimiter?: RequestHandler;
+	extractLimiter?: RequestHandler;
 }
 
 /**
@@ -177,7 +224,7 @@ export function registerGetMemoryById(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -233,7 +280,7 @@ export function registerGetMemoryList(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -331,15 +378,28 @@ interface PatchBody {
  * Merge a PATCH body into the existing atom. Each field follows its own
  * rule:
  *   - `content`    — replaced only when a non-empty string is supplied;
- *                    empty / missing preserves the old value.
- *   - `tags`       — merged through `normalizeTags` (trim → empty filter →
+ *                    empty / missing preserves the old value. Rejects
+ *                    content starting with `---` because the on-disk
+ *                    .md parser (file-store.normalizeMarkdown) would
+ *                    consume the user's content as the file's
+ *                    frontmatter, hashing it as frontmatter rather
+ *                    than body and leaving the stored
+ *                    content_fingerprint mismatched on read.
+ *   - `tags`       — non-string entries in the incoming array are
+ *                    dropped before merging so a malformed body
+ *                    (e.g. `[123, "ok"]`) does not TypeError inside
+ *                    `normalizeTags`. The merged set is then run
+ *                    through `normalizeTags` (trim → empty filter →
  *                    alias fold → Set dedup) using the runtime
- *                    `tagAliases` map, then de-duplicated against the
+ *                    `tagAliases` map and de-duplicated against the
  *                    existing list. Omitted (vs `[]`) preserves the
  *                    existing tags verbatim — re-normalizing on every
  *                    PATCH would silently rewrite un-normalized legacy
  *                    tags once the user adds a `tagAliases` map.
- *   - `importance` — clamped to [0, 1]; missing preserves the old value.
+ *   - `importance` — clamped to [0, 1]; missing preserves the old
+ *                    value. NaN / Infinity fall back to the existing
+ *                    value because `Math.max(0, Math.min(1, NaN))`
+ *                    would otherwise store NaN in the DB.
  *
  * Side effects: stamps `updated_at = Date.now()` and recomputes
  * `content_fingerprint` (sync sha256 + slice).
@@ -348,38 +408,54 @@ function mergePatchBody(
 	existing: MemoryAtom,
 	body: PatchBody | undefined,
 	tagAliases: Record<string, string> | undefined,
-): MemoryAtom {
-	const mergedContent =
-		typeof body?.content === "string" && body.content.length > 0
-			? body.content
-			: existing.content;
-	const mergedTags = Array.isArray(body?.tags)
-		? [
-				...existing.tags,
-				...normalizeTags(body.tags, tagAliases).filter(
-					(t) => !existing.tags.includes(t),
-				),
-			]
-		: existing.tags;
+): { atom: MemoryAtom; conflict?: { status: 400; body: Record<string, unknown> } } {
+	let mergedContent: string = existing.content;
+	if (typeof body?.content === "string" && body.content.length > 0) {
+		if (body.content.startsWith("---")) {
+			return {
+				atom: existing,
+				conflict: {
+					status: 400,
+					body: { error: "content_cannot_start_with_frontmatter" },
+				},
+			};
+		}
+		mergedContent = body.content;
+	}
+	const incomingTags = Array.isArray(body?.tags)
+		? body.tags.filter((t): t is string => typeof t === "string")
+		: null;
+	const mergedTags =
+		incomingTags === null
+			? existing.tags
+			: [
+					...existing.tags,
+					...normalizeTags(incomingTags, tagAliases).filter(
+						(t) => !existing.tags.includes(t),
+					),
+				];
 	const mergedImportance =
-		typeof body?.importance === "number"
+		typeof body?.importance === "number" && Number.isFinite(body.importance)
 			? Math.max(0, Math.min(1, body.importance))
 			: existing.importance;
 	return {
-		...existing,
-		content: mergedContent,
-		tags: mergedTags,
-		importance: mergedImportance,
-		updated_at: Date.now(),
-		content_fingerprint: computeFingerprint(mergedContent),
+		atom: {
+			...existing,
+			content: mergedContent,
+			tags: mergedTags,
+			importance: mergedImportance,
+			updated_at: Date.now(),
+			content_fingerprint: computeFingerprint(mergedContent),
+		},
 	};
 }
 
 export function registerPatchMemory(
 	app: express.Express,
 	deps: MemoryDeps,
+	middleware: RequestHandler<{ id: string }> = (_req, _res, next) => next(),
 ): void {
-	app.patch("/api/memory/:id", async (req, res) => {
+	app.patch("/api/memory/:id", middleware, async (req, res) => {
 		try {
 			const index = await createIndex(deps.dbPath);
 			try {
@@ -406,11 +482,18 @@ export function registerPatchMemory(
 				// Build the merged atom (content / tags / importance from
 				// the body, fingerprint recomputed, updated_at stamped).
 				// Pure function — no DB / file / SSE side effects.
-				const mergedAtom = mergePatchBody(
+				const mergeResult = mergePatchBody(
 					existing,
 					req.body,
 					deps.settings?.memory?.tagAliases,
 				);
+				if (mergeResult.conflict) {
+					res
+						.status(mergeResult.conflict.status)
+						.json(mergeResult.conflict.body);
+					return;
+				}
+				const mergedAtom = mergeResult.atom;
 
 				// Compute embedding OUTSIDE any DB transaction. The await
 				// on ollama could take seconds; we do not want to hold
@@ -484,7 +567,7 @@ export function registerPatchMemory(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -507,8 +590,9 @@ export function registerPatchMemory(
 export function registerStreamMemoryById(
 	app: express.Express,
 	deps: MemoryDeps,
+	middleware: RequestHandler<{ id: string }> = (_req, _res, next) => next(),
 ): void {
-	app.get("/api/memory/:id/stream", async (req, res) => {
+	app.get("/api/memory/:id/stream", middleware, async (req, res) => {
 		try {
 			const index = await createIndex(deps.dbPath);
 			try {
@@ -527,7 +611,7 @@ export function registerStreamMemoryById(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -597,7 +681,7 @@ export function registerGetMemoryStats(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(_req, res, err);
 		}
 	});
 }
@@ -671,7 +755,7 @@ export function registerPostArchive(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -753,7 +837,7 @@ export function registerPostSearch(
 				index.close();
 			}
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -797,8 +881,9 @@ export function registerPostSearch(
 export function registerPostExtract(
 	app: express.Express,
 	deps: MemoryDeps,
+	middleware: RequestHandler = (_req, _res, next) => next(),
 ): void {
-	app.post("/api/memory/extract", express.json(), async (req, res) => {
+	app.post("/api/memory/extract", middleware, express.json(), async (req, res) => {
 		try {
 			const { messages } = req.body || {};
 			if (!Array.isArray(messages) || messages.length === 0) {
@@ -851,7 +936,7 @@ export function registerPostExtract(
 				skippedIds: result.skipped.map((a) => a.id),
 			});
 		} catch (err) {
-			res.status(500).json({ error: (err as Error).message });
+			internalErrorResponse(req, res, err);
 		}
 	});
 }
@@ -864,16 +949,19 @@ export function registerPostExtract(
 export function mountMemoryRoutes(
 	app: express.Express,
 	deps: MemoryDeps,
+	limiters: MemoryRateLimiters = {},
 ): void {
+	const writeLimiter = limiters.writeLimiter;
+	const extractLimiter = limiters.extractLimiter;
 	// Static paths MUST register before /:id to avoid Express route shadowing
 	registerGetMemoryList(app, deps);
 	registerGetMemoryStats(app, deps);
 	registerPostSearch(app, deps);
-	registerPostExtract(app, deps);
+	registerPostExtract(app, deps, extractLimiter);
 	// Parameterized paths last.
 	registerGetMemoryById(app, deps);
-	registerPatchMemory(app, deps);
+	registerPatchMemory(app, deps, writeLimiter);
 	registerPostArchive(app, deps);
 	// Register /:id/stream after /:id for consistent route-list ordering in mountMemoryRoutes.
-	registerStreamMemoryById(app, deps);
+	registerStreamMemoryById(app, deps, writeLimiter);
 }

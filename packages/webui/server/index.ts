@@ -12,6 +12,7 @@ import { mountSessionsRoutes } from "./routes/sessions";
 import { mountMemoryRoutes } from "./routes/memory";
 import { mountModelsRoutes } from "./routes/models";
 import { mountSettingsRoutes } from "./routes/settings";
+import { rateLimit } from "./middleware/rate-limit";
 import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
@@ -331,12 +332,25 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   // personal-assistant extension's DEFAULT_DB_PATH / DEFAULT_ATOMS_DIR
   // (extensions/personal-assistant/memory.ts). Env-var overrides keep
   // tests and CI off the user's real ~/.pi/agent/memory tree.
-  mountMemoryRoutes(app, {
-    dbPath: process.env.PI_MEMORY_DB_PATH ?? join(homedir(), ".pi", "agent", "memory", "memory.db"),
-    atomsDir: process.env.PI_MEMORY_ATOMS_DIR ?? join(homedir(), ".pi", "agent", "memory", "atoms"),
-    settings,
-    callLlm,
-  });
+  //
+  // Rate limiting (Task 5.2, security hardening): PATCH and SSE share
+  // the writeLimiter (60/min/IP) because both can be spammed cheaply,
+  // and extract gets a tighter extractLimiter (10/min/IP) because it
+  // calls an external LLM. Limiters are local-only — the in-memory
+  // bucket resets on server restart, which is acceptable for a
+  // loopback dev API.
+  const writeLimiter = rateLimit({ windowMs: 60_000, max: 60 });
+  const extractLimiter = rateLimit({ windowMs: 60_000, max: 10 });
+  mountMemoryRoutes(
+    app,
+    {
+      dbPath: process.env.PI_MEMORY_DB_PATH ?? join(homedir(), ".pi", "agent", "memory", "memory.db"),
+      atomsDir: process.env.PI_MEMORY_ATOMS_DIR ?? join(homedir(), ".pi", "agent", "memory", "atoms"),
+      settings,
+      callLlm,
+    },
+    { writeLimiter, extractLimiter },
+  );
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   // Search for the web build in both dev and bundled contexts. In dev (tsx

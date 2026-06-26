@@ -23,6 +23,7 @@ import {
 	registerPostArchive,
 	type MemoryDeps,
 } from "../routes/memory.ts";
+import { rateLimit } from "../middleware/rate-limit.ts";
 
 // Module-level vi.mock so memory.ts's runtime `await import(...embed.ts)`
 // path inside recallAtoms hits the deterministic char-bag implementation
@@ -579,6 +580,72 @@ describe("PATCH /api/memory/:id", () => {
 			headers: { "If-Match": "1" },
 		});
 		expect(res.body.version).toBe(2);
+	});
+
+	// M1 (Task 5.2): `Math.max(0, Math.min(1, NaN))` returns NaN, which would
+	// be stored in the DB and break recall (cosine distance is undefined for
+	// NaN vectors). Importance must fall back to the existing value when the
+	// body sends NaN / Infinity, instead of silently corrupting the row.
+	it("falls back to existing importance when body.importance is NaN (M1)", async () => {
+		await insertAtom({ importance: 0.42 });
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { importance: Number.NaN },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		expect(typeof res.body.importance).toBe("number");
+		expect(Number.isFinite(res.body.importance as number)).toBe(true);
+		expect(res.body.importance).toBe(0.42);
+	});
+
+	it("falls back to existing importance when body.importance is Infinity (M1)", async () => {
+		await insertAtom({ importance: 0.3 });
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { importance: Number.POSITIVE_INFINITY },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		expect(Number.isFinite(res.body.importance as number)).toBe(true);
+		expect(res.body.importance).toBe(0.3);
+	});
+
+	// M2 (Task 5.2): content starting with `---` is the YAML frontmatter
+	// marker; the on-disk parser (file-store.normalizeMarkdown) would treat
+	// the user's body as frontmatter, hash it as frontmatter, and on read
+	// return content="" because the stored content_fingerprint would not
+	// match. The route rejects such bodies with 400 instead.
+	it("rejects content starting with --- (frontmatter marker) with 400 (M2)", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { content: "---\nnot really frontmatter" },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.error).toBe("content_cannot_start_with_frontmatter");
+	});
+
+	// M4 (Task 5.2): normalizeTags calls `.trim()` on each entry; passing a
+	// number would TypeError, leaking as 500. The route now filters to
+	// strings before normalizing. Because the body's `tags` array is the
+	// presence signal for "the user wants to merge tags", passing an array
+	// whose only valid entries are already-existing strings means the
+	// resulting tags are equivalent to existing — but the route must not
+	// throw, and the existing tags must remain intact.
+	it("preserves existing tags when PATCH body.tags has non-string entries (M4)", async () => {
+		await insertAtom({ tags: ["alpha", "beta"] });
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: [123, null, "alpha"] },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		const tags = res.body.tags as string[];
+		// "alpha" and "beta" preserved verbatim; the number/null entries
+		// were dropped silently rather than TypeError-throwing into 500.
+		expect(tags).toEqual(["alpha", "beta"]);
 	});
 });
 
@@ -2032,5 +2099,133 @@ describe("mountMemoryRoutes includes stream", () => {
 			}
 		}
 		expect(routes).toContain("GET /api/memory/:id/stream");
+	});
+});
+
+// Tests for the per-IP rate limiting applied to write paths (Task 5.2 H2).
+// Verifies the contract from packages/webui/server/index.ts:
+//   - PATCH /api/memory/:id shares the 60/min/IP writeLimiter
+//   - The 61st request inside the window returns 429 with rate_limited
+//
+// Each test creates its own rateLimit() instance with a per-test keyFn so
+// the bucket map is isolated — sharing a single limiter across tests would
+// carry the count forward and break the assertion. The limiter used here
+// has the same shape as the production one (windowMs + max); only the key
+// function differs to keep tests deterministic.
+describe("PATCH rate limit (Task 5.2 H2)", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-ratelimit-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			embedTimeoutMs: 200,
+		};
+		// Per-test keyFn — guarantees each test gets a fresh bucket map
+		// (rateLimit() captures its own Map<key, Bucket> on construction).
+		const testKey = `rl-${Math.random().toString(36).slice(2)}`;
+		const writeLimiter = rateLimit({
+			windowMs: 60_000,
+			max: 60,
+			keyFn: () => testKey,
+		});
+		mountMemoryRoutes(app, deps, { writeLimiter });
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-rl",
+				type: "rule",
+				title: "T",
+				content: "Original content",
+				summary: "S",
+				tags: ["existing"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-rl-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	const patchOnce = async (
+		ifMatch: string,
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") throw new Error("no address");
+		const res = await fetch(`http://127.0.0.1:${addr.port}/api/memory/atom-rl`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json", "If-Match": ifMatch },
+			body: JSON.stringify({ tags: ["x"] }),
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	it("returns 429 after 60 PATCH requests within the window", async () => {
+		await insertAtom();
+		// First 60 must succeed. Each PATCH bumps the version, so we pass
+		// the matching If-Match token to the body — the version increments
+		// after each successful call so the next call uses v+1.
+		for (let i = 1; i <= 60; i++) {
+			const res = await patchOnce(String(i));
+			expect(res.status).toBe(200);
+		}
+		// The 61st must be rejected with the rate-limit contract.
+		const blocked = await patchOnce("61");
+		expect(blocked.status).toBe(429);
+		expect(blocked.body.error).toBe("rate_limited");
+		expect(typeof blocked.body.retryAfterMs).toBe("number");
 	});
 });
