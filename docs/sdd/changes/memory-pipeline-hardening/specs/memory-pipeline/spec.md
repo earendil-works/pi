@@ -66,7 +66,7 @@
 ### Requirement: 检索 score 公式含 tag_overlap 和 freshness
 `recallAtoms` SHALL 在既有 `score = cosine × (1 + 0.3 × strength + 0.2 × importance)` 主项之上加法叠加 `tag_overlap` 和 `freshness_decay` 两维度:
 - `tagOverlap = computeTagOverlap(query, atom.tags)`,query 经 alias 折叠后与 atom.tags 求交集大小 / 归一化 token 数
-- `freshness = exp(-daysSinceUpdate / 30)`,importance 因子 MVP 固定 0.5
+- `freshness = exp(-daysSinceUpdate / 30)`(固定半衰期 30 天,无 importance 因子)
 - 默认权重 `tagOverlapWeight = 0.10`, `freshnessWeight = 0.05`,均可由 `settings.memory.{tagOverlapWeight, freshnessWeight}` 覆盖
 - `RecallResult` SHALL 新增字段 `tagOverlap: number` 和 `freshness: number` 用于 debug
 

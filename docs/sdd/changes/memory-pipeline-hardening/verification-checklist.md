@@ -21,6 +21,11 @@
 | S12 | 极冷 atom 的 freshness_decay 接近 0 | scenarios.md:L71 | unit-test | `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/scoring.test.ts -t "freshness 365 天"` | computeFreshness 返回 ≈ 0 | [ ] |
 | S13 | SSE 心跳保活 | scenarios.md:L76 | unit-test | `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "心跳"` | 25s 周期收到 `: ping\n\n` | [ ] |
 | S14 | 同时 PATCH 同一 atom 的并发竞争 | scenarios.md:L81 | unit-test | `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "并发 PATCH"` | 后到的 client 收到 409 | [ ] |
+| S15 | 客户端缺 If-Match,返回 400 | spec.md ADDED #1 派生 | unit-test | `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "缺 If-Match"` | 响应 400,body.error="missing_if_match" | [ ] |
+| S16 | If-Match 为 `*` 表示 any-version | spec.md ADDED #1 派生 | unit-test | `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "If-Match 通配"` | 响应 200,正常 updateAtom | [ ] |
+| S17 | 自然语言 query 不受 tag_overlap 影响 | spec.md ADDED #4 派生 | unit-test | `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/scoring.test.ts -t "自然语言 query"` | 所有 atom 的 tagOverlap=0,排序由 cosine × (1+0.3s+0.2i) + 0.05×freshness 主导 | [ ] |
+| S18 | 客户端首次加载拉一次完整 atom | spec.md MODIFIED #1 派生 | unit-test | `cd packages/webui/web && node ../../../node_modules/vitest/dist/cli.js --run test/MemoryDetail.test.ts -t "首次加载"` | mount 后调 1 次 `GET /api/memory/:id`,不轮询 | [ ] |
+| S19 | 完整 PATCH 流程(7 步顺序) | spec.md MODIFIED #2 派生 | unit-test | `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "完整流程"` | v5 → v6,tags 归一合并,supersede 跳过,atom 文件写入,SSE 广播 | [ ] |
 
 ## 需求验证 (Requirements)
 
@@ -41,6 +46,6 @@
 
 ## 通过标准
 
-- [ ] 所有场景 (S1-S14) 状态为 [x],每项有可追溯证据
+- [ ] 所有场景 (S1-S19) 状态为 [x],每项有可追溯证据
 - [ ] 所有需求 (R1-R12) 状态为 [x],每项有源码行号
 - [ ] 证据格式: R 类 → 源码文件:行号,S 类 → curl 输出/screenshot/测试结果

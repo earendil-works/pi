@@ -51,7 +51,7 @@ Memory 管线当前在 webui 写入路径下有 5 个真实痛点(经源码逐�
 **Decision**: 新公式
 ```ts
 const tagOverlap = computeTagOverlap(query, atom.tags);    // 0..1,query 经 alias 归一
-const freshness = computeFreshness(atom.updated_at);       // 0..1
+const freshness = computeFreshness(atom.updated_at);       // 0..1,exp(-days/30),固定 30 天半衰期
 score = cosine × (1 + 0.3strength + 0.2importance)
       + wTag × tagOverlap
       + wFreshness × freshness;

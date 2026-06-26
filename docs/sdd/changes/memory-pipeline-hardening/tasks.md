@@ -27,7 +27,7 @@
 
 - [ ] 1.2 **`computeTagOverlap` + `computeFreshness` 实现**
   - **文件**: `extensions/personal-assistant/scoring.ts` (Create)
-  - **内容**: `computeTagOverlap(query: string, tags: string[], queryAliases?: Record<string,string>): number` —— split query 到 token,经 alias 折叠,求与 tags 集合交集大小 / 归一化查询 token 数,范围 [0,1]。`computeFreshness(updatedAt: number, now?: number): number` —— `Math.exp(-daysSinceUpdate / (30 * max(0.1, importance)))`,但 importance 不在签名里,所以默认 0.5(可由 settings 覆盖);常数 30 天作为半衰期基准。**注**: 当前函数签名只接 `updatedAt`,importance 通过 settings 配置或上层传入;MVP 用固定 importance=0.5 计算。
+  - **内容**: `computeTagOverlap(query: string, tags: string[], queryAliases?: Record<string,string>): number` —— split query 到 token,经 alias 折叠,求与 tags 集合交集大小 / 归一化查询 token 数,范围 [0,1]。`computeFreshness(updatedAt: number, now?: number): number` —— `Math.exp(-daysSinceUpdate / 30)`,**固定半衰期 30 天,无 importance 因子**(与 spec R4 一致);`now` 用于测试注入固定时间。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/scoring.test.ts` 全绿
   - **依赖**: 无
 
@@ -113,12 +113,11 @@
   - **验证**: MemoryDetail 测试覆盖 409 分支。
   - **依赖**: 3.1
 
-- [ ] 3.4 **`MemoryEditor.tsx` tag 输入归一化**
+- [ ] 3.4 **`MemoryEditor.tsx` 仅显示原始输入,归一化在 server 端**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Modify, lines 62-68)
-  - **内容**: `handleTagsChange` 改为调用 client-side `normalizeTags(splitTags, tagAliases)` —— 需要从 server 拉 `settings.memory.tagAliases`(通过 `api.settings.get()`)。新加 `useEffect` 在 mount 时拉取并存 state。`handleTagsChange` 比较归一化前后的数组,差异通过 `reportChange({tags: normalized})` 上报。注意:不能每键击都打 server,所以归一化只在 onBlur 或 Enter 时做(已有 `reportChange` 是 debounce 进入 useAutoSave)。简化方案:`handleTagsChange` 立即调 normalizeTags,reportChange 推迟 500ms,避免输入过程中重排。
-  - **验证**: MemoryEditor 测试覆盖归一化。
-  - **依赖**: 1.1(server 端 helper 已有,client 端需要引入 `normalizeTags` 同源代码 —— 放到 `packages/webui/web/src/lib/` 或直接 server-side PATCH 时归一化、UI 仅显示)。**MVP 决定**: 归一化只在 server 端做(PATCH 时),UI 显示原子原始值,**简化 3.4 任务**: 仅在 onBlur 时调用 `normalizeTags` 显示归一后预览,实际写入依赖 server 端归一化。
-  - **依赖**: 1.1
+  - **内容**: **MVP 决定: tag 归一化只在 server 端 PATCH 时执行**(`memory.ts:patch-handler` 调用 `normalizeTags`)。`MemoryEditor.tsx` 不修改,保持 `tagsText` 显示用户原始输入,server 返回的 atom.tags(已归一)在响应中回来后通过 `setLocalAtom` 覆盖 `localAtom.tags`。`MemoryEditor.tsx` 不引入 client-side `normalizeTags`,避免 server/extension/webui 三方代码重复(extension 的 tag-alias.ts 不能被 webui 引用,跨包)。
+  - **验证**: 现有 MemoryEditor 测试保持全绿;不需要新测试。
+  - **依赖**: 2.2(等 server 端归一化生效)
 
 ## 4. SSE 路由集成
 
@@ -176,7 +175,7 @@
 
 - [ ] 5.6 **新单元测试 `scoring.test.ts`**
   - **文件**: `extensions/personal-assistant/test/scoring.test.ts` (Create)
-  - **内容**: `computeTagOverlap`:query="code-style eslint",tags=["code-style","test"] → 0.5;tags=[] → 0;query="",tags=["x"] → 0;alias 折叠覆盖。`computeFreshness`:updatedAt=now → 1.0;updatedAt=30 天前 → exp(-1) ≈ 0.368;updatedAt=90 天前 → exp(-3) ≈ 0.050。
+  - **内容**: `computeTagOverlap`:query="code-style eslint",tags=["code-style","test"] → 0.5;tags=[] → 0;query="",tags=["x"] → 0;alias 折叠覆盖。`computeFreshness(updatedAt, now=Date.now())`:updatedAt=now → exp(0) = 1.0;updatedAt=30 天前 → exp(-1) ≈ 0.368;updatedAt=90 天前 → exp(-3) ≈ 0.050。
   - **验证**: 见 1.2 任务命令。
   - **依赖**: 1.2
 
