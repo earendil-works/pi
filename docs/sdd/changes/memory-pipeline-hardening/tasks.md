@@ -87,7 +87,7 @@
   - **验证**: `curl -N http://127.0.0.1:<port>/api/memory/<id>/stream` 收到 `: connected\n\n`,后续 PATCH 触发 `event: atom\n\n`。
   - **依赖**: 2.3
 
-- [ ] 2.5 **PATCH 触发 broadcast**
+- [x] 2.5 **PATCH 触发 broadcast**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify, PATCH handler)
   - **内容**: 在 PATCH handler 末尾(`res.json(mergedAtom)` 之前),若 status=create 或 supersede 都调 `broadcastAtomUpdate(mergedAtom)`。如果 atom 被 superseded(返回 status="supersede"),`broadcastAtomUpdate` 用新 atom;旧 atom 的 version 不变所以不推送。
   - **验证**: SSE 集成测试(5.3 任务)。
@@ -113,7 +113,7 @@
   - **验证**: MemoryDetail 测试覆盖 409 分支。
   - **依赖**: 3.1
 
-- [ ] 3.4 **`MemoryEditor.tsx` 仅显示原始输入,归一化在 server 端**
+- [x] 3.4 **`MemoryEditor.tsx` 仅显示原始输入,归一化在 server 端**
   - **文件**: `packages/webui/web/src/components/memory/MemoryEditor.tsx` (Modify, lines 62-68)
   - **内容**: **MVP 决定: tag 归一化只在 server 端 PATCH 时执行**(`memory.ts:patch-handler` 调用 `normalizeTags`)。`MemoryEditor.tsx` 不修改,保持 `tagsText` 显示用户原始输入,server 返回的 atom.tags(已归一)在响应中回来后通过 `setLocalAtom` 覆盖 `localAtom.tags`。`MemoryEditor.tsx` 不引入 client-side `normalizeTags`,避免 server/extension/webui 三方代码重复(extension 的 tag-alias.ts 不能被 webui 引用,跨包)。
   - **验证**: 现有 MemoryEditor 测试保持全绿;不需要新测试。
@@ -123,7 +123,7 @@
 
 (已经在 2.4 / 2.5 完成,这里汇总验证)
 
-- [ ] 4.1 **SSE 路由挂载到 `mountMemoryRoutes`**
+- [x] 4.1 **SSE 路由挂载到 `mountMemoryRoutes`**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify, mountMemoryRoutes)
   - **内容**: 在 `mountMemoryRoutes` 函数里 `registerStreamMemoryById(app, deps);` 调用,确保 SSE 路由被挂载。
   - **验证**: `curl -N http://127.0.0.1:<port>/api/memory/<id>/stream` 返回 `text/event-stream` 响应。
@@ -141,7 +141,7 @@
   - **验证**: 任务命令运行该 describe 全绿。
   - **依赖**: 2.1
 
-- [ ] 5.2 **新增 supersede + tag 归一化测试到 `memory-routes.test.ts`**
+- [x] 5.2 **新增 supersede + tag 归一化测试到 `memory-routes.test.ts`**
   - **文件**: `packages/webui/server/test/memory-routes.test.ts` (Modify)
   - **内容**: 新增 `describe("PATCH /api/memory/:id dedup", ...)` 块:
     - 先 PATCH 创建 atom A(cosine baseline)
@@ -195,7 +195,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts`(全绿)
   - **依赖**: 5.1, 5.2, 5.3
 
-- [ ] 6.3 **extension 单元测试**
+- [x] 6.3 **extension 单元测试**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/`(全绿,含既有 extraction/search/decay/storage 测试)
   - **依赖**: 1.5, 5.4, 5.5, 5.6, 5.7
 
