@@ -99,6 +99,23 @@ export interface PersonalAssistantConfig {
 		};
 		autoDecay?: boolean;
 		autoExtract?: boolean;
+		/**
+		 * tag alias mapping for `normalizeTags` (extensions/personal-assistant/tag-alias.ts).
+		 * Applied dual-side:写入侧折叠 atom.tags,查询侧折叠 query tokens。
+		 * 缺失/非对象时 graceful degradation(仅 Set 去重)。
+		 * 通过 PATCH /api/settings 修改,运行时立即生效。
+		 */
+		tagAliases?: Record<string, string>;
+		/**
+		 * score 公式中 `tag_overlap` 项的权重。默认 0.10。
+		 * 主项 `cosine × (1 + 0.3strength + 0.2importance)` 不受此配置影响。
+		 */
+		tagOverlapWeight?: number;
+		/**
+		 * score 公式中 `freshness_decay` 项的权重。默认 0.05。
+		 * freshness = exp(-daysSinceUpdate / 30),固定 30 天半衰期。
+		 */
+		freshnessWeight?: number;
 	};
 }
 
