@@ -17,7 +17,7 @@ import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
 import { attachWsHandler } from "./ws/handler";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { Model } from "@earendil-works/pi-ai";
 import { type PersonalAssistantConfig, DEFAULT_DB_PATH, DEFAULT_ATOMS_DIR } from "@earendil-works/pi-personal-assistant";
 
