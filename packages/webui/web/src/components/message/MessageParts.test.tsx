@@ -277,10 +277,11 @@ describe("MessageParts", () => {
       expect(container.textContent).toContain("read");
     });
 
-    // Spec scenario: isStreaming 切到 false 后 fold 折叠, 但 text (在
-    // fold 外) 仍可见. 这是新行为: fold 只包 inference (thinking + tool),
-    // 任何 text part 渲染在 fold 外, 永远可见.
-    it("auto-collapses the fold when isStreaming transitions from true to false, but keeps text visible (outside fold)", () => {
+    // Spec scenario: isStreaming 切到 false 后 fold 折叠, 但 turn 的
+    // 最终结论 text (在 fold 外) 仍可见. 这是核心 spec: fold 只包
+    // inference (thinking + tool + 中间推理 text), 仅有最后一条 text
+    // part (turn 的最终结论) 渲染在 fold 外, 永远可见.
+    it("auto-collapses the fold when isStreaming transitions from true to false, but keeps the final text visible (outside fold)", () => {
       const parts: Part[] = [
         { type: "thinking", text: "thinking-co" },
         { type: "text", text: "visible-reply" },
@@ -297,7 +298,8 @@ describe("MessageParts", () => {
       );
       // Fold auto-collapses → thinking button NOT in DOM
       expect(screen.queryByText(/思考/)).toBeNull();
-      // But text "visible-reply" remains visible (it lives outside the fold)
+      // The text "visible-reply" is the LAST (and only) text part → the
+      // turn's final conclusion → renders OUTSIDE the fold, stays visible
       expect(screen.getByText("visible-reply")).toBeTruthy();
     });
 
@@ -365,12 +367,11 @@ describe("MessageParts", () => {
 
     // Spec scenario: 多 text 中间夹 tool 顺序保留. Five parts in mixed
     // order: thinking, text(interim), toolCall, toolResult, text(final).
-    // With the new "text outside fold" behavior, all text parts
-    // (interim + final) are extracted and rendered as a group AFTER the
-    // fold. So the visible DOM order is: fold contents (thinking +
-    // ToolGroup with bash+file1) then text contents (interim-text +
-    // final-text). The fold still auto-collapses; text stays visible.
-    it("preserves the order of 5 mixed parts (inference in fold, text after fold)", () => {
+    // The fold contains inference + intermediate text (everything except
+    // the LAST text part); only `final-text` renders OUTSIDE the fold as
+    // the turn's final conclusion. Visible DOM order with isStreaming=true:
+    // fold (思考 → interim-text → ToolGroup [bash, file1]) → final-text.
+    it("preserves the order of 5 mixed parts (intermediate text inside fold, final text outside)", () => {
       const parts: Part[] = [
         { type: "thinking", text: "thinking-co-t" },
         { type: "text", text: "interim-text" },
@@ -385,14 +386,15 @@ describe("MessageParts", () => {
       expect(screen.getByText("bash")).toBeTruthy();
       expect(screen.getByText("file1")).toBeTruthy();
       expect(screen.getByText("final-text")).toBeTruthy();
-      // Order verification: fold content (思考, bash, file1) appears first,
-      // then text content (interim-text, final-text) below the fold.
+      // Order verification: fold content (思考, interim-text, bash, file1)
+      // appears first in chronological order, then final-text after the
+      // fold as the turn's final conclusion.
       const text = document.body.textContent ?? "";
       const positions = [
         "思考",
+        "interim-text",
         "bash",
         "file1",
-        "interim-text",
         "final-text",
       ].map((t) => text.indexOf(t));
       const sorted = [...positions].sort((a, b) => a - b);
@@ -400,12 +402,12 @@ describe("MessageParts", () => {
     });
 
     // Spec scenario: 5-part mixed turn with fold collapsed — only the
-    // inference parts (thinking + tool) are hidden. All text parts
-    // (interim + final) are rendered OUTSIDE the fold and remain visible.
-    // This is the key "text outside fold" assertion: the agent's reply
-    // (both the streaming deltas and the final text) MUST stay visible
-    // when the fold auto-collapses.
-    it("keeps all text parts visible when fold auto-collapses after a 5-part mixed turn", () => {
+    // final text is visible. The fold auto-collapses on isStreaming=false
+    // and hides inference + intermediate text. The final text (the LAST
+    // text part in the turn) renders OUTSIDE the fold and remains visible
+    // so the user can see the agent's conclusion without expanding the
+    // step.
+    it("keeps only the final text visible when fold auto-collapses after a 5-part mixed turn", () => {
       const parts: Part[] = [
         { type: "thinking", text: "thinking-co-t" },
         { type: "text", text: "interim-text" },
@@ -416,13 +418,14 @@ describe("MessageParts", () => {
       // isStreaming=false → fold collapsed
       render(<MessageParts parts={parts} isStreaming={false} />);
       // Fold content hidden: thinking button, tool name, tool result first
-      // line all NOT in DOM
+      // line, AND the intermediate text are all NOT in DOM (interim-text
+      // is inside the fold body)
       expect(screen.queryByText("思考")).toBeNull();
+      expect(screen.queryByText("interim-text")).toBeNull();
       expect(screen.queryByText("bash")).toBeNull();
       expect(screen.queryByText("file1")).toBeNull();
-      // But BOTH text parts (interim and final) are OUTSIDE the fold,
-      // always visible
-      expect(screen.getByText("interim-text")).toBeTruthy();
+      // The final text is the LAST text part → OUTSIDE the fold, always
+      // visible without expanding the step
       expect(screen.getByText("final-text")).toBeTruthy();
     });
 

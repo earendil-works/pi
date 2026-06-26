@@ -376,24 +376,35 @@ export function MessageParts({
     }
   }
 
-  // Split chunks into inference (wrapped in the fold) and text (rendered
-  // outside the fold, always visible). The fold auto-collapses on
-  // `isStreaming=false` so the user can hide long CoT / tool chains, but
-  // the agent's reply text stays visible below the fold so it is never
-  // hidden inside a collapsed step.
-  const inferenceChunks = chunks.filter(
-    (c): c is Exclude<Chunk, { kind: "text" }> => c.kind !== "text",
-  );
-  const textChunks = chunks.filter(
-    (c): c is Extract<Chunk, { kind: "text" }> => c.kind === "text",
-  );
+  // Identify the LAST text chunk in the turn. It represents the turn's
+  // final conclusion and renders OUTSIDE the fold so it is never hidden
+  // by a collapsed step. All other text chunks (intermediate reasoning,
+  // e.g. a "let me check" preamble emitted between tool calls) are
+  // treated as inference and render INSIDE the fold alongside thinking
+  // and tool parts. The fold auto-collapses on `isStreaming=false` so
+  // long CoT + tool chains stay out of the way, but the agent's final
+  // reply is always visible below the fold.
+  let lastTextChunkIdx = -1;
+  for (let j = 0; j < chunks.length; j++) {
+    if (chunks[j].kind === "text") lastTextChunkIdx = j;
+  }
+  const finalTextChunk =
+    lastTextChunkIdx >= 0 && chunks[lastTextChunkIdx].kind === "text"
+      ? chunks[lastTextChunkIdx]
+      : null;
+  const foldChunks =
+    lastTextChunkIdx >= 0
+      ? chunks.filter((_, j) => j !== lastTextChunkIdx)
+      : chunks;
 
   if (!hasStepContent) {
     return (
       <div className="flex flex-col gap-2">
-        {textChunks.map((chunk, i) => (
-          <TextItem key={`tx-${i}`} part={chunk.part} />
-        ))}
+        {chunks.map((chunk, i) =>
+          chunk.kind === "text" ? (
+            <TextItem key={`tx-${i}`} part={chunk.part} />
+          ) : null,
+        )}
       </div>
     );
   }
@@ -417,7 +428,7 @@ export function MessageParts({
 
   return (
     <>
-      {inferenceChunks.length > 0 && (
+      {foldChunks.length > 0 && (
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col gap-2">
           <StepHeader
             isStreaming={isStreaming}
@@ -427,27 +438,34 @@ export function MessageParts({
           />
           {open && (
             <div className="flex flex-col gap-2 border-t border-gray-100 pt-2">
-              {inferenceChunks.map((chunk, i) =>
-                chunk.kind === "tools" ? (
-                  <ToolGroup
-                    key={`tg-${i}`}
-                    parts={chunk.parts}
-                    cardStates={cardStates}
-                    onCardSubmit={onCardSubmit}
-                    onCardCancel={onCardCancel}
-                  />
-                ) : (
-                  // chunk.kind === "thinking" — inferenceChunks excludes text
-                  <ThinkingItem key={`th-${i}`} part={chunk.part} />
-                ),
-              )}
+              {foldChunks.map((chunk, i) => {
+                if (chunk.kind === "tools") {
+                  return (
+                    <ToolGroup
+                      key={`tg-${i}`}
+                      parts={chunk.parts}
+                      cardStates={cardStates}
+                      onCardSubmit={onCardSubmit}
+                      onCardCancel={onCardCancel}
+                    />
+                  );
+                }
+                if (chunk.kind === "thinking") {
+                  return <ThinkingItem key={`th-${i}`} part={chunk.part} />;
+                }
+                // chunk.kind === "text" — intermediate reasoning emitted
+                // between inference parts. Rendered inside the fold in
+                // chronological order so the user sees the full thinking
+                // → text → tool → text → ... chain when expanding.
+                return <TextItem key={`tx-fold-${i}`} part={chunk.part} />;
+              })}
             </div>
           )}
         </div>
       )}
-      {textChunks.map((chunk, i) => (
-        <TextItem key={`tx-${i}`} part={chunk.part} />
-      ))}
+      {finalTextChunk && finalTextChunk.kind === "text" && (
+        <TextItem part={finalTextChunk.part} />
+      )}
     </>
   );
 }
