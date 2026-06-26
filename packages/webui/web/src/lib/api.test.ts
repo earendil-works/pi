@@ -373,6 +373,115 @@ describe("api", () => {
       }
     });
   });
+
+  describe("memory.patch", () => {
+    it("should PATCH /api/memory/:id with JSON body when called without opts", async () => {
+      const updated = { id: "a-1", title: "new" };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(updated),
+      });
+
+      await api.memory.patch("a-1", { title: "new" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/memory/a-1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ title: "new" }),
+        }),
+      );
+      const init = mockFetch.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect((init?.headers as Record<string, string>)["If-Match"]).toBeUndefined();
+    });
+
+    it("should encode the id in the URL", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({}),
+      });
+
+      await api.memory.patch("id/with spaces", { title: "t" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/memory/id%2Fwith%20spaces",
+        expect.any(Object),
+      );
+    });
+
+    it("should send If-Match header when opts.ifMatch is a string", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: "a-1" }),
+      });
+
+      await api.memory.patch("a-1", { title: "t" }, { ifMatch: "etag-abc" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/memory/a-1",
+        expect.objectContaining({
+          method: "PATCH",
+          headers: expect.objectContaining({
+            "Content-Type": "application/json",
+            "If-Match": "etag-abc",
+          }),
+        }),
+      );
+    });
+
+    it("should send If-Match header when opts.ifMatch is a number", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: "a-1" }),
+      });
+
+      await api.memory.patch("a-1", { title: "t" }, { ifMatch: 7 });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/memory/a-1",
+        expect.objectContaining({
+          method: "PATCH",
+          headers: expect.objectContaining({ "If-Match": "7" }),
+        }),
+      );
+    });
+
+    it("should send If-Match '*' when opts.ifMatch is '*'", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: "a-1" }),
+      });
+
+      await api.memory.patch("a-1", { title: "t" }, { ifMatch: "*" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/memory/a-1",
+        expect.objectContaining({
+          headers: expect.objectContaining({ "If-Match": "*" }),
+        }),
+      );
+    });
+
+    it("should propagate status code on patch failure", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+      });
+
+      try {
+        await api.memory.patch("a-1", { title: "t" }, { ifMatch: 3 });
+        expect.fail("should have thrown");
+      } catch (e: unknown) {
+        expect((e as { status: number }).status).toBe(409);
+      }
+    });
+  });
 });
 
 describe("WebSocketClient", () => {

@@ -338,6 +338,72 @@ export class MemoryIndex {
 	}
 
 	/**
+	 * Atomic compare-and-swap update. Reads the current `version` inside a
+	 * single transaction; if it matches `expectedVersion`, applies the
+	 * update + bumps version + (optionally) writes the new vector, and
+	 * returns `{updated:true, atom: updatedAtom}` with the bumped version
+	 * reflected on the returned record. If the version has moved on, the
+	 * transaction returns `{updated:false, currentVersion: actualVersion}`
+	 * WITHOUT touching the row — the caller can refetch and retry.
+	 *
+	 * This is the storage-layer primitive the webui PATCH route uses to
+	 * close the TOCTOU race between its initial `If-Match` check and the
+	 * `await embedText()` + `await supersedeIfSimilar()` window. Even if
+	 * two concurrent PATCH requests both pass the in-memory CAS check, at
+	 * most one will succeed here — the other gets `updated:false`.
+	 *
+	 * Passing `embedding: null` skips the vector write (mirrors
+	 * `updateAtom`'s `embedding?` semantics — used when `embedText` returned
+	 * null because ollama is unreachable, so the dense channel is dropped
+	 * but the DB row is still kept consistent).
+	 */
+	async updateAtomIfVersion(
+		atom: MemoryAtom,
+		embedding: number[] | null,
+		expectedVersion: number,
+	): Promise<
+		| { updated: true; atom: MemoryAtom }
+		| { updated: false; currentVersion: number }
+	> {
+		const row = atomToRow(atom);
+		const result = this.db.transaction((): { updated: true; atom: MemoryAtom } | {
+			updated: false;
+			currentVersion: number;
+		} => {
+			const currentRow = this.db
+				.prepare(`SELECT version FROM memory_index WHERE id = ?`)
+				.get(atom.id) as { version: number } | undefined;
+			if (!currentRow) {
+				throw new Error(`atom ${atom.id} not found`);
+			}
+			if (currentRow.version !== expectedVersion) {
+				return { updated: false, currentVersion: currentRow.version };
+			}
+			this.db
+				.prepare(
+					`
+				UPDATE memory_index SET
+					title = @title, summary = @summary, content = @content, tags = @tags,
+					importance = @importance, version = version + 1, updated_at = @updated_at,
+					content_fingerprint = @content_fingerprint
+				WHERE id = @id
+			`,
+				)
+				.run(row);
+			if (embedding !== null) {
+				this.db
+					.prepare(`UPDATE memory_vectors SET embedding = ? WHERE id = ?`)
+					.run(new Float32Array(embedding), atom.id);
+			}
+			return {
+				updated: true,
+				atom: { ...atom, version: currentRow.version + 1 },
+			};
+		})();
+		return result;
+	}
+
+	/**
 	 * Fetch an atom by id regardless of state — active, archived, or
 	 * superseded. Returns null when no row exists.
 	 */

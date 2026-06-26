@@ -99,6 +99,23 @@ export interface PersonalAssistantConfig {
 		};
 		autoDecay?: boolean;
 		autoExtract?: boolean;
+		/**
+		 * tag alias mapping for `normalizeTags` (extensions/personal-assistant/tag-alias.ts).
+		 * Applied dual-side:写入侧折叠 atom.tags,查询侧折叠 query tokens。
+		 * 缺失/非对象时 graceful degradation(仅 Set 去重)。
+		 * 通过 PATCH /api/settings 修改,运行时立即生效。
+		 */
+		tagAliases?: Record<string, string>;
+		/**
+		 * score 公式中 `tag_overlap` 项的权重。默认 0.10。
+		 * 主项 `cosine × (1 + 0.3strength + 0.2importance)` 不受此配置影响。
+		 */
+		tagOverlapWeight?: number;
+		/**
+		 * score 公式中 `freshness_decay` 项的权重。默认 0.05。
+		 * freshness = exp(-daysSinceUpdate / 30),固定 30 天半衰期。
+		 */
+		freshnessWeight?: number;
 	};
 }
 
@@ -668,10 +685,19 @@ export function registerMemory(pi: ExtensionAPI): void {
 					// when omitted. topK=20 matches design.md Decision 2
 					// (per-channel KNN pool; the fused per-type cap is
 					// hard-coded at DEFAULT_TOP_K in search.ts).
+					// tagOverlapWeight / freshnessWeight / tagAliases are the
+					// runtime-configurable scoring knobs from
+					// PersonalAssistantConfig.memory — wired here so the
+					// agent's before_agent_start hook honors the same
+					// settings the webui search endpoint consumes.
+					const m = config.memory;
 					results = await recallAtoms(index, userMessage, {
 						topK: 20,
-						rrfK: config.memory?.recall?.rrfK,
-						recallThreshold: config.memory?.recall?.recallThreshold,
+						rrfK: m?.recall?.rrfK,
+						recallThreshold: m?.recall?.recallThreshold,
+						tagOverlapWeight: m?.tagOverlapWeight,
+						freshnessWeight: m?.freshnessWeight,
+						tagAliases: m?.tagAliases,
 					});
 				} catch (err) {
 					ctx.ui.setStatus("memory", "⚠ memory recall failed");

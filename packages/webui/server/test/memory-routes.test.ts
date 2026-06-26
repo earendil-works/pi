@@ -14,6 +14,7 @@ import path from "node:path";
 import os from "node:os";
 import { embedText } from "../../../../extensions/personal-assistant/embed.ts";
 import {
+	__getSubscriberCount,
 	mountMemoryRoutes,
 	registerGetMemoryById,
 	registerGetMemoryList,
@@ -455,15 +456,19 @@ describe("PATCH /api/memory/:id", () => {
 
 	const fetchAt = async (
 		routePath: string,
-		init: { method?: string; body?: unknown } = {},
+		init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
 	): Promise<{ status: number; body: Record<string, unknown> }> => {
 		const addr = server.address();
 		if (!addr || typeof addr === "string") {
 			throw new Error("server has no address");
 		}
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			...init.headers,
+		};
 		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
 			method: init.method ?? "GET",
-			headers: { "Content-Type": "application/json" },
+			headers,
 			body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
 		});
 		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -523,6 +528,7 @@ describe("PATCH /api/memory/:id", () => {
 		const res = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { tags: ["new-tag"] },
+			headers: { "If-Match": "1" },
 		});
 		expect(res.status).toBe(200);
 		const tags = res.body.tags as string[];
@@ -531,6 +537,7 @@ describe("PATCH /api/memory/:id", () => {
 		const dup = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { tags: ["existing"] },
+			headers: { "If-Match": "2" },
 		});
 		const dupTags = dup.body.tags as string[];
 		expect(dupTags.filter((t) => t === "existing")).toHaveLength(1);
@@ -541,6 +548,7 @@ describe("PATCH /api/memory/:id", () => {
 		const res = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { content: "Totally different content here" },
+			headers: { "If-Match": "1" },
 		});
 		expect(res.status).toBe(200);
 		expect(res.body.content).toBe("Totally different content here");
@@ -552,11 +560,13 @@ describe("PATCH /api/memory/:id", () => {
 		const high = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { importance: 1.5 },
+			headers: { "If-Match": "1" },
 		});
 		expect(high.body.importance).toBe(1);
 		const low = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { importance: -0.5 },
+			headers: { "If-Match": "2" },
 		});
 		expect(low.body.importance).toBe(0);
 	});
@@ -566,6 +576,7 @@ describe("PATCH /api/memory/:id", () => {
 		const res = await fetchAt("/api/memory/atom-1", {
 			method: "PATCH",
 			body: { tags: ["x"] },
+			headers: { "If-Match": "1" },
 		});
 		expect(res.body.version).toBe(2);
 	});
@@ -1370,5 +1381,656 @@ describe("mountMemoryRoutes includes extract", () => {
 			}
 		}
 		expect(routes).toContain("POST /api/memory/extract");
+	});
+});
+
+// Tests for the PATCH /api/memory/:id CAS (If-Match) contract (Task 2.1).
+// Covers the optimistic-concurrency contract from docs/sdd/changes/memory-v2-refactor
+// design.md Decision 1 + spec ADDED #1:
+//   - missing If-Match       → 400 missing_if_match
+//   - matching If-Match      → 200 + version incremented by 1
+//   - stale If-Match         → 409 version_conflict + current atom snapshot
+//   - If-Match: "*"          → 200 (any-version escape hatch)
+//
+// The existing PATCH tests (the `describe("PATCH /api/memory/:id", ...)`
+// block at line 412) intentionally omit the If-Match header — after this
+// task lands they will fail with 400. The orchestrator owns updating the
+// webui client to send the header from GET responses (next task).
+describe("PATCH /api/memory/:id CAS (If-Match)", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cas-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Seed an empty v2-schema DB.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			embedTimeoutMs: 200,
+		};
+		registerPatchMemory(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		routePath: string,
+		init: {
+			method?: string;
+			body?: unknown;
+			headers?: Record<string, string>;
+		} = {},
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			...init.headers,
+		};
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: init.method ?? "GET",
+			headers,
+			body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-cas",
+				type: "rule",
+				title: "CAS Test",
+				content: "Original content",
+				summary: "S",
+				tags: ["existing"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-cas-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("returns 400 when If-Match header is missing", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			// No If-Match header
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.error).toBe("missing_if_match");
+	});
+
+	it("returns 200 when If-Match matches existing.version", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["new-tag"] },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		// Version bumped from 1 → 2.
+		expect(res.body.version).toBe(2);
+	});
+
+	it("returns 409 when If-Match version is stale", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			headers: { "If-Match": "0" },
+		});
+		expect(res.status).toBe(409);
+		expect(res.body.error).toBe("version_conflict");
+		// `current` payload lets the client merge or reload.
+		const current = res.body.current as { version: number };
+		expect(current).toBeDefined();
+		expect(current.version).toBe(1);
+	});
+
+	it("accepts If-Match: * (any-version escape hatch)", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			headers: { "If-Match": "*" },
+		});
+		expect(res.status).toBe(200);
+		// Version still bumps even on the wildcard path.
+		expect(res.body.version).toBe(2);
+	});
+});
+
+// Tests for the PATCH dedup gate + tag normalization (Task 2.2). Covers:
+//   - the supersedeIfSimilar self-match guard routing PATCH to in-place
+//     update (no previousId in response, version still bumped)
+//   - normalizeTags folding via deps.settings.memory.tagAliases
+//   - the embedText === null → supersedeIfSimilar returns "create" path
+//
+// The PATCH route's "supersede" branch (status === "supersede") is
+// effectively unreachable: mergedAtom.id always equals existing.id
+// (the PATCHed atom), and the self-match guard in supersedeIfSimilar
+// returns "create" when the most-similar atom is the same id —
+// markSupersededTx would also fail on PRIMARY KEY conflict in the
+// cross-id case (the PATCHed atom's row already exists). The route
+// therefore always falls through to updateAtom. We still wire up the
+// gate so future callers (or future deduplication modes) can plug in.
+describe("PATCH /api/memory/:id dedup + tag normalization", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-dedup-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			embedTimeoutMs: 200,
+		};
+		registerPatchMemory(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		routePath: string,
+		init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			...init.headers,
+		};
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: init.method ?? "GET",
+			headers,
+			body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-1",
+				type: "rule",
+				title: "T",
+				content: "Original content",
+				summary: "S",
+				tags: ["old"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-dedup-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("dedup gate self-match returns in-place update (no previousId, version bumped)", async () => {
+		await insertAtom();
+		// PATCH the same content that already exists. The mock charBag
+		// embedding for the unchanged embeddable text is identical to
+		// the stored embedding's direction but the stored vector is
+		// all-0.01 (set by the helper), so cosine is low → the dedup
+		// gate returns "create" via the self-match or threshold paths.
+		// Either way the route falls through to updateAtom and bumps
+		// version to 2 without setting previousId.
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { content: "Original content" },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.previousId).toBeUndefined();
+		expect(res.body.version).toBe(2);
+		expect(res.body.content).toBe("Original content");
+	});
+
+	it("normalizes tags via settings.memory.tagAliases", async () => {
+		await insertAtom({ tags: ["old"] });
+		deps.settings = {
+			memory: { tagAliases: { "代码规范": "code-style" } },
+		} as never;
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: ["代码规范", "code-style"] },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		const tags = res.body.tags as string[];
+		expect(tags).toEqual(["old", "code-style"]);
+	});
+
+	it("preserves existing.tags verbatim when PATCH body has no tags field", async () => {
+		// Setup: atom with un-normalized tags (the legacy form, before any
+		// tagAliases map existed in settings). Settings.memory.tagAliases is
+		// configured so a re-normalize WOULD rewrite the tag. The PATCH body
+		// omits `tags` entirely (no field), so the route must preserve the
+		// legacy form verbatim — silently rewriting it would be data loss.
+		await insertAtom({ tags: ["代码规范"] });
+		deps.settings = {
+			memory: { tagAliases: { "代码规范": "code-style" } },
+		} as never;
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			// Body contains `importance` only — no `tags` field at all.
+			body: { importance: 0.7 },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		const tags = res.body.tags as string[];
+		// Preserved verbatim: NOT folded to "code-style" by the alias map.
+		expect(tags).toEqual(["代码规范"]);
+	});
+
+	it("skips supersede gracefully when embedText returns null", async () => {
+		await insertAtom();
+		// embedText is mocked at module level (charBag). Force a null
+		// return for this single PATCH call so supersedeIfSimilar takes
+		// the null-embedding branch and returns "create" without
+		// touching the index. mockResolvedValueOnce auto-queues and
+		// reverts to the default charBag after this one call.
+		vi.mocked(embedText).mockResolvedValueOnce(null);
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			body: { tags: ["y"] },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.previousId).toBeUndefined();
+		expect(res.body.version).toBe(2);
+	});
+});
+
+// Tests for the GET /api/memory/:id/stream SSE endpoint (Task 2.4).
+// Covers:
+//   - 404 for unknown atom (immediate response close)
+//   - 200 text/event-stream with Content-Type + initial : connected frame
+//   - event: atom broadcast when another client PATCHes (S2)
+//   - subscriber cleanup on client disconnect (S7)
+//
+// SSE frames are split on the standard "\n\n" delimiter; a comment frame
+// begins with ":", and an event frame is "event: <name>\ndata: <payload>".
+// AbortController simulates the client closing the connection mid-stream;
+// cleanup is verified through the `__getSubscriberCount` test-only handle
+// exposed by memory.ts (the underlying `subscribers` Map itself is not
+// part of the public API).
+describe("GET /api/memory/:id/stream", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+	const openControllers: AbortController[] = [];
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-stream-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Seed an empty v2-schema DB.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			// Short embed timeout — same convention as PATCH tests so the
+			// broadcast-on-PATCH test completes quickly in CI.
+			embedTimeoutMs: 200,
+		};
+		mountMemoryRoutes(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		// Abort every stream so server.close() doesn't hang waiting on
+		// idle SSE connections to terminate.
+		for (const c of openControllers) {
+			try { c.abort(); } catch { /* ignore */ }
+		}
+		openControllers.length = 0;
+		// Give the server's close handlers a tick to fire before we
+		// tear down the listener.
+		await new Promise((r) => setTimeout(r, 50));
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const addr = (): number => {
+		const a = server.address();
+		if (!a || typeof a === "string") throw new Error("no server address");
+		return a.port;
+	};
+
+	const track = (controller: AbortController): AbortController => {
+		openControllers.push(controller);
+		return controller;
+	};
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-stream",
+				type: "rule",
+				title: "T",
+				content: "C",
+				summary: "S",
+				tags: ["existing"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-stream-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	// Start a background read loop that pushes every parsed SSE frame
+	// into `frames`. The loop terminates silently when the stream ends
+	// or the reader is cancelled, so callers never see unhandled
+	// rejections from abort-driven cancellations.
+	const startReading = (
+		streamRes: Response,
+		frames: string[],
+	): void => {
+		if (!streamRes.body) throw new Error("response has no body");
+		const reader = streamRes.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		(async () => {
+			try {
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) return;
+					buffer += decoder.decode(value, { stream: true });
+					let idx: number;
+					while ((idx = buffer.indexOf("\n\n")) !== -1) {
+						frames.push(buffer.slice(0, idx));
+						buffer = buffer.slice(idx + 2);
+					}
+				}
+			} catch { /* reader cancelled (abort / cleanup) */ }
+		})();
+	};
+
+	const waitForFrames = async (
+		frames: string[],
+		n: number,
+		timeoutMs = 5000,
+	): Promise<void> => {
+		const start = Date.now();
+		while (frames.length < n) {
+			if (Date.now() - start > timeoutMs) {
+				throw new Error(
+					`SSE timeout: waited ${timeoutMs}ms for ${n} frames, got ${frames.length}: ${JSON.stringify(frames)}`,
+				);
+			}
+			await new Promise((r) => setTimeout(r, 5));
+		}
+	};
+
+	it("returns 404 for unknown atom", async () => {
+		const res = await fetch(
+			`http://127.0.0.1:${addr()}/api/memory/unknown-id/stream`,
+		);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error?: string };
+		expect(body.error).toBe("atom_not_found");
+	});
+
+	it("returns text/event-stream for known atom, sends : connected frame", async () => {
+		await insertAtom();
+		const controller = track(new AbortController());
+		const res = await fetch(
+			`http://127.0.0.1:${addr()}/api/memory/atom-stream/stream`,
+			{ signal: controller.signal },
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+		const frames: string[] = [];
+		startReading(res, frames);
+		await waitForFrames(frames, 1);
+		expect(frames[0]).toBe(": connected");
+	});
+
+	it("pushes event: atom when another client PATCHes", async () => {
+		await insertAtom();
+
+		const controller = track(new AbortController());
+		const streamRes = await fetch(
+			`http://127.0.0.1:${addr()}/api/memory/atom-stream/stream`,
+			{ signal: controller.signal },
+		);
+		expect(streamRes.status).toBe(200);
+
+		const frames: string[] = [];
+		startReading(streamRes, frames);
+
+		// Wait for the initial : connected frame so we know the server
+		// has registered the subscriber before we trigger the PATCH.
+		await waitForFrames(frames, 1);
+		expect(frames[0]).toBe(": connected");
+
+		// PATCH the same atom from a separate (non-streaming) fetch.
+		// If-Match: "1" matches the freshly inserted atom's version.
+		const patchRes = await fetch(
+			`http://127.0.0.1:${addr()}/api/memory/atom-stream`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json", "If-Match": "1" },
+				body: JSON.stringify({ tags: ["broadcast"] }),
+			},
+		);
+		expect(patchRes.status).toBe(200);
+
+		await waitForFrames(frames, 2);
+		const eventFrame = frames[1] ?? "";
+		expect(eventFrame.startsWith("event: atom\ndata: ")).toBe(true);
+		const payload = eventFrame.slice("event: atom\ndata: ".length);
+		const parsed = JSON.parse(payload) as {
+			id: string;
+			version: number;
+			tags: string[];
+		};
+		expect(parsed.id).toBe("atom-stream");
+		expect(parsed.version).toBe(2);
+		expect(parsed.tags).toContain("broadcast");
+	});
+
+	it("cleans up subscriber on client disconnect", async () => {
+		await insertAtom();
+
+		const controller = track(new AbortController());
+		const streamRes = await fetch(
+			`http://127.0.0.1:${addr()}/api/memory/atom-stream/stream`,
+			{ signal: controller.signal },
+		);
+		expect(streamRes.status).toBe(200);
+
+		const frames: string[] = [];
+		startReading(streamRes, frames);
+		await waitForFrames(frames, 1);
+		expect(frames[0]).toBe(": connected");
+
+		// `__getSubscriberCount` is the test-only handle into the
+		// module-level `subscribers` Map (memory.ts intentionally does
+		// not export the Map itself).
+		expect(__getSubscriberCount("atom-stream")).toBe(1);
+
+		controller.abort();
+
+		// Wait for the server's res.on('close') handler to fire and
+		// remove the response from the Set.
+		const start = Date.now();
+		while (__getSubscriberCount("atom-stream") > 0) {
+			if (Date.now() - start > 2000) {
+				throw new Error("subscriber not cleaned up within 2s");
+			}
+			await new Promise((r) => setTimeout(r, 10));
+		}
+		expect(__getSubscriberCount("atom-stream")).toBe(0);
+	});
+});
+
+// Verifies mountMemoryRoutes registers the SSE stream handler alongside
+// the other handlers. Guards against accidental removal of the
+// registerStreamMemoryById call.
+describe("mountMemoryRoutes includes stream", () => {
+	it("registers GET /api/memory/:id/stream", () => {
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		mountMemoryRoutes(app, deps);
+		const routes: string[] = [];
+		const router = app._router;
+		if (router && Array.isArray(router.stack)) {
+			for (const layer of router.stack as Array<{
+				route?: { path: string; methods: Record<string, boolean> };
+			}>) {
+				if (layer.route) {
+					const method = Object.keys(layer.route.methods)[0] ?? "unknown";
+					routes.push(`${method.toUpperCase()} ${layer.route.path}`);
+				}
+			}
+		}
+		expect(routes).toContain("GET /api/memory/:id/stream");
 	});
 });

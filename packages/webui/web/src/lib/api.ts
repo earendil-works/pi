@@ -295,9 +295,19 @@ export const api = {
       return request<MemoryAtom>(`/api/memory/${encodeURIComponent(id)}`);
     },
 
-    patch(id: string, partial: Partial<MemoryAtom>): Promise<MemoryAtom> {
+    patch(
+      id: string,
+      partial: Partial<MemoryAtom>,
+      opts?: { ifMatch?: string | number },
+    ): Promise<MemoryAtom> {
+      const headers: Record<string, string> = {};
+      if (opts?.ifMatch !== undefined) {
+        headers["If-Match"] =
+          typeof opts.ifMatch === "number" ? String(opts.ifMatch) : opts.ifMatch;
+      }
       return request<MemoryAtom>(`/api/memory/${encodeURIComponent(id)}`, {
         method: "PATCH",
+        headers,
         body: JSON.stringify(partial),
       });
     },
