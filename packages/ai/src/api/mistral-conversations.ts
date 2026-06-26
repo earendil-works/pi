@@ -556,6 +556,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 					}
 					continue;
 				}
+				if (block.type === "serverContent") continue;
 				toolCalls.push({
 					id: block.id,
 					type: "function",

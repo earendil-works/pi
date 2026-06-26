@@ -921,6 +921,10 @@ export class AgentSession {
 			}
 		}
 
+		// Server-side tools (executed by Anthropic, not the agent loop)
+		toolSnippets.web_search = "Search the web for current information. The search runs server-side.";
+		validToolNames.push("web_search");
+
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =

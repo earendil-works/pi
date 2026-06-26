@@ -349,6 +349,12 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+/** Opaque server-side content block (web_search, web_fetch, etc.) replayed as-is. */
+export interface ServerContent {
+	type: "serverContent";
+	raw: Record<string, unknown>;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -382,7 +388,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ServerContent)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;

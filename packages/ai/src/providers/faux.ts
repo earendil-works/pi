@@ -159,7 +159,7 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(content: AssistantMessage["content"]): string {
 	return content
 		.map((block) => {
 			if (block.type === "text") {
@@ -168,6 +168,7 @@ function assistantContentToText(content: Array<TextContent | ThinkingContent | T
 			if (block.type === "thinking") {
 				return block.thinking;
 			}
+			if (block.type === "serverContent") return "";
 			return `${block.name}:${JSON.stringify(block.arguments)}`;
 		})
 		.join("\n");
@@ -374,6 +375,7 @@ async function streamWithDeltas(
 			continue;
 		}
 
+		if (block.type === "serverContent") continue;
 		partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
 		stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });
 		for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {

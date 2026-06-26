@@ -19,6 +19,7 @@ import type {
 	Model,
 	ProviderEnv,
 	ProviderHeaders,
+	ServerContent,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -540,7 +541,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
+			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | ServerContent) & {
+				index: number;
+			};
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -598,6 +601,16 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						};
 						output.content.push(block);
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+					} else if (
+						event.content_block.type === "server_tool_use" ||
+						event.content_block.type === "web_search_tool_result"
+					) {
+						const block: Block = {
+							type: "serverContent",
+							raw: event.content_block as unknown as Record<string, unknown>,
+							index: event.index,
+						};
+						output.content.push(block);
 					}
 				} else if (event.type === "content_block_delta") {
 					if (event.delta.type === "text_delta") {
@@ -958,6 +971,11 @@ function buildParams(
 		);
 	}
 
+	if (isOAuthToken && model.provider === "anthropic") {
+		const serverTools: any[] = [{ type: "web_search_20260209", name: "web_search" }];
+		params.tools = [...(params.tools ?? []), ...serverTools];
+	}
+
 	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.
 	if (model.reasoning) {
 		if (options?.thinkingEnabled) {
@@ -1115,6 +1133,8 @@ function convertMessages(
 						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
 						input: block.arguments ?? {},
 					});
+				} else if (block.type === "serverContent") {
+					blocks.push(block.raw as unknown as ContentBlockParam);
 				}
 			}
 			if (blocks.length === 0) continue;
