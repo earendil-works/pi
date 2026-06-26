@@ -184,7 +184,7 @@ export const OPENCODE_GO_MODELS = {
 			cacheRead: 0.02,
 			cacheWrite: 0,
 		},
-		contextWindow: 512000,
+		contextWindow: 1000000,
 		maxTokens: 131072,
 	} satisfies Model<"anthropic-messages">,
 	"qwen3.6-plus": {
