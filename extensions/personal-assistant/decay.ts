@@ -49,6 +49,12 @@ export async function runDecay(
 
 		const newStrength = computeNewStrength(atom.strength, atom.importance, deltaDays, baseDecay);
 		index.updateStrength(atom.id, newStrength);
+		// Stamp last_access = now so the NEXT decay run measures delta
+		// from this checkpoint, not from created_at. Without this, every
+		// decay run multiplies the same factor and strength compounds
+		// exponentially: factor^N after N runs (regression test in
+		// test/decay.test.ts "does not compound ...").
+		index.updateLastAccess(atom.id);
 		decayed++;
 
 		// Rule type NEVER archives (per design)

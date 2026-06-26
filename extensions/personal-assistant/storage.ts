@@ -861,6 +861,28 @@ export class MemoryIndex {
 	}
 
 	/**
+	 * Stamp `last_access` to `now` without bumping `access_count`. Used by
+	 * the decay run to checkpoint the per-atom clock: each decay run
+	 * writes its own timestamp so the NEXT run measures delta from
+	 * (now - last_access), not (now - created_at). Without this, a
+	 * long-lived atom that survives many decay runs would compound the
+	 * same factor N times → strength = factor^N → archive in days
+	 * instead of months (regression: see extensions/personal-assistant/
+	 * test/decay.test.ts "does not compound strength across multiple
+	 * decay runs").
+	 *
+	 * Distinct from `updateAccess`, which also bumps `access_count` and
+	 * is reserved for user-initiated `memory_get` recalls — decay is a
+	 * system action and must not pollute the access-count signal that
+	 * the strength-feedback loop reads.
+	 */
+	updateLastAccess(id: string): void {
+		this.db
+			.prepare(`UPDATE memory_index SET last_access = ? WHERE id = ?`)
+			.run(Date.now(), id);
+	}
+
+	/**
 	 * Mark an atom as archived in a single transaction with an audit row
 	 * (S13 / R26). The transaction makes the state change and the audit
 	 * record atomic: a process crash between the UPDATE and the INSERT

@@ -108,4 +108,46 @@ describe("runDecay", () => {
 		expect(result.skipped).toBe(1);
 		expect(index.getAtom(a.id)?.strength).toBe(a.strength); // unchanged
 	});
+
+	// Regression: multiple decay runs (one per process / session_start)
+	// must NOT compound. Without the fix, each run multiplies strength by
+	// the same factor (since last_access isn't updated), giving
+	// strength = factor^N after N runs — atoms archive in days instead
+	// of months. Fix: each decay run stamps last_access = now so the
+	// next run uses a fresh delta (the time since the last decay).
+	it("does not compound strength across multiple decay runs (regression)", async () => {
+		// Atom created 0.989 days ago, importance=0.6, baseDecay=0.025.
+		// Single decay run: factor = exp(-0.0253 * 0.989 / 0.6) = 0.959.
+		// Without the fix, 30 sequential runs give 0.959^30 = 0.291
+		// (the value observed in the user DB for a 1-day-old atom).
+		// With the fix, all 30 runs collapse to one effective run:
+		// strength should stay near 0.959 (not decay to 0.291).
+		const a = sampleAtom({
+			importance: 0.6,
+			strength: 1.0,
+			last_access: null, // never recalled → uses created_at
+			created_at: Date.now() - 0.989 * 24 * 60 * 60 * 1000,
+		});
+		await insertAtom(a);
+
+		// First decay run: should set strength to ~0.959 and stamp last_access.
+		const r1 = await runDecay(index, { baseDecay: 0.025 });
+		expect(r1.decayed).toBe(1);
+		const after1 = index.getAtom(a.id)!;
+		const strengthAfter1 = after1.strength;
+		expect(strengthAfter1).toBeGreaterThan(0.95);
+		expect(strengthAfter1).toBeLessThan(0.97);
+		// Fix: last_access must be set after decay so subsequent runs
+		// use a fresh delta (instead of reusing created_at).
+		expect(after1.last_access).not.toBeNull();
+		expect(after1.last_access!).toBeGreaterThan(Date.now() - 1000);
+
+		// Subsequent runs within 1 hour of last decay must be skipped
+		// (no compounding), per the existing 1-hour throttle rule.
+		// `last_access` is now set to ~now, so delta < 1/24 day → skip.
+		const r2 = await runDecay(index, { baseDecay: 0.025 });
+		expect(r2.skipped).toBe(1);
+		expect(r2.decayed).toBe(0);
+		expect(index.getAtom(a.id)!.strength).toBeCloseTo(strengthAfter1, 10);
+	});
 });
