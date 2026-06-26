@@ -47,6 +47,13 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
   const [atom, setAtom] = useState<MemoryAtom | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
+  // Inline message shown when a PATCH hit a 409 conflict — the server-side
+  // CAS rejected our stale-version write, so we re-fetched the current atom
+  // and bumped localAtom's version to align. We render this next to the
+  // save status rather than via the `loadError` short-circuit so the editor
+  // stays mounted and the user can keep editing (their local edits are
+  // preserved in `localAtom`; only the version is aligned).
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   // localAtom = user's edit state. SSE + initial fetch preserve it when the
   // server version is unchanged; replace it when the server returns a newer
   // version.
@@ -118,7 +125,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
           setLocalAtom((prev) =>
             prev ? { ...prev, version: fresh.version } : prev,
           );
-          setLoadError("远端已更新,已刷新最新版本,请重新编辑");
+          setConflictMessage("远端已更新,已刷新最新版本,请重新编辑");
         } else {
           throw err;
         }
@@ -190,6 +197,14 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
             className="text-amber-600"
           >
             连接中断,正在重连...
+          </div>
+        )}
+        {conflictMessage && (
+          <div
+            data-testid="memory-conflict-status"
+            className="text-amber-600"
+          >
+            {conflictMessage}
           </div>
         )}
       </div>

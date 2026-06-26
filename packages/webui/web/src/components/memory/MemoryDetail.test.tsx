@@ -378,7 +378,15 @@ describe("MemoryDetail auto-save CAS", () => {
     });
 
     expect(api.memory.get).toHaveBeenCalledWith("a-1");
+    // Inline conflict message — NOT the loadError short-circuit (which
+    // would unmount the editor and leave the user with no way to re-edit).
     expect(screen.getByText(/远端已更新/)).toBeDefined();
+    // loadError short-circuit must NOT have fired — the editor is still
+    // mounted, the user's local edit ("Local edit") is preserved in the
+    // input, and the header still shows the bumped version.
+    expect(screen.queryByText(/error loading atom:/)).toBeNull();
+    expect(screen.getByDisplayValue("Local edit")).toBeDefined();
+    expect(screen.getByText("version: 2")).toBeDefined();
   });
 
   it("propagates non-409 errors normally", async () => {
