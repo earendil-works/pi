@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import { z } from "zod";
 import { embedText, buildEmbeddableText } from "./embed.ts";
 import { writeAtomToFile } from "./file-store.ts";
+import { supersedeIfSimilar } from "./dedup.ts";
 import { MemoryIndex } from "./storage.ts";
 import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
 
@@ -132,29 +133,15 @@ async function executeItem(
 		return { status: "skip", atom: existing };
 	}
 
-	// Embed the full atom text (title + summary + content + tags).
-	const fakeAtom = {
-		title: item.title,
-		summary: item.summary,
-		content: item.content,
-		tags: item.tags,
-	} as Pick<MemoryAtom, "title" | "summary" | "content" | "tags">;
-	const embeddableText = buildEmbeddableText(fakeAtom);
+	const newAtom = buildAtomFromItem(item, fingerprint);
+	const embeddableText = buildEmbeddableText(newAtom);
 	const embedding = await embedText(embeddableText);
 
-	// Cosine dedup — only when we actually got a vector.
-	if (embedding) {
-		const similar = index.findMostSimilarEmbedding(embedding, 0.92);
-		if (similar) {
-			const newAtom = buildAtomFromItem(item, fingerprint);
-			const { newAtom: finalNew } = index.markSupersededTx(similar.atom.id, newAtom, embedding);
-			await writeAtomToFile(finalNew, atomsDir);
-			return { status: "supersede", atom: finalNew };
-		}
+	const dedupResult = await supersedeIfSimilar(index, atomsDir, newAtom, embedding);
+	if (dedupResult.status === "supersede") {
+		return { status: "supersede", atom: dedupResult.atom };
 	}
 
-	// Create new atom.
-	const newAtom = buildAtomFromItem(item, fingerprint);
 	const vector = embedding ?? new Array(1024).fill(0);
 	await index.insertAtom(newAtom, vector);
 	await writeAtomToFile(newAtom, atomsDir);
