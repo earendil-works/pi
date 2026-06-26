@@ -9,6 +9,12 @@ import { writeAtomToFile } from "./file-store.ts";
 // supersede mechanism (design.md Decision 2). Caller does insertAtom /
 // updateAtom on the "create" path; this function is the dedup gate, not a
 // write primitive.
+//
+// Self-match guard: when the caller is PATCHing an existing atom, the most
+// similar match is the atom itself (cosine 1.0). markSupersededTx would then
+// UPDATE that row's is_latest=0 and INSERT a new row with the SAME id, which
+// fails on the PRIMARY KEY constraint. In that case we return "create" so the
+// caller can do its own in-place updateAtom for the same atom id.
 export async function supersedeIfSimilar(
 	index: MemoryIndex,
 	atomsDir: string,
@@ -22,6 +28,10 @@ export async function supersedeIfSimilar(
 
 	const similar = index.findMostSimilarEmbedding(embedding, threshold ?? 0.92);
 	if (!similar) {
+		return { status: "create", atom: newAtom };
+	}
+
+	if (similar.atom.id === newAtom.id) {
 		return { status: "create", atom: newAtom };
 	}
 

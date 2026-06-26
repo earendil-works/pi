@@ -244,4 +244,27 @@ describe("supersedeIfSimilar", () => {
 		const aAfter = index.getAtom(a.id);
 		expect(aAfter?.is_latest).toBe(1);
 	});
+
+	// Test 6: PATCH path passes newAtom with id === most-similar atom's id.
+	// The most similar match is the atom itself (cosine 1.0). Without a
+	// self-match guard, markSupersededTx would UPDATE the row's is_latest=0
+	// then INSERT a new row with the same id → UNIQUE PRIMARY KEY failure
+	// → route 500s. The guard must return "create" so the caller can do
+	// its own in-place updateAtom for the same atom id.
+	it("returns create when most similar atom is self (same id)", async () => {
+		const a = sampleAtom({ id: "A1", title: "Atom A", content: "alpha content unique" });
+		await index.insertAtom(a, V_UNIT);
+
+		const updatedA: MemoryAtom = { ...a, content: "alpha content unique v2" };
+		const result = await supersedeIfSimilar(index, atomsDir, updatedA, V_UNIT);
+		expect(result.status).toBe("create");
+		expect(result.atom.id).toBe(updatedA.id);
+		// A is unchanged: still active and latest.
+		const aAfter = index.getAtom(a.id);
+		expect(aAfter?.is_latest).toBe(1);
+		expect(aAfter?.content).toBe(a.content);
+		// No new atom file was written — "create" leaves file writes to the caller.
+		const files = await fs.readdir(atomsDir);
+		expect(files).toHaveLength(0);
+	});
 });
