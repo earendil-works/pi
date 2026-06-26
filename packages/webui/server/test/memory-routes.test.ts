@@ -1372,3 +1372,171 @@ describe("mountMemoryRoutes includes extract", () => {
 		expect(routes).toContain("POST /api/memory/extract");
 	});
 });
+
+// Tests for the PATCH /api/memory/:id CAS (If-Match) contract (Task 2.1).
+// Covers the optimistic-concurrency contract from docs/sdd/changes/memory-v2-refactor
+// design.md Decision 1 + spec ADDED #1:
+//   - missing If-Match       → 400 missing_if_match
+//   - matching If-Match      → 200 + version incremented by 1
+//   - stale If-Match         → 409 version_conflict + current atom snapshot
+//   - If-Match: "*"          → 200 (any-version escape hatch)
+//
+// The existing PATCH tests (the `describe("PATCH /api/memory/:id", ...)`
+// block at line 412) intentionally omit the If-Match header — after this
+// task lands they will fail with 400. The orchestrator owns updating the
+// webui client to send the header from GET responses (next task).
+describe("PATCH /api/memory/:id CAS (If-Match)", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cas-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		// Seed an empty v2-schema DB.
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		app.use(express.json());
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+			embedTimeoutMs: 200,
+		};
+		registerPatchMemory(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		routePath: string,
+		init: {
+			method?: string;
+			body?: unknown;
+			headers?: Record<string, string>;
+		} = {},
+	): Promise<{ status: number; body: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			...init.headers,
+		};
+		const res = await fetch(`http://127.0.0.1:${addr.port}${routePath}`, {
+			method: init.method ?? "GET",
+			headers,
+			body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+		});
+		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, body };
+	};
+
+	const insertAtom = async (
+		overrides: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> => {
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		try {
+			const atom = {
+				id: "atom-cas",
+				type: "rule",
+				title: "CAS Test",
+				content: "Original content",
+				summary: "S",
+				tags: ["existing"],
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: "fp-cas-12345678",
+				source_session: null,
+				...overrides,
+			};
+			const embedding = new Array<number>(1024).fill(0.01);
+			await idx.insertAtom(atom as never, embedding);
+			return atom;
+		} finally {
+			idx.close();
+		}
+	};
+
+	it("returns 400 when If-Match header is missing", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			// No If-Match header
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.error).toBe("missing_if_match");
+	});
+
+	it("returns 200 when If-Match matches existing.version", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["new-tag"] },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		// Version bumped from 1 → 2.
+		expect(res.body.version).toBe(2);
+	});
+
+	it("returns 409 when If-Match version is stale", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			headers: { "If-Match": "0" },
+		});
+		expect(res.status).toBe(409);
+		expect(res.body.error).toBe("version_conflict");
+		// `current` payload lets the client merge or reload.
+		const current = res.body.current as { version: number };
+		expect(current).toBeDefined();
+		expect(current.version).toBe(1);
+	});
+
+	it("accepts If-Match: * (any-version escape hatch)", async () => {
+		await insertAtom();
+		const res = await fetchAt("/api/memory/atom-cas", {
+			method: "PATCH",
+			body: { tags: ["x"] },
+			headers: { "If-Match": "*" },
+		});
+		expect(res.status).toBe(200);
+		// Version still bumps even on the wildcard path.
+		expect(res.body.version).toBe(2);
+	});
+});

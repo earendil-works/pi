@@ -37,7 +37,54 @@ import {
 	buildEmbeddableText,
 	embedText,
 } from "../../../../extensions/personal-assistant/embed.ts";
-import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
+import type { PersonalAssistantConfig, MemoryAtom } from "@earendil-works/pi-personal-assistant";
+
+/**
+ * SSE 订阅表: atomId → Set<Response>
+ * module-level state, vitest watch 模式下每个 test file 独立 createApp 避免污染。
+ */
+const subscribers = new Map<string, Set<express.Response>>();
+
+/** SSE 心跳周期(ms),默认 25s。test 可注入更短值。 */
+export const SSE_HEARTBEAT_MS = 25_000;
+
+/**
+ * 注册一个 SSE 订阅,自动发送初始 `: connected` 帧和 25s 心跳。
+ * 客户端断开(res close)时自动从订阅表移除。
+ */
+export function subscribeAtom(atomId: string, res: express.Response): void {
+	res.write(": connected\n\n");
+	let set = subscribers.get(atomId);
+	if (!set) {
+		set = new Set();
+		subscribers.set(atomId, set);
+	}
+	set.add(res);
+	const interval = setInterval(() => {
+		try { res.write(": ping\n\n"); } catch { /* ignore broken pipes */ }
+	}, SSE_HEARTBEAT_MS);
+	res.on("close", () => {
+		clearInterval(interval);
+		const s = subscribers.get(atomId);
+		if (s) {
+			s.delete(res);
+			if (s.size === 0) subscribers.delete(atomId);
+		}
+	});
+}
+
+/**
+ * 当某 atom 被 PATCH/supersede 后,推送给该 atom 的所有订阅者。
+ * 帧格式: `event: atom\ndata: <JSON>\n\n`
+ */
+export function broadcastAtomUpdate(atom: MemoryAtom): void {
+	const set = subscribers.get(atom.id);
+	if (!set || set.size === 0) return;
+	const frame = `event: atom\ndata: ${JSON.stringify(atom)}\n\n`;
+	for (const r of set) {
+		try { r.write(frame); } catch { /* ignore broken pipes */ }
+	}
+}
 
 /**
  * Dependency injection bag for the memory routes. Grew over Tasks 7.1-7.7
@@ -206,7 +253,13 @@ export function registerGetMemoryList(
  *
  * Status codes:
  *   - 200: updated atom JSON.
+ *   - 400: missing If-Match header (Task 2.1, CAS contract).
  *   - 404: atom id is unknown.
+ *   - 409: If-Match version does not match the current row. Body is
+ *          `{ error: "version_conflict", current: <atom> }` so the
+ *          client can merge or reload without a second round-trip.
+ *          Bypassed when If-Match is `*` (escape hatch for callers
+ *          that explicitly want last-writer-wins).
  *   - 500: DB / file-system failure.
  */
 export function registerPatchMemory(
@@ -220,6 +273,29 @@ export function registerPatchMemory(
 				const existing = index.getAtom(req.params.id);
 				if (!existing) {
 					res.status(404).json({ error: "atom not found" });
+					return;
+				}
+
+				// CAS check (Task 2.1, design.md Decision 1). The client
+				// must send the version it loaded with; missing → 400,
+				// stale → 409 with `current` so the client can merge or
+				// reload. "*" is an escape hatch for clients that
+				// explicitly want last-writer-wins (skips the check).
+				// Header name is read lowercase per Node / Express
+				// normalization; `String(...) === String(...)` bridges
+				// the string header vs numeric DB column.
+				const ifMatch = req.headers["if-match"];
+				if (ifMatch === undefined) {
+					res.status(400).json({ error: "missing_if_match" });
+					return;
+				}
+				if (
+					ifMatch !== "*" &&
+					String(ifMatch) !== String(existing.version)
+				) {
+					res
+						.status(409)
+						.json({ error: "version_conflict", current: existing });
 					return;
 				}
 
