@@ -454,7 +454,7 @@ describe("PATCH /api/memory/:id", () => {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
-const fetchAt = async (
+	const fetchAt = async (
 		routePath: string,
 		init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
 	): Promise<{ status: number; body: Record<string, unknown> }> => {

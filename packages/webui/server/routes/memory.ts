@@ -66,7 +66,7 @@ export const SSE_HEARTBEAT_MS = 25_000;
  * 客户端断开(res close)时自动从订阅表移除。
  */
 export function subscribeAtom(atomId: string, res: express.Response): void {
-	res.write(": connected\n\n");
+	try { res.write(": connected\n\n"); } catch { /* ignore broken pipes */ }
 	let set = subscribers.get(atomId);
 	if (!set) {
 		set = new Set();
@@ -800,10 +800,10 @@ export function mountMemoryRoutes(
 	registerGetMemoryStats(app, deps);
 	registerPostSearch(app, deps);
 	registerPostExtract(app, deps);
-	// Parameterized paths last. Stream must come after /:id so its
-	// ":id/stream" tail is matched first by Express's route stack.
+	// Parameterized paths last.
 	registerGetMemoryById(app, deps);
 	registerPatchMemory(app, deps);
 	registerPostArchive(app, deps);
+	// Register /:id/stream after /:id for consistent route-list ordering in mountMemoryRoutes.
 	registerStreamMemoryById(app, deps);
 }
