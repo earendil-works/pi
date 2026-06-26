@@ -802,6 +802,42 @@ describe("MemoryIndex", () => {
 			expect(index.getAudit("a").length).toBe(baselineAuditCount);
 		});
 
+		// Regression: an atom archived with low strength (e.g. 0.05) used to
+		// stay at that low strength after markUnarchived — and on the very
+		// next runDecay it was immediately re-archived (delta measured
+		// from created_at, so the low strength was re-multiplied by ~1.0
+		// and the threshold check still failed). Fix: markUnarchived
+		// must reset strength to the atom's author-assigned importance
+		// (the "fresh start" value per the schema comment "Starts equal
+		// to importance") AND stamp last_access = now so the next decay
+		// run uses a fresh delta.
+		it("markUnarchived resets strength to importance and stamps last_access (regression)", async () => {
+			const atom = sampleAtom({
+				id: "u",
+				archived: 1,
+				strength: 0.05, // below the typical 0.1 archive threshold
+				importance: 0.7,
+				last_access: null,
+			});
+			await index.insertAtom(atom, dummyEmbedding());
+			index.markArchived("u"); // ensure archived=1 + FTS5 row gone
+			// Simulate the bug: a low-strength atom gets archived.
+			expect(index.getAtom("u")?.strength).toBe(0.05);
+			expect(index.getAtom("u")?.archived).toBe(1);
+
+			// Manually restore (the user's flow).
+			index.markUnarchived("u");
+			const after = index.getAtom("u")!;
+			expect(after.archived).toBe(0);
+			// Fresh-start strength = importance (per schema comment).
+			expect(after.strength).toBe(0.7);
+			// last_access is now stamped so the next decay run measures
+			// delta from this checkpoint, not from created_at. Without
+			// this, runDecay would re-archive the atom within 1 hour.
+			expect(after.last_access).not.toBeNull();
+			expect(after.last_access!).toBeGreaterThan(Date.now() - 1000);
+		});
+
 		it("deleteVector removes the embedding from memory_vectors", async () => {
 			const atom = sampleAtom({ id: "a" });
 			await index.insertAtom(atom, dummyEmbedding());

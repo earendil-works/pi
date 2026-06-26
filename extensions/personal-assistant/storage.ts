@@ -913,6 +913,16 @@ export class MemoryIndex {
 	 * eventually fix it, but a manual unarchive should be instantly
 	 * visible in search results.
 	 *
+	 * Also resets `strength` to the atom's `importance` (the
+	 * schema-comment "fresh start" value — strength starts equal to
+	 * importance for new atoms) and stamps `last_access = now`. Without
+	 * these two writes, the next runDecay would see a low strength
+	 * (the value that triggered the archive in the first place) AND
+	 * an old `last_access` / `created_at`, multiply by ~1.0, and
+	 * re-archive the atom on the very next session_start. The user
+	 * explicitly rescued the atom, so the system should give it a
+	 * fresh decay budget, not the leftover decayed one.
+	 *
 	 * Intentionally NOT wrapped in a transaction with an audit row —
 	 * the design says unarchive should not recompute or audit, since
 	 * the original archived audit row is still present and sufficient
@@ -920,7 +930,18 @@ export class MemoryIndex {
 	 */
 	markUnarchived(id: string): void {
 		this.db.transaction(() => {
-			this.db.prepare(`UPDATE memory_index SET archived = 0 WHERE id = ?`).run(id);
+			// Reset strength to importance + stamp last_access = now in the
+			// same UPDATE so the next runDecay sees a fresh-start strength
+			// AND a fresh delta checkpoint.
+			this.db
+				.prepare(
+					`UPDATE memory_index
+					 SET archived = 0,
+					     strength = importance,
+					     last_access = ?
+					 WHERE id = ?`,
+				)
+				.run(Date.now(), id);
 			// Re-insert the FTS5 row so BM25 search immediately surfaces
 			// the atom. INSERT OR REPLACE handles the edge case where the
 			// row somehow still exists.
