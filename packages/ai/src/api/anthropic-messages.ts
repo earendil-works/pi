@@ -875,13 +875,17 @@ function createClient(
 	}
 
 	// API key or header-owned auth.
+	// Enterprise Claude Code-scoped API keys need Claude Code identity headers.
+	const claudeCodeApiKey = !!(apiKey && model.provider === "anthropic");
 	const sessionAffinityHeaders: ProviderHeaders =
 		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
+	const ccBetaFeatures = claudeCodeApiKey ? ["claude-code-20250219", ...betaFeatures] : betaFeatures;
 	const defaultHeaders = mergeHeaders(
 		{
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
-			...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+			...(ccBetaFeatures.length > 0 ? { "anthropic-beta": ccBetaFeatures.join(",") } : {}),
+			...(claudeCodeApiKey ? { "user-agent": `claude-cli/${claudeCodeVersion}`, "x-app": "cli" } : {}),
 		},
 		sessionAffinityHeaders,
 		model.headers,
@@ -895,7 +899,7 @@ function createClient(
 		defaultHeaders,
 	});
 
-	return { client, isOAuthToken: false };
+	return { client, isOAuthToken: claudeCodeApiKey };
 }
 
 function buildParams(
