@@ -390,8 +390,8 @@ export const AZURE_OPENAI_RESPONSES_MODELS = {
 		contextWindow: 400000,
 		maxTokens: 128000,
 	} satisfies Model<"azure-openai-responses">,
-	"gpt-5.2-chat-latest": {
-		id: "gpt-5.2-chat-latest",
+	"gpt-5.2-chat": {
+		id: "gpt-5.2-chat",
 		name: "GPT-5.2 Chat",
 		api: "azure-openai-responses",
 		provider: "azure-openai-responses",
