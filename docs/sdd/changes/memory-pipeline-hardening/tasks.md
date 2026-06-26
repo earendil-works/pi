@@ -19,25 +19,25 @@
 
 ## 1. 基础 helper(extensions 层)
 
-- [ ] 1.1 **`normalizeTags` 实现**
+- [x] 1.1 **`normalizeTags` 实现**
   - **文件**: `extensions/personal-assistant/tag-alias.ts` (Create)
   - **内容**: 实现 `normalizeTags(input: string[], aliases?: Record<string,string>): string[]` —— trim → 空字符串过滤 → alias 折叠(用 `aliases[raw.toLowerCase()] ?? raw`)→ `new Set` 去重 → 保序。`aliases` 为空/undefined/非对象时跳过折叠,直接 Set 去重。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/tag-alias.test.ts` 全绿
   - **依赖**: 无
 
-- [ ] 1.2 **`computeTagOverlap` + `computeFreshness` 实现**
+- [x] 1.2 **`computeTagOverlap` + `computeFreshness` 实现**
   - **文件**: `extensions/personal-assistant/scoring.ts` (Create)
   - **内容**: `computeTagOverlap(query: string, tags: string[], queryAliases?: Record<string,string>): number` —— split query 到 token,经 alias 折叠,求与 tags 集合交集大小 / 归一化查询 token 数,范围 [0,1]。`computeFreshness(updatedAt: number, now?: number): number` —— `Math.exp(-daysSinceUpdate / 30)`,**固定半衰期 30 天,无 importance 因子**(与 spec R4 一致);`now` 用于测试注入固定时间。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/scoring.test.ts` 全绿
   - **依赖**: 无
 
-- [ ] 1.3 **`supersedeIfSimilar` 抽出**
+- [x] 1.3 **`supersedeIfSimilar` 抽出**
   - **文件**: `extensions/personal-assistant/dedup.ts` (Create)
   - **内容**: 实现 `supersedeIfSimilar(index: MemoryIndex, atomsDir: string, newAtom: MemoryAtom, embedding: number[] | null, threshold?: number): Promise<{status:"supersede"|"create"; atom: MemoryAtom}>` —— 复用 `extraction.ts:122-162` 的逻辑:embedding 非 null 时调 `index.findMostSimilarEmbedding(embedding, threshold ?? 0.92)`,命中则 `index.markSupersededTx` + `writeAtomToFile`,返回 supersede;否则返回 create。`buildAtomFromItem` 不能直接复用(PATCH 已有 atom),改为接受外部传入 atom。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup.test.ts` 全绿
   - **依赖**: 无
 
-- [ ] 1.4 **`PersonalAssistantConfig.memory` 扩展字段**
+- [x] 1.4 **`PersonalAssistantConfig.memory` 扩展字段**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: 在 `PersonalAssistantConfig.memory`(memory.ts:67-103)里 `autoExtract?: boolean` 之后追加三个可选字段:
     ```ts
@@ -56,7 +56,7 @@
 
 ## 2. PATCH route 改造(server 层)
 
-- [ ] 2.1 **PATCH route 加 `If-Match` 校验**
+- [x] 2.1 **PATCH route 加 `If-Match` 校验**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify, lines 216-288)
   - **内容**: 在 `app.patch("/api/memory/:id", ...)` handler 开头读 `req.headers['if-match']`(可能 undefined)。规则:
     - undefined → `400 {error:"missing_if_match"}`
@@ -75,7 +75,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts -t "supersede"` 全绿
   - **依赖**: 1.1, 1.3, 1.4
 
-- [ ] 2.3 **SSE 订阅表 + 心跳**
+- [x] 2.3 **SSE 订阅表 + 心跳**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify, top of file)
   - **内容**: 文件顶部声明 `const subscribers = new Map<string, Set<express.Response>>();`。导出 `subscribeAtom(id, res)` 和 `broadcastAtomUpdate(atom)` 两个 helper。`subscribeAtom` 立即发 `: connected\n\n` + 每 25s 发 `: ping\n\n`(用 `setInterval` 注册到 `res` 上,`res.on('close')` 时 `clearInterval` 并从 Set 删除)。`broadcastAtomUpdate` 在订阅表里查 id,遍历发 `event: atom\ndata: <JSON>\n\n`。
   - **验证**: 单测验证订阅表的 add/del/广播;集成测试由 5.3 任务添加。
@@ -95,13 +95,13 @@
 
 ## 3. Client 改造(webui 层)
 
-- [ ] 3.1 **`api.memory.patch` 支持自定义 headers**
+- [x] 3.1 **`api.memory.patch` 支持自定义 headers**
   - **文件**: `packages/webui/web/src/lib/api.ts` (Modify)
   - **内容**: `api.memory.patch` 当前签名推断为 `(id: string, patch: Partial<MemoryAtom>) => Promise<MemoryAtom>`。改为 `(id: string, patch: Partial<MemoryAtom>, opts?: {ifMatch?: string|number}) => Promise<MemoryAtom>`。当 `opts.ifMatch` 提供时,fetch 调用加 `headers: {"If-Match": typeof === 'number' ? String(opts.ifMatch) : opts.ifMatch}`。失败响应按 status 抛出 `Error`(已有)。
   - **验证**: 类型层 `tsgo --noEmit` 通过。
   - **依赖**: 无
 
-- [ ] 3.2 **`MemoryDetail.tsx` 用 EventSource 替 setInterval**
+- [x] 3.2 **`MemoryDetail.tsx` 用 EventSource 替 setInterval**
   - **文件**: `packages/webui/web/src/components/memory/MemoryDetail.tsx` (Modify, lines 53-78)
   - **内容**: 删除 `useEffect` 里的 `setInterval(fetchAtom, 3000)`(line 73)。新增 `useEffect` 创建 `new EventSource(`/api/memory/${id}/stream`)`,`onmessage` 解析 `event.data` 为 atom,仅当 `incoming.version > localAtom.version` 时 `setAtom(incoming)`(避免乱序)。`onerror` 显示"连接中断"提示但保留 `EventSource` 自动重连。`useEffect` 清理函数 `eventSource.close()`。初始 `fetchAtom()` 调用保留(拿首屏数据)。
   - **验证**: `cd packages/webui/web && node ../../../node_modules/vitest/dist/cli.js --run test/MemoryDetail.test.ts` 全绿(组件测试需更新 mock)
