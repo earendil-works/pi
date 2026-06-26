@@ -150,7 +150,12 @@ describe("recallAtoms", () => {
 		superseded_at: null,
 		archived: 0,
 		created_at: Date.now(),
-		updated_at: Date.now(),
+		// 1 year ago by default so the score-formula additive `0.05 ×
+		// freshness` term is `exp(-365/30) ≈ 5.2e-6` × 0.05 ≈ 2.6e-7
+		// (negligible). Keeps the multiplicative-formula tests
+		// (`toBeCloseTo(1.5, 5)`, `toBeCloseTo(1.05, 5)`) valid without
+		// accounting for the +0.05 freshness boost.
+		updated_at: Date.now() - 365 * 24 * 60 * 60 * 1000,
 		last_access: null,
 		content_fingerprint: `fp-${Math.random().toString(36).slice(2, 18)}`,
 		source_session: null,

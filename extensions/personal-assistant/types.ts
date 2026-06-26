@@ -72,12 +72,22 @@ export interface RecallResult {
 	cosine: number;
 	/**
 	 * Weighted ranking score used to order hits within each atom type during
-	 * search. Formula: `score = cosine × (1 + 0.3 × strength + 0.2 × importance)`.
+	 * search. Formula:
+	 *   score = cosine × (1 + 0.3 × strength + 0.2 × importance)
+	 *         + 0.10 × tagOverlap
+	 *         + 0.05 × freshness
 	 *
-	 * Cosine is the multiplicative anchor: a cosine of 0 forces score to 0,
-	 * regardless of strength/importance. The strength/importance term adds a
-	 * continuous boost capped at +0.5 (when both are 1.0), so an unrelated atom
-	 * can never be boosted above a relevant one.
+	 * The first term is the multiplicative anchor (back-compat from the
+	 * dense-only era): a cosine of 0 forces that term to 0, regardless of
+	 * strength/importance. The strength/importance term adds a continuous
+	 * boost capped at +0.5 (when both are 1.0), so an unrelated atom can
+	 * never be boosted above a relevant one.
+	 *
+	 * The two additive terms (`tagOverlap` and `freshness`) are debug
+	 * surfaces — they tune ranking for keyword-rescue and recency
+	 * respectively, but are NOT used to override the multiplicative anchor
+	 * (cosine=0 still produces score=0 since the additive terms alone cap
+	 * at +0.15).
 	 *
 	 * `score` is exposed only in the search response (UI / debug surfaces).
 	 * The format layer (`formatMemoryContext`) re-sorts hits by `distance` ASC
@@ -103,6 +113,22 @@ export interface RecallResult {
 	 * that the existing memory_get path depends on.
 	 */
 	rrfScore?: number;
+	/**
+	 * Tag overlap contribution: fraction of query segment tokens (after
+	 * tag-alias folding via `computeTagOverlap`) that match an atom's tag
+	 * set, in [0, 1]. Debug surface for the `0.10 × tagOverlap` additive
+	 * term in the score formula. Computed per-segment so heterogeneous
+	 * queries (`mgm工时计算` → ["mgm", "工时计算"]) get accurate per-tag
+	 * matching against the original segment, not the joined query string.
+	 */
+	tagOverlap?: number;
+	/**
+	 * Freshness decay in [0, 1]: `exp(-daysSinceUpdate / 30)`. Debug surface
+	 * for the `0.05 × freshness` additive term in the score formula. A
+	 * freshly-updated atom scores 1.0; an atom updated ~30 days ago scores
+	 * ≈0.37; a year-old atom scores ≈5.2e-6 (negligible).
+	 */
+	freshness?: number;
 }
 
 // ---------------------------------------------------------------------------

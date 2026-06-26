@@ -138,6 +138,21 @@ const insertAtom = async (atom: MemoryAtom, index: MemoryIndex): Promise<void> =
 	await index.insertAtom(atom, emb);
 };
 
+/**
+ * Fixture helper for the additive-score formula tests (tagOverlap +
+ * freshness). Sets `updated_at` to 1 year ago by default so the freshness
+ * contribution to `score` is essentially 0 (`exp(-365/30) ≈ 5.2e-6`) and
+ * the new tests can isolate the `tagOverlap` boost without freshness
+ * masking the difference. The 1-year-ago default also keeps the existing
+ * score-formula assertions (e.g. `toBeCloseTo(1.5, 5)`) valid without
+ * needing to recalculate the +0.05 freshness term.
+ */
+const makeAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom =>
+	sampleAtom({
+		updated_at: Date.now() - 365 * 24 * 60 * 60 * 1000,
+		...overrides,
+	});
+
 describe("rrfFuse", () => {
 	it("rrfFuse sums contributions from both channels", () => {
 		// denseRanks = [a(0), b(1)]  →  a gets 1/(60+0+1)=1/61,  b gets 1/(60+1+1)=1/62
@@ -752,6 +767,102 @@ it("long mixed query does NOT split into segments; BM25 strips - and . cleanly",
 		for (let i = 0; i < results.length - 1; i++) {
 			expect(results[i]?.atom.type).not.toBe(results[i + 1]?.atom.type);
 		}
+	});
+
+	// (m) NEW (task 5.4) — score includes the `0.10 × tagOverlap` additive
+	// term when a query segment token matches an atom's tag. We insert two
+	// atoms with the SAME content (so dense cosine is equal), differing only
+	// in tags: `matching` has `tags: ["code-style"]` so `tagOverlap=1.0` for
+	// the query "code-style"; `baseline` has `tags: []` so `tagOverlap=0`.
+	// Both use `makeAtom` (1-year-ago updated_at) so the freshness term is
+	// negligible and the score delta isolates the tagOverlap contribution.
+	//
+	// We mock `vectorSearch` per type so the dense channel returns the same
+	// cosine (0.7) for both atoms, regardless of how `insertAtom`'s embeddable
+	// text weights the tag token — this isolates the tagOverlap contribution
+	// from any incidental embedding differences that the tag join would
+	// introduce in the real `buildEmbeddableText` path.
+	it("score includes tag_overlap boost for atoms with matching tags", async () => {
+		installCharBagMock();
+		const matching = makeAtom({
+			type: "rule",
+			content: "code-style specific marker alpha beta",
+			tags: ["code-style"],
+		});
+		const baseline = makeAtom({
+			type: "fact",
+			content: "code-style specific marker alpha beta",
+			tags: [],
+		});
+		await insertAtom(matching, index);
+		await insertAtom(baseline, index);
+
+		// Pin the dense cosine to 0.7 for both atoms (above the 0.65 floor
+		// so the dense hit survives the floor filter). Same distance →
+		// same cosine for both, so the only score difference is the
+		// tagOverlap additive term.
+		const realVS = index.vectorSearch.bind(index);
+		index.vectorSearch = ((embedding: number[], k: number, filter?: { type?: "rule" | "fact" | "process" }) => {
+			if (filter?.type === "rule") return [{ id: matching.id, distance: Math.sqrt(0.6) }];
+			if (filter?.type === "fact") return [{ id: baseline.id, distance: Math.sqrt(0.6) }];
+			return realVS(embedding, k, filter);
+		}) as typeof index.vectorSearch;
+
+		const results = await recallAtoms(index, "code-style");
+		const matchingHit = results.find((r) => r.atom.id === matching.id);
+		const baselineHit = results.find((r) => r.atom.id === baseline.id);
+		expect(matchingHit).toBeDefined();
+		expect(baselineHit).toBeDefined();
+		// tagOverlap is 1.0 when the (lowercased) query token exactly
+		// matches an atom tag; 0 otherwise. computeTagOverlap tokenizes
+		// on whitespace so "code-style" is a single token.
+		expect(matchingHit?.tagOverlap).toBeCloseTo(1.0, 5);
+		expect(baselineHit?.tagOverlap).toBe(0);
+		// Both atoms have the same dense cosine (0.7) and same
+		// strength/importance/freshness, so the score delta collapses
+		// to the 0.10 tagOverlap term: 0.10 × (1.0 − 0) = 0.10.
+		expect(matchingHit?.cosine).toBeCloseTo(0.7, 5);
+		expect(baselineHit?.cosine).toBeCloseTo(0.7, 5);
+		expect((matchingHit?.score ?? 0) - (baselineHit?.score ?? 0)).toBeCloseTo(0.10, 5);
+	});
+
+	// (n) NEW (task 5.4) — score includes the `0.05 × freshness` additive
+	// term, decaying as `updated_at` ages. Two atoms with identical content
+	// (so charBag cosine is equal) and identical tagOverlap (both have
+	// empty tags), differing only in `updated_at`: 1 day ago vs 30 days
+	// ago. The 30-day-old atom's score must be strictly less than the
+	// 1-day-old atom's (the freshness term is monotonically decreasing
+	// with `updated_at`).
+	it("score includes freshness decay for older atoms", async () => {
+		installCharBagMock();
+		const fresh = makeAtom({
+			type: "rule",
+			content: "alpha specific marker beta gamma",
+			tags: [],
+			updated_at: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
+		});
+		const stale = makeAtom({
+			type: "fact",
+			content: "alpha specific marker beta gamma",
+			tags: [],
+			updated_at: Date.now() - 30 * 24 * 60 * 60 * 1000, // 30 days ago
+		});
+		await insertAtom(fresh, index);
+		await insertAtom(stale, index);
+
+		const results = await recallAtoms(index, "alpha");
+		const freshHit = results.find((r) => r.atom.id === fresh.id);
+		const staleHit = results.find((r) => r.atom.id === stale.id);
+		expect(freshHit).toBeDefined();
+		expect(staleHit).toBeDefined();
+		// freshness is exp(-daysSinceUpdate / 30). 1-day → exp(-1/30) ≈
+		// 0.9672; 30-day → exp(-1) ≈ 0.3679. The 5-decimal precision
+		// matches the formula's claim of monotonic decay.
+		expect(freshHit?.freshness).toBeCloseTo(Math.exp(-1 / 30), 5);
+		expect(staleHit?.freshness).toBeCloseTo(Math.exp(-1), 5);
+		// Score is strictly higher for the fresher atom — same cosine /
+		// strength / importance / tagOverlap, only freshness differs.
+		expect(freshHit?.score ?? 0).toBeGreaterThan(staleHit?.score ?? 0);
 	});
 });
 
