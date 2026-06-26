@@ -35,9 +35,50 @@ const ATOM: MemoryAtom = {
   content: "# body",
 };
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  url: string;
+  withCredentials = false;
+  readyState = 0;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  closed = false;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  simulateMessage(payload: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  }
+
+  simulateError(): void {
+    this.onerror?.(new Event("error"));
+  }
+}
+
+function lastSource(): MockEventSource {
+  const src = MockEventSource.instances[MockEventSource.instances.length - 1];
+  if (!src) throw new Error("no EventSource was created");
+  return src;
+}
+
+beforeEach(() => {
+  MockEventSource.instances.length = 0;
+  globalThis.EventSource =
+    MockEventSource as unknown as typeof globalThis.EventSource;
+});
+
 describe("MemoryDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    MockEventSource.instances.length = 0;
     (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValue(ATOM);
     (api.memory.patch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...ATOM,
@@ -111,10 +152,141 @@ describe("MemoryDetail", () => {
     await act(async () => {
       await vi.runOnlyPendingTimersAsync();
     });
-    // header Archive button is the first one rendered
     const archiveButtons = screen.getAllByText("Archive");
     expect(archiveButtons.length).toBeGreaterThan(0);
     fireEvent.click(archiveButtons[0]!);
-    expect(onArchive).toHaveBeenCalledWith("a-1");
+    expect(onArchive).toHaveBeenCalledWith("a-1", false);
+  });
+});
+
+describe("MemoryDetail SSE", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    MockEventSource.instances.length = 0;
+    (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValue(ATOM);
+    (api.memory.patch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...ATOM,
+      title: "New",
+    });
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("opens an EventSource pointing at /api/memory/<id>/stream on mount", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    expect(lastSource().url).toBe("/api/memory/a-1/stream");
+  });
+
+  it("does not poll after the initial fetch", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    const callsAfterMount = (api.memory.get as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect((api.memory.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      callsAfterMount,
+    );
+  });
+
+  it("applies SSE messages whose version is newer than the current atom", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    const updated: MemoryAtom = {
+      ...ATOM,
+      version: 2,
+      title: "From SSE",
+      updated_at: ATOM.updated_at + 1,
+    };
+    act(() => {
+      lastSource().simulateMessage(updated);
+    });
+    expect(screen.getByDisplayValue("From SSE")).toBeDefined();
+    expect(screen.getByText("version: 2")).toBeDefined();
+  });
+
+  it("drops SSE messages whose version is not greater than current", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    const stale: MemoryAtom = { ...ATOM, version: 1, title: "Stale" };
+    act(() => {
+      lastSource().simulateMessage(stale);
+    });
+    expect(screen.queryByDisplayValue("Stale")).toBeNull();
+    expect(screen.getByDisplayValue("Test title")).toBeDefined();
+  });
+
+  it("drops SSE messages with a smaller version (out-of-order)", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    const newer: MemoryAtom = {
+      ...ATOM,
+      version: 5,
+      title: "Newer",
+      updated_at: ATOM.updated_at + 5,
+    };
+    const older: MemoryAtom = {
+      ...ATOM,
+      version: 3,
+      title: "Older",
+      updated_at: ATOM.updated_at + 3,
+    };
+    act(() => {
+      lastSource().simulateMessage(newer);
+    });
+    act(() => {
+      lastSource().simulateMessage(older);
+    });
+    expect(screen.getByDisplayValue("Newer")).toBeDefined();
+    expect(screen.queryByDisplayValue("Older")).toBeNull();
+  });
+
+  it("shows a reconnect hint on EventSource error and keeps the stream alive", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    act(() => {
+      lastSource().simulateError();
+    });
+    expect(screen.getByText(/连接中断|重连/)).toBeDefined();
+    expect(lastSource().closed).toBe(false);
+  });
+
+  it("closes the EventSource on unmount", async () => {
+    const { unmount } = render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    unmount();
+    expect(lastSource().closed).toBe(true);
   });
 });

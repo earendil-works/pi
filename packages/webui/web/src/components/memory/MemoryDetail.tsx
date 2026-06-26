@@ -46,11 +46,13 @@ function computePatch(server: MemoryAtom, local: MemoryAtom): Partial<MemoryAtom
 export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps) {
   const [atom, setAtom] = useState<MemoryAtom | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // localAtom = user's edit state. Polling preserves it when the server version
-  // is unchanged; replaces it when the server returns a newer version.
+  const [sseConnected, setSseConnected] = useState(false);
+  // localAtom = user's edit state. SSE + initial fetch preserve it when the
+  // server version is unchanged; replace it when the server returns a newer
+  // version.
   const [localAtom, setLocalAtom] = useState<MemoryAtom | null>(null);
 
-  // 3s polling fetch
+  // Initial fetch + SSE subscription for live atom updates
   useEffect(() => {
     let alive = true;
     const fetchAtom = async () => {
@@ -70,10 +72,29 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
       }
     };
     void fetchAtom();
-    const interval = setInterval(() => void fetchAtom(), 3000);
+
+    const eventSource = new EventSource(`/api/memory/${id}/stream`);
+    eventSource.onmessage = (event) => {
+      try {
+        const incoming = JSON.parse(event.data) as MemoryAtom;
+        // 单调递增防护: 仅当 incoming.version 严格大于当前版本才接受推送
+        const accept = (prev: MemoryAtom | null) =>
+          prev && incoming.version <= prev.version ? prev : incoming;
+        setAtom(accept);
+        setLocalAtom(accept);
+        setSseConnected(true);
+      } catch {
+        // Ignore malformed messages
+      }
+    };
+    eventSource.onerror = () => {
+      // EventSource 自动重连; 仅标记状态让 UI 提示
+      setSseConnected(false);
+    };
+
     return () => {
       alive = false;
-      clearInterval(interval);
+      eventSource.close();
     };
   }, [id]);
 
@@ -146,6 +167,14 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
           <div>updated: {atom.updated_at}</div>
           <div>last_access: {atom.last_access || "—"}</div>
         </div>
+        {!sseConnected && (
+          <div
+            data-testid="memory-sse-status"
+            className="text-amber-600"
+          >
+            连接中断,正在重连...
+          </div>
+        )}
       </div>
       {/* editor */}
       <div className="flex-1 min-h-0">
