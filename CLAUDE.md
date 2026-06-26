@@ -99,3 +99,11 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - **isStreaming 是单向上下文**: 父组件 (ChatPage) 知道 `isThinking`,通过 prop 透传到 MessageBubble → MessageParts。子组件不读 store / 不发请求
 - **Step collapsed/expanded 状态用 useState**: 用户点击 toggle 改变本地 state,无持久化、无 URL 参数。刷新页面后 step 默认按 `isStreaming` 决定(流中展开,流完折叠)
 - **Duration 显示冻结在完成时刻**: 用 `useRef<completedAt>` 记下 step 关闭的时间戳,header duration 算 `completedAt - startedAt` 而不是 `Date.now() - startedAt`。完成后不再 tick,旧 turn 看到的还是真实耗时,不是缓慢增长的"since-timestamp"近似
+
+## memory-pipeline-hardening 原则
+
+- 写入路径优先走"已有 supersede 机制",webui PATCH 不绕过 extraction 的 cosine 去重门
+- 客户端乐观更新必须带 `If-Match` 版本号,服务端用 409 终止冲突而非无声覆盖
+- 单 atom 状态推送优先走 SSE(零冗余),仅在 SSE 不可用时回退轮询
+- tag 写入是归一化操作(merge alias + 去重),不是字符串透传
+- 检索打分公式扩展维度时,既有 `cosine × (1 + 0.3s + 0.2i)` 主项保持向后兼容

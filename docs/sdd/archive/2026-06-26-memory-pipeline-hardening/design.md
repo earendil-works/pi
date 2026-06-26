@@ -252,3 +252,5 @@ export function computeFreshness(updatedAt: number, now?: number): number;
 - `MemoryDeps` 当前要求 `settings, callLlm`(测试编译错误暴露),新代码沿用即可,无需扩展接口。
 
 **验证清单对应 scenarios.md**: 每个 Scenario 必须有对应测试,verification-checklist 在 write_plan 阶段生成。
+
+<!-- archived-with: 2026-06-26-memory-pipeline-hardening | status: final -->
