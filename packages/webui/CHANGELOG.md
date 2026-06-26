@@ -10,11 +10,16 @@
   - `api.memory` namespace on the webui client with 6 methods.
   - `useAutoSave` hook (3s debounce + 200ms unmount flush deadline) wired into `MemoryDetail` for transparent auto-save.
 - "bug" promoted to 8th `MemoryAtomType` (production data had 1 atom of this type; previously caused silent type rewrite on PATCH).
+- GET /api/memory/:id/stream — SSE endpoint pushing atom-version updates to subscribed clients
+- PATCH /api/memory/:id requires If-Match header (returns 409 on version mismatch, 400 if missing)
+- PATCH response includes optional `previousId` field when a similar atom was auto-superseded
+- MemoryDetail uses SSE to replace the prior 3-second polling loop
 
 ### Changed
 
 - `POST /api/memory/search` response is now discovery-only: `{results: [{id, type, title, summary, tags, distance, cosine, score}], recallTimeMs}` — no `tier` / `formattedText` / `tokenBudgetUsed`. The agent calls `memory_get(id)` to fetch full content (the sole programmatic strength-feedback entry). The MemorySearchTester UI now shows each result's `score` directly.
 - `GET /api/memory/:id` is preview-only — does not bump `access_count`.
+- 409 conflict responses in MemoryDetail now surface an inline status banner instead of a full-page error
 
 ### Fixed
 

@@ -21,6 +21,11 @@
 - New `memory_get` tool — sole programmatic strength-feedback entry. Bumps `access_count` and `last_access` on successful lookup.
 - New `scoreUserTone` 5-tier user-tone scorer (STRONG/HABIT/WEAK/RARE/NEUTRAL) + `<user_tone>` hint injection in `buildExtractionPrompt`. Extraction LLM uses it to calibrate importance (±0.15 deviation allowed).
 - TUI footer status indicator for memory recall. The `before_agent_start` hook now surfaces the most recent recall result via `ctx.ui.setStatus("memory", …)` so the user sees `"📦 N atoms · rule=X fact=Y process=Z · top=0.XXX"` (hits), `"🔍 no memory match"` (empty), or `"⚠ memory recall failed"` (error) below the mode chip. Status reflects the most recent recall; older states are not retained.
+- `supersedeIfSimilar(index, atomsDir, newAtom, embedding, threshold?)` extracted to `dedup.ts` for reuse by webui PATCH and extraction flows
+- `normalizeTags(input, aliases?)` in `tag-alias.ts` for dual-side alias folding (write + query)
+- `computeTagOverlap` and `computeFreshness` scoring helpers in `scoring.ts`
+- `PersonalAssistantConfig.memory.{tagAliases, tagOverlapWeight, freshnessWeight}` — runtime-configurable scoring weights
+- Score formula extended with additive `tagOverlap` and `freshness` terms (RecallResult exposes both as debug fields)
 
 ### Changed
 - memory.ts reduced from 1649 → 290 lines (v2 is entry-point-only)
