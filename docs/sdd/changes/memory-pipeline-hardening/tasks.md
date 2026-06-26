@@ -200,5 +200,5 @@
   - **依赖**: 1.5, 5.4, 5.5, 5.6, 5.7
 
 ## Verification
-- [ ] 全量测试: `./test.sh` + `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/` + `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/`
-- [ ] Lint + typecheck: `npm run check`
+- [x] 全量测试: `./test.sh` + `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/` + `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/`
+- [x] Lint + typecheck: `npm run check`
