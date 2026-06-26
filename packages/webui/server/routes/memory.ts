@@ -4,6 +4,7 @@
 //   - GET /api/memory            (list with filter/pagination, Task 7.1)
 //   - GET /api/memory/:id        (full atom + content body, Task 7.3)
 //   - PATCH /api/memory/:id      (manual edits, Task 7.5)
+//   - GET /api/memory/:id/stream (SSE single-atom push, Task 2.4)
 //   - GET /api/memory/stats      (counts, Task 7.2)
 //   - POST /api/memory/:id/archive  (toggle archived flag, Task 7.5)
 //   - POST /api/memory/search    (recall + token budget, Task 7.6)
@@ -37,6 +38,8 @@ import {
 	buildEmbeddableText,
 	embedText,
 } from "../../../../extensions/personal-assistant/embed.ts";
+import { supersedeIfSimilar } from "../../../../extensions/personal-assistant/dedup.ts";
+import { normalizeTags } from "../../../../extensions/personal-assistant/tag-alias.ts";
 import type { PersonalAssistantConfig, MemoryAtom } from "@earendil-works/pi-personal-assistant";
 
 /**
@@ -44,6 +47,16 @@ import type { PersonalAssistantConfig, MemoryAtom } from "@earendil-works/pi-per
  * module-level state, vitest watch 模式下每个 test file 独立 createApp 避免污染。
  */
 const subscribers = new Map<string, Set<express.Response>>();
+
+/**
+ * Test-only handle that exposes the current subscriber count for a given
+ * atom id. Lets the SSE integration test verify that `res.on('close')`
+ * removed a disconnected response from the Set (Task 2.4 cleanup test).
+ * Not part of the public API.
+ */
+export function __getSubscriberCount(atomId: string): number {
+	return subscribers.get(atomId)?.size ?? 0;
+}
 
 /** SSE 心跳周期(ms),默认 25s。test 可注入更短值。 */
 export const SSE_HEARTBEAT_MS = 25_000;
@@ -232,8 +245,11 @@ export function registerGetMemoryList(
  *   - `content`:    string — replaces the existing content. Empty strings
  *                   are ignored (preserves the old content). Recomputes
  *                   `content_fingerprint` on change.
- *   - `tags`:       string[] — unioned with the existing tags (deduplicated;
- *                   existing order preserved, new tags appended).
+ *   - `tags`:       string[] — merged with the existing tags through
+ *                   `normalizeTags` (trim → empty filter → alias fold →
+ *                   Set dedup → preserve order) using the runtime
+ *                   `deps.settings.memory.tagAliases` map. Omitted tags
+ *                   leave the existing list untouched.
  *   - `importance`: number — clamped to [0, 1].
  *
  * Other atom fields (id, type, title, summary, strength, access_count,
@@ -250,9 +266,15 @@ export function registerGetMemoryList(
  *   - When embedText returns null (ollama down / timeout / network
  *     error), the route still updates the DB row and rewrites the .md
  *     file — only the vector is skipped (Decision 7: no fallback).
+ *   - The dedup gate (`supersedeIfSimilar`) is wired in for future use,
+ *     but for PATCH the new atom's id always equals existing.id, so the
+ *     self-match guard inside supersedeIfSimilar returns "create" and the
+ *     route falls through to updateAtom. A supersede response would carry
+ *     `previousId` set to the superseded atom's id.
  *
  * Status codes:
- *   - 200: updated atom JSON.
+ *   - 200: updated atom JSON. On a supersede hit, body includes
+ *          `previousId: <supersededAtomId>`.
  *   - 400: missing If-Match header (Task 2.1, CAS contract).
  *   - 404: atom id is unknown.
  *   - 409: If-Match version does not match the current row. Body is
@@ -300,16 +322,28 @@ export function registerPatchMemory(
 				}
 
 				// Merge body fields. content is replaced only when a
-				// non-empty string is supplied; tags are unioned;
-				// importance is clamped to [0, 1].
+				// non-empty string is supplied; tags are merged through
+				// normalizeTags (trim → empty filter → alias fold → Set
+				// dedup → preserve order) using the runtime tagAliases
+				// from settings.memory.tagAliases; importance is clamped
+				// to [0, 1].
 				const mergedContent =
 					typeof req.body?.content === "string" &&
 					req.body.content.length > 0
 						? req.body.content
 						: existing.content;
-				const mergedTags = Array.isArray(req.body?.tags)
-					? Array.from(new Set([...existing.tags, ...req.body.tags]))
+				const tagAliases = deps.settings?.memory?.tagAliases;
+				const incomingTags = Array.isArray(req.body?.tags)
+					? req.body.tags
 					: existing.tags;
+				const normalizedIncoming = normalizeTags(incomingTags, tagAliases);
+				const filteredIncoming = normalizedIncoming.filter(
+					(t) => !existing.tags.includes(t),
+				);
+				const mergedTags = normalizeTags(
+					[...existing.tags, ...filteredIncoming],
+					tagAliases,
+				);
 				const mergedImportance =
 					typeof req.body?.importance === "number"
 						? Math.max(0, Math.min(1, req.body.importance))
@@ -340,6 +374,26 @@ export function registerPatchMemory(
 					timeoutMs: deps.embedTimeoutMs,
 				});
 
+				// Dedup gate (Task 2.2, design.md Decision 2). For a PATCH
+				// the new atom's id always equals existing.id (we are
+				// updating the same row in place), so the self-match guard
+				// inside supersedeIfSimilar returns "create" — the route
+				// falls through to updateAtom below. The gate is still
+				// wired up so future callers (or a future routing of PATCH
+				// to a fresh id) can take the supersede path.
+				const dedupResult = await supersedeIfSimilar(
+					index,
+					deps.atomsDir,
+					mergedAtom,
+					embedding ?? null,
+				);
+				if (dedupResult.status === "supersede") {
+					const finalAtom = dedupResult.atom;
+					broadcastAtomUpdate(finalAtom);
+					res.json({ ...finalAtom, previousId: finalAtom.parent_id });
+					return;
+				}
+
 				// Fast atomic DB update. updateAtom() runs in its own
 				// transaction and bumps version internally. Passing
 				// `undefined` for embedding skips the vector update
@@ -354,7 +408,55 @@ export function registerPatchMemory(
 				// the file's content_hash matches content_fingerprint.
 				await writeAtomToFile(mergedAtom, deps.atomsDir);
 
+				// SSE: push the post-write atom to every subscriber of
+				// this id (Task 2.4). No-op when nobody is subscribed —
+				// the empty Set short-circuits inside broadcastAtomUpdate.
+				broadcastAtomUpdate(mergedAtom);
+
 				res.json(mergedAtom);
+			} finally {
+				index.close();
+			}
+		} catch (err) {
+			res.status(500).json({ error: (err as Error).message });
+		}
+	});
+}
+
+/**
+ * GET /api/memory/:id/stream — SSE endpoint for real-time atom updates
+ * (Task 2.4, design.md Decision 3, spec ADDED #5).
+ *
+ * Subscribes the client to atom-version change events for `:id`. The server
+ * pushes `event: atom\ndata: {...}\n\n` whenever the atom is updated via
+ * PATCH (or any other path that ends in `broadcastAtomUpdate`). A
+ * `: ping\n\n` heartbeat is sent every 25s by `subscribeAtom` to keep the
+ * connection alive through NATs / proxies.
+ *
+ * Status codes:
+ *   - 200: text/event-stream response, connection held open
+ *   - 404: atom id is unknown (response ends immediately)
+ *   - 500: only for genuine DB failures
+ */
+export function registerStreamMemoryById(
+	app: express.Express,
+	deps: MemoryDeps,
+): void {
+	app.get("/api/memory/:id/stream", async (req, res) => {
+		try {
+			const index = await createIndex(deps.dbPath);
+			try {
+				const existing = index.getAtom(req.params.id);
+				if (!existing) {
+					res.status(404).json({ error: "atom_not_found" });
+					return;
+				}
+				res.setHeader("Content-Type", "text/event-stream");
+				res.setHeader("Cache-Control", "no-cache");
+				res.setHeader("Connection", "keep-alive");
+				// Express 5 / Node 18+ may have flushHeaders.
+				(res as { flushHeaders?: () => void }).flushHeaders?.();
+				subscribeAtom(req.params.id, res);
 			} finally {
 				index.close();
 			}
@@ -698,8 +800,10 @@ export function mountMemoryRoutes(
 	registerGetMemoryStats(app, deps);
 	registerPostSearch(app, deps);
 	registerPostExtract(app, deps);
-	// Parameterized paths last
+	// Parameterized paths last. Stream must come after /:id so its
+	// ":id/stream" tail is matched first by Express's route stack.
 	registerGetMemoryById(app, deps);
 	registerPatchMemory(app, deps);
 	registerPostArchive(app, deps);
+	registerStreamMemoryById(app, deps);
 }
