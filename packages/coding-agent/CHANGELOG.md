@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the inherited Friendli provider (`friendli`) using the OpenAI-compatible `https://api.friendli.ai/serverless/v1` endpoint, authenticated with `FRIENDLI_API_KEY`. Default model `zai-org/GLM-5.2`. See [Providers](docs/providers.md).
+
 ### Fixed
 
 - Fixed `--session` and `SessionManager.open()` to reject non-empty invalid session files without overwriting them ([#6002](https://github.com/earendil-works/pi/issues/6002)).

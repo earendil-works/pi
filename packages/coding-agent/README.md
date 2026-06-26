@@ -127,6 +127,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - OpenCode Go
 - Hugging Face
 - Fireworks
+- Friendli
 - Together AI
 - Kimi For Coding
 - MiniMax

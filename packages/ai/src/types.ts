@@ -40,6 +40,7 @@ export type KnownProvider =
 	| "openai-codex"
 	| "nvidia"
 	| "deepseek"
+	| "friendli"
 	| "github-copilot"
 	| "xai"
 	| "groq"
