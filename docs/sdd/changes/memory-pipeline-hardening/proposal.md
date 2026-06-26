@@ -35,7 +35,7 @@ Memory 管线当前存在 5 个真实痛点(基于对源码的逐条核验):
 1. **CAS**: 客户端用旧 version 发 PATCH,服务端返回 409 + 当前 atom,UI 展示合并选项或重载。
 2. **supersede**: webui PATCH 时,新内容与现有 active atom 的 cosine > 0.92,自动调用 `markSupersededTx`,新 atom 继承旧 atom 的 strength/access_count。
 3. **SSE**: `GET /api/memory/:id/stream` 返回 `text/event-stream`,PATCH 命中该 id 时推送 `{version, atom}` 事件。客户端 `MemoryDetail` 用 `EventSource` 替代 `setInterval(..., 3000)`。
-4. **tag 规范化**: 写入时经 `normalizeTags(input)` 走 `tag_aliases.json` 映射,空 tag/重复 tag 被合并。UI 输入也即时归一化。
+4. **tag 规范化**: 写入时经 `normalizeTags(input)` 走 `settings.memory.tagAliases` 映射,空 tag/重复 tag 被合并。UI 输入也即时归一化。
 5. **scoring**: 新公式
    ```
    score = cosine × (1 + 0.3strength + 0.2importance)

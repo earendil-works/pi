@@ -16,7 +16,7 @@ Memory 管线当前在 webui 写入路径下有 5 个真实痛点(经源码逐�
 - webui PATCH 路径接入 `If-Match` 版本校验(409 终止冲突)
 - webui PATCH 路径复用 `extraction.ts` 的 cosine supersede 门
 - `MemoryDetail` 用 SSE 替换 3 秒轮询
-- 写入时归一化 tag(走 `tag_aliases.json` 映射)
+- 写入时归一化 tag(走 `settings.memory.tagAliases` 映射)
 - 检索 score 加 `tag_overlap` 和 `freshness_decay` 两维度,保持 `cosine/score` 向后兼容
 
 **Non-Goals**:
@@ -42,22 +42,23 @@ Memory 管线当前在 webui 写入路径下有 5 个真实痛点(经源码逐�
 **Rationale**: express 原生 `res` 即可,无需 ws 升级;注释帧防 NAT/中间设备切断;订阅表用内存 Map(atom 数量 O(100s),GC 友好)。
 **Alternatives**: WebSocket(过度工程,server→client 单向即可);全表广播(拒绝,只 Detail 需要)。
 
-### 4. tag 归一化按 schema 优先级合并
-**Decision**: 写入路径经 `normalizeTags(input: string[], aliases: Record<string,string>): string[]` —— 先 trim/空过滤,再按 alias map 折叠,最后 `Set` 去重。结果保持输入顺序。
-**Rationale**: 与既有 `extraction.ts:235` 的 `mergedTags = Array.from(new Set([...existing.tags, ...req.body.tags]))` 保持 Set 去重风格一致;`tag_aliases.json` 缺失时返回原 input(graceful degradation)。
-**Alternatives**: 数据库维护 alias 表(拒绝,MVP 用 JSON 文件足够);LLM 自动提议(拒绝,非目标)。
+### 4. tag 归一化双侧 + alias 存 settings 表
+**Decision**: 写入路径经 `normalizeTags(input, aliases?)` —— trim → 空过滤 → alias 折叠 → Set 去重 → 保序。alias 源是 `settings.memory.tagAliases`(`PersonalAssistantConfig` 扩展字段)。**查询侧**对 query 做同样的 split + alias 折叠,用于 `computeTagOverlap`。
+**Rationale**: 双侧归一化是关键 —— 否则 atom 用 `code-style`、query 用 `coding-rule` 即便 alias 折叠了也只是单侧有效。`settings.json` 通过既有 `PATCH /api/settings`(settings.ts:86) 修改即可,无需新接口。`deps.settings` 已存在于 `MemoryDeps`(memory.ts:57),`normalizeTags` 在 PATCH 路由里直接读。
+**Alternatives**: 单独 `tag_aliases.json` 文件(拒绝,用户已选 settings 表);LLM 自动提议 alias(拒绝,非目标);数据库维护 alias 表(拒绝,MVP 不需要);仅写入侧归一化(拒绝,查询侧不归一化则 tag_overlap 仍漏命中)。
 
 ### 5. score 公式加法叠加 tag_overlap + freshness
 **Decision**: 新公式
 ```ts
-const tagOverlap = computeTagOverlap(query, atom.tags);    // 0..1
+const tagOverlap = computeTagOverlap(query, atom.tags);    // 0..1,query 经 alias 归一
 const freshness = computeFreshness(atom.updated_at);       // 0..1
 score = cosine × (1 + 0.3strength + 0.2importance)
-      + 0.10 × tagOverlap
-      + 0.05 × freshness;
+      + wTag × tagOverlap
+      + wFreshness × freshness;
+// 默认 wTag=0.10, wFreshness=0.05,均可由 settings.memory.{tagOverlapWeight,freshnessWeight} 覆盖
 ```
-**Rationale**: 主项 `cosine × (1+...)` 保持向后兼容(agent 的 `memory_get` 工具和 `SearchResponse.score` 字段);加法项贡献 ≤ 0.15,不会颠覆排序,只对边缘 case 调整。
-**Alternatives**: 乘法叠加(拒绝,会放大 cosine 差异);替换主项(拒绝,破坏 back-compat)。
+**Rationale**: 主项 `cosine × (1+...)` 保持向后兼容(agent 的 `memory_get` 工具和 `SearchResponse.score` 字段);加法项贡献 ≤ 0.15,不会颠覆排序,只对边缘 case 调整。`tagOverlap` 计算前先 `normalizeQueryTags(query, settings.tagAliases)`,确保双侧归一。
+**Alternatives**: 乘法叠加(拒绝,会放大 cosine 差异);替换主项(拒绝,破坏 back-compat);tag_overlap 作为独立阈值门(拒绝,作用同 BM25 通道冗余)。
 
 ## Architecture
 
@@ -96,6 +97,12 @@ export function normalizeTags(
   input: string[],
   aliases?: Record<string, string>,
 ): string[];
+// aliases 来自 settings.memory.tagAliases(见 PersonalAssistantConfig 扩展)
+
+// 扩展 PersonalAssistantConfig.memory(memory.ts:67-103)
+tagAliases?: Record<string, string>;     // 写入归一化 + 查询 token 折叠
+tagOverlapWeight?: number;               // 默认 0.10
+freshnessWeight?: number;                // 默认 0.05
 
 // 新增 extensions/personal-assistant/scoring.ts(从 search.ts 抽出)
 export function computeTagOverlap(query: string, tags: string[]): number;
@@ -198,15 +205,15 @@ export function computeFreshness(updatedAt: number, now?: number): number;
 | cosine supersede 在 ollama down 时跳过,webui 路径退化 | 沿用 `extraction.ts:147` 的 graceful degradation,fallback 到原 PATCH 流程,日志记 warn |
 | `If-Match` 头被某些反向代理剥离 | 在 server 启动时打印 warning 日志,`req.headers['if-match']` 取不到时按 400 处理 |
 | 新 scoring 公式破坏既有 `hybrid-recall.test.ts` 的 score 数值断言 | 既有断言用容差 `toBeCloseTo(..., 2)` 即可吸收小变化;tag_overlap/freshness 项只在 query 命中 tag 或 atom 新鲜时贡献,绝大多数测试不触发 |
-| `tag_aliases.json` 文件位置未定 | 放在 `packages/webui/server/data/tag_aliases.json`(随 server 启动加载),MVP 用 commit-in JSON,后续可挪到 settings 表 |
+| `tag_aliases` 缺失/格式错 | `normalizeTags` 在 `aliases` undefined / 非对象时直接返回 `Array.from(new Set(input))`,graceful degradation |
 | SSE 与 3 秒轮询并存时,`MemoryDetail` 同时收到两路更新 | 先实现 SSE,然后删轮询;过渡期用 feature flag(`useSSE` 默认 false) |
 | `supersedeIfSimilar` 抽出后 `extraction.ts:122-162` 重构 | 重构后 `executeItem` 调用新函数,既有 `extraction.test.ts` 覆盖不变 |
 
 ## Testing Strategy
 
 - **单元测试**:
-  - `extensions/personal-assistant/test/tag-alias.test.ts`: 归一化、alias 映射、空输入、文件缺失
-  - `extensions/personal-assistant/test/scoring.test.ts`: `computeTagOverlap` / `computeFreshness` 数值正确性
+  - `extensions/personal-assistant/test/tag-alias.test.ts`: 归一化(写入侧)、query 归一化(检索侧)、alias 映射、空输入、alias 缺失
+  - `extensions/personal-assistant/test/scoring.test.ts`: `computeTagOverlap` / `computeFreshness` / `normalizeQueryTags` 数值正确性 + 三路 score 公式
   - `extensions/personal-assistant/test/dedup.test.ts`: `supersedeIfSimilar` 抽出后的纯函数测试(用现有 `MemoryIndex` fixture)
 - **集成测试**:
   - `packages/webui/server/test/memory-routes.test.ts` 新增:
@@ -219,7 +226,7 @@ export function computeFreshness(updatedAt: number, now?: number): number;
     - back-compat: 旧 score 数值在 `tagOverlap=0, freshness=0` 时与新公式一致
 - **边界条件**:
   - SSE 连接断开重连:`vi.useFakeTimers` + 模拟 `res.close`
-  - `tag_aliases.json` 不存在: server 启动不报错,归一化跳过
+  - `settings.memory.tagAliases` 缺失/非对象: 归一化跳过,直接 Set 去重
   - cosine = 0.92 边界:`>=` 比较,等同 `extraction.ts:147`
 
 ## Implementation Notes
@@ -241,7 +248,7 @@ export function computeFreshness(updatedAt: number, now?: number): number;
 - SSE 注释帧必须以 `\n\n` 结尾(空行作为帧终止);事件帧 `event: atom\ndata: {...}\n\n`。
 - `supersedeIfSimilar` 抽出时必须保留 `markSupersededTx` 的 audit log 写入(extraction.ts 间接依赖)。
 - server 端的 SSE 订阅表用 module-level `Map<id, Set<Response>>`,要避免 hot reload 泄漏(vitest watch 模式);简单方案:测试每个 case 独立 `createApp`。
-- 新增 `tag_aliases.json` 的 location: 用 `import.meta.url` 推导 `data/tag_aliases.json`,与 `cron-watcher.ts` 的 `cronDataPath` 类似 pattern。
+- `settings.memory.tagAliases` 写入路径:走既有 `PATCH /api/settings`(settings.ts:86) deep-merge,无需新建接口;`MemoryDeps.settings`(memory.ts:57)在 PATCH handler 里直接读取。
 - `MemoryDeps` 当前要求 `settings, callLlm`(测试编译错误暴露),新代码沿用即可,无需扩展接口。
 
 **验证清单对应 scenarios.md**: 每个 Scenario 必须有对应测试,verification-checklist 在 write_plan 阶段生成。

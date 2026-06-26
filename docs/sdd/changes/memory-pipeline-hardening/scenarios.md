@@ -18,9 +18,9 @@
 - **THEN** 服务端调用 `markSupersededTx(A.id, newAtom, embedding)`,A 标 `is_latest=0`,新 atom 继承 A 的 strength/access_count
 
 ### Scenario: tag 输入"代码规范, code-style"被归一化
-- **GIVEN** `tag_aliases.json` 含 `{"代码规范": "code-style", "code-style": "code-style"}`
-- **WHEN** 用户输入 tags `"代码规范, code-style, coding-rule"` 且 `tag_aliases.json` 含 `"coding-rule": "code-style"`
-- **THEN** 写入前归一为 `["code-style"]`(去重 + alias 折叠)
+- **GIVEN** `settings.memory.tagAliases` = `{"代码规范": "code-style", "coding-rule": "code-style"}`
+- **WHEN** 用户输入 tags `"代码规范, code-style, coding-rule"`
+- **THEN** 写入前归一为 `["code-style"]`(alias 折叠 + Set 去重)
 
 ### Scenario: 检索 query 命中 tag 提升排序
 - **GIVEN** query="code-style",atom A(tag=["code-style"]) cosine=0.7,atom B(tag=[]) cosine=0.85
@@ -44,10 +44,10 @@
 - **WHEN** webui PATCH 写入新内容
 - **THEN** 服务端跳过 cosine dedup 检查,直接走原 PATCH 流程(graceful degradation,见 search.ts Decision 7)
 
-### Scenario: tag_aliases.json 缺失或格式错
-- **GIVEN** `tag_aliases.json` 不存在
+### Scenario: tag_aliases 缺失或格式错
+- **GIVEN** `settings.memory.tagAliases` 不存在或非对象(例如 `null`)
 - **WHEN** PATCH 写入带 tag 的 atom
-- **THEN** `normalizeTags` 跳过归一化,直接走 split+trim+filter(不阻断写入)
+- **THEN** `normalizeTags` 跳过 alias 折叠,直接 Set 去重(不阻断写入)
 
 ### Scenario: 同时收到两次 SSE 推送,version 顺序错乱
 - **GIVEN** 客户端订阅 stream,服务端先推 v=6(被另一客户端写入),后推 v=7(本客户端刚 PATCH 成功)
