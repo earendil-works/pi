@@ -273,6 +273,90 @@ describe("MemoryIndex", () => {
 			expect(arr[0]).toBeCloseTo(0.99, 5);
 		});
 
+		it("updateAtomIfVersion returns updated=false when version mismatches", async () => {
+			const atom = sampleAtom({ title: "original", content_fingerprint: "fp-cas-1" });
+			await index.insertAtom(atom, dummyEmbedding());
+			const updated: MemoryAtom = {
+				...atom,
+				title: "patched-but-rejected",
+				updated_at: Date.now() + 1000,
+			};
+			const result = await index.updateAtomIfVersion(updated, null, 0);
+			expect(result.updated).toBe(false);
+			if (!result.updated) {
+				expect(result.currentVersion).toBe(1);
+			}
+			// DB row unchanged — the bad version was rejected.
+			const row = index.getAtom(atom.id);
+			expect(row?.title).toBe("original");
+			expect(row?.version).toBe(1);
+		});
+
+		it("updateAtomIfVersion returns updated=true and bumps version when match", async () => {
+			const atom = sampleAtom({ content_fingerprint: "fp-cas-2" });
+			await index.insertAtom(atom, dummyEmbedding());
+			const updated: MemoryAtom = {
+				...atom,
+				title: "patched",
+				updated_at: Date.now() + 1000,
+			};
+			const newEmb: number[] = new Array(1024).fill(0.5);
+			const result = await index.updateAtomIfVersion(updated, newEmb, atom.version);
+			expect(result.updated).toBe(true);
+			if (result.updated) {
+				expect(result.atom.id).toBe(atom.id);
+				expect(result.atom.title).toBe("patched");
+				expect(result.atom.version).toBe(atom.version + 1);
+			}
+			// DB row reflects the successful update.
+			const row = index.getAtom(atom.id);
+			expect(row?.title).toBe("patched");
+			expect(row?.version).toBe(2);
+			// Embedding row was updated.
+			const vecRow = index
+				.getRawDb()
+				.prepare(`SELECT embedding FROM memory_vectors WHERE id = ?`)
+				.get(atom.id) as { embedding: Buffer };
+			const arr = new Float32Array(
+				vecRow.embedding.buffer,
+				vecRow.embedding.byteOffset,
+				1024,
+			);
+			expect(arr[0]).toBeCloseTo(0.5, 5);
+		});
+
+		it("updateAtomIfVersion skips embedding update when embedding is null", async () => {
+			const atom = sampleAtom({ content_fingerprint: "fp-cas-3" });
+			await index.insertAtom(atom, dummyEmbedding());
+			const originalVec = index
+				.getRawDb()
+				.prepare(`SELECT embedding FROM memory_vectors WHERE id = ?`)
+				.get(atom.id) as { embedding: Buffer };
+			const originalArr = new Float32Array(
+				originalVec.embedding.buffer,
+				originalVec.embedding.byteOffset,
+				1024,
+			);
+			const originalFirst = originalArr[0];
+			const updated: MemoryAtom = {
+				...atom,
+				title: "patched",
+				updated_at: Date.now() + 1000,
+			};
+			const result = await index.updateAtomIfVersion(updated, null, atom.version);
+			expect(result.updated).toBe(true);
+			const afterVec = index
+				.getRawDb()
+				.prepare(`SELECT embedding FROM memory_vectors WHERE id = ?`)
+				.get(atom.id) as { embedding: Buffer };
+			const afterArr = new Float32Array(
+				afterVec.embedding.buffer,
+				afterVec.embedding.byteOffset,
+				1024,
+			);
+			expect(afterArr[0]).toBeCloseTo(originalFirst as number, 5);
+		});
+
 		it("getActiveAtomByFingerprint returns active+latest matching atom", async () => {
 			const atom = sampleAtom({ content_fingerprint: "fp-unique" });
 			await index.insertAtom(atom, dummyEmbedding());

@@ -1701,6 +1701,28 @@ describe("PATCH /api/memory/:id dedup + tag normalization", () => {
 		expect(tags).toEqual(["old", "code-style"]);
 	});
 
+	it("preserves existing.tags verbatim when PATCH body has no tags field", async () => {
+		// Setup: atom with un-normalized tags (the legacy form, before any
+		// tagAliases map existed in settings). Settings.memory.tagAliases is
+		// configured so a re-normalize WOULD rewrite the tag. The PATCH body
+		// omits `tags` entirely (no field), so the route must preserve the
+		// legacy form verbatim — silently rewriting it would be data loss.
+		await insertAtom({ tags: ["代码规范"] });
+		deps.settings = {
+			memory: { tagAliases: { "代码规范": "code-style" } },
+		} as never;
+		const res = await fetchAt("/api/memory/atom-1", {
+			method: "PATCH",
+			// Body contains `importance` only — no `tags` field at all.
+			body: { importance: 0.7 },
+			headers: { "If-Match": "1" },
+		});
+		expect(res.status).toBe(200);
+		const tags = res.body.tags as string[];
+		// Preserved verbatim: NOT folded to "code-style" by the alias map.
+		expect(tags).toEqual(["代码规范"]);
+	});
+
 	it("skips supersede gracefully when embedText returns null", async () => {
 		await insertAtom();
 		// embedText is mocked at module level (charBag). Force a null
