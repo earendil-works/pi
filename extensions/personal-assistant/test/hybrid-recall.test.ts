@@ -864,6 +864,122 @@ it("long mixed query does NOT split into segments; BM25 strips - and . cleanly",
 		// strength / importance / tagOverlap, only freshness differs.
 		expect(freshHit?.score ?? 0).toBeGreaterThan(staleHit?.score ?? 0);
 	});
+
+	// (o) NEW — `RecallOptions.tagOverlapWeight` overrides the default 0.10
+	// additive weight. Same setup as test (m) but with the option doubled
+	// to 0.20. The score delta between the matching-tag atom and the
+	// baseline atom must double from 0.10 to 0.20, proving the value is
+	// read from options rather than hardcoded.
+	it("tagOverlapWeight option overrides the default additive weight", async () => {
+		installCharBagMock();
+		const matching = makeAtom({
+			type: "rule",
+			content: "code-style specific marker alpha beta",
+			tags: ["code-style"],
+		});
+		const baseline = makeAtom({
+			type: "fact",
+			content: "code-style specific marker alpha beta",
+			tags: [],
+		});
+		await insertAtom(matching, index);
+		await insertAtom(baseline, index);
+
+		const realVS = index.vectorSearch.bind(index);
+		index.vectorSearch = ((embedding: number[], k: number, filter?: { type?: "rule" | "fact" | "process" }) => {
+			if (filter?.type === "rule") return [{ id: matching.id, distance: Math.sqrt(0.6) }];
+			if (filter?.type === "fact") return [{ id: baseline.id, distance: Math.sqrt(0.6) }];
+			return realVS(embedding, k, filter);
+		}) as typeof index.vectorSearch;
+
+		const results = await recallAtoms(index, "code-style", {
+			tagOverlapWeight: 0.20,
+		});
+		const matchingHit = results.find((r) => r.atom.id === matching.id);
+		const baselineHit = results.find((r) => r.atom.id === baseline.id);
+		expect(matchingHit).toBeDefined();
+		expect(baselineHit).toBeDefined();
+		expect(matchingHit?.tagOverlap).toBeCloseTo(1.0, 5);
+		expect(baselineHit?.tagOverlap).toBe(0);
+		// Weight override is honored: delta = 0.20 × (1.0 - 0) = 0.20.
+		expect((matchingHit?.score ?? 0) - (baselineHit?.score ?? 0)).toBeCloseTo(0.20, 5);
+	});
+
+	// (p) NEW — `RecallOptions.freshnessWeight` overrides the default 0.05
+	// additive weight. Same setup as test (n) but with the weight doubled
+	// to 0.10. The score delta between the fresh and stale atoms must
+	// double from the default, proving the value is read from options.
+	it("freshnessWeight option overrides the default additive weight", async () => {
+		installCharBagMock();
+		const fresh = makeAtom({
+			type: "rule",
+			content: "alpha specific marker beta gamma",
+			tags: [],
+			updated_at: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
+		});
+		const stale = makeAtom({
+			type: "fact",
+			content: "alpha specific marker beta gamma",
+			tags: [],
+			updated_at: Date.now() - 30 * 24 * 60 * 60 * 1000, // 30 days ago
+		});
+		await insertAtom(fresh, index);
+		await insertAtom(stale, index);
+
+		const realVS = index.vectorSearch.bind(index);
+		index.vectorSearch = ((embedding: number[], k: number, filter?: { type?: "rule" | "fact" | "process" }) => {
+			if (filter?.type === "rule") return [{ id: fresh.id, distance: Math.sqrt(0.6) }];
+			if (filter?.type === "fact") return [{ id: stale.id, distance: Math.sqrt(0.6) }];
+			return realVS(embedding, k, filter);
+		}) as typeof index.vectorSearch;
+
+		const results = await recallAtoms(index, "alpha", { freshnessWeight: 0.10 });
+		const freshHit = results.find((r) => r.atom.id === fresh.id);
+		const staleHit = results.find((r) => r.atom.id === stale.id);
+		expect(freshHit).toBeDefined();
+		expect(staleHit).toBeDefined();
+		// Only the freshness contribution differs. Expected delta:
+		// 0.10 × (exp(-1/30) - exp(-1)) ≈ 0.10 × 0.5993 ≈ 0.05993.
+		const expectedDelta = 0.10 * (Math.exp(-1 / 30) - Math.exp(-1));
+		expect((freshHit?.score ?? 0) - (staleHit?.score ?? 0)).toBeCloseTo(expectedDelta, 5);
+	});
+
+	// (q) NEW — query-side alias folding via `RecallOptions.tagAliases`.
+	// The user types the CJK alias "代码规范" (which `escapeFtsQuery` strips
+	// to "", so BM25 produces no hits), but `tagAliases: {"代码规范":
+	// "code-style"}` lets `computeTagOverlap` fold the query token to the
+	// atom tag and produce tagOverlap=1.0. Without the fix, the call site
+	// passes no alias map and the tagOverlap stays 0.
+	//
+	// We mock `vectorSearch` per type so the dense channel returns cosine
+	// 0.7 for the atom regardless of the charBag mismatch between the CJK
+	// query and the ASCII content (otherwise dense would drop the atom at
+	// the 0.65 floor before RRF fusion).
+	it("query-side alias fold via tagAliases option matches aliased atom tags", async () => {
+		installCharBagMock();
+		const aliased = makeAtom({
+			type: "rule",
+			content: "code-style specific marker alpha beta",
+			tags: ["code-style"],
+		});
+		await insertAtom(aliased, index);
+
+		const realVS = index.vectorSearch.bind(index);
+		index.vectorSearch = ((embedding: number[], k: number, filter?: { type?: "rule" | "fact" | "process" }) => {
+			if (filter?.type === "rule") return [{ id: aliased.id, distance: Math.sqrt(0.6) }];
+			return realVS(embedding, k, filter);
+		}) as typeof index.vectorSearch;
+
+		const results = await recallAtoms(index, "代码规范", {
+			tagAliases: { "代码规范": "code-style" },
+			recallThreshold: 0,
+		});
+		const hit = results.find((r) => r.atom.id === aliased.id);
+		expect(hit).toBeDefined();
+		// query "代码规范" → folded to "code-style" via tagAliases → matches
+		// the atom's only tag → tagOverlap = 1.0.
+		expect(hit?.tagOverlap).toBeCloseTo(1.0, 5);
+	});
 });
 
 // ---------------------------------------------------------------------------

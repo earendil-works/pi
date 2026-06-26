@@ -17,17 +17,22 @@
 //     placeholder items. The hard cap is `DEFAULT_TOP_K` results per type,
 //     so even an unbounded `topK` request returns at most 9 items.
 //   - Per-type scoring: `score = cosine × (1 + 0.3 × strength + 0.2 ×
-//     importance) + 0.10 × tagOverlap + 0.05 × freshness` — the
+//     importance) + wTag × tagOverlap + wFreshness × freshness` — the
 //     multiplicative anchor is kept verbatim from the dense-only era for
 //     back-compat (Decision 8). Cosine is the multiplicative anchor;
 //     strength/importance contribute a continuous boost. The two additive
 //     terms (tagOverlap, freshness) are tuning signals — they boost
 //     recall for keyword-rescue (tags) and recency bias (freshness) but
 //     do NOT override the multiplicative anchor (cosine=0 still yields
-//     score=0 since the additive terms cap at +0.15). For BM25-only hits
-//     (no dense signal) `cosine = 0` and the multiplicative term is 0,
-//     so `score = 0.10 × tagOverlap + 0.05 × freshness` — keyword-rescue
-//     hits can still rank by tag/freshness alone, which is the right
+//     score=0 since the additive terms cap at +0.15 at the default
+//     weights). Weights are configurable per-call via
+//     `RecallOptions.tagOverlapWeight` / `RecallOptions.freshnessWeight`
+//     (defaults 0.10 / 0.05); at runtime these are wired from
+//     `PersonalAssistantConfig.memory.tagOverlapWeight` /
+//     `.freshnessWeight`. For BM25-only hits (no dense signal)
+//     `cosine = 0` and the multiplicative term is 0, so `score =
+//     wTag × tagOverlap + wFreshness × freshness` — keyword-rescue hits
+//     can still rank by tag/freshness alone, which is the right
 //     semantics: keyword relevance compensates for the missing dense
 //     evidence, gated by how recently the atom was written.
 //   - Default cosine threshold = 0.65 (the "dense-channel cosine floor"
@@ -216,6 +221,22 @@ export interface RecallOptions {
 	recallThreshold?: number;
 	/** Restrict KNN to a single atom type. */
 	filter?: { type?: MemoryAtom["type"] };
+	/** Override the additive weight of `tagOverlap` in the score formula.
+	 *  Default 0.10 — the multiplicative anchor (`cosine × (1 + 0.3strength
+	 *  + 0.2importance)`) is unaffected. Read from
+	 *  `PersonalAssistantConfig.memory.tagOverlapWeight` at the call site. */
+	tagOverlapWeight?: number;
+	/** Override the additive weight of `freshness` in the score formula.
+	 *  Default 0.05 — the multiplicative anchor is unaffected. Read from
+	 *  `PersonalAssistantConfig.memory.freshnessWeight` at the call site. */
+	freshnessWeight?: number;
+	/** Tag alias map applied to the QUERY side during `computeTagOverlap`.
+	 *  Lets a CJK query token (`"代码规范"`) fold to the canonical tag the
+	 *  atom was indexed with (`"code-style"`). Atom-side aliasing happens
+	 *  at write time via `normalizeTags`; this option lets callers pass
+	 *  the same alias map to recall. Mirrors `PersonalAssistantConfig.
+	 *  memory.tagAliases`. */
+	tagAliases?: Record<string, string> | null;
 }
 
 /**
@@ -424,6 +445,9 @@ async function recallAtomsSingleSegment(
 	const rrfK = options.rrfK ?? DEFAULT_RRF_K;
 	const recallThreshold = options.recallThreshold ?? DEFAULT_RECALL_THRESHOLD;
 	const cosineFloor = options.threshold ?? DEFAULT_DENSE_COSINE_FLOOR;
+	const wTag = options.tagOverlapWeight ?? 0.10;
+	const wFreshness = options.freshnessWeight ?? 0.05;
+	const tagAliases = options.tagAliases;
 
 	// Embed segment for the dense channel. null means ollama is down —
 	// dense channel collapses to [] but BM25 still runs (graceful
@@ -514,10 +538,8 @@ async function recallAtomsSingleSegment(
 					cosine = 1 - (distance * distance) / 2;
 				}
 
-				const tagOverlap = computeTagOverlap(segment, atom.tags);
+				const tagOverlap = computeTagOverlap(segment, atom.tags, tagAliases);
 				const freshness = computeFreshness(atom.updated_at);
-				const wTag = 0.10;
-				const wFreshness = 0.05;
 				const score =
 					cosine *
 						(1 + STRENGTH_WEIGHT * atom.strength + IMPORTANCE_WEIGHT * atom.importance) +
