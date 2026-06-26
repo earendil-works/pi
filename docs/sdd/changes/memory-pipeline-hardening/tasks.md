@@ -189,10 +189,10 @@
 
 - [ ] 6.1 **全量 type check + lint**
   - **验证**: `npm run check`(全输出,无 tail)
-  - **依赖**: 全部
+  - **依赖**: 5.1, 5.2, 5.3, 5.4
 
 - [ ] 6.2 **server 集成测试**
-  - **验证**: `./test.sh` 或 `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts`(全绿)
+  - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts`(全绿)
   - **依赖**: 5.1, 5.2, 5.3
 
 - [ ] 6.3 **extension 单元测试**
