@@ -685,10 +685,19 @@ export function registerMemory(pi: ExtensionAPI): void {
 					// when omitted. topK=20 matches design.md Decision 2
 					// (per-channel KNN pool; the fused per-type cap is
 					// hard-coded at DEFAULT_TOP_K in search.ts).
+					// tagOverlapWeight / freshnessWeight / tagAliases are the
+					// runtime-configurable scoring knobs from
+					// PersonalAssistantConfig.memory — wired here so the
+					// agent's before_agent_start hook honors the same
+					// settings the webui search endpoint consumes.
+					const m = config.memory;
 					results = await recallAtoms(index, userMessage, {
 						topK: 20,
-						rrfK: config.memory?.recall?.rrfK,
-						recallThreshold: config.memory?.recall?.recallThreshold,
+						rrfK: m?.recall?.rrfK,
+						recallThreshold: m?.recall?.recallThreshold,
+						tagOverlapWeight: m?.tagOverlapWeight,
+						freshnessWeight: m?.freshnessWeight,
+						tagAliases: m?.tagAliases,
 					});
 				} catch (err) {
 					ctx.ui.setStatus("memory", "⚠ memory recall failed");

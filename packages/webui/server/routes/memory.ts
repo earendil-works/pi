@@ -66,13 +66,13 @@ export const SSE_HEARTBEAT_MS = 25_000;
  * 客户端断开(res close)时自动从订阅表移除。
  */
 export function subscribeAtom(atomId: string, res: express.Response): void {
-	try { res.write(": connected\n\n"); } catch { /* ignore broken pipes */ }
 	let set = subscribers.get(atomId);
 	if (!set) {
 		set = new Set();
 		subscribers.set(atomId, set);
 	}
 	set.add(res);
+	try { res.write(": connected\n\n"); } catch { /* ignore broken pipes */ }
 	const interval = setInterval(() => {
 		try { res.write(": ping\n\n"); } catch { /* ignore broken pipes */ }
 	}, SSE_HEARTBEAT_MS);
@@ -327,23 +327,30 @@ export function registerPatchMemory(
 				// dedup → preserve order) using the runtime tagAliases
 				// from settings.memory.tagAliases; importance is clamped
 				// to [0, 1].
+				//
+				// When the client does NOT send `tags` (body field is
+				// undefined — distinct from `tags: []`), preserve the
+				// existing tags verbatim. Re-normalizing on every PATCH
+				// would silently rewrite un-normalized legacy tags once
+				// the user adds a `tagAliases` map to settings — the
+				// caller never touched tags, but the response would
+				// report different ones.
 				const mergedContent =
 					typeof req.body?.content === "string" &&
 					req.body.content.length > 0
 						? req.body.content
 						: existing.content;
 				const tagAliases = deps.settings?.memory?.tagAliases;
-				const incomingTags = Array.isArray(req.body?.tags)
-					? req.body.tags
-					: existing.tags;
-				const normalizedIncoming = normalizeTags(incomingTags, tagAliases);
-				const filteredIncoming = normalizedIncoming.filter(
-					(t) => !existing.tags.includes(t),
-				);
-				const mergedTags = normalizeTags(
-					[...existing.tags, ...filteredIncoming],
-					tagAliases,
-				);
+				let mergedTags: string[];
+				if (Array.isArray(req.body?.tags)) {
+					const normalizedIncoming = normalizeTags(req.body.tags, tagAliases);
+					const filteredIncoming = normalizedIncoming.filter(
+						(t) => !existing.tags.includes(t),
+					);
+					mergedTags = [...existing.tags, ...filteredIncoming];
+				} else {
+					mergedTags = existing.tags;
+				}
 				const mergedImportance =
 					typeof req.body?.importance === "number"
 						? Math.max(0, Math.min(1, req.body.importance))
@@ -394,15 +401,35 @@ export function registerPatchMemory(
 					return;
 				}
 
-				// Fast atomic DB update. updateAtom() runs in its own
-				// transaction and bumps version internally. Passing
-				// `undefined` for embedding skips the vector update
-				// when ollama was unreachable.
-				await index.updateAtom(mergedAtom, embedding ?? undefined);
-
-				// Mirror the version+1 from updateAtom's SQL so the
-				// response body matches what the DB row now holds.
-				mergedAtom.version = existing.version + 1;
+				// Fast atomic DB update. updateAtomIfVersion closes the
+				// TOCTOU race between the in-memory CAS check above and
+				// the `await embedText()` / `await supersedeIfSimilar()`
+				// window: the version re-read + write happen in a single
+				// SQLite transaction, so two concurrent PATCHes with the
+				// same `If-Match` cannot both succeed — the second one
+				// gets `{updated:false, currentVersion: ...}` and we
+				// return 409 here (the in-memory check was a stale
+				// snapshot; the storage transaction is the source of
+				// truth). Pass `null` (not `undefined`) so the method
+				// skips the vector update on the null-embedding path —
+				// matches updateAtom's semantics when ollama is down.
+				const casResult = await index.updateAtomIfVersion(
+					mergedAtom,
+					embedding ?? null,
+					existing.version,
+				);
+				if (!casResult.updated) {
+					const current = index.getAtom(req.params.id);
+					res.status(409).json({
+						error: "version_conflict",
+						current,
+					});
+					return;
+				}
+				// Adopt the version the storage layer wrote so the response
+				// body + the .md file + the SSE broadcast all agree on the
+				// bumped version.
+				mergedAtom.version = casResult.atom.version;
 
 				// Write the .md file. Must happen after the DB update so
 				// the file's content_hash matches content_fingerprint.
@@ -657,9 +684,13 @@ export function registerPostSearch(
 			const index = await createIndex(deps.dbPath);
 			try {
 				const t0 = Date.now();
+				const m = deps.settings?.memory;
 				const results = await recallAtoms(index, query, {
 					topK,
 					filter: type ? { type } : undefined,
+					tagOverlapWeight: m?.tagOverlapWeight,
+					freshnessWeight: m?.freshnessWeight,
+					tagAliases: m?.tagAliases,
 				});
 				const recallTimeMs = Date.now() - t0;
 
