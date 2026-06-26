@@ -284,6 +284,97 @@ export function registerGetMemoryList(
  *          that explicitly want last-writer-wins).
  *   - 500: DB / file-system failure.
  */
+
+/**
+ * If-Match conflict response the caller writes back to the client.
+ * `null` means "proceed with the PATCH".
+ */
+type IfMatchConflict = { status: 400 | 409; body: Record<string, unknown> } | null;
+
+/**
+ * Validate the `If-Match` header against the current atom version (Task 2.1).
+ *   - header missing       → 400 missing_if_match
+ *   - header stale         → 409 version_conflict + `current` atom
+ *   - header `"*"`         → ok (last-writer-wins escape hatch)
+ *   - header matches       → ok
+ *
+ * Returns `null` on the success path. Header is read via
+ * `req.headers["if-match"]` (Node/Express normalise to lowercase) and
+ * `String(...)` bridges the string header vs numeric DB column.
+ */
+function checkIfMatchConflict(
+	ifMatch: string | string[] | undefined,
+	existing: MemoryAtom,
+): IfMatchConflict {
+	if (ifMatch === undefined) {
+		return { status: 400, body: { error: "missing_if_match" } };
+	}
+	if (ifMatch !== "*" && String(ifMatch) !== String(existing.version)) {
+		return { status: 409, body: { error: "version_conflict", current: existing } };
+	}
+	return null;
+}
+
+/**
+ * Shape of the PATCH /api/memory/:id request body. All fields optional —
+ * `tags: undefined` (omitted) is distinct from `tags: []` (explicit empty)
+ * to preserve the existing tags verbatim when the caller doesn't touch
+ * them.
+ */
+interface PatchBody {
+	content?: string;
+	tags?: string[];
+	importance?: number;
+}
+
+/**
+ * Merge a PATCH body into the existing atom. Each field follows its own
+ * rule:
+ *   - `content`    — replaced only when a non-empty string is supplied;
+ *                    empty / missing preserves the old value.
+ *   - `tags`       — merged through `normalizeTags` (trim → empty filter →
+ *                    alias fold → Set dedup) using the runtime
+ *                    `tagAliases` map, then de-duplicated against the
+ *                    existing list. Omitted (vs `[]`) preserves the
+ *                    existing tags verbatim — re-normalizing on every
+ *                    PATCH would silently rewrite un-normalized legacy
+ *                    tags once the user adds a `tagAliases` map.
+ *   - `importance` — clamped to [0, 1]; missing preserves the old value.
+ *
+ * Side effects: stamps `updated_at = Date.now()` and recomputes
+ * `content_fingerprint` (sync sha256 + slice).
+ */
+function mergePatchBody(
+	existing: MemoryAtom,
+	body: PatchBody | undefined,
+	tagAliases: Record<string, string> | undefined,
+): MemoryAtom {
+	const mergedContent =
+		typeof body?.content === "string" && body.content.length > 0
+			? body.content
+			: existing.content;
+	const mergedTags = Array.isArray(body?.tags)
+		? [
+				...existing.tags,
+				...normalizeTags(body.tags, tagAliases).filter(
+					(t) => !existing.tags.includes(t),
+				),
+			]
+		: existing.tags;
+	const mergedImportance =
+		typeof body?.importance === "number"
+			? Math.max(0, Math.min(1, body.importance))
+			: existing.importance;
+	return {
+		...existing,
+		content: mergedContent,
+		tags: mergedTags,
+		importance: mergedImportance,
+		updated_at: Date.now(),
+		content_fingerprint: computeFingerprint(mergedContent),
+	};
+}
+
 export function registerPatchMemory(
 	app: express.Express,
 	deps: MemoryDeps,
@@ -303,75 +394,23 @@ export function registerPatchMemory(
 				// stale → 409 with `current` so the client can merge or
 				// reload. "*" is an escape hatch for clients that
 				// explicitly want last-writer-wins (skips the check).
-				// Header name is read lowercase per Node / Express
-				// normalization; `String(...) === String(...)` bridges
-				// the string header vs numeric DB column.
-				const ifMatch = req.headers["if-match"];
-				if (ifMatch === undefined) {
-					res.status(400).json({ error: "missing_if_match" });
-					return;
-				}
-				if (
-					ifMatch !== "*" &&
-					String(ifMatch) !== String(existing.version)
-				) {
-					res
-						.status(409)
-						.json({ error: "version_conflict", current: existing });
+				const ifMatchConflict = checkIfMatchConflict(
+					req.headers["if-match"],
+					existing,
+				);
+				if (ifMatchConflict) {
+					res.status(ifMatchConflict.status).json(ifMatchConflict.body);
 					return;
 				}
 
-				// Merge body fields. content is replaced only when a
-				// non-empty string is supplied; tags are merged through
-				// normalizeTags (trim → empty filter → alias fold → Set
-				// dedup → preserve order) using the runtime tagAliases
-				// from settings.memory.tagAliases; importance is clamped
-				// to [0, 1].
-				//
-				// When the client does NOT send `tags` (body field is
-				// undefined — distinct from `tags: []`), preserve the
-				// existing tags verbatim. Re-normalizing on every PATCH
-				// would silently rewrite un-normalized legacy tags once
-				// the user adds a `tagAliases` map to settings — the
-				// caller never touched tags, but the response would
-				// report different ones.
-				const mergedContent =
-					typeof req.body?.content === "string" &&
-					req.body.content.length > 0
-						? req.body.content
-						: existing.content;
-				const tagAliases = deps.settings?.memory?.tagAliases;
-				let mergedTags: string[];
-				if (Array.isArray(req.body?.tags)) {
-					const normalizedIncoming = normalizeTags(req.body.tags, tagAliases);
-					const filteredIncoming = normalizedIncoming.filter(
-						(t) => !existing.tags.includes(t),
-					);
-					mergedTags = [...existing.tags, ...filteredIncoming];
-				} else {
-					mergedTags = existing.tags;
-				}
-				const mergedImportance =
-					typeof req.body?.importance === "number"
-						? Math.max(0, Math.min(1, req.body.importance))
-						: existing.importance;
-
-				// Build the merged atom. Type is inferred from `existing`
-				// (MemoryAtom), so no explicit import of MemoryAtom is
-				// required here — spread + three overrides preserves the
-				// full shape.
-				const mergedAtom = {
-					...existing,
-					content: mergedContent,
-					tags: mergedTags,
-					importance: mergedImportance,
-					updated_at: Date.now(),
-				};
-
-				// Recompute fingerprint from the (possibly new) content.
-				// This is sync (sha256 + slice) — no async overhead.
-				mergedAtom.content_fingerprint =
-					computeFingerprint(mergedContent);
+				// Build the merged atom (content / tags / importance from
+				// the body, fingerprint recomputed, updated_at stamped).
+				// Pure function — no DB / file / SSE side effects.
+				const mergedAtom = mergePatchBody(
+					existing,
+					req.body,
+					deps.settings?.memory?.tagAliases,
+				);
 
 				// Compute embedding OUTSIDE any DB transaction. The await
 				// on ollama could take seconds; we do not want to hold
