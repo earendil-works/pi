@@ -143,6 +143,7 @@ describe("MemoryDetail", () => {
     expect(api.memory.patch).toHaveBeenCalledWith(
       "a-1",
       expect.objectContaining({ title: "New title" }),
+      expect.objectContaining({ ifMatch: ATOM.version }),
     );
   });
 
@@ -313,5 +314,89 @@ describe("MemoryDetail SSE", () => {
     });
     unmount();
     expect(lastSource().closed).toBe(true);
+  });
+});
+
+describe("MemoryDetail auto-save CAS", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    MockEventSource.instances.length = 0;
+    (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValue(ATOM);
+    (api.memory.patch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...ATOM,
+      title: "New",
+    });
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("passes If-Match header on PATCH", async () => {
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    fireEvent.change(screen.getByDisplayValue("Test title"), {
+      target: { value: "New title" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(api.memory.patch).toHaveBeenCalledWith(
+      "a-1",
+      expect.objectContaining({ title: "New title" }),
+      expect.objectContaining({ ifMatch: ATOM.version }),
+    );
+  });
+
+  it("refreshes atom on 409 response", async () => {
+    const conflict = Object.assign(new Error("Conflict"), { status: 409 });
+    (api.memory.patch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      conflict,
+    );
+    const fresh: MemoryAtom = {
+      ...ATOM,
+      version: ATOM.version + 1,
+      title: "Server version",
+    };
+
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    (api.memory.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fresh);
+    fireEvent.change(screen.getByDisplayValue("Test title"), {
+      target: { value: "Local edit" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(api.memory.get).toHaveBeenCalledWith("a-1");
+    expect(screen.getByText(/远端已更新/)).toBeDefined();
+  });
+
+  it("propagates non-409 errors normally", async () => {
+    (api.memory.patch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error("Server boom"), { status: 500 }),
+    );
+    render(
+      <MemoryDetail id="a-1" onArchive={vi.fn()} onListRefresh={vi.fn()} />,
+    );
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+    fireEvent.change(screen.getByDisplayValue("Test title"), {
+      target: { value: "X" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(screen.getByText(/error: Server boom/)).toBeDefined();
   });
 });

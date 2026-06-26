@@ -104,8 +104,25 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
       if (!latest || !atom) return;
       const diff = computePatch(atom, latest);
       if (Object.keys(diff).length === 0) return;
-      await api.memory.patch(id, diff);
-      onListRefresh();
+      try {
+        await api.memory.patch(id, diff, { ifMatch: latest.version });
+        onListRefresh();
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          "status" in err &&
+          (err as { status: number }).status === 409
+        ) {
+          const fresh = await api.memory.get(id);
+          setAtom(fresh);
+          setLocalAtom((prev) =>
+            prev ? { ...prev, version: fresh.version } : prev,
+          );
+          setLoadError("远端已更新,已刷新最新版本,请重新编辑");
+        } else {
+          throw err;
+        }
+      }
     },
   });
 
