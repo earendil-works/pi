@@ -87,7 +87,7 @@
 //     agent fetches full content on demand by calling `memory_get(atom.id)`.
 
 import { embedText } from "./embed.ts";
-import { computeFreshness, computeTagOverlap } from "./scoring.ts";
+import { computeScore } from "./scoring.ts";
 import type { MemoryIndex } from "./storage.ts";
 import type { MemoryAtom, MemoryAtomType, RecallResult } from "./types.ts";
 
@@ -116,10 +116,6 @@ const MAX_SPLIT_SEGMENTS = 3;
  *  dense-ONLY floor — it filters cosine hits from the dense channel before
  *  RRF fusion. The fused-recall gate is `recallThreshold` below. */
 const DEFAULT_DENSE_COSINE_FLOOR = 0.65;
-
-/** Multiplicative boost weights for the score formula (Decision 8). */
-const STRENGTH_WEIGHT = 0.3;
-const IMPORTANCE_WEIGHT = 0.2;
 
 /** All canonical atom types — the three groups for per-type KNN. */
 const TYPES: readonly MemoryAtomType[] = ["rule", "fact", "process"];
@@ -538,21 +534,19 @@ async function recallAtomsSingleSegment(
 					cosine = 1 - (distance * distance) / 2;
 				}
 
-				const tagOverlap = computeTagOverlap(segment, atom.tags, tagAliases);
-				const freshness = computeFreshness(atom.updated_at);
-				const score =
-					cosine *
-						(1 + STRENGTH_WEIGHT * atom.strength + IMPORTANCE_WEIGHT * atom.importance) +
-					wTag * tagOverlap +
-					wFreshness * freshness;
+				const scoredAtom = computeScore(cosine, atom, segment, {
+					tagOverlapWeight: wTag,
+					freshnessWeight: wFreshness,
+					tagAliases,
+				});
 				scored.push({
 					atom,
 					distance,
 					cosine,
-					score,
+					score: scoredAtom.score,
 					rrfScore: f.rrfScore,
-					tagOverlap,
-					freshness,
+					tagOverlap: scoredAtom.tagOverlap,
+					freshness: scoredAtom.freshness,
 				});
 			}
 			// rrfFuse already returned DESC; the post-filter sort keeps ties
