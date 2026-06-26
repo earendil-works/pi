@@ -43,6 +43,8 @@ class MockEventSource {
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
+  private listeners: Map<string, Set<(event: { data: string }) => void>> =
+    new Map();
   closed = false;
 
   constructor(url: string) {
@@ -50,12 +52,35 @@ class MockEventSource {
     MockEventSource.instances.push(this);
   }
 
+  addEventListener(
+    type: string,
+    listener: (event: { data: string }) => void,
+  ): void {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(listener);
+    this.listeners.set(type, set);
+  }
+
+  removeEventListener(
+    type: string,
+    listener: (event: { data: string }) => void,
+  ): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
   close(): void {
     this.closed = true;
   }
 
-  simulateMessage(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  simulateMessage(type: string, payload: unknown): void {
+    const data = JSON.stringify(payload);
+    if (type === "message") {
+      this.onmessage?.({ data } as MessageEvent);
+      return;
+    }
+    for (const fn of this.listeners.get(type) ?? []) {
+      fn({ data } as MessageEvent);
+    }
   }
 
   simulateError(): void {
@@ -215,7 +240,7 @@ describe("MemoryDetail SSE", () => {
       updated_at: ATOM.updated_at + 1,
     };
     act(() => {
-      lastSource().simulateMessage(updated);
+      lastSource().simulateMessage("atom", updated);
     });
     expect(screen.getByDisplayValue("From SSE")).toBeDefined();
     expect(screen.getByText("version: 2")).toBeDefined();
@@ -230,7 +255,7 @@ describe("MemoryDetail SSE", () => {
     });
     const stale: MemoryAtom = { ...ATOM, version: 1, title: "Stale" };
     act(() => {
-      lastSource().simulateMessage(stale);
+      lastSource().simulateMessage("atom", stale);
     });
     expect(screen.queryByDisplayValue("Stale")).toBeNull();
     expect(screen.getByDisplayValue("Test title")).toBeDefined();
@@ -256,10 +281,10 @@ describe("MemoryDetail SSE", () => {
       updated_at: ATOM.updated_at + 3,
     };
     act(() => {
-      lastSource().simulateMessage(newer);
+      lastSource().simulateMessage("atom", newer);
     });
     act(() => {
-      lastSource().simulateMessage(older);
+      lastSource().simulateMessage("atom", older);
     });
     expect(screen.getByDisplayValue("Newer")).toBeDefined();
     expect(screen.queryByDisplayValue("Older")).toBeNull();

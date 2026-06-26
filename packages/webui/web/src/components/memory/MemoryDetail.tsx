@@ -74,7 +74,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
     void fetchAtom();
 
     const eventSource = new EventSource(`/api/memory/${id}/stream`);
-    eventSource.onmessage = (event) => {
+    eventSource.addEventListener("atom", (event: MessageEvent) => {
       try {
         const incoming = JSON.parse(event.data) as MemoryAtom;
         // 单调递增防护: 仅当 incoming.version 严格大于当前版本才接受推送
@@ -86,7 +86,7 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
       } catch {
         // Ignore malformed messages
       }
-    };
+    });
     eventSource.onerror = () => {
       // EventSource 自动重连; 仅标记状态让 UI 提示
       setSseConnected(false);
