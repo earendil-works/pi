@@ -38,6 +38,8 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.editor.focused = value;
 	}
 
+	private externalEditorCmd?: string;
+
 	constructor(
 		tui: TUI,
 		keybindings: KeybindingsManager,
@@ -45,7 +47,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		prefill: string | undefined,
 		onSubmit: (value: string) => void,
 		onCancel: () => void,
-		options?: EditorOptions,
+		options?: EditorOptions & { externalEditorCmd?: string },
 	) {
 		super();
 
@@ -53,6 +55,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.keybindings = keybindings;
 		this.onSubmitCallback = onSubmit;
 		this.onCancelCallback = onCancel;
+		this.externalEditorCmd = options?.externalEditorCmd;
 
 		// Add top border
 		this.addChild(new DynamicBorder());
@@ -76,7 +79,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add hint
-		const hasExternalEditor = !!(process.env.VISUAL || process.env.EDITOR);
+		const hasExternalEditor = !!(this.externalEditorCmd || process.env.VISUAL || process.env.EDITOR);
 		const hint =
 			keyHint("tui.select.confirm", "submit") +
 			"  " +
@@ -111,7 +114,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	}
 
 	private async openExternalEditor(): Promise<void> {
-		const editorCmd = process.env.VISUAL || process.env.EDITOR;
+		const editorCmd = this.externalEditorCmd || process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
 			return;
 		}
