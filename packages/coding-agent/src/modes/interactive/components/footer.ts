@@ -103,6 +103,12 @@ export class FooterComponent implements Component {
 					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
 				latestCacheHitRate =
 					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+			} else if (entry.type === "external_usage") {
+				totalInput += entry.input;
+				totalOutput += entry.output;
+				totalCacheRead += entry.cacheRead;
+				totalCacheWrite += entry.cacheWrite;
+				totalCost += entry.cost;
 			}
 		}
 

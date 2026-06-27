@@ -1237,6 +1237,15 @@ export interface ExtensionAPI {
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
+	/**
+	 * Report API usage from an external source (e.g., subagent, tool, or extension).
+	 *
+	 * The reported usage is appended to the session as an external_usage entry,
+	 * persisted in the session file, and included in footer cost/token totals.
+	 * Not sent to the LLM context.
+	 */
+	reportUsage(input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, source?: string): void;
+
 	// =========================================================================
 	// Session Metadata
 	// =========================================================================
@@ -1461,6 +1470,15 @@ export type SendUserMessageHandler = (
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
+export type ReportUsageHandler = (
+	input: number,
+	output: number,
+	cacheRead: number,
+	cacheWrite: number,
+	cost: number,
+	source?: string,
+) => void;
+
 export type SetSessionNameHandler = (name: string) => void;
 
 export type GetSessionNameHandler = () => string | undefined;
@@ -1518,6 +1536,7 @@ export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
+	reportUsage: ReportUsageHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;

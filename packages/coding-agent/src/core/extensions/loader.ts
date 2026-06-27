@@ -171,6 +171,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
+		reportUsage: notInitialized,
 		setSessionName: notInitialized,
 		getSessionName: notInitialized,
 		setLabel: notInitialized,
@@ -290,6 +291,11 @@ function createExtensionAPI(
 		appendEntry(customType: string, data?: unknown): void {
 			runtime.assertActive();
 			runtime.appendEntry(customType, data);
+		},
+
+		reportUsage(input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, source?: string): void {
+			runtime.assertActive();
+			runtime.reportUsage(input, output, cacheRead, cacheWrite, cost, source);
 		},
 
 		setSessionName(name: string): void {

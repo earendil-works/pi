@@ -566,6 +566,11 @@ export default function (pi: ExtensionAPI) {
 					const isError = isFailedResult(result);
 					if (isError) {
 						const errorMsg = getResultOutput(result);
+						for (const r of results) {
+							if (r.usage.cost > 0 || r.usage.input > 0) {
+								pi.reportUsage(r.usage.input, r.usage.output, r.usage.cacheRead, r.usage.cacheWrite, r.usage.cost, `subagent:${r.agent}`);
+							}
+						}
 						return {
 							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
 							details: makeDetails("chain")(results),
@@ -573,6 +578,11 @@ export default function (pi: ExtensionAPI) {
 						};
 					}
 					previousOutput = getFinalOutput(result.messages);
+				}
+				for (const r of results) {
+					if (r.usage.cost > 0 || r.usage.input > 0) {
+						pi.reportUsage(r.usage.input, r.usage.output, r.usage.cacheRead, r.usage.cacheWrite, r.usage.cost, `subagent:${r.agent}`);
+					}
 				}
 				return {
 					content: [{ type: "text", text: getFinalOutput(results[results.length - 1].messages) || "(no output)" }],
@@ -652,6 +662,11 @@ export default function (pi: ExtensionAPI) {
 						: "completed";
 					return `### [${r.agent}] ${status}\n\n${output}`;
 				});
+				for (const r of results) {
+					if (r.usage.cost > 0 || r.usage.input > 0) {
+						pi.reportUsage(r.usage.input, r.usage.output, r.usage.cacheRead, r.usage.cacheWrite, r.usage.cost, `subagent:${r.agent}`);
+					}
+				}
 				return {
 					content: [
 						{
@@ -678,11 +693,17 @@ export default function (pi: ExtensionAPI) {
 				const isError = isFailedResult(result);
 				if (isError) {
 					const errorMsg = getResultOutput(result);
+					if (result.usage.cost > 0 || result.usage.input > 0) {
+						pi.reportUsage(result.usage.input, result.usage.output, result.usage.cacheRead, result.usage.cacheWrite, result.usage.cost, `subagent:${result.agent}`);
+					}
 					return {
 						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
 						details: makeDetails("single")([result]),
 						isError: true,
 					};
+				}
+				if (result.usage.cost > 0 || result.usage.input > 0) {
+					pi.reportUsage(result.usage.input, result.usage.output, result.usage.cacheRead, result.usage.cacheWrite, result.usage.cost, `subagent:${result.agent}`);
 				}
 				return {
 					content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],

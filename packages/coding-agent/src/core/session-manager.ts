@@ -136,6 +136,22 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	display: boolean;
 }
 
+/**
+ * Records API usage from an external source (e.g., subagent, tool, extension).
+ * Picked up by the footer for cumulative cost tracking.
+ * Not sent to LLM context.
+ */
+export interface ExternalUsageEntry extends SessionEntryBase {
+	type: "external_usage";
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	/** Human-readable source label, e.g. "subagent:code-review" */
+	source?: string;
+}
+
 /** Session entry - has id/parentId for tree structure (returned by "read" methods in SessionManager) */
 export type SessionEntry =
 	| SessionMessageEntry
@@ -145,6 +161,7 @@ export type SessionEntry =
 	| BranchSummaryEntry
 	| CustomEntry
 	| CustomMessageEntry
+	| ExternalUsageEntry
 	| LabelEntry
 	| SessionInfoEntry;
 
@@ -1019,6 +1036,27 @@ export class SessionManager {
 			type: "custom",
 			customType,
 			data,
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Append an external usage entry (for extensions) as child of current leaf, then advance leaf.
+	 * These entries are picked up by the footer for cumulative cost tracking.
+	 */
+	appendExternalUsage(input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, source?: string): string {
+		const entry: ExternalUsageEntry = {
+			type: "external_usage",
+			input,
+			output,
+			cacheRead,
+			cacheWrite,
+			cost,
+			source,
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),

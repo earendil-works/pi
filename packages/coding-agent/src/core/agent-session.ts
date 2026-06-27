@@ -2241,6 +2241,9 @@ export class AgentSession {
 				appendEntry: (customType, data) => {
 					this.sessionManager.appendCustomEntry(customType, data);
 				},
+				reportUsage: (input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, source?: string) => {
+					this.sessionManager.appendExternalUsage(input, output, cacheRead, cacheWrite, cost, source);
+				},
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
