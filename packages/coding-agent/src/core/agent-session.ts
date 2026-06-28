@@ -978,7 +978,7 @@ export class AgentSession {
 		}
 
 		if (await this._checkCompaction(msg)) {
-			return true;
+			return this.agent.hasQueuedMessages();
 		}
 
 		// The agent loop drains both queues before emitting agent_end. Any messages
