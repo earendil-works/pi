@@ -2292,6 +2292,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				getSkills: () => this._resourceLoader.getSkills().skills,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},
 			{

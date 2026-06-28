@@ -85,6 +85,13 @@ export interface LoadSkillsResult {
 	diagnostics: ResourceDiagnostic[];
 }
 
+export function snapshotSkills(skills: readonly Skill[]): Skill[] {
+	return skills.map((skill) => ({
+		...skill,
+		sourceInfo: { ...skill.sourceInfo },
+	}));
+}
+
 /**
  * Validate skill name per Agent Skills spec.
  * Returns array of validation error messages (empty if valid).

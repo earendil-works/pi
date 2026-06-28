@@ -105,5 +105,10 @@ This is a test skill.
 
 		expect(session.resourceLoader.getSkills().skills).toEqual([customSkill]);
 		expect(session.resourceLoader.getSkills().diagnostics).toEqual([]);
+		expect(session.extensionRunner.createContext().getSkills()).toEqual(session.resourceLoader.getSkills().skills);
+		expect(session.extensionRunner.createContext().getSkills()).not.toBe(session.resourceLoader.getSkills().skills);
+		expect(session.extensionRunner.createContext().getSkills()[0]).not.toBe(
+			session.resourceLoader.getSkills().skills[0],
+		);
 	});
 });

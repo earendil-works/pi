@@ -56,6 +56,7 @@ import type {
 	SessionEntry,
 	SessionManager,
 } from "../session-manager.ts";
+import type { Skill } from "../skills.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -330,6 +331,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/** Get the currently loaded skills from the same inventory used by /skill. */
+	getSkills(): readonly Skill[];
 }
 
 /**
@@ -1546,6 +1549,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	getSkills?: () => readonly Skill[];
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }
 

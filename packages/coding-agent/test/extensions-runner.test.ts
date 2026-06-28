@@ -18,6 +18,7 @@ import type {
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import type { Skill } from "../src/core/skills.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -507,6 +508,37 @@ describe("ExtensionRunner", () => {
 
 			const ctx = runner.createContext();
 			expect(ctx.isProjectTrusted()).toBe(false);
+		});
+
+		it("exposes loaded skills on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const skills = [
+				{
+					name: "stronkpi-agents",
+					description: "Subagent orchestration",
+					filePath: path.join(tempDir, "skills", "stronkpi-agents", "SKILL.md"),
+					baseDir: path.join(tempDir, "skills", "stronkpi-agents"),
+					sourceInfo: {
+						path: path.join(tempDir, "skills", "stronkpi-agents", "SKILL.md"),
+						source: "local",
+						scope: "project",
+						origin: "top-level",
+						baseDir: path.join(tempDir, "skills", "stronkpi-agents"),
+					},
+					disableModelInvocation: false,
+				},
+			] satisfies Skill[];
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				getSkills: () => skills,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.getSkills()).toEqual(skills);
+			expect(ctx.getSkills()).not.toBe(skills);
+			expect(ctx.getSkills()[0]).not.toBe(skills[0]);
+			expect(ctx.getSkills()[0].sourceInfo).not.toBe(skills[0].sourceInfo);
 		});
 
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {
