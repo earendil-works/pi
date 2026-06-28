@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6124](https://github.com/earendil-works/pi/issues/6124) by [@petrroll](https://github.com/petrroll)).
+
 ## [0.81.1] - 2026-07-21
 
 ## [0.81.0] - 2026-07-21
