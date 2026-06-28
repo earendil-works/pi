@@ -6,6 +6,10 @@
 
 - Added an experimental first-time setup flow behind `PI_EXPERIMENTAL=1` that asks for a dark/light theme choice (preselecting the detected appearance) and opt-in analytics data sharing on first launch with the default agent directory; opting in stores a `trackingId` in `settings.json`.
 
+### Fixed
+
+- Fixed `find` results when searching from filesystem roots, including POSIX `/` and Windows bare drive roots, so relative paths preserve the first segment and directory matches use a single trailing slash ([#6104](https://github.com/earendil-works/pi/issues/6104)).
+
 ## [0.79.1] - 2026-06-09
 
 ### New Features
