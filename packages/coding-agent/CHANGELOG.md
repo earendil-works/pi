@@ -5,6 +5,7 @@
 ### Added
 
 - Added an `externalEditor` settings.json override for Ctrl+G external editor commands, with default fallbacks to Notepad on Windows and `nano` elsewhere ([#6122](https://github.com/earendil-works/pi/issues/6122)).
+- Added an `outputPad` setting for assistant message and thinking horizontal padding.
 
 ### Fixed
 

@@ -71,6 +71,7 @@ export interface SettingsConfig {
 	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
 	showHardwareCursor: boolean;
 	editorPaddingX: number;
+	outputPad: 0 | 1;
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	defaultProjectTrust: DefaultProjectTrust;
@@ -100,6 +101,7 @@ export interface SettingsCallbacks {
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
 	onShowHardwareCursorChange: (enabled: boolean) => void;
 	onEditorPaddingXChange: (padding: number) => void;
+	onOutputPadChange: (padding: 0 | 1) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
@@ -676,9 +678,19 @@ export class SettingsSelectorComponent extends Container {
 			values: ["0", "1", "2", "3"],
 		});
 
-		// Autocomplete max visible toggle (insert after editor-padding)
+		// Output padding toggle (insert after editor-padding)
 		const editorPaddingIndex = items.findIndex((item) => item.id === "editor-padding");
 		items.splice(editorPaddingIndex + 1, 0, {
+			id: "output-padding",
+			label: "Output padding",
+			description: "Horizontal padding for assistant messages and thinking",
+			currentValue: String(config.outputPad),
+			values: ["0", "1"],
+		});
+
+		// Autocomplete max visible toggle (insert after output-padding)
+		const outputPaddingIndex = items.findIndex((item) => item.id === "output-padding");
+		items.splice(outputPaddingIndex + 1, 0, {
 			id: "autocomplete-max-visible",
 			label: "Autocomplete max items",
 			description: "Max visible items in autocomplete dropdown (3-20)",
@@ -781,6 +793,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "editor-padding":
 						callbacks.onEditorPaddingXChange(parseInt(newValue, 10));
+						break;
+					case "output-padding":
+						callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);
 						break;
 					case "autocomplete-max-visible":
 						callbacks.onAutocompleteMaxVisibleChange(parseInt(newValue, 10));
