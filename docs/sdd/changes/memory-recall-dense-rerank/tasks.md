@@ -96,17 +96,17 @@
 
 ## 4. Final verification
 
-- [ ] 4.1 **Run full test suite + npm run check**
+- [x] 4.1 **Run full test suite + npm run check**
   - **Command**: `./test.sh && npm run check`
   - **Result**: 0 错误 0 警告 0 info
   - **依赖**: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 3.1, 3.2, 3.3
 
-- [ ] 4.2 **Residual code grep**
+- [x] 4.2 **Residual code grep**
   - **Command**: `grep -rn "searchByFts\|bm25Search\|escapeFtsQuery\|rrfFuse\|memory_fts\|MEMORY_FTS_SCHEMA\|splitQuery\|mergeResults\|MAX_SPLIT_SEGMENTS\|DEFAULT_RRF_K\|DEFAULT_RECALL_THRESHOLD\|rrfK\|recallThreshold\|queryRewrite\|query_rewrite" extensions/personal-assistant/ packages/webui/server/routes/memory.ts packages/coding-agent/src/core/settings-manager.ts --include="*.ts" | grep -v test/`
   - **Result**: 输出空(源码零残留;测试文件内的引用由对应任务清理)
   - **依赖**: 4.1
 
-- [ ] 4.3 **Residual doc grep**
+- [x] 4.3 **Residual doc grep**
   - **Command**: `grep -nE "FTS 行|rewriteQueryWithCallLlm|searchAtomsWithScores|memory-hybrid-bm25-recall|hybrid retrieval|BM25.*channel" CLAUDE.md docs/sdd/specs/spec.md`
   - **Result**: 输出空(文档零残留;`<!-- Removed: -->` HTML 注释和 "不调" exclusion 断言不在此 pattern 内)
   - **依赖**: 4.2
