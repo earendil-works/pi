@@ -31,5 +31,5 @@
 | R6 | REMOVED: 召回配置暴露 rrfK 和 recallThreshold knob | spec.md REMOVED #4 | code-review | `grep -n "rrfK\|recallThreshold" extensions/personal-assistant/memory.ts packages/webui/server/routes/memory.ts` 输出空 | [ ] |
 | R7 | REMOVED: rewriteQueryWithCallLlm / searchAtomsWithScores server helpers | spec.md REMOVED #5 | code-review | `grep -n "rewriteQueryWithCallLlm\|searchAtomsWithScores\|queryRewrite" extensions/personal-assistant/ packages/coding-agent/src/core/settings-manager.ts --include="*.ts"` 输出空 | [ ] |
 | R8 | CLAUDE.md 清理: 删 FTS 行 / rewriteQuery 引用 / hybrid 原则段 | tasks.md 3.1 | code-review | `grep -n "FTS 行\|rewriteQueryWithCallLlm\|searchAtomsWithScores\|memory-hybrid-bm25-recall" CLAUDE.md` 输出空 | [x] |
-| R9 | spec.md 矛盾消除: 删 v1 search 路由 spec + hybrid/RRF/BM25 段 | tasks.md 3.2 | code-review | `grep -n "rewriteQueryWithCallLlm\|hybrid retrieval\|BM25.*channel\|rrfK\|rrfScore" docs/sdd/specs/spec.md` 输出空 | [x] |
+| R9 | spec.md 矛盾消除: 删 v1 search 路由 spec + hybrid/RRF/BM25 段 | tasks.md 3.2 | code-review | `grep -n "rewriteQueryWithCallLlm\|hybrid retrieval\|BM25.*channel\|rrfK\|rrfScore" docs/sdd/specs/spec.md` 输出仅在 `<!-- Removed: -->` HTML 注释(历史记录) | [x] |
 | R10 | spec.md cosine floor 0.65 → 0.7 | tasks.md 3.2 | code-review | `grep -n "0\.65" docs/sdd/specs/spec.md` 输出空 | [x] |
