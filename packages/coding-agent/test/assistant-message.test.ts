@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -70,5 +71,29 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("Thinking...");
 		expect(rendered).toContain("maximum output token limit");
 		expect(rendered).toContain("response may be incomplete");
+	});
+
+	test("uses configured output padding for text and thinking", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "hello" },
+				{ type: "thinking", thinking: "reasoning" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+		);
+		const lines = component.render(80).map((line) => stripAnsi(line));
+
+		expect(lines.some((line) => line.includes(" hello"))).toBe(true);
+		expect(lines.some((line) => line.includes(" reasoning"))).toBe(true);
+
+		component.setOutputPad(0);
+		const updatedLines = component.render(80).map((line) => stripAnsi(line));
+		expect(updatedLines.some((line) => line.startsWith("hello"))).toBe(true);
+		expect(updatedLines.some((line) => line.startsWith("reasoning"))).toBe(true);
 	});
 });
