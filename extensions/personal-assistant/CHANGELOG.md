@@ -35,6 +35,7 @@
 - Search is discovery-only: `recallAtoms` returns summary + `id` for every result (no L0/L1 tier hydration). The agent calls `memory_get(id)` to fetch full content — that call is the sole programmatic strength-feedback signal.
 - Search response now returns `score` instead of `file_path`. Score = cosine × (1 + 0.3 × strength + 0.2 × importance), per-type top-3 with round-robin interleaving. `formatMemoryContext` re-sorts by `distance` ASC (cosine DESC) before injecting into LLM prompt — `score` is metadata, not visible to the LLM. Extraction prompt now accepts `<user_tone>` hint to calibrate importance.
 - Webui `GET /api/memory/:id` is preview-only — does NOT bump `access_count`. Strength feedback is recorded exclusively by the agent's `memory_get` tool.
+- Recall pipeline from hybrid (BM25+dense+RRF) to pure dense + cosine floor 0.7
 
 ### Fixed
 - Hash mismatch between DB content_fingerprint and file contentHash (both now use normalizeContent before sha256)
@@ -55,6 +56,10 @@
 - searchByFts, rewriteQuery, simpleKeywordExtraction, dedupeRedundantKeywords, dedupeAgainstQuery, expandCjkKeywords, isEmbeddingServiceAvailable, searchEmbeddings, parseRewriteJson, getEmbedding, callOllamaRewrite, searchAtoms, searchAtomsWithScores
 - Legacy sqlite.ts wrapper
 - `file_path` from search response and `formatMemoryBlock` output. Replaced with `id` for `memory_get` lookup.
+- BM25/FTS5 channel (escapeFtsQuery, bm25Search, MEMORY_FTS_SCHEMA, memory_fts table)
+- RRF fusion (rrfFuse, DEFAULT_RRF_K, DEFAULT_RECALL_THRESHOLD)
+- Query splitting (splitQuery, splitQueryRaw, mergeResults, MAX_SPLIT_SEGMENTS)
+- queryRewrite config field (dead code, never read)
 
 ### Known Limitations
 - **TUI memory status indicator**: the `ctx.ui.setStatus` API for footer status has existed since `7b902612 feat(coding-agent): add FooterDataProvider for git branch and extension statuses`, but neither v1 nor v2 memory ever called it. Recall results were only ever injected into the LLM prompt — invisible to the user. Now fixed via the `before_agent_start` hook firing `setStatus("memory", …)` on every turn.
