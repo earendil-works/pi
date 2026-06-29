@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { setBedrockProviderModule } from "../src/api/bedrock-converse-stream.lazy.ts";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
@@ -20,6 +22,16 @@ function fakeAuthContext(env: Record<string, string>, files: string[] = []): Aut
 }
 
 const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
+const BEDROCK_BEARER_TOKEN_ENV = "AWS_BEARER_TOKEN_BEDROCK";
+
+function doneStream(model: Model<Api>): AssistantMessageEventStream {
+	const stream = new AssistantMessageEventStream();
+	const message = fauxAssistantMessage("ok");
+	stream.push({ type: "start", partial: { ...message, api: model.api, provider: model.provider, model: model.id } });
+	stream.push({ type: "done", reason: "stop", message });
+	stream.end(message);
+	return stream;
+}
 
 describe("builtin providers", () => {
 	it("builtinModels registers every builtin provider with models", async () => {
@@ -66,6 +78,65 @@ describe("builtin providers", () => {
 		const unconfigured = createModels({ authContext: fakeAuthContext({}) });
 		unconfigured.setProvider(amazonBedrockProvider());
 		expect(await unconfigured.getAuth(model)).toBeUndefined();
+	});
+
+	it("maps Bedrock apiKey auth to request-scoped bearer-token env for both stream paths", async () => {
+		const captured: Array<{ apiKey?: string; env?: Record<string, string> } | undefined> = [];
+		setBedrockProviderModule({
+			stream: (model, _context, options) => {
+				captured.push(options);
+				return doneStream(model);
+			},
+			streamSimple: (model, _context, options) => {
+				captured.push(options);
+				return doneStream(model);
+			},
+		});
+
+		const provider = amazonBedrockProvider();
+		const model = provider.getModels()[0];
+
+		await provider
+			.stream(model, context, { apiKey: "bedrock-stream-token", env: { AWS_REGION: "us-west-2" } })
+			.result();
+		await provider
+			.streamSimple(model, context, { apiKey: "bedrock-simple-token", env: { AWS_REGION: "us-east-1" } })
+			.result();
+
+		expect(captured[0]).toMatchObject({
+			env: { AWS_REGION: "us-west-2", [BEDROCK_BEARER_TOKEN_ENV]: "bedrock-stream-token" },
+		});
+		expect(captured[0]?.apiKey).toBeUndefined();
+		expect(captured[1]).toMatchObject({
+			env: { AWS_REGION: "us-east-1", [BEDROCK_BEARER_TOKEN_ENV]: "bedrock-simple-token" },
+		});
+		expect(captured[1]?.apiKey).toBeUndefined();
+	});
+
+	it("maps stored Bedrock credentials resolved by Models into bearer-token env", async () => {
+		const captured: Array<{ apiKey?: string; env?: Record<string, string> } | undefined> = [];
+		setBedrockProviderModule({
+			stream: (model, _context, options) => {
+				captured.push(options);
+				return doneStream(model);
+			},
+			streamSimple: (model, _context, options) => {
+				captured.push(options);
+				return doneStream(model);
+			},
+		});
+
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("amazon-bedrock", async () => ({ type: "api_key", key: "stored-bedrock-token" }));
+		const models = createModels({ credentials });
+		models.setProvider(amazonBedrockProvider());
+		const model = models.getModels("amazon-bedrock")[0];
+
+		await models.completeSimple(model, context);
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0]).toMatchObject({ env: { [BEDROCK_BEARER_TOKEN_ENV]: "stored-bedrock-token" } });
+		expect(captured[0]?.apiKey).toBeUndefined();
 	});
 
 	it("requires Cloudflare Workers AI account config and returns scoped env", async () => {
