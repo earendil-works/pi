@@ -78,7 +78,6 @@ export interface PersonalAssistantConfig {
 	};
 	memory?: {
 		enabled?: boolean;
-		query_rewrite?: { provider?: string; model?: string };
 		extraction?: { provider?: string; model?: string };
 		embedding?: { provider?: string; model?: string };
 		decay?: { base_decay?: number; archive_threshold?: number };

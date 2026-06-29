@@ -75,10 +75,6 @@ export interface PersonalAssistantConfig {
 		 *  output), embedding is a vector encoder. Defaults fall back to
 		 *  the session model when omitted. */
 		extraction?: { provider: string; model: string };
-		/** Provider + model used by `before_agent_start` to rewrite the
-		 *  user prompt into a search-friendly query. Local-only by default
-		 *  (qwen2.5:3b) — cheap and avoids round-tripping the main agent. */
-		queryRewrite?: { provider: string; model: string };
 		embedding?: { ollamaUrl?: string; model?: string; provider?: string };
 		decay?: { baseDecay?: number; archiveThreshold?: number };
 		injection?: { maxCount?: number };
