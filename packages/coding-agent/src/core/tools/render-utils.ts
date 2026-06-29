@@ -36,9 +36,15 @@ export function normalizeDisplayText(text: string): string {
 	return text.replace(/\r/g, "");
 }
 
+export interface TextOutputOptions {
+	/** Whether image fallbacks should parse image dimensions from base64 data. */
+	includeImageDimensions?: boolean;
+}
+
 export function getTextOutput(
 	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> } | undefined,
 	showImages: boolean,
+	options: TextOutputOptions = {},
 ): string {
 	if (!result) return "";
 
@@ -48,12 +54,15 @@ export function getTextOutput(
 	let output = textBlocks.map((c) => sanitizeBinaryOutput(stripAnsi(c.text || "")).replace(/\r/g, "")).join("\n");
 
 	const caps = getCapabilities();
+	const includeImageDimensions = options.includeImageDimensions ?? true;
 	if (imageBlocks.length > 0 && (!caps.images || !showImages)) {
 		const imageIndicators = imageBlocks
 			.map((img) => {
 				const mimeType = img.mimeType ?? "image/unknown";
 				const dims =
-					img.data && img.mimeType ? (getImageDimensions(img.data, img.mimeType) ?? undefined) : undefined;
+					includeImageDimensions && img.data && img.mimeType
+						? (getImageDimensions(img.data, img.mimeType) ?? undefined)
+						: undefined;
 				return imageFallback(mimeType, dims);
 			})
 			.join("\n");

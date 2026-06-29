@@ -197,13 +197,14 @@ function rebuildBashResultRenderComponent(
 	},
 	options: ToolRenderResultOptions,
 	showImages: boolean,
+	includeImageDimensions: boolean,
 	startedAt: number | undefined,
 	endedAt: number | undefined,
 ): void {
 	const state = component.state;
 	component.clear();
 
-	let output = getTextOutput(result as any, showImages).trim();
+	let output = getTextOutput(result as any, showImages, { includeImageDimensions }).trim();
 	const truncation = result.details?.truncation;
 	const fullOutputPath = result.details?.fullOutputPath;
 	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
@@ -439,6 +440,7 @@ export function createBashToolDefinition(
 				result as any,
 				options,
 				context.showImages,
+				context.includeImageDimensions,
 				state.startedAt,
 				state.endedAt,
 			);

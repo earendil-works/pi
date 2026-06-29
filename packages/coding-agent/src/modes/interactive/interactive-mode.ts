@@ -3189,6 +3189,8 @@ export class InteractiveMode {
 							{
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),
+								// Do not replay historical inline image payloads on session load/rebuild.
+								allowInlineImages: false,
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,

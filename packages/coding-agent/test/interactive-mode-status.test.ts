@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import {
+	type AutocompleteProvider,
+	CombinedAutocompleteProvider,
+	resetCapabilitiesCache,
+	setCapabilities,
+} from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, TUI } from "../../tui/src/tui.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
@@ -113,6 +118,59 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode.renderSessionContext", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test("renders historical tool result images as fallbacks instead of replaying inline payloads", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const chatContainer = new Container();
+			const fakeThis: any = {
+				pendingTools: new Map(),
+				toolOutputExpanded: false,
+				chatContainer,
+				footer: { invalidate: vi.fn() },
+				updateEditorBorderColor: vi.fn(),
+				settingsManager: {
+					getShowImages: () => true,
+					getImageWidthCells: () => 60,
+				},
+				getRegisteredToolDefinition: () => undefined,
+				ui: { requestRender: vi.fn() },
+				sessionManager: { getCwd: () => process.cwd() },
+				addMessageToChat: vi.fn(() => {
+					chatContainer.addChild({ render: () => ["assistant"], invalidate: () => {} });
+				}),
+			};
+
+			(InteractiveMode as any).prototype.renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", name: "custom_tool", id: "tool-1", arguments: {} }],
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tool-1",
+						content: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+						isError: false,
+					},
+				],
+				thinkingLevel: "medium",
+				model: null,
+			});
+
+			const rendered = renderAll(chatContainer);
+			expect(rendered).not.toContain("_G");
+			expect(normalizeRenderedOutput(chatContainer)).toContain("[Image: [image/png]]");
+		} finally {
+			resetCapabilitiesCache();
+		}
 	});
 });
 

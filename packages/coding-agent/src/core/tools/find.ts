@@ -81,8 +81,9 @@ function formatFindResult(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
+	includeImageDimensions: boolean,
 ): string {
-	const output = getTextOutput(result, showImages).trim();
+	const output = getTextOutput(result, showImages, { includeImageDimensions }).trim();
 	let text = "";
 	if (output) {
 		const lines = output.split("\n");
@@ -363,7 +364,9 @@ export function createFindToolDefinition(
 		},
 		renderResult(result, options, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatFindResult(result as any, options, theme, context.showImages));
+			text.setText(
+				formatFindResult(result as any, options, theme, context.showImages, context.includeImageDimensions),
+			);
 			return text;
 		},
 	};

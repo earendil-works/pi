@@ -91,6 +91,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			isPartial,
 			expanded,
 			showImages: false,
+			includeImageDimensions: true,
 			isError,
 		};
 	};

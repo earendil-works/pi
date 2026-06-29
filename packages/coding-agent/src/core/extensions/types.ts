@@ -425,6 +425,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	expanded: boolean;
 	/** Whether inline images are currently shown in the TUI. */
 	showImages: boolean;
+	/** Whether image fallback labels may parse dimensions from base64 data. */
+	includeImageDimensions: boolean;
 	/** Whether the current result is an error. */
 	isError: boolean;
 }
