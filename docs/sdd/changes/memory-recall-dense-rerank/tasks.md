@@ -76,7 +76,7 @@
   - **Result**: `grep -n "FTS 行\|rewriteQueryWithCallLlm\|searchAtomsWithScores\|memory-hybrid-bm25-recall" CLAUDE.md` 输出空
   - **依赖**: 无
 
-- [ ] 3.2 **Clean spec.md hybrid/RRF/BM25 sections + update cosine floor value**
+- [x] 3.2 **Clean spec.md hybrid/RRF/BM25 sections + update cosine floor value**
   - **File**: Modify `docs/sdd/specs/spec.md`
   - **Content**:
     - 删除 v1 search 路由 spec block(原 line 1128-1206,引用 `rewriteQueryWithCallLlm` / `searchAtomsWithScores` / `QueryRewriteResult` / `simpleKeywordExtraction`)
