@@ -17,7 +17,7 @@
 
 ## 1. Delete hybrid recall channel — production code (atomic)
 
-- [ ] 1.1 **Delete BM25/FTS/hybrid from production code (storage.ts + search.ts + memory.ts)**
+- [x] 1.1 **Delete BM25/FTS/hybrid from production code (storage.ts + search.ts + memory.ts)**
   - **Files**:
     - Modify: `extensions/personal-assistant/storage.ts`
     - Modify: `extensions/personal-assistant/search.ts`
@@ -30,13 +30,13 @@
   - **测试文件**: 不动 — 由 task 2.7 / 1.7 后续处理。
   - **依赖**: 无
 
-- [ ] 1.2 **Delete FTS table sync from storage.ts**
+- [x] 1.2 **Delete FTS table sync from storage.ts**
   - **File**: Modify `extensions/personal-assistant/storage.ts`
   - **Content**: 删除 `MEMORY_FTS_SCHEMA` 常量; 删除 `init()` 中的 FTS 建表/backfill/repair 逻辑; 删除 `insertAtom` 中的 `INSERT INTO memory_fts`; 删除 `markSupersededTx` / `markArchived` / `unmarkArchived` 中的 FTS 操作; 在 `init()` 中新增 `DROP TABLE IF EXISTS memory_fts`(清理旧 DB 残留表)
   - **Result**: `grep -n "memory_fts" storage.ts` 只输出 `DROP TABLE IF EXISTS memory_fts` 一行
   - **依赖**: 1.1
 
-- [ ] 1.3 **Update webui route memory.ts**
+- [x] 1.3 **Update webui route memory.ts**
   - **File**: Modify `packages/webui/server/routes/memory.ts`
   - **Content**: 删除 `registerPostSearch` 中对 `m?.recall?.rrfK` 和 `m?.recall?.recallThreshold` 的引用
   - **Result**: `grep -n "rrfK\|recallThreshold" packages/webui/server/routes/memory.ts` 输出空
@@ -44,7 +44,7 @@
 
 ## 2. Update tests
 
-- [ ] 2.1 **Update search.test.ts + delete hybrid-recall.test.ts + update recall-quality.test.ts**
+- [x] 2.1 **Update search.test.ts + delete hybrid-recall.test.ts + update recall-quality.test.ts**
   - **Files**:
     - Modify: `extensions/personal-assistant/test/search.test.ts`
     - Delete: `extensions/personal-assistant/test/hybrid-recall.test.ts`
@@ -56,13 +56,13 @@
   - **Result**: `node ../../node_modules/vitest/dist/cli.js --run test/search.test.ts test/recall-quality.test.ts` 0 错误 0 失败
   - **依赖**: 1.1
 
-- [ ] 2.2 **Update storage.test.ts**
+- [x] 2.2 **Update storage.test.ts**
   - **File**: Modify `extensions/personal-assistant/test/storage.test.ts`
   - **Content**: 删除 `escapeFtsQuery` describe block; 删除 `memory_fts FTS5 table` describe block 的全部测试(init creates memory_fts / init backfills / init repairs broken / init does not touch valid / markSupersededTx swaps / markArchived deletes); 新增测试 `init() drops legacy memory_fts table` — 构造旧 DB 含 memory_fts 表 + 行,调 init(),验证 memory_fts 表不存在, memory_index/vectors 数据保留
   - **Result**: `node ../../node_modules/vitest/dist/cli.js --run test/storage.test.ts` 0 错误 0 失败
   - **依赖**: 1.2
 
-- [ ] 2.3 **Add regression test for Chinese query no-false-positive**
+- [x] 2.3 **Add regression test for Chinese query no-false-positive**
   - **File**: Create `extensions/personal-assistant/test/regressions/recall-dense-floor.test.ts`
   - **Content**: 插入 2 atom: A(title="novo skill 创建方法", type="fact") 和 B(title="BMK 报告品牌替换", type="fact"); 用 mock embedder 控制 cosine: A=0.75(通过 floor), B=0.55(低于 floor); 断言 `recallAtoms` 只返回 A 不含 B
   - **Result**: `node ../../node_modules/vitest/dist/cli.js --run test/regressions/recall-dense-floor.test.ts` 0 错误 0 失败
@@ -70,7 +70,7 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 **Clean CLAUDE.md obsolete principles**
+- [x] 3.1 **Clean CLAUDE.md obsolete principles**
   - **File**: Modify `CLAUDE.md`
   - **Content**: 删除 line 63 "必重建 FTS 行"; 删除 line 65 "调真实的 `rewriteQueryWithCallLlm` + `searchAtomsWithScores`"(整条); 删除 line 86-92 整段 `## memory-hybrid-bm25-recall` 原则(5 子原则)
   - **Result**: `grep -n "FTS 行\|rewriteQueryWithCallLlm\|searchAtomsWithScores\|memory-hybrid-bm25-recall" CLAUDE.md` 输出空
@@ -86,7 +86,7 @@
   - **Result**: `grep -nE "rewriteQueryWithCallLlm|searchAtomsWithScores|QueryRewriteResult|simpleKeywordExtraction" docs/sdd/specs/spec.md` 只输出在 `<!-- Removed: -->` HTML 注释和 "不调" exclusion 断言中的引用(4 行); `grep -n "0\.65" docs/sdd/specs/spec.md` 输出空
   - **依赖**: 无
 
-- [ ] 3.3 **Update CHANGELOG.md**
+- [x] 3.3 **Update CHANGELOG.md**
   - **File**: Modify `extensions/personal-assistant/CHANGELOG.md`
   - **Content**: 在 `## [Unreleased]` 下追加:
     - `### Changed`: `Recall pipeline from hybrid (BM25+dense+RRF) to pure dense + cosine floor 0.7`

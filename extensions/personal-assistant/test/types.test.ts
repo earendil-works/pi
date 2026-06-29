@@ -334,21 +334,18 @@ describe("types", () => {
 		expect(row.tags).toBe('["a","b"]');
 	});
 
-	it("PersonalAssistantConfig.memory.recall is optional", () => {
-		// recall block is fully optional: missing block, empty memory, and full
-		// recall sub-config all type-check and round-trip cleanly.
-		const c1: PersonalAssistantConfig = { memory: { recall: { rrfK: 30 } } };
-		const c2: PersonalAssistantConfig = {
-			memory: { recall: { rrfK: 60, recallThreshold: 1 / 60 } },
-		};
-		const c3: PersonalAssistantConfig = { memory: {} };
-		const c4: PersonalAssistantConfig = {};
+	it("PersonalAssistantConfig.memory is fully optional (post hybrid-removal)", () => {
+		// The `recall` sub-config was removed when the pipeline migrated
+		// from hybrid (BM25 + dense + RRF) to pure dense + cosine floor.
+		// This test pins that the surrounding `memory` block is still
+		// optional — empty memory, populated memory, and missing memory
+		// all type-check cleanly.
+		const c1: PersonalAssistantConfig = { memory: { tagOverlapWeight: 0.15 } };
+		const c2: PersonalAssistantConfig = { memory: {} };
+		const c3: PersonalAssistantConfig = {};
 
-		expect(c1.memory?.recall?.rrfK).toBe(30);
-		expect(c1.memory?.recall?.recallThreshold).toBeUndefined();
-		expect(c2.memory?.recall?.rrfK).toBe(60);
-		expect(c2.memory?.recall?.recallThreshold).toBeCloseTo(1 / 60);
-		expect(c3.memory?.recall).toBeUndefined();
-		expect(c4.memory).toBeUndefined();
+		expect(c1.memory?.tagOverlapWeight).toBe(0.15);
+		expect(c2.memory).toBeDefined();
+		expect(c3.memory).toBeUndefined();
 	});
 });

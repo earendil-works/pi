@@ -78,21 +78,6 @@ export interface PersonalAssistantConfig {
 		embedding?: { ollamaUrl?: string; model?: string; provider?: string };
 		decay?: { baseDecay?: number; archiveThreshold?: number };
 		injection?: { maxCount?: number };
-		/**
-		 * Hybrid recall (BM25 + dense + RRF) configuration. Both fields
-		 * optional — missing config falls back to defaults in `search.ts`.
-		 * Exposed here purely so settings.json can override them; no other
-		 * recall knobs are surfaced.
-		 */
-		recall?: {
-			/** RRF smoothing constant k. Default: 60 (industry standard). */
-			rrfK?: number;
-			/** Min fused RRF score to keep an atom. Default: 1/(rrfK+1) ≈ 0.0164.
-			 *  Lets single-channel rank=0 hits through (= threshold) and filters
-			 *  rank≥1. Use `1/rrfK ≈ 0.0167` for strict mode (single-channel
-			 *  rank=0 also filtered). */
-			recallThreshold?: number;
-		};
 		autoDecay?: boolean;
 		autoExtract?: boolean;
 		/**
@@ -676,25 +661,22 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const { recallAtoms } = await import("./search.ts");
 				const { formatMemoryContext } = await import("./format.ts");
 				let results: RecallResult[];
-				try {
-					// rrfK/recallThreshold fall back to search.ts defaults
-					// when omitted. topK=20 matches design.md Decision 2
-					// (per-channel KNN pool; the fused per-type cap is
-					// hard-coded at DEFAULT_TOP_K in search.ts).
-					// tagOverlapWeight / freshnessWeight / tagAliases are the
-					// runtime-configurable scoring knobs from
-					// PersonalAssistantConfig.memory — wired here so the
-					// agent's before_agent_start hook honors the same
-					// settings the webui search endpoint consumes.
-					const m = config.memory;
-					results = await recallAtoms(index, userMessage, {
-						topK: 20,
-						rrfK: m?.recall?.rrfK,
-						recallThreshold: m?.recall?.recallThreshold,
-						tagOverlapWeight: m?.tagOverlapWeight,
-						freshnessWeight: m?.freshnessWeight,
-						tagAliases: m?.tagAliases,
-					});
+			try {
+				// topK=20 matches design.md Decision 2 (per-type KNN pool;
+				// the post-scoring per-type cap is hard-coded at
+				// DEFAULT_TOP_K in search.ts).
+				// tagOverlapWeight / freshnessWeight / tagAliases are the
+				// runtime-configurable scoring knobs from
+				// PersonalAssistantConfig.memory — wired here so the
+				// agent's before_agent_start hook honors the same
+				// settings the webui search endpoint consumes.
+				const m = config.memory;
+				results = await recallAtoms(index, userMessage, {
+					topK: 20,
+					tagOverlapWeight: m?.tagOverlapWeight,
+					freshnessWeight: m?.freshnessWeight,
+					tagAliases: m?.tagAliases,
+				});
 				} catch (err) {
 					ctx.ui.setStatus("memory", "⚠ memory recall failed");
 					throw err;

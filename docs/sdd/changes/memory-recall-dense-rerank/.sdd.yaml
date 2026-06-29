@@ -4,8 +4,8 @@ change: memory-recall-dense-rerank
 created_at: 2026-06-29
 base_ref: 5f4a733ab0065430e86c6815346cc0ac190003c7
 tasks_total: 0
-tasks_done: 0
+tasks_done: 3
 isolation: branch
 verify_result: null
-last_review_sha: null
+last_review_sha: 1cb4672a
 archived: false
