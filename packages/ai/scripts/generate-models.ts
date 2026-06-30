@@ -581,139 +581,124 @@ function roundCost(value: number): number {
 }
 
 async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
-	try {
-		console.log("Fetching models from NVIDIA NIM API...");
-		const response = await fetchWithRetry(`${NVIDIA_BASE_URL}/models`, { label: "NVIDIA NIM" });
-		const data = (await response.json()) as { data?: NvidiaNimModelListItem[] };
-		const modelIds = new Map<string, string>();
+	console.log("Fetching models from NVIDIA NIM API...");
+	const response = await fetchWithRetry(`${NVIDIA_BASE_URL}/models`, { label: "NVIDIA NIM" });
+	const data = (await response.json()) as { data?: NvidiaNimModelListItem[] };
+	const modelIds = new Map<string, string>();
 
-		for (const model of data.data ?? []) {
-			modelIds.set(model.id, model.id);
-			modelIds.set(normalizeNvidiaModelId(model.id), model.id);
-		}
-
-		console.log(`Fetched ${data.data?.length ?? 0} model IDs from NVIDIA NIM`);
-		return modelIds;
-	} catch (error) {
-		console.error("Failed to fetch NVIDIA NIM models:", error);
-		return new Map();
+	for (const model of data.data ?? []) {
+		modelIds.set(model.id, model.id);
+		modelIds.set(normalizeNvidiaModelId(model.id), model.id);
 	}
+
+	console.log(`Fetched ${data.data?.length ?? 0} model IDs from NVIDIA NIM`);
+	return modelIds;
 }
 
 async function fetchOpenRouterModels(): Promise<Model<any>[]> {
-	try {
-		console.log("Fetching models from OpenRouter API...");
-		const response = await fetchWithRetry("https://openrouter.ai/api/v1/models", { label: "OpenRouter" });
-		const data = await response.json();
+	console.log("Fetching models from OpenRouter API...");
+	const response = await fetchWithRetry("https://openrouter.ai/api/v1/models", { label: "OpenRouter" });
+	const data = await response.json();
 
-		const models: Model<any>[] = [];
+	const models: Model<any>[] = [];
 
-		for (const model of data.data) {
-			// Only include models that support tools
-			if (!model.supported_parameters?.includes("tools")) continue;
+	for (const model of data.data) {
+		// Only include models that support tools
+		if (!model.supported_parameters?.includes("tools")) continue;
 
-			// Parse provider from model ID
-			let provider: KnownProvider = "openrouter";
-			let modelKey = model.id;
+		// Parse provider from model ID
+		let provider: KnownProvider = "openrouter";
+		let modelKey = model.id;
 
-			modelKey = model.id; // Keep full ID for OpenRouter
+		modelKey = model.id; // Keep full ID for OpenRouter
 
-			// Parse input modalities
-			const input: ("text" | "image")[] = ["text"];
-			if (model.architecture?.modality?.includes("image")) {
-				input.push("image");
-			}
-
-			// Convert pricing from $/token to $/million tokens
-			const inputCost = roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000);
-			const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
-			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
-			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
-
-			const normalizedModel: Model<any> = {
-				id: modelKey,
-				name: model.name,
-				api: "openai-completions",
-				baseUrl: "https://openrouter.ai/api/v1",
-				provider,
-				reasoning: model.supported_parameters?.includes("reasoning") || false,
-				input,
-				cost: {
-					input: inputCost,
-					output: outputCost,
-					cacheRead: cacheReadCost,
-					cacheWrite: cacheWriteCost,
-				},
-				contextWindow: model.context_length || 4096,
-				maxTokens: model.top_provider?.max_completion_tokens || 4096,
-			};
-			models.push(normalizedModel);
+		// Parse input modalities
+		const input: ("text" | "image")[] = ["text"];
+		if (model.architecture?.modality?.includes("image")) {
+			input.push("image");
 		}
 
-		console.log(`Fetched ${models.length} tool-capable models from OpenRouter`);
-		return models;
-	} catch (error) {
-		console.error("Failed to fetch OpenRouter models:", error);
-		return [];
+		// Convert pricing from $/token to $/million tokens
+		const inputCost = roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000);
+		const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
+		const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
+		const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
+
+		const normalizedModel: Model<any> = {
+			id: modelKey,
+			name: model.name,
+			api: "openai-completions",
+			baseUrl: "https://openrouter.ai/api/v1",
+			provider,
+			reasoning: model.supported_parameters?.includes("reasoning") || false,
+			input,
+			cost: {
+				input: inputCost,
+				output: outputCost,
+				cacheRead: cacheReadCost,
+				cacheWrite: cacheWriteCost,
+			},
+			contextWindow: model.context_length || 4096,
+			maxTokens: model.top_provider?.max_completion_tokens || 4096,
+		};
+		models.push(normalizedModel);
 	}
+
+	console.log(`Fetched ${models.length} tool-capable models from OpenRouter`);
+	return models;
 }
 
 async function fetchAiGatewayModels(): Promise<Model<any>[]> {
-	try {
-		console.log("Fetching models from Vercel AI Gateway API...");
-		const response = await fetchWithRetry(`${AI_GATEWAY_MODELS_URL}/models`, { label: "Vercel AI Gateway" });
-		const data = await response.json();
-		const models: Model<any>[] = [];
+	console.log("Fetching models from Vercel AI Gateway API...");
+	const response = await fetchWithRetry(`${AI_GATEWAY_MODELS_URL}/models`, { label: "Vercel AI Gateway" });
+	const data = await response.json();
+	const models: Model<any>[] = [];
 
-		const toNumber = (value: string | number | undefined): number => {
-			if (typeof value === "number") {
-				return Number.isFinite(value) ? value : 0;
-			}
-			const parsed = parseFloat(value ?? "0");
-			return Number.isFinite(parsed) ? parsed : 0;
-		};
+	const toNumber = (value: string | number | undefined): number => {
+		if (typeof value === "number") {
+			return Number.isFinite(value) ? value : 0;
+		}
+		const parsed = parseFloat(value ?? "0");
+		return Number.isFinite(parsed) ? parsed : 0;
+	};
 
-		const items = Array.isArray(data.data) ? (data.data as AiGatewayModel[]) : [];
-		for (const model of items) {
-			const tags = Array.isArray(model.tags) ? model.tags : [];
-			// Only include models that support tools
-			if (!tags.includes("tool-use")) continue;
+	const items = Array.isArray(data.data) ? (data.data as AiGatewayModel[]) : [];
+	for (const model of items) {
+		const tags = Array.isArray(model.tags) ? model.tags : [];
+		// Only include models that support tools
+		if (!tags.includes("tool-use")) continue;
 
-			const input: ("text" | "image")[] = ["text"];
-			if (tags.includes("vision")) {
-				input.push("image");
-			}
-
-			const inputCost = roundCost(toNumber(model.pricing?.input) * 1_000_000);
-			const outputCost = roundCost(toNumber(model.pricing?.output) * 1_000_000);
-			const cacheReadCost = roundCost(toNumber(model.pricing?.input_cache_read) * 1_000_000);
-			const cacheWriteCost = roundCost(toNumber(model.pricing?.input_cache_write) * 1_000_000);
-
-			models.push({
-				id: model.id,
-				name: model.name || model.id,
-				api: "anthropic-messages",
-				baseUrl: AI_GATEWAY_BASE_URL,
-				provider: "vercel-ai-gateway",
-				reasoning: tags.includes("reasoning"),
-				input,
-				cost: {
-					input: inputCost,
-					output: outputCost,
-					cacheRead: cacheReadCost,
-					cacheWrite: cacheWriteCost,
-				},
-				contextWindow: model.context_window || 4096,
-				maxTokens: model.max_tokens || 4096,
-			});
+		const input: ("text" | "image")[] = ["text"];
+		if (tags.includes("vision")) {
+			input.push("image");
 		}
 
-		console.log(`Fetched ${models.length} tool-capable models from Vercel AI Gateway`);
-		return models;
-	} catch (error) {
-		console.error("Failed to fetch Vercel AI Gateway models:", error);
-		return [];
+		const inputCost = roundCost(toNumber(model.pricing?.input) * 1_000_000);
+		const outputCost = roundCost(toNumber(model.pricing?.output) * 1_000_000);
+		const cacheReadCost = roundCost(toNumber(model.pricing?.input_cache_read) * 1_000_000);
+		const cacheWriteCost = roundCost(toNumber(model.pricing?.input_cache_write) * 1_000_000);
+
+		models.push({
+			id: model.id,
+			name: model.name || model.id,
+			api: "anthropic-messages",
+			baseUrl: AI_GATEWAY_BASE_URL,
+			provider: "vercel-ai-gateway",
+			reasoning: tags.includes("reasoning"),
+			input,
+			cost: {
+				input: inputCost,
+				output: outputCost,
+				cacheRead: cacheReadCost,
+				cacheWrite: cacheWriteCost,
+			},
+			contextWindow: model.context_window || 4096,
+			maxTokens: model.max_tokens || 4096,
+		});
 	}
+
+	console.log(`Fetched ${models.length} tool-capable models from Vercel AI Gateway`);
+	return models;
 }
 
 async function loadModelsDevData(): Promise<Model<any>[]> {
