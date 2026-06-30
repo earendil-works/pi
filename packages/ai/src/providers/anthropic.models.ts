@@ -4,40 +4,6 @@
 import type { Model } from "../types.ts";
 
 export const ANTHROPIC_MODELS = {
-	"claude-3-5-haiku-20241022": {
-		id: "claude-3-5-haiku-20241022",
-		name: "Claude Haiku 3.5",
-		api: "anthropic-messages",
-		provider: "anthropic",
-		baseUrl: "https://api.anthropic.com",
-		reasoning: false,
-		input: ["text", "image"],
-		cost: {
-			input: 0.8,
-			output: 4,
-			cacheRead: 0.08,
-			cacheWrite: 1,
-		},
-		contextWindow: 200000,
-		maxTokens: 8192,
-	} satisfies Model<"anthropic-messages">,
-	"claude-3-5-haiku-latest": {
-		id: "claude-3-5-haiku-latest",
-		name: "Claude Haiku 3.5 (latest)",
-		api: "anthropic-messages",
-		provider: "anthropic",
-		baseUrl: "https://api.anthropic.com",
-		reasoning: false,
-		input: ["text", "image"],
-		cost: {
-			input: 0.8,
-			output: 4,
-			cacheRead: 0.08,
-			cacheWrite: 1,
-		},
-		contextWindow: 200000,
-		maxTokens: 8192,
-	} satisfies Model<"anthropic-messages">,
 	"claude-3-5-sonnet-20240620": {
 		id: "claude-3-5-sonnet-20240620",
 		name: "Claude Sonnet 3.5",

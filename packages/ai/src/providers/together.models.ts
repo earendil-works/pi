@@ -360,4 +360,23 @@ export const TOGETHER_MODELS = {
 		contextWindow: 202752,
 		maxTokens: 131072,
 	} satisfies Model<"openai-completions">,
+	"zai-org/GLM-5.2": {
+		id: "zai-org/GLM-5.2",
+		name: "GLM-5.2",
+		api: "openai-completions",
+		provider: "together",
+		baseUrl: "https://api.together.ai/v1",
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","thinkingFormat":"together","supportsStrictMode":false,"supportsLongCacheRetention":false},
+		reasoning: true,
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null},
+		input: ["text"],
+		cost: {
+			input: 1.4,
+			output: 4.4,
+			cacheRead: 0.26,
+			cacheWrite: 0,
+		},
+		contextWindow: 262144,
+		maxTokens: 164000,
+	} satisfies Model<"openai-completions">,
 } as const;
