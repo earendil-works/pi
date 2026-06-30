@@ -26,3 +26,5 @@ export class UndoStack<S> {
 		return this.stack.length;
 	}
 }
+
+export { UndoStack as RedoStack };

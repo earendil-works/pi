@@ -2051,6 +2051,31 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "hello");
 		});
 
+		it("redoes undone edits without clearing the redo stack", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			for (const char of "hello world") editor.handleInput(char);
+			editor.handleInput("\x1b[45;5u"); // Undo to "hello"
+			editor.handleInput("\x1b[45;5u"); // Undo to ""
+			assert.strictEqual(editor.getText(), "");
+
+			editor.handleInput("\x1b[45;6u"); // Ctrl+Shift+- redo to "hello"
+			assert.strictEqual(editor.getText(), "hello");
+			editor.handleInput("\x1b[45;6u"); // Ctrl+Shift+- redo to "hello world"
+			assert.strictEqual(editor.getText(), "hello world");
+		});
+
+		it("clears redo on a new edit after undo", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			for (const char of "hello world") editor.handleInput(char);
+			editor.handleInput("\x1b[45;5u"); // Undo to "hello"
+			editor.handleInput("!");
+			editor.handleInput("\x1b[45;6u"); // Ctrl+Shift+- should be a no-op
+
+			assert.strictEqual(editor.getText(), "hello!");
+		});
+
 		it("undoes autocomplete", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

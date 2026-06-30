@@ -11,6 +11,13 @@ describe("KeybindingsManager", () => {
 		assert.strictEqual(keybindings.matches("\x1b[106;5u", "tui.input.newLine"), true);
 	});
 
+	it("binds Ctrl+Shift+- as the default redo key", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.redo"), ["ctrl+shift+-"]);
+		assert.strictEqual(keybindings.matches("\x1b[45;6u", "tui.editor.redo"), true);
+	});
+
 	it("does not evict selector confirm when input submit is rebound", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
 			"tui.input.submit": ["enter", "ctrl+enter"],

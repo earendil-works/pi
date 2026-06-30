@@ -223,6 +223,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	yank: "tui.editor.yank",
 	yankPop: "tui.editor.yankPop",
 	undo: "tui.editor.undo",
+	redo: "tui.editor.redo",
 	newLine: "tui.input.newLine",
 	submit: "tui.input.submit",
 	tab: "tui.input.tab",

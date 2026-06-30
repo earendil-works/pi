@@ -623,6 +623,21 @@ describe("Input component", () => {
 			assert.strictEqual(input.getValue(), "hello world");
 		});
 
+		it("redoes undone edits and clears redo on a new edit", () => {
+			const input = new Input();
+
+			for (const char of "hello world") input.handleInput(char);
+			input.handleInput("\x1b[45;5u"); // Undo to "hello"
+			input.handleInput("\x1b[45;5u"); // Undo to ""
+			assert.strictEqual(input.getValue(), "");
+
+			input.handleInput("\x1b[45;6u"); // Ctrl+Shift+- redo to "hello"
+			assert.strictEqual(input.getValue(), "hello");
+			input.handleInput("!");
+			input.handleInput("\x1b[45;6u"); // Ctrl+Shift+- should be a no-op
+			assert.strictEqual(input.getValue(), "hello!");
+		});
+
 		it("cursor movement starts new undo unit", () => {
 			const input = new Input();
 
