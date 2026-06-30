@@ -220,16 +220,18 @@ export function convertResponsesMessages<TApi extends Api>(
 			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
-			const textResult = msg.content
-				.filter((c): c is TextContent => c.type === "text")
-				.map((c) => c.text)
-				.join("\n");
-			const hasImages = msg.content.some((c): c is ImageContent => c.type === "image");
+			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
+			const textResult = textContent.map((c) => c.text).join("\n");
+			const imageContent = model.input.includes("image")
+				? msg.content.filter((c): c is ImageContent => c.type === "image")
+				: [];
+
 			const hasText = textResult.length > 0;
+			const hasImages = imageContent.length > 0;
 			const [callId] = msg.toolCallId.split("|");
 
 			let output: string | ResponseFunctionCallOutputItemList;
-			if (hasImages && model.input.includes("image")) {
+			if (hasImages) {
 				const contentParts: ResponseFunctionCallOutputItemList = [];
 
 				if (hasText) {
@@ -239,19 +241,17 @@ export function convertResponsesMessages<TApi extends Api>(
 					});
 				}
 
-				for (const block of msg.content) {
-					if (block.type === "image") {
-						contentParts.push({
-							type: "input_image",
-							detail: "auto",
-							image_url: `data:${block.mimeType};base64,${block.data}`,
-						});
-					}
+				for (const block of imageContent) {
+					contentParts.push({
+						type: "input_image",
+						detail: "auto",
+						image_url: `data:${block.mimeType};base64,${block.data}`,
+					});
 				}
 
 				output = contentParts;
 			} else {
-				output = sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "");
+				output = sanitizeSurrogates(hasText ? textResult : "");
 			}
 
 			messages.push({

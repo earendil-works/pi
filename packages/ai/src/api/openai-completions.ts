@@ -1018,19 +1018,17 @@ export function convertMessages(
 			for (; j < transformedMessages.length && transformedMessages[j].role === "toolResult"; j++) {
 				const toolMsg = transformedMessages[j] as ToolResultMessage;
 
-				// Extract text and image content
 				const textResult = toolMsg.content
 					.filter(isTextContentBlock)
 					.map((block) => block.text)
 					.join("\n");
-				const hasImages = toolMsg.content.some((c) => c.type === "image");
+				const imageContent = model.input.includes("image") ? toolMsg.content.filter(isImageContentBlock) : [];
+				const hasImages = imageContent.length > 0;
 
-				// Always send tool result with text (or placeholder if only images)
 				const hasText = textResult.length > 0;
-				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : ""),
+					content: sanitizeSurrogates(hasText ? textResult : ""),
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
@@ -1038,16 +1036,14 @@ export function convertMessages(
 				}
 				params.push(toolResultMsg);
 
-				if (hasImages && model.input.includes("image")) {
-					for (const block of toolMsg.content) {
-						if (isImageContentBlock(block)) {
-							imageBlocks.push({
-								type: "image_url",
-								image_url: {
-									url: `data:${block.mimeType};base64,${block.data}`,
-								},
-							});
-						}
+				if (hasImages) {
+					for (const block of imageContent) {
+						imageBlocks.push({
+							type: "image_url",
+							image_url: {
+								url: `data:${block.mimeType};base64,${block.data}`,
+							},
+						});
 					}
 				}
 			}
