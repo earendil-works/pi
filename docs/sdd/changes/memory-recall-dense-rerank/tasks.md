@@ -180,6 +180,12 @@
     ```
   - **依赖**: 无
 
+- [x] 5.7 **Address code-review I1: remove redundant try/catch from fetch helpers**
+  - **File**: `packages/ai/scripts/generate-models.ts`
+  - **Content**: Code review found inconsistent error handling. `loadModelsDevData` throws, but 3 supplementary fetch helpers (NVIDIA NIM, OpenRouter, Vercel AI Gateway) still had outer try/catch that swallowed errors. Removed the 3 wrappers — `fetchWithRetry` already throws after 3 attempts, so they were redundant.
+  - **Result**: All 4 fetch sites now propagate errors consistently. 3/3 builds still deterministic.
+  - **依赖**: 5.6
+
 ## 4. Final verification
 
 - [x] 4.1 **Run full test suite + npm run check**
