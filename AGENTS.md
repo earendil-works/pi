@@ -38,6 +38,11 @@
 
 - Treat npm dep and lockfile changes as reviewed code. Direct external deps stay pinned to exact versions.
 - Hydrate/update locally with `npm install --ignore-scripts`; clean/CI-style with `npm ci --ignore-scripts`. Don't run lifecycle scripts unless the user asks.
+- **Native deps require a rebuild after `--ignore-scripts`.** `better-sqlite3` ships an `install` script (`prebuild-install || node-gyp rebuild --release`) that produces `node_modules/better-sqlite3/build/Release/better_sqlite3.node`. When `npm ci --ignore-scripts` runs, this script is skipped and the `.node` binding is missing — every DB operation then throws `MODULE_NOT_FOUND` and the webui returns HTTP 500. After any `--ignore-scripts` install/hydrate, run:
+  ```bash
+  cd node_modules/better-sqlite3 && npm run install
+  ```
+  Pre-built binaries (`lightningcss-linux-x64-gnu`, `sqlite-vec-linux-x64/vec0.so`, `@rolldown/binding-linux-x64-gnu`, `@rollup/rollup-linux-x64-gnu`, `@mariozechner/clipboard-linux-x64-gnu`) are unaffected by `--ignore-scripts` — only better-sqlite3 needs the rebuild.
 - If dep metadata changes, refresh `package-lock.json` with `npm install --package-lock-only --ignore-scripts`.
 - If `packages/coding-agent/npm-shrinkwrap.json` needs regen, run `node scripts/generate-coding-agent-shrinkwrap.mjs` (verify with `--check` or `npm run check`). New deps with lifecycle scripts require review and an explicit allowlist entry in that script; never add one silently.
 - Pre-commit blocks lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1`. Don't bypass unless the user wants the lockfile change committed.
