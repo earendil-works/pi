@@ -232,12 +232,19 @@ export interface SettingsError {
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
 	private projectSettingsPath: string;
+	private agentDir: string;
 
 	constructor(cwd: string, agentDir: string) {
 		const resolvedCwd = resolvePath(cwd);
 		const resolvedAgentDir = resolvePath(agentDir);
+		this.agentDir = resolvedAgentDir;
 		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
 		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
+	}
+
+	/** Returns the resolved agent directory used by this storage. */
+	getAgentDir(): string {
+		return this.agentDir;
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -493,6 +500,19 @@ export class SettingsManager {
 
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
+	}
+
+	/**
+	 * Returns the resolved agent directory if the storage is file-backed
+	 * (FileSettingsStorage); otherwise undefined. Used to scope filesystem
+	 * lookups (e.g. MCP config) to the session's agent dir rather than the
+	 * user's global agent dir.
+	 */
+	getAgentDir(): string | undefined {
+		if (this.storage instanceof FileSettingsStorage) {
+			return this.storage.getAgentDir();
+		}
+		return undefined;
 	}
 
 	setProjectTrusted(trusted: boolean): void {
@@ -1250,8 +1270,10 @@ export class SettingsManager {
 
 const MCP_CONFIG_FILE = "mcp.json";
 
-export function loadMcpConfig(): Record<string, { url: string; token: string; enabled?: boolean }> {
-	const configPath = join(getAgentDir(), MCP_CONFIG_FILE);
+export function loadMcpConfig(
+	agentDir: string = getAgentDir(),
+): Record<string, { url: string; token: string; enabled?: boolean }> {
+	const configPath = join(agentDir, MCP_CONFIG_FILE);
 	if (!existsSync(configPath)) return {};
 	try {
 		return JSON.parse(readFileSync(configPath, "utf-8"));

@@ -1,11 +1,18 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+
+// Repo root: 3 levels up from this test file (test/ → coding-agent/ → packages/ → <repo>).
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const BUNDLED_EXTENSIONS_DIR = resolve(REPO_ROOT, "extensions");
+const BUNDLED_SKILLS_DIR = resolve(REPO_ROOT, "skills");
+const BUNDLED_PROMPTS_DIR = resolve(REPO_ROOT, "prompts");
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -86,6 +93,10 @@ describe("DefaultPackageManager", () => {
 			cwd: tempDir,
 			agentDir,
 			settingsManager,
+			// Skip bundled repo resources so tests are not polluted by extensions/skills/prompts
+			// shipped alongside the package. Tests that explicitly need bundled loading can
+			// construct their own DefaultPackageManager without this option.
+			noBundled: true,
 		});
 	});
 
@@ -108,6 +119,27 @@ describe("DefaultPackageManager", () => {
 			expect(result.themes).toEqual([]);
 			expect(result.skills.every((r) => r.metadata.source === "auto" && r.metadata.origin === "top-level")).toBe(
 				true,
+			);
+		});
+
+		it("should skip bundled repo resources when noBundled is true", async () => {
+			const pmWithoutBundled = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+				noBundled: true,
+			});
+
+			const result = await pmWithoutBundled.resolve();
+
+			// Bundled entries have a baseDir equal to one of the bundled dirs at the repo root.
+			const bundledBaseDirs = new Set([BUNDLED_EXTENSIONS_DIR, BUNDLED_SKILLS_DIR, BUNDLED_PROMPTS_DIR]);
+			expect(result.extensions.filter((r) => r.metadata.baseDir && bundledBaseDirs.has(r.metadata.baseDir))).toEqual(
+				[],
+			);
+			expect(result.skills.filter((r) => r.metadata.baseDir && bundledBaseDirs.has(r.metadata.baseDir))).toEqual([]);
+			expect(result.prompts.filter((r) => r.metadata.baseDir && bundledBaseDirs.has(r.metadata.baseDir))).toEqual(
+				[],
 			);
 		});
 

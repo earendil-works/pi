@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
@@ -11,6 +11,12 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+
+// Repo root: 3 levels up from this test file (test/ → coding-agent/ → packages/ → <repo>).
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const BUNDLED_EXTENSIONS_DIR = resolve(REPO_ROOT, "extensions");
+const BUNDLED_SKILLS_DIR = resolve(REPO_ROOT, "skills");
+const BUNDLED_PROMPTS_DIR = resolve(REPO_ROOT, "prompts");
 
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
@@ -37,6 +43,21 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
 			expect(loader.getThemes().themes).toEqual([]);
+		});
+
+		it("should skip bundled repo resources when noBundled is true", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noBundled: true });
+			await loader.reload();
+
+			const { extensions } = loader.getExtensions();
+			const { skills } = loader.getSkills();
+			const { prompts } = loader.getPrompts();
+
+			// Bundled entries have a baseDir equal to one of the bundled dirs at the repo root.
+			const bundledBaseDirs = new Set([BUNDLED_EXTENSIONS_DIR, BUNDLED_SKILLS_DIR, BUNDLED_PROMPTS_DIR]);
+			expect(extensions.filter((e) => e.sourceInfo?.path && bundledBaseDirs.has(e.sourceInfo.path))).toEqual([]);
+			expect(skills.filter((s) => s.filePath && bundledBaseDirs.has(s.filePath))).toEqual([]);
+			expect(prompts.filter((p) => p.filePath && bundledBaseDirs.has(p.filePath))).toEqual([]);
 		});
 
 		it("should discover skills from agentDir", async () => {
@@ -175,7 +196,7 @@ Project skill`,
 			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
 			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noBundled: true });
 			await loader.reload();
 
 			const extensionsResult = loader.getExtensions();
@@ -216,7 +237,7 @@ export default function(pi) {
 }`,
 			);
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noBundled: true });
 			await loader.reload({
 				resolveProjectTrust: async ({ extensionsResult }) => {
 					expect(extensionsResult.extensions.map((extension) => extension.path)).toEqual([
@@ -268,7 +289,7 @@ export default function(pi) {
 }`,
 			);
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noBundled: true });
 			await loader.reload();
 
 			const extensionsResult = loader.getExtensions();
@@ -407,7 +428,7 @@ Project skill content`,
 			writeFileSync(join(themesDir, "project.json"), JSON.stringify(themeData, null, 2));
 			const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager, noBundled: true });
 			await loader.reload();
 
 			expect(loader.getSystemPrompt()).toBe("Global system prompt.");
@@ -513,7 +534,7 @@ description: File URL skill
 Extra content`,
 			);
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noBundled: true });
 			await loader.reload();
 
 			loader.extendResources({

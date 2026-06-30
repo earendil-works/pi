@@ -178,6 +178,16 @@ export interface AgentSessionConfig {
 	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
 	excludedToolNames?: string[];
 	/**
+	 * Tool suppression mode. Mirrors `CreateAgentSessionOptions.noTools` so AgentSession can
+	 * filter the tool registry without callers having to repeat the logic in every entry point.
+	 *
+	 * - "all": no tools (built-in or extension) end up in the registry
+	 * - "builtin": built-in tools are kept in the registry but inactive; only tools from
+	 *   inline extension factories (paths starting with `<inline`) and `customTools` survive —
+	 *   tools from auto-loaded package extensions are filtered out
+	 */
+	noTools?: "all" | "builtin";
+	/**
 	 * Override base tools (useful for custom runtimes).
 	 *
 	 * These are synthesized into minimal ToolDefinitions internally so AgentSession can keep
@@ -311,6 +321,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
+	private _noTools?: "all" | "builtin";
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
@@ -327,7 +338,6 @@ export class AgentSession {
 	// MCP
 	private _mcpManager: McpManager | null = null;
 	private _mcpToolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
-	private _mcpReady: Promise<void> = Promise.resolve();
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -352,6 +362,7 @@ export class AgentSession {
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
+		this._noTools = config.noTools;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
@@ -1007,8 +1018,12 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		// Wait for MCP servers to finish connecting before processing prompt
-		await this._mcpReady;
+		// Note: MCP servers connect in the background via _buildRuntime.
+		// We intentionally do NOT await _mcpReady here, so the prompt starts
+		// immediately and is responsive even if an MCP server is slow or
+		// unreachable. MCP tools are merged into the agent's tool registry
+		// by _refreshToolRegistry() when each server connects, so they become
+		// available on the next turn.
 
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
@@ -2326,7 +2341,17 @@ export class AgentSession {
 		const isAllowedTool = (name: string): boolean =>
 			(!allowedToolNames || allowedToolNames.has(name)) && !excludedToolNames?.has(name);
 
-		const registeredTools = this._extensionRunner.getAllRegisteredTools();
+		// When `noTools === "builtin"`, drop tools from auto-loaded package extensions so only
+		// inline factory tools (paths starting with `<inline`) survive. Tools with synthetic
+		// paths (anything starting with `<`) are kept; real file paths point at package-level
+		// extensions and are filtered. `customTools` always carry `<sdk:…>` sourceInfo and
+		// pass through the filter unchanged.
+		const keepExtensionTool = (sourcePath: string): boolean =>
+			this._noTools !== "builtin" || sourcePath.startsWith("<");
+
+		const registeredTools = this._extensionRunner
+			.getAllRegisteredTools()
+			.filter((tool) => keepExtensionTool(tool.sourceInfo.path));
 		const allCustomTools = [
 			...registeredTools,
 			...this._customTools.map((definition) => ({
@@ -2467,13 +2492,17 @@ export class AgentSession {
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
 
-		// MCP: Connect to configured MCP servers and discover tools
+		// MCP: Connect to configured MCP servers in the background and discover tools.
+		// Connections are intentionally fire-and-forget so prompt() is responsive even
+		// when an MCP server is slow or unreachable. Tools are registered via
+		// _refreshToolRegistry() as each server connects, becoming available on the
+		// next prompt turn.
 		const mcpConfig = loadMcpConfig();
 		if (Object.keys(mcpConfig).length > 0) {
 			if (!this._mcpManager) {
 				this._mcpManager = new McpManager();
 			}
-			this._mcpReady = Promise.allSettled(
+			void Promise.allSettled(
 				Object.entries(mcpConfig).map(([name, config]) =>
 					this._mcpManager!.connectServer(name, config)
 						.then((tools: McpToolInfo[]) => {
@@ -2492,7 +2521,7 @@ export class AgentSession {
 							);
 						}),
 				),
-			).then(() => {});
+			);
 		}
 
 		const defaultActiveToolNames = this._baseToolsOverride

@@ -386,6 +386,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		allowedToolNames,
 		excludedToolNames,
+		noTools: options.noTools,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});

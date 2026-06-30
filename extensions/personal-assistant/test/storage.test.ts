@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { escapeFtsQuery, MemoryIndex } from "../storage.ts";
+import { MemoryIndex } from "../storage.ts";
 import type { MemoryAtom } from "../types.ts";
 
 // Minimal shape of rows returned by sqlite_master / PRAGMA queries.
@@ -191,6 +191,99 @@ describe("MemoryIndex", () => {
 				"SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_memory%'",
 			).all() as NameRow[];
 			expect(indexes).toHaveLength(5);
+		});
+
+		it("init drops legacy memory_fts table (pure-dense migration cleanup)", async () => {
+			// Scenario: a DB from the pre-migration era has memory_fts with
+			// rows. init() must DROP the table on every open so the legacy
+			// FTS5 mirror is cleaned up — recall is pure-dense now, no BM25
+			// channel needs the table. The DROP must preserve memory_index
+			// and memory_vectors content.
+			//
+			// We construct the legacy state by:
+			//   1. Calling init() to create memory_index + memory_vectors.
+			//   2. Inserting one active atom + its vector.
+			//   3. Manually creating memory_fts (FTS5 virtual table) + a row.
+			//   4. Calling init() again — the second init must DROP memory_fts.
+			const db = idx.getRawDb();
+
+			await idx.init();
+
+			const insertAtom = db.prepare(`
+				INSERT INTO memory_index (
+					id, type, title, summary, content, tags, importance, strength,
+					access_count, version, is_latest, parent_id, superseded_at, archived,
+					created_at, updated_at, last_access, content_fingerprint, source_session
+				) VALUES (
+					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
+					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
+					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
+				)
+			`);
+			const insertVec = db.prepare(
+				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
+			);
+			insertAtom.run({
+				id: "legacy-atom",
+				type: "fact",
+				title: "legacy title",
+				summary: "legacy summary",
+				content: "legacy content",
+				tags: JSON.stringify(["legacy"]),
+				importance: 0.5,
+				strength: 0.5,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: 1000,
+				updated_at: 1000,
+				last_access: null,
+				content_fingerprint: "fp-legacy",
+				source_session: null,
+			});
+			insertVec.run("legacy-atom", new Float32Array(1024));
+
+			// Recreate the legacy FTS5 mirror with a row.
+			db.exec(`
+				CREATE VIRTUAL TABLE memory_fts USING fts5(
+					id UNINDEXED,
+					title,
+					summary,
+					content,
+					tags,
+					tokenize='unicode61 remove_diacritics 2'
+				)
+			`);
+			db.prepare(
+				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
+			).run("legacy-atom", "legacy title", "legacy summary", "legacy content", "legacy");
+
+			// Pre-condition sanity: legacy table exists with 1 row.
+			const beforeDrop = db.prepare(
+				"SELECT COUNT(*) AS c FROM memory_fts",
+			).get() as { c: number };
+			expect(beforeDrop.c).toBe(1);
+
+			// Second init() — must DROP the legacy memory_fts table.
+			await idx.init();
+
+			const afterDrop = db.prepare(
+				"SELECT name FROM sqlite_master WHERE name = 'memory_fts'",
+			).get();
+			expect(afterDrop).toBeUndefined();
+
+			// memory_index + memory_vectors are intact — the DROP only
+			// touched the legacy FTS5 mirror.
+			const atomStillThere = idx.getAtom("legacy-atom");
+			expect(atomStillThere).not.toBeNull();
+			expect(atomStillThere?.title).toBe("legacy title");
+			const vecStillThere = db
+				.prepare("SELECT 1 FROM memory_vectors WHERE id = ?")
+				.get("legacy-atom");
+			expect(vecStillThere).toBeDefined();
 		});
 	});
 
@@ -606,69 +699,6 @@ describe("MemoryIndex", () => {
 			expect(oldAudit.some((a) => a.action === "superseded")).toBe(true);
 			expect(newAudit.some((a) => a.action === "created_from_supersede")).toBe(true);
 		});
-
-		it("markSupersededTx swaps memory_fts row", async () => {
-			// Scenario "supersedeAtom swaps the memory_fts row": when A is
-			// superseded by B inside markSupersededTx, the memory_fts row
-			// for A must be deleted and the row for B inserted in the same
-			// transaction. Use pure-alnum tokens (no hyphens, no special
-			// chars) so a bm25 MATCH hits ONLY the intended row — the FTS5
-			// unicode61 tokenizer splits on hyphens, and a hyphenated query
-			// like "title-A-oldunique" would be parsed as column syntax
-			// rather than a literal term.
-			const old = sampleAtom({
-				id: "A",
-				title: "titleoldxyz",
-				summary: "summaryoldxyz",
-				content: "contentoldxyz",
-				tags: ["tagoldxyz"],
-			});
-			await index.insertAtom(old, dummyEmbedding());
-
-			// Pre-condition sanity: insertAtom writes memory_fts row for A.
-			// If this fails, the test premise (A has a row to delete) is
-			// invalid and the rest of the assertions are meaningless.
-			const db = index.getRawDb();
-			const preOldCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("A") as { c: number };
-			expect(preOldCount.c).toBe(1);
-
-			const newAtom = sampleAtom({
-				id: "B",
-				title: "titlenewxyz",
-				summary: "summarynewxyz",
-				content: "contentnewxyz",
-				tags: ["tagnewxyz"],
-			});
-			index.markSupersededTx("A", newAtom, dummyEmbedding());
-
-			// 1. Old atom's memory_fts row is gone (transaction DELETEd it).
-			const oldCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("A") as { c: number };
-			expect(oldCount.c).toBe(0);
-
-			// 2. New atom's memory_fts row is present (transaction INSERTed it).
-			const newCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("B") as { c: number };
-			expect(newCount.c).toBe(1);
-
-			// 3. bm25Search for old atom's tokens must NOT return A. The
-			// is_latest filter alone would block A, but this assertion is
-			// the visible behaviour contract — prove the row is truly gone
-			// (the count check above is the structural assertion; this is
-			// the user-facing one).
-			const oldHits = index.bm25Search("titleoldxyz", 10);
-			expect(oldHits.map((r) => r.id)).not.toContain("A");
-
-			// 4. bm25Search for new atom's tokens MUST return B. This proves
-			// the new FTS5 row landed AND is searchable — not just present
-			// in count(*) terms.
-			const newHits = index.bm25Search("titlenewxyz", 10);
-			expect(newHits.map((r) => r.id)).toContain("B");
-		});
 	});
 
 	describe("access and decay", () => {
@@ -743,53 +773,6 @@ describe("MemoryIndex", () => {
 			expect(index.getAtom("a")?.archived).toBe(1);
 			const audit = index.getAudit("a");
 			expect(audit.some((a) => a.action === "archived")).toBe(true);
-		});
-
-		it("markArchived deletes memory_fts row", async () => {
-			// Scenario "archiveAtom removes the memory_fts row": when an atom
-			// is archived, the FTS5 mirror row must be dropped in the same
-			// transaction so a subsequent bm25Search cannot surface an
-			// archived atom. Principle: "archive / supersede 立即让 FTS5 行失效".
-			//
-			// The bm25Search query uses a pure alnum token — FTS5 unicode61
-			// tokenizes on whitespace + punctuation, and the escapeFtsQuery
-			// helper only strips `"()*:[]`. A hyphenated term like
-			// "title-arc-unique" would be parsed as a column-restricted
-			// query (`title-arc`) and fail with "no such column: arc"; an
-			// alnum suffix is the safe cross-test pattern (see the sibling
-			// "markSupersededTx swaps memory_fts row" test).
-			const atom = sampleAtom({
-				id: "arc-1",
-				title: "titlearcunique",
-				summary: "summaryarcunique",
-				content: "contentarcunique",
-				tags: ["tagarcunique"],
-			});
-			await index.insertAtom(atom, dummyEmbedding());
-
-			// Pre-condition sanity: insertAtom wrote the FTS5 row. If this
-			// fails, the test premise (a row exists to delete) is invalid
-			// and the rest of the assertions are meaningless.
-			const db = index.getRawDb();
-			const preCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("arc-1") as { c: number };
-			expect(preCount.c).toBe(1);
-
-			index.markArchived("arc-1");
-
-			// 1. FTS5 row count for the archived atom is zero — the structural
-			// assertion that the row was DELETEd in the same transaction.
-			const postCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("arc-1") as { c: number };
-			expect(postCount.c).toBe(0);
-
-			// 2. bm25Search for the archived atom's tokens must NOT return
-			// the id. This is the user-facing behaviour contract: prove the
-			// row is truly gone (not just hidden by the is_latest filter).
-			const hits = index.bm25Search("titlearcunique", 10);
-			expect(hits.map((r) => r.id)).not.toContain("arc-1");
 		});
 
 		it("markUnarchived restores archived=0 (no audit)", async () => {
@@ -895,1010 +878,9 @@ describe("MemoryIndex", () => {
 		});
 	});
 
-	describe("memory_fts FTS5 table", () => {
-		// memory_fts is the FTS5 mirror of memory_index used for keyword recall.
-		// It is created and backfilled in init() on first run; subsequent inits
-		// are no-ops (idempotent). See docs/sdd/changes/memory-v2-refactor
-		// (FTS5 schema and storage sync requirement).
-		let idx: MemoryIndex;
 
-		beforeEach(() => {
-			idx = freshIndex();
-		});
 
-		afterEach(() => {
-			idx.close();
-		});
 
-		it("init creates memory_fts table", async () => {
-			await idx.init();
-
-			const db = idx.getRawDb();
-			const row = db.prepare(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
-			).get() as NameRow | undefined;
-			expect(row).toBeDefined();
-			expect(row?.name).toBe("memory_fts");
-		});
-
-		it("init creates memory_fts virtual table with fts5 schema", async () => {
-			await idx.init();
-
-			const db = idx.getRawDb();
-			// FTS5 virtual tables show up in sqlite_master with the original
-			// CREATE VIRTUAL TABLE statement. Verify the fields and the
-			// tokenizer; deliberately do NOT assert external-content mode
-			// (`content=''`) because we need column values (notably `id`) to
-			// be retrievable on SELECT for bm25Search's JOIN to work.
-			const row = db.prepare(
-				"SELECT sql FROM sqlite_master WHERE name = 'memory_fts'",
-			).get() as SqlRow | undefined;
-			expect(row).toBeDefined();
-			const sql = row?.sql ?? "";
-			expect(sql).toContain("VIRTUAL TABLE");
-			expect(sql).toContain("fts5");
-			expect(sql).toContain("id UNINDEXED");
-			expect(sql).toContain("title");
-			expect(sql).toContain("summary");
-			expect(sql).toContain("content");
-			expect(sql).toContain("tags");
-			expect(sql).toContain("unicode61");
-			// memory_fts must NOT use external-content mode: that mode makes
-			// every column (including the UNINDEXED `id`) return NULL on
-			// SELECT, which would break `bm25Search`'s
-			// `INNER JOIN memory_index i ON v.id = i.id` join key.
-			expect(sql).not.toMatch(/content\s*=\s*''/);
-		});
-
-		it("init backfills active atoms on existing DB without memory_fts", async () => {
-			const db = idx.getRawDb();
-
-			// Apply the base schema, then drop memory_fts so the next init()
-			// must re-create it AND backfill. This simulates the upgrade path:
-			// a DB that already has memory_index rows but never had memory_fts.
-			await idx.init();
-			db.exec("DROP TABLE memory_fts");
-			expect(
-				db.prepare("SELECT name FROM sqlite_master WHERE name='memory_fts'").get(),
-			).toBeUndefined();
-
-			// Insert 8 active atoms directly via raw SQL (bypassing insertAtom
-			// so we control the exact pre-init state of memory_index).
-			const insertAtom = db.prepare(`
-				INSERT INTO memory_index (
-					id, type, title, summary, content, tags, importance, strength,
-					access_count, version, is_latest, parent_id, superseded_at, archived,
-					created_at, updated_at, last_access, content_fingerprint, source_session
-				) VALUES (
-					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
-					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
-					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
-				)
-			`);
-			const insertVec = db.prepare(
-				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
-			);
-
-			// Each atom gets a unique tag token (`tag0` … `tag7`) so we can
-			// verify per-atom indexing via FTS5 MATCH. With `content=''`
-			// (external-content mode), the FTS5 table does not store the
-			// `id` column (UNINDEXED returns null on SELECT), so we cannot
-			// join back to memory_index by id from the FTS5 side. MATCH on
-			// a unique token is the reliable per-atom assertion.
-			const tokens: string[] = [];
-			for (let i = 0; i < 8; i++) {
-				const id = `atom-${i}`;
-				const token = `tag${i}`;
-				insertAtom.run({
-					id,
-					type: "fact",
-					title: `Title ${i}`,
-					summary: `Summary ${i}`,
-					content: `Content body ${i}`,
-					tags: JSON.stringify([token, "common"]),
-					importance: 0.5,
-					strength: 0.5,
-					access_count: 0,
-					version: 1,
-					is_latest: 1,
-					parent_id: null,
-					superseded_at: null,
-					archived: 0,
-					created_at: 1000 + i,
-					updated_at: 1000 + i,
-					last_access: null,
-					content_fingerprint: `fp-${i}`,
-					source_session: null,
-				});
-				insertVec.run(id, new Float32Array(1024));
-				tokens.push(token);
-			}
-
-			// Now call init — should create memory_fts and backfill all 8 active atoms.
-			await idx.init();
-
-			// Total row count matches the 8 active atoms.
-			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
-			expect(count.c).toBe(8);
-
-			// Every atom's unique tag is findable via MATCH — proves each
-			// atom's row landed in the FTS5 index (not just that the count
-			// happened to be 8).
-			for (const token of tokens) {
-				const rows = db
-					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-					.all(token) as Array<{ rowid: number }>;
-				expect(rows.length).toBe(1);
-			}
-		});
-
-		it("init backfill filters out archived and superseded atoms", async () => {
-			// Principles: "FTS5 行只描述 active 文本层(不含 embedding)" —
-			// only active atoms (archived = 0 AND is_latest = 1) belong in
-			// memory_fts.
-			const db = idx.getRawDb();
-
-			await idx.init();
-			db.exec("DROP TABLE memory_fts");
-
-			const insertAtom = db.prepare(`
-				INSERT INTO memory_index (
-					id, type, title, summary, content, tags, importance, strength,
-					access_count, version, is_latest, parent_id, superseded_at, archived,
-					created_at, updated_at, last_access, content_fingerprint, source_session
-				) VALUES (
-					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
-					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
-					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
-				)
-			`);
-			const insertVec = db.prepare(
-				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
-			);
-
-			const seed = (
-				id: string,
-				fp: string,
-				overrides: { is_latest?: number; archived?: number; token?: string } = {},
-			): void => {
-				// Default to a unique tag token so each atom is MATCH-findable.
-				// Use a single alnum token (no hyphens) — FTS5 query syntax
-				// treats `-` as a NOT operator, so hyphenated tokens break MATCH.
-				const token = overrides.token ?? `${id}token`;
-				insertAtom.run({
-					id,
-					type: "fact",
-					title: id,
-					summary: `s-${id}`,
-					content: `c-${id}`,
-					tags: JSON.stringify([token]),
-					importance: 0.5,
-					strength: 0.5,
-					access_count: 0,
-					version: 1,
-					is_latest: overrides.is_latest ?? 1,
-					parent_id: null,
-					superseded_at: overrides.is_latest === 0 ? Date.now() : null,
-					archived: overrides.archived ?? 0,
-					created_at: 1000,
-					updated_at: 1000,
-					last_access: null,
-					content_fingerprint: fp,
-					source_session: null,
-				});
-				insertVec.run(id, new Float32Array(1024));
-			};
-
-			// 2 active, 1 archived, 1 superseded → backfill must include only the 2 active.
-			seed("active1", "fp-act-1", { token: "active1token" });
-			seed("active2", "fp-act-2", { token: "active2token" });
-			seed("archived1", "fp-arc", { archived: 1, token: "archived1token" });
-			seed("superseded1", "fp-sup", { is_latest: 0, token: "superseded1token" });
-
-			await idx.init();
-
-			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
-			expect(count.c).toBe(2);
-
-			// Active atoms are findable.
-			expect(
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all("active1token") as Array<{ rowid: number }>
-				).length,
-			).toBe(1);
-			expect(
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all("active2token") as Array<{ rowid: number }>
-				).length,
-			).toBe(1);
-
-			// Archived + superseded atoms are NOT findable.
-			expect(
-				db
-					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-					.all("archived1token"),
-			).toEqual([]);
-			expect(
-				db
-					.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-					.all("superseded1token"),
-			).toEqual([]);
-		});
-
-		it("init is idempotent — second init does not duplicate rows", async () => {
-			const db = idx.getRawDb();
-
-			// First init on a fresh DB creates all tables including memory_fts.
-			// memory_fts is empty here because memory_index has 0 active rows.
-			await idx.init();
-
-			// Drop memory_fts and seed 2 atoms. The next init() must create
-			// memory_fts and backfill those 2 atoms. A subsequent init() must
-			// NOT re-create or re-backfill (idempotent — same DB opened twice
-			// should not produce duplicate rows).
-			db.exec("DROP TABLE memory_fts");
-
-			const insertAtom = db.prepare(`
-				INSERT INTO memory_index (
-					id, type, title, summary, content, tags, importance, strength,
-					access_count, version, is_latest, parent_id, superseded_at, archived,
-					created_at, updated_at, last_access, content_fingerprint, source_session
-				) VALUES (
-					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
-					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
-					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
-				)
-			`);
-			const insertVec = db.prepare(
-				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
-			);
-
-			const seed = (id: string, fp: string): void => {
-				// Tag token is alnum-only so FTS5 MATCH parses it cleanly
-				// (FTS5 treats `-` as a NOT operator).
-				insertAtom.run({
-					id,
-					type: "fact",
-					title: id,
-					summary: `s-${id}`,
-					content: `c-${id}`,
-					tags: JSON.stringify([`${id}token`]),
-					importance: 0.5,
-					strength: 0.5,
-					access_count: 0,
-					version: 1,
-					is_latest: 1,
-					parent_id: null,
-					superseded_at: null,
-					archived: 0,
-					created_at: 1000,
-					updated_at: 1000,
-					last_access: null,
-					content_fingerprint: fp,
-					source_session: null,
-				});
-				insertVec.run(id, new Float32Array(1024));
-			};
-			seed("a1", "fp-1");
-			seed("a2", "fp-2");
-
-			// First init after seeding → backfills 2 atoms.
-			await idx.init();
-			const countAfterFirst = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as {
-				c: number;
-			};
-			expect(countAfterFirst.c).toBe(2);
-
-			// Second init → no change (memory_fts already exists, no re-create, no re-backfill).
-			await idx.init();
-			const countAfterSecond = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as {
-				c: number;
-			};
-			expect(countAfterSecond.c).toBe(2);
-
-			// And per-atom MATCH still finds exactly 1 row each — proving
-			// no duplicates were inserted on the second init.
-			expect(
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all("a1token") as Array<{ rowid: number }>
-				).length,
-			).toBe(1);
-			expect(
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all("a2token") as Array<{ rowid: number }>
-				).length,
-			).toBe(1);
-		});
-
-		it("init creates empty memory_fts on fresh DB with no active atoms", async () => {
-			// Edge case: DB with the base schema applied but zero atoms in
-			// memory_index. init() must still create memory_fts (table exists,
-			// zero rows).
-			await idx.init();
-
-			const db = idx.getRawDb();
-			const exists = db.prepare(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'",
-			).get();
-			expect(exists).toBeDefined();
-
-			const count = db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number };
-			expect(count.c).toBe(0);
-		});
-
-		it("init repairs broken memory_fts (NULL ids)", async () => {
-			// Task 7.3 smoke test: the user's real ~/.pi/agent/memory/memory.db
-			// has memory_fts with rows but ALL id columns are NULL — leftover
-			// from an earlier parallel session that created the table in
-			// contentless mode (content=''), which didn't populate the
-			// UNINDEXED id column on INSERT. Such a table silently breaks
-			// every bm25Search JOIN (`v.id IS NULL` never matches `i.id`).
-			// init() must detect the broken state and rebuild memory_fts
-			// from memory_index — same backfill SQL as the cold-start path.
-			const db = idx.getRawDb();
-			await idx.init();
-
-			// Drop the auto-created memory_fts and re-create a "broken"
-			// version. We use the same column shape as the production
-			// schema (id UNINDEXED, title, summary, content, tags) but
-			// INSERT 2 rows with explicit id=NULL. UNINDEXED columns in
-			// FTS5 accept NULL (stored, not indexed); the resulting table
-			// mirrors the user's failure mode at the row level: row exists,
-			// id is NULL.
-			db.exec("DROP TABLE memory_fts");
-			db.exec(`
-				CREATE VIRTUAL TABLE memory_fts USING fts5(
-					id UNINDEXED,
-					title,
-					summary,
-					content,
-					tags,
-					tokenize='unicode61 remove_diacritics 2'
-				)
-			`);
-			db.prepare(
-				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (NULL, ?, ?, ?, ?)",
-			).run("broken1", "broken1", "broken1", "broken1");
-			db.prepare(
-				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (NULL, ?, ?, ?, ?)",
-			).run("broken2", "broken2", "broken2", "broken2");
-
-			// Pre-condition sanity: 2 NULL-id rows confirmed (broken state).
-			// If this fails, the test premise is invalid — the broken
-			// state must be visible to init()'s detection query.
-			const brokenCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
-				.get() as { c: number };
-			expect(brokenCount.c).toBe(2);
-
-			// Seed memory_index with 2 active atoms that the repair
-			// backfill can recover into the rebuilt memory_fts. The
-			// tag-token uses pure alnum chars (no hyphens) so FTS5 MATCH
-			// parses it cleanly — FTS5 treats `-` as a NOT operator.
-			const insertAtom = db.prepare(`
-				INSERT INTO memory_index (
-					id, type, title, summary, content, tags, importance, strength,
-					access_count, version, is_latest, parent_id, superseded_at, archived,
-					created_at, updated_at, last_access, content_fingerprint, source_session
-				) VALUES (
-					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
-					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
-					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
-				)
-			`);
-			const insertVec = db.prepare(
-				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
-			);
-			for (let i = 1; i <= 2; i++) {
-				insertAtom.run({
-					id: `repairomicron${i}`,
-					type: "fact",
-					title: `repairtitle${i}`,
-					summary: `repairsummary${i}`,
-					content: `repaircontent${i}`,
-					tags: JSON.stringify([`repairtag${i}`]),
-					importance: 0.5,
-					strength: 0.5,
-					access_count: 0,
-					version: 1,
-					is_latest: 1,
-					parent_id: null,
-					superseded_at: null,
-					archived: 0,
-					created_at: 1000 + i,
-					updated_at: 1000 + i,
-					last_access: null,
-					content_fingerprint: `fp-repair-${i}`,
-					source_session: null,
-				});
-				insertVec.run(`repairomicron${i}`, new Float32Array(1024));
-			}
-
-			// init() should detect the broken state and rebuild.
-			await idx.init();
-
-			// After init: 0 NULL-id rows (the broken rows are gone).
-			const stillBroken = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
-				.get() as { c: number };
-			expect(stillBroken.c).toBe(0);
-
-			// Total row count matches the 2 active atoms (backfill worked).
-			const countWithId = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NOT NULL")
-				.get() as { c: number };
-			expect(countWithId.c).toBe(2);
-
-			// Per-atom assertion: the rebuilt memory_fts has the right
-			// ids (not just any 2 rows) — match each unique title token
-			// against memory_fts and verify the id is the active atom.
-			const hit1 = db
-				.prepare("SELECT id FROM memory_fts WHERE memory_fts MATCH ?")
-				.all("repairtitle1") as Array<{ id: string }>;
-			expect(hit1.map((r) => r.id)).toEqual(["repairomicron1"]);
-			const hit2 = db
-				.prepare("SELECT id FROM memory_fts WHERE memory_fts MATCH ?")
-				.all("repairtitle2") as Array<{ id: string }>;
-			expect(hit2.map((r) => r.id)).toEqual(["repairomicron2"]);
-
-			// End-to-end behaviour: bm25Search for a token from a seeded
-			// atom now returns it. Before the repair this would silently
-			// return [] because the JOIN key (v.id) was NULL.
-			const bmHits = idx.bm25Search("repairtitle1", 10);
-			expect(bmHits.map((r) => r.id)).toContain("repairomicron1");
-		});
-
-		it("init does not touch valid memory_fts (no false repair)", async () => {
-			// Negative test: a healthy memory_fts (no NULL-id rows) must
-			// not be dropped or rebuilt by init(). The defensive repair
-			// should only fire when broken state is detected. If init()
-			// incorrectly triggered a repair, the existing valid rows
-			// would be replaced by a backfill from memory_index — the
-			// "valid1" / "valid2" ids would be lost and a phantom
-			// "wouldbeinserted" row would appear.
-			const db = idx.getRawDb();
-			await idx.init();
-
-			// Drop the auto-created memory_fts and create a healthy one
-			// with 2 valid rows. Captures the rowids up front so we can
-			// prove the SAME rows survive init() — a DROP+CREATE would
-			// reassign rowids and the assertion would fail.
-			db.exec("DROP TABLE memory_fts");
-			db.exec(`
-				CREATE VIRTUAL TABLE memory_fts USING fts5(
-					id UNINDEXED,
-					title,
-					summary,
-					content,
-					tags,
-					tokenize='unicode61 remove_diacritics 2'
-				)
-			`);
-			db.prepare(
-				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
-			).run("valid1", "validtitle1", "validsummary1", "validcontent1", "validtag1");
-			db.prepare(
-				"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
-			).run("valid2", "validtitle2", "validsummary2", "validcontent2", "validtag2");
-
-			const before1 = db
-				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
-				.get("valid1") as { rowid: number };
-			const before2 = db
-				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
-				.get("valid2") as { rowid: number };
-
-			// Also insert an active atom into memory_index. If init()
-			// wrongly triggered a repair, the backfill would insert this
-			// atom into memory_fts — proving the false-positive path.
-			const insertAtom = db.prepare(`
-				INSERT INTO memory_index (
-					id, type, title, summary, content, tags, importance, strength,
-					access_count, version, is_latest, parent_id, superseded_at, archived,
-					created_at, updated_at, last_access, content_fingerprint, source_session
-				) VALUES (
-					@id, @type, @title, @summary, @content, @tags, @importance, @strength,
-					@access_count, @version, @is_latest, @parent_id, @superseded_at, @archived,
-					@created_at, @updated_at, @last_access, @content_fingerprint, @source_session
-				)
-			`);
-			const insertVec = db.prepare(
-				"INSERT INTO memory_vectors (id, embedding) VALUES (?, ?)",
-			);
-			insertAtom.run({
-				id: "wouldbeinserted",
-				type: "fact",
-				title: "wouldbetitle",
-				summary: "wouldbesummary",
-				content: "wouldbecontent",
-				tags: JSON.stringify(["wouldbetag"]),
-				importance: 0.5,
-				strength: 0.5,
-				access_count: 0,
-				version: 1,
-				is_latest: 1,
-				parent_id: null,
-				superseded_at: null,
-				archived: 0,
-				created_at: 1000,
-				updated_at: 1000,
-				last_access: null,
-				content_fingerprint: "fp-would",
-				source_session: null,
-			});
-			insertVec.run("wouldbeinserted", new Float32Array(1024));
-
-			// init() should be a no-op for the healthy memory_fts.
-			await idx.init();
-
-			// The original 2 valid rows must still exist with the SAME
-			// rowids — a DROP+CREATE would reassign rowids, so this
-			// catches any false repair.
-			const after1 = db
-				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
-				.get("valid1") as { rowid: number };
-			const after2 = db
-				.prepare("SELECT rowid FROM memory_fts WHERE id = ?")
-				.get("valid2") as { rowid: number };
-			expect(after1.rowid).toBe(before1.rowid);
-			expect(after2.rowid).toBe(before2.rowid);
-
-			// The "wouldbeinserted" atom must NOT have been backfilled —
-			// a false repair would have replaced the valid rows with a
-			// backfill from memory_index, surfacing this id.
-			const wouldbeCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get("wouldbeinserted") as { c: number };
-			expect(wouldbeCount.c).toBe(0);
-
-			// Total count is still 2 (no additions, no removals).
-			const totalCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts")
-				.get() as { c: number };
-			expect(totalCount.c).toBe(2);
-
-			// And of course, no NULL-id rows (the trigger condition
-			// is absent, so the repair branch must not fire).
-			const nullCount = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id IS NULL")
-				.get() as { c: number };
-			expect(nullCount.c).toBe(0);
-		});
-	});
-
-	describe("escapeFtsQuery", () => {
-		// Pure-function tests for the FTS5-syntax-char stripper. The user-facing
-		// consequence lives in `bm25Search` (see that describe block for the
-		// integration assertions); this block pins the unit-level contract so
-		// regressions are caught at the smallest scope.
-		//
-		// Why `,` is in the strip set: FTS5 reserves the comma as the NEAR
-		// separator (e.g. `a, b` = "a NEAR b"). A stray unescaped comma in a
-		// MATCH query raises "fts5: syntax error" — the user's verbatim query
-		// `这个先不管,这个项目路径下lefse没有结果` tripped this regression.
-
-		it("whitelist: keeps only ASCII letters, digits, underscore, whitespace", () => {
-			// Inverted regex: keep `[a-zA-Z0-9_\s]`, replace everything
-			// else with space, collapse spaces, trim. This is the
-			// symmetric form of the corpus's unicode61 token alphabet,
-			// eliminating enumeration-fragility of bad-char lists.
-			expect(escapeFtsQuery("hello world")).toBe("hello world");
-			expect(escapeFtsQuery("foo_bar baz123")).toBe("foo_bar baz123");
-		});
-
-		it("strips ALL FTS5 syntax chars (whitelist is exhaustive)", () => {
-			// Each of these individually raises a different FTS5 syntax
-			// error if not stripped: `;` → "syntax error near ';'",
-			// `!`/`?`/`&`/`|`/`~`/`@`/`#`/`$`/`%`/`=`/`<`/`>`/`'`/`\`
-			// similarly. The user's monthly-workload query
-			// `等位基因差异性表达（ASE）分析;分子分型分析;...` contains
-			// both fullwidth parens `（）` (U+FF08/FF09) and ASCII
-			// semicolon `;` — both must be stripped for FTS5 MATCH.
-			for (const c of [
-				'"', '(', ')', '*', ':', '[', ']', ',', '/', '-', '.',
-				';', '!', '?', '&', '|', '~', '@', '#', '$', '%', '=',
-				'<', '>', "'", '\\', '{', '}',
-			]) {
-				expect(escapeFtsQuery(`a${c}b`)).toBe("a b");
-			}
-			// Comma + literal Chinese tokens: the `,` is stripped; CJK
-			// is also stripped (BM25 cannot match CJK via unicode61).
-			// Only ASCII tokens survive the strip.
-			expect(escapeFtsQuery("这个先不管,这个项目路径下lefse没有结果")).toBe(
-				"lefse",
-			);
-		});
-
-		it("strips file-path separators (FTS5 query-parser trap)", () => {
-			// FTS5 query parser interprets `IDENT-IDENT` as `IDENT:IDENT`
-			// and the second IDENT as a column name → "no such column".
-			// Long user queries with file paths / sample IDs tripped
-			// this regression — bm25Search would throw on every recall.
-			expect(escapeFtsQuery("X101SC260410257-Z01-F001")).toBe(
-				"X101SC260410257 Z01 F001",
-			);
-			expect(escapeFtsQuery("foo-bar")).toBe("foo bar");
-			// `.` raises "fts5: syntax error near '.'". The corpus's
-			// unicode61 tokenizer already splits `-` and `.` at INSERT
-			// time, so stripping here is symmetric.
-			expect(escapeFtsQuery("foo.bar")).toBe("foo bar");
-			expect(escapeFtsQuery("metagenomics.20260617")).toBe(
-				"metagenomics 20260617",
-			);
-			// Full query from user's actual monthly-workload message:
-			// CJK + fullwidth parens + ASCII semicolons. After strip:
-			// empty (all CJK and all-punctuation between Chinese phrases
-			// is stripped, leaving only CJK which is also stripped).
-			expect(
-				escapeFtsQuery(
-					"等位基因差异性表达（ASE）分析;分子分型分析;加性表达基因分析",
-				),
-			).toBe("ASE");
-		});
-
-		it("trims leading/trailing whitespace and collapses runs", () => {
-			// All-special input collapses to empty string; bm25Search short-
-			// circuits on empty (MATCH '' would also error).
-			expect(escapeFtsQuery("***")).toBe("");
-			expect(escapeFtsQuery('"()[]:*/,')).toBe("");
-			// Multiple punctuation chars collapse into a single space.
-			expect(escapeFtsQuery("foo,,,bar")).toBe("foo bar");
-			expect(escapeFtsQuery("a!@#$%^&*()b")).toBe("a b");
-		});
-
-		it("strips CJK and fullwidth punctuation (BM25 cannot match them)", () => {
-			// unicode61 groups consecutive CJK into one token, making
-			// per-character MATCH fail; the dense channel handles
-			// semantic Chinese search. Fullwidth ASCII punctuation
-			// (`（` `）` `；` etc.) is also stripped — it's in the
-			// U+FF01-FF60 range and FTS5 syntax errors on those too.
-			expect(escapeFtsQuery("项目调研")).toBe("");
-			expect(escapeFtsQuery("等位基因（ASE）分析")).toBe("ASE");
-			expect(escapeFtsQuery("a；b")).toBe("a b");
-		});
-	});
-
-	describe("bm25 search", () => {
-		// Hybrid recall: bm25Search is the keyword half of RRF fusion (see
-		// search.ts). Mirrors vectorSearch's filter handling (archived / type /
-		// isLatestOnly) but ranks by FTS5 bm25() instead of sqlite-vec distance.
-		// Per "召回对单 channel 降级鲁棒": bm25Search must never throw on user
-		// input — special FTS5 chars (`"`, `(`, `)`, `*`, `:`, `[`, `]`, `,`)
-		// are stripped from the query before it is bound as the MATCH parameter.
-		// `,` is included because FTS5 reserves it as the NEAR separator
-		// ("a, b" = "a NEAR b"); a stray unescaped comma raises
-		// "fts5: syntax error" (the user's verbatim query
-		// "这个先不管,这个项目路径下lefse没有结果" tripped this regression).
-		let index: MemoryIndex;
-
-		beforeEach(async () => {
-			index = new MemoryIndex(":memory:");
-			await index.init();
-		});
-
-		afterEach(() => {
-			index.close();
-		});
-
-		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
-			id: randomUUID(),
-			type: "rule",
-			title: "t",
-			content: "c",
-			summary: "s",
-			tags: ["a"],
-			importance: 0.5,
-			strength: 0.5,
-			access_count: 0,
-			version: 1,
-			is_latest: 1,
-			parent_id: null,
-			superseded_at: null,
-			archived: 0,
-			created_at: Date.now(),
-			updated_at: Date.now(),
-			last_access: null,
-			content_fingerprint: randomUUID().slice(0, 16),
-			source_session: null,
-			...overrides,
-		});
-
-		const dummyEmbedding = (): number[] => new Array(1024).fill(0.1);
-
-		// Seed an atom. insertAtom now writes memory_fts in the same
-		// transaction (see storage.ts); we still mirror manually here so the
-		// bm25Search tests can control the exact FTS5 text payload (the
-		// production sync uses `atom.tags.join(' ')'` for tags, while the
-		// bm25Search fixtures need verbatim tokens like `["amplicon"]` to
-		// MATCH cleanly).
-		const insertWithFts = async (
-			atom: MemoryAtom,
-			text: { title: string; summary: string; content: string; tags: string[] },
-		): Promise<void> => {
-			await index.insertAtom(atom, dummyEmbedding());
-			index
-				.getRawDb()
-				.prepare(
-					"INSERT INTO memory_fts(id, title, summary, content, tags) VALUES (?, ?, ?, ?, ?)",
-				)
-				.run(atom.id, text.title, text.summary, text.content, JSON.stringify(text.tags));
-		};
-
-		it("bm25Search returns ranked hits for keyword query", async () => {
-			// Three atoms with distinct keyword vocab. Query for "amplicon" —
-			// only the amplicon atom should match, at rank 1, with a finite
-			// (negative) BM25 score.
-			const a1 = sampleAtom({ id: "amplicon-atom", content_fingerprint: "fp-amp" });
-			const a2 = sampleAtom({ id: "rna-atom", content_fingerprint: "fp-rna" });
-			const a3 = sampleAtom({ id: "lefse-atom", content_fingerprint: "fp-lefse" });
-
-			await insertWithFts(a1, {
-				title: "amplicon data",
-				summary: "amplicon sequencing overview",
-				content: "amplicon data analysis pipeline",
-				tags: ["amplicon", "biomarker"],
-			});
-			await insertWithFts(a2, {
-				title: "rna virus",
-				summary: "rna virus detection",
-				content: "rna virus sequencing",
-				tags: ["rna", "virus"],
-			});
-			await insertWithFts(a3, {
-				title: "lefse biomarker",
-				summary: "lefse biomarker discovery",
-				content: "lefse biomarker analysis",
-				tags: ["lefse", "biomarker"],
-			});
-
-			const results = index.bm25Search("amplicon", 10);
-
-			expect(results.length).toBeGreaterThan(0);
-			expect(results[0]!.id).toBe("amplicon-atom");
-			// FTS5 bm25() returns a negative number; lower (more negative) =
-			// more relevant. We only assert it is a finite number here.
-			expect(typeof results[0]!.bm25).toBe("number");
-			expect(Number.isFinite(results[0]!.bm25)).toBe(true);
-		});
-
-		it("bm25Search escapes FTS5 special chars in query", async () => {
-			// Atom contains Chinese tokens `没有` and `结果` plus `lefse`.
-			// We send a query that mixes these literal tokens with FTS5
-			// syntax chars (`"`, `(`, `*`, `:`). Without escape, SQLite would
-			// raise "fts5: syntax error"; with escape, the chars are stripped
-			// to spaces and the literal tokens survive. All three post-escape
-			// tokens (`lefse`, `没有`, `结果`) must be present in the atom
-			// because FTS5 default MATCH treats whitespace-separated tokens
-			// as implicit AND.
-			const atom = sampleAtom({
-				id: "lefse-cn",
-				type: "fact",
-				content_fingerprint: "fp-lefse-cn",
-			});
-
-			await insertWithFts(atom, {
-				title: "lefse 没有 结果",
-				summary: "lefse 没有 结果 summary",
-				content: "lefse 没有 结果 content with details",
-				tags: ["lefse"],
-			});
-
-			const query = 'lefse "没有" 结果';
-
-			// Must NOT throw — escape is the safety net for arbitrary user input.
-			expect(() => index.bm25Search(query, 10)).not.toThrow();
-
-			const results = index.bm25Search(query, 10);
-
-			// Even after escape, the literal tokens `lefse`, `没有`, `结果`
-			// still match the seeded atom — proving the escape is content-
-			// preserving, not just syntactic sugar.
-			expect(results.length).toBeGreaterThan(0);
-			expect(results[0]!.id).toBe("lefse-cn");
-		});
-
-		it("bm25Search accepts ASCII comma in query (no FTS5 NEAR syntax error)", async () => {
-			// Regression: the user's verbatim query
-			// `这个先不管,这个项目路径下lefse没有结果` raised
-			// "fts5: syntax error near ','" because FTS5 reserves `,` as the
-			// NEAR separator. The fix extends escapeFtsQuery's strip set to
-			// include `,` so the comma collapses to whitespace and the
-			// surviving tokens (`lefse`, `没有`, `结果`) match the atom.
-			//
-			// This is the integration assertion that proves the regex change
-			// is wired through to bm25Search's MATCH binding — the unit test
-			// for escapeFtsQuery alone would not catch a missing-call
-			// regression.
-			const atom = sampleAtom({
-				id: "amplicon-biomarker",
-				type: "fact",
-				content_fingerprint: "fp-amp-bio",
-			});
-			await insertWithFts(atom, {
-				title: "amplicon biomarker data",
-				summary: "amplicon biomarker analysis",
-				content: "amplicon biomarker backflow customer data",
-				tags: ["amplicon", "biomarker"],
-			});
-
-			// The verbatim failure query: literal Chinese phrase with a
-			// comma separating clauses. Pre-fix, the `,` triggered the FTS5
-			// NEAR-parse path and raised a syntax error.
-			const query = "amplicon,biomarker";
-
-			// Must NOT throw — escape is the safety net for arbitrary user
-			// input including ASCII commas.
-			expect(() => index.bm25Search(query, 10)).not.toThrow();
-
-			const results = index.bm25Search(query, 10);
-
-			// Post-escape the query is "amplicon biomarker" (whitespace-
-			// separated AND of two tokens). Both tokens are present in the
-			// seeded atom, so the MATCH returns it — proving the comma strip
-			// is content-preserving, not just syntactic sugar.
-			expect(results.length).toBeGreaterThan(0);
-			expect(results[0]!.id).toBe("amplicon-biomarker");
-		});
-	});
-
-	describe("insertAtom sync to memory_fts", () => {
-		// insertAtom is the only write path that produces new active atoms
-		// (supersede transactions route through updateAtom + the
-		// markSupersededTx flow). It must keep memory_fts in lock-step with
-		// memory_index inside a single db.transaction so a failed FTS5 write
-		// rolls back the index/vector writes too. See principle
-		// "FTS5 行同步在 storage 层原子化,与 memory_index 同事务".
-		let idx: MemoryIndex;
-
-		beforeEach(async () => {
-			idx = new MemoryIndex(":memory:");
-			await idx.init();
-		});
-
-		afterEach(() => {
-			idx.close();
-		});
-
-		const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
-			id: randomUUID(),
-			type: "rule",
-			title: "title1alpha",
-			content: "content1alpha",
-			summary: "summary1alpha",
-			tags: ["tag1alpha", "tag2alpha"],
-			importance: 0.5,
-			strength: 0.5,
-			access_count: 0,
-			version: 1,
-			is_latest: 1,
-			parent_id: null,
-			superseded_at: null,
-			archived: 0,
-			created_at: Date.now(),
-			updated_at: Date.now(),
-			last_access: null,
-			content_fingerprint: randomUUID().slice(0, 16),
-			source_session: null,
-			...overrides,
-		});
-
-		const dummyEmbedding = (): number[] => new Array(1024).fill(0.01);
-
-		it("insertAtom writes memory_fts row", async () => {
-			// Scenario: insertAtom writes a matching memory_fts row. Each of
-			// the four indexed fields (title / summary / content / tags) gets
-			// a unique alnum token so MATCH returns exactly 1 row per field —
-			// proving each landed in the FTS5 index, not just that the count
-			// happens to be 1.
-			const atom = sampleAtom();
-			await idx.insertAtom(atom, dummyEmbedding());
-
-			const db = idx.getRawDb();
-
-			const count = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get(atom.id) as { c: number };
-			expect(count.c).toBe(1);
-
-			const match = (term: string): number =>
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all(term) as Array<{ rowid: number }>
-				).length;
-
-			expect(match("title1alpha")).toBe(1);
-			expect(match("summary1alpha")).toBe(1);
-			expect(match("content1alpha")).toBe(1);
-			// tags.join(" ") → "tag1alpha tag2alpha" — both tokens indexed.
-			expect(match("tag1alpha")).toBe(1);
-			expect(match("tag2alpha")).toBe(1);
-		});
-
-		it("insertAtom writes memory_fts atomically with memory_index and memory_vectors", async () => {
-			// Inject a failure on the memory_fts INSERT to verify that all
-			// three writes inside the transaction roll back together. The
-			// atomicity contract: a partial write to memory_fts MUST NOT
-			// leave dangling memory_index / memory_vectors rows.
-			//
-			// We shadow `prepare` on the live better-sqlite3 handle for the
-			// duration of this test. The handler is the same object that
-			// `insertAtom` calls `this.db.prepare` on, so the shadow is
-			// observed inside the transaction body. Restore in `finally` so
-			// afterEach / idx.close() still work.
-			const db = idx.getRawDb() as unknown as {
-				prepare: (sql: string) => unknown;
-			};
-			const origPrepare = db.prepare.bind(db);
-			db.prepare = (sql: string): unknown => {
-				if (sql.includes("INSERT INTO memory_fts")) {
-					throw new Error("FTS5 inject failure");
-				}
-				return origPrepare(sql);
-			};
-
-			try {
-				const atom = sampleAtom();
-				await expect(idx.insertAtom(atom, dummyEmbedding())).rejects.toThrow();
-
-				// All three tables must have zero rows for this atom id —
-				// the transaction rolled back as a unit.
-				const dbAfter = idx.getRawDb();
-				expect(
-					dbAfter
-						.prepare("SELECT COUNT(*) AS c FROM memory_index WHERE id = ?")
-						.get(atom.id),
-				).toEqual({ c: 0 });
-				expect(
-					dbAfter
-						.prepare("SELECT COUNT(*) AS c FROM memory_vectors WHERE id = ?")
-						.get(atom.id),
-				).toEqual({ c: 0 });
-				expect(
-					dbAfter
-						.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-						.get(atom.id),
-				).toEqual({ c: 0 });
-			} finally {
-				// Restore so afterEach / idx.close() work normally.
-				(db as { prepare: typeof origPrepare }).prepare = origPrepare;
-			}
-		});
-
-		it("insertAtom handles empty tags array in memory_fts (empty string is fine for FTS5)", async () => {
-			// Edge case: `atom.tags` is `[]` → `tags.join(" ")` → "" (empty
-			// string). FTS5 accepts an empty string for a TEXT column and
-			// indexes the row with no tokens in the tags column.
-			const atom = sampleAtom({ tags: [] });
-			await idx.insertAtom(atom, dummyEmbedding());
-
-			const db = idx.getRawDb();
-			const count = db
-				.prepare("SELECT COUNT(*) AS c FROM memory_fts WHERE id = ?")
-				.get(atom.id) as { c: number };
-			expect(count.c).toBe(1);
-
-			// The other three fields are still indexed (only tags is empty).
-			const match = (term: string): number =>
-				(
-					db
-						.prepare("SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?")
-						.all(term) as Array<{ rowid: number }>
-				).length;
-
-			expect(match("title1alpha")).toBe(1);
-			expect(match("summary1alpha")).toBe(1);
-			expect(match("content1alpha")).toBe(1);
-		});
-	});
 
 	describe("embed_text_version migration", () => {
 		// `embed_text_version` tracks which version of `buildEmbeddableText`

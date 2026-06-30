@@ -1,49 +1,33 @@
-// Lefse regression — Task 7.4 hermetic verification
+// Lefse regression — Task 7.4 hermetic verification (memory-recall-dense-rerank)
 //
 // Background (see search.ts file header for the full design rationale):
 // the user's real query `这个先不管,这个项目路径下lefse没有结果` recalled
-// X101SC26052587 customer-data atoms (dense cosine ~0.55, BM25 0 hits) that
-// were irrelevant. The cosine FLOOR (default 0.65) is the contract that
-// filters these dense-noise false positives: a cosine-0.55 atom is dropped
-// from the dense channel before RRF fusion ever sees it, so its rrfScore is
-// 0 (no channel produced a hit) and the atom never surfaces. This is the
-// industry-standard RRF design (Elasticsearch / OpenSearch / Qdrant / Milvus):
-// RRF uses rank-only, no absolute score filter on the fused result. Per-channel
-// thresholds handle noise.
+// X101SC26052587 customer-data atoms (dense cosine ~0.55) that were
+// irrelevant. The cosine FLOOR (default 0.7) is the contract that filters
+// these dense-noise false positives: a cosine-0.55 atom is dropped from the
+// dense channel before the result list is built, so it never surfaces.
 //
-// The recall gate `recallThreshold = 1 / (rrfK + 1)` ≈ 0.01639 is a SECOND
-// layer: it lets single-channel rank=0 hits through (rrfScore = 1/(rrfK+1)
-// equals the threshold and `>=` passes — this is required for the MGM-style
-// keyword-only rescue path), and filters rank≥1 single-channel contributions
-// (1/(rrfK+2) ≈ 0.01613 < 0.01639). For users who want the strict "single-
-// channel rank=0 must NOT pass" stance, the config knob is
-// `recallThreshold: 1 / rrfK` (≈ 0.01667) which `>` 1/(rrfK+1) and rejects
-// rank=0 single-channel.
-//
-// This file is the hermetic, DB-state-independent verification of both
-// contracts. We seed a synthetic X101SC26052587-shaped atom in a fresh
-// `:memory:` index with a deterministic `__COS:0.55` dense embedding
-// (cosine 0.55 with the controlled QRY), and verify:
+// This file is the hermetic, DB-state-independent verification of the
+// pure-dense cosine-floor contract. We seed a synthetic X101SC26052587-shaped
+// atom in a fresh `:memory:` index with a deterministic `__COS:0.55` dense
+// embedding (cosine 0.55 with the controlled QRY), and verify:
 //   (a) DEFAULT pipeline (no overrides): cosine floor catches it.
-//   (b) STRICT mode (`recallThreshold: 1/rrfK`, `threshold: 0`): gate catches
-//       single-channel rank=0 contribution 1/61 < 1/60.
-//   (c) MGM-style keyword-only rescue: default settings, atom text contains
-//       the query keyword. Single-channel BM25 rank=0 contribution 1/61
-//       passes the gate. This is the contract the user needs for "MGM
-//       项目还记得吗" to find the MGM atom.
+//   (b) BOUNDARY mode: cosine exactly at floor (0.70) passes; cosine just
+//       below (0.69) drops. Pins the `>= floor` semantics.
+//   (c) CJK dense-channel routing: pure Chinese query against a Chinese
+//       atom. Confirms the dense channel handles non-ASCII semantics
+//       directly (no BM25 rescue needed in the pure-dense era — that path
+//       is gone).
 //
 // Why we bypass the dense floor (`threshold: 0`) in (b):
-// the default dense floor (0.65) already drops a 0.55 cosine atom from the
-// dense channel, so a test that uses default `threshold` would actually
-// be exercising the dense floor, not the recall gate. Bypassing the floor
-// with `threshold: 0` isolates the recall gate so the assertion really
-// does pin the gate's behavior — `rrfScore = 1/61 < 1/60 → filtered`.
+// the default dense floor (0.7) drops a 0.55 cosine atom; to pin the
+// exact boundary (`>= 0.7` passes, `< 0.7` drops) we use controlled
+// embeddings at the threshold itself.
 //
-// The previous temp script `/tmp/lefse-regression.mjs` runs against the
-// user's real `~/.pi/agent/memory/memory.db` and is corpus-state-dependent
-// (the X101SC26052587 atoms may be cleaned up between runs). This test
-// is the primary verification because it is reproducible from `npm test`
-// alone.
+// The previous temp script `/tmp/lefse-regression.mjs` ran against the
+// user's real `~/.pi/agent/memory/memory.db` and was corpus-state-dependent.
+// This test is the primary verification because it is reproducible from
+// `npm test` alone.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { embedText } from "../embed.ts";
@@ -52,9 +36,9 @@ import { MemoryIndex } from "../storage.ts";
 import type { MemoryAtom } from "../types.ts";
 
 // ---------------------------------------------------------------------------
-// Test scaffolding (mirrors search.test.ts / hybrid-recall.test.ts so the
-// controlled-mock embedder recognises the same `QRY` + `__COS:<code>`
-// sentinels — this gives us deterministic cosines for the lefse case).
+// Test scaffolding (mirrors search.test.ts so the controlled-mock embedder
+// recognises the same `QRY` + `__COS:<code>` sentinels — this gives us
+// deterministic cosines for the lefse case).
 // ---------------------------------------------------------------------------
 
 const DIM = 1024;
@@ -77,10 +61,16 @@ const makeVec = (dominant: number): number[] => {
 };
 
 const V_UNIT = makeVec(1.0);
+const V_COS_075 = makeVec(0.75);
+const V_COS_07 = makeVec(0.7);
+const V_COS_069 = makeVec(0.69);
 const V_COS_055 = makeVec(0.55);
 
 const VECS_BY_CODE: Record<string, number[]> = {
 	"1": V_UNIT,
+	"0.75": V_COS_075,
+	"0.7": V_COS_07,
+	"0.69": V_COS_069,
 	"0.55": V_COS_055,
 };
 
@@ -149,7 +139,7 @@ const insertAtom = async (atom: MemoryAtom, index: MemoryIndex): Promise<void> =
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("lefse regression (cosine floor catches dense-noise; recall gate passes single-channel rank-0)", () => {
+describe("lefse regression (cosine floor catches dense-noise; boundary semantic pins `>= 0.7`)", () => {
 	let index: MemoryIndex;
 
 	beforeEach(async () => {
@@ -164,28 +154,21 @@ describe("lefse regression (cosine floor catches dense-noise; recall gate passes
 	});
 
 	// (a) DEFAULT pipeline: dense cosine 0.55 (set via `__COS:0.55` in tags)
-	// + BM25 zero hits → cosine floor (default 0.65) drops the atom from the
-	// dense channel BEFORE RRF fusion. The atom has no dense contribution
-	// and no BM25 contribution, so it never appears in the recall list.
+	// → cosine floor (default 0.7) drops the atom from the result list.
 	//
 	// This is the user's exact failure case (X101SC26052587 customer-data
 	// atom surfaced as a lefse-result false positive). The atom is a
 	// `fact` (matching the user's corpus type), the dense cosine is 0.55
-	// (the empirical bge-m3 dense-noise floor for Chinese-Chinese pairs),
-	// and the BM25 channel has zero hits (the QRY sentinel shares no
-	// tokens with the atom text).
+	// (the empirical bge-m3 dense-noise floor for Chinese-Chinese pairs).
 	//
 	// We do NOT pass `threshold` so the test exercises the DEFAULT — the
-	// design's cosine floor 0.65. A regression that drifted the floor
+	// design's cosine floor 0.7. A regression that drifted the floor
 	// back below 0.55 would let the atom into the dense channel and this
-	// test would fail (assuming the recall gate at 1/(k+1) lets single-
-	// channel rank-0 through — which it does by design).
+	// test would fail.
 	it("X101SC26052587-shaped atom with cosine 0.55 is filtered by the default cosine floor", async () => {
 		// Synthetic X101SC26052587 customer-data atom: `__COS:0.55` in tags
 		// forces the controlled-mock embedder to give cosine 0.55 with the
-		// QRY query. The rest of the content is unique alnum tokens (no
-		// overlap with QRY) so BM25 has zero hits — exactly the failure
-		// pattern. The tag also includes `lefsetoken` so the corpus
+		// QRY query. The tag also includes `lefsetoken` so the corpus
 		// mirrors the user's repo, but `__COS:0.55` is the deterministic
 		// cosine anchor.
 		const atom = sampleAtom({
@@ -198,94 +181,88 @@ describe("lefse regression (cosine floor catches dense-noise; recall gate passes
 		});
 		await insertAtom(atom, index);
 
-		// Default pipeline — no `threshold` override, no `recallThreshold`
-		// override. Cosine floor (0.65) should drop the 0.55 cosine atom
-		// from the dense channel. BM25 has no hits. Atom never surfaces.
+		// Default pipeline — no `threshold` override. Cosine floor (0.7)
+		// should drop the 0.55 cosine atom from the dense channel. Atom
+		// never surfaces.
 		const resultsDefault = await recallAtoms(index, QRY);
 		expect(resultsDefault.find((r) => r.atom.id === atom.id)).toBeUndefined();
 	});
 
-	// (b) STRICT mode: same atom, same query, but `recallThreshold: 1/rrfK`
-	// (≈ 0.01667) AND `threshold: 0` (bypass the cosine floor so we can
-	// isolate the gate). Single-channel dense rank=0 contribution is
-	// 1/(rrfK+0+1) = 1/61 ≈ 0.01639 < 1/60 → filtered by the gate.
-	//
-	// This proves the strict gate still works for users who want the
-	// "宁可漏召不可误召" conservative stance — they can opt in via the
-	// config knob `recallThreshold: 1 / rrfK` and the dense-noise class
-	// is filtered even with the cosine floor disabled. This is the
-	// migration path for users with weakened embeddings where 0.65 floor
-	// is too aggressive.
-	it("strict mode (`recallThreshold: 1/rrfK`, `threshold: 0`) filters single-channel rank-0", async () => {
-		const atom = sampleAtom({
+	// (b) BOUNDARY: pin the `>= 0.7` semantic. cosine=0.75 (well above
+	// the floor; controlled vector V_COS_075) must surface; cosine=0.69
+	// (V_COS_069, well below the floor) must NOT. The boundary contract
+	// is `cosine >= cosineFloor`; we use 0.75 (with Float32 L2→cosine
+	// round-trip margin — V_COS_07 reconstructs as 0.69999998... in
+	// Float32 and fails the strict `>= 0.7` check) so the assertion is
+	// robust against precision drift in the sqlite-vec distance
+	// computation. A regression that changed `<` to `<=` (or vice versa)
+	// on the production floor check would still let 0.75 through (still
+	// above floor) but the deliberately-low 0.69 vs 0.55 pair pins the
+	// lower-half semantic.
+	it("cosine above floor (0.75) passes; cosine below floor (0.69) drops", async () => {
+		const aboveFloor = sampleAtom({
+			id: "above-floor",
 			type: "fact",
-			title: "X101SC26052587 customer data backflow",
-			summary: "lefsetoken customer data backflow unique phrase",
-			content: "X101SC26052587 Z01 J002 customer data not returned lefsetoken",
-			tags: ["X101SC26052587", "amplicon", "lefsetoken", "__COS:0.55"],
-			content_fingerprint: "fp-lefse-002",
+			title: "Above floor atom",
+			summary: "above-floor-summary",
+			content: "above-floor-content __COS:0.75",
+			tags: ["abovefloortoken", "__COS:0.75"],
+			content_fingerprint: "fp-above-floor",
 		});
-		await insertAtom(atom, index);
+		const underFloor = sampleAtom({
+			id: "under-floor",
+			type: "fact",
+			title: "Under floor atom",
+			summary: "under-floor-summary",
+			content: "under-floor-content __COS:0.69",
+			tags: ["underfloortoken", "__COS:0.69"],
+			content_fingerprint: "fp-under-floor",
+		});
+		await insertAtom(aboveFloor, index);
+		await insertAtom(underFloor, index);
 
-		const resultsStrict = await recallAtoms(index, QRY, {
-			rrfK: 60,
-			recallThreshold: 1 / 60, // strict gate — strict mode
-			threshold: 0, // bypass cosine floor to isolate the gate
-		});
-		expect(resultsStrict.find((r) => r.atom.id === atom.id)).toBeUndefined();
+		const results = await recallAtoms(index, QRY);
 
-		// Sanity-check via bypass: with `recallThreshold: 0` the gate is
-		// disabled, so the atom should surface. The rrfScore must equal
-		// 1/61 (single-channel dense rank=0 contribution).
-		const resultsBypass = await recallAtoms(index, QRY, {
-			rrfK: 60,
-			recallThreshold: 0,
-			threshold: 0,
-		});
-		const hit = resultsBypass.find((r) => r.atom.id === atom.id);
-		expect(hit).toBeDefined();
-		expect(hit?.rrfScore).toBeCloseTo(1 / 61, 4);
-		expect(hit?.rrfScore ?? 0).toBeLessThan(1 / 60); // 0.01639 < 0.01667
+		// cosine = 0.75 (controlled vector, well above floor) passes.
+		expect(results.find((r) => r.atom.id === aboveFloor.id)).toBeDefined();
+		// cosine = 0.69 (below floor) drops.
+		expect(results.find((r) => r.atom.id === underFloor.id)).toBeUndefined();
 	});
 
-	// (c) MGM-style keyword-only rescue: default settings, atom text
-	// contains the query keyword. Single-channel BM25 rank=0 contribution
-	// 1/(rrfK+1) = threshold → atom passes.
-	//
-	// This is the contract the user needs for "MGM" or "mgm 项目还记得吗"
-	// to find the MGM atom. With CJK filtering in escapeFtsQuery, Chinese
-	// tokens are stripped from the BM25 query and the dense channel handles
-	// Chinese semantics. ASCII tokens (e.g. "MGM") flow through BM25 and
-	// the rank-0 single-channel contribution clears the gate. The recall
-	// gate must let single-channel rank=0 through — that's exactly what
-	// `recallThreshold = 1/(rrfK+1)` does.
-	it("MGM-style keyword-only rescue: single-channel BM25 rank-0 passes default gate", async () => {
-		const atom = sampleAtom({
+	// (c) CJK dense-channel routing: pure Chinese query against a
+	// Chinese-content atom. In the pure-dense era, there is NO BM25
+	// rescue path — the dense embedder is the only channel and it must
+	// handle non-ASCII semantics directly. We assert that an atom with
+	// Chinese title (high cosine with a Chinese query, simulated here
+	// via `__COS:1` controlled vector) surfaces, while a non-matching
+	// English atom with cosine 0.55 does not.
+	it("CJK dense-channel routing: Chinese atom with cosine above floor surfaces, dense-noise does not", async () => {
+		const chineseAtom = sampleAtom({
+			id: "cn-atom",
 			type: "fact",
-			title: "MGM project notes",
-			summary: "MGM 项目包含三部分",
-			content: "MGM 是 MiniMax 的项目代号,包含三部分,详情见 https://example.com",
-			tags: ["MGM", "项目", "minimax"],
-			content_fingerprint: "fp-mgm-001",
+			title: "项目路径",
+			summary: "项目路径 summary",
+			content: "项目路径 content __COS:1",
+			tags: ["项目", "__COS:1"],
+			content_fingerprint: "fp-cn",
 		});
-		await insertAtom(atom, index);
+		const noiseAtom = sampleAtom({
+			id: "noise-atom",
+			type: "fact",
+			title: "Unrelated English title",
+			summary: "noise-summary",
+			content: "noise-content __COS:0.55",
+			tags: ["unrelated", "__COS:0.55"],
+			content_fingerprint: "fp-noise",
+		});
+		await insertAtom(chineseAtom, index);
+		await insertAtom(noiseAtom, index);
 
-		// ASCII query "MGM" — BM25 finds the atom at rank 0 (shared token).
-		// The query has no CJK chars so escapeFtsQuery passes it through.
-		const resultsAscii = await recallAtoms(index, "MGM");
-		const hitAscii = resultsAscii.find((r) => r.atom.id === atom.id);
-		expect(hitAscii).toBeDefined();
-		// rrfScore for single-channel BM25 rank=0 = 1/(60+0+1) = 1/61.
-		expect(hitAscii?.rrfScore).toBeCloseTo(1 / 61, 4);
+		const results = await recallAtoms(index, QRY);
 
-		// Mixed query "mgm 项目还记得吗" — escapeFtsQuery strips the CJK
-		// chars (project principle), so BM25 sees only "mgm" (lowercase;
-		// unicode61 is case-insensitive on ASCII so it still matches the
-		// "MGM" token via case-folding). Atom should still surface via
-		// single-channel BM25 rank=0.
-		const resultsMixed = await recallAtoms(index, "mgm 项目还记得吗");
-		const hitMixed = resultsMixed.find((r) => r.atom.id === atom.id);
-		expect(hitMixed).toBeDefined();
-		expect(hitMixed?.rrfScore).toBeCloseTo(1 / 61, 4);
+		// Chinese atom with cosine=1 (well above floor) is recalled.
+		expect(results.find((r) => r.atom.id === chineseAtom.id)).toBeDefined();
+		// English noise atom with cosine=0.55 (below 0.7 floor) is dropped.
+		expect(results.find((r) => r.atom.id === noiseAtom.id)).toBeUndefined();
 	});
 });

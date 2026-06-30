@@ -248,15 +248,21 @@ describe("before_agent_start + context hooks", () => {
 	//
 	// recallAtoms options passed by before_agent_start must reflect:
 	//   - topK: 20 (Decision 2 — per-channel KNN candidate count)
-	//   - rrfK + recallThreshold: from settings.json
-	//     `personalAssistant.memory.recall.{rrfK, recallThreshold}` when
-	//     present, undefined otherwise (search.ts falls back to defaults).
+	//   - tagOverlapWeight / freshnessWeight / tagAliases: from
+	//     settings.json `personalAssistant.memory.{tagOverlapWeight,
+	//     freshnessWeight, tagAliases}` when present, undefined otherwise
+	//     (search.ts applies its own additive-weight defaults).
+	//
+	// Note: `rrfK` / `recallThreshold` were removed when the recall
+	// pipeline migrated from hybrid (BM25 + dense + RRF) to pure dense +
+	// cosine floor (memory-recall-dense-rerank). The wiring tests now
+	// cover the surviving scoring knobs only.
 	//
 	// "config block missing → defaults used" — when settings.json has no
-	// `personalAssistant.memory.recall`, the options object should carry
-	// `rrfK: undefined, recallThreshold: undefined` so search.ts applies
-	// its DEFAULT_RRF_K (60) / DEFAULT_RECALL_THRESHOLD (1/60) defaults.
-	it("recallAtoms is called with topK: 20 and undefined recall knobs when config is missing", async () => {
+	// `personalAssistant.memory`, the options object should carry
+	// `tagOverlapWeight: undefined, freshnessWeight: undefined,
+	// tagAliases: undefined` so search.ts applies its 0.10 / 0.05 defaults.
+	it("recallAtoms is called with topK: 20 and undefined scoring knobs when config is missing", async () => {
 		// Existing beforeEach already stubs HOME=/tmp with no settings.json,
 		// so loadConfig() returns {} — exactly the "config block missing"
 		// scenario we need.
@@ -281,8 +287,9 @@ describe("before_agent_start + context hooks", () => {
 		expect(thirdArg).toBeDefined();
 		expect(thirdArg).toMatchObject({
 			topK: 20,
-			rrfK: undefined,
-			recallThreshold: undefined,
+			tagOverlapWeight: undefined,
+			freshnessWeight: undefined,
+			tagAliases: undefined,
 		});
 	});
 });
@@ -319,40 +326,46 @@ describe("before_agent_start recall config wiring (Task 4.2)", () => {
 		rmSync(tmpHome, { recursive: true, force: true });
 	});
 
-	// "user tightens recallThreshold" — config.recall.recallThreshold flows
-	// through to the recallAtoms call as the third-arg option. The test
-	// sets both rrfK and recallThreshold so we also cover the joint-wiring
-	// case (both knobs read in the same option object).
-	it("recallAtoms is called with config.recall.rrfK + recallThreshold when present in settings.json", async () => {
-		writeSettings({
-			personalAssistant: {
-				memory: {
-					recall: {
-						rrfK: 30,
-						recallThreshold: 0.01,
-					},
-				},
+	// "user tunes scoring weights" — config.memory.tagOverlapWeight +
+// config.memory.freshnessWeight + config.memory.tagAliases flow through
+// to the recallAtoms call as the third-arg option. The test sets all
+// three knobs so we also cover the joint-wiring case (multiple scoring
+// knobs read in the same option object).
+//
+// Note: this used to test config.recall.{rrfK, recallThreshold} — that
+// sub-block was removed when the pipeline migrated to pure-dense
+// (memory-recall-dense-rerank). The scoring knobs are now the only
+// runtime-tunable recall parameters.
+it("recallAtoms is called with tagOverlapWeight + freshnessWeight + tagAliases when present in settings.json", async () => {
+	writeSettings({
+		personalAssistant: {
+			memory: {
+				tagOverlapWeight: 0.15,
+				freshnessWeight: 0.10,
+				tagAliases: { 代码规范: "code-style" },
 			},
-		});
-
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-		expect(beforeHandler).toBeDefined();
-		expect(ctxHandler).toBeDefined();
-
-		// Same fire-and-forget pattern as the other suite — await the
-		// context handler to drain the pending search before asserting.
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
-
-		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
-		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-		expect(thirdArg).toBeDefined();
-		expect(thirdArg).toMatchObject({
-			topK: 20,
-			rrfK: 30,
-			recallThreshold: 0.01,
-		});
+		},
 	});
+
+	registerMemory(mockPi as unknown as ExtensionAPI);
+	const beforeHandler = mockPi.hooks.get("before_agent_start");
+	const ctxHandler = mockPi.hooks.get("context");
+	expect(beforeHandler).toBeDefined();
+	expect(ctxHandler).toBeDefined();
+
+	// Same fire-and-forget pattern as the other suite — await the
+	// context handler to drain the pending search before asserting.
+	await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
+	await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
+
+	expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
+	const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+	expect(thirdArg).toBeDefined();
+	expect(thirdArg).toMatchObject({
+		topK: 20,
+		tagOverlapWeight: 0.15,
+		freshnessWeight: 0.10,
+		tagAliases: { 代码规范: "code-style" },
+	});
+});
 });

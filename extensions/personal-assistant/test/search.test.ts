@@ -6,7 +6,7 @@
 //   - Per-type lists sorted by score DESC, then interleaved round-robin so
 //     each type gets a turn. Sparse types skip their slot (never pad with
 //     cross-type items or placeholders).
-//   - cosine < 0.65 is dropped after the KNN returns.
+//   - cosine < 0.7 is dropped after the KNN returns (the dense cosine floor).
 //   - Results carry `{ atom, distance, cosine, score }` — no `file_path`.
 //   - Search is DISCOVERY ONLY: does NOT bump `access_count`. Programmatic
 //     strength feedback is the responsibility of the agent's `memory_get`
@@ -280,13 +280,14 @@ describe("recallAtoms", () => {
 
 	// (g) REPLACE old file_path test — discovery-only shape: id + score only.
 	it("does NOT carry file_path (search is discovery-only with id+score)", async () => {
+		installControlledMock();
 		const a = sampleAtom({
 			type: "process",
-			content: "discovery test xi signal unique",
+			content: "__COS:1 discovery test xi signal unique",
 		});
 		await insertAtom(a);
 
-		const results = await recallAtoms(index, "xi signal unique");
+		const results = await recallAtoms(index, QRY);
 		expect(results.length).toBeGreaterThan(0);
 		const first = results[0] as RecallResult;
 		// Runtime check: the new contract drops `file_path` from results.
@@ -396,10 +397,10 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		// recallThreshold: 0 bypasses the strict default 1/rrfK gate so this
-		// single-channel dense-only rank=1 hit (rrfScore 0.0164) surfaces.
-		// This test isolates the score-formula math from the recall gate.
-		const results = await recallAtoms(index, QRY, { recallThreshold: 0 });
+		// threshold: 0 disables the cosine floor so this cosine=1 hit
+		// surfaces regardless of the default 0.7 floor. This isolates the
+		// score-formula math from the cosine floor gate.
+		const results = await recallAtoms(index, QRY, { threshold: 0 });
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.5, 5);
@@ -416,10 +417,10 @@ describe("recallAtoms", () => {
 		});
 		await insertAtom(a);
 
-		// recallThreshold: 0 bypasses the strict default 1/rrfK gate so this
-		// single-channel dense-only rank=1 hit (rrfScore 0.0164) surfaces.
-		// This test isolates the score-formula math from the recall gate.
-		const results = await recallAtoms(index, QRY, { recallThreshold: 0 });
+		// threshold: 0 disables the cosine floor so this cosine=0.7 hit
+		// surfaces regardless of the default 0.7 floor. This isolates the
+		// score-formula math from the cosine floor gate.
+		const results = await recallAtoms(index, QRY, { threshold: 0 });
 		expect(results.length).toBe(1);
 		expect(results[0]?.atom.id).toBe(a.id);
 		expect(results[0]?.score).toBeCloseTo(1.05, 5);

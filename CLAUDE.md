@@ -60,9 +60,8 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 ## webui-memory-page 原则
 
 - **`MemoryIndex` 是 personal-assistant 的 public API**：class 和 `MemoryAtom` / `MemoryAtomType` / `searchAtoms` / `writeAtomToFile` / `readAtomFromFile` / `ATOMS_DIR` / `MEMORY_DB_PATH` 必须 export；webui server 通过 tsconfig path mapping 直接 import，不重复实现 SQLite 读写
-- **`.md` 文件是 single source of truth，DB 是索引**：body 编辑必须重算 hash、可能重写文件、可能迁移 `file_path`、必重建 FTS 行、必清 embedding
+- **`.md` 文件是 single source of truth，DB 是索引**：body 编辑必须重算 hash、可能重写文件、可能迁移 `file_path`、必清 embedding
 - **编辑必落盘**：3s debounce + 路由切换 / 关闭 tab / 刷新页面时强制 flush pending save，不丢用户输入
-- **Recall 测试 = 真实 pipeline**：不 mock、不写测试专用的 search 函数；调真实的 `rewriteQueryWithCallLlm` + `searchAtomsWithScores`，展示分项分数让用户能定位召回失败原因
 - **v1 不做 create / delete atom**：atom 由抽取流程自然生成，UI 手动 create 容易污染模型对真实用户偏好的判断；delete 用归档（`archived=true`）替代
 - **编辑失败 = 视觉反馈 + 一次重试**：toast 提示、in-memory 值回滚、3s 后再试一次，第二次失败停手，不无限循环
 - **Server 端走 `callLlm` 回调，不构造 `ExtensionContext` stub**：`ExtensionContext.modelRegistry` 强耦合 session 生命周期，stub 易跑偏；server 永远用 `*WithCallLlm` 形态访问 LLM 能力，和现有 `runMemoryExtraction` 一致
@@ -82,14 +81,6 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - importance 由 extraction LLM 在收到 `<user_tone>` hint 后**自主**判断，词表扫描只决定 hint 强度（strong/habit/neutral/weak/rare），不直接覆写 LLM 输出；LLM 可在 ±0.15 范围内调整
 - `scoreUserTone` 纯词表匹配（中英双语 ~20 词，5 档 strong/habit/neutral/weak/rare），不调 LLM，微秒级；**聚合所有 user 消息**取最强命中 tier，NEUTRAL 等级不向 prompt 注入任何 hint
 - TUI footer 通过 `ctx.ui.setStatus("memory", …)` 显示召回摘要（hits: `📦 N atoms · rule=X fact=Y process=Z · top=0.XXX`；空: `🔍 no memory match`；失败: `⚠ memory recall failed`），让用户在不打开 webui 的情况下也能看到 memory pipeline 状态——LLM prompt 注入 + TUI 状态双轨
-
-## memory-hybrid-bm25-recall 原则
-
-- 召回融合默认走 RRF (Reciprocal Rank Fusion),不归一化 BM25 与 cosine,只取 rank 加权 — 量纲不同、分布不同的 score 强行相加不稳,RRF 用 `1/(k+rank)` 自然规避
-- FTS5 行同步在 storage 层原子化,与 memory_index 同事务,FTS5 行只描述 active 文本层(不含 embedding),archive / supersede 立即让 FTS5 行失效
-- 召回配置只暴露 `rrfK` 和 `recallThreshold` 两个 knob,其他全部硬编码在 `search.ts` — 加 knob 等于让用户调自己不懂的参数,YAGNI
-- `recallThreshold` 默认 `1/rrfK` (= 1/60 ≈ 0.01667 with rrfK=60),意味着单 channel rank=1 (0-indexed, 贡献 1/(rrfK+0+1) = 1/61 ≈ 0.01639) 单独命中**不足以**过阈值,必须双 channel 都命中 OR 单 channel 极强 — 这是"宁可漏召不可误召"的保守姿态,保护 dense noise case (用户的 lefse 场景)
-- 召回对单 channel 降级鲁棒:dense 失败 → 纯 BM25 仍工作;BM25 返回 0 → 纯 dense 仍工作;两者都失败 → 返回 `[]`(同旧行为)
 
 ## webui-collapsible-thinking-step 原则
 
