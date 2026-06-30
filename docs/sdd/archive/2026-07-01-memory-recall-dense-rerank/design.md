@@ -286,3 +286,5 @@ npm run check                                # 类型 + lint
 - `registerPostSearch` (`packages/webui/server/routes/memory.ts:793`) 读取 `m?.recall?.rrfK` / `m?.recall?.recallThreshold`,要同步删
 - `before_agent_start` hook (`memory.ts:694`) 传 `rrfK` / `recallThreshold`,要同步删
 - `buildEmbeddableText` / `CURRENT_EMBEDDABLE_TEXT_VERSION` 不动(embedding 层不受影响)
+
+<!-- archived-with: 2026-07-01-memory-recall-dense-rerank | status: final -->

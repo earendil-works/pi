@@ -1,4 +1,4 @@
-phase: release
+phase: archive
 workflow: full
 change: memory-recall-dense-rerank
 created_at: 2026-06-29
@@ -8,4 +8,4 @@ tasks_done: 19
 isolation: branch
 verify_result: pass
 last_review_sha: 2b1322ff595274ef4ab1e949624758db32fef98b
-archived: false
+archived: true

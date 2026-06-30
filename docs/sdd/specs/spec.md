@@ -1333,18 +1333,54 @@ Extraction prompt SHALL 不让 LLM 决定 create/update/skip,只让 LLM 输出 `
 - **THEN** 调 ollama 时 `input` 字段含 atom 所有字段拼接 (不只 title)
 
 #### Requirement: 纯向量检索 (无 FTS,无混合)
-recallAtoms SHALL 用 sqlite-vec KNN 单向量检索,不做 FTS 匹配,不做 BM25 + Vector hybrid scoring。
+recallAtoms SHALL 用 sqlite-vec KNN 单向量检索,不做 FTS 匹配,不做 BM25 + Vector hybrid scoring,不做 RRF 融合。cosine floor 0.7 是唯一召回门控。bge-m3 多语言模型直接 embed 原文(含混合 ASCII+CJK),不拆段。
 
-##### Scenario: recallAtoms 不调 searchByFts
+##### Scenario: recallAtoms 不调 searchByFts / bm25Search / rrfFuse
 - **GIVEN** memory.ts / search.ts 源码
-- **WHEN** `grep -n "searchByFts\|FTS5\|bm25" extensions/personal-assistant/search.ts`
-- **THEN** 无匹配 (0 行)
+- **WHEN** `grep -n "searchByFts\|bm25Search\|rrfFuse\|FTS5\|bm25" extensions/personal-assistant/search.ts`
+- **THEN** 输出为空
 
 ##### Scenario: recallAtoms 走 sqlite-vec KNN
 - **GIVEN** DB 有 50 atom,memory_vectors 表有对应 embedding
 - **WHEN** recallAtoms(index, query) 执行
 - **THEN** sqlite-vec 收到 KNN 查询
 - **AND** 不走任何 FTS MATCH 查询
+- **AND** 不走任何 RRF 融合
+
+##### Scenario: cosine floor 0.7 过滤
+- **GIVEN** DB 有 atom A(cosine=0.75)和 atom B(cosine=0.55)
+- **WHEN** recallAtoms(index, query) 执行
+- **THEN** A 通过 cosine floor(c >= 0.7)
+- **AND** B 被 cosine floor 过滤掉(c < 0.7)
+
+##### Scenario: 混合 ASCII+CJK query 直接 embed
+- **GIVEN** query = "mgm工时计算"(ASCII + CJK 混合)
+- **WHEN** recallAtoms(index, "mgm工时计算") 执行
+- **THEN** 不执行 splitQuery(已删),直接 embedText("mgm工时计算")
+- **AND** bge-m3 输出单条 embedding 用于 KNN
+
+#### Requirement: per-type top-3 dense + round-robin recall
+`recallAtoms` MUST run, for each of the three atom types (rule / fact / process) independently, a dense KNN search (sqlite-vec, top-K candidates), filter by cosine floor 0.7, compute score via `score = cosine × (1 + 0.3 × strength + 0.2 × importance) + 0.10 × tagOverlap + 0.05 × freshness`, take the top 3 by score per type (sparse types degrade), then interleave the per-type lists via round-robin into a single result list.
+
+##### Scenario: per-type top-3 dense ranking
+- **GIVEN** rule type has 3 atoms with cosine/strength/importance triples giving scores 1.05 / 0.8925 / 0.876
+- **WHEN** `recallAtoms` ranks the rule slice
+- **THEN** all 3 are returned in score DESC order
+
+##### Scenario: sub-floor atoms are dropped
+- **GIVEN** some rule-type candidates have cosine < 0.7
+- **WHEN** `recallAtoms` returns
+- **THEN** those candidates are NOT in the result list
+
+##### Scenario: empty query returns empty
+- **GIVEN** query is an empty string `""`
+- **WHEN** `recallAtoms(index, "")` is called
+- **THEN** returns `[]`
+
+##### Scenario: ollama unavailable returns empty
+- **GIVEN** ollama is not running, embedText returns null
+- **WHEN** `recallAtoms(index, query)` is called
+- **THEN** returns `[]` immediately (no FTS fallback, no keyword extraction)
 
 #### Requirement: L0/L1 双层注入 + Token budget
 formatMemoryContext SHALL 按 distance 排序遍历 results,每个 result:
@@ -1683,6 +1719,8 @@ The webui `POST /api/memory/search` response MUST include `score` in each result
 <!-- Removed: formatMemoryContext topNL1 L1 tier split — The format layer no longer hydrates content at recall time (search is path-IO-free and full content lives behind `memory_get`). The `topNL1` parameter, L1 tier (with `<content>` field), and `<memory-context>` wrapping are removed; formatMemoryContext now emits only summary + id blocks under a fixed token budget. -->
 
 <!-- Removed: hardcoded DEFAULT_THRESHOLD = 0.5/0.7 cosine gate — Pure cosine threshold is replaced by RRF fused score threshold (`recallThreshold`, default `1/(rrfK+1)` ≈ 0.01639 with rrfK=60). The dense cosine floor (`DEFAULT_DENSE_COSINE_FLOOR = 0.7`) remains as a separate per-channel pre-filter for the dense channel (catches dense-noise atoms like the lefse case at cosine 0.55), but is no longer the recall gate itself. Migration: Existing call sites that pass `{ threshold: 0.5 }` continue to work (dense floor), but to control the recall gate they should pass `recallThreshold` instead. No code change required at call sites that use defaults — recall just behaves better out of the box. -->
+
+<!-- Removed: rrfK / recallThreshold recall config knob — RRF 融合已删除,`PersonalAssistantConfig.memory.recall.rrfK` 和 `recallThreshold` 字段不再适用,从 settings / webui routes / memory.ts 全栈删除。`recallThreshold` 默认值 `1/(rrfK+1)` ≈ 0.01639 with rrfK=60 不再被读取。Migration: 无 — 这两个 knob 从未被用户配置(默认值始终生效),删除无影响。cosine floor 0.7 替代 RRF recallThreshold 作为唯一召回门控。 -->
 
 <!-- Removed: content field in buildEmbeddableText — v1 of `buildEmbeddableText` included `title + summary + content + tags`. v2 drops `content` because recall is discovery-only (results carry `atom.id`; full content is fetched by `memory_get` on demand), and embedding the long verbose `content` field diluted the curated title/summary/tags signal with incidental token mentions. Migration: `CURRENT_EMBEDDABLE_TEXT_VERSION = 2` triggers incremental re-embed on next `session_start` via `listStaleEmbedVersionIds` / `setEmbedTextVersion`. New atoms are embedded at v2 by default. -->
 
