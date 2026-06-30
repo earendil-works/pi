@@ -7,5 +7,5 @@ tasks_total: 17
 tasks_done: 17
 isolation: branch
 verify_result: pending
-last_review_sha: 1cb4672a
+last_review_sha: 2b1322ff595274ef4ab1e949624758db32fef98b
 archived: false
