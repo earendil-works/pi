@@ -1,0 +1,119 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pi: Print Mode",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": [
+        "--tsconfig",
+        "${workspaceFolder}/tsconfig.json",
+        "${workspaceFolder}/packages/coding-agent/src/cli.ts",
+        "--provider",
+        "azure-openai-completions",
+        "--model",
+        "gpt-5.4",
+        "-p",
+        "Summarize the current repository structure"
+      ],
+      "env": {
+        "AZURE_OPENAI_API_KEY": "xK3CR5gN1u6azwpEZNdsLOnYv2mTmvkP_GPT_AK",
+        "AZURE_OPENAI_BASE_URL": "https://aidp.bytedance.net/api/modelhub/online/v2/crawl",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "gpt-5.4-2026-03-05"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Pi: Interactive",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": [
+        "--tsconfig",
+        "${workspaceFolder}/tsconfig.json",
+        "${workspaceFolder}/packages/coding-agent/src/cli.ts",
+        "--provider",
+        "azure-openai-responses",
+        "--model",
+        "gpt-5.4-2026-03-05"
+      ],
+      "env": {
+        "AZURE_OPENAI_API_KEY": "${env:AZURE_OPENAI_API_KEY}",
+        "AZURE_OPENAI_BASE_URL": "${env:AZURE_OPENAI_BASE_URL}",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "${env:AZURE_OPENAI_DEPLOYMENT_NAME_MAP}"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Pi: No Env Print",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": [
+        "--tsconfig",
+        "${workspaceFolder}/tsconfig.json",
+        "${workspaceFolder}/packages/coding-agent/src/cli.ts",
+        "--provider",
+        "azure-openai-responses",
+        "--model",
+        "gpt-5.4-2026-03-05",
+        "-p",
+        "Hello from debugger"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_OAUTH_TOKEN": "",
+        "OPENAI_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "GROQ_API_KEY": "",
+        "CEREBRAS_API_KEY": "",
+        "XAI_API_KEY": "",
+        "OPENROUTER_API_KEY": "",
+        "ZAI_API_KEY": "",
+        "MISTRAL_API_KEY": "",
+        "MINIMAX_API_KEY": "",
+        "MINIMAX_CN_API_KEY": "",
+        "AI_GATEWAY_API_KEY": "",
+        "OPENCODE_API_KEY": "",
+        "COPILOT_GITHUB_TOKEN": "",
+        "GH_TOKEN": "",
+        "GITHUB_TOKEN": "",
+        "HF_TOKEN": "",
+        "GOOGLE_APPLICATION_CREDENTIALS": "",
+        "GOOGLE_CLOUD_PROJECT": "",
+        "GCLOUD_PROJECT": "",
+        "GOOGLE_CLOUD_LOCATION": "",
+        "AWS_PROFILE": "",
+        "AWS_ACCESS_KEY_ID": "",
+        "AWS_SECRET_ACCESS_KEY": "",
+        "AWS_SESSION_TOKEN": "",
+        "AWS_REGION": "",
+        "AWS_DEFAULT_REGION": "",
+        "AWS_BEARER_TOKEN_BEDROCK": "",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI": "",
+        "AWS_WEB_IDENTITY_TOKEN_FILE": "",
+        "AZURE_OPENAI_API_KEY": "${env:AZURE_OPENAI_API_KEY}",
+        "AZURE_OPENAI_BASE_URL": "${env:AZURE_OPENAI_BASE_URL}",
+        "AZURE_OPENAI_RESOURCE_NAME": "${env:AZURE_OPENAI_RESOURCE_NAME}",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "${env:AZURE_OPENAI_DEPLOYMENT_NAME_MAP}"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Attach: Pi",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": false,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
