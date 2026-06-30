@@ -98,7 +98,7 @@
 
 > **Origin**: review-fail in sdd-review (2026-06-30). 14 tests failed across 5 files in `packages/coding-agent/`. User chose to expand scope.
 
-- [ ] 5.1 **Fix DefaultPackageManager test pollution from bundled repo extensions (Group A, 8 failures)**
+- [x] 5.1 **Fix DefaultPackageManager test pollution from bundled repo extensions (Group A, 8 failures)**
   - **Files**: `packages/coding-agent/src/core/package-manager.ts`, possibly `packages/coding-agent/src/core/resource-loader.ts`
   - **Failing tests**:
     - `test/package-manager.test.ts:L104` `should return no package-sourced paths when no sources configured` — expected `[]` got 4 items
@@ -116,7 +116,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/package-manager.test.ts test/resource-loader.test.ts` 0 failures
   - **依赖**: 无
 
-- [ ] 5.2 **Fix noTools extension tool filtering regression (Group B, 2 failures)**
+- [x] 5.2 **Fix noTools extension tool filtering regression (Group B, 2 failures)**
   - **Files**: `packages/coding-agent/test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts`, possibly `packages/coding-agent/src/core/` related to session creation
   - **Failing tests**:
     - `keeps extension tools active when built-in defaults are disabled` — expected 8 tools got 15 (`ask_user_question, bash, ...`)
@@ -128,7 +128,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` 0 failures
   - **依赖**: 无
 
-- [ ] 5.3 **Fix AgentSession concurrent prompt guard (Group C, 4 failures)**
+- [x] 5.3 **Fix AgentSession concurrent prompt guard (Group C, 4 failures)**
   - **File**: `packages/coding-agent/test/agent-session-concurrent.test.ts`
   - **Failing tests**:
     - `L130` `should throw when prompt() called while streaming`
@@ -141,7 +141,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/agent-session-concurrent.test.ts` 0 failures
   - **依赖**: 无
 
-- [ ] 5.4 **Fix session_start transient UI event ordering (Group D, 1 failure)**
+- [x] 5.4 **Fix session_start transient UI event ordering (Group D, 1 failure)**
   - **File**: `packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts`
   - **Failing test**: `subscribes before replacement session_start handlers send user messages`
   - **Symptom**: `events` does not contain `message_start:user:user from start`
@@ -150,7 +150,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/suite/regressions/5943-session-start-notify.test.ts` 0 failures
   - **依赖**: 无
 
-- [ ] 5.5 **Re-run full test suite + npm run check**
+- [x] 5.5 **Re-run full test suite + npm run check**
   - **Command**: `./test.sh && npm run check`
   - **Result**: 0 失败 0 错误 0 警告 0 info
   - **依赖**: 5.1, 5.2, 5.3, 5.4
