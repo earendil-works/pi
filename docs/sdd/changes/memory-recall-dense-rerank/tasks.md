@@ -155,7 +155,7 @@
   - **Result**: 0 失败 0 错误 0 警告 0 info
   - **依赖**: 5.1, 5.2, 5.3, 5.4
 
-- [ ] 5.6 **Fix generate-models.ts fetch reliability (intermittent build failure)**
+- [x] 5.6 **Fix generate-models.ts fetch reliability (intermittent build failure)**
   - **File**: `packages/ai/scripts/generate-models.ts`
   - **Background**: `npm run build` invokes `generate-models` which fetches from `https://models.dev/api.json`. On the same machine + commit, the same build alternates between passing (1022 models, nvidia OK) and failing (1002 models, nvidia MISSING) — fully non-deterministic. Confirmed during sdd-review verify on 2026-06-30.
   - **Root cause** (3 issues):
