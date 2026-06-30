@@ -25,7 +25,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
-| External editor | Ctrl+G opens `$VISUAL` or `$EDITOR` |
+| External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 
 See [Keybindings](keybindings.md) for all shortcuts and customization.
 
@@ -297,7 +297,7 @@ pi --exclude-tools ask_question
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
-| `VISUAL`, `EDITOR` | External editor for Ctrl+G |
+| `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 
 ## Design Principles
 

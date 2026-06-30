@@ -311,8 +311,7 @@ describe("openai-codex streaming", () => {
 		expect(result.stopReason).toBe("length");
 	});
 
-	it("aborts SSE fetch when response headers do not arrive", async () => {
-		vi.useFakeTimers();
+	it("aborts SSE fetch after the configured HTTP timeout when response headers do not arrive", async () => {
 		const token = mockToken();
 
 		const fetchMock = vi.fn((input: string | URL, init?: RequestInit) => {
@@ -357,25 +356,15 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
 		};
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const result = await streamOpenAICodexResponses(model, context, {
 			apiKey: token,
 			transport: "sse",
+			timeoutMs: 10,
 		}).result();
-		let settled = false;
-		const observedResultPromise = resultPromise.then((result) => {
-			settled = true;
-			return result;
-		});
-		await vi.advanceTimersByTimeAsync(0);
+
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-
-		await vi.advanceTimersByTimeAsync(10_000);
-		expect(settled).toBe(false);
-
-		await vi.advanceTimersByTimeAsync(10_000);
-		const result = await observedResultPromise;
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toBe("Codex SSE response headers timed out after 20000ms");
+		expect(result.errorMessage).toBe("Codex SSE response headers timed out after 10ms");
 	});
 
 	it("aborts SSE body reads after response headers arrive", async () => {

@@ -51,6 +51,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
+| `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
@@ -62,6 +63,14 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `editorPaddingX` | number | `0` | Horizontal padding for input editor (0-3) |
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
+
+For VS Code, include `--wait` so pi resumes after the editor exits:
+
+```json
+{
+  "externalEditor": "code --wait"
+}
+```
 
 ### Telemetry and update checks
 

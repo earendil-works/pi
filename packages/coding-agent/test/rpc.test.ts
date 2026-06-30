@@ -283,6 +283,62 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		expect(text).toContain("test123");
 	}, 90000);
 
+	test("should get session entries with since cursor", async () => {
+		await client.start();
+
+		await client.promptAndWait("Reply with just 'ok'");
+
+		const { entries, leafId } = await client.getEntries();
+		expect(entries.length).toBeGreaterThanOrEqual(2); // user + assistant
+		for (const entry of entries) {
+			expect(entry.id).toBeDefined();
+		}
+		expect(leafId).toBe(entries[entries.length - 1].id);
+
+		// since cursor returns only entries strictly after the given id
+		const since = await client.getEntries(entries[0].id);
+		expect(since.entries.map((e) => e.id)).toEqual(entries.slice(1).map((e) => e.id));
+		expect(since.leafId).toBe(leafId);
+
+		// unknown since id is an error response
+		await expect(client.getEntries("nonexistent-id")).rejects.toThrow("Entry not found");
+	}, 90000);
+
+	test("should get session tree", async () => {
+		await client.start();
+
+		await client.promptAndWait("Reply with just 'ok'");
+
+		const { entries, leafId } = await client.getEntries();
+		const { tree, leafId: treeLeafId } = await client.getTree();
+		expect(treeLeafId).toBe(leafId);
+
+		// Single root whose chain matches the entries
+		expect(tree.length).toBe(1);
+		const chainIds: string[] = [];
+		let nodes = tree;
+		while (nodes.length === 1) {
+			chainIds.push(nodes[0].entry.id);
+			nodes = nodes[0].children;
+		}
+		expect(nodes.length).toBe(0);
+		expect(chainIds).toEqual(entries.map((e) => e.id));
+	}, 90000);
+
+	test("should retain pre-compaction entries in get_entries", async () => {
+		await client.start();
+
+		await client.promptAndWait("Reply with just 'ok'");
+		const before = await client.getEntries();
+
+		await client.compact();
+
+		const after = await client.getEntries();
+		// Append-only: pre-compaction entries are still there, in the same order
+		expect(after.entries.slice(0, before.entries.length).map((e) => e.id)).toEqual(before.entries.map((e) => e.id));
+		expect(after.entries.some((e) => e.type === "compaction")).toBe(true);
+	}, 120000);
+
 	test("should set and get session name", async () => {
 		await client.start();
 

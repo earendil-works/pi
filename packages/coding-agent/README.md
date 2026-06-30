@@ -161,6 +161,7 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Tab to complete paths |
 | Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
+| External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 | Images | Ctrl+V to paste (Alt+V on Windows), or drag onto terminal |
 | Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending |
 
@@ -663,7 +664,7 @@ pi --thinking high "Solve this complex problem"
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
-| `VISUAL`, `EDITOR` | External editor for Ctrl+G |
+| `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 
 ---
 

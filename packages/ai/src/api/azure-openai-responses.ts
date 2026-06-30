@@ -10,6 +10,7 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -44,19 +45,7 @@ function resolveDeploymentName(model: Model<"azure-openai-responses">, options?:
 }
 
 function formatAzureOpenAIError(error: unknown): string {
-	if (error instanceof Error) {
-		const status = (error as Error & { status?: unknown }).status;
-		const statusCode = typeof status === "number" ? status : undefined;
-		if (statusCode !== undefined) {
-			return `Azure OpenAI API error (${statusCode}): ${error.message}`;
-		}
-		return error.message;
-	}
-	try {
-		return JSON.stringify(error);
-	} catch {
-		return String(error);
-	}
+	return formatProviderError(normalizeProviderError(error), "Azure OpenAI API error");
 }
 
 // Azure OpenAI Responses-specific options

@@ -10,6 +10,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
@@ -386,6 +387,22 @@ export class RpcClient {
 	async getForkMessages(): Promise<Array<{ entryId: string; text: string }>> {
 		const response = await this.send({ type: "get_fork_messages" });
 		return this.getData<{ messages: Array<{ entryId: string; text: string }> }>(response).messages;
+	}
+
+	/**
+	 * Get session entries in append order, optionally only those after the `since` entry id.
+	 */
+	async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
+		const response = await this.send({ type: "get_entries", since });
+		return this.getData<{ entries: SessionEntry[]; leafId: string | null }>(response);
+	}
+
+	/**
+	 * Get the session entry tree.
+	 */
+	async getTree(): Promise<{ tree: SessionTreeNode[]; leafId: string | null }> {
+		const response = await this.send({ type: "get_tree" });
+		return this.getData<{ tree: SessionTreeNode[]; leafId: string | null }>(response);
 	}
 
 	/**

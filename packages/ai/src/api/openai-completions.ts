@@ -32,6 +32,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -463,10 +464,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			// Some providers via OpenRouter give additional information in this field.
+			// normalizeProviderError already stringifies the parsed body (error.error)
+			// into errorMessage, so only append the raw metadata when it is not already
+			// present to avoid double-printing it.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
+			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
+				output.errorMessage += `\n${rawMetadata}`;
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -593,10 +599,10 @@ function buildParams(
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
-			thinking?: { type: "enabled" | "disabled" };
+			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
 			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;

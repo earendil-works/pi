@@ -90,6 +90,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
@@ -839,6 +840,18 @@ export class SettingsManager {
 
 	getHideThinkingBlock(): boolean {
 		return this.settings.hideThinkingBlock ?? false;
+	}
+
+	getExternalEditorCommand(): string | undefined {
+		const configuredEditor = this.settings.externalEditor;
+		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
+			return configuredEditor;
+		}
+		const environmentEditor = process.env.VISUAL || process.env.EDITOR;
+		if (environmentEditor) {
+			return environmentEditor;
+		}
+		return process.platform === "win32" ? "notepad" : "nano";
 	}
 
 	setHideThinkingBlock(hide: boolean): void {

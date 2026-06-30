@@ -661,6 +661,64 @@ Response:
 }
 ```
 
+#### get_entries
+
+Get all session entries in append order (excluding the session header). The session is an append-only tree of entries with stable ids, so an entry id works as a durable cursor: pass the last entry id you have seen as `since` to get only entries strictly after it, even across client restarts. Unlike `get_messages`, this includes pre-compaction history and abandoned branches.
+
+```json
+{"type": "get_entries"}
+```
+
+With a cursor:
+```json
+{"type": "get_entries", "since": "abc123"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_entries",
+  "success": true,
+  "data": {
+    "entries": [
+      {"type": "message", "id": "def456", "parentId": "abc123", "timestamp": "...", "message": {"role": "user", "...": "..."}}
+    ],
+    "leafId": "def456"
+  }
+}
+```
+
+`leafId` is the id of the current leaf entry (`null` for an empty session), so a client can tell in one round trip whether the active branch moved. If `since` does not match any entry id, the response is `success: false`.
+
+#### get_tree
+
+Get the session as a tree of entries. Each node is `{entry, children, label?, labelTimestamp?}`. A well-formed session has a single root; orphaned entries (broken parent chain) also appear as roots.
+
+```json
+{"type": "get_tree"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_tree",
+  "success": true,
+  "data": {
+    "tree": [
+      {
+        "entry": {"type": "message", "id": "abc123", "parentId": null, "...": "..."},
+        "children": [
+          {"entry": {"type": "message", "id": "def456", "parentId": "abc123", "...": "..."}, "children": []}
+        ]
+      }
+    ],
+    "leafId": "def456"
+  }
+}
+```
+
 #### get_last_assistant_text
 
 Get the text content of the last assistant message.
