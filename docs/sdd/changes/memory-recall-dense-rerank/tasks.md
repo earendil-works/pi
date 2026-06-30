@@ -94,6 +94,67 @@
   - **Result**: grep 4 条新条目都在 `[Unreleased]` 下
   - **依赖**: 无
 
+## 5. Fix pre-existing coding-agent test failures (review-found)
+
+> **Origin**: review-fail in sdd-review (2026-06-30). 14 tests failed across 5 files in `packages/coding-agent/`. User chose to expand scope.
+
+- [ ] 5.1 **Fix DefaultPackageManager test pollution from bundled repo extensions (Group A, 8 failures)**
+  - **Files**: `packages/coding-agent/src/core/package-manager.ts`, possibly `packages/coding-agent/src/core/resource-loader.ts`
+  - **Failing tests**:
+    - `test/package-manager.test.ts:L104` `should return no package-sourced paths when no sources configured` — expected `[]` got 4 items
+    - `test/package-manager.test.ts:L185` `should resolve symlinked user and project resources once` — expected `{extensions:1, skills:1}` got `{extensions:5, skills:2}`
+    - `test/resource-loader.test.ts:L160` `should load symlinked user and project extensions once` — length 1 vs 5
+    - `test/resource-loader.test.ts:L190` `should load user extensions before trust and reuse them after trust resolves` — expected 1 got 5
+    - `test/resource-loader.test.ts:L237` `should keep both extensions loaded when command names collide` — length 2 vs 6
+    - `test/resource-loader.test.ts:L379` `should skip project resources that require trust when project is not trusted` — empty vs 4
+    - `test/resource-loader.test.ts:L503` `should load extension resources returned as file URLs` — collision diagnostics non-empty
+  - **Root cause**: `DefaultPackageManager.resolve()` at `package-manager.ts:2407-2449` hardcodes `extensions` / `skills` / `prompts` paths from `import.meta.url` (`../../../../extensions`) and always loads bundled repo resources. Tests create their own `cwd` / `agentDir` in temp dirs but bundled repo extensions leak in.
+  - **Content**: Add a mechanism so `DefaultResourceLoader` (or `DefaultPackageManager`) does NOT load bundled repo resources in test scenarios. Options:
+    1. Add `noBundled: true` option to `DefaultResourceLoader` / `DefaultPackageManager` that skips the `repoExtDir`/`repoSKillsDir`/`repoPromptsDir` block
+    2. Set `DefaultPackageManager` / `DefaultResourceLoader` test-mode flag via env var that is opt-in for tests
+  - **Result**: All 8 tests pass. Other tests that rely on bundled extensions (if any) still pass — verify with full `./test.sh`.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/package-manager.test.ts test/resource-loader.test.ts` 0 failures
+  - **依赖**: 无
+
+- [ ] 5.2 **Fix noTools extension tool filtering regression (Group B, 2 failures)**
+  - **Files**: `packages/coding-agent/test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts`, possibly `packages/coding-agent/src/core/` related to session creation
+  - **Failing tests**:
+    - `keeps extension tools active when built-in defaults are disabled` — expected 8 tools got 15 (`ask_user_question, bash, ...`)
+    - `propagates noTools through service-based session creation` — expected `[]` got 7 (`memory_get, todowrite, ...`)
+  - **Content**: Investigate why `noTools` (or equivalent flag) does not filter built-in tools when extension tools should remain active. Two failure modes:
+    1. Built-in tools not filtered (got 15 vs expected 8) → fix filter logic in session creation
+    2. Extension tools being filtered out alongside built-ins (got 7 vs expected `[]`) → preserve extension tools while clearing built-ins
+  - **Result**: Both tests pass.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` 0 failures
+  - **依赖**: 无
+
+- [ ] 5.3 **Fix AgentSession concurrent prompt guard (Group C, 4 failures)**
+  - **File**: `packages/coding-agent/test/agent-session-concurrent.test.ts`
+  - **Failing tests**:
+    - `L130` `should throw when prompt() called while streaming`
+    - `L152` `should allow steer() while streaming`
+    - `L168` `should allow followUp() while streaming`
+    - `L184` `should queue extension-origin steering messages while streaming`
+  - **Symptom**: All `expected false to be true // Object.is equality`
+  - **Content**: Read the test file to determine the asserted behavior. Investigate `AgentSession.prompt/steer/followUp` concurrent-guard implementation. The guards either (a) throw when they shouldn't, (b) don't throw when they should, or (c) return wrong boolean.
+  - **Result**: All 4 tests pass.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/agent-session-concurrent.test.ts` 0 failures
+  - **依赖**: 无
+
+- [ ] 5.4 **Fix session_start transient UI event ordering (Group D, 1 failure)**
+  - **File**: `packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts`
+  - **Failing test**: `subscribes before replacement session_start handlers send user messages`
+  - **Symptom**: `events` does not contain `message_start:user:user from start`
+  - **Content**: Investigate the session_start event flow. When replacement session_start handlers subscribe BEFORE the user message is sent, the message_start:user event should still fire. Currently the events array is missing this entry.
+  - **Result**: Test passes.
+  - **验证**: `node ../../node_modules/vitest/dist/cli.js --run test/suite/regressions/5943-session-start-notify.test.ts` 0 failures
+  - **依赖**: 无
+
+- [ ] 5.5 **Re-run full test suite + npm run check**
+  - **Command**: `./test.sh && npm run check`
+  - **Result**: 0 失败 0 错误 0 警告 0 info
+  - **依赖**: 5.1, 5.2, 5.3, 5.4
+
 ## 4. Final verification
 
 - [x] 4.1 **Run full test suite + npm run check**
