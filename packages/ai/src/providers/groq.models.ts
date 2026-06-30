@@ -100,7 +100,7 @@ export const GROQ_MODELS = {
 		cost: {
 			input: 0.075,
 			output: 0.3,
-			cacheRead: 0.037,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 131072,
