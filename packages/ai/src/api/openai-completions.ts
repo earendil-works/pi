@@ -1045,7 +1045,7 @@ export function convertMessages(
 				params.push(toolResultMsg);
 
 				if (hasImages && model.input.includes("image")) {
-					for (const block of toolMsg.content) {
+					for (const block of (toolMsg.content || [])) {
 						if (isImageContentBlock(block)) {
 							imageBlocks.push({
 								type: "image_url",

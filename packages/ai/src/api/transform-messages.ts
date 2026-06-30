@@ -45,7 +45,7 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 			};
 		}
 
-		if (msg.role === "toolResult") {
+		if (msg.role === "toolResult" && Array.isArray(msg.content)) {
 			return {
 				...msg,
 				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_TOOL_IMAGE_PLACEHOLDER),

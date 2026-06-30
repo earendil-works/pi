@@ -735,7 +735,7 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		role: "toolResult",
 		toolCallId: finalized.toolCall.id,
 		toolName: finalized.toolCall.name,
-		content: finalized.result.content,
+		content: finalized.result.content ?? [{ type: "text", text: "(empty tool result)" }],
 		details: finalized.result.details,
 		isError: finalized.isError,
 		timestamp: Date.now(),
