@@ -155,6 +155,31 @@
   - **Result**: 0 失败 0 错误 0 警告 0 info
   - **依赖**: 5.1, 5.2, 5.3, 5.4
 
+- [ ] 5.6 **Fix generate-models.ts fetch reliability (intermittent build failure)**
+  - **File**: `packages/ai/scripts/generate-models.ts`
+  - **Background**: `npm run build` invokes `generate-models` which fetches from `https://models.dev/api.json`. On the same machine + commit, the same build alternates between passing (1022 models, nvidia OK) and failing (1002 models, nvidia MISSING) — fully non-deterministic. Confirmed during sdd-review verify on 2026-06-30.
+  - **Root cause** (3 issues):
+    1. `loadModelsDevData` catches errors and returns `[]` (line 1584-1587) — silent failure, build continues with 0 catalogs
+    2. `fetch("https://models.dev/api.json")` (line 717) has no timeout, no retry, no `response.ok` check — network flakes hang or produce partial JSON
+    3. `data.nvidia?.models ? await fetchNvidiaNimModelIds()` (line 721) — partial JSON missing nvidia field skips nvidia processing → no `nvidia.models.ts` → TS2307 in nvidia.ts
+  - **Content**:
+    - Add `AbortSignal.timeout(30_000)` to each external `fetch` (models.dev, NVIDIA NIM, OpenRouter, Vercel AI Gateway)
+    - Check `response.ok` (or `response.status` in [200, 299]) before parsing; throw on non-2xx
+    - Add exponential-backoff retry (3 attempts, 1s → 2s → 4s) for transient failures
+    - In `loadModelsDevData`: if response is missing expected provider keys (e.g. nvidia when its `*.ts` source exists), throw — do not silently return `[]`
+    - Add post-`loadModelsDevData` sanity check: for each `${providerId}.ts` in `src/providers/`, ensure `${providerId}.models.ts` was generated; if not, throw with which provider is missing
+  - **Result**: `npm run build` 5 次连跑都成功生成所有 35 个 catalog,0 fail。`grep "memory_fts" storage.ts` 仍只输出 DROP TABLE（保证未误改业务逻辑）。
+  - **验证**:
+    ```bash
+    cd packages/ai && for i in 1 2 3 4 5; do
+      npm run generate-models 2>&1 | grep -E "Generated|Total" | head -2
+    done
+    # 期望: 5 次都 "Generated 35 catalogs" 附近,无 "Cannot find module" 错误
+    cd ../.. && npm run build 2>&1 | tail -3
+    # 期望: 成功
+    ```
+  - **依赖**: 无
+
 ## 4. Final verification
 
 - [x] 4.1 **Run full test suite + npm run check**
