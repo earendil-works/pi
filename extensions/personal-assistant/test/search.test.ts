@@ -354,7 +354,7 @@ describe("recallAtoms", () => {
 	});
 
 	// (k) NEW — cosine below threshold is dropped after vectorSearch returns.
-	it("cosine below threshold (0.65) is dropped", async () => {
+	it("cosine below the dense floor (0.7) is dropped", async () => {
 		installControlledMock();
 		const a = sampleAtom({
 			content: "__COS:0.4 below threshold atom rho signal",

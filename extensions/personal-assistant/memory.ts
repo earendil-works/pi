@@ -661,22 +661,22 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const { recallAtoms } = await import("./search.ts");
 				const { formatMemoryContext } = await import("./format.ts");
 				let results: RecallResult[];
-			try {
-				// topK=20 matches design.md Decision 2 (per-type KNN pool;
-				// the post-scoring per-type cap is hard-coded at
-				// DEFAULT_TOP_K in search.ts).
-				// tagOverlapWeight / freshnessWeight / tagAliases are the
-				// runtime-configurable scoring knobs from
-				// PersonalAssistantConfig.memory — wired here so the
-				// agent's before_agent_start hook honors the same
-				// settings the webui search endpoint consumes.
-				const m = config.memory;
-				results = await recallAtoms(index, userMessage, {
-					topK: 20,
-					tagOverlapWeight: m?.tagOverlapWeight,
-					freshnessWeight: m?.freshnessWeight,
-					tagAliases: m?.tagAliases,
-				});
+				try {
+					// topK=20 matches design.md Decision 2 (per-type KNN pool;
+					// the post-scoring per-type cap is hard-coded at
+					// DEFAULT_TOP_K in search.ts).
+					// tagOverlapWeight / freshnessWeight / tagAliases are the
+					// runtime-configurable scoring knobs from
+					// PersonalAssistantConfig.memory — wired here so the
+					// agent's before_agent_start hook honors the same
+					// settings the webui search endpoint consumes.
+					const m = config.memory;
+					results = await recallAtoms(index, userMessage, {
+						topK: 20,
+						tagOverlapWeight: m?.tagOverlapWeight,
+						freshnessWeight: m?.freshnessWeight,
+						tagAliases: m?.tagAliases,
+					});
 				} catch (err) {
 					ctx.ui.setStatus("memory", "⚠ memory recall failed");
 					throw err;

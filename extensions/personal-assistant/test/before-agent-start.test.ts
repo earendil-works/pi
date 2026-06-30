@@ -327,45 +327,45 @@ describe("before_agent_start recall config wiring (Task 4.2)", () => {
 	});
 
 	// "user tunes scoring weights" — config.memory.tagOverlapWeight +
-// config.memory.freshnessWeight + config.memory.tagAliases flow through
-// to the recallAtoms call as the third-arg option. The test sets all
-// three knobs so we also cover the joint-wiring case (multiple scoring
-// knobs read in the same option object).
-//
-// Note: this used to test config.recall.{rrfK, recallThreshold} — that
-// sub-block was removed when the pipeline migrated to pure-dense
-// (memory-recall-dense-rerank). The scoring knobs are now the only
-// runtime-tunable recall parameters.
-it("recallAtoms is called with tagOverlapWeight + freshnessWeight + tagAliases when present in settings.json", async () => {
-	writeSettings({
-		personalAssistant: {
-			memory: {
-				tagOverlapWeight: 0.15,
-				freshnessWeight: 0.10,
-				tagAliases: { 代码规范: "code-style" },
+	// config.memory.freshnessWeight + config.memory.tagAliases flow through
+	// to the recallAtoms call as the third-arg option. The test sets all
+	// three knobs so we also cover the joint-wiring case (multiple scoring
+	// knobs read in the same option object).
+	//
+	// Note: this used to test config.recall.{rrfK, recallThreshold} — that
+	// sub-block was removed when the pipeline migrated to pure-dense
+	// (memory-recall-dense-rerank). The scoring knobs are now the only
+	// runtime-tunable recall parameters.
+	it("recallAtoms is called with tagOverlapWeight + freshnessWeight + tagAliases when present in settings.json", async () => {
+		writeSettings({
+			personalAssistant: {
+				memory: {
+					tagOverlapWeight: 0.15,
+					freshnessWeight: 0.10,
+					tagAliases: { 代码规范: "code-style" },
+				},
 			},
-		},
+		});
+
+		registerMemory(mockPi as unknown as ExtensionAPI);
+		const beforeHandler = mockPi.hooks.get("before_agent_start");
+		const ctxHandler = mockPi.hooks.get("context");
+		expect(beforeHandler).toBeDefined();
+		expect(ctxHandler).toBeDefined();
+
+		// Same fire-and-forget pattern as the other suite — await the
+		// context handler to drain the pending search before asserting.
+		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
+		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
+
+		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
+		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+		expect(thirdArg).toBeDefined();
+		expect(thirdArg).toMatchObject({
+			topK: 20,
+			tagOverlapWeight: 0.15,
+			freshnessWeight: 0.10,
+			tagAliases: { 代码规范: "code-style" },
+		});
 	});
-
-	registerMemory(mockPi as unknown as ExtensionAPI);
-	const beforeHandler = mockPi.hooks.get("before_agent_start");
-	const ctxHandler = mockPi.hooks.get("context");
-	expect(beforeHandler).toBeDefined();
-	expect(ctxHandler).toBeDefined();
-
-	// Same fire-and-forget pattern as the other suite — await the
-	// context handler to drain the pending search before asserting.
-	await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-	await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
-
-	expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
-	const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-	expect(thirdArg).toBeDefined();
-	expect(thirdArg).toMatchObject({
-		topK: 20,
-		tagOverlapWeight: 0.15,
-		freshnessWeight: 0.10,
-		tagAliases: { 代码规范: "code-style" },
-	});
-});
 });

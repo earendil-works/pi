@@ -803,7 +803,7 @@ describe("MemoryIndex", () => {
 				last_access: null,
 			});
 			await index.insertAtom(atom, dummyEmbedding());
-			index.markArchived("u"); // ensure archived=1 + FTS5 row gone
+			index.markArchived("u"); // ensure archived=1 (pure-dense pipeline; no FTS5 mirror)
 			// Simulate the bug: a low-strength atom gets archived.
 			expect(index.getAtom("u")?.strength).toBe(0.05);
 			expect(index.getAtom("u")?.archived).toBe(1);

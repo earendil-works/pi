@@ -48,19 +48,6 @@ export function getExpectedProviderIds(providersDir: string): string[] {
 }
 
 /**
- * Returns the provider ids that currently have a generated catalog file
- * (`${id}.models.ts`) on disk.
- */
-export function getActualGeneratedProviderIds(providersDir: string): string[] {
-	const actual: string[] = [];
-	for (const entry of readdirSync(providersDir)) {
-		if (!entry.endsWith(CATALOG_SUFFIX)) continue;
-		actual.push(basename(entry, CATALOG_SUFFIX));
-	}
-	return actual;
-}
-
-/**
  * Throws if any expected provider id is missing from the in-memory set of
  * generated providers (typically `Object.keys(providers)` in the generator).
  * The error message lists every missing id so the build log shows the gap
@@ -78,20 +65,6 @@ export function assertAllExpectedProvidersHaveCatalogs(
 	if (missing.length === 0) return;
 	throw new Error(
 		`Provider catalog generation is incomplete. Missing ${missing.length} of ${expected.length} expected provider catalog(s): ${missing.join(", ")}`,
-	);
-}
-
-/**
- * Throws if any expected provider id is missing a generated catalog on disk.
- * Useful as a post-generation check; the in-memory variant above is preferred
- * for fail-loud behavior.
- */
-export function assertAllExpectedProviderCatalogsExist(expected: string[], providersDir: string): void {
-	const actual = new Set(getActualGeneratedProviderIds(providersDir));
-	const missing = expected.filter((id) => !actual.has(id)).sort();
-	if (missing.length === 0) return;
-	throw new Error(
-		`Provider catalog files are missing under ${providersDir}: ${missing.join(", ")}`,
 	);
 }
 

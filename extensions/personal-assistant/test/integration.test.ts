@@ -71,26 +71,26 @@ describe("integration: extraction → embedding → recall", () => {
 		expect(result.created).toHaveLength(1);
 		const createdAtom = result.created[0]!;
 
-// Step 2: recallAtoms with related query
-    const index = new MemoryIndex(dbPath);
-    await index.init();
-    try {
-      // threshold: 0 to work around position-sensitive char-bigram mock embed.
-      // The pure-dense pipeline has no RRF gate to bypass — `threshold: 0`
-      // alone disables the cosine floor, letting the char-bigram mock's
-      // ranking pass through without a floor check. Same pattern as the
-      // recall-quality tests — measure pure channel ranking without any
-      // gating policy interfering.
-      const recall = await recallAtoms(index, "图片提取", {
-        topK: 5,
-        threshold: 0,
-      });
-      const ids = recall.map(r => r.atom.id);
-      expect(ids).toContain(createdAtom.id);
-    } finally {
-      index.close();
-    }
-  });
+		// Step 2: recallAtoms with related query
+		const index = new MemoryIndex(dbPath);
+		await index.init();
+		try {
+			// threshold: 0 to work around position-sensitive char-bigram mock embed.
+			// The pure-dense pipeline has no RRF gate to bypass — `threshold: 0`
+			// alone disables the cosine floor, letting the char-bigram mock's
+			// ranking pass through without a floor check. Same pattern as the
+			// recall-quality tests — measure pure channel ranking without any
+			// gating policy interfering.
+			const recall = await recallAtoms(index, "图片提取", {
+				topK: 5,
+				threshold: 0,
+			});
+			const ids = recall.map((r) => r.atom.id);
+			expect(ids).toContain(createdAtom.id);
+		} finally {
+			index.close();
+		}
+	});
 
 	it("extracted atom .md file is written and hydrates content", async () => {
 		const mockCallLlm = async () =>

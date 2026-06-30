@@ -1018,12 +1018,11 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		// Note: MCP servers connect in the background via _buildRuntime.
-		// We intentionally do NOT await _mcpReady here, so the prompt starts
-		// immediately and is responsive even if an MCP server is slow or
-		// unreachable. MCP tools are merged into the agent's tool registry
-		// by _refreshToolRegistry() when each server connects, so they become
-		// available on the next turn.
+		// MCP servers connect in the background via _buildRuntime — we do not
+		// block the prompt on MCP availability so a slow/unreachable server
+		// does not stall the user's first turn. Tools are merged into the
+		// agent's registry by _refreshToolRegistry() when each server
+		// connects, becoming available on subsequent turns.
 
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;

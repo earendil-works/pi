@@ -97,12 +97,10 @@ export interface RecallResult {
 	 */
 	score: number;
 	/**
-	 * Tag overlap contribution: fraction of query segment tokens (after
-	 * tag-alias folding via `computeTagOverlap`) that match an atom's tag
-	 * set, in [0, 1]. Debug surface for the `0.10 × tagOverlap` additive
-	 * term in the score formula. Computed per-segment so heterogeneous
-	 * queries (`mgm工时计算` → ["mgm", "工时计算"]) get accurate per-tag
-	 * matching against the original segment, not the joined query string.
+	 * Tag overlap contribution: fraction of query tokens (after tag-alias
+	 * folding via `computeTagOverlap`) that match an atom's tag set, in
+	 * [0, 1]. Debug surface for the `0.10 × tagOverlap` additive term in
+	 * the score formula.
 	 */
 	tagOverlap?: number;
 	/**
