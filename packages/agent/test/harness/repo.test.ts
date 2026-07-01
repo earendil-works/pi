@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionRepo } from "../../src/harness/session/jsonl-repo.ts";
 import { InMemorySessionRepo } from "../../src/harness/session/memory-repo.ts";
+import { SessionLifecycle } from "../../src/harness/session/session-lifecycle.ts";
+import { SqliteSessionRepo } from "../../src/harness/session/sqlite/repo.ts";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
 
 describe("InMemorySessionRepo", () => {
@@ -64,5 +67,46 @@ describe("JsonlSessionRepo", () => {
 		await repo.delete(sourceMetadata);
 		expect(existsSync(sourceMetadata.path)).toBe(false);
 		await expect(repo.open(sourceMetadata)).rejects.toThrow("Session not found");
+	});
+});
+
+describe("SessionLifecycle", () => {
+	it("mirrors create, open, fork, and delete to sqlite when PI_SQLITE_SESSION_STORAGE=1", async () => {
+		const previous = process.env.PI_SQLITE_SESSION_STORAGE;
+		process.env.PI_SQLITE_SESSION_STORAGE = "1";
+		try {
+			const root = createTempDir();
+			const env = new NodeExecutionEnv({ cwd: root });
+			const jsonlRepo = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
+			const databasePath = join(root, "sessions.sqlite");
+			const sqliteRepo = new SqliteSessionRepo({ env, databasePath });
+			const lifecycle = new SessionLifecycle({ jsonlRepo, sqliteRepo });
+			const session = await lifecycle.create({ cwd: "/tmp/source", id: "source-session" });
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			await session.moveTo(null);
+			const sqliteSession = await sqliteRepo.open({
+				id: "source-session",
+				cwd: "/tmp/source",
+				createdAt: (await session.getMetadata()).createdAt,
+				path: databasePath,
+			});
+			expect((await sqliteSession.getEntries()).map((entry) => entry.id)).toEqual(
+				(await session.getEntries()).map((entry) => entry.id),
+			);
+			const reopened = await lifecycle.open(await session.getMetadata());
+			expect((await reopened.getEntries()).map((entry) => entry.id)).toEqual(
+				(await session.getEntries()).map((entry) => entry.id),
+			);
+			const fork = await lifecycle.fork(await session.getMetadata(), { cwd: "/tmp/target", id: "fork-session" });
+			expect((await fork.getEntries()).map((entry) => entry.id)).toEqual(
+				(await session.getEntries()).map((entry) => entry.id),
+			);
+			await lifecycle.delete(await session.getMetadata());
+			expect(await sqliteRepo.list({ cwd: "/tmp/source" })).toEqual([]);
+		} finally {
+			if (previous === undefined) delete process.env.PI_SQLITE_SESSION_STORAGE;
+			else process.env.PI_SQLITE_SESSION_STORAGE = previous;
+		}
 	});
 });
