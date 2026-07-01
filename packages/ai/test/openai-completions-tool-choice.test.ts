@@ -653,6 +653,72 @@ describe("openai-completions tool_choice", () => {
 		expect(response.errorMessage).toBe("Stream ended without finish_reason");
 	});
 
+	it("infers toolUse stop reason when provider omits finish_reason for tool calls", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-nim-no-fr",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call-abc",
+									type: "function",
+									function: { name: "bash", arguments: '{"command":"ls"}' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			},
+			{
+				id: "chatcmpl-nim-no-fr",
+				choices: [] as Array<{ delta: Record<string, unknown>; finish_reason: string | null }>,
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tool: Tool = {
+			name: "bash",
+			description: "Execute a bash command",
+			parameters: Type.Object({ command: Type.String() }),
+		};
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "List files",
+						timestamp: Date.now(),
+					},
+				],
+				tools: [tool],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.stopReason).toBe("toolUse");
+		expect(response.errorMessage).toBeUndefined();
+		expect(response.content).toEqual([
+			{
+				type: "toolCall",
+				id: "call-abc",
+				name: "bash",
+				arguments: { command: "ls" },
+			},
+		]);
+	});
+
 	it("coalesces tool call deltas by stable index when provider mutates ids mid-stream", async () => {
 		mockState.chunks = [
 			{
