@@ -32,11 +32,34 @@ class BashResultRenderComponent extends Container {
 function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
-function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
+function splitCommandLines(command: string): string[] {
+	const lines = command.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+	while (lines.length > 1 && lines[lines.length - 1]?.trim() === "") {
+		lines.pop();
+	}
+	return lines;
+}
+function formatShellCall(
+	args: { command?: string; timeout?: number } | undefined,
+	prompt: string,
+	expanded = true,
+): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
+	let commandDisplay: string;
+	if (command === null) {
+		commandDisplay = invalidArgText(theme);
+	} else if (!command) {
+		commandDisplay = theme.fg("toolOutput", "...");
+	} else {
+		const commandLines = splitCommandLines(command);
+		if (!expanded && commandLines.length > 1) {
+			commandDisplay = `${theme.fg("toolOutput", "bash script")} ${theme.fg("muted", `(${commandLines.length} lines)`)}`;
+		} else {
+			commandDisplay = command;
+		}
+	}
 	return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
 }
 function rebuildBashResultRenderComponent(
@@ -131,7 +154,7 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 				state.endedAt = undefined;
 			}
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt));
+			text.setText(formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt, context.expanded));
 			return text;
 		},
 		renderResult(result, options, _theme, context) {

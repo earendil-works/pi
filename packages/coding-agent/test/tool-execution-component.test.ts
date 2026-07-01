@@ -155,6 +155,44 @@ describe("ToolExecutionComponent parity", () => {
 		await promise;
 	});
 
+	test("collapses multiline bash call headers to a script summary", () => {
+		const command = "set -euo pipefail\necho one\necho two\n";
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-multiline-collapsed",
+			{ command },
+			{},
+			createBashToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(160).join("\n"));
+		expect(collapsed).toContain("$ bash script (3 lines)");
+		expect(collapsed).not.toContain("set -euo pipefail");
+
+		component.setExpanded(true);
+		const expanded = stripAnsi(component.render(160).join("\n"));
+		expect(expanded).toContain("set -euo pipefail");
+		expect(expanded).toContain("echo one");
+	});
+
+	test("keeps single-line bash call headers visible when collapsed", () => {
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-single-line-collapsed",
+			{ command: "git status --short" },
+			{},
+			createBashToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(160).join("\n"));
+		expect(collapsed).toContain("$ git status --short");
+		expect(collapsed).not.toContain("bash script");
+	});
+
 	test("bash renderer does not duplicate final full output truncation details", async () => {
 		const operations: BashOperations = {
 			exec: async (_command, _cwd, { onData }) => {
