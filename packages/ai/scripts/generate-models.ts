@@ -220,6 +220,7 @@ const GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES = {
 	"claude-opus-4.7": { minimal: "low" },
 	"claude-opus-4.8": { minimal: "low" },
 	"claude-sonnet-4.6": { minimal: "low", xhigh: "max" },
+	"claude-sonnet-5": { minimal: "low", xhigh: "max" },
 } satisfies Record<string, NonNullable<Model<Api>["thinkingLevelMap"]>>;
 
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
@@ -1361,12 +1362,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
-				// Claude 4.x models route to Anthropic Messages API
-				const isCopilotClaude4 = /^claude-(haiku|sonnet|opus)-4([.\-]|$)/.test(modelId);
+				// Claude models route to the Anthropic Messages API. Match the known
+				// families with any version so new releases are covered automatically.
+				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)[-.]\d/.test(modelId);
 				// gpt-5 models require responses API, others use completions
 				const needsResponsesApi = modelId.startsWith("gpt-5") || modelId.startsWith("oswe");
 
-				const api: Api = isCopilotClaude4
+				const api: Api = isCopilotClaude
 					? "anthropic-messages"
 					: needsResponsesApi
 						? "openai-responses"
@@ -1895,6 +1897,25 @@ async function generateModels() {
 				...copilotBaseModel,
 				id: "gpt-5.3-codex",
 				name: "GPT-5.3 Codex",
+			});
+		}
+	}
+
+	// Add missing GitHub Copilot Claude Sonnet 5 until models.dev includes it.
+	// Cloned from Claude Sonnet 4.6 (same Anthropic Messages routing, 1M context,
+	// adaptive thinking) until Copilot's catalog exposes real Sonnet 5 metadata.
+	// Pricing is the promotional Sonnet 5 rate published in GitHub Copilot's
+	// models-and-pricing docs (in effect through 2026-08-31).
+	const copilotSonnetBase = allModels.find(
+		(m) => m.provider === "github-copilot" && m.id === "claude-sonnet-4.6",
+	);
+	if (copilotSonnetBase) {
+		if (!allModels.some((m) => m.provider === "github-copilot" && m.id === "claude-sonnet-5")) {
+			allModels.push({
+				...copilotSonnetBase,
+				id: "claude-sonnet-5",
+				name: "Claude Sonnet 5",
+				cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 			});
 		}
 	}

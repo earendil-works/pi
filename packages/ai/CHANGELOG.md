@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Anthropic Claude Sonnet 5 model metadata for the GitHub Copilot provider, routed through the Anthropic Messages API.
+
 ## [0.80.3] - 2026-06-30
 
 ### Added
