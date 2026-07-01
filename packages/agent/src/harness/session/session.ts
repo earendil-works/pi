@@ -4,6 +4,7 @@ import { createBranchSummaryMessage, createCompactionSummaryMessage, createCusto
 import type {
 	ActiveToolsChangeEntry,
 	BranchSummaryEntry,
+	ClosableSessionStorage,
 	CompactionEntry,
 	CustomEntry,
 	CustomMessageEntry,
@@ -99,7 +100,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async cleanup(): Promise<void> {
-		await this.storage.cleanup();
+		if ("cleanup" in this.storage && typeof this.storage.cleanup === "function") {
+			await (this.storage as SessionStorage<TMetadata> & ClosableSessionStorage).cleanup();
+		}
+		if (this.sqliteStorage && "cleanup" in this.sqliteStorage && typeof this.sqliteStorage.cleanup === "function") {
+			await (this.sqliteStorage as SessionStorage<SqliteSessionMetadata> & ClosableSessionStorage).cleanup();
+		}
 	}
 
 	getLeafId(): Promise<string | null> {

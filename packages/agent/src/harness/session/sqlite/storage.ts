@@ -1,4 +1,5 @@
 import type {
+	ClosableSessionStorage,
 	LeafEntry,
 	SessionStorage,
 	SessionTreeEntry,
@@ -263,7 +264,7 @@ async function loadSqliteStorage(
 	return { row, entries, leafId };
 }
 
-export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
+export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata>, ClosableSessionStorage {
 	private readonly db: SqliteDatabase;
 	private readonly metadata: SqliteSessionMetadata;
 	private entries: SessionTreeEntry[];

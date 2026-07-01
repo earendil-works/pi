@@ -493,6 +493,9 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	getLabel(id: string): Promise<string | undefined>;
 	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
+}
+
+export interface ClosableSessionStorage {
 	cleanup(): Promise<void>;
 }
 
