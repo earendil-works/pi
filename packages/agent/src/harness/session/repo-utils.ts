@@ -5,6 +5,7 @@ import {
 	type SessionMetadata,
 	type SessionStorage,
 	type SessionTreeEntry,
+	type SqliteSessionMetadata,
 } from "../types.ts";
 import { Session } from "./session.ts";
 import { uuidv7 } from "./uuid.ts";
@@ -17,8 +18,11 @@ export function createTimestamp(): string {
 	return new Date().toISOString();
 }
 
-export function toSession<TMetadata extends SessionMetadata>(storage: SessionStorage<TMetadata>): Session<TMetadata> {
-	return new Session(storage);
+export function toSession<TMetadata extends SessionMetadata>(
+	storage: SessionStorage<TMetadata>,
+	sqliteStorage?: SessionStorage<SqliteSessionMetadata>,
+): Session<TMetadata> {
+	return new Session(storage, sqliteStorage);
 }
 
 export function getFileSystemResultOrThrow<TValue>(result: Result<TValue, FileError>, message: string): TValue {
