@@ -16,6 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import type { SQLInputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import {
 	type ExecutionEnv,
 	ExecutionError,
@@ -25,6 +27,9 @@ import {
 	type FileKind,
 	ok,
 	type Result,
+	type SqliteDatabase,
+	type SqliteRunResult,
+	type SqliteStatement,
 	toError,
 } from "../types.ts";
 
@@ -200,6 +205,69 @@ function getShellEnv(baseEnv?: NodeJS.ProcessEnv, extraEnv?: Record<string, stri
 		...baseEnv,
 		...extraEnv,
 	};
+}
+
+class NodeSqliteStatement implements SqliteStatement {
+	private readonly statement: ReturnType<DatabaseSync["prepare"]>;
+
+	constructor(statement: ReturnType<DatabaseSync["prepare"]>) {
+		this.statement = statement;
+	}
+
+	async run(params?: unknown[]): Promise<SqliteRunResult> {
+		const sqliteParams = params as SQLInputValue[] | undefined;
+		const result = sqliteParams ? this.statement.run(...sqliteParams) : this.statement.run();
+		return {
+			changes: Number(result.changes),
+			lastInsertRowid: result.lastInsertRowid === undefined ? undefined : Number(result.lastInsertRowid),
+		};
+	}
+
+	async get<TRow extends object>(params?: unknown[]): Promise<TRow | undefined> {
+		const sqliteParams = params as SQLInputValue[] | undefined;
+		return (sqliteParams ? this.statement.get(...sqliteParams) : this.statement.get()) as TRow | undefined;
+	}
+
+	async all<TRow extends object>(params?: unknown[]): Promise<TRow[]> {
+		const sqliteParams = params as SQLInputValue[] | undefined;
+		return (sqliteParams ? this.statement.all(...sqliteParams) : this.statement.all()) as TRow[];
+	}
+}
+
+class NodeSqliteDatabase implements SqliteDatabase {
+	private readonly db: DatabaseSync;
+
+	constructor(db: DatabaseSync) {
+		this.db = db;
+	}
+
+	async exec(sql: string): Promise<void> {
+		this.db.exec(sql);
+	}
+
+	prepare(sql: string): SqliteStatement {
+		return new NodeSqliteStatement(this.db.prepare(sql));
+	}
+
+	async transaction<T>(fn: () => Promise<T>): Promise<T> {
+		this.db.exec("BEGIN");
+		try {
+			const result = await fn();
+			this.db.exec("COMMIT");
+			return result;
+		} catch (error) {
+			try {
+				this.db.exec("ROLLBACK");
+			} catch {
+				// Ignore rollback errors to rethrow original error.
+			}
+			throw error;
+		}
+	}
+
+	async close(): Promise<void> {
+		this.db.close();
+	}
 }
 
 function killProcessTree(pid: number): void {
@@ -542,6 +610,12 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		} catch (error) {
 			return err(toFileError(error, filePath));
 		}
+	}
+
+	async openSqlite(path: string): Promise<SqliteDatabase> {
+		const resolved = resolvePath(this.cwd, path);
+		await mkdir(resolve(resolved, ".."), { recursive: true });
+		return new NodeSqliteDatabase(new DatabaseSync(resolved));
 	}
 
 	async cleanup(): Promise<void> {
