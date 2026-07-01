@@ -9,6 +9,7 @@ import type {
 	CustomEntry,
 	CustomMessageEntry,
 	LabelEntry,
+	LeafEntry,
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
@@ -268,9 +269,16 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
 		}
-		await this.storage.setLeafId(entryId);
+		const leafEntry: LeafEntry = {
+			type: "leaf",
+			id: await this.storage.createEntryId(),
+			parentId: await this.storage.getLeafId(),
+			timestamp: new Date().toISOString(),
+			targetId: entryId,
+		};
+		await this.storage.appendEntry(leafEntry);
 		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
-			await this.sqliteStorage.setLeafId(entryId);
+			await this.sqliteStorage.appendEntry(leafEntry);
 		}
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
