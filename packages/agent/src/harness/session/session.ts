@@ -15,9 +15,11 @@ import type {
 	SessionMetadata,
 	SessionStorage,
 	SessionTreeEntry,
+	SqliteSessionMetadata,
 	ThinkingLevelChangeEntry,
 } from "../types.ts";
 import { SessionError } from "../types.ts";
+import { isExperimentalSqliteSessionStorageEnabled } from "./sqlite/experimental.ts";
 
 export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
 	let thinkingLevel = "off";
@@ -81,9 +83,11 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
+	private sqliteStorage?: SessionStorage<SqliteSessionMetadata>;
 
-	constructor(storage: SessionStorage<TMetadata>) {
+	constructor(storage: SessionStorage<TMetadata>, sqliteStorage?: SessionStorage<SqliteSessionMetadata>) {
 		this.storage = storage;
+		this.sqliteStorage = sqliteStorage;
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -92,6 +96,10 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	getStorage(): SessionStorage<TMetadata> {
 		return this.storage;
+	}
+
+	async cleanup(): Promise<void> {
+		await this.storage.cleanup();
 	}
 
 	getLeafId(): Promise<string | null> {
@@ -126,6 +134,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
 		await this.storage.appendEntry(entry);
+		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
+			await this.sqliteStorage.appendEntry(entry);
+		}
 		return entry.id;
 	}
 
@@ -252,6 +263,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
 		}
 		await this.storage.setLeafId(entryId);
+		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
+			await this.sqliteStorage.setLeafId(entryId);
+		}
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
 			type: "branch_summary",

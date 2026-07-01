@@ -31,6 +31,7 @@ export * from "./harness/session/jsonl-repo.ts";
 export * from "./harness/session/memory-repo.ts";
 export * from "./harness/session/repo-utils.ts";
 export * from "./harness/session/session.ts";
+export * from "./harness/session/session-lifecycle.ts";
 export { uuidv7 } from "./harness/session/uuid.ts";
 export * from "./harness/skills.ts";
 export * from "./harness/system-prompt.ts";
