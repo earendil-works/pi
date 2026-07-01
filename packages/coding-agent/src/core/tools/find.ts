@@ -17,6 +17,25 @@ function toPosixPath(value: string): string {
 	return value.split(path.sep).join("/");
 }
 
+// Relativizes an absolute result path against the search root and returns it in
+// POSIX form. `path.resolve` strips a trailing separator from every path except a
+// bare root (e.g. "/", "C:\"), where it is kept. The previous `slice(len + 1)`
+// assumed a separator always follows `searchPath`, so for a bare root it ate the
+// first real character (and, on Windows, the trailing-slash guard ran before
+// `toPosixPath`, turning a "\"-terminated path into "//"). See #6104.
+export function relativizeSearchResult(p: string, searchPath: string): string {
+	let rel: string;
+	if (p.startsWith(searchPath)) {
+		const start = searchPath.endsWith(path.sep) ? searchPath.length : searchPath.length + 1;
+		rel = p.slice(start);
+	} else {
+		rel = path.relative(searchPath, p);
+	}
+	rel = toPosixPath(rel);
+	if ((p.endsWith("/") || p.endsWith("\\")) && !rel.endsWith("/")) rel += "/";
+	return rel;
+}
+
 const findSchema = Type.Object({
 	pattern: Type.String({
 		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
@@ -180,10 +199,7 @@ export function createFindToolDefinition(
 							}
 
 							// Relativize paths against the search root for stable output.
-							const relativized = results.map((p) => {
-								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
-								return toPosixPath(path.relative(searchPath, p));
-							});
+							const relativized = results.map((p) => relativizeSearchResult(p, searchPath));
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
@@ -308,15 +324,7 @@ export function createFindToolDefinition(
 							for (const rawLine of lines) {
 								const line = rawLine.replace(/\r$/, "").trim();
 								if (!line) continue;
-								const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-								let relativePath = line;
-								if (line.startsWith(searchPath)) {
-									relativePath = line.slice(searchPath.length + 1);
-								} else {
-									relativePath = path.relative(searchPath, line);
-								}
-								if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
-								relativized.push(toPosixPath(relativePath));
+								relativized.push(relativizeSearchResult(line, searchPath));
 							}
 
 							const resultLimitReached = relativized.length >= effectiveLimit;
