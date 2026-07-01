@@ -224,6 +224,7 @@ interface EditorSnapshot {
 	state: EditorState;
 	pastes: Map<number, string>;
 	pasteCounter: number;
+	autoSpacedPasteIds: Set<number>;
 }
 
 interface LayoutLine {
@@ -317,6 +318,7 @@ export class Editor implements Component, Focusable {
 	// Paste tracking for large pastes
 	private pastes: Map<number, string> = new Map();
 	private pasteCounter: number = 0;
+	private autoSpacedPasteIds: Set<number> = new Set();
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -1094,6 +1096,52 @@ export class Editor implements Component, Focusable {
 		return { line: this.state.cursorLine, col: this.state.cursorCol };
 	}
 
+	private findMatchingPasteMarkerBeforeCursor(
+		pasteContent: string,
+	): { pasteId: number; pasteContent: string; startCol: number; endCol: number } | null {
+		const line = this.state.lines[this.state.cursorLine] || "";
+		if (this.state.cursorCol === 0 || !line.includes("[paste #")) return null;
+
+		for (const match of line.matchAll(PASTE_MARKER_REGEX)) {
+			const marker = match[0];
+			const startCol = match.index;
+			const endCol = startCol + marker.length;
+			if (endCol !== this.state.cursorCol) continue;
+
+			const pasteId = Number.parseInt(match[1]!, 10);
+			const storedPasteContent = this.pastes.get(pasteId);
+			if (storedPasteContent === undefined) continue;
+			if (storedPasteContent === pasteContent) {
+				return { pasteId, pasteContent: storedPasteContent, startCol, endCol };
+			}
+			if (
+				this.autoSpacedPasteIds.has(pasteId) &&
+				/^[/~.]/.test(pasteContent) &&
+				storedPasteContent === ` ${pasteContent}`
+			) {
+				return { pasteId, pasteContent: storedPasteContent, startCol, endCol };
+			}
+		}
+
+		return null;
+	}
+
+	private replaceCurrentLineRangeWithText(startCol: number, endCol: number, text: string): void {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		this.state.lines[this.state.cursorLine] = currentLine.slice(0, startCol) + currentLine.slice(endCol);
+		this.setCursorCol(startCol);
+		this.insertTextAtCursorInternal(text);
+	}
+
+	private countPasteMarkerOccurrences(pasteId: number): number {
+		let count = 0;
+		const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+		for (const line of this.state.lines) {
+			count += [...line.matchAll(markerRegex)].length;
+		}
+		return count;
+	}
+
 	setText(text: string): void {
 		this.cancelAutocomplete();
 		this.lastAction = null;
@@ -1270,11 +1318,13 @@ export class Editor implements Component, Focusable {
 
 		// If pasting a file path (starts with /, ~, or .) and the character before
 		// the cursor is a word character, prepend a space for better readability
+		let autoSpacedPaste = false;
 		if (/^[/~.]/.test(filteredText)) {
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const charBeforeCursor = this.state.cursorCol > 0 ? currentLine[this.state.cursorCol - 1] : "";
 			if (charBeforeCursor && /\w/.test(charBeforeCursor)) {
 				filteredText = ` ${filteredText}`;
+				autoSpacedPaste = true;
 			}
 		}
 
@@ -1284,10 +1334,26 @@ export class Editor implements Component, Focusable {
 		// Check if this is a large paste (> 10 lines or > 1000 characters)
 		const totalChars = filteredText.length;
 		if (pastedLines.length > 10 || totalChars > 1000) {
+			const matchingMarker = this.findMatchingPasteMarkerBeforeCursor(filteredText);
+			if (matchingMarker) {
+				const shouldDeletePaste = this.countPasteMarkerOccurrences(matchingMarker.pasteId) <= 1;
+				this.replaceCurrentLineRangeWithText(
+					matchingMarker.startCol,
+					matchingMarker.endCol,
+					matchingMarker.pasteContent,
+				);
+				if (shouldDeletePaste) {
+					this.pastes.delete(matchingMarker.pasteId);
+					this.autoSpacedPasteIds.delete(matchingMarker.pasteId);
+				}
+				return;
+			}
+
 			// Store the paste and insert a marker
 			this.pasteCounter++;
 			const pasteId = this.pasteCounter;
 			this.pastes.set(pasteId, filteredText);
+			if (autoSpacedPaste) this.autoSpacedPasteIds.add(pasteId);
 
 			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
 			const marker =
@@ -1350,6 +1416,7 @@ export class Editor implements Component, Focusable {
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
+		this.autoSpacedPasteIds.clear();
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
@@ -2097,7 +2164,12 @@ export class Editor implements Component, Focusable {
 	}
 
 	private pushUndoSnapshot(): void {
-		this.undoStack.push({ state: this.state, pastes: this.pastes, pasteCounter: this.pasteCounter });
+		this.undoStack.push({
+			state: this.state,
+			pastes: this.pastes,
+			pasteCounter: this.pasteCounter,
+			autoSpacedPasteIds: this.autoSpacedPasteIds,
+		});
 	}
 
 	private undo(): void {
@@ -2107,6 +2179,7 @@ export class Editor implements Component, Focusable {
 		Object.assign(this.state, snapshot.state);
 		this.pastes = snapshot.pastes;
 		this.pasteCounter = snapshot.pasteCounter;
+		this.autoSpacedPasteIds = snapshot.autoSpacedPasteIds;
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {

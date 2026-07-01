@@ -3590,6 +3590,109 @@ describe("Editor component", () => {
 			assert.match(text, /\[paste #\d+ \+\d+ lines\]/);
 		});
 
+		it("expands an adjacent matching paste marker when pasted again", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = "line\n".repeat(20).trimEnd();
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #\d+ \+20 lines\]/);
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.strictEqual(editor.getText(), bigContent);
+			assert.deepStrictEqual(editor.getCursor(), { line: 19, col: 4 });
+		});
+
+		it("expands repeated paste in place while preserving prefix and suffix", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = "line\n".repeat(20).trimEnd();
+
+			editor.handleInput("A");
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			editor.handleInput("B");
+			editor.handleInput("\x1b[D");
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `A${bigContent}B`);
+			assert.deepStrictEqual(editor.getCursor(), { line: 19, col: 4 });
+		});
+
+		it("undo after expanding a repeated paste restores a backed marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = "line\n".repeat(20).trimEnd();
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			const markerText = editor.getText();
+			assert.match(markerText, /\[paste #\d+ \+20 lines\]/);
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.strictEqual(editor.getText(), bigContent);
+
+			editor.handleInput("\x1b[45;5u"); // Ctrl+- (undo)
+			assert.strictEqual(editor.getText(), markerText);
+			assert.strictEqual(editor.getExpandedText(), bigContent);
+		});
+
+		it("does not expand marker-like literals after repeated paste expansion", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = `[paste #1 +20 lines]\n${"line\n".repeat(20).trimEnd()}`;
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1 \+21 lines\]/);
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.strictEqual(editor.getText(), bigContent);
+			assert.strictEqual(editor.getExpandedText(), bigContent);
+		});
+
+		it("keeps paste backing when one duplicated marker occurrence is expanded", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = "line\n".repeat(20).trimEnd();
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			const markerText = editor.getText();
+			editor.insertTextAtCursor(` ${markerText}`);
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `${markerText} ${bigContent}`);
+			assert.strictEqual(editor.getExpandedText(), `${bigContent} ${bigContent}`);
+		});
+
+		it("expands repeated path-like large paste that received an automatic leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigPath = `/${"a".repeat(1000)}`;
+
+			editor.handleInput("go");
+			editor.handleInput(`\x1b[200~${bigPath}\x1b[201~`);
+			assert.match(editor.getText(), /^go\[paste #\d+ 1002 chars\]$/);
+
+			editor.handleInput(`\x1b[200~${bigPath}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `go ${bigPath}`);
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 + bigPath.length });
+		});
+
+		it("does not treat an original leading space as automatic path spacing", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigPath = `/${"a".repeat(1000)}`;
+
+			editor.handleInput(`\x1b[200~ ${bigPath}\x1b[201~`);
+			editor.handleInput(`\x1b[200~${bigPath}\x1b[201~`);
+
+			const markers = [...editor.getText().matchAll(/\[paste #\d+ 100[12] chars\]/g)];
+			assert.strictEqual(markers.length, 2);
+		});
+
+		it("creates another marker when the repeated paste is not adjacent", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const bigContent = "line\n".repeat(20).trimEnd();
+
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+			editor.handleInput(" ");
+			editor.handleInput(`\x1b[200~${bigContent}\x1b[201~`);
+
+			const markers = [...editor.getText().matchAll(/\[paste #\d+ \+20 lines\]/g)];
+			assert.strictEqual(markers.length, 2);
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");
