@@ -172,6 +172,7 @@ function getAnthropicCompat(
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
 	return {
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
+		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? false,
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? true,
@@ -950,6 +951,7 @@ function buildParams(
 			context.tools,
 			isOAuthToken,
 			compat.supportsEagerToolInputStreaming,
+			compat.supportsStrictTools,
 			compat.supportsCacheControlOnTools ? cacheControl : undefined,
 		);
 	}
@@ -1189,22 +1191,29 @@ function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
+	strictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
 ): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		const schema = tool.parameters as { properties?: unknown; required?: string[]; additionalProperties?: unknown };
+		const strict = strictTools && tool.strict === true;
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			input_schema: {
-				type: "object",
-				properties: schema.properties ?? {},
-				required: schema.required ?? [],
-			},
+			// Strict schemas are sent as declared; see Tool.strict.
+			input_schema: strict
+				? (tool.parameters as unknown as Anthropic.Messages.Tool.InputSchema)
+				: {
+						type: "object",
+						properties: schema.properties ?? {},
+						required: schema.required ?? [],
+						...(schema.additionalProperties === false ? { additionalProperties: false } : {}),
+					},
+			...(strict ? { strict: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});

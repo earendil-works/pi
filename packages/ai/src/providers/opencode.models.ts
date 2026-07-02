@@ -28,6 +28,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -62,6 +63,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -79,7 +81,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"max"},
 		input: ["text", "image"],
@@ -98,7 +100,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -117,7 +119,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -153,6 +155,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -170,7 +173,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -188,7 +191,7 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {

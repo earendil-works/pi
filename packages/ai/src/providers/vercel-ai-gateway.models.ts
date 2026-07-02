@@ -520,6 +520,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -571,6 +572,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -588,7 +590,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"max"},
 		input: ["text", "image"],
@@ -607,7 +609,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -626,7 +628,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -662,6 +664,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -679,7 +682,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -697,7 +700,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {

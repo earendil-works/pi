@@ -112,7 +112,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -131,6 +131,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -148,6 +149,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -233,6 +235,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -250,6 +253,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -267,7 +271,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"max"},
 		input: ["text", "image"],
@@ -286,7 +290,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -305,7 +309,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
+		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false,"supportsStrictTools":true},
 		reasoning: true,
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
@@ -358,6 +362,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -375,6 +380,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -392,7 +398,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -410,7 +416,7 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
-		compat: {"forceAdaptiveThinking":true},
+		compat: {"forceAdaptiveThinking":true,"supportsStrictTools":true},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {

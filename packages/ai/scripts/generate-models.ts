@@ -277,6 +277,11 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
 }
 
+function isAnthropicStrictToolsModel(modelId: string): boolean {
+	const id = modelId.toLowerCase();
+	return /(opus|sonnet|haiku)-4[-.][5-9]/.test(id) || /(opus|sonnet|haiku|fable|mythos)-5/.test(id);
+}
+
 const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
@@ -481,6 +486,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
+	}
+	// github-copilot strict capability is unknown and its backend rejects unrecognized tool fields with a 400 (#3575)
+	if (model.api === "anthropic-messages" && model.provider !== "github-copilot" && isAnthropicStrictToolsModel(model.id)) {
+		mergeAnthropicMessagesCompat(model, { supportsStrictTools: true });
 	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
 		mergeThinkingLevelMap(

@@ -434,6 +434,16 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
+	/**
+	 * Opt into Anthropic strict tool use: grammar-constrained sampling that
+	 * guarantees tool inputs match the schema, honored on models whose compat sets
+	 * `supportsStrictTools`. The schema is sent as declared and must fit the
+	 * strict-mode JSON Schema subset and complexity limits, including
+	 * `additionalProperties: false` on every object, or the API rejects the
+	 * request with a 400; see
+	 * https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+	 */
+	strict?: boolean;
 }
 
 export interface Context {
@@ -537,6 +547,14 @@ export interface AnthropicMessagesCompat {
 	 * Default: true.
 	 */
 	supportsEagerToolInputStreaming?: boolean;
+	/**
+	 * Whether the model supports Anthropic strict tool use (`tools[].strict: true`).
+	 * Requires structured-outputs support (Claude 4.5+ / 5.x); built-in models set
+	 * this in generated metadata. Only tools that opt in via `Tool.strict` are
+	 * affected.
+	 * Default: false.
+	 */
+	supportsStrictTools?: boolean;
 	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
 	supportsLongCacheRetention?: boolean;
 	/**
