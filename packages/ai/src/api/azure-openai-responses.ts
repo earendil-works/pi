@@ -15,6 +15,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { resolveOpenAIResponsesMaxOutputTokens } from "./openai-responses-max-output-tokens.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -263,8 +264,9 @@ function buildParams(
 		store: false,
 	};
 
-	if (options?.maxTokens) {
-		params.max_output_tokens = options?.maxTokens;
+	const maxOutputTokens = resolveOpenAIResponsesMaxOutputTokens(model, context, options?.maxTokens);
+	if (maxOutputTokens !== undefined) {
+		params.max_output_tokens = maxOutputTokens;
 	}
 
 	if (options?.temperature !== undefined) {

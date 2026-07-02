@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import {
+	stream as streamOpenAIResponses,
+	streamSimple as streamSimpleOpenAIResponses,
+} from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
-import type { Model } from "../src/types.ts";
+import type { Context, Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
+
+interface OpenAIResponsesPayload {
+	max_output_tokens?: number;
+}
 
 function getHeader(headers: CapturedHeaders, name: string): string | null {
 	if (!headers) return null;
@@ -164,6 +171,62 @@ describe("openai-responses provider defaults", () => {
 			});
 		},
 	);
+
+	it("clamps streamSimple max_output_tokens to the OpenAI Responses minimum when the context cap is below it", async () => {
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.5"),
+			contextWindow: 4098,
+			maxTokens: 1024,
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "abcd", timestamp: 0 }],
+		};
+		let capturedPayload: OpenAIResponsesPayload | undefined;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamSimpleOpenAIResponses(model, context, {
+			apiKey: "test-key",
+			onPayload: (payload) => {
+				capturedPayload = payload as OpenAIResponsesPayload;
+			},
+		});
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload?.max_output_tokens).toBe(16);
+	});
+
+	it("fails before requesting OpenAI Responses when the minimum output budget cannot fit", async () => {
+		const model: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.5"),
+			contextWindow: 10,
+			maxTokens: 1024,
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "x".repeat(40), timestamp: 0 }],
+		};
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const result = await streamSimpleOpenAIResponses(model, context, { apiKey: "test-key" }).result();
+
+		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("Context is exhausted");
+		expect(result.errorMessage).toContain("requires at least 16 output tokens");
+	});
 
 	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });

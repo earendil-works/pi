@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import {
+	stream as streamAzureOpenAIResponses,
+	streamSimple as streamSimpleAzureOpenAIResponses,
+} from "../src/api/azure-openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 
@@ -12,6 +15,7 @@ interface CapturedAzureClientOptions {
 }
 
 interface CapturedAzureResponsesPayload {
+	max_output_tokens?: number;
 	prompt_cache_key?: string;
 	store?: boolean;
 }
@@ -163,6 +167,24 @@ describe("azure-openai-responses base URL normalization", () => {
 		}).result();
 
 		expect(azureMock.lastParams?.store).toBe(false);
+	});
+
+	it("clamps streamSimple max_output_tokens to the Azure OpenAI Responses minimum when the context cap is below it", async () => {
+		const model = {
+			...getModel("azure-openai-responses", "gpt-4o-mini"),
+			baseUrl: "https://my-resource.openai.azure.com",
+			contextWindow: 4098,
+			maxTokens: 1024,
+		};
+		const nearFullContext: Context = {
+			messages: [{ role: "user", content: "abcd", timestamp: 0 }],
+		};
+
+		await streamSimpleAzureOpenAIResponses(model, nearFullContext, {
+			apiKey: "test-api-key",
+		}).result();
+
+		expect(azureMock.lastParams?.max_output_tokens).toBe(16);
 	});
 
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {
