@@ -82,7 +82,7 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 
 代码会自动处理 dedup, 你不需要担心:
 - 内容指纹 (sha256) → 完全重复跳过
-- 余弦相似度 > 0.92 → 旧 atom 自动 superseded
+- 余弦相似度 ≥ 0.65 → 旧 atom 自动 superseded
 
 所以你只管 emit, 不需要 emit "skip" 或 "merge" 类标记。
 
@@ -119,7 +119,7 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 /**
  * Execute a single extraction item against the index:
  *   - fingerprint dedup: skip when an active atom with the same fingerprint exists
- *   - cosine dedup: supersede when the most similar active atom clears 0.92
+ *   - cosine dedup: supersede when the most similar active atom clears 0.65
  *   - otherwise: create a new atom (DB row + vector + .md file)
  *
  * Returns the outcome (skip / supersede / create) and the resulting atom when

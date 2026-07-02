@@ -7,7 +7,7 @@
 //   - embedding === null → return {status: "create", atom: newAtom} (graceful
 //     degradation per search.ts Decision 7 — embedder is optional, write must
 //     still happen).
-//   - findMostSimilarEmbedding(embedding, threshold ?? 0.92)
+//   - findMostSimilarEmbedding(embedding, threshold ?? 0.65)
 //   - if hit: markSupersededTx + writeAtomToFile → {status: "supersede",
 //     atom: finalNew}. Reuses storage.markSupersededTx so the same row +
 //     vector + FTS5 swap semantics apply.
@@ -35,7 +35,7 @@ import type { MemoryAtom } from "../types.ts";
 // hybrid-recall.test.ts:42-49) + controlled cosine vectors. Real MemoryIndex
 // + real SQLite; the only mock is the embedder. For tests 1 and 2 we use the
 // charBag mock with disjoint title/summary/tags so the natural charBag
-// cosines are reliably below 0.92 — relying on the default "Sample summary"
+// cosines are reliably below 0.65 — relying on the default "Sample summary"
 // + "test" tags makes the dot product dominated by shared \n characters and
 // pushes the cosine well above the threshold regardless of content. For
 // tests 3, 4 and 5 we bypass the embedder with `index.insertAtom(a, vec)`
@@ -124,10 +124,10 @@ describe("supersedeIfSimilar", () => {
 	});
 
 	// Test 1: charBag of disjoint title/summary/tags ("AAA" / "BBB" / "CCC")
-	// yields low cosines (~0.31) — well below 0.92. The new atom's
+	// yields low cosines (~0.31) — well below 0.65. The new atom's
 	// embedding doesn't match either A or B, so the function returns
 	// "create" without mutating the index.
-	it("returns create when no similar atom exists (cosine < 0.92)", async () => {
+	it("returns create when no similar atom exists (cosine < 0.65)", async () => {
 		const a = sampleAtom({
 			title: "AAA",
 			summary: "AAA",
@@ -228,15 +228,15 @@ describe("supersedeIfSimilar", () => {
 		expect(result.atom.is_latest).toBe(1);
 	});
 
-	// Test 5: default threshold is 0.92 (matches extraction.ts:147).
+	// Test 5: default threshold is 0.65 (matches extraction.ts:147).
 	// With cosine 0.5 the threshold is NOT cleared, so the function
 	// returns "create" and leaves the existing atom untouched.
-	it("returns create with default threshold (0.92) when cosine 0.5", async () => {
+	it("returns create with default threshold (0.65) when cosine 0.5", async () => {
 		const a = sampleAtom({ title: "Atom A", content: "alpha content unique" });
 		await index.insertAtom(a, V_UNIT);
 
 		const newAtom = sampleAtom({ title: "New", content: "different content here" });
-		// No threshold argument → falls back to 0.92.
+		// No threshold argument → falls back to 0.65.
 		const result = await supersedeIfSimilar(index, atomsDir, newAtom, V_COS_05);
 		expect(result.status).toBe("create");
 		expect(result.atom.id).toBe(newAtom.id);
