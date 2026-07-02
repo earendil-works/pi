@@ -196,12 +196,24 @@ describe("ImagesModels", () => {
 	it("builtinImagesModels registers the openrouter provider with its catalog", async () => {
 		const models = builtinImagesModels({ authContext: fakeAuthContext({ OPENROUTER_API_KEY: "or-key" }) });
 		const providers = models.getProviders();
-		expect(providers.map((p) => p.id)).toEqual(["openrouter"]);
+		expect(providers.map((p) => p.id)).toContain("openrouter");
 
 		const list = models.getModels("openrouter");
 		expect(list.length).toBeGreaterThan(0);
 		expect(list.every((m) => m.api === "openrouter-images")).toBe(true);
 
 		expect((await models.getAuth(list[0]))?.auth.apiKey).toBe("or-key");
+	});
+
+	it("builtinImagesModels registers the deepinfra provider with its catalog", async () => {
+		const models = builtinImagesModels({ authContext: fakeAuthContext({ DEEPINFRA_API_KEY: "di-key" }) });
+		const providers = models.getProviders();
+		expect(providers.map((p) => p.id)).toContain("deepinfra");
+
+		const list = models.getModels("deepinfra");
+		expect(list.length).toBeGreaterThan(0);
+		expect(list.every((m) => m.api === "deepinfra-images")).toBe(true);
+
+		expect((await models.getAuth(list[0]))?.auth.apiKey).toBe("di-key");
 	});
 });

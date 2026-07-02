@@ -3,12 +3,19 @@
 import { writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import type { ImagesModel } from "../src/types.ts";
+import { DEEPINFRA_BASE_URL, type DeepInfraCatalogModel, DEEPINFRA_MODELS_URL } from "../src/api/deepinfra.ts";
+import type { ImagesModel, KnownImagesApi, KnownImagesProvider } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageRoot = join(__dirname, "..");
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+// DeepInfra tags every image model `image-gen` with no separate edit tag, but many
+// require a source image (Kontext/Redux/Qwen-Image-Edit, Bria background ops), which
+// the text-to-image `images/generations` surface cannot drive. Exclude them until
+// image-input editing is plumbed through.
+const DEEPINFRA_IMAGE_EDIT_RE = /(?:edit|kontext|redux|remove_background|erase_foreground|blur_background|expand)/i;
 
 interface OpenRouterModelRecord {
 	id: string;
@@ -76,14 +83,44 @@ async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-ima
 	}
 }
 
-function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): string {
-	const imageModelsByProvider = {
-		openrouter: Object.fromEntries(
-			models
-				.sort((a, b) => a.id.localeCompare(b.id))
-				.map((model) => [
-					model.id,
-					`{
+async function fetchDeepInfraImageModels(): Promise<ImagesModel<"deepinfra-images">[]> {
+	try {
+		console.log("Fetching image models from DeepInfra API...");
+		const response = await fetch(DEEPINFRA_MODELS_URL);
+		const data = (await response.json()) as { data?: DeepInfraCatalogModel[] };
+		const models: ImagesModel<"deepinfra-images">[] = [];
+		let excluded = 0;
+
+		for (const model of data.data ?? []) {
+			if (!(model.metadata?.tags ?? []).includes("image-gen")) continue;
+			if (DEEPINFRA_IMAGE_EDIT_RE.test(model.id)) {
+				excluded++;
+				continue;
+			}
+			models.push({
+				id: model.id,
+				name: model.id,
+				api: "deepinfra-images",
+				provider: "deepinfra",
+				baseUrl: DEEPINFRA_BASE_URL,
+				input: ["text"],
+				output: ["image"],
+				// DeepInfra bills image generation per image (metadata.pricing.per_image_unit),
+				// which does not map to pi's token-based ImagesModel cost.
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			});
+		}
+
+		console.log(`Fetched ${models.length} image models from DeepInfra (excluded ${excluded} image-edit models)`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch DeepInfra image models:", error);
+		return [];
+	}
+}
+
+function serializeModel(model: ImagesModel<KnownImagesApi>): string {
+	return `{
 			id: ${JSON.stringify(model.id)},
 			name: ${JSON.stringify(model.name)},
 			api: ${JSON.stringify(model.api)},
@@ -92,15 +129,17 @@ function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): st
 			input: ${JSON.stringify(model.input)},
 			output: ${JSON.stringify(model.output)},
 			cost: ${JSON.stringify(model.cost, null, 2).replace(/^/gm, "\t")}
-		} satisfies ImagesModel<${JSON.stringify(model.api)}>`,
-				]),
-		),
-	};
+		} satisfies ImagesModel<${JSON.stringify(model.api)}>`;
+}
 
-	const providerEntries = Object.entries(imageModelsByProvider)
-		.map(([provider, providerModels]) => {
-			const modelEntries = Object.entries(providerModels)
-				.map(([id, serialized]) => `\t\t${JSON.stringify(id)}: ${serialized},`)
+function generateImageModelsFile(modelsByProvider: Record<KnownImagesProvider, ImagesModel<KnownImagesApi>[]>): string {
+	const providerEntries = Object.entries(modelsByProvider)
+		.map(([provider, models]) => {
+			// Key by id (last wins) to collapse any duplicate ids the catalog APIs return,
+			// avoiding duplicate object-literal keys in the generated file.
+			const byId = new Map(models.sort((a, b) => a.id.localeCompare(b.id)).map((model) => [model.id, model]));
+			const modelEntries = Array.from(byId.values())
+				.map((model) => `\t\t${JSON.stringify(model.id)}: ${serializeModel(model)},`)
 				.join("\n");
 			return `\t${JSON.stringify(provider)}: {\n${modelEntries}\n\t},`;
 		})
@@ -118,8 +157,10 @@ ${providerEntries}
 }
 
 async function main(): Promise<void> {
-	const models = await fetchOpenRouterImageModels();
-	const output = generateImageModelsFile(models);
+	// Independent catalog fetches; each fetcher catches its own errors and returns [].
+	const [openrouter, deepinfra] = await Promise.all([fetchOpenRouterImageModels(), fetchDeepInfraImageModels()]);
+	// Keys are always emitted (even when empty) so provider factories can read them.
+	const output = generateImageModelsFile({ openrouter, deepinfra });
 	const outputPath = join(packageRoot, "src", "image-models.generated.ts");
 	writeFileSync(outputPath, output, "utf-8");
 	console.log(`Generated ${outputPath}`);

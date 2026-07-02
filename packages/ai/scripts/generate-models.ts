@@ -9,6 +9,7 @@ import {
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
 } from "../src/api/cloudflare.ts";
+import { DEEPINFRA_BASE_URL, type DeepInfraCatalogModel, DEEPINFRA_MODELS_URL } from "../src/api/deepinfra.ts";
 import type { AnthropicMessagesCompat, Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -324,6 +325,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isDeepInfra = provider === "deepinfra" || baseUrl.includes("api.deepinfra.com");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 
 	const isNonStandard =
@@ -341,10 +343,17 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+		isAntLing ||
+		isDeepInfra;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
+		baseUrl.includes("chutes.ai") ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isDeepInfra;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
@@ -378,7 +387,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
-		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isDeepInfra,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(
@@ -386,7 +395,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 			isCloudflareWorkersAI ||
 			isCloudflareAiGateway ||
 			isNvidia ||
-			isAntLing
+			isAntLing ||
+			isDeepInfra
 		),
 	};
 }
@@ -707,6 +717,64 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Vercel AI Gateway models:", error);
+		return [];
+	}
+}
+
+// DeepInfra reports max_tokens == context_length for every chat model (no distinct
+// output cap), so clamp the default output budget to a reasonable ceiling; callers
+// can still request more, and the runtime clamps to the available context.
+const DEEPINFRA_MAX_OUTPUT_TOKENS = 131072;
+
+async function fetchDeepInfraModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from DeepInfra API...");
+		const response = await fetch(DEEPINFRA_MODELS_URL);
+		const data = (await response.json()) as { data?: DeepInfraCatalogModel[] };
+		const models: Model<any>[] = [];
+
+		for (const model of data.data ?? []) {
+			const tags = model.metadata?.tags ?? [];
+			// Only chat models map to the text/completions surface.
+			if (!tags.includes("chat")) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (tags.includes("vision") || tags.includes("vlm")) {
+				input.push("image");
+			}
+
+			// The catalog tags reasoning and reasoning_effort independently; treat either
+			// as a reasoning model, but only advertise reasoning_effort when tagged.
+			const hasReasoningEffort = tags.includes("reasoning_effort");
+			const reasoning = tags.includes("reasoning") || hasReasoningEffort;
+
+			const contextWindow = model.metadata?.context_length || 4096;
+			const pricing = model.metadata?.pricing ?? {};
+			models.push({
+				id: model.id,
+				name: model.id,
+				api: "openai-completions",
+				baseUrl: DEEPINFRA_BASE_URL,
+				provider: "deepinfra",
+				reasoning,
+				...(reasoning && !hasReasoningEffort ? { compat: { supportsReasoningEffort: false } } : {}),
+				input,
+				cost: {
+					// DeepInfra pricing is already expressed in $/million tokens.
+					input: roundCost(pricing.input_tokens ?? 0),
+					output: roundCost(pricing.output_tokens ?? 0),
+					cacheRead: roundCost(pricing.cache_read_tokens ?? 0),
+					cacheWrite: 0,
+				},
+				contextWindow,
+				maxTokens: Math.min(contextWindow, DEEPINFRA_MAX_OUTPUT_TOKENS),
+			});
+		}
+
+		console.log(`Fetched ${models.length} chat models from DeepInfra`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch DeepInfra models:", error);
 		return [];
 	}
 }
@@ -1585,9 +1653,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const deepInfraModels = await fetchDeepInfraModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...deepInfraModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

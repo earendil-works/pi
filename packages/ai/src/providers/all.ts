@@ -9,6 +9,8 @@ import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
 import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
+import { deepinfraProvider } from "./deepinfra.ts";
+import { deepinfraImagesProvider } from "./deepinfra-images.ts";
 import { deepseekProvider } from "./deepseek.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
@@ -76,6 +78,7 @@ export function builtinProviders(): Provider[] {
 		cerebrasProvider(),
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
+		deepinfraProvider(),
 		deepseekProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
@@ -118,7 +121,7 @@ export function builtinModels(options?: CreateModelsOptions): MutableModels {
 
 /** All built-in image-generation providers, freshly constructed. */
 export function builtinImagesProviders(): ImagesProvider[] {
-	return [openrouterImagesProvider()];
+	return [openrouterImagesProvider(), deepinfraImagesProvider()];
 }
 
 /** An `ImagesModels` collection with every built-in image-generation provider registered. */
