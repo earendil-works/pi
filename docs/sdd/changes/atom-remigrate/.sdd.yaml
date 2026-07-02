@@ -1,0 +1,11 @@
+phase: brainstorm
+workflow: full
+change: atom-remigrate
+created_at: 2026-07-02
+base_ref: 5d9a8cf984fc0e7bf38613d3c5c69c085247c693
+tasks_total: 0
+tasks_done: 0
+isolation: null
+verify_result: null
+last_review_sha: null
+archived: false
