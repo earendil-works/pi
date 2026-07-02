@@ -325,6 +325,10 @@ export class TUI extends Container {
 	private overlayStack: OverlayStackEntry[] = [];
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 
+	private stickyBottomStart: Component | null = null;
+	private stickyScrollOffset = 0;
+	private stickyPreviousScrollableLineCount = 0;
+
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
 		super();
 		this.terminal = terminal;
@@ -361,6 +365,77 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	/**
+	 * Keep this component and all following root-level siblings fixed at the bottom of the terminal.
+	 * Components before the boundary become a scrollable viewport. PageUp/PageDown scroll that viewport.
+	 */
+	setStickyBottomStart(component: Component | null): void {
+		this.stickyBottomStart = component;
+		this.stickyScrollOffset = 0;
+		this.stickyPreviousScrollableLineCount = 0;
+		this.requestRender(true);
+	}
+
+	override render(width: number): string[] {
+		if (!this.stickyBottomStart) {
+			return super.render(width);
+		}
+
+		const stickyIndex = this.children.indexOf(this.stickyBottomStart);
+		if (stickyIndex === -1) {
+			return super.render(width);
+		}
+
+		const renderChildren = (children: Component[]): string[] => {
+			const lines: string[] = [];
+			for (const child of children) {
+				const childLines = child.render(width);
+				for (const line of childLines) {
+					lines.push(line);
+				}
+			}
+			return lines;
+		};
+
+		const scrollableLines = renderChildren(this.children.slice(0, stickyIndex));
+		const stickyLines = renderChildren(this.children.slice(stickyIndex));
+		const height = Math.max(1, this.terminal.rows);
+
+		if (stickyLines.length >= height) {
+			this.stickyPreviousScrollableLineCount = scrollableLines.length;
+			this.stickyScrollOffset = 0;
+			return stickyLines.slice(stickyLines.length - height);
+		}
+
+		const scrollableHeight = Math.max(1, height - stickyLines.length);
+		if (this.stickyScrollOffset > 0 && scrollableLines.length > this.stickyPreviousScrollableLineCount) {
+			this.stickyScrollOffset += scrollableLines.length - this.stickyPreviousScrollableLineCount;
+		}
+
+		const maxScrollOffset = Math.max(0, scrollableLines.length - scrollableHeight);
+		this.stickyScrollOffset = Math.max(0, Math.min(this.stickyScrollOffset, maxScrollOffset));
+		this.stickyPreviousScrollableLineCount = scrollableLines.length;
+
+		const start = Math.max(0, scrollableLines.length - scrollableHeight - this.stickyScrollOffset);
+		const visibleScrollable = scrollableLines.slice(start, start + scrollableHeight);
+		while (visibleScrollable.length < scrollableHeight) {
+			visibleScrollable.unshift("");
+		}
+
+		return [...visibleScrollable, ...stickyLines];
+	}
+
+	private scrollStickyViewport(delta: number): boolean {
+		if (!this.stickyBottomStart || delta === 0) return false;
+		const previousOffset = this.stickyScrollOffset;
+		this.stickyScrollOffset = Math.max(0, this.stickyScrollOffset + delta);
+		if (this.stickyScrollOffset !== previousOffset) {
+			this.requestRender();
+			return true;
+		}
+		return false;
 	}
 
 	setFocus(component: Component | null): void {
@@ -792,6 +867,16 @@ export class TUI extends Container {
 		if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
 			this.onDebug();
 			return;
+		}
+
+		if (matchesKey(data, "pageUp")) {
+			if (this.scrollStickyViewport(Math.max(1, this.terminal.rows - 3))) {
+				return;
+			}
+		} else if (matchesKey(data, "pageDown")) {
+			if (this.scrollStickyViewport(-Math.max(1, this.terminal.rows - 3))) {
+				return;
+			}
 		}
 
 		// If focused component is an overlay, verify it's still visible

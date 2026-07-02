@@ -664,6 +664,7 @@ export class InteractiveMode {
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.widgetContainerBelow);
 		this.ui.addChild(this.footer);
+		this.ui.setStickyBottomStart(this.widgetContainerAbove);
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();

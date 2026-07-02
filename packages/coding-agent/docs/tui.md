@@ -186,6 +186,25 @@ await showMenu();  // "Back" = just call again
 
 See [overlay-qa-tests.ts](../examples/extensions/overlay-qa-tests.ts) for comprehensive examples covering anchors, margins, stacking, responsive visibility, and animation.
 
+## Sticky Bottom Layout
+
+For chat-style UIs, the TUI can keep a bottom region fixed while earlier root-level components become a scrollable viewport:
+
+```typescript
+const history = new Container();
+const editor = new Editor();
+const footer = new Footer();
+
+tui.addChild(history);
+tui.addChild(editor);
+tui.addChild(footer);
+
+// `editor` and all following root siblings stay fixed at the bottom.
+tui.setStickyBottomStart(editor);
+```
+
+When enabled, `PageUp` / `PageDown` scroll only the history area. The sticky components keep their existing rendering, layout, and styling.
+
 ## Built-in Components
 
 Import from `@earendil-works/pi-tui`:
