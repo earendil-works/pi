@@ -118,6 +118,37 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 - *完全靠程序端 dedup 兜底*: 0.65 dedup 兜底仍存在 (Decision 10),但 fingerprint 不同会绕过 (check_seq 脚本位置 vs update-seq cosine 0.77, fingerprint 不同)。LLM 主动看到 corpus 更优
 - *在 extract pipeline 加 RAG lookup*: 工程量中等 (每次 extract 前查 corpus),LLM 主动看 top-N atom。短期不做,留作未来 change
 
+### 8a. (目标 2 核心) extract dedup 必须是 LLM 二次确认,不是程序自动 supersede
+**Decision**: `executeItem` 在程序层 cosine ≥ 0.65 命中现有 atom 时,**不直接调用 `supersedeIfSimilar`**,而是把"hit 的 title+summary+content"和"LLM emit 的新 item"一起喂给 LLM 做二次合并判定。LLM 返回三种 action:
+- `update`: 旧 atom 字段更新 (LLM 给的新 content 追加或合并)
+- `supersede`: 旧 atom 标 archived,新 atom 独立存在
+- `create`: 忽略 hit,新 atom 独立存在 (LLM 判断是真正的新主题)
+- `skip`: 重复,啥也不做 (程序层 cosine 不够,LLM 看语义仍是重复)
+**Rationale**: **cosine 距离 ≠ 语义判断**。0.65 cosine 命中可能是 (a) 真 cluster (该合),(b) 主题相邻但不同 (不该合),(c) 同一项目但不同方面 (该 update)。只有 LLM 看具体内容能区分。这是 extract dedup 的核心:
+- 程序层 cosine 找候选 (1 ms, 召回 1 个最相似的)
+- LLM 二次判定 (200-500 ms, 决定怎么处理)
+- 两者串联:**快 + 准**
+**Examples** (90 atom corpus):
+- cosine 0.65+ 命中 → LLM 二次看:
+  - 0.65 → 0.85 区间 (相邻主题): LLM 多数 `create` (e.g. "check_seq 脚本位置" vs "check_seq update-seq" — 程序 cosine 0.77,LLM 看是 `update`,因为是同一脚本的不同约束)
+  - 0.85+ 区间 (强相似): LLM 多数 `supersede` (e.g. "扩增子物种注释结果文件" vs "扩增子物种注释结果文件路径" — cosine 0.756,LLM 看是 `supersede` 因为几乎同义)
+- 0.55-0.65 区间 (程序放过): LLM 看不到 (prompt 注入 corpus 时也包含,但 extract 路径不二次确认,纯靠 cosine 判断)
+**Alternatives**:
+- *纯程序 0.65 dedup (Decision 1 之前的版本)*: 拒。丢失 LLM 语义判断,"check_seq 脚本位置" vs "check_seq update-seq" 这类"同脚本不同约束" case 会被错误合并成 1 个 atom
+- *LLM 处理每个 emit 都看 corpus top-5 atom (RAG lookup)*: 拒。工程量翻倍,延迟 +2-3s,LLM 不一定有判定能力
+- *程序层 cosine + LLM 二次确认 = 上面 Decision 8a*: 选。**这是 extract dedup 的正确设计**
+
+### 8b. (目标 1) migration 仍用纯程序 0.65 dedup (无 LLM)
+**Decision**: 目标 1 (历史 90 atom 迁移) **不**用 LLM 二次确认,直接程序层 `markSupersededNoInsert(0.65)`。原因:
+- 90 atom 是 legacy,无"语义细节"需要 LLM 看
+- LLM 5 batch 调试 90 atom 成本高,边际收益低
+- 程序 0.65 dedup 已经触发 35 pair 真实 cluster,覆盖足够
+- 用户可调阈值 (0.60/0.70) 二次跑,idempotent
+**Rationale**: 目标 1 是"批量历史治理",LLM 价值在"新增判断",不在"批量处理"。LLM 二次确认的真正用武之地是 extract pipeline (目标 2),不是 migration。**目标 1 + 目标 2 用不同 dedup 机制是合理的**。
+**Alternatives**:
+- *目标 1 也用 LLM 二次确认*: 拒。90 atom × 1 LLM call × 35 pair = 35 次 LLM call,工程量不值得
+- *目标 1 + 2 都纯程序*: 拒。丢失 LLM 在 extract 上的语义判断价值
+
 ### 9. (目标 2) 程序端 tag 归一化兜底
 **Decision**: `executeItem` 写入前对 LLM emit 的 tags 做归一化:
 - lowercase (中文不变,用 Unicode 范围检测)
@@ -191,32 +222,21 @@ migrate-legacy-atoms.mts (entry)
   │   │     返回 top-1 (排除自己)
   │   │
   │   ├── 3c. 若 hit 且 hit.atom.id !== atom.id:
-  │   │   │
-  │   │   ├── hit 是冷 atom (排序在前但 cosine 高 = 排序靠后被前面命中了) — wait
-  │   │   │
-  │   │   实际语义: 排序靠前的"赢",调用 markSupersededTx(hit.atom.id, currentAtom, embedding)
-  │   │     → hit.atom 标 is_latest=0, currentAtom 字段保持 (但 version+1)
-  │   │   │
-  │   │   ├── 记录: hit.atom.id 算 "被合并", currentAtom.id 算 "赢"
-  │   │   ├── 不需要 bge-m3 reindex (embedding 没变,只是 hit.atom 标 archived)
-  │   │   └── 注意: 需要 markSupersededTx 用 no-insert 变体,见 Implementation Notes
+  │   │   排序靠前的"赢",调用 markSupersededNoInsert(hit.id, atom.id, now)
+  │   │     → hit.atom 标 is_latest=0, parent_id=atom.id, superseded_at=now
+  │   │     → atom 不动 (id 保留,active,作为"赢")
+  │   │   注意: 不 insert 新 row (跟现有 markSupersededTx 不同)
   │   │
   │   └── 3d. 若 hit 是自己 (cosine=1.0) 或无 hit: skip (atom 不动)
   │
-  ├── 4. 输出 migrate-report.json:
-  │     { timestamp, totalActiveAtoms, archivedCount, reindexFailed: [] }
-  │     (no LLM, no reindex, no batch — 报告极简)
+  ├── 4. 输出 migrate-report.json: { timestamp, totalActiveAtoms, archivedCount, threshold }
   │
-  └── 5. 提示用户:
-        "Migration done. 90 → 75 (archived 15). 
-         备份在 memory.db.bak.YYYYMMDD, 30 天后可删除。
-         Re-run idempotent (0.65 dedup 终态不变,再跑 0 个改动)。
-         验收: precision@5 ≥ 40% 跑 recall-quality.test.ts 验证。"
+  └── 5. 提示用户: "Migration done. 90 → 75 (archived 15). Re-run idempotent."
 ```
 
-**关键简化**: 没有 LLM call,没有 JSON parse,没有 batch 处理,没有 idempotency 标记。**整个脚本逻辑 ≈ 30 行 TypeScript**。
+**关键简化**: 没有 LLM call。目标 1 是批量历史治理,LLM 价值在 extract 实时判断 (目标 2),不在批量迁移。
 
-### 数据流 (目标 2: Extract 优化)
+### 数据流 (目标 2: Extract 优化 — **核心: LLM 二次确认 dedup**)
 
 ```
 session_before_compact (or any extract trigger)
@@ -233,13 +253,40 @@ session_before_compact (or any extract trigger)
   │
   ├── LLM 提取 → ExtractionResult.items[]
   │
-  └── executePlan (existing, modified)
+  └── executePlan (extended — **核心改动**)
       对每个 item:
-        - 调 normalizeTag() 对 tags 做 lowercase + 字典匹配
-        - 调 conceptTagCount() 检测概念性 tag 数量
-        - 若 0 概念性 tag, warn 但仍写入
-        - 走现有 fingerprint + 0.65 cosine dedup 链 (Decision 10)
+        │
+        ├── 1. 调 normalizeTag() 对 tags 做 lowercase + 字典匹配
+        ├── 2. 调 conceptTagCount() 检测概念性 tag 数量,若 0 warn
+        ├── 3. 算 fingerprint,查 corpus 同 fingerprint 原子 → 命中就 skip
+        ├── 4. 算 embedding (调 embedText)
+        ├── 5. 调 findMostSimilarEmbedding(embedding, 0.65) 找 hit
+        │
+        ├── 6. **若无 hit** (cosine < 0.65):
+        │     → 直接 insertAtom + writeAtomToFile + bge-m3 reindex
+        │     (传统路径,无 LLM 二次确认)
+        │
+        └── 7. **若有 hit** (cosine ≥ 0.65):
+              │
+              ├── 7a. 调 LLM 二次确认 (新 prompt):
+              │     输入: hit.atom { title, summary, content, tags } + item { title, summary, content, tags }
+              │     输出 JSON: { action: "update" | "supersede" | "create", merged?: { title, summary, content, tags } }
+              │     - "update": 旧 atom 字段更新 (LLM 给的 merged 是新版本)
+              │     - "supersede": 旧 atom 标 archived, item 独立 create
+              │     - "create": 忽略 hit, item 独立 create (LLM 看了判断是不同主题)
+              │
+              ├── 7b. apply action:
+              │     - "update": index.updateAtom(mergedAtom)  (in-place, version+1) + writeAtomToFile + bge-m3 reindex
+              │     - "supersede": index.markSupersededTx(hit.id, item, embedding) + writeAtomToFile + bge-m3 reindex
+              │     - "create": index.insertAtom(item) + writeAtomToFile + bge-m3 reindex
+              │
+              └── 7c. (若 LLM JSON parse 失败) 走保守路径:
+                    - 默认 "supersede" (hit 是程序认定的真重复)
+                    - warn "LLM dedup confirm failed, fell back to supersede"
+                    - 不中断,继续
 ```
+
+**核心 insight**: cosine 是**候选信号**,LLM 是**决策信号**。程序找候选 (1ms),LLM 看候选决定怎么处理 (200-500ms)。两者串联,**快 + 准**。
 
 ### 关键类型 (新文件内,不需要 export)
 
@@ -377,7 +424,10 @@ export function conceptTagCount(tags: string[]): number;
 | Risk | Mitigation |
 |------|------------|
 | tag 字典注入 prompt 让 LLM 倾向"复用旧 tag"过度 | 字典只列 top 50,旁白强调"自由 emit";程序不强制 |
-| LLM 不遵守"主动更新"规则,继续创建冗余 atom | **0.65 cosine dedup 兜底** (Decision 10,不再是 0.92) |
+| LLM 不遵守"主动更新"规则,继续创建冗余 atom | **程序 cosine 0.65 兜底 + LLM 二次确认** (Decision 8a) |
+| **LLM 二次确认二次 LLM call 失败** (timeout/JSON parse) | 走保守 fallback 默认 `supersede` (程序认定的重复) + warn;不中断 |
+| **LLM 二次确认判错** (把 update 判成 supersede 或反之) | 跑 test/extraction-dedup-confirm.test.ts 5 个边界 case (update/supersede/create/skip 各种判定);若有判错,调整 prompt 措辞 |
+| 二次 LLM call 延迟 +200-500ms per item | extract 一次 typically emit 1-3 items,总 +1-1.5s,可接受 |
 | tag lowercase 把 `MGM` 误转为 `mgm` | `normalizeTag` 优先查字典,命中用字典标准形;字典没有才 lowercase |
 | 概念性 tag 检测误伤 | 暂不强制 reject,只 warn |
 | tag 字典 top-50 计算每次 extract 都跑,延迟 +50ms | 缓存 in-memory 直到 session 结束 |
@@ -396,14 +446,20 @@ export function conceptTagCount(tags: string[]): number;
 
 ### 集成测试
 - **`test/recall-quality.test.ts`** 加 case: 迁移后 precision@5 ≥ 40% (用户原 case)
-- **`test/extraction-prompt.test.ts`** (新): 目标 2 测试
+- **`test/extraction-dedup-confirm.test.ts`** (新 — **核心测试**): 目标 2 LLM 二次确认路径
+  - mock LLM,验证 cosine 命中时 executeItem 调 LLM 二次确认
+  - 5 个边界 case:
+    - cosine 0.65+ 命中 + LLM 返回 `update` → 旧 atom 字段更新 (version+1)
+    - cosine 0.65+ 命中 + LLM 返回 `supersede` → 旧 atom 标 archived,新 atom 独立
+    - cosine 0.65+ 命中 + LLM 返回 `create` → 旧 atom 不动,新 atom 独立
+    - cosine 0.65+ 命中 + LLM 返回 `skip` → 旧 atom 不动,新 item 丢弃
+    - cosine 0.65+ 命中 + LLM JSON parse 失败 → 走 fallback `supersede` + warn
   - mock LLM,验证 `buildExtractionPrompt` 输出包含 "## 现有 tag 字典" + "## 主动更新,非扩张" 段
   - mock LLM,验证 `executeItem` 写入前 `normalizeTag` 调用:
     - 字典里 "Amplicon" → 输出 "amplicon"
     - 字典里 "MGM" → 输出 "MGM" (不强制 lowercase)
   - mock LLM emit 0 概念性 tag → 写入但 warn
   - mock LLM,验证 fingerprint 同 atom 被 skip (既有)
-  - mock LLM,验证 cosine ≥ 0.65 的 emit 走 supersede (Decision 10 新阈值)
 - **`test/dedup-threshold.test.ts`** (新): 测试 `supersedeIfSimilar(0.65)`:
   - cosine 0.64 的 pair 不被 merge
   - cosine 0.66 的 pair 被 merge
@@ -437,12 +493,28 @@ export function conceptTagCount(tags: string[]): number;
    - 写 migrate-report.json
 4. 跑 `recall-quality.test.ts` 验证 precision ≥ 40%
 
-**目标 2 (extract 优化)**:
-1. 先实现 `tag-vocab.ts` (`loadTagVocabulary`, `normalizeTag`, `conceptTagCount`) — 纯函数无依赖
-2. `buildExtractionPrompt` 加 `tagVocabulary` 参数 (向后兼容,opts 可选)
-3. 调 `buildExtractionPrompt` 的地方 (`runCompactExtraction` in memory.ts) 提前算 vocabulary
-4. `executeItem` 在 `buildAtomFromItem` 之前对 tags 调 `normalizeTag`
-5. 改 `EXTRACT_PROMPT_V2` 之后追加 "## 主动更新,非扩张" 段 (静态拼接到 prompt)
+**目标 2 (extract 优化 — 核心改动: LLM 二次确认 dedup)**:
+1. `tag-vocab.ts` (`loadTagVocabulary`, `normalizeTag`, `conceptTagCount`) — 纯函数无依赖
+2. `EXTRACT_PROMPT_V2` 追加 "## 主动更新,非扩张" 段 (静态拼接)
+3. `buildExtractionPrompt` 加 `tagVocabulary` 参数,注入字典
+4. 调 `buildExtractionPrompt` 的地方 (`runCompactExtraction` in memory.ts) 提前算 vocabulary
+5. **核心**: 改 `executeItem` 加 LLM 二次确认分支 (Decision 8a):
+   - `cosine ≥ 0.65` 命中时,不直接 supersede
+   - 调 LLM 二次确认:`{ hit.atom, newItem }` 输入,`{ action: update|supersede|create|skip, merged? }` 输出
+   - 根据 action 走不同 write 路径
+6. `normalizeTag` 在 `executeItem` 写入前调 (归一化 tags)
+7. 二次确认 LLM call 的 prompt 模板 + JSON schema 在 `extraction-dedup-confirm-prompt.ts` (新文件,内联即可,无需独立)
+
+### 关键设计原则 (贯穿两目标)
+
+- **程序层 cosine 是"候选信号",不是"决策信号"**:
+  - 目标 1 (批量迁移): 用 cosine 0.65 直接 supersede (无 LLM 二次,因为批量价值低)
+  - 目标 2 (extract 实时): cosine 0.65 命中 → LLM 二次确认 (语义判断有价值)
+  - 目标 2 (extract 实时): cosine < 0.65 不命中 → 直接 insert (无需 LLM 确认)
+- **目标 1 + 目标 2 共享 0.65 阈值,但程序行为不同**:
+  - 目标 1 是"批量处理",LLM 价值低
+  - 目标 2 是"实时决策",LLM 价值高
+  - 这是合理的"同阈值不同行为",不是设计漂移
 
 ### gotchas
 - **`markSupersededTx` 会 INSERT 新 row**: 现有 `markSupersededTx` 不适用 (会插同 id 新 row 失败)。**新加 `markSupersededNoInsert(oldId, parentId, now)`** 只做 UPDATE。这是目标 1 的关键 helper

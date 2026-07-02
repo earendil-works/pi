@@ -59,17 +59,42 @@
 ### 场景: 目标 2 — LLM 看到可合并的新信息,更新而非新建
 - **GIVEN** 用户会话中提到"check_seq.py 又改了输出格式,现在支持 JSON"
 - **AND** corpus 已有 atom "check_seq.py 脚本位置与输出格式" (tsv 格式)
-- **WHEN** extract LLM 分析这条新信息
-- **THEN** LLM 看到 prompt 中"## 主动更新,非扩张"规则
-- **AND** LLM 决定: 现有 atom "check_seq.py 脚本位置与输出格式" 字段 `content` 追加 "2026-07 新增 JSON 格式支持",**不创建新 atom**
-- **THEN** `executeItem` 走 supersede 路径 (**cosine ≥ 0.65** 命中旧 atom,Decision 10),新 version 替代旧 version
+- **WHEN** extract LLM (主) 跑完,emit 一个 item
+- **AND** `executeItem` 算 embedding,`findMostSimilarEmbedding(0.65)` 命中旧 atom (cosine 0.77,实测)
+- **THEN** executeItem 不直接 supersede,而是调 LLM **二次确认**
+- **AND** 二次 LLM 看到 prompt 注入的"## 主动更新,非扩张"规则 + hit.atom 内容
+- **AND** 二次 LLM 返回 `{ action: "update", merged: { title: "check_seq.py 脚本位置与输出格式", content: "原 content + 2026-07 新增 JSON 格式支持" } }`
+- **THEN** executeItem 走 update 路径:`index.updateAtom(mergedAtom)` in-place,version+1,writeAtomToFile,bge-m3 reindex
+- **AND** 旧 atom id 保留,新信息合并进去
 
-### 场景: 目标 2 — LLM 误判新建,程序 dedup 兜底
-- **GIVEN** LLM 看到"check_seq.py 新增 JSON 格式支持"但没识别到可合并,emit 一个新 atom
-- **WHEN** `executeItem` 跑 fingerprint dedup + **0.65** cosine dedup
-- **AND** 新 atom content_fingerprint 跟旧 atom 重复 → skip
-- **OR** 新 atom 跟旧 atom cosine ≥ 0.65 → supersede
-- **THEN** 旧 atom 内容被更新 (新 atom 字段覆盖 + 历史保留),新 atom 不独立存在
+### 场景: 目标 2 — LLM 二次确认 cosine 命中:action=supersede
+- **GIVEN** 提取出"扩增子物种注释结果文件" (item),corpus 已有"扩增子物种注释结果文件路径" (hit, cosine 0.756)
+- **WHEN** 二次 LLM 看 hit+item 内容
+- **THEN** 二次 LLM 判定:这是几乎同义的重复 (文件 vs 文件路径,仅 2 字差),返回 `action: "supersede"`
+- **THEN** executeItem 走 supersede 路径:`index.markSupersededTx(hit.id, item, embedding)`,hit 标 archived+parent_id=item.id,item 独立存在,writeAtomToFile + bge-m3 reindex
+
+### 场景: 目标 2 — LLM 二次确认 cosine 命中:action=create
+- **GIVEN** 提取出"iCAMP 分组柱状图顺序修复" (item),corpus 已有"iCAMP 分组顺序 Skill 注册信息" (hit, cosine 0.78 实测)
+- **WHEN** 二次 LLM 看 hit+item
+- **THEN** 二次 LLM 判定:这俩虽然都"iCAMP 分组",但一个是修复,一个是 Skill 注册,**主题不同** → 返回 `action: "create"`
+- **THEN** executeItem 走 create 路径:hit 不动,item 独立 insert,writeAtomToFile + bge-m3 reindex
+- **AND** 召回时两个 atom 都出现,user 自己选哪个相关
+
+### 场景: 目标 2 — LLM 二次确认 cosine 命中:action=skip
+- **GIVEN** 二次 LLM 看完 hit+item,判定信息完全重复 (fingerprint 已 dedup,但 cosine 0.65+ 又命中)
+- **WHEN** 返回 `action: "skip"`
+- **THEN** executeItem 不写任何文件,item 丢弃,trace 记 "dedup-confirm: skip"
+
+### 场景: 目标 2 — LLM 二次确认失败 (timeout / JSON parse 失败)
+- **GIVEN** 二次 LLM call 5s timeout 或返回非 JSON
+- **THEN** executeItem 走 fallback:`action: "supersede"` (保守,跟 cosine 0.65 命中一致)
+- **AND** 日志 warn: "LLM dedup confirm failed for item X (hit Y), fell back to supersede"
+- **AND** 不中断,继续下一个 item
+
+### 场景: 目标 2 — cosine < 0.65 不命中,无二次 LLM
+- **GIVEN** 提取出全新主题的 item,`findMostSimilarEmbedding(0.65)` 返回 null 或 cosine < 0.65
+- **THEN** executeItem 直接走 create 路径,**不调二次 LLM**(省时间)
+- **AND** 这是常见 case (新主题/新工具/新人名),占 80% extract
 
 ### 场景: 目标 2 — 启动时 tag 字典加载
 - **GIVEN** corpus 90 atom 加载完成
