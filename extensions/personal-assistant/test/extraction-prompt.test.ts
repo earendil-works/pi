@@ -203,3 +203,35 @@ describe("buildExtractionPrompt tone injection", () => {
 		expect(EXTRACT_PROMPT_V2).toMatch(/±0\.15|可上下浮动/);
 	});
 });
+
+describe("buildExtractionPrompt tagVocabulary injection", () => {
+	it("(a) non-empty tagVocabulary: prompt contains '## 现有 tag 字典' section + dict entries joined with comma, between EXTRACT_PROMPT_V2 and ## Messages", () => {
+		const messages = [{ role: "user", content: "16S amplicon 测序流程" }];
+		const prompt = buildExtractionPrompt(messages, { tagVocabulary: ["amplicon", "16S"] });
+		expect(prompt).toContain("## 现有 tag 字典");
+		expect(prompt).toContain("amplicon, 16S");
+		// Insertion order contract: EXTRACT_PROMPT_V2 → tagDictSection → ## Messages
+		expect(prompt.indexOf(EXTRACT_PROMPT_V2)).toBeLessThan(prompt.indexOf("## 现有 tag 字典"));
+		expect(prompt.indexOf("## 现有 tag 字典")).toBeLessThan(prompt.indexOf("## Messages"));
+	});
+
+	it("(b) tagVocabulary = [] (empty array): prompt does NOT contain '## 现有 tag 字典' section (avoid LLM noise)", () => {
+		const messages = [{ role: "user", content: "今天天气不错" }];
+		const prompt = buildExtractionPrompt(messages, { tagVocabulary: [] });
+		expect(prompt).not.toContain("## 现有 tag 字典");
+	});
+
+	it("(c) opts undefined / opts = {} / opts.tagVocabulary undefined: prompt byte-identical to no-opts call (backward compat)", () => {
+		const messages = [{ role: "user", content: "今天天气不错" }];
+		const promptNoOpts = buildExtractionPrompt(messages);
+		const promptEmptyOpts = buildExtractionPrompt(messages, {});
+		const promptUndefinedVocab = buildExtractionPrompt(messages, { tagVocabulary: undefined });
+		// No spurious dictionary section in any of these variants.
+		expect(promptNoOpts).not.toContain("## 现有 tag 字典");
+		expect(promptEmptyOpts).not.toContain("## 现有 tag 字典");
+		expect(promptUndefinedVocab).not.toContain("## 现有 tag 字典");
+		// Byte-identical regression guard.
+		expect(promptEmptyOpts).toBe(promptNoOpts);
+		expect(promptUndefinedVocab).toBe(promptNoOpts);
+	});
+});

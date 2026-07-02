@@ -291,13 +291,24 @@ export function scoreUserTone(messages: Array<{ role: string; content: string }>
  * messages section. NEUTRAL messages inject nothing — the prompt stays
  * byte-identical to the v1 shape.
  */
-export function buildExtractionPrompt(messages: Array<{ role: string; content: string }>): string {
+export interface BuildExtractionPromptOptions {
+	tagVocabulary?: string[];
+}
+
+export function buildExtractionPrompt(
+	messages: Array<{ role: string; content: string }>,
+	opts?: BuildExtractionPromptOptions,
+): string {
 	const messagesText = messages.map((m) => `[${m.role}] ${m.content}`).join("\n\n");
 	const tone = scoreUserTone(messages);
 	const toneHint = tone.level === "neutral"
 		? ""
 		: `<user_tone>${tone.level}</user_tone>\n<importance_hint>${tone.importanceHint}</importance_hint>\n\n`;
-	return `${EXTRACT_PROMPT_V2}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
+	const tagDict = opts?.tagVocabulary ?? [];
+	const tagDictSection = tagDict.length > 0
+		? `\n\n## 现有 tag 字典 (优先复用, 不要发明新近义 tag)\n${tagDict.join(", ")}`
+		: "";
+	return `${EXTRACT_PROMPT_V2}${tagDictSection}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
 }
 
 /**
