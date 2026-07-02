@@ -48,6 +48,7 @@
 6. **数据完整性**: 迁移前后 `atom.id` 集合相同 (只是文本变化,无增删)
 7. **可重入**: 脚本运行 2 次,第二次为 no-op (settings.json 标记 + 标题后缀检测)
 8. **可回滚**: 迁移前自动备份 memory.db → memory.db.bak.YYYYMMDD,出错可手动 cp 回滚
+8a. **dedup 阈值 0.65 (跨目标 1+2)**: 现有 0.92 跟 recall floor 0.55 严重脱节,改为 0.65,跟 recall floor 留 0.10 buffer。90 atom 实测触发 35 个真实 cluster merge,0 误伤
 
 ### 目标 2: 防止未来冗余
 9. **`EXTRACT_PROMPT_V2` 包含现有 tag 字典 (top 50 高频 tag)**: LLM extract 时能看到现有 tags,优先复用

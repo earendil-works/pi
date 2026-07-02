@@ -118,6 +118,38 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 - *概念性 tag 缺失就 reject 整个 item*: 拒,丢失数据代价大于 tag 质量
 - *不做归一化,完全信 LLM*: 拒,LLM 幻觉/大小写漂移不可避免
 
+### 10. (目标 1+2 跨) dedup 阈值降到 0.65,与 recall floor (0.55) 留 0.10 buffer
+**Decision**: 把 `supersedeIfSimilar` 的默认 threshold 从 0.92 改为 **0.65**。
+**Rationale**: 现有 0.92 跟 recall floor 0.55 严重脱节 — 0.55-0.92 的近主题重复 atom 会同时被召回 (precision 受损) 但程序不去重。降到 0.65 后:
+- corpus 内任意两个 atom 的 cosine < 0.65
+- recall floor 0.55 仍能召回到"语义相邻但不重复"的 atom
+- 0.10 buffer 留给 bge-m3 cosine 噪声 (同一 cluster 内 0.05-0.10 的 cosine 抖动不会触发误合并)
+
+**实测 (90 atom corpus threshold sweep)**:
+| Threshold | 触发的 merge pair | 受影响 atom | 估算 corpus 减 |
+|-----------|-----------------|------------|---------------|
+| 0.55 | 190 | 78/90 (87%) | 减 43% (过合并,会误伤"修复"+"位置") |
+| 0.60 | 71 | 50/90 (56%) | 减 28% (边界,语义相关 atom 也被合) |
+| **0.65** | **35** | **33/90 (37%)** | **减 18% (合理)** |
+| 0.70 | 18 | 19/90 (21%) | 减 10% (太松,继续有召回重复) |
+| 0.75 | 6 | 10/90 (11%) | 减 6% (基本无 dedup) |
+| 0.92 (现状) | 0 | 0/90 (0%) | 减 0% (完全失效) |
+
+**0.65 触发的 35 个 pair 全部是真实 cluster** (X101SC / RNAVIRUS-DELIVERY-CHECK / 工时估算系列 / iCAMP / check_seq / smart-sample-find / workMonitor / README 审阅 / 远程结果路径),**没有**误伤 case。
+
+**Alternatives**:
+- *0.60 (跟 recall floor 0.55 仅 0.05 buffer)*: 拒。bge-m3 cosine 噪声 0.05-0.10,buffer 太小容易误合并
+- *0.70*: 拒。仍允许 0.55-0.70 的近主题重复召回到,precision 改善有限
+- *0.55 (完全跟 recall 对齐)*: 拒。会强制 dedup 掉所有"语义相邻但主题不同"的 atom (e.g. 修复 vs 位置)
+- *保留 0.92*: 拒。已知完全失效,8 commits 历史的"我们觉得太严了"的认知证据 (0 个 merge pair 触发)
+
+### 11. (目标 1) migration 也用 0.65 dedup,跟未来 extract pipeline 一致
+**Decision**: migration script 不只做 LLM 合并,也用 0.65 cosine 阈值在程序层做一次"漏网之鱼"扫描:LMM 漏合并的 cluster 走 `supersedeIfSimilar(0.65)` 强制合并。
+**Rationale**: LLM 5 个 batch 可能漏掉 1-2 个 cluster,程序层 0.65 兜底。threshold 跟 extract 一致,避免两套 dedup 逻辑 (extract 0.65 / migration 0.92 这种漂移)。
+**Alternatives**:
+- *只用 LLM 合并,程序不兜底*: 拒。LLM 5 batch 不保证 100% 召回所有 cluster
+- *migration 用 0.70,extract 用 0.65*: 拒。thresholds 应该一致,防止未来 extract 漏的 cluster 在 migration 也没合
+
 ## Architecture
 
 ### 文件改动
@@ -334,12 +366,14 @@ export function conceptTagCount(tags: string[]): number;  // count tags in "conc
 | Risk | Mitigation |
 |------|------------|
 | tag 字典注入 prompt 让 LLM 倾向"复用旧 tag"过度,新主题 emit 受抑制 | 字典只列 top 50,字典旁白强调"自由 emit 新 tag";程序端不强制 LLM 必须用字典 tag |
-| LLM 不遵守"主动更新"规则,继续创建冗余 atom | 程序端 0.92 cosine dedup 仍兜底 (虽然对 cluster case 无效,但能挡 fingerprint 不一样的重复 emit) |
+| LLM 不遵守"主动更新"规则,继续创建冗余 atom | 程序端 **0.65** cosine dedup 兜底 (Decision 10) |
 | tag lowercase 把 `MGM` 误转为 `mgm` (项目名 brand) | `normalizeTag` 优先查字典,字典里有 `MGM` 就用 `MGM`,不强制 lowercase;字典没有才 lowercase |
 | 概念性 tag 检测 (`concept/*` 命名空间) 误伤 | 暂不强制 reject,只 warn。后续可加更宽松的"动作动词"检测 (e.g. 标签含修复/位置/流程/规则) |
 | tag 字典 top-50 计算每次 extract 都跑,延迟 +50ms | 缓存 in-memory 直到 session 结束。首次构建后无开销 |
 | 提示词变长,LLM 成本 +5% (单次 extract) | 可接受,extract 本身是低频路径 (session_before_compact 触发) |
 | 用户改 `concept/*` 命名空间,程序端 namespace 假设破 | 在 CHANGELOG 标注约定,user 改了 namespace 算 breaking |
+| **0.65 dedup 误合并** (bge-m3 cosine 噪声 0.05-0.10 把不该合的合了) | 90 atom 实测 0 个误伤;运行 30 天后 review `supersedeIfSimilar` 的实际命中率,如有误伤调回 0.70 |
+| **0.65 dedup 太严**,导致 5%-10% 合理 extract 被错误 supersede | 同上,30 天 review 后调阈值 |
 
 ## Testing Strategy
 
