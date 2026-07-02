@@ -17,11 +17,9 @@ import type {
 	SessionMetadata,
 	SessionStorage,
 	SessionTreeEntry,
-	SqliteSessionMetadata,
 	ThinkingLevelChangeEntry,
 } from "../types.ts";
 import { SessionError } from "../types.ts";
-import { isExperimentalSqliteSessionStorageEnabled } from "./sqlite/experimental.ts";
 
 export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
 	let thinkingLevel = "off";
@@ -85,11 +83,9 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
-	private sqliteStorage?: SessionStorage<SqliteSessionMetadata>;
 
-	constructor(storage: SessionStorage<TMetadata>, sqliteStorage?: SessionStorage<SqliteSessionMetadata>) {
+	constructor(storage: SessionStorage<TMetadata>) {
 		this.storage = storage;
-		this.sqliteStorage = sqliteStorage;
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -103,9 +99,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	async cleanup(): Promise<void> {
 		if ("cleanup" in this.storage && typeof this.storage.cleanup === "function") {
 			await (this.storage as SessionStorage<TMetadata> & ClosableSessionStorage).cleanup();
-		}
-		if (this.sqliteStorage && "cleanup" in this.sqliteStorage && typeof this.sqliteStorage.cleanup === "function") {
-			await (this.sqliteStorage as SessionStorage<SqliteSessionMetadata> & ClosableSessionStorage).cleanup();
 		}
 	}
 
@@ -141,9 +134,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
 		await this.storage.appendEntry(entry);
-		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
-			await this.sqliteStorage.appendEntry(entry);
-		}
 		return entry.id;
 	}
 
@@ -277,9 +267,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			targetId: entryId,
 		};
 		await this.storage.appendEntry(leafEntry);
-		if (isExperimentalSqliteSessionStorageEnabled() && this.sqliteStorage) {
-			await this.sqliteStorage.appendEntry(leafEntry);
-		}
 		if (!summary) return undefined;
 		return this.appendTypedEntry({
 			type: "branch_summary",

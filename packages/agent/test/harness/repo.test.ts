@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
+import { createBuiltinSessionRepo, selectBuiltinSessionStorage } from "../../src/harness/session/builtins.ts";
 import { JsonlSessionRepo } from "../../src/harness/session/jsonl-repo.ts";
 import { InMemorySessionRepo } from "../../src/harness/session/memory-repo.ts";
 import { SessionLifecycle } from "../../src/harness/session/session-lifecycle.ts";
@@ -71,7 +72,7 @@ describe("JsonlSessionRepo", () => {
 });
 
 describe("SessionLifecycle", () => {
-	it("mirrors create, open, fork, and delete to sqlite when PI_SQLITE_SESSION_STORAGE=1", async () => {
+	it("wraps a single repo and uses the builtin backend factory to select sqlite under the flag", async () => {
 		const previous = process.env.PI_SQLITE_SESSION_STORAGE;
 		process.env.PI_SQLITE_SESSION_STORAGE = "1";
 		try {
@@ -80,29 +81,43 @@ describe("SessionLifecycle", () => {
 			const jsonlRepo = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
 			const databasePath = join(root, "sessions.sqlite");
 			const sqliteRepo = new SqliteSessionRepo({ env, databasePath });
-			const lifecycle = new SessionLifecycle({ jsonlRepo, sqliteRepo });
+			const repo = createBuiltinSessionRepo({
+				env,
+				storage: selectBuiltinSessionStorage({
+					jsonl: { kind: "jsonl", sessionsRoot: root },
+					sqlite: { kind: "sqlite", databasePath },
+				}),
+			});
+			const lifecycle = new SessionLifecycle({ repo });
 			const session = await lifecycle.create({ cwd: "/tmp/source", id: "source-session" });
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendMessage(createAssistantMessage("two"));
 			await session.moveTo(null);
+			const metadata = await session.getMetadata();
+			expect(metadata.path).toBe(databasePath);
+			expect(await jsonlRepo.list({ cwd: "/tmp/source" })).toEqual([]);
+			const listed = await lifecycle.list({ cwd: "/tmp/source" });
+			expect(listed).toHaveLength(1);
+			expect(listed[0]?.id).toBe("source-session");
 			const sqliteSession = await sqliteRepo.open({
 				id: "source-session",
 				cwd: "/tmp/source",
-				createdAt: (await session.getMetadata()).createdAt,
+				createdAt: metadata.createdAt,
 				path: databasePath,
 			});
 			expect((await sqliteSession.getEntries()).map((entry) => entry.id)).toEqual(
 				(await session.getEntries()).map((entry) => entry.id),
 			);
-			const reopened = await lifecycle.open(await session.getMetadata());
+			const reopened = await lifecycle.open(metadata);
 			expect((await reopened.getEntries()).map((entry) => entry.id)).toEqual(
 				(await session.getEntries()).map((entry) => entry.id),
 			);
-			const fork = await lifecycle.fork(await session.getMetadata(), { cwd: "/tmp/target", id: "fork-session" });
+			const fork = await lifecycle.fork(metadata, { cwd: "/tmp/target", id: "fork-session" });
+			expect((await fork.getMetadata()).path).toBe(databasePath);
 			expect((await fork.getEntries()).map((entry) => entry.id)).toEqual(
 				(await session.getEntries()).map((entry) => entry.id),
 			);
-			await lifecycle.delete(await session.getMetadata());
+			await lifecycle.delete(metadata);
 			expect(await sqliteRepo.list({ cwd: "/tmp/source" })).toEqual([]);
 		} finally {
 			if (previous === undefined) delete process.env.PI_SQLITE_SESSION_STORAGE;
