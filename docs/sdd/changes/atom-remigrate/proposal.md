@@ -2,41 +2,57 @@
 
 ## 动机
 
-当前 personal-assistant 记忆系统有严重的"原子过碎 + 短内容 + 高假阳性召回"问题,根本原因在**历史 atom 的写法不规整**,而非召回算法。
+当前 personal-assistant 记忆系统有严重的"原子过碎 + 标签冗余 + 高假阳性召回"问题,根因在**两个层面**:
 
-实测证据 (本会话, 2026-07-02):
-- 90 个 active atom,平均 content 长度仅 199 字 (fact) / 244 字 (process) / 134 字 (rule)
-- LLM 召回时一次只看到 1-2 句 summary,大量上下文被丢失,需要再 read 全文才能用
+**1. 历史 atom 已经冗余** (本次目标 1: 一次性治理)
+- 90 个 active atom 中至少 9 个 cluster 重复 (扩增子物种注释/iCAMP 分组/check_seq/RNAVIRUS-DELIVERY-CHECK/smart-sample-find/workMonitor/X101SC26052587/README 各 2-3 个)
 - 召回假阳性高: query "修复的脚本和修复逻辑给我" → 8 个 hit,2 真 6 假 (precision 25%)
-- 重复 cluster 至少 9 个 (扩增子物种注释/iCAMP 分组/check_seq/RNAVIRUS-DELIVERY-CHECK/smart-sample-find/workMonitor/X101SC26052587/README) — 多个 atom 讲同一主题的不同侧面
+- 召回端看到的是"扩增子物种注释结果文件" + "扩增子物种注释结果文件路径" 两个几乎相同的 atom,无法判断哪个是 LLM 真正想要的
 
-根因: 当前 `executeItem` 的写入路径只做 fingerprint 精确去重 + cosine ≥ 0.92 单一阈值去重,**不解决"同一主题多个 atom"的语义级冗余**。LLM 每次 extract 各自独立的 atom,从不合并。
+**2. 现有 extract pipeline 还会持续产生冗余** (本次目标 2: 防止未来再出现)
+- `EXTRACT_PROMPT_V2` 对 tags 只说 "3-8 个,短小 (1-3 词),含中英文",**没要求** 概念性 vs 专名比例、tag 一致性、是否更新已有 atom
+- 84 个老 atom 产生 350 个 unique tag,平均每 tag 出现 1.1 次。**tag 体系本身已无序**
+- `executeItem` 写入路径只做 fingerprint 精确去重 + cosine ≥ 0.92 单一阈值去重。LLM 提取时没有"现有 atom 上下文",不会主动合并语义相关的新信息
 
-本次变更目标: **一次性 LLM 批处理 90 个老 atom**,合并语义级重复、扩充每个剩余 atom 的 content 长度 (因为合并后自然变长)。不动召回策略、不动 bge-m3 service,只动 atom 文本 + 触发 reindex。
+**目标 1**: 一次性 LLM 批处理 90 个老 atom,**只合并不扩张** (不刻意加长 content),in-place 改 + supersede 链,id 保留,bge-m3 reindex。
+**目标 2**: 改 `EXTRACT_PROMPT_V2`,强制 LLM (a) 看现有 tag 字典后再 emit tags, (b) "新信息可归入已有 atom 就更新而非新建"。从源头防止未来再产生冗余。
 
 ## 影响范围
 
 - **新增 Capability**: `migration/atom-remigrate` (一次性脚本,不可重复执行)
-- **修改 Capability**: `personal-assistant.memory` (atom 文本字段 in-place 更新)
+- **修改 Capability**: 
+  - `personal-assistant.memory` (atom 文本字段 in-place 更新 — 目标 1)
+  - `personal-assistant.extraction` (`EXTRACT_PROMPT_V2` 加现有 tag 字典注入 + 主动更新规则 — 目标 2)
 - **删除 Capability**: 无
 
 ## 非目标
 
 - 不改召回策略 (search.ts / format.ts / hybrid-search.ts / server.py 全部零改动)
-- 不改 extract prompt (`EXTRACT_PROMPT_V2` 保持现状,后续可单独 change 优化)
+- 不扩张 atom content 长度 (用户明确: 无须扩张新 atom)
 - 不改 decay / strength / access_count 字段 (只改 title/summary/content/tags 4 个文本字段 + content_fingerprint 重算)
 - 不删 atom (即使新版本更短,只要 LLM 决定保留就保留)
 - 不改 schema (`memory_index` 表 0 列变化,`content_fingerprint` 是已存在列)
 - 不动 webui (UI 自然显示新文本,无前端代码变化)
 - 不重建 bge-m3 全量索引 (只对改动的 atom 调 `reindex_one`)
+- 不引入 tag 同义词表 LLM 自动聚类 (那是另一个独立 change)
+- 不回填 source_session (那是另一个 change)
 
 ## 验收标准
 
+### 目标 1: 合并迁移
 1. **合并后 atom 数量减少 ≥ 20%** (90 → ≤ 72),由 LLM 判定,只要合并 cluster 至少 6 个即达标
-2. **剩余 atom 平均 content 长度 ≥ 350 字** (从 199/244/134 提升 ~75%)
+2. **不扩张**: 合并后 content 长度不刻意加长,可短可长 (用户说"无须扩张新atom")
 3. **任何被改的 atom**: 同一 id 保留,`updated_at` 更新,`version` +1,`access_count` 不变,`is_latest=1`,`archived=0`
 4. **每个被改的 atom**: bge-m3 向量通过 `/api/atoms/{id}/reindex` 重算,新 cosine/sparse 跟新文本一致
 5. **召回真阳性率 (precision@5) 在迁移后 ≥ 40%** (用户原 case "修复的脚本和修复逻辑给我",top-5 内至少 2 个真相关) — 通过 `recall-quality.test.ts` 验证
 6. **数据完整性**: 迁移前后 `atom.id` 集合相同 (只是文本变化,无增删)
-7. **可重入**: 脚本运行 2 次,第二次为 no-op (检测到 title 已是新格式就跳过)
+7. **可重入**: 脚本运行 2 次,第二次为 no-op (settings.json 标记 + 标题后缀检测)
 8. **可回滚**: 迁移前自动备份 memory.db → memory.db.bak.YYYYMMDD,出错可手动 cp 回滚
+
+### 目标 2: 防止未来冗余
+9. **`EXTRACT_PROMPT_V2` 包含现有 tag 字典 (top 50 高频 tag)**: LLM extract 时能看到现有 tags,优先复用
+10. **`EXTRACT_PROMPT_V2` 包含"主动更新,非扩张"规则**: 明确告诉 LLM,新信息可归入已有 atom 时更新而非新建
+11. **强制 tag 大小写归一**: LLM 输出后程序 lowercase (中文不变),避免 "Amplicon" / "amplicon" 这种
+12. **强制至少 1 个概念性 tag**: 每 atom 至少 1 个"动作/类别" tag (e.g. "修复"/"位置"/"流程"),不允许全是专名
+13. **新增 extraction 单元测试**: 验证 LLM 输出 tags 全 lowercase,至少 1 个概念性 tag
+14. **新会话 30 天后**: corpus atom 平均 tag 重复率 ≥ 2.0 (即每个 tag 平均被 ≥ 2 个 atom 使用) — 通过 `tag-quality.test.ts` 验证

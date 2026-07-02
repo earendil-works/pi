@@ -28,6 +28,45 @@
 - **WHEN** LLM 合并: 新 atom 保留两者的所有细节 (路径/约束/工具调用/报错),content 写到 400+ 字
 - **THEN** 新 atom `embeddable text version` 不需要 bump (buildEmbeddableText 不变),但要触发 bge-m3 reindex
 
+### 场景: 目标 2 — Extract prompt 注入现有 tag 字典
+- **GIVEN** 启动时 scan corpus,统计 top 50 高频 tag
+- **AND** 启动时维护 in-memory `Set<string> tagVocabulary` (来自高频 tag)
+- **WHEN** 用户新会话触发 `session_before_compact` 走 extract
+- **THEN** LLM prompt 包含一段:
+  ```
+  ## 现有 tag 字典 (优先复用,不要发明新近义 tag)
+  amplicon, 16S, MTB, R, 扩增子, 修复, bug, fix, position, location,
+  flow, process, rule, prefer, prefer-not, prefer-must, ...
+  
+  ## Tag 规范
+  - 大小写归一: 全部 lowercase (中文不变)
+  - 同义合并: 写 "Amplicon" 视作 "amplicon"; 写 "Bug 修复" 视作 "bug fix"
+  - 概念性 tag 至少 1 个 (动作/类别)
+  - 总数 3-6 个
+  ```
+
+### 场景: 目标 2 — LLM 看到可合并的新信息,更新而非新建
+- **GIVEN** 用户会话中提到"check_seq.py 又改了输出格式,现在支持 JSON"
+- **AND** corpus 已有 atom "check_seq.py 脚本位置与输出格式" (tsv 格式)
+- **WHEN** extract LLM 分析这条新信息
+- **THEN** LLM 看到 prompt 中"## 主动更新,非扩张"规则
+- **AND** LLM 决定: 现有 atom "check_seq.py 脚本位置与输出格式" 字段 `content` 追加 "2026-07 新增 JSON 格式支持",**不创建新 atom**
+- **THEN** `executeItem` 走 supersede 路径 (cosine ≥ 0.92 命中旧 atom),新 version 替代旧 version
+
+### 场景: 目标 2 — LLM 误判新建,程序 dedup 兜底
+- **GIVEN** LLM 看到"check_seq.py 新增 JSON 格式支持"但没识别到可合并,emit 一个新 atom
+- **WHEN** `executeItem` 跑 fingerprint dedup + cosine dedup
+- **AND** 新 atom content_fingerprint 跟旧 atom 重复 → skip
+- **OR** 新 atom 跟旧 atom cosine ≥ 0.92 → supersede
+- **THEN** 旧 atom 内容被更新 (新 atom 字段覆盖 + 历史保留),新 atom 不独立存在
+
+### 场景: 目标 2 — 启动时 tag 字典加载
+- **GIVEN** corpus 90 atom 加载完成
+- **WHEN** `extractMemoriesWithCallLlm` 第一次被调用
+- **THEN** 构造 prompt 时先调 `loadTagVocabulary(index)` (新函数),扫 `memory_index.tags` 列 (JSON 解析),统计频次,取 top 50
+- **AND** 注入到 prompt 顶部 "## 现有 tag 字典" 段
+- **AND** tagVocabulary 缓存 in-memory 直到 session 结束 (不每次都重算)
+
 ## 异常流程
 
 ### 场景: LLM 返回的 JSON 不合规
@@ -84,3 +123,22 @@
 - **WHEN** LLM 召回,可能召回到这个 atom 但 cosine 跟新文本不匹配
 - **THEN** 召回质量局部下降,但不致命 (90 个里 1-2 个 stale)
 - **AND** 用户跑 `npx tsx extensions/personal-assistant/scripts/reconcile-vectors.mts` 全量对齐 (或等下次 service 重启)
+
+### 场景: 目标 2 — 边界: corpus 完全空,tag 字典为空
+- **GIVEN** 用户首次启动,corpus 0 atom
+- **WHEN** 第一次 extract 触发
+- **THEN** `loadTagVocabulary` 返回空集,prompt 中 "## 现有 tag 字典" 段为 "(空,自由 emit)"
+- **AND** 不报错,正常走 extract
+
+### 场景: 目标 2 — 边界: corpus 满 1000 atom,tag 字典扫描慢
+- **GIVEN** corpus 1000 atom
+- **WHEN** `loadTagVocabulary` 扫所有 active atom 的 tags 列
+- **THEN** 单次扫约 50ms,缓存 in-memory 整 session
+- **AND** 用户感知不到延迟 (session_before_compact 已有 1-2s LLM call)
+
+### 场景: 目标 2 — 边界: LLM 不遵守 tag 规范
+- **GIVEN** 提示词要求"tag 全 lowercase" + "至少 1 个概念性 tag"
+- **WHEN** LLM 仍 emit `["Amplicon", "X101SC", "16S"]` (全专名,大写)
+- **THEN** 程序端做归一化: `["amplicon", "x101sc", "16s"]`
+- **AND** 检测概念性 tag 缺失: 若 0 个概念性 tag,reject 整个 item,日志 "tag lacks concept marker, skipped"
+- **OR** 仅 warn 写入,不强 reject (用户后续可手动改)
