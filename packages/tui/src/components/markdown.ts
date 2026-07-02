@@ -215,18 +215,18 @@ export class Markdown implements Component {
 			if (bgFn) {
 				contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
 			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				// No background - don't pad to width.
+				// The TUI renderer clears each line with \x1b[2K before writing,
+				// so trailing spaces are unnecessary. Omitting them keeps xterm.js
+				// cells empty, which allows proper whitespace trimming on copy.
+				contentLines.push(lineWithMargins);
 			}
 		}
 
 		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(width);
 		const emptyLines: string[] = [];
 		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
+			const line = bgFn ? applyBackgroundToLine(" ".repeat(width), width, bgFn) : "";
 			emptyLines.push(line);
 		}
 

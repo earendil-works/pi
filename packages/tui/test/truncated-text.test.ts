@@ -8,55 +8,61 @@ import { visibleWidth } from "../src/utils.ts";
 const chalk = new Chalk({ level: 3 });
 
 describe("TruncatedText component", () => {
-	it("pads output lines to exactly match width", () => {
+	it("does not pad output lines to full width", () => {
 		const text = new TruncatedText("Hello world", 1, 0);
 		const lines = text.render(50);
 
 		// Should have exactly one content line (no vertical padding)
 		assert.strictEqual(lines.length, 1);
 
-		// Line should be exactly 50 visible characters
+		// Line should contain the text with left/right padding but NOT
+		// be padded to the full width — trailing cells stay empty so
+		// xterm.js trims whitespace on copy.
 		const visibleLen = visibleWidth(lines[0]);
-		assert.strictEqual(visibleLen, 50);
+		assert.strictEqual(visibleLen, 13); // 1 + 11 + 1
 	});
 
-	it("pads output with vertical padding lines to width", () => {
+	it("vertical padding lines are empty", () => {
 		const text = new TruncatedText("Hello", 0, 2);
 		const lines = text.render(40);
 
 		// Should have 2 padding lines + 1 content line + 2 padding lines = 5 total
 		assert.strictEqual(lines.length, 5);
 
-		// All lines should be exactly 40 characters
-		for (const line of lines) {
-			assert.strictEqual(visibleWidth(line), 40);
-		}
+		// Padding lines should be empty (not space-filled)
+		assert.strictEqual(lines[0], "");
+		assert.strictEqual(lines[1], "");
+		assert.strictEqual(lines[3], "");
+		assert.strictEqual(lines[4], "");
+
+		// Content line should contain text but not be padded to width
+		assert.strictEqual(visibleWidth(lines[2]), 5);
 	});
 
-	it("truncates long text and pads to width", () => {
+	it("truncates long text with ellipsis", () => {
 		const longText = "This is a very long piece of text that will definitely exceed the available width";
 		const text = new TruncatedText(longText, 1, 0);
 		const lines = text.render(30);
 
 		assert.strictEqual(lines.length, 1);
 
-		// Should be exactly 30 characters
-		assert.strictEqual(visibleWidth(lines[0]), 30);
+		// Should not exceed 30 characters (content width 28 + 2 padding)
+		assert.ok(visibleWidth(lines[0]) <= 30);
 
 		// Should contain ellipsis
 		const stripped = lines[0].replace(/\x1b\[[0-9;]*m/g, "");
 		assert.ok(stripped.includes("..."));
 	});
 
-	it("preserves ANSI codes in output and pads correctly", () => {
+	it("preserves ANSI codes in output", () => {
 		const styledText = `${chalk.red("Hello")} ${chalk.blue("world")}`;
 		const text = new TruncatedText(styledText, 1, 0);
 		const lines = text.render(40);
 
 		assert.strictEqual(lines.length, 1);
 
-		// Should be exactly 40 visible characters (ANSI codes don't count)
-		assert.strictEqual(visibleWidth(lines[0]), 40);
+		// Visible width should be content + padding, not padded to 40
+		assert.strictEqual(visibleWidth(lines[0]), 13); // 1 + 11 + 1
 
 		// Should preserve the color codes
 		assert.ok(lines[0].includes("\x1b["));
@@ -69,21 +75,21 @@ describe("TruncatedText component", () => {
 
 		assert.strictEqual(lines.length, 1);
 
-		// Should be exactly 20 visible characters
-		assert.strictEqual(visibleWidth(lines[0]), 20);
+		// Should not exceed 20 visible characters
+		assert.ok(visibleWidth(lines[0]) <= 20);
 
 		// Should contain reset code before ellipsis
 		assert.ok(lines[0].includes("\x1b[0m..."));
 	});
 
-	it("handles text that fits exactly", () => {
+	it("handles text that fits without truncation", () => {
 		// With paddingX=1, available width is 30-2=28
 		// "Hello world" is 11 chars, fits comfortably
 		const text = new TruncatedText("Hello world", 1, 0);
 		const lines = text.render(30);
 
 		assert.strictEqual(lines.length, 1);
-		assert.strictEqual(visibleWidth(lines[0]), 30);
+		assert.strictEqual(visibleWidth(lines[0]), 13); // 1 + 11 + 1
 
 		// Should NOT contain ellipsis
 		const stripped = lines[0].replace(/\x1b\[[0-9;]*m/g, "");
@@ -95,7 +101,8 @@ describe("TruncatedText component", () => {
 		const lines = text.render(30);
 
 		assert.strictEqual(lines.length, 1);
-		assert.strictEqual(visibleWidth(lines[0]), 30);
+		// Empty text with paddingX=1: just left + right padding
+		assert.strictEqual(visibleWidth(lines[0]), 2);
 	});
 
 	it("stops at newline and only shows first line", () => {
@@ -104,7 +111,7 @@ describe("TruncatedText component", () => {
 		const lines = text.render(40);
 
 		assert.strictEqual(lines.length, 1);
-		assert.strictEqual(visibleWidth(lines[0]), 40);
+		assert.strictEqual(visibleWidth(lines[0]), 12); // 1 + 10 + 1
 
 		// Should only contain "First line"
 		const stripped = lines[0].replace(/\x1b\[[0-9;]*m/g, "").trim();
@@ -119,7 +126,7 @@ describe("TruncatedText component", () => {
 		const lines = text.render(25);
 
 		assert.strictEqual(lines.length, 1);
-		assert.strictEqual(visibleWidth(lines[0]), 25);
+		assert.ok(visibleWidth(lines[0]) <= 25);
 
 		// Should contain ellipsis and not second line
 		const stripped = lines[0].replace(/\x1b\[[0-9;]*m/g, "");
