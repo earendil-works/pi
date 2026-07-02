@@ -568,6 +568,43 @@ export class MemoryIndex {
 	}
 
 	/**
+	 * Migration helper: mark an existing atom as superseded without inserting
+	 * a new row. The "winner" of the cluster is identified by `parentId`
+	 * (the canonical id whose vector/text stays in the active corpus).
+	 *
+	 * Difference from `markSupersededTx`: this is UPDATE-only — no INSERT,
+	 * no vector write. Use this when the winner already exists with a
+	 * DIFFERENT id (e.g. migration sweep). `markSupersededTx` is for the
+	 * "new atom replaces old" path where the new id is freshly generated.
+	 *
+	 * Vector is intentionally untouched: the loser's content has not changed,
+	 * so its existing vector remains accurate.
+	 *
+	 * Throws if `oldId` is not found.
+	 */
+	markSupersededNoInsert(oldId: string, parentId: string, now: number): MemoryAtom {
+		const old = this.getAtom(oldId);
+		if (!old) throw new Error(`atom ${oldId} not found`);
+
+		this.db
+			.prepare(
+				`
+			UPDATE memory_index SET
+				is_latest = 0,
+				parent_id = ?,
+				superseded_at = ?
+			WHERE id = ?
+		`,
+			)
+			.run(parentId, now, oldId);
+
+		// Re-read to return the updated row (parent_id/superseded_at now set)
+		const updated = this.getAtom(oldId);
+		if (!updated) throw new Error(`atom ${oldId} disappeared after update`);
+		return updated;
+	}
+
+	/**
 	 * Append a row to the `memory_audit` log. The created_at column is filled
 	 * server-side from `unixepoch() * 1000` by the schema default, but we
 	 * also pass an explicit `Date.now()` so the value matches what callers
