@@ -33,8 +33,8 @@
 
 - [ ] 1.3 **dedup.test.ts 更新现有 case 适配 0.65 阈值**
   - **文件**: `extensions/personal-assistant/test/dedup.test.ts` (Modify)
-  - **内容**: 现有 5 个 it() 中, 显式传 `0.92` 的 case 改为传 `0.65` (确保测原 0.65 行为); 用 `// @ts-expect-error` 或显式调用,保证不传 threshold 时也走 0.65。test header 注释 (line 10 提的 "0.92" 改为 "0.65")。任一 case 失败则读原 test 看 context 调整。
-  - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup.test.ts` 全 5 个 case pass
+  - **内容**: 现有 6 个 it() (实际数, 见 line 130, 234 等) 中, 显式传 `0.92` 的 case 改为传 `0.65`; 默认 threshold 的 test (line 234 "returns create with default threshold (0.92) when cosine 0.5") 改名为 "returns create with default threshold (0.65) when cosine 0.5" + 同步更新 test header 注释 (line 10 提的 "0.92" 改为 "0.65", line 38 提的 "0.92" 改为 "0.65", line 127 提的 "0.92" 改为 "0.65", line 231 提的 "0.92" 改为 "0.65", line 239 提的 "0.92" 改为 "0.65")。任一 case 失败则读原 test 看 context 调整。
+  - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup.test.ts` 全 6 个 case pass
   - **依赖**: 1.1
 
 ## 2. 目标 1: Migration 脚本 (程序驱动 0.65 dedup, 无 LLM)
@@ -55,7 +55,7 @@
   - **文件**: `extensions/personal-assistant/scripts/migrate-legacy-atoms.mts` (Create)
   - **内容**: 单文件 `#!/usr/bin/env tsx` 入口; `import { MemoryIndex } from "../storage.ts"`; 主函数 `main()`: (1) `loadConfig()` 读 `dbPath`/`atomsDir`, 兜底用 `DEFAULT_DB_PATH`/`DEFAULT_ATOMS_DIR` (from memory.ts:92,95); (2) 备份 `cp dbPath dbPath+".bak."+YYYYMMDD`, 失败 throw "backup failed, refusing to migrate"; (3) `new MemoryIndex(dbPath)` + `init()`; (4) `const active = index.getActiveAtoms()`; (5) SQL 直接排序 (避免 JS in-memory sort): `db.prepare("SELECT * FROM memory_index WHERE is_latest=1 AND archived=0 ORDER BY access_count DESC, COALESCE(last_access, 0) DESC, created_at DESC")`; (6) for loop: 从 `memory_vectors` 读 embedding (新 helper `getEmbedding(id)`, 在 storage.ts 加, 见 2.4), 调 `index.findMostSimilarEmbedding(emb, 0.65)`, 若是 hit 且 hit.id !== atom.id 调 `index.markSupersededNoInsert(hit.id, atom.id, Date.now())`; (7) 写 `migrate-report.json` (`{timestamp, totalActiveAtoms, archivedCount, unchangedCount, backupPath, threshold: 0.65}`); (8) close index, 打印 summary; (9) wrap try/finally 关闭 index。**支持** CLI `--threshold=N` (用 `process.argv` 解析), 默认 0.65。
   - **验证**: `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts --help` 打印 usage (脚本用 if (process.argv.includes("--help")) printUsage(); return)
-  - **依赖**: 2.1
+  - **依赖**: 1.1, 2.1, 2.4
 
 - [ ] 2.4 **storage.ts 加 getEmbedding helper**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify, 在 `getAtom` 附近追加)
@@ -111,19 +111,23 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-prompt.test.ts` 原 case 仍 pass + 新 case (传 tagVocabulary 后输出含字典) pass
   - **依赖**: 3.1, 3.3
 
-- [ ] 3.5 **memory.ts 调 buildExtractionPrompt 时传 tagVocabulary**
+- [ ] 3.5 **memory.ts 调 buildExtractionPrompt 时传 tagVocabulary (含 in-memory 缓存)**
   - **文件**: `extensions/personal-assistant/memory.ts:448-457` (Modify)
   - **内容**: 在 `extractMemoriesWithCallLlm(callLlm, messages, index, { atomsDir, model: ... })` 调用前, 加:
   ```typescript
-  const tagVocabulary = loadTagVocabulary(index, 50);
-  const result = await extractMemoriesWithCallLlm(callLlm, messages, index, {
-    atomsDir,
-    model: `${extractionCfg.provider}/${extractionCfg.model}`,
-    tagVocabulary,
-  });
+  // Module-level cache: cleared when pi process restarts (session end = process end for most cases)
+  let tagVocabularyCache: { corpusHash: string; tags: string[] } | null = null;
+  function getCachedTagVocabulary(index: MemoryIndex): string[] {
+    const currentHash = String(index.getActiveAtoms().length);  // cheap "did corpus size change" proxy
+    if (tagVocabularyCache?.corpusHash === currentHash) return tagVocabularyCache.tags;
+    const tags = loadTagVocabulary(index, 50);
+    tagVocabularyCache = { corpusHash: currentHash, tags };
+    return tags;
+  }
+  const tagVocabulary = getCachedTagVocabulary(index);
   ```
-  `extractMemoriesWithCallLlm` 的 opts 类型加 `tagVocabulary?: string[]` 字段(见 3.6)。`loadTagVocabulary` import 从 tag-vocab.ts。
-  - **验证**: `cd extensions/personal-assistant && grep -n "loadTagVocabulary" memory.ts` 找到 ≥ 1 行
+  缓存 key 用 active atom 数作为 proxy (避免每 extract 都 O(n) 扫全 corpus; 1000 atom 时省 ~50ms × 多次 extract)。`corpusHash` 变了 (用户手动增删 atom) 重新算。`extractMemoriesWithCallLlm` 的 opts 类型加 `tagVocabulary?: string[]` 字段(见 3.6)。`loadTagVocabulary` import 从 tag-vocab.ts。
+  - **验证**: `cd extensions/personal-assistant && grep -n "loadTagVocabulary\|tagVocabularyCache" memory.ts` 找到 ≥ 2 行 (loadTagVocabulary + cache 引用)
   - **依赖**: 3.4
 
 - [ ] 3.6 **extractMemoriesWithCallLlm 签名扩展 (加 tagVocabulary)**
@@ -247,22 +251,31 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-quality.test.ts` precision assertion pass
   - **依赖**: 2.5
 
-- [ ] 3.13 **CHANGELOG 更新**
+- [ ] 3.13 **CHANGELOG 更新 (fill existing ### Added / ### Changed 子段)**
   - **文件**: `extensions/personal-assistant/CHANGELOG.md` (Modify)
-  - **内容**: 在 `## [Unreleased]` 下追加:
+  - **内容**: 当前 `## [Unreleased]` 下已有 `### Added (none in this change)` 和 `### Changed (covered above)` 占位子段。**不要**新建 `### Added` / `### Changed` (会重复子标题)。改法:
+  1. 把 `### Added\n- (none in this change)` 改为:
   ```
   ### Added
-  - Migration script `migrate-legacy-atoms.mts` for one-time 0.65-cosine dedup of legacy atoms (idempotent, 天然 — re-run shows 0 changes).
+  - Migration script `migrate-legacy-atoms.mts` for one-time 0.65-cosine dedup of legacy atoms (idempotent — re-run shows 0 changes).
   - Extract pipeline LLM 二次确认 dedup: cosine ≥ 0.65 命中时调 LLM 判定 update/supersede/create/skip, 防止 future redundancy.
   - `tag-vocab.ts`: tag 字典加载 + 归一化 + 概念性 tag 计数, 注入到 `EXTRACT_PROMPT_V2` 顶部.
-
+  - `markSupersededNoInsert` (storage.ts): migration 用 helper, UPDATE only 不 INSERT.
+  - `bge-reindex.ts`: bge-m3 service `/api/atoms/{id}/reindex` HTTP client, 5s timeout.
+  ```
+  2. 把 `### Changed\n- (covered above)` 改为:
+  ```
   ### Changed
   - `supersedeIfSimilar` default threshold 0.92 → 0.65 (matches recall floor 0.55 + 0.10 buffer, 90 atom sweep showed 0 false positives).
   - `EXTRACT_PROMPT_V2` adds "## 主动更新,非扩张" 段 instructing LLM to update existing atoms when possible.
   - `executeItem` adds normalizeTag + conceptTagCount guard + LLM 二次确认 dedup on cosine ≥ 0.65 hit.
+  - `executePlan` signature extended with optional `callLlm` param (legacy behavior preserved when undefined).
+  - `buildExtractionPrompt` signature extended with optional `{ tagVocabulary? }` opts.
+  - `extractMemoriesWithCallLlm` config extended with optional `tagVocabulary` field.
   ```
+  3. `### Fixed\n- (none in this change)` 保持不变 (无 fix 类变更)。
   格式跟现有 CHANGELOG 风格一致 (revert 0.60→0.55 entry 保留, 见 [Unreleased] 已存在的 decay + search entries)。
-  - **验证**: `cd extensions/personal-assistant && head -50 CHANGELOG.md` 应看到 [Unreleased] 下新 entries
+  - **验证**: `cd extensions/personal-assistant && head -50 CHANGELOG.md` 应看到 [Unreleased] 下 ### Added / ### Changed 都被填实, 无重复 ### Added / ### Changed 子标题
   - **依赖**: 1.1, 3.7, 3.8 (主要实现完才能写 changelog)
 
 ## 4. 文档与验证 (Verification & Docs)

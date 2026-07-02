@@ -319,11 +319,11 @@ export function conceptTagCount(tags: string[]): number;
 
 ## Existing Code to Reuse
 
-### Reuse: `MemoryIndex.getActiveAtoms()`
+### Reuse: `MemoryIndex.getActiveAtoms()` (备用, 主路径走 SQL 直接排序)
 - **Path**: `extensions/personal-assistant/storage.ts:306`
 - **Why**: 直接拿到 90 个 active atom 列表,过滤 archived=0 + is_latest=1
 - **Risk**: 返回的 atom 都是 in-memory 行,需要确认 rowToAtom 解析 tags 数组正确 (已确认 storage.ts:170)
-- **Decision**: reuse
+- **Decision**: 备用 — 主路径走 SQL `SELECT * FROM memory_index WHERE is_latest=1 AND archived=0 ORDER BY access_count DESC, COALESCE(last_access, 0) DESC, created_at DESC` (效率: SQL sort 比 JS in-memory sort 快 5-10×,1000+ atom corpus 时差距明显)。`getActiveAtoms()` 可用于 backup 前的 total count 报告,以及非主流程的 sanity check。
 
 ### Reuse: `MemoryIndex.updateAtom()`
 - **Path**: `extensions/personal-assistant/storage.ts:186`
