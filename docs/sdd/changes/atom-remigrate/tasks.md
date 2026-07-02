@@ -25,13 +25,13 @@
   - **验证**: `grep -n "0.92" extensions/personal-assistant/dedup.ts` 应 0 行
   - **依赖**: 无
 
-- [ ] 1.2 **dedup-threshold.test.ts 新增: 验证 0.65 默认值 + 边界**
+- [x] 1.2 **dedup-threshold.test.ts 新增: 验证 0.65 默认值 + 边界**
   - **文件**: `extensions/personal-assistant/test/dedup-threshold.test.ts` (Create)
   - **内容**: 4 个 it() block: (a) `supersedeIfSimilar(index, dir, newAtom, vec)` 不传 threshold 时, 内部调 `findMostSimilarEmbedding(vec, 0.65)`,用 spy on `index.findMostSimilarEmbedding` 验证传入 0.65; (b) cosine 0.64 不被 merge; (c) cosine 0.66 被 merge; (d) self-match guard (cosine 1.0 返回 create 而非 supersede)。Mock embedder, 用 1024 维控制向量 (跟 dedup.test.ts 一致)。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup-threshold.test.ts` 全 4 个 case pass
   - **依赖**: 1.1
 
-- [ ] 1.3 **dedup.test.ts + extraction.ts stale 0.92 references 更新**
+- [x] 1.3 **dedup.test.ts + extraction.ts stale 0.92 references 更新**
   - **文件**: `extensions/personal-assistant/test/dedup.test.ts` + `extensions/personal-assistant/extraction.ts` (Modify)
   - **内容**:
   - **dedup.test.ts**: 现有 6 个 it() (实际数, 见 line 130, 234 等) 中, 显式传 `0.92` 的 case 改为传 `0.65`; 默认 threshold 的 test (line 234 "returns create with default threshold (0.92) when cosine 0.5") 改名为 "returns create with default threshold (0.65) when cosine 0.5" + 同步更新 test header 注释 (line 10 提的 "0.92" 改为 "0.65", line 38 提的 "0.92" 改为 "0.65", line 127 提的 "0.92" 改为 "0.65", line 231 提的 "0.92" 改为 "0.65", line 239 提的 "0.92" 改为 "0.65")。任一 case 失败则读原 test 看 context 调整。
@@ -51,7 +51,7 @@
 
 ## 2. 目标 1: Migration 脚本 (程序驱动 0.65 dedup, 无 LLM)
 
-- [ ] 2.1 **storage.ts 新加 markSupersededNoInsert helper**
+- [x] 2.1 **storage.ts 新加 markSupersededNoInsert helper**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify, 在 `markSupersededTx` 之后追加)
   - **内容**: 公开方法 `markSupersededNoInsert(oldId: string, parentId: string, now: number): MemoryAtom`。**只** UPDATE `memory_index` SET `is_latest=0, parent_id=?, superseded_at=?` WHERE id=?,**不** INSERT 新 row, **不** 改 vector (content 没变, vector 仍正确)。返回被改的旧 atom (getAtom 重读)。**不要**包 transaction,单个 UPDATE 即可 (并发安全: better-sqlite3 串行化)。**关键**: parentId 是"赢" atom 的 id (新规则 — 旧 atom 的 parent_id 指向保留方)。
   - **验证**: `cd extensions/personal-assistant && grep -n "markSupersededNoInsert" storage.ts` 找到 1 行定义
@@ -69,7 +69,7 @@
   - **验证**: `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts --help` 打印 usage (脚本用 if (process.argv.includes("--help")) printUsage(); return)
   - **依赖**: 1.1, 2.1, 2.4
 
-- [ ] 2.4 **storage.ts 加 getEmbedding helper**
+- [x] 2.4 **storage.ts 加 getEmbedding helper**
   - **文件**: `extensions/personal-assistant/storage.ts` (Modify, 在 `getAtom` 附近追加)
   - **内容**: `getEmbedding(id: string): number[] | null` — 从 `memory_vectors` 表 SELECT embedding WHERE id=?,返回 number[] (用 `Float32Array.from` 转换) 或 null (无 row)。SQLite-vec 列是 BLOB, 直接 fetchall。
   - **验证**: `cd extensions/personal-assistant && grep -n "getEmbedding" storage.ts` 找到 1 行定义
@@ -89,7 +89,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/tag-vocab.test.ts` 全 case pass (test 文件在 3.2 task 创建)
   - **依赖**: 无
 
-- [ ] 3.2 **tag-vocab 单元测试**
+- [x] 3.2 **tag-vocab 单元测试**
   - **文件**: `extensions/personal-assistant/test/tag-vocab.test.ts` (Create)
   - **内容**: describe `loadTagVocabulary`: (a) 空 corpus → []; (b) 5 atom 各有 ["amplicon", "16S"], 2 atom 各有 ["amplicon", "修复"] → top 2 = ["amplicon" (7), "16S" (5)]; describe `normalizeTag`: (c) "Amplicon" + 字典含 "amplicon" → "amplicon"; (d) "MGM" + 字典含 "MGM" → "MGM" (不强制 lowercase); (e) "amplicon" 无字典 → "amplicon"; (f) "扩增子" 无字典 → "扩增子" (中文不变); (g) "" → ""; (h) "  amplicon  " → "amplicon" (trim); describe `conceptTagCount`: (i) ["concept/fix", "amplicon"] → 1; (j) ["amplicon", "16S"] → 0; (k) [] → 0。共 10+ 个 it()。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/tag-vocab.test.ts` 全 case pass
@@ -110,7 +110,7 @@
   - **验证**: `grep -n "主动更新,非扩张" extensions/personal-assistant/extraction.ts` 找到 ≥ 1 行
   - **依赖**: 无
 
-- [ ] 3.4 **buildExtractionPrompt 改造: 加 tagVocabulary opts 参数**
+- [x] 3.4 **buildExtractionPrompt 改造: 加 tagVocabulary opts 参数**
   - **文件**: `extensions/personal-assistant/extraction.ts:287-294` (Modify)
   - **内容**: 签名改 `buildExtractionPrompt(messages, opts?: { tagVocabulary?: string[] }): string`。在 EXTRACT_PROMPT_V2 拼接后, `toneHint` 之前,插入条件段:
   ```typescript
@@ -178,7 +178,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-dedup-confirm.test.ts` 5 个边界 case pass (test 文件 3.10 task 创建)
   - **依赖**: 3.1, 3.5, 3.6, 3.8
 
-- [ ] 3.8 **confirmDedupAction 函数: LLM 二次确认 (新核心)**
+- [x] 3.8 **confirmDedupAction 函数: LLM 二次确认 (新核心)**
   - **文件**: `extensions/personal-assistant/extraction.ts` (Modify, 在 `executeItem` 之后追加, 或放新文件 `extraction-dedup-confirm.ts`)
   - **内容**: 导出函数 `confirmDedupAction(callLlm, hitAtom: MemoryAtom, newItem: ExtractionItem): Promise<{ action: "update" | "supersede" | "create" | "skip", merged?: { title: string; summary: string; content: string; tags: string[] } }>`。完整实现:
   1. 构造 prompt (DEDUP_CONFIRM_PROMPT 字符串, ~300 字):
