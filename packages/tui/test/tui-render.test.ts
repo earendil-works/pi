@@ -295,6 +295,45 @@ describe("TUI Kitty image cleanup", () => {
 		tui.stop();
 	});
 
+	it("deletes off-screen Kitty images without forcing full redraws when line count is unchanged", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 5);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 1, maxHeightCells: 1, imageId: 12345 },
+				{ widthPx: 10, heightPx: 10 },
+			);
+			component.lines = [...image.render(40), ...Array.from({ length: 19 }, (_, i) => `Line ${i + 1}`)];
+			tui.start();
+			await terminal.waitForRender();
+
+			const redrawsAfterInitialRender = tui.fullRedraws;
+			terminal.clearWrites();
+
+			component.lines = ["Removed image", ...Array.from({ length: 19 }, (_, i) => `Line ${i + 1}`)];
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.strictEqual(tui.fullRedraws, redrawsAfterInitialRender, "off-screen image removal should not redraw");
+			assert.ok(writes.includes(deleteKittyImage(12345)), "off-screen image should still be deleted by id");
+			assert.ok(!writes.includes("\x1b[2J"), "off-screen image deletion should not clear scrollback");
+
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
 	it("deletes previously rendered image ids during full redraws", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui = new TUI(terminal);
@@ -704,6 +743,62 @@ describe("TUI differential rendering", () => {
 
 		assert.strictEqual(tui.fullRedraws, redrawsAfterShrink, "Append should stay on the differential path");
 		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "Line 2", "", ""]);
+
+		tui.stop();
+	});
+
+	it("does not full-redraw when unchanged-height edits start above the viewport", async () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 20 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		const redrawsAfterInitialRender = tui.fullRedraws;
+
+		component.lines = Array.from({ length: 20 }, (_, i) => (i === 0 ? "CHANGED OFFSCREEN" : `Line ${i}`));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(
+			tui.fullRedraws,
+			redrawsAfterInitialRender,
+			"off-screen content changes with the same line count should not replay scrollback",
+		);
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 15", "Line 16", "Line 17", "Line 18", "Line 19"]);
+
+		tui.stop();
+	});
+
+	it("clamps unchanged-height changes that begin above the viewport to visible rows", async () => {
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 20 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		const redrawsAfterInitialRender = tui.fullRedraws;
+
+		component.lines = Array.from({ length: 20 }, (_, i) => {
+			if (i === 0) return "CHANGED OFFSCREEN";
+			if (i === 19) return "CHANGED VISIBLE";
+			return `Line ${i}`;
+		});
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(
+			tui.fullRedraws,
+			redrawsAfterInitialRender,
+			"visible tail changes should render differentially even if an earlier off-screen line changed first",
+		);
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 15", "Line 16", "Line 17", "Line 18", "CHANGED VISIBLE"]);
 
 		tui.stop();
 	});

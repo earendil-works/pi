@@ -1391,6 +1391,11 @@ export class TUI extends Container {
 			firstChanged = expandedRange.firstChanged;
 			lastChanged = expandedRange.lastChanged;
 		}
+		// Preserve the full changed range for Kitty image cleanup. The repaint range may
+		// later be clamped to the visible viewport, but image deletion is id-based and
+		// must still include off-screen changed image lines.
+		const kittyDeleteFirstChanged = firstChanged;
+		const kittyDeleteLastChanged = lastChanged;
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
 		// No changes - but still need to update hardware cursor position if it moved
@@ -1450,18 +1455,38 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// Differential rendering can only touch what was actually visible. If a stable-
+		// height update starts above the viewport, clamp repainting to visible rows
+		// instead of falling back to a full redraw. This avoids replaying large scrollback
+		// for off-screen-only updates (for example, a completed tool block changing
+		// status color) while keeping the visible viewport and cached line state current.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			if (newLines.length === this.previousLines.length) {
+				if (lastChanged < prevViewportTop) {
+					const imageDeletes = this.deleteChangedKittyImages(kittyDeleteFirstChanged, kittyDeleteLastChanged);
+					if (imageDeletes) {
+						this.terminal.write(imageDeletes);
+					}
+					this.positionHardwareCursor(cursorPos, newLines.length);
+					this.previousLines = newLines;
+					this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+					this.previousWidth = width;
+					this.previousHeight = height;
+					this.previousViewportTop = prevViewportTop;
+					return;
+				}
+				firstChanged = prevViewportTop;
+			} else {
+				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
 		}
 
 		// Render from first changed line to end
 		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
-		buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
+		buffer += this.deleteChangedKittyImages(kittyDeleteFirstChanged, kittyDeleteLastChanged);
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
 		if (moveTargetRow > prevViewportBottom) {
