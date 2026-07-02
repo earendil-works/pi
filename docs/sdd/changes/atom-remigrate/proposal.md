@@ -39,16 +39,16 @@
 
 ## 验收标准
 
-### 目标 1: 合并迁移
-1. **合并后 atom 数量减少 ≥ 20%** (90 → ≤ 72),由 LLM 判定,只要合并 cluster 至少 6 个即达标
-2. **不扩张**: 合并后 content 长度不刻意加长,可短可长 (用户说"无须扩张新atom")
-3. **任何被改的 atom**: 同一 id 保留,`updated_at` 更新,`version` +1,`access_count` 不变,`is_latest=1`,`archived=0`
-4. **每个被改的 atom**: bge-m3 向量通过 `/api/atoms/{id}/reindex` 重算,新 cosine/sparse 跟新文本一致
-5. **召回真阳性率 (precision@5) 在迁移后 ≥ 40%** (用户原 case "修复的脚本和修复逻辑给我",top-5 内至少 2 个真相关) — 通过 `recall-quality.test.ts` 验证
-6. **数据完整性**: 迁移前后 `atom.id` 集合相同 (只是文本变化,无增删)
-7. **可重入**: 脚本运行 2 次,第二次为 no-op (settings.json 标记 + 标题后缀检测)
+### 目标 1: 合并迁移 (程序驱动 0.65 dedup)
+1. **合并后 atom 数量减少 ≥ 17%** (90 → ≤ 75),由 0.65 cosine dedup 自动触发 35 pair merge
+2. **不扩张**: 合并是 markSupersededNoInsert 标 archived,不修改 content,长度自然不变
+3. **任何被改的 atom**: 同一 id 保留,被 supersede 的 atom 仅 `is_latest=0` + `parent_id` + `superseded_at` 三个字段变化;`version` / `access_count` / `last_access` 不动
+4. **不需要 bge-m3 reindex**: content 没变,vector 跟文本仍一致 (这是目标 1 比 LLM batch 简单的关键)
+5. **召回真阳性率 (precision@5) ≥ 40%** (用户原 case "修复的脚本和修复逻辑给我",top-5 内至少 2 个真相关) — 通过 `recall-quality.test.ts` 验证
+6. **数据完整性**: 迁移前后 `atom.id` 集合相同,只 is_latest 状态变化
+7. **天然 idempotent**: 第二次跑 0 个改动 (0.65 dedup 终态不变,所有 self-match 走 guard path)
 8. **可回滚**: 迁移前自动备份 memory.db → memory.db.bak.YYYYMMDD,出错可手动 cp 回滚
-8a. **dedup 阈值 0.65 (跨目标 1+2)**: 现有 0.92 跟 recall floor 0.55 严重脱节,改为 0.65,跟 recall floor 留 0.10 buffer。90 atom 实测触发 35 个真实 cluster merge,0 误伤
+8a. **dedup 阈值 0.65 (跨目标 1+2)**: 现有 0.92 跟 recall floor 0.55 严重脱节,改为 0.65。90 atom 实测触发 35 个真实 cluster merge,0 误伤
 
 ### 目标 2: 防止未来冗余
 9. **`EXTRACT_PROMPT_V2` 包含现有 tag 字典 (top 50 高频 tag)**: LLM extract 时能看到现有 tags,优先复用

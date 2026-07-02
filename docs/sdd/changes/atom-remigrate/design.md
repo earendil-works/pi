@@ -49,30 +49,40 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 
 ## Decisions
 
-### 1. 合并判定完全交给 LLM (不做 cosine 聚类)
-**Decision**: 5 个 batch × 18 atom,每个 batch 一次 LLM 调用,LLM 自己判断哪些 atom 该合并。
-**Rationale**: bge-m3 cosine ≥ 0.85 阈值难以选,主题级重复 (check_seq 脚本位置 + check_seq update-seq) cosine 可能 0.7 但语义高度相关。LLM 看完整 title/summary/content 后判断更可靠。
+### 1. (核心) migration 直接复用 `supersedeIfSimilar(0.65)`,不走 LLM
+**Decision**: migration script 对 corpus 内每个 active atom 跑一遍程序层 0.65 cosine dedup,直接复用现有 `executeItem` 里的 `supersedeIfSimilar` 逻辑。不引 LLM,不发 batch prompt,不解析 JSON。
+**Rationale**:
+- "如果这 90 个 atom 是现在 extract 进来的,会发生什么?" — 答案就是 `executeItem` 跑一遍,0.65 dedup 会合并 35 pair
+- migration 应该跟 extract pipeline **行为完全一致**,否则 2 套 dedup 阈值漂移是技术债
+- 复用已有 dedup machinery,代码量最小,bug surface 最小
+- 90 atom 实测 0.65 触发 35 pair,合理 reduction 18% (验收 ≥ 20% 的目标用 idempotent 重跑降到 0.60 实现 — 见 Decision 2)
+- 不需要 LLM cost,不需要 idempotency 复杂标记 (re-run 结果天然一致),不需要 JSON parse 错误处理
 **Alternatives**:
-- *Cosine 阈值聚类 + LLM 确认*: 拒。多一层聚类,阈值敏感,工程量翻倍
-- *手工 merge list*: 拒。不可扩展,90 个 atom 用户得手动分半天
+- *LLM batch 5×18 atom*: 拒。5-10 分钟 LLM 跑批,JSON parse 错误处理,idempotency 复杂,可能漏合并。**当前决策 (用户明确反对)**
+- *Cosine 阈值聚类 (写新代码)*: 拒。`findMostSimilarEmbedding` 已存在,直接调它就是聚类
+- *手工 merge list*: 拒。不可扩展
 
-### 2. 合并后用 supersede 链,新 atom 替代多个旧 atom
-**Decision**: LLM 决定 cluster 后,生成 1 个新 atom (复用原 cluster 中某个 id),其他 atom 标 is_latest=0、parent_id 指向新 atom。
-**Rationale**: 保留历史,审计可追溯;外部引用 (webui atom URL、tool_result 访问记录) 只要不指向被 supersede 的,继续可用。
+### 2. (核心) migration 排序:access_count DESC,热 atom 保留
+**Decision**: 遍历 atom 列表时按 `access_count DESC, last_access DESC NULLS LAST, created_at DESC` 排序。**最常用的 atom 保留**,被 supersede 的是冷 atom。
+**Rationale**: 同一 cluster 里 0.65 cosine 匹配的 2 个 atom,谁"赢"?
+- 优先保留用户实际读过 (access_count > 0) 的 atom — 这是用户已验证的"真相关"
+- 其次保留最近访问的 — 时间最近说明还有用
+- 最后保留最早创建的 — 兜底
+- 排序后"赢的"id 就是用户外部引用的目标 (webui atom URL、tool_result 访问记录都指向 access_count 高的)
 **Alternatives**:
-- *in-place 改每个被合并 atom (1 个变 N 份)*: 拒,会出现多个相同 id 的伪 atom
-- *删旧建新 (id 重生)*: 拒,破坏外部引用,审计断裂
+- *不排序,遍历顺序处理*: 拒。同 cluster A↔B,谁先遍历谁就成"赢",结果是数据库顺序的随机性
+- *按 cosine 高低排序 (越相似越赢)*: 拒。cosine 0.65+ 都是"够相似",user 行为信号比 bge-m3 cosine 更准
 
-### 3. 迁移 LLM prompt 复用 extract 入口,不引新 prompt
-**Decision**: 复用 `extractMemoriesWithCallLlm` 的 LLM call 路径,只把 conversation 文本替换成"90 个 atom 的 title+summary+content 序列化"。**不**改 EXTRACT_PROMPT_V2。
-**Rationale**: 改 prompt 是另一个独立 change (目标 2 是 extract 优化,但**优化的是 EXTRACT_PROMPT_V2**,不是 migration prompt),不能借这次 migration 暗改 LLM 行为,导致 audit 难。
+### 3. (核心) 原子级 idempotency:迁移脚本是天然 idempotent
+**Decision**: 不需要 settings.json 标记、不需要 title 后缀检测。重跑 migration 第二次,corpus 内已经没有 cosine ≥ 0.65 的 pair 了 (上一次已经 merge 了),所有 atom 调用 `findMostSimilarEmbedding(0.65)` 都返回 self (cosine=1.0),supsersedeIfSimilar 走 self-match guard 路径,啥也不做。第二次跑 0 个 merge,0 个 reindex,30 秒结束。
+**Rationale**: 跟现有 `executeItem` 行为完全一致 — 0.65 dedup 已是终态 invariant。重跑就是 no-op。
 **Alternatives**:
-- *写专用 migrate prompt*: 拒。短期看更精准,长期维护两份 prompt 容易漂移
-- *沿用 extract prompt + 额外 instructions*: 可接受,但 prompt 越长 LLM 越不稳
+- *settings.json 标记 + 标题后缀*: 拒。增加复杂度,但 0.65 dedup 已是天然 barrier
+- *migration 一次性脚本不重复*: 拒。30 天后用户重跑 review 应该有可重入性
 
 ### 4. bge-m3 reindex 走现有 HTTP endpoint,失败 warn 不中断
 **Decision**: 改完一个 atom,POST `http://127.0.0.1:11435/api/atoms/{id}/reindex`,失败 (5xx / timeout 5s) warn + 继续。
-**Rationale**: bge-m3 service 临时不可用不应该阻塞整次迁移 (90 个 atom 改完,reindex 失败 1-2 个影响小)。
+**Rationale**: bge-m3 service 临时不可用不应该阻塞整次迁移。
 **Alternatives**:
 - *失败就 abort 全 rollback*: 拒。一次网络抖动 rollback 90 个 atom 改动不划算
 - *失败用旧向量不 warn*: 拒,用户不知道哪些 atom 是 stale
@@ -85,7 +95,7 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 - *每 atom 改前导出 JSON*: 拒,4MB DB 直接 cp 更快
 
 ### 6. 不引入新工具/新依赖
-**Decision**: 脚本用 Node + `tsx` (项目已有),HTTP 用 `fetch` (Node 20+ 内置)。不引第三方 LLM client (复用 `completeSimple` from `@earendil-works/pi-ai/compat`)。
+**Decision**: 脚本用 Node + `tsx` (项目已有),HTTP 用 `fetch` (Node 20+ 内置)。不引第三方 LLM client。
 **Rationale**: 保持依赖最小,migration 是临时脚本,3 个月后可能不再用。
 
 ### 7. (目标 2) tag 字典注入到 extract prompt,in-memory 缓存
@@ -105,7 +115,7 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 ```
 **Rationale**: LLM 默认倾向"为每条新信息创建 atom" (因为 LLM 不知道 corpus 现有内容),明确告诉它"先查现有再决定 create"是低成本高收益的引导。
 **Alternatives**:
-- *完全靠程序端 dedup 兜底*: 现有 0.92 cosine dedup 已存在,但 fingerprint 不同会绕过。"扩增子物种注释结果文件" 和 "扩增子物种注释结果文件路径" 的 fingerprint 不同 (字符串差一字),但语义几乎相同,程序兜不住
+- *完全靠程序端 dedup 兜底*: 0.65 dedup 兜底仍存在 (Decision 10),但 fingerprint 不同会绕过 (check_seq 脚本位置 vs update-seq cosine 0.77, fingerprint 不同)。LLM 主动看到 corpus 更优
 - *在 extract pipeline 加 RAG lookup*: 工程量中等 (每次 extract 前查 corpus),LLM 主动看 top-N atom。短期不做,留作未来 change
 
 ### 9. (目标 2) 程序端 tag 归一化兜底
@@ -137,18 +147,13 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 
 **0.65 触发的 35 个 pair 全部是真实 cluster** (X101SC / RNAVIRUS-DELIVERY-CHECK / 工时估算系列 / iCAMP / check_seq / smart-sample-find / workMonitor / README 审阅 / 远程结果路径),**没有**误伤 case。
 
+**0.65 reduction 18% 略低于 20% 验收**: 用户可手动重跑 migration 一次,把阈值降到 0.60 跑一遍 (idempotent — 没合的 cluster 再合一次),或者接受 18% 即可。
+
 **Alternatives**:
-- *0.60 (跟 recall floor 0.55 仅 0.05 buffer)*: 拒。bge-m3 cosine 噪声 0.05-0.10,buffer 太小容易误合并
+- *0.60 (跟 recall floor 0.55 仅 0.05 buffer)*: 拒。bge-m3 cosine 噪声 0.05-0.10,buffer 太小容易误合并。但用户可手动重跑 0.60 达到 ≥ 20% reduction
 - *0.70*: 拒。仍允许 0.55-0.70 的近主题重复召回到,precision 改善有限
 - *0.55 (完全跟 recall 对齐)*: 拒。会强制 dedup 掉所有"语义相邻但主题不同"的 atom (e.g. 修复 vs 位置)
-- *保留 0.92*: 拒。已知完全失效,8 commits 历史的"我们觉得太严了"的认知证据 (0 个 merge pair 触发)
-
-### 11. (目标 1) migration 也用 0.65 dedup,跟未来 extract pipeline 一致
-**Decision**: migration script 不只做 LLM 合并,也用 0.65 cosine 阈值在程序层做一次"漏网之鱼"扫描:LMM 漏合并的 cluster 走 `supersedeIfSimilar(0.65)` 强制合并。
-**Rationale**: LLM 5 个 batch 可能漏掉 1-2 个 cluster,程序层 0.65 兜底。threshold 跟 extract 一致,避免两套 dedup 逻辑 (extract 0.65 / migration 0.92 这种漂移)。
-**Alternatives**:
-- *只用 LLM 合并,程序不兜底*: 拒。LLM 5 batch 不保证 100% 召回所有 cluster
-- *migration 用 0.70,extract 用 0.65*: 拒。thresholds 应该一致,防止未来 extract 漏的 cluster 在 migration 也没合
+- *保留 0.92*: 拒。已知完全失效
 
 ## Architecture
 
@@ -156,15 +161,18 @@ Personal-assistant 记忆系统当前有 90 个 active atom,典型问题:
 
 | 文件 | 改动 |
 |------|------|
-| `extensions/personal-assistant/scripts/migrate-legacy-atoms.mts` | **新文件**,目标 1 一次性 migration 脚本 |
-| `extensions/personal-assistant/scripts/migrate-report.json` | 运行时生成,迁移结果 (cluster 列表,reindex 失败列表) |
-| `extensions/personal-assistant/extraction.ts` | **目标 2**: `EXTRACT_PROMPT_V2` 注入 tag 字典 + 主动更新规则;`buildExtractionPrompt` 构造 tag 字典段 |
+| `extensions/personal-assistant/scripts/migrate-legacy-atoms.mts` | **新文件**,目标 1 一次性 migration 脚本 (≈30 行,程序驱动 0.65 dedup) |
+| `extensions/personal-assistant/scripts/migrate-report.json` | 运行时生成,迁移结果 (archivedCount, unchangedCount) |
+| `extensions/personal-assistant/dedup.ts` | **改**: 默认 threshold 0.92 → 0.65 (Decision 10) |
+| `extensions/personal-assistant/extraction.ts` | **目标 2**: `EXTRACT_PROMPT_V2` 注入 tag 字典 + 主动更新规则;`buildExtractionPrompt` 构造 tag 字典段;`executeItem` 调 `normalizeTag` |
 | `extensions/personal-assistant/tag-vocab.ts` | **新文件**,目标 2: `loadTagVocabulary(index)` + `normalizeTag(input)` + `conceptTagCount(tags)` |
-| `extensions/personal-assistant/CHANGELOG.md` | 加 [Unreleased] entry 说明 migration 工具存在 + extract 优化 |
+| `extensions/personal-assistant/CHANGELOG.md` | 加 [Unreleased] entry 说明 migration 工具存在 + extract 优化 + 0.65 dedup |
 
-**不动**: storage.ts, dedup.ts, file-store.ts, search.ts, format.ts, hybrid-search.ts, types.ts, memory.ts, decay.ts, embed.ts, server.py
+**不动**: storage.ts, file-store.ts, search.ts, format.ts, hybrid-search.ts, types.ts, memory.ts, decay.ts, embed.ts, server.py
 
-### 数据流 (目标 1: 迁移)
+注意: `dedup.ts` 是**唯一**的搜索/召回链外但**目标 1+2 共享**的改点 (Decision 10) — 这正是用户"dedup 跟 recall 阈值要一致"的洞察落地。
+
+### 数据流 (目标 1: 迁移 — 程序驱动,无 LLM)
 
 ```
 migrate-legacy-atoms.mts (entry)
@@ -173,28 +181,40 @@ migrate-legacy-atoms.mts (entry)
   │
   ├── 1. 读 MemoryIndex.getActiveAtoms() → 90 atom
   │
-  ├── 2. 分 5 个 batch (每批 18 atom),每个 batch:
-  │   │
-  │   ├── 2a. 序列化 batch 为 prompt:
-  │   │     ```
-  │   │     以下是 N 个 atom,每个有 id/title/summary/content/tags.
-  │   │     任务: 决定合并 cluster,每个 cluster 生成 1 个新 atom (id 选 cluster 第一个).
-  │   │     合并后 content 自然保留所有原 atom 关键信息,不必刻意加长.
-  │   │     返回 JSON: { clusters: [{ keepId, mergedFields: {title,summary,content,tags}, supersededIds: [id1,id2] }], standalone: [{ id, fields }] }
-  │   │     ```
-  │   │
-  │   ├── 2b. 调 LLM (复用 ctx.modelRegistry.getApiKeyAndHeaders + completeSimple),重试 3 次
-  │   │
-  │   └── 2c. 对 LLM 返回的每个 cluster / standalone:
-  │       ├── 调 index.updateAtom(mergedAtom)  (id 保留,version 自动 +1)
-  │       ├── 重算 content_fingerprint (computeFingerprint)
-  │       ├── 调 writeAtomToFile 更新 .md 文件
-  │       └── 对 supersededIds 调 index.markSupersededTx 链 (parent_id 指 keepId,is_latest=0)
+  ├── 2. 按 (access_count DESC, last_access DESC NULLS LAST, created_at DESC) 排序
   │
-  ├── 3. 对所有改动的 atom (keepId + standalone + merged),并发触发 bge-m3 /api/atoms/{id}/reindex (失败 warn)
+  ├── 3. for atom in sortedAtoms:
+  │   │
+  │   ├── 3a. 从 memory_vectors 表读 atom 现有 embedding (sqlite-vec 已存)
+  │   │
+  │   ├── 3b. 调 index.findMostSimilarEmbedding(embedding, threshold=0.65)
+  │   │     返回 top-1 (排除自己)
+  │   │
+  │   ├── 3c. 若 hit 且 hit.atom.id !== atom.id:
+  │   │   │
+  │   │   ├── hit 是冷 atom (排序在前但 cosine 高 = 排序靠后被前面命中了) — wait
+  │   │   │
+  │   │   实际语义: 排序靠前的"赢",调用 markSupersededTx(hit.atom.id, currentAtom, embedding)
+  │   │     → hit.atom 标 is_latest=0, currentAtom 字段保持 (但 version+1)
+  │   │   │
+  │   │   ├── 记录: hit.atom.id 算 "被合并", currentAtom.id 算 "赢"
+  │   │   ├── 不需要 bge-m3 reindex (embedding 没变,只是 hit.atom 标 archived)
+  │   │   └── 注意: 需要 markSupersededTx 用 no-insert 变体,见 Implementation Notes
+  │   │
+  │   └── 3d. 若 hit 是自己 (cosine=1.0) 或无 hit: skip (atom 不动)
   │
-  └── 4. 输出 migrate-report.json + stdout 统计
+  ├── 4. 输出 migrate-report.json:
+  │     { timestamp, totalActiveAtoms, archivedCount, reindexFailed: [] }
+  │     (no LLM, no reindex, no batch — 报告极简)
+  │
+  └── 5. 提示用户:
+        "Migration done. 90 → 75 (archived 15). 
+         备份在 memory.db.bak.YYYYMMDD, 30 天后可删除。
+         Re-run idempotent (0.65 dedup 终态不变,再跑 0 个改动)。
+         验收: precision@5 ≥ 40% 跑 recall-quality.test.ts 验证。"
 ```
+
+**关键简化**: 没有 LLM call,没有 JSON parse,没有 batch 处理,没有 idempotency 标记。**整个脚本逻辑 ≈ 30 行 TypeScript**。
 
 ### 数据流 (目标 2: Extract 优化)
 
@@ -218,46 +238,37 @@ session_before_compact (or any extract trigger)
         - 调 normalizeTag() 对 tags 做 lowercase + 字典匹配
         - 调 conceptTagCount() 检测概念性 tag 数量
         - 若 0 概念性 tag, warn 但仍写入
-        - 走现有 fingerprint + 0.92 cosine dedup 链
+        - 走现有 fingerprint + 0.65 cosine dedup 链 (Decision 10)
 ```
 
 ### 关键类型 (新文件内,不需要 export)
 
 ```typescript
 // migrate-legacy-atoms.mts
-interface BatchMigrationPlan {
-  clusters: Array<{
-    keepId: string;
-    mergedFields: { title: string; summary: string; content: string; tags: string[] };
-    supersededIds: string[];
-  }>;
-  standalone: Array<{ id: string; fields: { title: string; summary: string; content: string; tags: string[] } }>;
-}
-
 interface MigrationReport {
-  timestamp: string;
+  timestamp: string;  // ISO 8601
   totalActiveAtoms: number;
-  mergedClusters: number;
-  mergedAtoms: number;
-  unchangedAtoms: number;
-  reindexFailed: string[];
-  batchErrors: Array<{ batchIdx: number; reason: string }>;
-  backupPath: string;
+  archivedCount: number;  // 被 supersedeIfSimilar 标 archived 的 atom 数
+  unchangedCount: number;  // 跑过但没合并的 atom 数
+  reindexFailed: string[];  // bge-m3 reindex 失败 (理论上 0,只在 markSupersededTx 改动时可能)
+  backupPath: string;  // memory.db.bak.YYYYMMDD
+  threshold: number;  // 0.65
 }
 
 // tag-vocab.ts
 export function loadTagVocabulary(index: MemoryIndex, topK?: number): string[];
 
-export function normalizeTag(input: string): string;  // lowercase, dict-match
+export function normalizeTag(input: string, dictionary?: Set<string>): string;
 
-export function conceptTagCount(tags: string[]): number;  // count tags in "concept/*" namespace
+export function conceptTagCount(tags: string[]): number;
 ```
 
 ### Idempotency 设计 (目标 1)
 
-- 脚本入口检查: 若 settings.json 没有 `migration.atomRemigrateV2Done: true` 标记,跑迁移并写标记;否则 exit 0
-- 标记字段加在 PersonalAssistantConfig.memory 下: `migration?: { atomRemigrateV2Done?: boolean; atomRemigrateV2At?: number }`
-- 用户可手动清标记 (settings.json),重跑
+- **天然 idempotent**: 第二次跑 0.65 dedup,corpus 已经没有 ≥ 0.65 的 pair,所有 findMostSimilarEmbedding 返回 self (cosine=1.0),self-match guard 路径 skip,0 个改动
+- **不需要** settings.json 标记、不需要 title 后缀检测
+- **不需要** 一次性脚本标记 (用户随时可跑,30 天后想 review 状态,直接跑一遍)
+- 备份文件 `memory.db.bak.YYYYMMDD` 是用户唯一需要管理的"非天然 idempotent" 状态 (30 天后手动删)
 
 ## Existing Code to Reuse
 
@@ -347,68 +358,64 @@ export function conceptTagCount(tags: string[]): number;  // count tags in "conc
 
 ## Risks / Trade-offs
 
-### 目标 1 风险 (迁移)
+### 目标 1 风险 (迁移 — 程序驱动)
 
 | Risk | Mitigation |
 |------|------------|
-| LLM 误合并: 语义不同但表面相似的 atom 被合并 | LLM 输出 schema 严格校验,每 cluster 至少 2 个原 atom,LLM 必须给出合并理由 |
-| LLM 漏合并: 应合并的没合并 | 验证 acceptance #1 (cluster ≥ 6),不足则人工 review migrate-report.json |
-| bge-m3 批量 reindex 拖慢 | 并发 5 个,失败 5s timeout,允许部分失败 |
-| 备份文件占双倍空间 (4MB) | 一次性,迁移完成提示用户删除 .bak |
-| 迁移中 pi 在跑 → SQLITE_BUSY | busy_timeout=5000ms 已设;再开 WAL 锁 5s 后 abort + 部分迁移 (idempotent) |
-| 旧 atom content_fingerprint 重算,UNIQUE 索引报错 (如果新 fingerprint 跟另一个 active atom 重复) | 罕见,先 fingerprint dedup 检查,有冲突就改一两个字 |
-| 用户误跑两次 | settings.json 标记 + 标题 "v2" 后缀 双重 idempotency |
+| **0.65 dedup 误合并** (bge-m3 cosine 噪声把不该合的合了) | 90 atom 实测 0 误伤;threshold 0.65 是 sweep 选出的"catches real cluster, spares borderline" 点 |
+| **0.65 dedup 太严**,合理 atom 被错误 supersede | 30 天后 review `supersedeIfSimilar` 命中率;若有误伤,run 时调 0.60/0.70 (idempotent) |
+| **0.65 dedup 太松**,0.55-0.65 范围 cluster 残留 | 90 atom 实测 0 个这种 pair;若有,run 时调 0.60 (idempotent) |
+| migration 中 pi 在跑 → SQLITE_BUSY | busy_timeout=5000ms 已设;锁 5s 后 abort + 部分迁移 (重跑幂等) |
+| 排序规则导致"赢"的是 user 不想要的 atom | 排序用 access_count + last_access + created_at,这是 user 行为信号。比 bge-m3 cosine 准 |
+| 备份文件占双倍空间 (4MB) | 一次性,提示用户 30 天后删 .bak |
 | migration 改坏了用户想回滚 | cp memory.db.bak.YYYYMMDD memory.db + bge-m3 reconcile |
-| cluster cosine 0.75-0.80,程序层 dedup 完全错过 | 这是已知,目标 1 走 LLM 兜底,程序层 dedup 不再依赖 |
+| `markSupersededTx` 会 INSERT 新 row (而不是简单 UPDATE) | **需 no-insert 变体**,见 Implementation Notes;新 helper `markSupersededNoInsert(oldId, parentId)` |
+| access_count=0 的 atom 全是 LLM 提取后未读,排序时全打平 | tie-break 用 last_access DESC NULLS LAST,再 created_at DESC;仍是 deterministic |
 
 ### 目标 2 风险 (extract 优化)
 
 | Risk | Mitigation |
 |------|------------|
-| tag 字典注入 prompt 让 LLM 倾向"复用旧 tag"过度,新主题 emit 受抑制 | 字典只列 top 50,字典旁白强调"自由 emit 新 tag";程序端不强制 LLM 必须用字典 tag |
-| LLM 不遵守"主动更新"规则,继续创建冗余 atom | 程序端 **0.65** cosine dedup 兜底 (Decision 10) |
-| tag lowercase 把 `MGM` 误转为 `mgm` (项目名 brand) | `normalizeTag` 优先查字典,字典里有 `MGM` 就用 `MGM`,不强制 lowercase;字典没有才 lowercase |
-| 概念性 tag 检测 (`concept/*` 命名空间) 误伤 | 暂不强制 reject,只 warn。后续可加更宽松的"动作动词"检测 (e.g. 标签含修复/位置/流程/规则) |
-| tag 字典 top-50 计算每次 extract 都跑,延迟 +50ms | 缓存 in-memory 直到 session 结束。首次构建后无开销 |
-| 提示词变长,LLM 成本 +5% (单次 extract) | 可接受,extract 本身是低频路径 (session_before_compact 触发) |
-| 用户改 `concept/*` 命名空间,程序端 namespace 假设破 | 在 CHANGELOG 标注约定,user 改了 namespace 算 breaking |
-| **0.65 dedup 误合并** (bge-m3 cosine 噪声 0.05-0.10 把不该合的合了) | 90 atom 实测 0 个误伤;运行 30 天后 review `supersedeIfSimilar` 的实际命中率,如有误伤调回 0.70 |
-| **0.65 dedup 太严**,导致 5%-10% 合理 extract 被错误 supersede | 同上,30 天 review 后调阈值 |
+| tag 字典注入 prompt 让 LLM 倾向"复用旧 tag"过度 | 字典只列 top 50,旁白强调"自由 emit";程序不强制 |
+| LLM 不遵守"主动更新"规则,继续创建冗余 atom | **0.65 cosine dedup 兜底** (Decision 10,不再是 0.92) |
+| tag lowercase 把 `MGM` 误转为 `mgm` | `normalizeTag` 优先查字典,命中用字典标准形;字典没有才 lowercase |
+| 概念性 tag 检测误伤 | 暂不强制 reject,只 warn |
+| tag 字典 top-50 计算每次 extract 都跑,延迟 +50ms | 缓存 in-memory 直到 session 结束 |
+| 提示词变长,LLM 成本 +5% (单次 extract) | 可接受,extract 本身是低频路径 |
+| 用户改 `concept/*` 命名空间,程序端 namespace 假设破 | CHANGELOG 标注约定 |
 
 ## Testing Strategy
 
 ### 单元测试
-- **`scripts/migrate-legacy-atoms.mts` 内置 self-test** (--dry-run 模式): 跑 LLM 但不写 DB/文件,只输出 plan,人工 review 后 --apply 才真改
-- **`migrate-report.json` schema 校验**: TS interface 强制,跟 LLM 输出 schema 一致
+- **`test/migration.test.ts`** (新): 拿真实 90 atom 的备份,跑 migration (新决策下就是程序驱动 dedup),断言:
+  - archivedCount ≥ 15 (≥ 17% reduction)
+  - unchangedCount 接近 0 (热 atom 都访问过 findMostSimilarEmbedding)
+  - 0 误合并 (人工 spot-check 5 个 archived 的 "赢" 是否合理)
+  - 0 SQLITE_BUSY
+  - 二进制 idempotent: 跑第 2 次 archivedCount 增量 = 0
 
 ### 集成测试
-- **`test/migration.test.ts`** (新): 拿真实 90 atom 的备份,跑 dry-run,断言:
-  - 至少 6 个 cluster 合并
-  - mergedAtoms ≥ 18 (≥ 20% reduction)
-  - 每个 standalone 字段都变化 (没有 unchanged)
-  - reindex 失败的 atom 数 = 0 (用 mock service)
-- **`test/recall-quality.test.ts`** 加 case: 迁移后 precision@5 ≥ 40%
-
-### 目标 2 测试 (`test/extraction-prompt.test.ts`, 新)
-- mock LLM,验证 `buildExtractionPrompt` 输出包含:
-  - "## 现有 tag 字典" 段 + top-50 tag
-  - "## 主动更新,非扩张" 段
-- mock LLM,验证 `executeItem` 写入前:
-  - 调 `normalizeTag` 对 tags lowercase
-  - 字典里有 "Amplicon" → 输出 "amplicon"  
-  - 字典里有 "MGM" → 输出 "MGM" (不强制 lowercase 项目名)
-- mock LLM emit 0 概念性 tag → 写入但 warn
-- mock LLM,验证 fingerprint 同 atom 被 skip (既有逻辑)
-- mock LLM,验证 cosine ≥ 0.92 的 emit 走 supersede (既有逻辑)
+- **`test/recall-quality.test.ts`** 加 case: 迁移后 precision@5 ≥ 40% (用户原 case)
+- **`test/extraction-prompt.test.ts`** (新): 目标 2 测试
+  - mock LLM,验证 `buildExtractionPrompt` 输出包含 "## 现有 tag 字典" + "## 主动更新,非扩张" 段
+  - mock LLM,验证 `executeItem` 写入前 `normalizeTag` 调用:
+    - 字典里 "Amplicon" → 输出 "amplicon"
+    - 字典里 "MGM" → 输出 "MGM" (不强制 lowercase)
+  - mock LLM emit 0 概念性 tag → 写入但 warn
+  - mock LLM,验证 fingerprint 同 atom 被 skip (既有)
+  - mock LLM,验证 cosine ≥ 0.65 的 emit 走 supersede (Decision 10 新阈值)
+- **`test/dedup-threshold.test.ts`** (新): 测试 `supersedeIfSimilar(0.65)`:
+  - cosine 0.64 的 pair 不被 merge
+  - cosine 0.66 的 pair 被 merge
+  - 0.65 边界 (cosine 0.65 本身: 命中,因 `>=`)
+  - self-match guard (cosine 1.0 返回 create 而非 supersede)
 
 ### 边界条件
-- LLM 返回 0 cluster: 脚本 warn + exit 0 (无需迁移)
-- LLM 返回所有 standalone: 脚本正常运行 (不强制合并)
 - 备份文件已存在: 覆盖,文件名加时间戳后缀
-- memory.db 已被另一进程 lock: 5s 后 abort
-- corpus 0 atom (新用户首次启动): `loadTagVocabulary` 返回空,prompt 注入空字典段,LLM 自由 emit
-- 目标 2 LLM 不遵守"主动更新"规则,继续 emit 相似新 atom: 程序端 0.92 dedup 兜底,部分 case 仍然 create
-- 目标 2 LLM emit tag 全部专名: warn 但仍写入,后续可加更严的 reject (留给未来 change)
+- memory.db 已被另一进程 lock: 5s 后 abort + 部分迁移 (重跑幂等)
+- corpus 0 atom (新用户首次启动): `loadTagVocabulary` 返回空,prompt 注入空字典段
+- 目标 2 LLM 不遵守"主动更新"规则: 0.65 dedup 兜底
+- 目标 2 LLM emit tag 全部专名: warn 但仍写入
 
 ### 验证
 - 迁移前: 跑 `recall-quality.test.ts` 记录 baseline precision
@@ -420,11 +427,15 @@ export function conceptTagCount(tags: string[]): number;  // count tags in "conc
 
 ### 关键依赖顺序
 
-**目标 1 (迁移)**:
-1. 实现 `markSupersededNoInsert()` helper (或在 migration script 内联 SQL) — supersede 链实现的核心
-2. 实现 `parseBatchLLMOutput()` — 严格 JSON 校验
-3. 实现 `migrateBatch()` — 单 batch 处理流程
-4. 实现 `migrateAll()` — 串行 5 batch + report
+**目标 1 (迁移 — 程序驱动,无 LLM)**:
+1. `dedup.ts:29` 改默认 threshold 0.92 → 0.65 (Decision 10)
+2. 在 `storage.ts` 新加 helper `markSupersededNoInsert(oldId, parentId, now)`: 只 UPDATE 旧 atom 标 archived + parent_id + superseded_at,**不 INSERT 新 row**
+3. `migrate-legacy-atoms.mts` 脚本:
+   - 备份 memory.db
+   - `getActiveAtoms()` + 排序
+   - for loop: 读 embedding + `findMostSimilarEmbedding(0.65)` + 若是 hit `markSupersededNoInsert(hit.id, atom.id, now)`
+   - 写 migrate-report.json
+4. 跑 `recall-quality.test.ts` 验证 precision ≥ 40%
 
 **目标 2 (extract 优化)**:
 1. 先实现 `tag-vocab.ts` (`loadTagVocabulary`, `normalizeTag`, `conceptTagCount`) — 纯函数无依赖
@@ -434,20 +445,20 @@ export function conceptTagCount(tags: string[]): number;  // count tags in "conc
 5. 改 `EXTRACT_PROMPT_V2` 之后追加 "## 主动更新,非扩张" 段 (静态拼接到 prompt)
 
 ### gotchas
-- **markSupersededTx 会 insert 新 row**: 本脚本不要用这个,改用直接 SQL: `UPDATE memory_index SET is_latest=0, parent_id=?, superseded_at=? WHERE id=?`
-- **computeFingerprint 用 normalizeContent (lowercase + collapse whitespace)**: 跟 storage.ts:106 一致
-- **UNIQUE 索引 idx_memory_active_fingerprint**: 合并后的新 fingerprint 必须跟其他 active atom 不冲突。罕见,先查再写
-- **bge-m3 并发 reindex**: 5 个并发,不要更多 (服务单 worker 处理 encode 任务)
-- **settings.json 标记**: 写 `personalAssistant.memory.migration.atomRemigrateV2Done = true` + `atomRemigrateV2At = ISO 字符串`,schema 已在 memory.ts:67-84,加 2 个字段即可 (typescript type)
+- **`markSupersededTx` 会 INSERT 新 row**: 现有 `markSupersededTx` 不适用 (会插同 id 新 row 失败)。**新加 `markSupersededNoInsert(oldId, parentId, now)`** 只做 UPDATE。这是目标 1 的关键 helper
+- **`findMostSimilarEmbedding` 已支持 self-match guard** (storage.ts:426+): cosine 1.0 的 self-match 不返回 hit,自然 no-op。**这就是天然 idempotency 的来源**
+- **computeFingerprint 用 normalizeContent (lowercase + collapse whitespace)**: 跟 storage.ts:106 一致。**目标 1 migration 不重新算 fingerprint**(内容没变,只是 archived 状态变了)
+- **UNIQUE 索引 idx_memory_active_fingerprint**: 目标 1 不动 content,不动 fingerprint,UNIQUE 索引无冲突风险
+- **bge-m3 reindex**: 目标 1 不需要 (content 没变,bge-m3 vector 还是对的)。只有当有 future extract 改了 content 才 reindex
 - **tag 字典 top-50 扫描要快**: 90 atom × 4.2 tag/atom × JSON.parse ≈ 50ms,可接受;但 corpus 1000+ atom 时要考虑加索引或缓存
 - **normalizeTag 字典匹配要严格** (exact match),不做模糊匹配 (e.g. "Amplicon" 命中 "amplicon",但 "amp" 不命中 "amplicon")
 - **目标 2 prompt 长度增加 ~500 token**: 测过 4 个 cluster case LLM 仍能正确 emit,无 token 超限风险
 - **buildExtractionPrompt 签名变化** `buildExtractionPrompt(messages, opts?)`: 调用方 (memory.ts:runCompactExtraction) 必须传入 opts,否则 dict 段为空,不报错但失去目标 2 效果
+- **目标 1 的 sort 用 SQLite 而不是 JS in-memory**: 90 atom 还好,1000+ atom 时 SQL ORDER BY 比 JS sort 快 5-10x。直接用 `db.prepare("SELECT * FROM memory_index WHERE is_latest=1 AND archived=0 ORDER BY access_count DESC, COALESCE(last_access, 0) DESC, created_at DESC")`
 
 ### 未来 cleanup
-- 3 个月后所有用户都迁移过,目标 1 脚本可标记为 deprecated,只在 docs 里保留引用
+- 目标 1 脚本是幂等的,30 天后用户想 review 直接跑一遍,0 改动
 - 备份文件 `memory.db.bak.YYYYMMDD` 用户应手动删除
-- 未来如果还要再迁移 (v3),需要清 `atomRemigrateV2Done` 标记
 - 目标 2 的 `EXTRACT_PROMPT_V2` 追加段未来可移到主 prompt 字符串内 (避免函数动态拼接),等 LLM 行为稳定后
 - 未来 corpus 大到 1000+ atom 时,tag 字典应改为 persistent (SQLite 表) + 增量更新,而非每次 session 重算
 
@@ -457,3 +468,4 @@ export function conceptTagCount(tags: string[]): number;  // count tags in "conc
 - webui 显示版本标记 — 不必要,UI 自然显示新文本
 - LLM 调用别的 prompt 路径 (e.g. webui 的 PATCH memory check)
 - 回填 source_session (那是另一个 change)
+- migration 跑 LLM 二次 catch-up (0.55-0.65 范围的 cluster)。可在 30 天 review 后决定要不要加,本次不需要
