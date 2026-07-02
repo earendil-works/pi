@@ -283,6 +283,28 @@ export class MemoryIndex {
 	}
 
 	/**
+	 * Read the cached embedding for an atom from `memory_vectors`. Returns
+	 * `null` if the row does not exist (atom was never indexed, or its
+	 * vector was deleted). Used by the migration script to perform
+	 * program-driven 0.65 dedup without re-running embed.
+	 *
+	 * The BLOB column holds a `Float32Array` packed by sqlite-vec; we
+	 * reconstruct it on read.
+	 */
+	getEmbedding(id: string): number[] | null {
+		const row = this.db
+			.prepare(`SELECT embedding FROM memory_vectors WHERE id = ?`)
+			.get(id) as { embedding: Buffer } | undefined;
+		if (!row) return null;
+		const float32 = new Float32Array(
+			row.embedding.buffer,
+			row.embedding.byteOffset,
+			row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT,
+		);
+		return Array.from(float32);
+	}
+
+	/**
 	 * Look up the active + latest atom matching a content fingerprint. Used
 	 * at write time to detect duplicate content and to short-circuit the
 	 * extraction pipeline (S15 / R12).
