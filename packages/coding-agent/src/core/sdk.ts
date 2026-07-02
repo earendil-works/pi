@@ -100,6 +100,7 @@ export type {
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionFactory,
+	InlineExtension,
 	SlashCommandInfo,
 	SlashCommandSource,
 	ToolDefinition,
