@@ -19,7 +19,7 @@
 
 ## 1. 跨目标基础设施: dedup 阈值 0.65 (Decision 10)
 
-- [ ] 1.1 **dedup.ts 默认 threshold 0.92 → 0.65**
+- [x] 1.1 **dedup.ts 默认 threshold 0.92 → 0.65**
   - **文件**: `extensions/personal-assistant/dedup.ts:29` (Modify)
   - **内容**: `supersedeIfSimilar` 函数内 `findMostSimilarEmbedding` 调用的默认 fallback `0.92` 改为 `0.65`。同步更新文件顶部注释 (line 8-10 提的 "0.92-cosine" 改为 "0.65-cosine", line 9 提的 "design.md Decision 2" 改为 "Decision 10")。
   - **验证**: `grep -n "0.92" extensions/personal-assistant/dedup.ts` 应 0 行
@@ -31,10 +31,22 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup-threshold.test.ts` 全 4 个 case pass
   - **依赖**: 1.1
 
-- [ ] 1.3 **dedup.test.ts 更新现有 case 适配 0.65 阈值**
-  - **文件**: `extensions/personal-assistant/test/dedup.test.ts` (Modify)
-  - **内容**: 现有 6 个 it() (实际数, 见 line 130, 234 等) 中, 显式传 `0.92` 的 case 改为传 `0.65`; 默认 threshold 的 test (line 234 "returns create with default threshold (0.92) when cosine 0.5") 改名为 "returns create with default threshold (0.65) when cosine 0.5" + 同步更新 test header 注释 (line 10 提的 "0.92" 改为 "0.65", line 38 提的 "0.92" 改为 "0.65", line 127 提的 "0.92" 改为 "0.65", line 231 提的 "0.92" 改为 "0.65", line 239 提的 "0.92" 改为 "0.65")。任一 case 失败则读原 test 看 context 调整。
-  - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup.test.ts` 全 6 个 case pass
+- [ ] 1.3 **dedup.test.ts + extraction.ts stale 0.92 references 更新**
+  - **文件**: `extensions/personal-assistant/test/dedup.test.ts` + `extensions/personal-assistant/extraction.ts` (Modify)
+  - **内容**:
+  - **dedup.test.ts**: 现有 6 个 it() (实际数, 见 line 130, 234 等) 中, 显式传 `0.92` 的 case 改为传 `0.65`; 默认 threshold 的 test (line 234 "returns create with default threshold (0.92) when cosine 0.5") 改名为 "returns create with default threshold (0.65) when cosine 0.5" + 同步更新 test header 注释 (line 10 提的 "0.92" 改为 "0.65", line 38 提的 "0.92" 改为 "0.65", line 127 提的 "0.92" 改为 "0.65", line 231 提的 "0.92" 改为 "0.65", line 239 提的 "0.92" 改为 "0.65")。任一 case 失败则读原 test 看 context 调整。
+  - **extraction.ts** (level 0 reviewer MEDIUM finding): line 85 提的 "余弦相似度 > 0.92" 改为 "余弦相似度 ≥ 0.65" (在 EXTRACT_PROMPT_V2 字符串内, 改完同步通知 LLM 新阈值); line 122 executeItem JSDoc 提的 "clears 0.92" 改为 "clears 0.65"。**注意**: line 85 改动后 extraction-prompt.test.ts 仍应 pass (现有 test 不锁定 "0.92" 字符串, 是锁定"dedup.*自动"模式)。改完跑 extraction-prompt.test.ts 确认。
+  - **验证**:
+  ```bash
+  cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/dedup.test.ts
+  # 全 6 个 case pass
+  cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-prompt.test.ts
+  # 全 23 个 case pass (line 85 prompt 改动不破坏现有 test)
+  grep -n "0.92" extensions/personal-assistant/extraction.ts
+  # 应 0 行 (line 85 + 122 改完)
+  grep -n "0.92" extensions/personal-assistant/test/dedup.test.ts
+  # 应 0 行 (header 注释 + test 标题 + in-test 注释都改完)
+  ```
   - **依赖**: 1.1
 
 ## 2. 目标 1: Migration 脚本 (程序驱动 0.65 dedup, 无 LLM)
@@ -71,7 +83,7 @@
 
 ## 3. 目标 2: Extract Pipeline 优化 (LLM 二次确认 dedup + tag 字典 + tag 归一化)
 
-- [ ] 3.1 **tag-vocab.ts 新文件: loadTagVocabulary + normalizeTag + conceptTagCount**
+- [x] 3.1 **tag-vocab.ts 新文件: loadTagVocabulary + normalizeTag + conceptTagCount**
   - **文件**: `extensions/personal-assistant/tag-vocab.ts` (Create)
   - **内容**: 3 个 export 函数: (a) `loadTagVocabulary(index: MemoryIndex, topK = 50): string[]` — 扫 `index.getActiveAtoms()`, 收集所有 tags (JSON.parse `tags` 列 → string[]), 频次统计, sort by count DESC, 取 top K; (b) `normalizeTag(input: string, dictionary?: Set<string>): string` — trim + 字典精确匹配优先; 字典命中 → 用字典标准形 (e.g. "Amplicon" 命中 "amplicon"); 不命中 → lowercase (用 Unicode range 检测, 中文不变: `/[\u4e00-\u9fff]/` 跳过 lowercase); 空串返回空串; (c) `conceptTagCount(tags: string[]): number` — 计数 `tags.filter(t => t.startsWith("concept/")).length`。**纯函数, 无副作用**。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/tag-vocab.test.ts` 全 case pass (test 文件在 3.2 task 创建)
@@ -83,7 +95,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/tag-vocab.test.ts` 全 case pass
   - **依赖**: 3.1
 
-- [ ] 3.3 **EXTRACT_PROMPT_V2 追加 "## 主动更新,非扩张" 段**
+- [x] 3.3 **EXTRACT_PROMPT_V2 追加 "## 主动更新,非扩张" 段**
   - **文件**: `extensions/personal-assistant/extraction.ts:42-106` (Modify, 在 EXTRACT_PROMPT_V2 字符串末尾追加)
   - **内容**: 在 EXTRACT_PROMPT_V2 模板字符串的 `## Output Schema` 段**之前**插入:
   ```
@@ -203,7 +215,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-dedup-confirm.test.ts` mock callLlm 验证 4 个 action + fallback
   - **依赖**: 3.1 (用 normalizeTag)
 
-- [ ] 3.9 **bge-m3 reindex_one HTTP 客户端 (新文件)**
+- [x] 3.9 **bge-m3 reindex_one HTTP 客户端 (新文件)**
   - **文件**: `extensions/personal-assistant/scripts/reindex-one.mts` (Create) **或** 新加 `extensions/personal-assistant/bge-reindex.ts`
   - **内容**: 导出函数 `reindexOne(atomId: string, baseUrl = "http://127.0.0.1:11435"): Promise<{ ok: boolean; error?: string }>`。POST `${baseUrl}/api/atoms/${atomId}/reindex`, 5s timeout (AbortController), 失败返回 `{ ok: false, error: "..." }`, 不 throw。
   - **验证**: `cd extensions/personal-assistant && grep -n "reindexOne" bge-reindex.ts` 找到定义
