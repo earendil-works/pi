@@ -86,6 +86,13 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 
 所以你只管 emit, 不需要 emit "skip" 或 "merge" 类标记。
 
+## 主动更新,非扩张 (重要!)
+
+- 如果新信息可归入 corpus 已有的 atom (主题/对象/项目相同), 优先更新该 atom 的 content, 不要为这条信息创建新 atom
+- 更新方式: 在 content 末尾追加新段落, 标注日期 (e.g. "2026-07 新增 JSON 格式支持")
+- 仅在信息属于全新主题/新对象/新项目时才创建新 atom
+- 这是 corpus 持续精炼的关键: 主动合并而非堆叠
+
 ## Output Schema (严格 JSON)
 
 返回纯 JSON, 不要 markdown 代码块包装:
