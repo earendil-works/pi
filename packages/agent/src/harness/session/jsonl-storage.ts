@@ -33,8 +33,11 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 }
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
+	// Use 12 characters (8 timestamp + 4 random) to avoid collisions within 65-second windows.
+	// UUIDv7 first 8 chars = upper 32 bits of timestamp, only changes every ~65 seconds.
+	// Including chars 9-12 (random bits) ensures uniqueness for rapid successive calls.
 	for (let i = 0; i < 100; i++) {
-		const id = uuidv7().slice(0, 8);
+		const id = uuidv7().slice(0, 12);
 		if (!byId.has(id)) return id;
 	}
 	return uuidv7();
@@ -234,13 +237,14 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			timestamp: new Date().toISOString(),
 			targetId: leafId,
 		};
+		// Update in-memory structures synchronously BEFORE async I/O.
+		this.entries.push(entry);
+		this.byId.set(entry.id, entry);
+		this.currentLeafId = leafId;
 		getFileSystemResultOrThrow(
 			await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`),
 			`Failed to append session leaf ${entry.id}`,
 		);
-		this.entries.push(entry);
-		this.byId.set(entry.id, entry);
-		this.currentLeafId = leafId;
 	}
 
 	async createEntryId(): Promise<string> {
@@ -248,14 +252,17 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	async appendEntry(entry: SessionTreeEntry): Promise<void> {
-		getFileSystemResultOrThrow(
-			await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`),
-			`Failed to append session entry ${entry.id}`,
-		);
+		// Update in-memory structures synchronously BEFORE async I/O.
+		// This prevents race conditions where concurrent createEntryId() calls
+		// would generate duplicate IDs because byId hasn't been updated yet.
 		this.entries.push(entry);
 		this.byId.set(entry.id, entry);
 		updateLabelCache(this.labelsById, entry);
 		this.currentLeafId = leafIdAfterEntry(entry);
+		getFileSystemResultOrThrow(
+			await this.fs.appendFile(this.filePath, `${JSON.stringify(entry)}\n`),
+			`Failed to append session entry ${entry.id}`,
+		);
 	}
 
 	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {

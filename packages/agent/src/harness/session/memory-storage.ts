@@ -26,8 +26,9 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 }
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
+	// Use 12 characters (8 timestamp + 4 random) to avoid collisions within 65-second windows.
 	for (let i = 0; i < 100; i++) {
-		const id = uuidv7().slice(0, 8);
+		const id = uuidv7().slice(0, 12);
 		if (!byId.has(id)) return id;
 	}
 	return uuidv7();
