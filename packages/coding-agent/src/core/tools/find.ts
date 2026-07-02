@@ -17,6 +17,20 @@ function toPosixPath(value: string): string {
 	return value.split(path.sep).join("/");
 }
 
+function hasTrailingPathSeparator(value: string): boolean {
+	return value.endsWith("/") || value.endsWith("\\");
+}
+
+function formatFindPath(searchPath: string, resultPath: string): string {
+	const hadTrailingSlash = hasTrailingPathSeparator(resultPath);
+	const absolutePath = path.isAbsolute(resultPath) ? resultPath : path.resolve(searchPath, resultPath);
+	let relativePath = path.relative(searchPath, absolutePath);
+	if (hadTrailingSlash && relativePath && !hasTrailingPathSeparator(relativePath)) {
+		relativePath += path.sep;
+	}
+	return toPosixPath(relativePath);
+}
+
 const findSchema = Type.Object({
 	pattern: Type.String({
 		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
@@ -180,10 +194,7 @@ export function createFindToolDefinition(
 							}
 
 							// Relativize paths against the search root for stable output.
-							const relativized = results.map((p) => {
-								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
-								return toPosixPath(path.relative(searchPath, p));
-							});
+							const relativized = results.map((p) => formatFindPath(searchPath, p));
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
@@ -308,15 +319,7 @@ export function createFindToolDefinition(
 							for (const rawLine of lines) {
 								const line = rawLine.replace(/\r$/, "").trim();
 								if (!line) continue;
-								const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-								let relativePath = line;
-								if (line.startsWith(searchPath)) {
-									relativePath = line.slice(searchPath.length + 1);
-								} else {
-									relativePath = path.relative(searchPath, line);
-								}
-								if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
-								relativized.push(toPosixPath(relativePath));
+								relativized.push(formatFindPath(searchPath, line));
 							}
 
 							const resultLimitReached = relativized.length >= effectiveLimit;
