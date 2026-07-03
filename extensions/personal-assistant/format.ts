@@ -2,15 +2,16 @@
 //
 // Architecture constraints (from design.md):
 //   - Search is discovery-only; results carry {id, type, title, summary, tags,
-//     distance, cosine, score}. No file_path is exposed to the LLM.
-//   - Each block: [type] title / summary / id: <uuid> / Tags: <t1, t2, ...>
-//     The agent calls `memory_get(id)` to fetch full content on demand — NOT
-//     the standard `read` tool. score is metadata for the search response /
-//     debug UI only and is never injected into the LLM prompt.
+//     cosine, sparseScore, rrf, relativePath}.
+//   - Each block: [type] title / summary / file: <relativePath>
+//     The agent calls the `read` tool on the full path to fetch full content.
+//     The base directory is disclosed in the context injection prefix.
 //   - Token estimate: Math.ceil(text.length / 2.5) — rough, deterministic, no
 //     tokenizer dependency. (R49: strict budget, never exceed.)
-//   - Sort by distance ASC (best first) before packing into the budget (S57,
-//     R6: cosine is the primary key, score is metadata only).
+//   - Sort by rerankScore DESC (cross-encoder rerank is the new ranking
+//     authority; recall-precision R3 / design.md D5), with `rrf` DESC as the
+//     tie-breaker for hits that don't carry a rerankScore. The client does
+//     not re-rank — the server's rerank stage is the sole ranking authority.
 //   - Pure functions only. No I/O, no clock, no random.
 
 import type { RecallResult } from "./types.ts";
@@ -21,16 +22,14 @@ import type { RecallResult } from "./types.ts";
  * Block layout:
  *   [<type>] <title>
  *   <summary>
- *   id: <atom.id>
- *   Tags: <t1, t2, ...>
+ *   file: <relativePath>
  *
- * The LLM uses the emitted `id` to call `memory_get(id)` to fetch the full
- * atom content. This is the sole strength-feedback entry point — there is
- * intentionally no `file:` line in the block (R6 / REMOVED file-in-format-block).
+ * The LLM uses the `file:` line to call the `read` tool with the full path
+ * (base dir from the context prefix + relative path).
  */
 export function formatMemoryBlock(result: RecallResult): string {
 	const { atom } = result;
-	return `[${atom.type}] ${atom.title}\n${atom.summary}\nid: ${atom.id}\nTags: ${atom.tags.join(", ")}`;
+	return `[${atom.type}] ${atom.title}\n${atom.summary}\nfile: ${result.relativePath ?? ""}`;
 }
 
 /**
@@ -44,10 +43,10 @@ function estimateTokens(text: string): number {
 
 /**
  * Render recall results into a single text block that fits within `tokenBudget`
- * tokens. Results are re-sorted by distance ASC (equivalent to cosine DESC —
- * score is metadata for the search response only and does NOT influence the
- * injected ordering) and added one at a time; we stop as soon as the next
- * block would push us over the budget.
+ * tokens. Results are re-sorted by `rerankScore` DESC (server's cross-encoder
+ * rerank output — the client does not re-rank), with `rrf` DESC as the
+ * tie-breaker for hits that don't carry a `rerankScore`. Added one at a time;
+ * we stop as soon as the next block would push us over the budget.
  *
  * Returns the concatenated text, the (estimated) tokens used, and the number
  * of results that were included. Pure / deterministic.
@@ -56,10 +55,19 @@ export function formatMemoryContext(
 	results: RecallResult[],
 	tokenBudget: number,
 ): { text: string; used: number; included: number } {
-	// Sort by distance asc (best first). score is metadata — never used for
-	// prompt ordering (S57, R6: cosine is the primary key). Copy first so we
-	// never mutate the caller's array.
-	const sorted = [...results].sort((a, b) => a.distance - b.distance);
+	// Sort by rerankScore DESC (cross-encoder rerank is the new ranking
+	// authority — recall-precision R3 / D5), with `rrf` DESC as the tie-breaker
+	// for hits that don't carry a rerankScore. The `-1` sentinel for undefined
+	// rerankScore ensures any real score (including 0) sorts BEFORE an absent
+	// one, so legacy call sites that skip the rerank stage still compile and
+	// their hits group at the tail of the output.
+	// Copy first so we never mutate the caller's array.
+	const sorted = [...results].sort((a, b) => {
+		const ar = a.rerankScore ?? -1;
+		const br = b.rerankScore ?? -1;
+		if (ar !== br) return br - ar;
+		return (b.rrf ?? 0) - (a.rrf ?? 0);
+	});
 
 	let totalText = "";
 	let usedTokens = 0;
