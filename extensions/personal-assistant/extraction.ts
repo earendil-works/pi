@@ -116,6 +116,20 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 `;
 
 // ---------------------------------------------------------------------------
+// Test-only access to executeItem
+// ---------------------------------------------------------------------------
+//
+// `executeItem` is module-private so the public surface stays narrow. Tests
+// that need direct access (extraction-dedup-confirm.test.ts scenarios a-i)
+// import this alias instead of reaching into a private symbol via a cast.
+// The leading underscore + comment make the "internal-only, do not import
+// from app code" intent loud. tsgo enforces the visibility boundary; the
+// name itself is a soft convention.
+
+/** @internal — test-only access to executeItem (otherwise private). */
+export const __testing_executeItem = executeItem;
+
+// ---------------------------------------------------------------------------
 // executePlan — execute extraction items against the memory index
 // ---------------------------------------------------------------------------
 
