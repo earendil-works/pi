@@ -372,6 +372,12 @@ function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
 }
 
+function printPnpmSelfUpdateMetadataHint(): void {
+	console.error(chalk.dim("If pnpm reports missing package versions, its cached registry metadata may be stale."));
+	console.error(chalk.dim("Run: pnpm store prune"));
+	console.error(chalk.dim(`Then retry: ${APP_NAME} update`));
+}
+
 function printSelfUpdateNote(note: string): void {
 	const trimmedNote = note.trim();
 	if (!trimmedNote) {
@@ -753,6 +759,9 @@ export async function handlePackageCommand(
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : "Unknown package command error";
 						console.error(chalk.red(`Error: ${message}`));
+						if (installMethod === "pnpm") {
+							printPnpmSelfUpdateMetadataHint();
+						}
 						printSelfUpdateFallback(selfUpdateCommand);
 						process.exitCode = 1;
 						return true;
