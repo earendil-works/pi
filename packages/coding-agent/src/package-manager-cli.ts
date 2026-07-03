@@ -373,9 +373,8 @@ function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 }
 
 function printPnpmSelfUpdateMetadataHint(): void {
-	console.error(chalk.dim("If pnpm reports missing package versions, its cached registry metadata may be stale."));
-	console.error(chalk.dim("Run: pnpm store prune"));
-	console.error(chalk.dim(`Then retry: ${APP_NAME} update`));
+	console.error(chalk.yellow("If pnpm reports missing package versions, its cached registry metadata may be stale."));
+	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`));
 }
 
 function printSelfUpdateNote(note: string): void {

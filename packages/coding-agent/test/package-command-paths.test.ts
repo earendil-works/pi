@@ -567,8 +567,8 @@ else {
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).not.toContain("Updated pi");
 			expect(stderr).toContain("exited with code 23");
-			expect(stderr).toContain("pnpm store prune");
-			expect(stderr).toContain("Then retry: pi update");
+			expect(stderr).toContain("If pnpm reports missing package versions");
+			expect(stderr).toContain("Run `pnpm store prune` and retry `pi update --self`.");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
