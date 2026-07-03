@@ -129,7 +129,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run packages/webui/server/test/memory-routes.test.ts` (5.2 新加 case 之外,先确认不爆既有 8 个测试)
   - **依赖**: 2.1, 3.5, 4.1
 
-- [ ] 5.2 **更新 webui search 路由测试 (扩展现有 memory-routes.test.ts)**
+- [x] 5.2 **更新 webui search 路由测试 (扩展现有 memory-routes.test.ts)**
   - **文件**: `packages/webui/server/test/memory-routes.test.ts` (Modify) — 现有 `POST /api/memory/search` describe 块在 line 1081
   - **内容**: 在现有 describe 块内追加 3 个 case: (1) filtered=false → response 不含 rewriteTimeMs/rerankTimeMs,单路 recall; (2) filtered=true + rewrite mock (vi.mock rewrite.ts module alias) → response 含 subqueries multi-recall + rerankScore 字段; (3) filtered=true + rewrite timeout → fallback subqueries=[query] 仍返 hits. mock fetch 到 ollama 用 vi.spyOn 全局 fetch. 复用 mountMemoryRoutes + fetchAt 助手 (已存在).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run packages/webui/server/test/memory-routes.test.ts` (现有 + 新增 3 个 = 全过)

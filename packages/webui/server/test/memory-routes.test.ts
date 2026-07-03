@@ -1284,6 +1284,180 @@ describe("POST /api/memory/search", () => {
 		expect(res.status).toBe(200);
 		expect(res.data.rerankTimeMs).toBeUndefined();
 	});
+
+	it("omits rewriteTimeMs/rerankTimeMs/rerankScore on each result when filtered=false (single recall)", async () => {
+		const atomA = await insertAtom({ id: "test-single-recall-a", content: "alpha path recall data for single path" });
+		const atomId = String(atomA.id);
+
+		// Mock hybridSearch endpoint to return our atom deterministically
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr = typeof url === "string" ? url : url instanceof URL ? url.href : String(url);
+				if (urlStr.includes("/api/search")) {
+					return new Response(JSON.stringify({
+						query: "alpha path recall",
+						atoms_count: 1,
+						results: [{
+							id: atomId,
+							title: "Test rule content",
+							type: "rule",
+							rank: 1,
+							rrf: 1.0,
+							dense_cos: 0.95,
+							sparse_score: 0.85,
+						}],
+					}));
+				}
+				return origFetch(url, init);
+			},
+		);
+
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "alpha path recall",
+				filtered: false,
+			});
+			expect(res.status).toBe(200);
+			expect(res.data.rewriteTimeMs).toBeUndefined();
+			expect(res.data.rerankTimeMs).toBeUndefined();
+			const results = res.data.results as Array<Record<string, unknown>>;
+			expect(results.length).toBeGreaterThan(0);
+			for (const r of results) {
+				expect(r.rerankScore).toBeUndefined();
+			}
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
+
+	it("includes rerankScore when filtered=true with rewrite producing multiple subqueries", async () => {
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+		vi.mocked(rewriteQueries).mockResolvedValueOnce([
+			"multi alpha content",
+			"multi beta content",
+		]);
+
+		const atomA = await insertAtom({ id: "test-multi-query-a", content: "multi alpha content data here" });
+		const atomB = await insertAtom({ id: "test-multi-query-b", content: "multi beta content data here" });
+		const idA = String(atomA.id);
+		const idB = String(atomB.id);
+
+		// Intercept both the hybridSearch and rerank endpoints
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr = typeof url === "string" ? url : url instanceof URL ? url.href : String(url);
+				if (urlStr.includes("/api/search")) {
+					// Determine which subquery — return the matching atom
+					const bodyStr = typeof init?.body === "string" ? init.body : "";
+					const ids: string[] = [];
+					if (bodyStr.includes("multi alpha")) ids.push(idA);
+					if (bodyStr.includes("multi beta")) ids.push(idB);
+					if (ids.length === 0) ids.push(idA);
+					return new Response(JSON.stringify({
+						query: "test",
+						atoms_count: ids.length,
+						results: ids.map((id, i) => ({
+							id,
+							title: "Test rule content",
+							type: "rule",
+							rank: i + 1,
+							rrf: 1.0 - i * 0.1,
+							dense_cos: 0.9 - i * 0.1,
+							sparse_score: 0.8 - i * 0.1,
+						})),
+					}));
+				}
+				if (urlStr.includes("/api/rerank")) {
+					const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+					const hits: Array<{ id: string }> = body.hits ?? [];
+					return new Response(JSON.stringify({
+						scores: hits.map((h) => ({ id: h.id, score: 0.95 })),
+					}));
+				}
+				return origFetch(url, init);
+			},
+		);
+
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "multi alpha beta",
+				filtered: true,
+			});
+			expect(res.status).toBe(200);
+			expect(typeof res.data.rewriteTimeMs).toBe("number");
+			expect(typeof res.data.rerankTimeMs).toBe("number");
+			const results = res.data.results as Array<Record<string, unknown>>;
+			expect(results.length).toBeGreaterThan(0);
+			for (const r of results) {
+				expect(typeof r.rerankScore).toBe("number");
+			}
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
+
+	it("falls back to original query on rewrite timeout and still returns results", async () => {
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+		vi.mocked(rewriteQueries).mockResolvedValueOnce({
+			reason: "timeout",
+			subqueries: ["alpha fallback query"],
+		});
+
+		const atomA = await insertAtom({ content: "alpha fallback query content test data" });
+		const atomId = String(atomA.id);
+
+		// Also mock rerank so we get deterministic results (the real rerank
+		// service may not have this atom's scores).
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr = typeof url === "string" ? url : url instanceof URL ? url.href : String(url);
+				if (urlStr.includes("/api/search")) {
+					return new Response(JSON.stringify({
+						query: "alpha fallback query",
+						atoms_count: 1,
+						results: [{
+							id: atomId,
+							title: "Test rule content",
+							type: "rule",
+							rank: 1,
+							rrf: 1.0,
+							dense_cos: 0.95,
+							sparse_score: 0.85,
+						}],
+					}));
+				}
+				if (urlStr.includes("/api/rerank")) {
+					const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+					const hits: Array<{ id: string }> = body.hits ?? [];
+					return new Response(JSON.stringify({
+						scores: hits.map((h) => ({ id: h.id, score: 0.95 })),
+					}));
+				}
+				return origFetch(url, init);
+			},
+		);
+
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "alpha fallback query",
+				filtered: true,
+			});
+			expect(res.status).toBe(200);
+			expect(typeof res.data.rewriteTimeMs).toBe("number");
+			expect(typeof res.data.rerankTimeMs).toBe("number");
+			const results = res.data.results as Array<Record<string, unknown>>;
+			expect(results.length).toBeGreaterThan(0);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
 });
 
 // Verifies mountMemoryRoutes registers the search handler. Guards against
