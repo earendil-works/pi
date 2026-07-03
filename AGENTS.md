@@ -34,6 +34,26 @@
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 - Never commit unless the user asks.
 
+## WebUI deploy (manual copy required)
+
+`packages/coding-agent/scripts/webui-update.sh` documents `npm run build` in `packages/coding-agent` as "copy webui artifacts", but the actual `build` script in `packages/coding-agent/package.json` only runs `tsgo + copy-assets` (theme/jsonl assets). It does **not** copy the webui bundle or frontend dist. After editing anything under `packages/webui/{src,server,web}`, the production webui at `http://127.0.0.1:8741` will not pick up the change unless you copy manually:
+
+```bash
+# 1. build webui (vite + esbuild)
+(cd packages/webui && npm run build)
+
+# 2. copy artifacts to the running prod location (script above does NOT do this)
+cp packages/webui/dist/server.bundle.js packages/coding-agent/dist/webui/server.bundle.js
+cp -r packages/webui/web/dist/. packages/coding-agent/dist/webui/web/
+
+# 3. restart prod (the symlinked global `pi --web` reads dist/webui/ at startup)
+bash packages/coding-agent/scripts/webui-restart.sh
+```
+
+Verify after restart: `curl -s http://127.0.0.1:8741/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'` should reflect the new bundle hash, and a sanity grep of the served JS should find your new strings.
+
+If you only changed `web/`, step 2 only needs the second `cp` (frontend assets). If you only changed `server/`, only the first `cp` (server.bundle.js). The `index.html` references hashed asset names, so always re-copy `web/dist/` as a whole — partial copies leave the HTML pointing at deleted old hashes.
+
 ## Dependency and Install Security
 
 - Treat npm dep and lockfile changes as reviewed code. Direct external deps stay pinned to exact versions.
@@ -210,3 +230,12 @@ brainstorm → plan → develop → review → release → archive.
 - Archived: `docs/sdd/archive/<name>/`
 
 <!-- sddSpec:end -->
+1. **召回是优化, 故障必须降级不能停摆** — gate / rerank 是精度优化层, 任一故障跳过该层走老路径, 不阻塞 context 注入整体。
+2. **gate 是 binary 决策不需要置信度** — `{need_memory}` 不带 confidence 也不产出 query, 边界情况一律偏向 false (压假阳性优先), 把判断责任交给 rerank。
+3. **rerank 输出才是 format 的事实** — formatMemoryContext 接收 rerank_score 降序的 hit, RRF rrf 只作为同分时的 tie-breaker; 不再以 bge-m3 的 RRF 输出作为最终排序依据。
+4. **gate 上下文最小化** — 仅取最近 2-3 条 user msg (不含 assistant), 不读 atom store, 不读 db; 上文场景识别靠对话短窗口, 不靠全 memory。
+5. **threshold + gap 双重截断, 单一阈值不可** — threshold ≥0.5 防低分混入, gap >0.15 截在分界突变处; 任意单阈值都会有一类失败 (高阈值 leak 低, 低阈值 leak noise)。
+6. **non-blocking 是 hard contract** — gate / rewrite / rerank 任何环节, 进 context hook 后默认异步 + timeout (gate 500ms, rewrite 1500ms, rerank 2000ms), 不得进 await critical path 之外; context hook 8s 总超时剩余的 4-7s 应留给 hybridSearch / format / modelRegistry 等。
+7. **简单调用, 一个端点一个职责** — server.py 加 `/api/rerank`, 输入 `(query, hits[])` 输出 `[{id, score}]`, 不暴露 cross-encoder 模型自身参数 (threshold / gap 在客户端做, server 只返分); 客户端不下推截断策略到 server。
+8. **不增加 schema 也不破坏向后兼容** — memory_vectors / memory_index schema 不动; `RecallResult` 加 `rerank_score?: number` 必须是 optional 字段, 老测试不破坏; `before_agent_start` hook 保留但仍能 skip-gate 流程入口。
+9. **新模块单一 home** — gate 逻辑在 `extensions/personal-assistant/gate.ts`; rewrite 在 `extensions/personal-assistant/rewrite.ts`; merge 在 `extensions/personal-assistant/merge.ts`; rerank 客户端在 `extensions/personal-assistant/rerank.ts`; threshold/gap 在 rerank.ts 内部封装为 `rerankAndFilter()`, 不外溢到 search.ts / memory.ts。

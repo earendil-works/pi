@@ -143,7 +143,7 @@
 
 ## 6. 文档与回归
 
-- [ ] 6.1 **更新 AGENTS.md 标注 gate 改动**
+- [x] 6.1 **更新 AGENTS.md 标注 gate 改动**
   - **文件**: `AGENTS.md` (Modify) — Core Principles 中现有 gate 段 (recall-precision 第 2 条 "gate 是 binary 决策不需要置信度")
   - **内容**: 原条目 `{need_memory, search_query}` 改为 `{need_memory}`,不输出 query 字段说明. 新增一行指向 rewrite 模块.
   - **验证**: 人工 read AGENTS.md Core Principles 区段确认
