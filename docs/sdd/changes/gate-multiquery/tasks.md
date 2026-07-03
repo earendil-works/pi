@@ -149,7 +149,7 @@
   - **验证**: 人工 read AGENTS.md Core Principles 区段确认
   - **依赖**: 4.5
 
-- [ ] 6.2 **跑全套测试 + npm run check**
+- [x] 6.2 **跑全套测试 + npm run check**
   - **文件**: 无 (验证 task)
   - **内容**: 在 roots repo 下 `npm run check` (biome + tsgo + shrinkwrap + ts-imports + browser-smoke). 修复任何新 errors/warnings. 不 commit 直到 clean.
   - **验证**: `npm run check` 退出码 0
