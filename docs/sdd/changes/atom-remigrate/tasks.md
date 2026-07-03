@@ -298,7 +298,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && npm run check 2>&1 | tail -20` 输出末尾有 "0 errors, 0 warnings, 0 infos" 类信息
   - **依赖**: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13
 
-- [ ] 4.2 **跑 test.sh (目标 1+2 全量单元 + 集成测试)**
+- [x] 4.2 **跑 test.sh (目标 1+2 全量单元 + 集成测试)**
   - **文件**: 无 (验证任务)
   - **内容**: 从 repo 根跑 `./test.sh`, 确认所有 extensions/personal-assistant/test/*.test.ts 全部 pass (除预存在的 search.test.ts mock issue)。特别检查新增的: dedup-threshold.test.ts, migration.test.ts, tag-vocab.test.ts, extraction-dedup-confirm.test.ts。
   - **验证**: `cd /home/qjh/workspace/personal/pi && bash test.sh 2>&1 | tail -20` 输出末尾 "0 failed"
