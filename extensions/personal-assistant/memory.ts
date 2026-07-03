@@ -49,6 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { runDecay } from "./decay.ts";
 import { MemoryIndex } from "./storage.ts";
 import { recallAtoms } from "./search.ts";
+import { mergeByAtomId } from "./merge.ts";
 import {
 	runMemoryExtraction,
 	extractMemoriesWithCallLlm,
@@ -721,7 +722,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 
 		// 3. Gate decision (dynamic import)
 		const gateEnabled = config.memory?.gate?.enabled ?? true;
-		let searchQuery = current;
+		let subqueries: string[] = [current];
 		let gateStatus = "disabled";
 		let gateMs = 0;
 		let gateT0 = 0;
@@ -731,6 +732,9 @@ export function registerMemory(pi: ExtensionAPI): void {
 		let rerankStatus = "skip";
 		let rerankReason: string | undefined;
 		let rerankMs = 0;
+		let rewriteStatus = "skip";
+		let rewriteMs = 0;
+		const rewriteEnabled = config.memory?.rewrite?.enabled ?? true;
 		const gateLogLabels: Record<string, string> = {
 			parse: "parse-fail",
 			unreachable: "down",
@@ -777,8 +781,23 @@ export function registerMemory(pi: ExtensionAPI): void {
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			gateStatus = "pass";
-			// Task 1.1: GateDecision no longer includes search_query.
-			// searchQuery remains the raw current prompt.
+
+			// 3a. Rewrite (dynamic import) — gate pass only
+			if (rewriteEnabled) {
+				const rewriteT0 = performance.now();
+				const { rewriteQueries } = await import("./rewrite.ts");
+				const outcome = await rewriteQueries(current, recent, { timeoutMs: 1500 });
+				rewriteMs = performance.now() - rewriteT0;
+				if (Array.isArray(outcome)) {
+					subqueries = outcome;
+					rewriteStatus = "ok";
+				} else {
+					subqueries = outcome.subqueries;
+					rewriteStatus = outcome.reason;
+				}
+			} else {
+				rewriteStatus = "disabled";
+			}
 		} else {
 			gateStatus = "disabled";
 		}
@@ -789,7 +808,10 @@ export function registerMemory(pi: ExtensionAPI): void {
 		await index.init();
 		try {
 			const recallT0 = performance.now();
-			const results = await recallAtoms(index, searchQuery, { topK: 20 });
+			const allResults = await Promise.all(
+				subqueries.map((q) => recallAtoms(index, q, { topK: 20 })),
+			);
+			const results = mergeByAtomId(allResults);
 			recallMs = performance.now() - recallT0;
 			hybridCount = results.length;
 
@@ -800,7 +822,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			if (rerankEnabled && results.length > 0) {
 				const rerankT0 = performance.now();
 				const { rerankAndFilter } = await import("./rerank.ts");
-				const reranked = await rerankAndFilter(searchQuery, results);
+				const reranked = await rerankAndFilter(subqueries.join(" "), results);
 				rerankMs = performance.now() - rerankT0;
 				if (Array.isArray(reranked)) {
 					finalResults = reranked;

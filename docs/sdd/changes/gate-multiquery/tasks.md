@@ -90,7 +90,7 @@
   - **验证**: `npx tsx -e "import {loadConfig} from './extensions/personal-assistant/memory.ts'; const c=loadConfig(); console.log(typeof c.memory?.rewrite?.enabled);"` 输出 undefined (因为 settings.json 无此字段,但语法不爆)
   - **依赖**: 1.1, 3.1
 
-- [ ] 4.2 **context hook 加 rewrite 阶段**
+- [x] 4.2 **context hook 加 rewrite 阶段**
   - **文件**: `extensions/personal-assistant/memory.ts:695-886` (Modify)
   - **内容**: gate pass 分支后插入 rewrite. 新变量: `subqueries: string[]` 初始化为 `[current]` (覆盖原 `searchQuery` 变量,**删除原 searchQuery 变量全部 declaration**), `rewriteStatus: string`, `rewriteMs: number`, `rewriteEnabled`. rewrite enabled && gate pass 时调 `await import("./rewrite.ts")` 拿 `rewriteQueries`,传入 (current, recent, {timeoutMs:1500}). 判别 Array.isArray 后赋 subqueries. 失败时 `subqueries = outcome.subqueries`. 后续代码全部用 `subqueries` 不再出现单 `searchQuery` 变量 (4.3 / 4.4 联动改).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/pipeline.test.ts` (会失败直到 4.6 重写 pipeline test)
