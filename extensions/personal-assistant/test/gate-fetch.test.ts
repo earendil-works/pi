@@ -156,12 +156,13 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 		expect(result).toBe("parse");
 	});
 
-	it("returns 'parse' when response content is empty string", async () => {
+	it("returns 'parse' and warns when response content is empty string", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({ message: { content: "" } }),
 		);
 		const result = await callGate("test", []);
 		expect(result).toBe("parse");
+		expect(console.warn).toHaveBeenCalledWith("[gate] empty response from LLM");
 	});
 
 	// ── Fetch rejects that should produce null ─────────────────────

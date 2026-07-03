@@ -81,6 +81,10 @@ export function buildGatePrompt(current: string, recent: string[]): { role: stri
 // the caller can distinguish parse failures from other errors.
 function parseGateResponse(raw: string): GateDecision | "parse" {
 	const stripped = raw.trim();
+	if (stripped.length === 0) {
+		console.warn("[gate] empty response from LLM");
+		return "parse";
+	}
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(stripped);
