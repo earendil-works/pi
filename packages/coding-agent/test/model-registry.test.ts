@@ -892,6 +892,8 @@ describe("ModelRegistry", () => {
 
 			expect(registry.getProviderDisplayName("openai")).toBe("OpenAI");
 			expect(registry.getProviderDisplayName("github-copilot")).toBe("GitHub Copilot");
+			expect(registry.getProviderDisplayName("glm")).toBe("GLM API");
+			expect(registry.getProviderDisplayName("glm-cn")).toBe("GLM API (China)");
 			expect(registry.getProviderDisplayName("zai")).toBe("ZAI Coding Plan (Global)");
 			expect(registry.getProviderDisplayName("unknown-provider")).toBe("unknown-provider");
 

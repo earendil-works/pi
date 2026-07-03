@@ -11,6 +11,8 @@ import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
+import { GLM_MODELS } from "./providers/glm.models.ts";
+import { GLM_CN_MODELS } from "./providers/glm-cn.models.ts";
 import { GOOGLE_MODELS } from "./providers/google.models.ts";
 import { GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_MODELS } from "./providers/groq.models.ts";
@@ -48,6 +50,8 @@ export const MODELS = {
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
+	"glm": GLM_MODELS,
+	"glm-cn": GLM_CN_MODELS,
 	"google": GOOGLE_MODELS,
 	"google-vertex": GOOGLE_VERTEX_MODELS,
 	"groq": GROQ_MODELS,

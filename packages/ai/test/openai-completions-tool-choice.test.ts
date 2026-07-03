@@ -297,7 +297,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores z.ai GLM-5.2 effort metadata", () => {
-		for (const provider of ["zai", "zai-coding-cn"] as const) {
+		for (const provider of ["glm", "glm-cn", "zai", "zai-coding-cn"] as const) {
 			const model = getModel(provider, "glm-5.2")!;
 			expect(model.compat?.supportsReasoningEffort).toBe(true);
 			expect(model.thinkingLevelMap).toEqual({

@@ -593,6 +593,8 @@ describe("default model selection", () => {
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
+		expect(defaultModelPerProvider.glm).toBe("glm-5.2");
+		expect(defaultModelPerProvider["glm-cn"]).toBe("glm-5.2");
 		expect(defaultModelPerProvider.zai).toBe("glm-5.1");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");

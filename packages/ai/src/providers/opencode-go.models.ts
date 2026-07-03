@@ -172,7 +172,7 @@ export const OPENCODE_GO_MODELS = {
 	} satisfies Model<"openai-completions">,
 	"minimax-m3": {
 		id: "minimax-m3",
-		name: "MiniMax-M3 (3x usage)",
+		name: "MiniMax-M3",
 		api: "anthropic-messages",
 		provider: "opencode-go",
 		baseUrl: "https://opencode.ai/zen/go",

@@ -4,6 +4,7 @@ import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 const originalCopilotGitHubToken = process.env.COPILOT_GITHUB_TOKEN;
 const originalGhToken = process.env.GH_TOKEN;
 const originalGitHubToken = process.env.GITHUB_TOKEN;
+const originalZaiApiKey = process.env.ZAI_API_KEY;
 const originalZaiCodingCnApiKey = process.env.ZAI_CODING_CN_API_KEY;
 
 afterEach(() => {
@@ -23,6 +24,12 @@ afterEach(() => {
 		delete process.env.GITHUB_TOKEN;
 	} else {
 		process.env.GITHUB_TOKEN = originalGitHubToken;
+	}
+
+	if (originalZaiApiKey === undefined) {
+		delete process.env.ZAI_API_KEY;
+	} else {
+		process.env.ZAI_API_KEY = originalZaiApiKey;
 	}
 
 	if (originalZaiCodingCnApiKey === undefined) {
@@ -56,5 +63,14 @@ describe("environment API keys", () => {
 
 		expect(findEnvKeys("zai-coding-cn")).toEqual(["ZAI_CODING_CN_API_KEY"]);
 		expect(getEnvApiKey("zai-coding-cn")).toBe("zai-coding-cn-token");
+	});
+
+	it("resolves GLM API credentials from ZAI_API_KEY", () => {
+		process.env.ZAI_API_KEY = "glm-api-token";
+
+		expect(findEnvKeys("glm")).toEqual(["ZAI_API_KEY"]);
+		expect(getEnvApiKey("glm")).toBe("glm-api-token");
+		expect(findEnvKeys("glm-cn")).toEqual(["ZAI_API_KEY"]);
+		expect(getEnvApiKey("glm-cn")).toBe("glm-api-token");
 	});
 });

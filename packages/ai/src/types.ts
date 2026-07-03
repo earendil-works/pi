@@ -41,6 +41,8 @@ export type KnownProvider =
 	| "nvidia"
 	| "deepseek"
 	| "github-copilot"
+	| "glm"
+	| "glm-cn"
 	| "xai"
 	| "groq"
 	| "cerebras"

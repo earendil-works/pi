@@ -12,6 +12,8 @@ import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
 import { deepseekProvider } from "./deepseek.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
+import { glmProvider } from "./glm.ts";
+import { glmCnProvider } from "./glm-cn.ts";
 import { googleProvider } from "./google.ts";
 import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
@@ -79,6 +81,8 @@ export function builtinProviders(): Provider[] {
 		deepseekProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
+		glmProvider(),
+		glmCnProvider(),
 		googleProvider(),
 		googleVertexProvider(),
 		groqProvider(),

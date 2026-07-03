@@ -31,6 +31,9 @@ describe("builtin providers", () => {
 		const anthropic = models.getModel("anthropic", "claude-haiku-4-5");
 		expect(anthropic?.api).toBe("anthropic-messages");
 
+		expect(models.getModel("glm", "glm-5.2")?.baseUrl).toBe("https://api.z.ai/api/paas/v4");
+		expect(models.getModel("glm-cn", "glm-5.2")?.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
+
 		const all = models.getModels();
 		expect(all.length).toBeGreaterThan(500);
 
