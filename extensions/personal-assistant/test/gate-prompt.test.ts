@@ -42,6 +42,7 @@ describe("buildGatePrompt (task 2.2)", () => {
 		expect(system.content).toContain("决策助手");
 		expect(system.content).toContain("need_memory");
 		// search_query field removed in task 1.1 — gate is pure binary decision.
+		expect(system.content).not.toContain("search_query");
 		// The two false-positive rules (指代性 / 零信息量) drive S1 and S2.
 		expect(system.content).toContain("上面的脚本");
 		expect(system.content).toContain("那个");

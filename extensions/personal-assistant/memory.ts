@@ -727,17 +727,15 @@ export function registerMemory(pi: ExtensionAPI): void {
 		let rerankStatus = "skip";
 		let rerankReason: string | undefined;
 		let rerankMs = 0;
+		const gateLogLabels: Record<string, string> = {
+			parse: "parse-fail",
+			unreachable: "down",
+		};
 		if (gateEnabled) {
 			gateT0 = performance.now();
 			const { callGate } = await import("./gate.ts");
 			const gateDecision = await callGate(current, recent, { timeoutMs: 500 });
 			gateMs = performance.now() - gateT0;
-
-			// Gate error label map for debug log
-			const gateLogLabels: Record<string, string> = {
-				parse: "parse-fail",
-				unreachable: "down",
-			};
 
 			if (gateDecision === null) {
 				gateStatus = "unknown";
@@ -840,10 +838,6 @@ export function registerMemory(pi: ExtensionAPI): void {
 			}
 
 			// 7b. Debug log — single per-call emission (task 5.4)
-			const gateLogLabels: Record<string, string> = {
-				parse: "parse-fail",
-				unreachable: "down",
-			};
 			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 			const reasonStr = rerankReason ? `(${rerankReason})` : "";
 			console.debug(
