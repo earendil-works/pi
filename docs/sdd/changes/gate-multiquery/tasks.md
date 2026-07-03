@@ -18,19 +18,19 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/gate-skeleton.test.ts` (Type 测通过)
   - **依赖**: 无
 
-- [ ] 1.2 **更新 gate-fetch.test.ts 删除 search_query 断言**
+- [x] 1.2 **更新 gate-fetch.test.ts 删除 search_query 断言**
   - **文件**: `extensions/personal-assistant/test/gate-fetch.test.ts` (Modify)
   - **内容**: 删除 line 48, 58, 104, 116 的 `search_query` 字段断言,改为 `expect(result).toEqual({ need_memory: true } satisfies GateDecision)` 形态. 删除 line 131-139 整个 test case `wrong types for search_query (not string)` (字段已不存在). line 124 / 189 / 208 的 mock body 仍可保留多余的 search_query 字段 (mock 仿真允许 LLM 多输出字段), parseGateResponse 必须忽略多余字段 — 加一个新测试 case "ignores extra fields like freed_search_query",假定 mock LLM 返 `{"need_memory":true,"search_query":"垃圾测试"}`,断言 callGate 返 `{need_memory:true}` (验证 schema 忽略 unknown field).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/gate-fetch.test.ts` (15 测试 - 1 删 + 1 新增 = 15 全过)
   - **依赖**: 1.1
 
-- [ ] 1.3 **更新 gate-prompt.test.ts 删除 search_query 字段断言**
+- [x] 1.3 **更新 gate-prompt.test.ts 删除 search_query 字段断言**
   - **文件**: `extensions/personal-assistant/test/gate-prompt.test.ts` (Modify)
   - **内容**: buildGatePrompt 返回的 messages 不变结构,system content 中已不含 search_query 提示词. 删除断言 system content 含 "search_query" 字符串的测试. 增加断言 system content 不含 "search_query" (验证清理).
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/gate-prompt.test.ts`
   - **依赖**: 1.1
 
-- [ ] 1.4 **更新 memory.ts context hook,删除 gate search_query 使用**
+- [x] 1.4 **更新 memory.ts context hook,删除 gate search_query 使用**
   - **文件**: `extensions/personal-assistant/memory.ts:779` (Modify)
   - **内容**: 删除 line 779 `if (gateDecision.search_query) searchQuery = gateDecision.search_query;`. `searchQuery` 变量初始化为 `current` 保留,后续管线将在 task 4 改为 rewrite 输出.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/pipeline.test.ts` (会暂时失败,因 search_query 被删但 pipeline test 仍 mock GateDecision 带 search_query — 这是已知的,待 task 4 调整). 试运行预期失败,确认搜索路径未走到 search_query 即可.
@@ -44,7 +44,7 @@
   - **验证**: `npx tsx -e "import {mergeByAtomId} from './extensions/personal-assistant/merge.ts'; const a=[{atom:{id:'x'},rrf:0.05,cosine:0.8,sparseScore:0.2}]; const b=[{atom:{id:'x'},rrf:0.03,cosine:0.7,sparseScore:0.1}]; const r=mergeByAtomId([a,b]); console.log(JSON.stringify(r[0].rrf));"` 应输出 0.05 (取 rrf 高的)
   - **依赖**: 无
 
-- [ ] 2.2 **写 merge.ts 单元测试**
+- [x] 2.2 **写 merge.ts 单元测试**
   - **文件**: `extensions/personal-assistant/test/merge.test.ts` (Create)
   - **内容**: 5 个 case: (1) 单组 input 不动; (2) B4 多组重叠 atomId 取 rrf 高; (3) B9 全空组 → []; (4) 单组空 + 一组有内容 → 保留有内容; (5) 三组 mixed id 出现 2 次取 rrf 高. 每个 case 都用 RecallResult 形态 fixture.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/merge.test.ts` (5 个测试全过)
