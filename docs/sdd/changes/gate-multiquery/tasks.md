@@ -169,7 +169,7 @@
 
 ## Verification
 
-- [ ] 全量测试: `./test.sh` (per AGENTS.md, 而非 `npm test`)
-- [ ] Lint: `npm run check` (全 clean,无 error/warning/info)
-- [ ] 端到端 smoke: `bash /tmp/gate-multiquery-smoke.sh` 命中复合 query ≥1 hit
-- [ ] 复合 query "MGM项目的工时如何计算" filtered=true 至少返回 1 个 rerankScore ≥ 0.5 的 hit
+- [x] 全量测试: `./test.sh` (per AGENTS.md, 而非 `npm test`)
+- [x] Lint: `npm run check` (全 clean,无 error/warning/info)
+- [x] 端到端 smoke: `bash /tmp/gate-multiquery-smoke.sh` 命中复合 query ≥1 hit
+- [x] 复合 query "MGM项目的工时如何计算" filtered=true 至少返回 1 个 rerankScore ≥ 0.5 的 hit
