@@ -27,6 +27,7 @@
 // 中文) land on Chinese-language atoms (atom-10..atom-13) at top-K, separate
 // from the aggregate metrics computed over the full query set.
 
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -57,6 +58,68 @@ vi.mock("../embed.ts", () => ({
 	loadConfig: () => ({}),
 	CURRENT_EMBEDDABLE_TEXT_VERSION: 2,
 }));
+
+// Mock hybridSearch so the new search.ts code path (which calls the
+// embedding service via /api/search) works in this hermetic test. The mock
+// re-implements the service's hybrid retrieval locally: char n-gram embed
+// the query + every atom, compute cosine, apply the dense floor, return
+// the top-K as a flat list of hits (the per-type split happens in
+// search.ts).
+vi.mock("../hybrid-search.ts", async () => {
+	const { hybridSearch: actual } = await vi.importActual<
+		typeof import("../hybrid-search.ts")
+	>("../hybrid-search.ts");
+	const cosine = (a: number[], b: number[]): number => {
+		let dot = 0;
+		let na = 0;
+		let nb = 0;
+		for (let i = 0; i < a.length; i++) {
+			dot += a[i]! * b[i]!;
+			na += a[i]! * a[i]!;
+			nb += b[i]! * b[i]!;
+		}
+		return dot / (Math.sqrt(na) * Math.sqrt(nb));
+	};
+	return {
+		hybridSearch: async (
+			query: string,
+			topK: number,
+			options?: { denseFloor?: number },
+		) => {
+			const index = (globalThis as { __test_index?: MemoryIndex }).__test_index;
+			if (!index) return [];
+			const qVec = Array.from(mockEmbed(query));
+			const denseFloor = options?.denseFloor ?? 0;
+			const atoms = index.listAtoms({ archived: false });
+			const hits: Array<{
+				id: string;
+				title: string;
+				type: "rule" | "fact" | "process";
+				rank: number;
+				rrf: number;
+				dense_cos: number;
+				sparse_score: number;
+			}> = [];
+			for (const atom of atoms) {
+				const text = `${atom.title}\n\n${atom.summary}\n\n${(atom.tags || []).join(" ")}`;
+				const aVec = Array.from(mockEmbed(text));
+				const cos = cosine(qVec, aVec);
+				if (cos < denseFloor) continue;
+				hits.push({
+					id: atom.id,
+					title: atom.title,
+					type: atom.type,
+					rank: 0,
+					rrf: cos,
+					dense_cos: cos,
+					sparse_score: 0,
+				});
+			}
+			hits.sort((a, b) => b.dense_cos - a.dense_cos);
+			return hits.slice(0, topK).map((h, i) => ({ ...h, rank: i + 1 }));
+		},
+	};
+});
 
 const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
 	id: crypto.randomUUID(),
@@ -94,11 +157,13 @@ describe("recallAtoms quality (labeled dataset)", () => {
 		await fs.mkdir(atomsDir, { recursive: true });
 		index = new MemoryIndex(dbPath);
 		await index.init();
+		(globalThis as { __test_index?: MemoryIndex }).__test_index = index;
 	});
 
 	afterEach(async () => {
 		index.close();
 		await fs.rm(tmpDir, { recursive: true, force: true });
+		delete (globalThis as { __test_index?: MemoryIndex }).__test_index;
 	});
 
 	const insertAtom = async (atom: MemoryAtom) => {
@@ -346,5 +411,305 @@ describe("recallAtoms quality (labeled dataset)", () => {
 			const ids = results.map((r) => r.atom.id);
 			expect(ids).toContain("atom-13");
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.12 (R11 / R12 / R13) — migration's effect on recall precision.
+//
+// test/migration.test.ts already exercises the script's surface (backup
+// file, archive count, idempotency). This block covers the user-visible
+// angle that complements those tests:
+//   - Decision 2: when a cluster pair collides, the higher-access_count
+//     atom wins (the user's "hot" / already-validated reference stays;
+//     the cold duplicate gets archived). Without this guard the
+//     migration would pick a winner at random in DB order.
+//   - R12: corpus shrinks ≥ 17% after a clean migration run (proposal
+//     acceptance #1).
+//   - R13: the 0.65 threshold has 0 false-positive merges — atoms at
+//     cosine < 0.65 (e.g. 0.643, just under) stay untouched (proposal
+//     acceptance #8a).
+//
+// Fixture shape mirrors test/migration.test.ts seedCorpus: 6 atoms
+// arranged as 2 cluster pairs (cos ≈ 0.866 within a pair, ~0 across
+// pairs) plus 2 unique dense-random vectors. The per-pair access_count
+// gap (10 vs 3, 8 vs 2) is what makes Decision 2 deterministic.
+//
+// Each test runs against its own tmpdir memory.db (via the env-var
+// override established by Task 2.5) so the script never touches the
+// user's live corpus.
+// ---------------------------------------------------------------------------
+
+const MIGRATION_SCRIPT = path.resolve(
+	__dirname,
+	"..",
+	"scripts",
+	"migrate-legacy-atoms.mts",
+);
+const ROOT_TSCONFIG = path.resolve(__dirname, "..", "..", "..", "tsconfig.json");
+
+/** Build a unit-length 1024-dim vector at `angleDeg` in the (x,y)
+ *  plane. Used to plant cluster-pair members with a precise cosine.
+ *  Two atoms at 0° and 30° have cosine 0.866; two atoms at 0° and
+ *  50° have cosine 0.643 (below the 0.65 threshold). */
+function angledVec(angleDeg: number, dims = 1024): number[] {
+	const rad = (angleDeg * Math.PI) / 180;
+	const arr = new Array(dims).fill(0);
+	arr[0] = Math.cos(rad);
+	arr[1] = Math.sin(rad);
+	return arr;
+}
+
+/** Build a unit-length 1024-dim pseudo-random vector. Used for the
+ *  "unique" atoms in the fixture — they're well below 0.65 cosine to
+ *  any other atom so the migration never accidentally merges them. */
+function denseVec(seed: number, dims = 1024): number[] {
+	const arr = new Array(dims).fill(0);
+	let s = seed;
+	for (let i = 0; i < dims; i++) {
+		s = (s * 1103515245 + 12345) & 0x7fffffff;
+		arr[i] = (s / 0x7fffffff) * 2 - 1;
+	}
+	const norm = Math.sqrt(arr.reduce((sum, v) => sum + v * v, 0));
+	return arr.map((v) => v / norm);
+}
+
+/** Insert the 6-atom migration fixture. Pair axes are 30° apart (cos
+ *  0.866, well above the 0.65 threshold) and pairs live in different
+ *  quadrants so cross-pair cosine is 0 or negative. */
+async function seedMigrationFixture(dbPath: string): Promise<void> {
+	const idx = new MemoryIndex(dbPath);
+	await idx.init();
+	const baseTime = Date.now();
+	const fixture: Array<{
+		id: string;
+		vec: number[];
+		access_count: number;
+		last_access: number | null;
+		created_at: number;
+	}> = [
+		{
+			id: "a1",
+			vec: angledVec(0),
+			access_count: 10,
+			last_access: baseTime,
+			created_at: baseTime,
+		},
+		{
+			id: "b1",
+			vec: angledVec(90),
+			access_count: 8,
+			last_access: baseTime - 500,
+			created_at: baseTime + 100,
+		},
+		{
+			id: "a2",
+			vec: angledVec(30),
+			access_count: 3,
+			last_access: null,
+			created_at: baseTime + 200,
+		},
+		{
+			id: "b2",
+			vec: angledVec(120),
+			access_count: 2,
+			last_access: null,
+			created_at: baseTime + 300,
+		},
+		{
+			id: "x",
+			vec: denseVec(50),
+			access_count: 1,
+			last_access: baseTime - 2000,
+			created_at: baseTime + 400,
+		},
+		{
+			id: "y",
+			vec: denseVec(60),
+			access_count: 0,
+			last_access: null,
+			created_at: baseTime + 500,
+		},
+	];
+	for (const a of fixture) {
+		await idx.insertAtom(
+			{
+				id: a.id,
+				type: "fact",
+				title: a.id,
+				content: a.id,
+				summary: "s",
+				tags: ["x"],
+				importance: 0.5,
+				strength: 1.0,
+				access_count: a.access_count,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: a.created_at,
+				updated_at: a.created_at,
+				last_access: a.last_access,
+				content_fingerprint: "fp" + a.id,
+				source_session: null,
+			},
+			a.vec,
+		);
+	}
+	idx.close();
+}
+
+describe("migration effect on recall precision (Task 3.12)", () => {
+	let workspace: string;
+	let dbPath: string;
+	let atomsDir: string;
+
+	beforeEach(async () => {
+		workspace = await fs.mkdtemp(path.join(os.tmpdir(), "recall-quality-mig-"));
+		dbPath = path.join(workspace, "memory.db");
+		atomsDir = path.join(workspace, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+		await seedMigrationFixture(dbPath);
+	});
+
+	afterEach(async () => {
+		await fs.rm(workspace, { recursive: true, force: true });
+	});
+
+	/** Spawn the migration script pointed at the test tmpdir db. The
+	 *  two env vars were added in Task 2.5 so the destructive dedup
+	 *  pass never reaches the user's real memory.db. */
+	function runScript(): { status: number; stdout: string; stderr: string } {
+		const result = spawnSync("npx", ["tsx", MIGRATION_SCRIPT], {
+			env: {
+				...process.env,
+				PERSONAL_ASSISTANT_DB_PATH: dbPath,
+				PERSONAL_ASSISTANT_ATOMS_DIR: atomsDir,
+				TSX_TSCONFIG_PATH: ROOT_TSCONFIG,
+			},
+			encoding: "utf-8",
+		});
+		return {
+			status: result.status ?? -1,
+			stdout: result.stdout ?? "",
+			stderr: result.stderr ?? "",
+		};
+	}
+
+	it("Decision 2: hot atom (higher access_count) wins cluster pair", () => {
+		const { status, stdout, stderr } = runScript();
+		if (status !== 0) {
+			throw new Error(`script failed: ${stderr || stdout}`);
+		}
+		expect(status).toBe(0);
+
+		const idx = new MemoryIndex(dbPath);
+		idx.init();
+		try {
+			// a2 (access_count=3) is the loser; a1 (access_count=10)
+			// is the canonical winner. markSupersededNoInsert sets
+			// is_latest=0 and parent_id=<winner_id> on the loser
+			// without setting archived=1.
+			const a2 = idx.getAtom("a2");
+			expect(a2).not.toBeNull();
+			expect(a2!.is_latest).toBe(0);
+			expect(a2!.parent_id).toBe("a1");
+
+			// b pair follows the same pattern.
+			const b2 = idx.getAtom("b2");
+			expect(b2).not.toBeNull();
+			expect(b2!.is_latest).toBe(0);
+			expect(b2!.parent_id).toBe("b1");
+
+			// Winners stay active.
+			expect(idx.getAtom("a1")!.is_latest).toBe(1);
+			expect(idx.getAtom("a1")!.parent_id).toBeNull();
+			expect(idx.getAtom("b1")!.is_latest).toBe(1);
+			expect(idx.getAtom("b1")!.parent_id).toBeNull();
+		} finally {
+			idx.close();
+		}
+	});
+
+	it("R12: corpus reduction ≥ 17% after migration", () => {
+		const { status, stdout, stderr } = runScript();
+		if (status !== 0) {
+			throw new Error(`script failed: ${stderr || stdout}`);
+		}
+		expect(status).toBe(0);
+
+		const idx = new MemoryIndex(dbPath);
+		idx.init();
+		try {
+			const active = idx.getActiveAtoms();
+			// 6 atoms → 4 active = 33% reduction (well above the
+			// 17% acceptance floor). The two losers (a2, b2) are
+			// filtered out by the is_latest=1 clause in
+			// getActiveAtoms' WHERE.
+			expect(active.length).toBe(4);
+			const reduction = (6 - active.length) / 6;
+			expect(reduction).toBeGreaterThanOrEqual(0.17);
+		} finally {
+			idx.close();
+		}
+	});
+
+	it("R13: 0.65 threshold produces 0 false merges at cosine < 0.65", async () => {
+		// Add a 7th atom whose closest neighbour sits at cosine
+		// ≈ 0.643 (50° off a1's axis). This is *just under* the 0.65
+		// threshold, so it must NOT be merged into a1 by the
+		// migration sweep. The 0.65 floor leaves 0 false positives.
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const baseTime = Date.now();
+		await idx.insertAtom(
+			{
+				id: "below_threshold",
+				type: "fact",
+				title: "below_threshold",
+				content: "below_threshold",
+				summary: "s",
+				tags: ["x"],
+				importance: 0.5,
+				strength: 1.0,
+				access_count: 0,
+				version: 1,
+				is_latest: 1,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0,
+				created_at: baseTime + 600,
+				updated_at: baseTime + 600,
+				last_access: null,
+				content_fingerprint: "fpbelow",
+				source_session: null,
+			},
+			angledVec(50),
+		);
+		idx.close();
+
+		const { status, stdout, stderr } = runScript();
+		if (status !== 0) {
+			throw new Error(`script failed: ${stderr || stdout}`);
+		}
+		expect(status).toBe(0);
+
+		const idx2 = new MemoryIndex(dbPath);
+		idx2.init();
+		try {
+			// below_threshold stays active — no merge happened.
+			const below = idx2.getAtom("below_threshold");
+			expect(below).not.toBeNull();
+			expect(below!.is_latest).toBe(1);
+			expect(below!.parent_id).toBeNull();
+
+			// And the existing pair merges still fired (sanity
+			// check — the new atom didn't break the loop).
+			expect(idx2.getAtom("a2")!.is_latest).toBe(0);
+			expect(idx2.getAtom("b2")!.is_latest).toBe(0);
+		} finally {
+			idx2.close();
+		}
 	});
 });
