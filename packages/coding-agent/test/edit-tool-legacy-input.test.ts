@@ -114,3 +114,44 @@ describe("edit tool stringified edits", () => {
 		});
 	});
 });
+
+describe("edit tool hallucinated keys", () => {
+	it("strips extra keys like newText_x emitted by newer Claude models", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: [{ oldText: "a", newText: "b", newText_x: "", in_file: "file.txt" }],
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: [{ oldText: "a", newText: "b" }],
+		});
+	});
+
+	it("strips extra keys from the first edit only, preserving clean subsequent edits", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: [
+				{ oldText: "a", newText: "b", newText_unused: "" },
+				{ oldText: "c", newText: "d" },
+			],
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: [
+				{ oldText: "a", newText: "b" },
+				{ oldText: "c", newText: "d" },
+			],
+		});
+	});
+
+	it("does not reallocate the edits array when all edits are clean", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const edits = [{ oldText: "a", newText: "b" }];
+		const input = { path: "file.txt", edits };
+		const prepared = definition.prepareArguments!(input);
+		expect(prepared).toBe(input);
+		expect((prepared as typeof input).edits).toBe(edits);
+	});
+});

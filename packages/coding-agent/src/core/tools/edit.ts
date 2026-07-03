@@ -106,12 +106,30 @@ function prepareEditArguments(input: unknown): EditToolInput {
 		} catch {}
 	}
 
+	// Strip hallucinated keys (like newText_x, in_file) emitted by newer Claude models.
+	// Only reallocate when extra keys are actually present to preserve reference equality for clean input.
+	if (Array.isArray(args.edits)) {
+		const hasExtraKeys = args.edits.some(
+			(edit) =>
+				edit !== null &&
+				typeof edit === "object" &&
+				Object.keys(edit as object).some((k) => k !== "oldText" && k !== "newText"),
+		);
+		if (hasExtraKeys) {
+			args.edits = args.edits.map((edit: unknown) => {
+				if (!edit || typeof edit !== "object") return edit;
+				const { oldText, newText } = edit as Record<string, unknown>;
+				return { oldText, newText };
+			});
+		}
+	}
+
 	const legacy = args as LegacyEditToolInput;
 	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") {
 		return args as EditToolInput;
 	}
 
-	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
+	const edits = Array.isArray(args.edits) ? [...args.edits] : [];
 	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
 	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
 	return { ...rest, edits } as EditToolInput;
