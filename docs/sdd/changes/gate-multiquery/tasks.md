@@ -38,7 +38,7 @@
 
 ## 2. merge.ts 纯函数模块 (可与 1 并行)
 
-- [ ] 2.1 **创建 mergeByAtomId pure function**
+- [x] 2.1 **创建 mergeByAtomId pure function**
   - **文件**: `extensions/personal-assistant/merge.ts` (Create)
   - **内容**: 导出 `function mergeByAtomId(resultGroups: RecallResult[][]): RecallResult[]`. 逻辑: `Map<string, RecallResult>` key by atom.id,遍历所有 group 遇见 rrf 比当前高或没有的就 set. 返回 `[...map.values()]`. 无 I/O.
   - **验证**: `npx tsx -e "import {mergeByAtomId} from './extensions/personal-assistant/merge.ts'; const a=[{atom:{id:'x'},rrf:0.05,cosine:0.8,sparseScore:0.2}]; const b=[{atom:{id:'x'},rrf:0.03,cosine:0.7,sparseScore:0.1}]; const r=mergeByAtomId([a,b]); console.log(JSON.stringify(r[0].rrf));"` 应输出 0.05 (取 rrf 高的)
@@ -52,7 +52,7 @@
 
 ## 3. rewrite.ts 模块
 
-- [ ] 3.1 **创建 rewrite.ts skeleton + types**
+- [x] 3.1 **创建 rewrite.ts skeleton + types**
   - **文件**: `extensions/personal-assistant/rewrite.ts` (Create)
   - **内容**: 导出 `RewriteOptions`, `RewriteError = "timeout"|"parse"|"unreachable"`, `RewriteFallback { reason, subqueries: string[] }`. 顶层导出 `rewriteQueries(query, recent?, options?): Promise<string[] | RewriteFallback>`. body 一开始 return `[]` (skeleton). 默认值: DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434", DEFAULT_MODEL = "qwen2.5:3b-instruct-q4_0", DEFAULT_TIMEOUT_MS = 1500, DEFAULT_MAX_SUBQUERIES = 3.
   - **验证**: `npx tsx --no-warnings -e "import {rewriteQueries} from './extensions/personal-assistant/rewrite.ts'; await rewriteQueries('x'); console.log('ok')"` 输出 ok (skeleton 不爆)
