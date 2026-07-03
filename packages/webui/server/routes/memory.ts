@@ -482,10 +482,14 @@ export function registerPatchMemory(
 				// Build the merged atom (content / tags / importance from
 				// the body, fingerprint recomputed, updated_at stamped).
 				// Pure function — no DB / file / SSE side effects.
+				// Write-time tag alias folding is no longer wired: the
+				// PersonalAssistantConfig.tagAliases knob was removed when
+				// the recall client stopped re-ranking. Pass `undefined` so
+				// normalizeTags falls back to plain dedup.
 				const mergeResult = mergePatchBody(
 					existing,
 					req.body,
-					deps.settings?.memory?.tagAliases,
+					undefined,
 				);
 				if (mergeResult.conflict) {
 					res
@@ -769,10 +773,12 @@ export function registerPostArchive(
  *   - `type`   (optional) — restrict recall to a single atom type.
  *
  * Response:
- *   - `results`: ranked list of `{ id, type, title, summary, tags, distance, cosine, score }`. Empty when no atoms match or
- *     ollama is unreachable (embedText → null → []).
+ *   - `results`: ranked list of `{ id, type, title, summary, tags, cosine, sparseScore, rrf }`. Empty when no atoms match or
+ *     the bge-m3 service is unreachable (hybridSearch → []).
  *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
- *   - `score` is a debug/UI-only metadata field — LLM does not see it (formatMemoryContext re-sorts by distance before prompt injection).
+ *   - `rrf` is the server's RRF score from dual-channel fusion; it is the
+ *     sole ranking signal. The client no longer re-ranks — `formatMemoryContext`
+ *     sorts by `rrf` DESC before prompt injection.
  *
  * Discovery-only contract (R-search-cheap):
  *   - No `formattedText`, no `tier` field, no `tokenBudgetUsed`, no `file_path`.
@@ -796,7 +802,7 @@ export function registerPostSearch(
 ): void {
 	app.post("/api/memory/search", express.json(), async (req, res) => {
 		try {
-			const { query, topK = 10, type } = req.body || {};
+			const { query, topK = 10, type, filtered = true } = req.body || {};
 			if (typeof query !== "string" || query.length === 0) {
 				res
 					.status(400)
@@ -807,15 +813,62 @@ export function registerPostSearch(
 			const index = await createIndex(deps.dbPath);
 			try {
 				const t0 = Date.now();
-				const m = deps.settings?.memory;
-				const results = await recallAtoms(index, query, {
-					topK,
-					filter: type ? { type } : undefined,
-					tagOverlapWeight: m?.tagOverlapWeight,
-					freshnessWeight: m?.freshnessWeight,
-					tagAliases: m?.tagAliases,
-				});
-				const recallTimeMs = Date.now() - t0;
+				let results: RecallResult[];
+				let rewriteTimeMs = 0;
+				let rerankTimeMs = 0;
+
+				if (filtered) {
+					// Full pipeline: rewrite → multi-recall → merge → rerank
+					const { rewriteQueries } = await import(
+						"../../../../extensions/personal-assistant/rewrite.ts"
+					);
+					const tr = Date.now();
+					const rewriteOutcome = await rewriteQueries(query, null, {
+						timeoutMs: 1500,
+					});
+					rewriteTimeMs = Date.now() - tr;
+					const subqueries = Array.isArray(rewriteOutcome)
+						? rewriteOutcome
+						: rewriteOutcome.subqueries;
+
+					const { mergeByAtomId } = await import(
+						"../../../../extensions/personal-assistant/merge.ts"
+					);
+					results = mergeByAtomId(
+						await Promise.all(
+							subqueries.map((q) =>
+								recallAtoms(index, q, {
+									topK,
+									filter: type ? { type } : undefined,
+								}),
+							),
+						),
+					);
+
+					if (results.length > 0) {
+						const { rerankAndFilter } = await import(
+							"../../../../extensions/personal-assistant/rerank.ts"
+						);
+						const t1 = Date.now();
+						const reranked = await rerankAndFilter(
+							subqueries.join(" "),
+							results,
+						);
+						rerankTimeMs = Date.now() - t1;
+						if (Array.isArray(reranked)) {
+							results = reranked;
+						} else {
+							results = reranked.topK;
+						}
+					}
+				} else {
+					results = await recallAtoms(index, query, {
+						topK,
+						filter: type ? { type } : undefined,
+					});
+				}
+
+				const recallTimeMs = Date.now() - t0 - rewriteTimeMs - rerankTimeMs;
 
 				res.json({
 					results: results.map((r) => ({
@@ -824,14 +877,13 @@ export function registerPostSearch(
 						title: r.atom.title,
 						summary: r.atom.summary,
 						tags: r.atom.tags,
-						distance: r.distance,
 						cosine: r.cosine,
-						// Task 1.1 will add `score` to RecallResult; until then
-						// the value is undefined and the response field is
-						// omitted (TS suppression below keeps HEAD compiling).
-						score: (r as RecallResult & { score?: number }).score ?? 0,
+						sparseScore: r.sparseScore,
+						rrf: r.rrf,
+						...(r.rerankScore !== undefined ? { rerankScore: r.rerankScore } : {}),
 					})),
 					recallTimeMs,
+					...(filtered ? { rewriteTimeMs, rerankTimeMs } : {}),
 				});
 			} finally {
 				index.close();

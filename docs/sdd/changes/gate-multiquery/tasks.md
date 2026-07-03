@@ -123,7 +123,7 @@
 
 ## 5. webui server routes/memory.ts 整合
 
-- [ ] 5.1 **registerPostSearch 加 rewrite+multivrecall+merge 路径**
+- [x] 5.1 **registerPostSearch 加 rewrite+multivrecall+merge 路径**
   - **文件**: `packages/webui/server/routes/memory.ts:799-841` (Modify)
   - **内容**: filtered=true 分支扩展: `const { rewriteQueries } = await import("../../...rewrite.ts")` 拿 rewriteQueries,传入 (query, null, {timeoutMs:1500}) 拿 subqueries. `Promise.all(subqueries.map(q => recallAtoms(index, q, {topK, filter:type?{type}:undefined})))` 多路 recall. `mergeByAtomId` 合并. `rerankAndFilter(subqueries.join(" "), merged)` 替换原 rerank query. response 加 `rewriteTimeMs` 字段. filtered=false 完全不动. (dynamic import 路径从 `routes/memory.ts` 起: `../../../../extensions/personal-assistant/rewrite.ts` 4 个 ../)
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run packages/webui/server/test/memory-routes.test.ts` (5.2 新加 case 之外,先确认不爆既有 8 个测试)
@@ -135,7 +135,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run packages/webui/server/test/memory-routes.test.ts` (现有 + 新增 3 个 = 全过)
   - **依赖**: 5.1
 
-- [ ] 5.3 **调整 5.1 验证命令**
+- [x] 5.3 **调整 5.1 验证命令**
   - **文件**: 无 (验证 clarification)
   - **内容**: 5.1 验证命令实际跑 `/api/memory/search` 测试在 memory-routes.test.ts,有别于 5.2 新加 case. 5.1 验证应只确认 registerPostSearch 签名 + filtered 分支调用链不爆; 5.2 是端到端 case 验证.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run packages/webui/server/test/memory-routes.test.ts` (单次运行包含 5.1 + 5.2 全部 case)

@@ -48,6 +48,18 @@ vi.mock("../../../../extensions/personal-assistant/embed.ts", async () => {
 	};
 });
 
+vi.mock("../../../../extensions/personal-assistant/rewrite.ts", async () => {
+	const actual = await vi.importActual<
+		typeof import("../../../../extensions/personal-assistant/rewrite.ts")
+	>("../../../../extensions/personal-assistant/rewrite.ts");
+	return {
+		...actual,
+		rewriteQueries: vi.fn(
+			async (query: string): Promise<string[]> => [query],
+		),
+	};
+});
+
 describe("GET /api/memory/:id", () => {
 	let app: express.Express;
 	let deps: MemoryDeps;
@@ -1243,6 +1255,34 @@ describe("POST /api/memory/search", () => {
 		expect(res.status).toBe(200);
 		expect(typeof res.data.recallTimeMs).toBe("number");
 		expect(res.data.recallTimeMs as number).toBeGreaterThanOrEqual(0);
+	});
+
+	it("includes rewriteTimeMs when filtered=true (default)", async () => {
+		await insertAtom({ content: "alpha rewrite time test data" });
+		const res = await fetchAt("/api/memory/search", { query: "alpha rewrite" });
+		expect(res.status).toBe(200);
+		expect(typeof res.data.rewriteTimeMs).toBe("number");
+		expect(res.data.rewriteTimeMs as number).toBeGreaterThanOrEqual(0);
+	});
+
+	it("omits rewriteTimeMs when filtered=false", async () => {
+		await insertAtom({ content: "alpha rewrite omitted test data" });
+		const res = await fetchAt("/api/memory/search", {
+			query: "alpha rewrite",
+			filtered: false,
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.rewriteTimeMs).toBeUndefined();
+	});
+
+	it("omits rerankTimeMs when filtered=false", async () => {
+		await insertAtom({ content: "alpha rerank omitted test data" });
+		const res = await fetchAt("/api/memory/search", {
+			query: "alpha rerank",
+			filtered: false,
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.rerankTimeMs).toBeUndefined();
 	});
 });
 
