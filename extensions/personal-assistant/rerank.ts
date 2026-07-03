@@ -111,8 +111,38 @@ export async function rerankAndFilter(
 		if (!data.scores || data.scores.length !== hits.length) {
 			return { reason: "shape-mismatch" as RerankFallbackReason, topK: hits.slice(0, 3) };
 		}
-		// 3.3 fills threshold + gap on the scored hits
-		return hits;
+		// Apply scores to hits
+		for (const s of data.scores) {
+			const hit = hits.find((h) => h.atom.id === s.id);
+			if (hit) hit.rerankScore = s.score;
+		}
+
+		const thr = options.threshold ?? DEFAULT_THRESHOLD;
+		const gp = options.gap ?? DEFAULT_GAP;
+
+		// Sort by rerankScore DESC, use rrf as tiebreaker
+		const sorted = [...hits].sort((a, b) => {
+			const as = a.rerankScore ?? -1;
+			const bs = b.rerankScore ?? -1;
+			if (as !== bs) return bs - as;
+			return (b.rrf ?? 0) - (a.rrf ?? 0);
+		});
+
+		// Threshold filter
+		const above = sorted.filter((h) => (h.rerankScore ?? -1) >= thr);
+		if (above.length === 0) return [];
+
+		// Gap detection: find first gap > gp
+		let cutIndex = above.length - 1;
+		for (let i = 0; i < above.length - 1; i++) {
+			const as = above[i].rerankScore ?? 0;
+			const bs = above[i + 1].rerankScore ?? 0;
+			if (as - bs > gp) {
+				cutIndex = i;
+				break;
+			}
+		}
+		return above.slice(0, cutIndex + 1);
 	} catch (err) {
 		if (err instanceof DOMException && err.name === "AbortError") {
 			return { reason: "timeout" as RerankFallbackReason, topK: hits.slice(0, 3) };

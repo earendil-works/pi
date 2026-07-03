@@ -123,14 +123,80 @@ describe("RerankFallback type compiles", () => {
 	});
 });
 
+function mockSuccessResponse(scores: Array<{ id: string; score: number }>) {
+	globalThis.fetch = vi.fn(
+		async () =>
+			new Response(JSON.stringify({ scores }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+	) as unknown as typeof fetch;
+}
+
 // ---------------------------------------------------------------------------
 // R1 — happy path (3.2 fills body)
-// 3.2 implements the fetch + 200-shape branch.
+// 3.2 implements the fetch + 200-shape branch; 3.3 adds threshold + gap.
 // ---------------------------------------------------------------------------
 describe("R1 — rerank happy path", () => {
-	it.todo("returns hits reordered by rerank score when server responds 200");
-	it.todo("attaches rerankScore to each returned hit");
-	it.todo("preserves hit count when all hits pass threshold");
+	it("returns hits reordered by rerank score when server responds 200", async () => {
+		// Server returns scores in a different order than hits; mapping by id
+		// must still produce the correct DESC sort.
+		// Gaps between consecutive scores are < 0.15 to avoid gap cutoff.
+		const scores = [
+			{ id: "c", score: 0.82 },
+			{ id: "a", score: 0.92 },
+			{ id: "b", score: 0.85 },
+		];
+		mockSuccessResponse(scores);
+		const hits = ["a", "b", "c"].map((id) => makeHit(id));
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(3);
+		expect(arr[0].atom.id).toBe("a");
+		expect(arr[1].atom.id).toBe("b");
+		expect(arr[2].atom.id).toBe("c");
+	});
+
+	it("attaches rerankScore to each returned hit", async () => {
+		const scores = [
+			{ id: "x", score: 0.88 },
+			{ id: "y", score: 0.76 },
+		];
+		mockSuccessResponse(scores);
+		const hits = [makeHit("x"), makeHit("y")];
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr[0].rerankScore).toBe(0.88);
+		expect(arr[1].rerankScore).toBe(0.76);
+	});
+
+	it("threshold + gap: cuts at first gap > 0.15", async () => {
+		// R1 scenario: [0.92,0.85,0.55,0.32,0.21,0.18,0.15,0.10]
+		// threshold >= 0.5 keeps [0.92,0.85,0.55]; gap at 0.85->0.55 (0.30 > 0.15)
+		// returns [0.92, 0.85]
+		const scores = [
+			{ id: "1", score: 0.92 },
+			{ id: "2", score: 0.85 },
+			{ id: "3", score: 0.55 },
+			{ id: "4", score: 0.32 },
+			{ id: "5", score: 0.21 },
+			{ id: "6", score: 0.18 },
+			{ id: "7", score: 0.15 },
+			{ id: "8", score: 0.10 },
+		];
+		mockSuccessResponse(scores);
+		const hits = ["1", "2", "3", "4", "5", "6", "7", "8"].map((id) => makeHit(id));
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(2);
+		expect(arr[0].atom.id).toBe("1");
+		expect(arr[0].rerankScore).toBe(0.92);
+		expect(arr[1].atom.id).toBe("2");
+		expect(arr[1].rerankScore).toBe(0.85);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -138,8 +204,44 @@ describe("R1 — rerank happy path", () => {
 // 3.2 implements fetch; 3.3 implements threshold/gap filter.
 // ---------------------------------------------------------------------------
 describe("R2 — threshold drops low-score hits", () => {
-	it.todo("drops hits with rerankScore < threshold");
-	it.todo("keeps hits with rerankScore >= threshold");
+	it("threshold + gap: keeps above-threshold hits then cuts at gap", async () => {
+		// R2 scenario: [0.92,0.85,0.55,0.52,0.51,0.50,0.30,0.28]
+		// threshold >= 0.5 keeps [0.92,0.85,0.55,0.52,0.51,0.50]
+		// gap at 0.85->0.55 (0.30 > 0.15) returns [0.92,0.85]
+		const scores = [
+			{ id: "1", score: 0.92 },
+			{ id: "2", score: 0.85 },
+			{ id: "3", score: 0.55 },
+			{ id: "4", score: 0.52 },
+			{ id: "5", score: 0.51 },
+			{ id: "6", score: 0.50 },
+			{ id: "7", score: 0.30 },
+			{ id: "8", score: 0.28 },
+		];
+		mockSuccessResponse(scores);
+		const hits = ["1", "2", "3", "4", "5", "6", "7", "8"].map((id) => makeHit(id));
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(2);
+		expect(arr[0].atom.id).toBe("1");
+		expect(arr[1].atom.id).toBe("2");
+	});
+
+	it("keeps all hits when all above threshold and no gap found", async () => {
+		const scores = [
+			{ id: "a", score: 0.90 },
+			{ id: "b", score: 0.85 },
+			{ id: "c", score: 0.82 },
+			{ id: "d", score: 0.80 },
+		];
+		mockSuccessResponse(scores);
+		const hits = ["a", "b", "c", "d"].map((id) => makeHit(id));
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(4);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -147,7 +249,61 @@ describe("R2 — threshold drops low-score hits", () => {
 // 3.3 implements the threshold filter producing the empty array.
 // ---------------------------------------------------------------------------
 describe("R3 — all hits below threshold", () => {
-	it.todo("returns [] when every rerank score is below threshold");
+	it("returns [] when every rerank score is below threshold", async () => {
+		// R3 scenario: [0.48,0.45,0.42,0.30] all < 0.5 => return []
+		const scores = [
+			{ id: "1", score: 0.48 },
+			{ id: "2", score: 0.45 },
+			{ id: "3", score: 0.42 },
+			{ id: "4", score: 0.30 },
+		];
+		mockSuccessResponse(scores);
+		const hits = ["1", "2", "3", "4"].map((id) => makeHit(id));
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		expect(result).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// R7 + tie — threshold + gap edge cases (3.3 fills body)
+// ---------------------------------------------------------------------------
+describe("threshold + gap edge cases", () => {
+	it("single element: returns it when threshold passes", async () => {
+		// R7: [0.7] >= 0.5, no gap to detect => return [0.7]
+		const scores = [{ id: "1", score: 0.7 }];
+		mockSuccessResponse(scores);
+		const hits = [makeHit("1")];
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(1);
+		expect(arr[0].atom.id).toBe("1");
+		expect(arr[0].rerankScore).toBe(0.7);
+	});
+
+	it("tie scores: returns both ordered by rrf DESC", async () => {
+		// Two hits both score 0.55; different rrf => both pass threshold,
+		// no gap (0.55-0.55=0 <= 0.15), sorted by rrf DESC.
+		const scores = [
+			{ id: "a", score: 0.55 },
+			{ id: "b", score: 0.55 },
+		];
+		mockSuccessResponse(scores);
+		const hits: RecallResult[] = [
+			{ ...makeHit("a", { title: "A" }), rrf: 0.3 },
+			{ ...makeHit("b", { title: "B" }), rrf: 0.8 },
+		];
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(true);
+		const arr = result as RecallResult[];
+		expect(arr).toHaveLength(2);
+		// rrf DESC: b (0.8) before a (0.3)
+		expect(arr[0].atom.id).toBe("b");
+		expect(arr[0].rerankScore).toBe(0.55);
+		expect(arr[1].atom.id).toBe("a");
+		expect(arr[1].rerankScore).toBe(0.55);
+	});
 });
 
 // ---------------------------------------------------------------------------
