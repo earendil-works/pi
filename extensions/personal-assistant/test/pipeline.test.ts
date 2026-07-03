@@ -425,6 +425,28 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 	});
 
 	// -----------------------------------------------------------------------
+	// Rerank all below threshold — rerank returns empty array
+	// -----------------------------------------------------------------------
+	it("rerank returns [] (all below threshold) — no memory match, pipeline stops", async () => {
+		mockRerankAndFilter.mockResolvedValue([]);
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+		// Format is NOT called because rerank filtered everything out
+		expect(mockFormatMemoryContext).not.toHaveBeenCalled();
+		expect(result).toBe(event);
+
+		const memoryCalls = ctx.setStatusCalls.filter((c) => c.key === "memory");
+		const lastStatus = memoryCalls[memoryCalls.length - 1]!.text;
+		expect(lastStatus).toContain("🔍 no memory match");
+	});
+
+	// -----------------------------------------------------------------------
 	// Empty recall — no memory match
 	// -----------------------------------------------------------------------
 	it("returns event unchanged when recall returns empty results", async () => {
