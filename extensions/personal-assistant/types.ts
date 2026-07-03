@@ -63,53 +63,40 @@ export interface MemoryAtom {
 // Recall result
 // ---------------------------------------------------------------------------
 
-/** Hydrated atom + similarity metadata from vector search. */
+/**
+ * Hydrated atom + similarity metadata from the bge-m3 dual-channel
+ * hybrid-RRF service. The client no longer re-ranks — the server's RRF
+ * output (`rrf`, `dense_cos`, `sparse_score`) IS the ranking, and
+ * `formatMemoryContext` injects hits in `rrf` DESC order so the LLM
+ * sees the server's view of relevance.
+ */
 export interface RecallResult {
 	atom: MemoryAtom;
-	/** Raw L2 distance returned by sqlite-vec. Smaller = closer. */
-	distance: number;
-	/** Cosine similarity in [0,1], derived as 1 - distance²/2 (for L2-normalized vectors). */
+	/** Cosine similarity in [0,1] from the service's dense channel. */
 	cosine: number;
+	/** Sparse-channel score from the bge-m3 learned sparse representation. */
+	sparseScore: number;
 	/**
-	 * Weighted ranking score used to order hits within each atom type during
-	 * search. Formula:
-	 *   score = cosine × (1 + 0.3 × strength + 0.2 × importance)
-	 *         + 0.10 × tagOverlap
-	 *         + 0.05 × freshness
-	 *
-	 * The first term is the multiplicative anchor (back-compat from the
-	 * dense-only era): a cosine of 0 forces that term to 0, regardless of
-	 * strength/importance. The strength/importance term adds a continuous
-	 * boost capped at +0.5 (when both are 1.0), so an unrelated atom can
-	 * never be boosted above a relevant one.
-	 *
-	 * The two additive terms (`tagOverlap` and `freshness`) are debug
-	 * surfaces — they tune ranking for keyword-rescue and recency
-	 * respectively, but are NOT used to override the multiplicative anchor
-	 * (cosine=0 still produces score=0 since the additive terms alone cap
-	 * at +0.15).
-	 *
-	 * `score` is exposed only in the search response (UI / debug surfaces).
-	 * The format layer (`formatMemoryContext`) re-sorts hits by `distance` ASC
-	 * before injecting them into the LLM prompt, so the LLM never sees
-	 * `score` — it sees cosine-ordered blocks and uses `id` to call `memory_get`
-	 * for full content.
+	 * RRF score from the service's `1/(k_rrf + rank)` fusion of the dense
+	 * and sparse channels. Primary ranking key — `formatMemoryContext`
+	 * sorts by this field. Single-channel rank-0 hits have `rrf ≈ 1/60`.
 	 */
-	score: number;
+	rrf: number;
 	/**
-	 * Tag overlap contribution: fraction of query tokens (after tag-alias
-	 * folding via `computeTagOverlap`) that match an atom's tag set, in
-	 * [0, 1]. Debug surface for the `0.10 × tagOverlap` additive term in
-	 * the score formula.
+	 * Relative file path for the `read` tool, e.g. "fact/<atom.id>.md".
+	 * Set by the `before_agent_start` hook before formatting, using
+	 * `atomsDir` from config. The base directory is disclosed in the
+	 * context injection prefix.
 	 */
-	tagOverlap?: number;
+	relativePath?: string;
 	/**
-	 * Freshness decay in [0, 1]: `exp(-daysSinceUpdate / 30)`. Debug surface
-	 * for the `0.05 × freshness` additive term in the score formula. A
-	 * freshly-updated atom scores 1.0; an atom updated ~30 days ago scores
-	 * ≈0.37; a year-old atom scores ≈5.2e-6 (negligible).
+	 * Cross-encoder rerank score in [0,1] from the bge-reranker / server
+	 * `/api/rerank` step (recall-precision task 1.1 / R8). Optional so
+	 * legacy call sites that skip the rerank stage keep compiling; when
+	 * present, `formatMemoryContext` sorts by this field DESC and falls
+	 * back to `rrf` DESC for hits without a rerankScore (task 1.3).
 	 */
-	freshness?: number;
+	rerankScore?: number;
 }
 
 // ---------------------------------------------------------------------------

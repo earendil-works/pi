@@ -132,65 +132,88 @@ describe("types", () => {
 		expect(back.is_latest).toBe(0);
 	});
 
-	it("shapes RecallResult with distance, cosine, score (no file_path, no rrfScore)", () => {
+	it("shapes RecallResult with cosine, sparseScore, rrf (no score, no distance)", () => {
 		const result: RecallResult = {
 			atom: makeAtom(),
-			distance: 0.42,
 			cosine: 0.79,
-			score: 0.79 * (1 + 0.3 * 0.7 + 0.2 * 0.7), // = 0.79 × 1.35 = 1.0665
+			sparseScore: 0.21,
+			rrf: 0.0167,
 		};
-		expect(result.score).toBeGreaterThan(0);
-		expect(result.score).toBeLessThanOrEqual(1.5); // max boost scenario
 		expect(result.cosine).toBeGreaterThan(0);
 		expect(result.cosine).toBeLessThanOrEqual(1);
+		expect(result.sparseScore).toBeGreaterThan(0);
+		expect(result.rrf).toBeGreaterThan(0);
 		// file_path is gone — confirm via type-level: no such field
 		expect((result as { file_path?: unknown }).file_path).toBeUndefined();
-		// rrfScore is gone in pure-dense era — confirm via type-level
-		expect((result as { rrfScore?: unknown }).rrfScore).toBeUndefined();
+		// score is gone — client no longer computes a custom score
+		expect((result as { score?: unknown }).score).toBeUndefined();
+		// distance is gone — client no longer reads L2 distance (rrf is the sort key)
+		expect((result as { distance?: unknown }).distance).toBeUndefined();
 	});
 
-	it("score field follows the multiplicative formula", () => {
-		// cosine × (1 + 0.3 × strength + 0.2 × importance)
-		const atom = makeAtom({ strength: 1.0, importance: 1.0 });
-		const result: RecallResult = {
-			atom,
-			distance: 0.1,
-			cosine: 0.99,
-			score: 0.99 * 1.5,
-		};
-		expect(result.score).toBeCloseTo(1.485);
-	});
-
-	it("score formula respects the strength/importance cap", () => {
-		// Pure-dense contract: strength and importance contribute additively
-		// to the score via the 0.3/0.2 weights. With strength=0.7, importance=0.7
-		// (the makeAtom defaults), the boost is 0.3×0.7 + 0.2×0.7 = 0.35
-		// (so the score's multiplicative term is cosine × 1.35, NOT × 1.5).
+	it("rrf is the server's RRF score (rank-0 contribution = 1/60)", () => {
 		const result: RecallResult = {
 			atom: makeAtom(),
-			distance: 0.3,
-			cosine: 0.85,
-			score: 0.85 * (1 + 0.3 * 0.7 + 0.2 * 0.7),
+			cosine: 0.5,
+			sparseScore: 0.3,
+			rrf: 1 / 60,
 		};
-		// 0.85 × 1.35 = 1.1475 (multiplicative-only; tagOverlap + freshness add
-		// more in production, but in this test we set score directly)
-		expect(result.score).toBeCloseTo(1.1475, 3);
+		expect(result.rrf).toBeCloseTo(0.01667, 5);
 	});
 
-	it("existing score field is preserved across the pure-dense migration", () => {
-		// Delta Spec scenario: with strength=0.7, importance=0.8, cosine=0.78,
-		// score = 0.78 × (1 + 0.3×0.7 + 0.2×0.8) = 0.78 × 1.37 = 1.0686
-		// (the spec text says ≈ 1.222 but that value is arithmetically
-		// inconsistent with the documented formula; the contract is the
-		// formula, not the typo).
+	it("relativePath is optional and set by the agent hook before formatting", () => {
 		const result: RecallResult = {
-			atom: makeAtom({ strength: 0.7, importance: 0.8 }),
-			distance: 0.45,
-			cosine: 0.78,
-			score: 0.78 * (1 + 0.3 * 0.7 + 0.2 * 0.8),
+			atom: makeAtom(),
+			cosine: 0.5,
+			sparseScore: 0.1,
+			rrf: 0.0167,
 		};
-		// score contract unchanged: backwards compat with webui + memory_get.
-		expect(result.score).toBeCloseTo(1.0686, 3);
+		expect(result.relativePath).toBeUndefined();
+		// The hook sets it before calling formatMemoryContext.
+		result.relativePath = `fact/${result.atom.id}.md`;
+		expect(result.relativePath).toBe(`fact/${result.atom.id}.md`);
+	});
+
+	// Task 1.1 (recall-precision R8): RecallResult gains optional `rerankScore?: number`
+	// to carry the cross-encoder rerank output. The field must be optional so legacy
+	// call sites (no rerank pipeline yet) keep compiling and existing tests stay green.
+	// format.ts (task 1.3) will later sort hits by rerankScore DESC and fall back to rrf
+	// for hits without a rerankScore.
+	it("rerankScore is optional on RecallResult — omitted literal yields undefined", () => {
+		const r: RecallResult = {
+			atom: makeAtom(),
+			cosine: 0.5,
+			sparseScore: 0.4,
+			rrf: 0.05,
+		};
+		// Field absent on the literal — must be optional so the assignment compiles
+		// and the property reads back as undefined.
+		expect(r.rerankScore).toBeUndefined();
+	});
+
+	it("rerankScore on RecallResult — set literal round-trips the score", () => {
+		const r2: RecallResult = {
+			atom: makeAtom(),
+			cosine: 0.5,
+			sparseScore: 0.4,
+			rrf: 0.05,
+			rerankScore: 0.92,
+		};
+		expect(r2.rerankScore).toBe(0.92);
+	});
+
+	it("rerankScore is a number — string / null literals are rejected at compile time", () => {
+		// Compile-time guards. The first two lines would error under `tsc --noEmit`
+		// if rerankScore were missing from the type or had the wrong shape; the runtime
+		// assertions verify the accepted shape behaves as expected.
+		const ok: RecallResult = {
+			atom: makeAtom(),
+			cosine: 0,
+			sparseScore: 0,
+			rrf: 0,
+			rerankScore: 0,
+		};
+		expect(ok.rerankScore).toBe(0);
 	});
 
 	it("shapes ExtractionItem with the 6 fields", () => {
@@ -310,17 +333,18 @@ describe("types", () => {
 		expect(row.tags).toBe('["a","b"]');
 	});
 
-	it("PersonalAssistantConfig.memory is fully optional (post hybrid-removal)", () => {
-		// The `recall` sub-config was removed when the pipeline migrated
-		// from hybrid (BM25 + dense + RRF) to pure dense + cosine floor.
-		// This test pins that the surrounding `memory` block is still
-		// optional — empty memory, populated memory, and missing memory
-		// all type-check cleanly.
-		const c1: PersonalAssistantConfig = { memory: { tagOverlapWeight: 0.15 } };
+	it("PersonalAssistantConfig.memory is fully optional (post client-trust-server refactor)", () => {
+		// The client-side scoring knobs (`tagOverlapWeight`, `freshnessWeight`,
+		// `tagAliases`) were removed when recall stopped re-ranking. The
+		// server's RRF is the sole ranking signal. This test pins that
+		// the surrounding `memory` block is still optional — empty
+		// memory, populated memory, and missing memory all type-check
+		// cleanly.
+		const c1: PersonalAssistantConfig = { memory: { dbPath: "/tmp/x.db" } };
 		const c2: PersonalAssistantConfig = { memory: {} };
 		const c3: PersonalAssistantConfig = {};
 
-		expect(c1.memory?.tagOverlapWeight).toBe(0.15);
+		expect(c1.memory?.dbPath).toBe("/tmp/x.db");
 		expect(c2.memory).toBeDefined();
 		expect(c3.memory).toBeUndefined();
 	});
