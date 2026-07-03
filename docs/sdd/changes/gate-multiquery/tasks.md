@@ -84,7 +84,7 @@
 
 ## 4. memory.ts context hook pipeline 整合
 
-- [ ] 4.1 **PersonalAssistantConfig 加 rewrite.enabled 字段**
+- [x] 4.1 **PersonalAssistantConfig 加 rewrite.enabled 字段**
   - **文件**: `extensions/personal-assistant/memory.ts:74-114` (Modify)
   - **内容**: 在 memory?.gate / memory?.rerank 之间插入 `rewrite?: { enabled?: boolean };`. Default true(同 gate/rerank).
   - **验证**: `npx tsx -e "import {loadConfig} from './extensions/personal-assistant/memory.ts'; const c=loadConfig(); console.log(typeof c.memory?.rewrite?.enabled);"` 输出 undefined (因为 settings.json 无此字段,但语法不爆)

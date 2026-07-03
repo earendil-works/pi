@@ -90,6 +90,10 @@ export interface PersonalAssistantConfig {
 		/** Context-hook gate (LLM decides need-memory + rewrites query).
 		 *  Default enabled when omitted; absence means "use default". */
 		gate?: { enabled?: boolean };
+		/** Context-hook query-rewrite stage (refines user query for search).
+		 *  Default enabled when omitted; absence means "use default".
+		 *  Independent from gate.enabled — any combination is valid (B8). */
+		rewrite?: { enabled?: boolean };
 		/** Context-hook cross-encoder rerank stage.
 		 *  Default enabled when omitted; absence means "use default". */
 		rerank?: { enabled?: boolean };
