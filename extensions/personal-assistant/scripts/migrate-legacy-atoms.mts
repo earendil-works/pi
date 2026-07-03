@@ -125,9 +125,19 @@ async function main(): Promise<void> {
 	// 1. Resolve paths. `loadConfig` returns {} on any failure (missing
 	//    file, bad JSON, etc.) so we only need to handle the case where
 	//    the user has overridden dbPath / atomsDir via settings.json.
+	//
+	//    Precedence: env var > settings.json > compiled-in default. The
+	//    env-var override (PERSONAL_ASSISTANT_DB_PATH / _ATOMS_DIR) exists
+	//    purely so the integration test (test/migration.test.ts, Task 2.5)
+	//    can point the destructive dedup pass at a throwaway tmpdir db
+	//    instead of the user's live memory.db. Unset in normal operation,
+	//    so `loadConfig`'s default behavior (HOME = ~/.pi/agent) is
+	//    preserved for real invocations.
 	const config = loadConfig();
-	const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
-	const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+	const dbPath =
+		process.env.PERSONAL_ASSISTANT_DB_PATH ?? config.memory?.dbPath ?? DEFAULT_DB_PATH;
+	const atomsDir =
+		process.env.PERSONAL_ASSISTANT_ATOMS_DIR ?? config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 
 	// 2. Backup. Use copyFile (not move) so a failed migration leaves
 	//    the live db untouched. A copy failure aborts loudly per L108-112.
@@ -179,9 +189,44 @@ async function main(): Promise<void> {
 		//    currently being visited — sorted by access_count DESC first)
 		//    and mark the lower-ranked hit as superseded. Idempotent
 		//    because the second pass sees only canonical atoms.
+		//
+		//    The 4th arg `atom.id` is `excludeId`: we must NOT consider
+		//    the atom we're iterating against as a candidate, because its
+		//    own embedding is the query so cosine-with-self = 1.0 and
+		//    would otherwise always shadow the real neighbour. The
+		//    storage-layer `findMostSimilarEmbedding` skips rows where
+		//    `id = excludeId` (both at the SQL level and inside the
+		//    defensive in-loop guard), so the caller's self-match check
+		//    at `hit.atom.id !== atom.id` is now redundant — we keep it
+		//    as belt-and-suspenders for the next refactor that touches
+		//    the same area.
+		//
+		//    The is_latest re-check below is the second half of the
+		//    fix: when iteration N marks atom X as the loser of a
+		//    pair, iteration N+1 may then visit X's cluster mate X'
+		//    (still in `sorted` because we captured it before the loop
+		//    started). Without this re-check, X' would now find its
+		//    own canonical winner X as the "loser" and mark IT
+		//    superseded — over-archiving to BOTH sides of every pair
+		//    (4-atom corpus → 0 active instead of 2). Re-reading
+		//    is_latest here gives us: "the canonical winner of a
+		//    pair is whichever rank-ordered atom survived the first
+		//    supersede; everyone after that one gets the
+		//    unchangedCount++ treatment."
+		//    See docs/sdd/changes/atom-remigrate/design.md Decision 3.
 		let archivedCount = 0;
 		let unchangedCount = 0;
 		for (const atom of sorted) {
+			// Re-check canonical status: an earlier iteration of this
+			// loop may have marked this atom superseded as the loser
+			// of a cluster pair. `sorted` is a snapshot from before
+			// any writes, so we have to ask the DB for the current
+			// truth.
+			const fresh = index.getAtom(atom.id);
+			if (!fresh || fresh.is_latest !== 1 || fresh.archived !== 0) {
+				unchangedCount++;
+				continue;
+			}
 			const embedding = index.getEmbedding(atom.id);
 			if (!embedding) {
 				// Atoms without a vector row are skipped silently. This
@@ -191,7 +236,7 @@ async function main(): Promise<void> {
 				unchangedCount++;
 				continue;
 			}
-			const hit = index.findMostSimilarEmbedding(embedding, threshold);
+			const hit = index.findMostSimilarEmbedding(embedding, threshold, undefined, atom.id);
 			if (hit && hit.atom.id !== atom.id) {
 				index.markSupersededNoInsert(hit.atom.id, atom.id, Date.now());
 				archivedCount++;

@@ -411,27 +411,39 @@ export class MemoryIndex {
 	 * with a `Float32Array` binding (R20). The `k` parameter both bounds
 	 * sqlite-vec's internal candidate set and the number of returned
 	 * rows; we rely on the post-JOIN filter to drop the rest.
+	 *
+	 * `excludeId` (optional) drops one atom from the candidate set at the
+	 * SQL level via `AND v.id != ?`. Used by callers that already know the
+	 * query embedding is derived from that atom (the migration script,
+	 * re-embedding sanity sweeps) so the trivially-perfect self-match
+	 * (cosine = 1.0) doesn't drown out the real neighbours. The
+	 * exclusion is also re-checked in `findMostSimilarEmbedding` as a
+	 * defensive in-loop guard — see the comment on that method.
 	 */
 	vectorSearch(
 		embedding: number[],
 		k: number,
 		filter?: { type?: MemoryAtomType; archived?: boolean; isLatestOnly?: boolean },
+		excludeId?: string,
 	): Array<{ id: string; distance: number }> {
 		const { whereSql, prefixParams } = this.buildActiveFilter(filter);
-		const sql = `
-			SELECT v.id, v.distance
-			FROM memory_vectors v
-			INNER JOIN memory_index i ON v.id = i.id
-			WHERE ${whereSql}
-			AND v.embedding MATCH ?
-			AND k = ?
-			ORDER BY v.distance
-		`;
+		const conditions: string[] = [whereSql, "v.embedding MATCH ?", "k = ?"];
 		const params: (string | number | Float32Array)[] = [
 			...prefixParams,
 			new Float32Array(embedding),
 			k,
 		];
+		if (excludeId !== undefined) {
+			conditions.push("v.id != ?");
+			params.push(excludeId);
+		}
+		const sql = `
+			SELECT v.id, v.distance
+			FROM memory_vectors v
+			INNER JOIN memory_index i ON v.id = i.id
+			WHERE ${conditions.join(" AND ")}
+			ORDER BY v.distance
+		`;
 
 		type Row = { id: string; distance: number };
 		const rows = this.db.prepare(sql).all(...params) as Row[];
@@ -444,17 +456,35 @@ export class MemoryIndex {
 	 * by sqlite-vec as `1 - distance²/2`, valid only when both vectors
 	 * are L2-normalised) when the best match clears the threshold,
 	 * otherwise null (R21).
+	 *
+	 * `excludeId` — when set, the search must skip the atom with that id
+	 * even though the query embedding is itself derived from that atom
+	 * (cosine would be 1.0 against itself). The migration script hits
+	 * this case: it iterates atoms already in the DB and asks for the
+	 * "most similar *other* atom", and the previous "self-match guard at
+	 * the caller" approach silently dropped every candidate because the
+	 * first hit (cos=1.0) was always the atom itself. See
+	 * docs/sdd/changes/atom-remigrate/design.md Decision 3. The exclusion
+	 * is enforced in two places — the SQL filter inside `vectorSearch`
+	 * (cheap: drops the row early) and the loop here (defensive: keeps
+	 * the structural promise even if a future vectorSearch refactor
+	 * drops the SQL clause).
 	 */
 	findMostSimilarEmbedding(
 		embedding: number[],
 		threshold: number,
 		filter?: { type?: MemoryAtomType },
+		excludeId?: string,
 	): { atom: MemoryAtom; cosine: number } | null {
 		// Pull top-5 candidates (not just top-1) so threshold check has a fair
 		// chance even if the closest atom doesn't pass but #2-#5 might.
-		const results = this.vectorSearch(embedding, 5, { ...filter });
+		const results = this.vectorSearch(embedding, 5, { ...filter }, excludeId);
 		if (results.length === 0) return null;
 		for (const r of results) {
+			// Defensive in-loop guard: even if vectorSearch ever drops the
+			// SQL `AND v.id != ?` clause (e.g. a refactor), we still skip
+			// the excluded atom here before the threshold check.
+			if (excludeId && r.id === excludeId) continue;
 			// Correct L2 → cosine: cosine = 1 - distance²/2 (only valid for
 			// L2-normalized vectors, which bge-m3 outputs are).
 			const cosine = 1 - (r.distance * r.distance) / 2;

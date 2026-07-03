@@ -586,6 +586,63 @@ describe("MemoryIndex", () => {
 			expect(result).toBeNull();
 		});
 
+		// Regression: findMostSimilarEmbedding did not exclude the query atom from
+		// its candidate set. The migration script (which iterates atoms already
+		// in the DB) always saw the atom itself as cos=1.0 and never reached its
+		// real neighbour, so the `hit.atom.id !== atom.id` guard at the caller
+		// silently dropped every candidate. The exclusion must now happen INSIDE
+		// the search, not just at the caller — see
+		// docs/sdd/changes/atom-remigrate/design.md Decision 3.
+		it("findMostSimilarEmbedding with excludeId skips the query atom itself", async () => {
+			// Build a 1024-dim unit vector pointing at exactly `angleDeg` off
+			// the first axis, so the L2 → cosine transform the storage uses
+			// (`cosine = 1 - distance²/2`) lands on a known value.
+			const angledVec = (angleDeg: number): number[] => {
+				const rad = (angleDeg * Math.PI) / 180;
+				const arr = new Array(1024).fill(0);
+				arr[0] = Math.cos(rad);
+				arr[1] = Math.sin(rad);
+				return arr;
+			};
+
+			// A at 0°, B at 60°. cos(A, A) = 1.0, cos(A, B) ≈ 0.5.
+			const a = sampleAtom({ id: "excluded", content_fingerprint: "fexcl" });
+			const b = sampleAtom({ id: "neighbour", content_fingerprint: "fneigh" });
+			await index.insertAtom(a, angledVec(0));
+			await index.insertAtom(b, angledVec(60));
+
+			// Without excludeId: legacy behaviour — the query atom itself
+			// is the closest match (cos=1.0).
+			const selfHit = index.findMostSimilarEmbedding(angledVec(0), 0.4);
+			expect(selfHit).not.toBeNull();
+			expect(selfHit!.atom.id).toBe("excluded");
+
+			// With excludeId: the search must skip A and return B at cos≈0.5.
+			const neighbourHit = index.findMostSimilarEmbedding(angledVec(0), 0.4, undefined, "excluded");
+			expect(neighbourHit).not.toBeNull();
+			expect(neighbourHit!.atom.id).toBe("neighbour");
+			expect(neighbourHit!.cosine).toBeCloseTo(0.5, 1);
+		});
+
+		it("findMostSimilarEmbedding excludeId returns null when no neighbour clears the threshold", async () => {
+			// Only A in the DB; excluding A leaves zero candidates, so the
+			// search must return null even when the query atom itself was a
+			// perfect (cos=1.0) match before exclusion.
+			const angledVec = (angleDeg: number): number[] => {
+				const rad = (angleDeg * Math.PI) / 180;
+				const arr = new Array(1024).fill(0);
+				arr[0] = Math.cos(rad);
+				arr[1] = Math.sin(rad);
+				return arr;
+			};
+
+			const only = sampleAtom({ id: "only", content_fingerprint: "fonly" });
+			await index.insertAtom(only, angledVec(0));
+
+			const result = index.findMostSimilarEmbedding(angledVec(0), 0.4, undefined, "only");
+			expect(result).toBeNull();
+		});
+
 		it("cosineSimilarity returns 1.0 for identical vectors", () => {
 			const v = randomVec(5);
 			expect(index.cosineSimilarity(v, v)).toBeCloseTo(1.0, 5);
