@@ -82,6 +82,9 @@ vi.mock("../storage.ts", () => ({
 		close(): void {
 			// no-op
 		}
+		getActiveAtoms(): Array<unknown> {
+			return [];
+		}
 	},
 }));
 
