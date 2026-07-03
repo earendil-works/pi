@@ -292,7 +292,7 @@
 
 ## 4. 文档与验证 (Verification & Docs)
 
-- [ ] 4.1 **运行 npm run check (全量 lint + typecheck)**
+- [x] 4.1 **运行 npm run check (全量 lint + typecheck)**
   - **文件**: 无 (验证任务)
   - **内容**: 从 repo 根跑 `npm run check`, 确认 0 error / 0 warning / 0 info。涉及的所有新文件 (tag-vocab.ts, scripts/migrate-legacy-atoms.mts, bge-reindex.ts) 都通过 tsgo 检查。
   - **验证**: `cd /home/qjh/workspace/personal/pi && npm run check 2>&1 | tail -20` 输出末尾有 "0 errors, 0 warnings, 0 infos" 类信息
@@ -304,7 +304,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && bash test.sh 2>&1 | tail -20` 输出末尾 "0 failed"
   - **依赖**: 4.1
 
-- [ ] 4.3 **手动 smoke test migration script (真实 corpus)**
+- [x] 4.3 **手动 smoke test migration script (真实 corpus)**
   - **文件**: 无 (验证任务)
   - **内容**: 在 real 90 atom corpus (备份 `/home/qjh/.pi/agent/memory/memory.db` → `/tmp/memory-pre-migration.db`) 跑:
   1. `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts`
