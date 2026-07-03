@@ -390,9 +390,15 @@ export async function executePlan(
 		if (result.status === "create" && result.atom) {
 			created.push(result.atom);
 		} else if (result.status === "supersede" && result.atom) {
-			superseded.push({ oldId: planItem.item.title, newAtom: result.atom });
+			// For supersede, `result.atom.parent_id` is set by
+			// `markSupersededTx` to the hit atom's id (the one being
+			// replaced) — that's the stable key audit/recall consumers
+			// expect here, NOT the new item's title.
+			superseded.push({ oldId: result.atom.parent_id ?? "", newAtom: result.atom });
 		} else if (result.status === "update" && result.atom) {
-			updated.push({ oldId: planItem.item.title, newAtom: result.atom });
+			// For update, the hit atom is rewritten in place — its id is
+			// preserved, so `oldId === result.atom.id`.
+			updated.push({ oldId: result.atom.id, newAtom: result.atom });
 		} else if (result.status === "skip" && result.atom) {
 			skipped.push(result.atom);
 		}

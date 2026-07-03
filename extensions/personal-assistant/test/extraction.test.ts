@@ -187,6 +187,12 @@ describe("executePlan", () => {
 		const entry = result.superseded[0];
 		expect(entry.newAtom.id).toBeTruthy();
 		expect(entry.newAtom.is_latest).toBe(1);
+		// oldId must point at the SUPERSEDED atom (the one being replaced),
+		// not at the new item's title. The superseded atom is the one in
+		// `index.getActiveAtoms()` BEFORE this second executePlan ran.
+		expect(entry.oldId).toBeTruthy();
+		expect(entry.oldId).not.toBe(entry.newAtom.id);
+		expect(entry.oldId).not.toBe("v2");
 	});
 
 	it("tolerates embedding failure: still writes .md file", async () => {
@@ -273,6 +279,8 @@ describe("executePlan", () => {
 		expect(updated?.title).toBe("TS strict preference (updated)");
 		expect(updated?.content).toContain("ESLint 强制");
 		expect(updated?.tags).toEqual(["typescript", "eslint"]);
+		// oldId must equal the updated atom's id (in-place rewrite keeps the id).
+		expect(result.updated[0]?.oldId).toBe(updated?.id);
 	});
 
 	it("LLM 二次确认 action=skip — drops the new item, no new row written", async () => {
