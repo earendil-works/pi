@@ -96,13 +96,13 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/pipeline.test.ts` (会失败直到 4.6 重写 pipeline test)
   - **依赖**: 1.4, 3.5, 4.1
 
-- [ ] 4.3 **multi-recall + merge 整合进 context hook**
+- [x] 4.3 **multi-recall + merge 整合进 context hook**
   - **文件**: `extensions/personal-assistant/memory.ts:784-795` (Modify) — recall 段
   - **内容**: 删原 `recallAtoms(index, searchQuery, {topK:20})` 单调用. 改为 `const allResults = await Promise.all(subqueries.map(q => recallAtoms(index, q, {topK:20}))); const { mergeByAtomId } = await import("./merge.ts"); const results = mergeByAtomId(allResults);`. 注意 4.2 已删 searchQuery, 不再出现 searchQuery 单变量. hybridCount 计数改为 merged 数组长度.
   - **验证**: 1 个单 subquery 时仍单调一次 recallAtoms (path 后退兼容). 注: 当 subqueries=[current] 时,join 后是 current 本身,等价原 searchQuery 行为.
   - **依赖**: 2.1, 4.2
 
-- [ ] 4.4 **rerank 用 joined subqueries**
+- [x] 4.4 **rerank 用 joined subqueries**
   - **文件**: `extensions/personal-assistant/memory.ts:798-801` (Modify)
   - **内容**: `rerankAndFilter(...)` 调用首参数改为 `subqueries.join(" ")` (单 subqueries 时等价原 searchQuery 字符串,多 subqueries 时空格连接). 其他 retry/fallback/status 逻辑全保留. 注: 此时 searchQuery 变量已不存在 (4.2 删除),不再引用.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/rerank.test.ts` (rerank 模块测试不动)
