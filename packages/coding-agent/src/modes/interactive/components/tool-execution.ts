@@ -8,6 +8,7 @@ import { theme } from "../theme/theme.ts";
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	zenLabel?: string;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -25,6 +26,7 @@ export class ToolExecutionComponent extends Container {
 	private expanded = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
+	private zenLabel: string | undefined;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition<any, any>;
 	private builtInToolDefinition?: ToolDefinition<any, any>;
@@ -57,6 +59,7 @@ export class ToolExecutionComponent extends Container {
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
+		this.zenLabel = options.zenLabel;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -136,6 +139,13 @@ export class ToolExecutionComponent extends Container {
 		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
 	}
 
+	private createZenCallComponent(): Component | undefined {
+		if (!this.zenLabel) {
+			return undefined;
+		}
+		return new Text(theme.fg("toolTitle", theme.bold(this.zenLabel)), 0, 0);
+	}
+
 	private createResultFallback(): Component | undefined {
 		const output = this.getTextOutput();
 		if (!output) {
@@ -213,6 +223,11 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setZenLabel(label: string | undefined): void {
+		this.zenLabel = label;
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -266,20 +281,26 @@ export class ToolExecutionComponent extends Container {
 			}
 			renderContainer.clear();
 
-			const callRenderer = this.getCallRenderer();
-			if (!callRenderer) {
-				renderContainer.addChild(this.createCallFallback());
+			const zenCallComponent = this.createZenCallComponent();
+			if (zenCallComponent) {
+				renderContainer.addChild(zenCallComponent);
 				hasContent = true;
 			} else {
-				try {
-					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
-					this.callRendererComponent = component;
-					renderContainer.addChild(component);
-					hasContent = true;
-				} catch {
-					this.callRendererComponent = undefined;
+				const callRenderer = this.getCallRenderer();
+				if (!callRenderer) {
 					renderContainer.addChild(this.createCallFallback());
 					hasContent = true;
+				} else {
+					try {
+						const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
+						this.callRendererComponent = component;
+						renderContainer.addChild(component);
+						hasContent = true;
+					} catch {
+						this.callRendererComponent = undefined;
+						renderContainer.addChild(this.createCallFallback());
+						hasContent = true;
+					}
 				}
 			}
 
@@ -314,7 +335,7 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			this.contentText.setCustomBgFn(bgFn);
-			this.contentText.setText(this.formatToolExecution());
+			this.contentText.setText(this.zenLabel ? this.formatZenToolExecution() : this.formatToolExecution());
 			hasContent = true;
 		}
 
@@ -360,6 +381,15 @@ export class ToolExecutionComponent extends Container {
 
 	private getTextOutput(): string {
 		return getRenderedTextOutput(this.result, this.showImages);
+	}
+
+	private formatZenToolExecution(): string {
+		let text = theme.fg("toolTitle", theme.bold(this.zenLabel ?? this.toolName));
+		const output = this.getTextOutput();
+		if (output) {
+			text += `\n${output}`;
+		}
+		return text;
 	}
 
 	private formatToolExecution(): string {

@@ -364,6 +364,28 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("done");
 	});
 
+	test("zen labels replace verbose call rendering and can be updated", () => {
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-zen-bash",
+			{ command: "git status --short && rg super-secret-command" },
+			{ zenLabel: "Checking workspace" },
+			createBashToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		let rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("Checking workspace");
+		expect(rendered).not.toContain("git status --short");
+		expect(rendered).not.toContain("super-secret-command");
+
+		component.setZenLabel("Reviewing files");
+		rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("Reviewing files");
+		expect(rendered).not.toContain("Checking workspace");
+	});
+
 	test("trims trailing blank display lines from write previews", () => {
 		const component = new ToolExecutionComponent(
 			"write",

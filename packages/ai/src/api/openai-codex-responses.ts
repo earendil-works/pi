@@ -464,7 +464,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 
 	const base = buildBaseOptions(model, context, options, apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+	const reasoningEffort = clampedReasoning === "off" ? "none" : clampedReasoning;
 
 	return stream(model, context, {
 		...base,

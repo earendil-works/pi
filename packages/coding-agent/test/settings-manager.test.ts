@@ -216,6 +216,23 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("zen mode setting", () => {
+		it("defaults to false and persists zenMode globally", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getZenMode()).toBe(false);
+
+			manager.setZenMode(true);
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.zenMode).toBe(true);
+			expect(savedSettings.theme).toBe("dark");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

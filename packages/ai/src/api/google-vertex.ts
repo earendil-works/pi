@@ -304,7 +304,7 @@ export const streamSimple: StreamFunction<"google-vertex", SimpleStreamOptions> 
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const base = buildBaseOptions(model, context, options, undefined);
-	if (!options?.reasoning) {
+	if (!options?.reasoning || options.reasoning === "off") {
 		return stream(model, context, {
 			...base,
 			thinking: { enabled: false },

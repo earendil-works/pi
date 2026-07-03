@@ -41,6 +41,7 @@ type RenderSessionContextThis = {
 	settingsManager: {
 		getShowImages(): boolean;
 		getImageWidthCells(): number;
+		getZenMode(): boolean;
 	};
 	sessionManager: { getCwd(): string };
 	session: { retryAttempt: number };
@@ -48,6 +49,12 @@ type RenderSessionContextThis = {
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
+	createToolExecutionComponent: (
+		toolName: string,
+		toolCallId: string,
+		args: unknown,
+		options?: { summarizeZenLabel?: boolean },
+	) => ToolExecutionComponent;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 	renderSessionItems: RenderSessionItems;
 };
@@ -70,6 +77,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		settingsManager: {
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
+			getZenMode: () => false,
 		},
 		sessionManager: { getCwd: () => process.cwd() },
 		session: { retryAttempt: 0 },
@@ -77,6 +85,11 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		createToolExecutionComponent: (
+			InteractiveMode.prototype as unknown as {
+				createToolExecutionComponent: RenderSessionContextThis["createToolExecutionComponent"];
+			}
+		).createToolExecutionComponent,
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })
 			.renderSessionItems,
 		addMessageToChat(message: AgentMessage) {

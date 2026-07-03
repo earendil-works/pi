@@ -10,6 +10,7 @@ import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
+	type Context,
 	getProviders,
 	type ImageContent,
 	type Message,
@@ -322,6 +323,9 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private zenToolSummaryChain: Promise<void> = Promise.resolve();
+	private zenPreviousToolSummary: string | undefined = undefined;
+	private zenToolSummaryGeneration = 0;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -406,6 +410,7 @@ export class InteractiveMode {
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
 			this.resetExtensionUI();
+			this.resetZenToolSummaries();
 		});
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
@@ -447,6 +452,193 @@ export class InteractiveMode {
 			(message) => this.showError(message),
 			() => this.updateEditorBorderColor(),
 		);
+	}
+
+	private resetZenToolSummaries(): void {
+		this.zenPreviousToolSummary = undefined;
+		this.zenToolSummaryChain = Promise.resolve();
+		this.zenToolSummaryGeneration++;
+	}
+
+	private getStringArg(args: unknown, key: string): string | undefined {
+		if (typeof args !== "object" || args === null) {
+			return undefined;
+		}
+		const value = (args as Record<string, unknown>)[key];
+		return typeof value === "string" ? value : undefined;
+	}
+
+	private getToolPathArg(args: unknown): string | undefined {
+		return this.getStringArg(args, "path") ?? this.getStringArg(args, "file_path");
+	}
+
+	private shortPathLabel(filePath: string | undefined): string | undefined {
+		if (!filePath) {
+			return undefined;
+		}
+		return path.basename(filePath) || filePath;
+	}
+
+	private createFallbackZenToolLabel(toolName: string, args: unknown): string {
+		const pathLabel = this.shortPathLabel(this.getToolPathArg(args));
+		switch (toolName) {
+			case "bash":
+				return "Running shell command";
+			case "read":
+				return pathLabel ? `Reading ${pathLabel}` : "Reading file";
+			case "edit":
+				return pathLabel ? `Editing ${pathLabel}` : "Editing file";
+			case "write":
+				return pathLabel ? `Writing ${pathLabel}` : "Writing file";
+			case "grep":
+				return "Searching files";
+			case "find":
+				return "Finding files";
+			case "ls":
+				return pathLabel ? `Listing ${pathLabel}` : "Listing files";
+			default:
+				return `${toolName} tool`;
+		}
+	}
+
+	private createLongZenToolLabel(toolName: string, args: unknown): string {
+		const command = this.getStringArg(args, "command");
+		if (toolName === "bash" && command !== undefined) {
+			return `$ ${command}`;
+		}
+
+		const pathArg = this.getToolPathArg(args);
+		if (pathArg !== undefined) {
+			return `${toolName} ${pathArg}`;
+		}
+
+		const serializedArgs = JSON.stringify(args);
+		return serializedArgs ? `${toolName} ${serializedArgs}` : toolName;
+	}
+
+	private normalizeZenToolLabel(label: string, fallback: string): string {
+		const normalized = label
+			.replace(/[\r\n]+/g, " ")
+			.replace(/^[[({\s"'`]+|[\])}\s"'`.]+$/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+		if (!normalized) {
+			return fallback;
+		}
+
+		const words = normalized.split(/\s+/).slice(0, 9);
+		return words.join(" ");
+	}
+
+	private getZenToolSummaryModel(): Model<any> | undefined {
+		const candidates = [
+			this.session.modelRegistry.find("openai", "gpt-5.4-mini"),
+			this.session.modelRegistry.find("openai-codex", "gpt-5.4-mini"),
+			this.session.modelRegistry.find("openrouter", "openai/gpt-5.4-mini"),
+		];
+		const configured = candidates.find((model): model is Model<any> => {
+			return model !== undefined && this.session.modelRegistry.hasConfiguredAuth(model);
+		});
+		if (configured) {
+			return configured;
+		}
+
+		return this.session.modelRegistry.getAvailable().find((model): model is Model<any> => {
+			return model.id === "gpt-5.4-mini" || model.id.endsWith("/gpt-5.4-mini");
+		});
+	}
+
+	private async summarizeZenToolLabel(
+		previousSummary: string | undefined,
+		longLabel: string,
+		fallback: string,
+	): Promise<string | undefined> {
+		const model = this.getZenToolSummaryModel();
+		if (!model) {
+			return undefined;
+		}
+
+		const prompt = [
+			`Previous summary: ${previousSummary || "(none)"}`,
+			`Current long label: ${longLabel.slice(0, 2000)}`,
+			"Summarize into under ten words. Return only the label.",
+		].join("\n");
+		const context: Context = {
+			systemPrompt:
+				"You write compact terminal UI labels for coding-agent tool calls. Return only a concise label under ten words. Do not include quotes or explanations.",
+			messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
+		};
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 2500);
+
+		try {
+			const stream = await this.agent.streamFn(model, context, {
+				maxTokens: 32,
+				reasoning: "off",
+				signal: controller.signal,
+				timeoutMs: 2500,
+				maxRetries: 0,
+			});
+			const response = await stream.result();
+			if (response.stopReason === "error" || response.stopReason === "aborted") {
+				return undefined;
+			}
+			const text = response.content
+				.filter((content): content is { type: "text"; text: string } => content.type === "text")
+				.map((content) => content.text)
+				.join(" ");
+			return this.normalizeZenToolLabel(text, fallback);
+		} catch {
+			return undefined;
+		} finally {
+			clearTimeout(timeout);
+		}
+	}
+
+	private queueZenToolLabelSummary(component: ToolExecutionComponent, toolName: string, args: unknown): void {
+		const generation = this.zenToolSummaryGeneration;
+		const fallback = this.createFallbackZenToolLabel(toolName, args);
+		const longLabel = this.createLongZenToolLabel(toolName, args);
+		this.zenToolSummaryChain = this.zenToolSummaryChain
+			.then(async () => {
+				if (generation !== this.zenToolSummaryGeneration || !this.settingsManager.getZenMode()) {
+					return;
+				}
+				const summary = await this.summarizeZenToolLabel(this.zenPreviousToolSummary, longLabel, fallback);
+				if (!summary || generation !== this.zenToolSummaryGeneration || !this.settingsManager.getZenMode()) {
+					return;
+				}
+				this.zenPreviousToolSummary = summary;
+				component.setZenLabel(summary);
+				this.ui.requestRender();
+			})
+			.catch(() => {});
+	}
+
+	private createToolExecutionComponent(
+		toolName: string,
+		toolCallId: string,
+		args: unknown,
+		options: { summarizeZenLabel?: boolean } = {},
+	): ToolExecutionComponent {
+		const zenLabel = this.settingsManager.getZenMode() ? this.createFallbackZenToolLabel(toolName, args) : undefined;
+		const component = new ToolExecutionComponent(
+			toolName,
+			toolCallId,
+			args,
+			{
+				showImages: this.settingsManager.getShowImages(),
+				imageWidthCells: this.settingsManager.getImageWidthCells(),
+				zenLabel,
+			},
+			this.getRegisteredToolDefinition(toolName),
+			this.ui,
+			this.sessionManager.getCwd(),
+		);
+		if (zenLabel && options.summarizeZenLabel !== false) {
+			this.queueZenToolLabelSummary(component, toolName, args);
+		}
+		return component;
 	}
 
 	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
@@ -2760,6 +2952,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.resetZenToolSummaries();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -2837,17 +3030,13 @@ export class InteractiveMode {
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
 							if (!this.pendingTools.has(content.id)) {
-								const component = new ToolExecutionComponent(
+								const component = this.createToolExecutionComponent(
 									content.name,
 									content.id,
 									content.arguments,
 									{
-										showImages: this.settingsManager.getShowImages(),
-										imageWidthCells: this.settingsManager.getImageWidthCells(),
+										summarizeZenLabel: false,
 									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-									this.sessionManager.getCwd(),
 								);
 								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
@@ -2906,21 +3095,14 @@ export class InteractiveMode {
 			case "tool_execution_start": {
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
-					component = new ToolExecutionComponent(
-						event.toolName,
-						event.toolCallId,
-						event.args,
-						{
-							showImages: this.settingsManager.getShowImages(),
-							imageWidthCells: this.settingsManager.getImageWidthCells(),
-						},
-						this.getRegisteredToolDefinition(event.toolName),
-						this.ui,
-						this.sessionManager.getCwd(),
-					);
+					component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
+				} else if (this.settingsManager.getZenMode()) {
+					component.updateArgs(event.args);
+					component.setZenLabel(this.createFallbackZenToolLabel(event.toolName, event.args));
+					this.queueZenToolLabelSummary(component, event.toolName, event.args);
 				}
 				component.markExecutionStarted();
 				this.ui.requestRender();
@@ -3228,18 +3410,9 @@ export class InteractiveMode {
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.id,
-							content.arguments,
-							{
-								showImages: this.settingsManager.getShowImages(),
-								imageWidthCells: this.settingsManager.getImageWidthCells(),
-							},
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-							this.sessionManager.getCwd(),
-						);
+						const component = this.createToolExecutionComponent(content.name, content.id, content.arguments, {
+							summarizeZenLabel: false,
+						});
 						component.setExpanded(this.toolOutputExpanded);
 						this.chatContainer.addChild(component);
 
@@ -4025,6 +4198,7 @@ export class InteractiveMode {
 					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
+					zenMode: this.settingsManager.getZenMode(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					warnings: this.settingsManager.getWarnings(),
@@ -4104,6 +4278,11 @@ export class InteractiveMode {
 					},
 					onQuietStartupChange: (enabled) => {
 						this.settingsManager.setQuietStartup(enabled);
+					},
+					onZenModeChange: (enabled) => {
+						this.settingsManager.setZenMode(enabled);
+						this.resetZenToolSummaries();
+						this.rebuildChatFromMessages();
 					},
 					onDefaultProjectTrustChange: (defaultProjectTrust) => {
 						this.settingsManager.setDefaultProjectTrust(defaultProjectTrust);
