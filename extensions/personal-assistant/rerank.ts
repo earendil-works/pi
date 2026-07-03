@@ -81,13 +81,42 @@ export async function rerankAndFilter(
 	hits: RecallResult[],
 	options: RerankOptions = {},
 ): Promise<RecallResult[] | RerankFallback> {
-	void query;
-	void hits;
-	void options;
-	void DEFAULT_SERVICE_URL;
-	void DEFAULT_TIMEOUT_MS;
-	void DEFAULT_THRESHOLD;
-	void DEFAULT_GAP;
-	// 3.2 / 3.3 will replace this placeholder with the real implementation.
-	return [];
+	const serviceUrl = options.serviceUrl ?? DEFAULT_SERVICE_URL;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+	if (hits.length === 0) return [];
+
+	try {
+		const { buildEmbeddableText } = await import("./embed.ts");
+		const rerankHits = hits.map((h) => ({
+			id: h.atom.id,
+			embeddable_text: buildEmbeddableText(h.atom),
+		}));
+
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const res = await fetch(`${serviceUrl}/api/rerank`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query, hits: rerankHits }),
+			signal: controller.signal,
+		});
+		clearTimeout(timer);
+
+		if (!res.ok) {
+			return { reason: "http-error" as RerankFallbackReason, topK: hits.slice(0, 3) };
+		}
+
+		const data = (await res.json()) as { scores?: Array<{ id: string; score: number }> };
+		if (!data.scores || data.scores.length !== hits.length) {
+			return { reason: "shape-mismatch" as RerankFallbackReason, topK: hits.slice(0, 3) };
+		}
+		// 3.3 fills threshold + gap on the scored hits
+		return hits;
+	} catch (err) {
+		if (err instanceof DOMException && err.name === "AbortError") {
+			return { reason: "timeout" as RerankFallbackReason, topK: hits.slice(0, 3) };
+		}
+		return { reason: "unreachable" as RerankFallbackReason, topK: hits.slice(0, 3) };
+	}
 }

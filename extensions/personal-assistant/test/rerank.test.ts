@@ -1,11 +1,51 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	rerankAndFilter,
 	type RerankOptions,
 	type RerankFallback,
 	type RerankFallbackReason,
 } from "../rerank.ts";
-import type { RecallResult } from "../types.ts";
+import type { MemoryAtom, RecallResult } from "../types.ts";
+
+let originalFetch: typeof fetch;
+
+beforeEach(() => {
+	originalFetch = globalThis.fetch;
+});
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
+});
+
+function makeHit(id: string, overrides?: Partial<MemoryAtom>): RecallResult {
+	return {
+		atom: {
+			id,
+			type: "fact",
+			title: "Test title",
+			summary: "Test summary",
+			content: "",
+			tags: ["test"],
+			importance: 0.5,
+			strength: 0.5,
+			access_count: 0,
+			version: 1,
+			is_latest: 1,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0,
+			created_at: 0,
+			updated_at: 0,
+			last_access: null,
+			content_fingerprint: "abc",
+			source_session: null,
+			...overrides,
+		},
+		cosine: 0.9,
+		sparseScore: 0.8,
+		rrf: 0.5,
+	};
+}
 
 // ---------------------------------------------------------------------------
 // 3.1 — Skeleton + signature + type-level coverage.
@@ -40,6 +80,12 @@ describe("rerankAndFilter skeleton", () => {
 			gap: 0.1,
 		};
 		expect(options.serviceUrl).toBe("http://example");
+	});
+
+	it("returns [] when hits is empty (short-circuits before fetch)", async () => {
+		const result = await rerankAndFilter("test query", []);
+		expect(Array.isArray(result)).toBe(true);
+		expect(result).toEqual([]);
 	});
 
 	it("returns RecallResult[] | RerankFallback (discriminable by Array.isArray)", async () => {
@@ -109,7 +155,36 @@ describe("R3 — all hits below threshold", () => {
 // 3.2 wires AbortController + timeoutMs to produce a fallback.
 // ---------------------------------------------------------------------------
 describe("R4 — rerank timeout fallback", () => {
-	it.todo("returns {reason:'timeout', topK:RRF top-K} on AbortError");
+	it("returns {reason:'timeout', topK:RRF top-K} on AbortError", async () => {
+		let observedAbort = false;
+		globalThis.fetch = vi.fn(
+			(_url, init) =>
+				new Promise<Response>((_resolve, reject) => {
+					const signal = init?.signal;
+					if (signal) {
+						if (signal.aborted) {
+							observedAbort = true;
+							reject(new DOMException("aborted", "AbortError"));
+							return;
+						}
+						signal.addEventListener("abort", () => {
+							observedAbort = true;
+							reject(new DOMException("aborted", "AbortError"));
+						});
+					}
+				}),
+		) as unknown as typeof fetch;
+
+		const hits = [makeHit("1"), makeHit("2"), makeHit("3"), makeHit("4")];
+		const result = await rerankAndFilter("test query", hits, { timeoutMs: 50 });
+		expect(observedAbort).toBe(true);
+		expect(Array.isArray(result)).toBe(false);
+		const fb = result as RerankFallback;
+		expect(fb.reason).toBe("timeout");
+		expect(fb.topK).toHaveLength(3);
+		expect(fb.topK[0].atom.id).toBe("1");
+	});
+
 	it.todo("does not retry on timeout");
 	it.todo("emits fallback within timeoutMs + small slack");
 	it.todo("uses DEFAULT_TIMEOUT_MS = 500 when not specified");
@@ -120,7 +195,60 @@ describe("R4 — rerank timeout fallback", () => {
 // 3.2 distinguishes 404 / 503 / connection refused from the body shape.
 // ---------------------------------------------------------------------------
 describe("R5 — rerank service unavailable fallback", () => {
-	it.todo("returns {reason:'unreachable'} on fetch network error");
-	it.todo("returns {reason:'http-error'} on 404 / 503");
-	it.todo("returns {reason:'shape-mismatch'} on malformed response body");
+	it("returns {reason:'unreachable'} on fetch network error", async () => {
+		globalThis.fetch = vi.fn(async () => {
+			throw new TypeError("fetch failed");
+		}) as unknown as typeof fetch;
+
+		const hits = [makeHit("1"), makeHit("2"), makeHit("3")];
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(false);
+		const fb = result as RerankFallback;
+		expect(fb.reason).toBe("unreachable");
+		expect(fb.topK).toHaveLength(3);
+	});
+
+	it("returns {reason:'http-error'} on 404 / 503", async () => {
+		// 404
+		globalThis.fetch = vi.fn(
+			async () => new Response("Not Found", { status: 404 }),
+		) as unknown as typeof fetch;
+		let hits = [makeHit("a"), makeHit("b"), makeHit("c")];
+		let result = await rerankAndFilter("test", hits);
+		expect(Array.isArray(result)).toBe(false);
+		let fb = result as RerankFallback;
+		expect(fb.reason).toBe("http-error");
+		expect(fb.topK).toHaveLength(3);
+
+		// 503
+		globalThis.fetch = vi.fn(
+			async () => new Response("Service Unavailable", { status: 503 }),
+		) as unknown as typeof fetch;
+		result = await rerankAndFilter("test", hits);
+		expect(Array.isArray(result)).toBe(false);
+		fb = result as RerankFallback;
+		expect(fb.reason).toBe("http-error");
+		expect(fb.topK).toHaveLength(3);
+	});
+
+	it("returns {reason:'shape-mismatch'} on malformed response body", async () => {
+		globalThis.fetch = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({ scores: [{ id: "1", score: 0.9 }] }),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+		) as unknown as typeof fetch;
+
+		// 3 hits but only 1 score entry -> shape-mismatch
+		const hits = [makeHit("1"), makeHit("2"), makeHit("3")];
+		const result = await rerankAndFilter("test query", hits);
+		expect(Array.isArray(result)).toBe(false);
+		const fb = result as RerankFallback;
+		expect(fb.reason).toBe("shape-mismatch");
+		expect(fb.topK).toHaveLength(3);
+	});
 });
