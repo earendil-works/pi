@@ -178,3 +178,106 @@ verified by the import succeeding + `/api/health` responding.
 This task ships the **state plumbing** and **lazy-load machinery** that
 4.2 will call. No new public endpoint yet, but `state.reranker` and
 `get_reranker()` are the hooks 4.2 depends on.
+
+---
+
+# server.py Changes: /api/health reports reranker_loading
+
+> Date: 2026-07-03 | Task: 4.3 | Spec scenarios: R2 (reranker_loaded in /api/health)
+>
+> Single field added to the existing `/api/health` response. No new endpoint,
+> no new state, no new logic. Pure observability addition.
+
+## Why this change
+
+Task 4.1 already added `reranker_loaded: bool` so operators can see the
+post-load state. That field alone cannot distinguish "never loaded" from
+"load in progress" — both report `reranker_loaded=false`. Adding
+`reranker_loading` (mirroring `state.reranker_loading`) lets clients probe
+the in-flight flag too, which is useful for debug logs that want to know
+whether a slow first request is still loading the 568MB model.
+
+This is **purely debug/observability** per principle 7 (simple endpoint
+return). No new contract, no new behavior, no client-side enforcement.
+
+## Diff summary
+
+One-line addition to `/tmp/bge-m3-test/server.py` in the `health()` handler
+(line 502, immediately after the existing `reranker_loaded` line):
+
+```python
+"reranker_loaded": state.reranker is not None,
+"reranker_loading": state.reranker_loading,   # ← new
+"encoding_version": ENCODING_VERSION,
+```
+
+No other changes. `state.reranker_loading` already exists (initialized to
+`False` at line 116) and is already toggled by `get_reranker()` (line 134
+sets it `True`, line 142's `finally` resets it). This task just exposes
+the existing value.
+
+## Verification evidence
+
+### Syntax check
+
+```
+$ python3 -c "import ast; ast.parse(open('/tmp/bge-m3-test/server.py').read()); print('parse ok')"
+parse ok
+```
+
+### TDD test — `/tmp/bge-m3-test/test_health_reranker.py`
+
+12 assertions, all pass. Drives `/api/health` through `fastapi.testclient.TestClient`
+(no uvicorn, no 568MB model load). Stubs `state.reranker` /
+`state.reranker_loading` to exercise all three observable states.
+
+| # | Scenario | State | Expected | Got |
+|---|----------|-------|----------|-----|
+| 1 | Initial cold state | `reranker=None`, `loading=False` | both fields `false` | PASS |
+| 2 | In-flight lazy load | `reranker=None`, `loading=True` | `reranker_loaded=false`, `reranker_loading=true` | PASS |
+| 3 | Loaded (mock instance) | `reranker=<obj>`, `loading=False` | `reranker_loaded=true`, `reranker_loading=false` | PASS |
+
+```
+Passed: 12 | Failed: 0
+ALL TESTS PASSED
+```
+
+TestClient is constructed **without** a `with` block, so the FastAPI
+startup event (which would try to load BGEM3FlagModel + reconcile disk)
+never fires. The test pre-populates the few state fields the handler
+reads (`state.atoms = []` etc.) so `/api/health` can run on a fresh
+import — matching what production startup would have set.
+
+### Live server
+
+```
+$ curl -s http://127.0.0.1:11435/api/health
+{"status":"ok","model":"BAAI/bge-m3","atoms":91,
+ "reranker_loaded":false,
+ "reranker_loading":false,
+ "encoding_version":2, ...}
+```
+
+Both fields appear adjacent in the JSON, in the order they appear in the
+response dict (loaded, then loading).
+
+### Regression — task 4.1 test still passes
+
+`/tmp/bge-m3-test/test_reranker_lazy.py` (18 assertions covering
+`get_reranker()` lazy load paths): all pass. The added field is
+independent of the lazy-load machinery it observes.
+
+## Scenarios satisfied
+
+- **R2** (spec): "/api/health reports `reranker_loaded`" — fully satisfied
+  since task 4.1. This task adds the complementary `reranker_loading`
+  flag to make the in-flight state observable too. No spec scenario
+  *required* the loading field; it was added on principle 7 (debug
+  observability at no cost).
+
+## Not in this task (deferred)
+
+- Nothing. This is the last server.py touch for the reranker track.
+- The `rerankAndFilter()` threshold + gap logic referenced in the 4.1 doc
+  lives in TypeScript (`extensions/personal-assistant/`) and is tracked
+  in a different change file.
