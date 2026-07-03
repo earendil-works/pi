@@ -1,10 +1,9 @@
 // gate.ts skeleton (task 2.1) — scaffolding tests.
 //
-// Asserts only the surface that task 2.1 establishes:
+// Asserts only the surface that task 1.1 establishes:
 //   - `callGate` is exported as a function from ../gate.ts
 //   - `GateDecision` interface is exported and accepts both polarities
-//     (`need_memory: true` with a search_query, and `need_memory: false`
-//     with an empty search_query)
+//     (`need_memory: true` and `need_memory: false`)
 //   - the placeholder body returns `null` regardless of input — the
 //     network protocol (ollama POST /api/chat, JSON parsing, timeout)
 //     is filled in by task 2.2 / 2.3; this test just pins the
@@ -37,25 +36,21 @@ describe("gate.ts skeleton (task 2.1)", () => {
 	});
 
 	// Type-level coverage: pins the contract for scenarios S1–S4
-	// (need_memory can be true with a query, or false with empty
-	// query). If the GateDecision shape changes, the assignments
-	// below stop compiling — the test file itself is the check.
-	it("GateDecision accepts { need_memory: true, search_query: 'foo' }", () => {
+	// (need_memory can be true or false). If the GateDecision shape
+	// changes, the assignments below stop compiling — the test file
+	// itself is the check.
+	it("GateDecision accepts { need_memory: true }", () => {
 		const decision: GateDecision = {
 			need_memory: true,
-			search_query: "foo",
 		};
 		expect(decision.need_memory).toBe(true);
-		expect(decision.search_query).toBe("foo");
 	});
 
-	it("GateDecision accepts { need_memory: false, search_query: '' }", () => {
+	it("GateDecision accepts { need_memory: false }", () => {
 		const decision: GateDecision = {
 			need_memory: false,
-			search_query: "",
 		};
 		expect(decision.need_memory).toBe(false);
-		expect(decision.search_query).toBe("");
 	});
 
 	// callGate degrades to null on fetch rejection (S6/S7 scenarios

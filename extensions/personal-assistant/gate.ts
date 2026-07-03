@@ -1,8 +1,8 @@
 // gate.ts — recall-precision gate (ollama qwen2.5:3b).
 //
 // Public surface:
-//   - GateDecision        : shape of gate output ({need_memory, search_query}).
-//                           (task 2.1)
+//   - GateDecision        : shape of gate output ({need_memory}).
+//                           (task 1.1)
 //   - GateOptions         : caller-tunable knobs (url / model / timeoutMs).
 //                           (task 2.1)
 //   - buildGatePrompt     : pure prompt constructor → ollama `messages`
@@ -21,7 +21,6 @@
 
 export interface GateDecision {
 	need_memory: boolean;
-	search_query: string;
 }
 
 export type GateError = "timeout" | "parse" | "unreachable";
@@ -41,12 +40,11 @@ const DEFAULT_TIMEOUT_MS = 500;
 // Two false-positive rules (指代性 / 零信息量) drive scenarios S1 / S2 — they
 // make the model emit need_memory=false for purely contextual or
 // acknowledgement turns. The historical-recall rule (历史回溯 + 真的需要
-// memory) drives S3 / S4 and pairs with the keyword-only search_query
-// instruction to keep retrieved queries free of 那个 / 上面的.
+// memory) drives S3 / S4.
 //
 // Kept as a module-level constant so it survives a single lint pass
 // without backtick interpolation churn and so test snapshots are stable.
-const GATE_SYSTEM_PROMPT = `你是 memory recall 决策助手. 输出 JSON, 字段 need_memory (bool) 和 search_query (string). 判断当前用户消息是否值得查 long-term memory. 指代性消息 ('上面的脚本', '那个') → need_memory=false. 零信息量 ('对', '好的', '继续') → need_memory=false. 历史回溯 ('之前', '记得吗', '历史') 且需要 memory 才 need_memory=true; search_query 用关键词提取, 不含指代词.`;
+const GATE_SYSTEM_PROMPT = `你是 memory recall 决策助手. 输出 JSON, 字段 need_memory (bool). 判断当前用户消息是否值得查 long-term memory. 指代性消息 ('上面的脚本', '那个') → need_memory=false. 零信息量 ('对', '好的', '继续') → need_memory=false. 历史回溯 ('之前', '记得吗', '历史') 且需要 memory 才 need_memory=true.`;
 
 // Build the ollama `/api/chat` `messages` array (system + user) the gate
 // LLM sees. Pure: no I/O, no clock — exercised directly by tests, called
@@ -100,12 +98,12 @@ function parseGateResponse(raw: string): GateDecision | "parse" {
 	}
 
 	const obj = parsed as Record<string, unknown>;
-	if (typeof obj.need_memory !== "boolean" || typeof obj.search_query !== "string") {
+	if (typeof obj.need_memory !== "boolean") {
 		console.warn("[gate] schema invalid, raw:", stripped.slice(0, 200));
 		return "parse";
 	}
 
-	return { need_memory: obj.need_memory, search_query: obj.search_query };
+	return { need_memory: obj.need_memory };
 }
 
 // Call the gate LLM (ollama /api/chat) with the given prompt and recent

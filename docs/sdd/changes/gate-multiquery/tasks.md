@@ -12,7 +12,7 @@
 
 ## 1. gate.ts schema 收紧 (binary only)
 
-- [ ] 1.1 **修改 GateDecision type,删除 search_query 字段**
+- [x] 1.1 **修改 GateDecision type,删除 search_query 字段**
   - **文件**: `extensions/personal-assistant/gate.ts` (Modify)
   - **内容**: `GateDecision` 从 `{need_memory: boolean; search_query: string}` 改为 `{need_memory: boolean}`. `GATE_SYSTEM_PROMPT` 删 "search_query (string) keyword-only 提取" 相关句,只保留 need_memory 二分 + S1/S2 防误判规则 (指代/零信息量/历史回溯). `parseGateResponse` 去掉 search_query 字段校验,只查 need_memory boolean.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/gate-skeleton.test.ts` (Type 测通过)

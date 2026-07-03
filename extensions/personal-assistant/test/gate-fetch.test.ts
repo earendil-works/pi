@@ -7,6 +7,7 @@
 //   - Timeout: AbortController fires → null (S6)
 //   - Connection refused: fetch throws → null (S7)
 //   - Schema invalid: valid JSON but wrong types → null
+//   - Extra fields (like search_query) are tolerated → GateDecision still returned
 //   - Response missing message: unexpected response shape → null
 //
 // Mock strategy: vi.spyOn(globalThis, 'fetch') inside each test with
@@ -41,21 +42,21 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 	it("returns GateDecision on successful fetch with valid JSON (need_memory:true)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":true,"search_query":"bwa 并发"}' },
+				message: { content: '{"need_memory":true}' },
 			}),
 		);
 		const result = await callGate("bwa 并发", ["之前的问题"]);
-		expect(result).toEqual({ need_memory: true, search_query: "bwa 并发" } satisfies GateDecision);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
 	});
 
 	it("returns GateDecision on successful fetch with valid JSON (need_memory:false)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":false,"search_query":""}' },
+				message: { content: '{"need_memory":false}' },
 			}),
 		);
 		const result = await callGate("对", ["好的", "继续"]);
-		expect(result).toEqual({ need_memory: false, search_query: "" } satisfies GateDecision);
+		expect(result).toEqual({ need_memory: false } satisfies GateDecision);
 	});
 
 	// ── S5: Parse fail → "parse" ─────────────────────────────────
@@ -96,46 +97,69 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
 				message: {
-					content: "一些前缀文字\n{\"need_memory\":false,\"search_query\":\"\"}",
+					content: "一些前缀文字\n{\"need_memory\":false}",
 				},
 			}),
 		);
 		const result = await callGate("对", []);
-		expect(result).toEqual({ need_memory: false, search_query: "" } satisfies GateDecision);
+		expect(result).toEqual({ need_memory: false } satisfies GateDecision);
 	});
 
 	it("parses JSON when LLM prepends text and JSON has trailing content", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
 				message: {
-					content: "先思考一下\n{\"need_memory\":true,\"search_query\":\"并发\"}\n然后继续",
+					content: "先思考一下\n{\"need_memory\":true}\n然后继续",
 				},
 			}),
 		);
 		const result = await callGate("并发问题", ["之前提过"]);
-		expect(result).toEqual({ need_memory: true, search_query: "并发" } satisfies GateDecision);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
 	});
 
 	// ── Schema validation ──────────────────────────────────────────
 
-	it("returns 'parse' when JSON has wrong types for need_memory (not boolean)", async () => {
+	it("returns 'parse' when JSON has wrong types for need_memory (string instead of boolean)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":"not bool","search_query":"test"}' },
+				message: { content: '{"need_memory":"not_bool"}' },
 			}),
 		);
 		const result = await callGate("test", []);
 		expect(result).toBe("parse");
 	});
 
-	it("returns 'parse' when JSON has wrong types for search_query (not string)", async () => {
+	it("returns 'parse' when need_memory is null (not boolean)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":true,"search_query":123}' },
+				message: { content: '{"need_memory":null}' },
 			}),
 		);
 		const result = await callGate("test", []);
 		expect(result).toBe("parse");
+	});
+
+	it("returns 'parse' when need_memory is missing entirely", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: "{}" },
+			}),
+		);
+		const result = await callGate("test", []);
+		expect(result).toBe("parse");
+	});
+
+	// Task 1.1: GateDecision no longer includes search_query.
+	// Extra fields (including search_query) must be tolerated for
+	// backward compat with LLM output that still includes them.
+	it("tolerates extra fields like search_query in JSON (backward compat)", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory":true,"search_query":"bwa 并发"}' },
+			}),
+		);
+		const result = await callGate("bwa 并发", ["之前的问题"]);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
 	});
 
 	// ── Response shape errors ──────────────────────────────────────
@@ -186,7 +210,7 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 	it("passes url, model, timeoutMs from options to fetch call", async () => {
 		const mockFetch = vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":false,"search_query":""}' },
+				message: { content: '{"need_memory":false}' },
 			}),
 		);
 		await callGate("hello", [], {
@@ -205,11 +229,11 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 	it("sends messages with system and user role in fetch body", async () => {
 		const mockFetch = vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
-				message: { content: '{"need_memory":true,"search_query":"bwa"}' },
+				message: { content: '{"need_memory":true}' },
 			}),
 		);
 		const result = await callGate("bwa 并发", ["之前的问题"]);
-		expect(result).not.toBeNull();
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
 		const [, init] = mockFetch.mock.calls[0]!;
 		const body = JSON.parse(init!.body as string);
 		expect(body.messages).toHaveLength(2);

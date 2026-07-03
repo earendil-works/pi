@@ -775,8 +775,8 @@ export function registerMemory(pi: ExtensionAPI): void {
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			gateStatus = "pass";
-			// Use gate's rewritten search query for recall
-			if (gateDecision.search_query) searchQuery = gateDecision.search_query;
+			// Task 1.1: GateDecision no longer includes search_query.
+			// searchQuery remains the raw current prompt.
 		} else {
 			gateStatus = "disabled";
 		}

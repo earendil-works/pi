@@ -3,8 +3,8 @@
 // buildGatePrompt is a pure function that turns (current + recent) into the
 // ollama `/api/chat` `messages` array (system + user). It is the single source
 // of truth for what the gate LLM (qwen2.5:3b) sees; scenarios S1–S4
-// (downstream: 指代性 / 零信息量 / 历史回溯 + 关键词 search_query) all hinge
-// on the system prompt guiding the LLM to emit {need_memory, search_query}
+// (downstream: 指代性 / 零信息量 / 历史回溯) all hinge
+// on the system prompt guiding the LLM to emit {need_memory}
 // correctly. S5 (parse fail) is exercised by 2.3 — this file only pins the
 // prompt shape so 2.3 can call it without re-deriving the format.
 //
@@ -41,7 +41,7 @@ describe("buildGatePrompt (task 2.2)", () => {
 		expect(system.content).toContain("memory recall");
 		expect(system.content).toContain("决策助手");
 		expect(system.content).toContain("need_memory");
-		expect(system.content).toContain("search_query");
+		// search_query field removed in task 1.1 — gate is pure binary decision.
 		// The two false-positive rules (指代性 / 零信息量) drive S1 and S2.
 		expect(system.content).toContain("上面的脚本");
 		expect(system.content).toContain("那个");

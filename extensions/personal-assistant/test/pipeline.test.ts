@@ -181,7 +181,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 
 		// Reset all mocks
 		mockCallGate.mockReset();
-		mockCallGate.mockResolvedValue({ need_memory: true, search_query: "bwa" } satisfies GateDecision);
+		mockCallGate.mockResolvedValue({ need_memory: true } satisfies GateDecision);
 		mockRerankAndFilter.mockReset();
 		mockRerankAndFilter.mockResolvedValue([
 			recallResult("atom-1", "rule", { rerankScore: 0.92 }),
@@ -225,10 +225,10 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		expect(gateArgs[1]).toEqual([]); // no recent messages
 		expect(gateArgs[2]).toEqual({ timeoutMs: 500 });
 
-		// recallAtoms was called with the GATE's search_query, not raw prompt
+		// recallAtoms was called with the raw current prompt (GateDecision no longer includes search_query)
 		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
 		const recallArgs = mockRecallAtoms.mock.calls[0]!;
-		expect(recallArgs[1]).toBe("bwa");
+		expect(recallArgs[1]).toBe("bwa 有问题");
 
 		// rerankAndFilter was called
 		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
@@ -350,7 +350,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 	// S1 — gate skip (need_memory=false)
 	// -----------------------------------------------------------------------
 	it("S1: gate says need_memory=false — skip pipeline, return event unchanged", async () => {
-		mockCallGate.mockResolvedValue({ need_memory: false, search_query: "" } satisfies GateDecision);
+		mockCallGate.mockResolvedValue({ need_memory: false } satisfies GateDecision);
 
 		const event = defaultEvent();
 		const ctx = createMockCtx();
