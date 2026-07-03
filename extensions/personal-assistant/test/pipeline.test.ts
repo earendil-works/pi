@@ -527,4 +527,103 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		const ctx = { ui: {} };
 		await expect(contextHandler(event, ctx)).resolves.not.toThrow();
 	});
+
+	// -----------------------------------------------------------------------
+	// Task 5.4 — debug log tests (single console.debug per pipeline run)
+	// -----------------------------------------------------------------------
+	describe("debug log (gate/rerank/latency)", () => {
+		let debugSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			debugSpy.mockRestore();
+		});
+
+		it("D1: happy path — gate=pass rerank=ok", async () => {
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toMatch(/\[recall\]/);
+			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rerank=ok");
+			expect(msg).toContain("pre=5");
+			expect(msg).toContain("post=2");
+			expect(msg).toMatch(/latency \{gate:\d+ms recall:\d+ms rerank:\d+ms\}/);
+		});
+
+		it("D2: gate timeout — gate=timeout rerank=skip", async () => {
+			mockCallGate.mockResolvedValue(null);
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=timeout");
+			expect(msg).toContain("rerank=skip");
+			expect(msg).toContain("pre=0");
+			expect(msg).toContain("post=0");
+		});
+
+		it("D3: rerank fallback(timeout) — gate=pass rerank=fallback(timeout)", async () => {
+			mockRerankAndFilter.mockResolvedValue({
+				reason: "timeout",
+				topK: [recallResult("atom-1", "rule")],
+			});
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rerank=fallback(timeout)");
+		});
+
+		it("D4: rerank fallback(http-error) — gate=pass rerank=fallback(http-error)", async () => {
+			mockRerankAndFilter.mockResolvedValue({
+				reason: "http-error",
+				topK: [recallResult("atom-1", "rule")],
+			});
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rerank=fallback(http-error)");
+		});
+
+		it("D5: gate disabled — gate=disabled rerank=ok", async () => {
+			mockFsSettings.value = JSON.stringify({
+				personalAssistant: {
+					memory: {
+						gate: { enabled: false },
+						rerank: { enabled: true },
+					},
+				},
+			});
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=disabled");
+			expect(msg).toContain("rerank=ok");
+			expect(msg).toContain("pre=5");
+			expect(msg).toContain("post=2");
+		});
+	});
 });

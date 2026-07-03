@@ -718,19 +718,43 @@ export function registerMemory(pi: ExtensionAPI): void {
 		// 3. Gate decision (dynamic import)
 		const gateEnabled = config.memory?.gate?.enabled ?? true;
 		let searchQuery = current;
+		let gateStatus = "disabled";
+		let gateMs = 0;
+		let gateT0 = 0;
+		let hybridCount = 0;
+		let finalCount = 0;
+		let recallMs = 0;
+		let rerankStatus = "skip";
+		let rerankReason: string | undefined;
+		let rerankMs = 0;
 		if (gateEnabled) {
+			gateT0 = performance.now();
 			const { callGate } = await import("./gate.ts");
 			const gateDecision = await callGate(current, recent, { timeoutMs: 500 });
-			if (!gateDecision || !gateDecision.need_memory) {
-				if (!gateDecision) {
-					ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
-				} else {
-					ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
-				}
+			gateMs = performance.now() - gateT0;
+			if (!gateDecision) {
+				gateStatus = "timeout";
+				ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
+				const reasonStr = rerankReason ? `(${rerankReason})` : "";
+				console.debug(
+					`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+				);
 				return event as unknown as { messages?: AgentMessage[] };
 			}
+			if (!gateDecision.need_memory) {
+				gateStatus = "skip-false";
+				ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
+				const reasonStr = rerankReason ? `(${rerankReason})` : "";
+				console.debug(
+					`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+				);
+				return event as unknown as { messages?: AgentMessage[] };
+			}
+			gateStatus = "pass";
 			// Use gate's rewritten search query for recall
 			if (gateDecision.search_query) searchQuery = gateDecision.search_query;
+		} else {
+			gateStatus = "disabled";
 		}
 
 		// 4. Open MemoryIndex and recall
@@ -738,29 +762,42 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
+			const recallT0 = performance.now();
 			const results = await recallAtoms(index, searchQuery, { topK: 20 });
+			recallMs = performance.now() - recallT0;
+			hybridCount = results.length;
 
 			// 5. Rerank (dynamic import)
 			let finalResults: RecallResult[];
 			let rerankFallback = false;
 			const rerankEnabled = config.memory?.rerank?.enabled ?? true;
 			if (rerankEnabled && results.length > 0) {
+				const rerankT0 = performance.now();
 				const { rerankAndFilter } = await import("./rerank.ts");
 				const reranked = await rerankAndFilter(searchQuery, results);
+				rerankMs = performance.now() - rerankT0;
 				if (Array.isArray(reranked)) {
 					finalResults = reranked;
+					rerankStatus = reranked.length > 0 ? "ok" : "all-below";
 				} else {
 					finalResults = reranked.topK;
 					rerankFallback = true;
+					rerankStatus = "fallback";
+					rerankReason = reranked.reason;
 				}
+			} else if (!rerankEnabled) {
+				finalResults = results;
+				rerankStatus = "disabled";
 			} else {
 				finalResults = results;
+				rerankStatus = "skip";
 			}
 
 			// 6. Assign relativePath
 			for (const r of finalResults) {
 				r.relativePath = `${r.atom.type}/${r.atom.id}.md`;
 			}
+			finalCount = finalResults.length;
 
 			// 7. setStatus with pipeline outcome
 			if (rerankFallback) {
@@ -777,6 +814,12 @@ export function registerMemory(pi: ExtensionAPI): void {
 					`📦 ${finalResults.length} atoms · rule=${rules} fact=${facts} process=${processes} · top=${maxRerankScore}`,
 				);
 			}
+
+			// 7b. Debug log — single per-call emission (task 5.4)
+			const reasonStr = rerankReason ? `(${rerankReason})` : "";
+			console.debug(
+				`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
+			);
 
 			if (finalResults.length === 0) {
 				return event as unknown as { messages?: AgentMessage[] };
