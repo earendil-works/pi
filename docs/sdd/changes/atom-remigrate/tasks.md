@@ -57,13 +57,13 @@
   - **验证**: `cd extensions/personal-assistant && grep -n "markSupersededNoInsert" storage.ts` 找到 1 行定义
   - **依赖**: 1.1
 
-- [ ] 2.2 **markSupersededNoInsert 单元测试**
+- [x] 2.2 **markSupersededNoInsert 单元测试**
   - **文件**: `extensions/personal-assistant/test/migration.test.ts` (Create, 但本 task 只测 helper)
   - **内容**: 在真实 MemoryIndex 上插入 atom A, B; 调 `markSupersededNoInsert(B.id, A.id, now)`, 断言: (a) B 的 is_latest=0, parent_id=A.id, superseded_at=now; (b) A 不变; (c) memory_vectors 表 B 的 vector 仍存在 (没动); (d) A,B 都还能 getAtom (B is_latest=0 但 row 还在)。3 个 it()。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/migration.test.ts` 3 个 case pass
   - **依赖**: 2.1
 
-- [ ] 2.3 **scripts/migrate-legacy-atoms.mts 脚本主体**
+- [x] 2.3 **scripts/migrate-legacy-atoms.mts 脚本主体**
   - **文件**: `extensions/personal-assistant/scripts/migrate-legacy-atoms.mts` (Create)
   - **内容**: 单文件 `#!/usr/bin/env tsx` 入口; `import { MemoryIndex } from "../storage.ts"`; 主函数 `main()`: (1) `loadConfig()` 读 `dbPath`/`atomsDir`, 兜底用 `DEFAULT_DB_PATH`/`DEFAULT_ATOMS_DIR` (from memory.ts:92,95); (2) 备份 `cp dbPath dbPath+".bak."+YYYYMMDD`, 失败 throw "backup failed, refusing to migrate"; (3) `new MemoryIndex(dbPath)` + `init()`; (4) `const active = index.getActiveAtoms()`; (5) SQL 直接排序 (避免 JS in-memory sort): `db.prepare("SELECT * FROM memory_index WHERE is_latest=1 AND archived=0 ORDER BY access_count DESC, COALESCE(last_access, 0) DESC, created_at DESC")`; (6) for loop: 从 `memory_vectors` 读 embedding (新 helper `getEmbedding(id)`, 在 storage.ts 加, 见 2.4), 调 `index.findMostSimilarEmbedding(emb, 0.65)`, 若是 hit 且 hit.id !== atom.id 调 `index.markSupersededNoInsert(hit.id, atom.id, Date.now())`; (7) 写 `migrate-report.json` (`{timestamp, totalActiveAtoms, archivedCount, unchangedCount, backupPath, threshold: 0.65}`); (8) close index, 打印 summary; (9) wrap try/finally 关闭 index。**支持** CLI `--threshold=N` (用 `process.argv` 解析), 默认 0.65。
   - **验证**: `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts --help` 打印 usage (脚本用 if (process.argv.includes("--help")) printUsage(); return)
@@ -123,7 +123,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-prompt.test.ts` 原 case 仍 pass + 新 case (传 tagVocabulary 后输出含字典) pass
   - **依赖**: 3.1, 3.3
 
-- [ ] 3.5 **memory.ts 调 buildExtractionPrompt 时传 tagVocabulary (含 in-memory 缓存)**
+- [x] 3.5 **memory.ts 调 buildExtractionPrompt 时传 tagVocabulary (含 in-memory 缓存)**
   - **文件**: `extensions/personal-assistant/memory.ts:448-457` (Modify)
   - **内容**: 在 `extractMemoriesWithCallLlm(callLlm, messages, index, { atomsDir, model: ... })` 调用前, 加:
   ```typescript
@@ -142,7 +142,7 @@
   - **验证**: `cd extensions/personal-assistant && grep -n "loadTagVocabulary\|tagVocabularyCache" memory.ts` 找到 ≥ 2 行 (loadTagVocabulary + cache 引用)
   - **依赖**: 3.4
 
-- [ ] 3.6 **extractMemoriesWithCallLlm 签名扩展 (加 tagVocabulary)**
+- [x] 3.6 **extractMemoriesWithCallLlm 签名扩展 (加 tagVocabulary)**
   - **文件**: `extensions/personal-assistant/extraction.ts:341-356` (Modify)
   - **内容**: 函数 `extractMemoriesWithCallLlm` 的 `config` 参数加字段 `tagVocabulary?: string[]`; 在 `buildExtractionPrompt(messages)` 调用处改为 `buildExtractionPrompt(messages, { tagVocabulary: config.tagVocabulary })`。`RunMemoryExtractionOptions` 同步加字段(若 webui 也用此接口)。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts` 既有 case pass
