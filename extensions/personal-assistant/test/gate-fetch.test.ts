@@ -58,36 +58,36 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 		expect(result).toEqual({ need_memory: false, search_query: "" } satisfies GateDecision);
 	});
 
-	// ── S5: Parse fail after retry → null ──────────────────────────
+	// ── S5: Parse fail → "parse" ─────────────────────────────────
 
-	it("returns null when response content is completely invalid JSON (parse fail → S5)", async () => {
+	it("returns 'parse' when response content is completely invalid JSON (S5)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
 				message: { content: "坏掉的 JSON" },
 			}),
 		);
 		const result = await callGate("hello", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
-	// ── S6: Timeout → null ─────────────────────────────────────────
+	// ── S6: Timeout → "timeout" ───────────────────────────────────
 
-	it("returns null when fetch times out via AbortController (S6)", async () => {
+	it("returns 'timeout' when fetch times out via AbortController (S6)", async () => {
 		// Simulate abort by rejecting with an AbortError (as DOMException does).
 		const abortError = new Error("The operation was aborted");
 		abortError.name = "AbortError";
 		vi.mocked(fetch).mockRejectedValueOnce(abortError);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("timeout");
 	});
 
-	// ── S7: Connection refused → null ──────────────────────────────
+	// ── S7: Connection refused → "unreachable" ────────────────────
 
-	it("returns null when fetch throws (ECONNREFUSED → S7)", async () => {
+	it("returns 'unreachable' when fetch throws (ECONNREFUSED → S7)", async () => {
 		const connError = new TypeError("fetch failed");
 		vi.mocked(fetch).mockRejectedValueOnce(connError);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("unreachable");
 	});
 
 	// ── Prefix garbage handling ────────────────────────────────────
@@ -118,55 +118,55 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 
 	// ── Schema validation ──────────────────────────────────────────
 
-	it("returns null when JSON has wrong types for need_memory (not boolean)", async () => {
+	it("returns 'parse' when JSON has wrong types for need_memory (not boolean)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
 				message: { content: '{"need_memory":"not bool","search_query":"test"}' },
 			}),
 		);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
-	it("returns null when JSON has wrong types for search_query (not string)", async () => {
+	it("returns 'parse' when JSON has wrong types for search_query (not string)", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
 				message: { content: '{"need_memory":true,"search_query":123}' },
 			}),
 		);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
 	// ── Response shape errors ──────────────────────────────────────
 
-	it("returns null when response has no message property", async () => {
+	it("returns 'parse' when response has no message property", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({ foo: "bar" }),
 		);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
-	it("returns null when response message has no content property", async () => {
+	it("returns 'parse' when response message has no content property", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({ message: {} }),
 		);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
-	it("returns null when response content is empty string", async () => {
+	it("returns 'parse' when response content is empty string", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({ message: { content: "" } }),
 		);
 		const result = await callGate("test", []);
-		expect(result).toBeNull();
+		expect(result).toBe("parse");
 	});
 
 	// ── Fetch rejects that should produce null ─────────────────────
 
-	it("returns null when res.json() rejects", async () => {
+	it("returns null when res.json() rejects (unknown error)", async () => {
 		const badResponse = {
 			ok: true,
 			status: 200,

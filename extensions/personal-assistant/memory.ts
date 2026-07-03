@@ -732,12 +732,36 @@ export function registerMemory(pi: ExtensionAPI): void {
 			const { callGate } = await import("./gate.ts");
 			const gateDecision = await callGate(current, recent, { timeoutMs: 500 });
 			gateMs = performance.now() - gateT0;
-			if (!gateDecision) {
-				gateStatus = "timeout";
-				ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
+
+			// Gate error label map for debug log
+			const gateLogLabels: Record<string, string> = {
+				parse: "parse-fail",
+				unreachable: "down",
+			};
+
+			if (gateDecision === null) {
+				gateStatus = "unknown";
+				ctx.ui?.setStatus?.("memory", "⚠ gate unknown, skipped");
 				const reasonStr = rerankReason ? `(${rerankReason})` : "";
+				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 				console.debug(
-					`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+					`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+				);
+				return event as unknown as { messages?: AgentMessage[] };
+			}
+			if (typeof gateDecision === "string") {
+				gateStatus = gateDecision;
+				if (gateDecision === "timeout") {
+					ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
+				} else if (gateDecision === "parse") {
+					ctx.ui?.setStatus?.("memory", "🚫 gate skipped (parse failed)");
+				} else if (gateDecision === "unreachable") {
+					ctx.ui?.setStatus?.("memory", "⚠ gate down, skipped");
+				}
+				const reasonStr = rerankReason ? `(${rerankReason})` : "";
+				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
+				console.debug(
+					`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
 				);
 				return event as unknown as { messages?: AgentMessage[] };
 			}
@@ -816,9 +840,14 @@ export function registerMemory(pi: ExtensionAPI): void {
 			}
 
 			// 7b. Debug log — single per-call emission (task 5.4)
+			const gateLogLabels: Record<string, string> = {
+				parse: "parse-fail",
+				unreachable: "down",
+			};
+			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 			const reasonStr = rerankReason ? `(${rerankReason})` : "";
 			console.debug(
-				`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
+				`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
 			);
 
 			if (finalResults.length === 0) {

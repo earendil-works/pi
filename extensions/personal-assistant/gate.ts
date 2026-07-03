@@ -24,6 +24,8 @@ export interface GateDecision {
 	search_query: string;
 }
 
+export type GateError = "timeout" | "parse" | "unreachable";
+
 export interface GateOptions {
 	ollamaUrl?: string;
 	model?: string;
@@ -74,45 +76,48 @@ export function buildGatePrompt(current: string, recent: string[]): { role: stri
 
 // Try to parse a raw LLM response string into a GateDecision.
 // First attempts direct JSON.parse. If that fails, strips leading
-// non-JSON text via regex /(\{[\s\S]*\})/ and retries. Returns null
-// if both attempts fail or the result doesn't match the schema.
-function parseGateResponse(raw: string): GateDecision | null {
+// non-JSON text via regex /(\{[\s\S]*\})/ and retries. Returns "parse"
+// if both attempts fail or the result doesn't match the schema, so
+// the caller can distinguish parse failures from other errors.
+function parseGateResponse(raw: string): GateDecision | "parse" {
 	const stripped = raw.trim();
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(stripped);
 	} catch {
 		const match = stripped.match(/(\{[\s\S]*\})/);
-		if (!match) return null;
+		if (!match) return "parse";
 		try {
 			parsed = JSON.parse(match[1]);
 		} catch {
 			console.warn("[gate] parse failed after retry, raw:", stripped.slice(0, 200));
-			return null;
+			return "parse";
 		}
 	}
 
 	const obj = parsed as Record<string, unknown>;
 	if (typeof obj.need_memory !== "boolean" || typeof obj.search_query !== "string") {
 		console.warn("[gate] schema invalid, raw:", stripped.slice(0, 200));
-		return null;
+		return "parse";
 	}
 
 	return { need_memory: obj.need_memory, search_query: obj.search_query };
 }
 
 // Call the gate LLM (ollama /api/chat) with the given prompt and recent
-// user messages. Returns a GateDecision on success, or null on any failure
-// (fetch rejection, timeout, parse error, schema validation).
+// user messages. Returns:
+//   - GateDecision  on success (need_memory determined by LLM)
+//   - GateError     on a known failure category (timeout / parse / unreachable)
+//   - null          on an unrecognised error (safety fallback, should not
+//                   happen in practice)
 //
-// The null return is a deliberate degradation path — the caller in
-// memory.ts treats null as "skip recall" and surfaces a ⚠/🚫 status
-// without propagating an exception.
+// The caller in memory.ts discriminates on the return type to set TUI status
+// and debug log with the specific failure category.
 export async function callGate(
 	prompt: string,
 	recentUserMsgs: string[],
 	options: GateOptions = {},
-): Promise<GateDecision | null> {
+): Promise<GateDecision | GateError | null> {
 	const ollamaUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
 	const model = options.model ?? DEFAULT_MODEL;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -137,7 +142,9 @@ export async function callGate(
 		const body: unknown = await res.json();
 		const msg = (body as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
 		rawContent = typeof msg?.content === "string" ? msg.content : "";
-	} catch {
+	} catch (err) {
+		if (err instanceof Error && err.name === "AbortError") return "timeout";
+		if (err instanceof TypeError) return "unreachable";
 		return null;
 	}
 

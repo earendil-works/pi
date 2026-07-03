@@ -42,7 +42,7 @@ const mockFsSettings = vi.hoisted(() => ({
 }));
 
 const mockCallGate = vi.hoisted(
-	() => vi.fn<(...args: unknown[]) => Promise<GateDecision | null>>(),
+	() => vi.fn<(...args: unknown[]) => Promise<GateDecision | "timeout" | "parse" | "unreachable" | null>>(),
 );
 const mockRerankAndFilter = vi.hoisted(() => vi.fn());
 const mockFormatMemoryContext = vi.hoisted(
@@ -374,10 +374,10 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 	});
 
 	// -----------------------------------------------------------------------
-	// S6 — gate timeout (callGate returns null)
+	// S6 — gate timeout (callGate returns "timeout")
 	// -----------------------------------------------------------------------
-	it("S6: gate timeout returns null — skip pipeline, return event unchanged", async () => {
-		mockCallGate.mockResolvedValue(null);
+	it("S6: gate timeout returns 'timeout' — skip pipeline, return event unchanged", async () => {
+		mockCallGate.mockResolvedValue("timeout");
 
 		const event = defaultEvent();
 		const ctx = createMockCtx();
@@ -392,6 +392,44 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		const memoryCalls = ctx.setStatusCalls.filter((c) => c.key === "memory");
 		expect(memoryCalls.length).toBeGreaterThanOrEqual(1);
 		expect(memoryCalls[memoryCalls.length - 1]!.text).toContain("⚠ gate timeout, skipped");
+	});
+
+	// -----------------------------------------------------------------------
+	// S5 — gate parse fail (callGate returns "parse")
+	// -----------------------------------------------------------------------
+	it("S5: gate returns 'parse' — skip pipeline, TUI shows parse-fail status", async () => {
+		mockCallGate.mockResolvedValue("parse");
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms).not.toHaveBeenCalled();
+		expect(result).toBe(event);
+
+		const memoryCalls = ctx.setStatusCalls.filter((c) => c.key === "memory");
+		expect(memoryCalls.length).toBeGreaterThanOrEqual(1);
+		expect(memoryCalls[memoryCalls.length - 1]!.text).toContain("🚫 gate skipped (parse failed)");
+	});
+
+	// -----------------------------------------------------------------------
+	// S7 — gate unreachable (callGate returns "unreachable")
+	// -----------------------------------------------------------------------
+	it("S7: gate returns 'unreachable' — skip pipeline, TUI shows down status", async () => {
+		mockCallGate.mockResolvedValue("unreachable");
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms).not.toHaveBeenCalled();
+		expect(result).toBe(event);
+
+		const memoryCalls = ctx.setStatusCalls.filter((c) => c.key === "memory");
+		expect(memoryCalls.length).toBeGreaterThanOrEqual(1);
+		expect(memoryCalls[memoryCalls.length - 1]!.text).toContain("⚠ gate down, skipped");
 	});
 
 	// -----------------------------------------------------------------------
@@ -558,7 +596,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		});
 
 		it("D2: gate timeout — gate=timeout rerank=skip", async () => {
-			mockCallGate.mockResolvedValue(null);
+			mockCallGate.mockResolvedValue("timeout");
 
 			const event = defaultEvent();
 			const ctx = createMockCtx();
@@ -602,6 +640,36 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=pass");
 			expect(msg).toContain("rerank=fallback(http-error)");
+		});
+
+		it("D6: gate parse fail — gate=parse-fail rerank=skip", async () => {
+			mockCallGate.mockResolvedValue("parse");
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=parse-fail");
+			expect(msg).toContain("rerank=skip");
+			expect(msg).toContain("pre=0");
+			expect(msg).toContain("post=0");
+		});
+
+		it("D7: gate unreachable — gate=down rerank=skip", async () => {
+			mockCallGate.mockResolvedValue("unreachable");
+
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(debugSpy).toHaveBeenCalledTimes(1);
+			const msg = debugSpy.mock.calls[0]![0] as string;
+			expect(msg).toContain("gate=down");
+			expect(msg).toContain("rerank=skip");
+			expect(msg).toContain("pre=0");
+			expect(msg).toContain("post=0");
 		});
 
 		it("D5: gate disabled — gate=disabled rerank=ok", async () => {
