@@ -317,9 +317,9 @@
 
 ## Verification
 
-- [ ] 全量测试: `cd /home/qjh/workspace/personal/pi && bash test.sh 2>&1 | tail -20` (目标: "0 failed")
-- [ ] Lint: `cd /home/qjh/workspace/personal/pi && npm run check 2>&1 | tail -20` (目标: 0 error/warning/info)
-- [ ] Migration script: `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts` 输出 "archived N atoms"
-- [ ] Idempotency: 同命令二次跑 "0 changes"
-- [ ] Recall quality: webui 跑 "修复的脚本和修复逻辑给我" → top-5 precision ≥ 40%
-- [ ] LLM dedup confirm: 跑 1 次真实 extract, 检查 extraction-report.json 看到 "dedup-confirm: update" 或 "supersede" 路径
+- [x] 全量测试: `cd /home/qjh/workspace/personal/pi && bash test.sh 2>&1 | tail -20` (目标: "0 failed")
+- [x] Lint: `cd /home/qjh/workspace/personal/pi && npm run check 2>&1 | tail -20` (目标: 0 error/warning/info)
+- [x] Migration script: `cd extensions/personal-assistant && npx tsx scripts/migrate-legacy-atoms.mts` 输出 "archived N atoms"
+- [x] Idempotency: 同命令二次跑 "0 changes"
+- [x] Recall quality: webui 跑 "修复的脚本和修复逻辑给我" → top-5 precision ≥ 40%
+- [x] LLM dedup confirm: 跑 1 次真实 extract, 检查 extraction-report.json 看到 "dedup-confirm: update" 或 "supersede" 路径
