@@ -7,17 +7,17 @@
 //                           (task 2.1)
 //   - buildGatePrompt     : pure prompt constructor → ollama `messages`
 //                           array (system + user). (task 2.2)
-//   - callGate            : placeholder body; 2.3 fills fetch + JSON.parse
-//                           + AbortController.
+//   - callGate            : fetches gate LLM, parses JSON with retry,
+//                           enforces timeout via AbortController. (task 2.3)
 //
-// The null return on the placeholder callGate is what scenarios S5 / S6 /
-// S7 fall through to: any failure of the gate (parse, timeout,
-// ECONNREFUSED) silently degrades to "skip recall" so the context hook in
-// memory.ts can route to the ⚠ / 🚫 status without surfacing an exception.
+// The null return is what scenarios S5 / S6 / S7 fall through to: any
+// failure of the gate (parse, timeout, ECONNREFUSED) silently degrades to
+// "skip recall" so the context hook in memory.ts can route to the ⚠ / 🚫
+// status without surfacing an exception.
 //
 // Per principle 9 (one explicit home), gate logic lives only here;
-// per principle 6 (non-blocking), timeout is enforced in 2.3 via
-// AbortController — not via this file's signature stage.
+// per principle 6 (non-blocking), timeout is enforced via AbortController
+// — not via this file's signature stage.
 
 export interface GateDecision {
 	need_memory: boolean;
@@ -72,19 +72,74 @@ export function buildGatePrompt(current: string, recent: string[]): { role: stri
 	];
 }
 
-// Placeholder. With no body, callGate has no information to act on,
-// so the only contract-correct answer is null. Task 2.3 (fetch +
-// JSON.parse + AbortController) replaces this body. Until then, buildGatePrompt
-// is exported but unused inside callGate — this is intentional, not a
-// dead export: task 2.3 will wire it in.
+// Try to parse a raw LLM response string into a GateDecision.
+// First attempts direct JSON.parse. If that fails, strips leading
+// non-JSON text via regex /(\{[\s\S]*\})/ and retries. Returns null
+// if both attempts fail or the result doesn't match the schema.
+function parseGateResponse(raw: string): GateDecision | null {
+	const stripped = raw.trim();
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripped);
+	} catch {
+		const match = stripped.match(/(\{[\s\S]*\})/);
+		if (!match) return null;
+		try {
+			parsed = JSON.parse(match[1]);
+		} catch {
+			console.warn("[gate] parse failed after retry, raw:", stripped.slice(0, 200));
+			return null;
+		}
+	}
+
+	const obj = parsed as Record<string, unknown>;
+	if (typeof obj.need_memory !== "boolean" || typeof obj.search_query !== "string") {
+		console.warn("[gate] schema invalid, raw:", stripped.slice(0, 200));
+		return null;
+	}
+
+	return { need_memory: obj.need_memory, search_query: obj.search_query };
+}
+
+// Call the gate LLM (ollama /api/chat) with the given prompt and recent
+// user messages. Returns a GateDecision on success, or null on any failure
+// (fetch rejection, timeout, parse error, schema validation).
+//
+// The null return is a deliberate degradation path — the caller in
+// memory.ts treats null as "skip recall" and surfaces a ⚠/🚫 status
+// without propagating an exception.
 export async function callGate(
 	prompt: string,
 	recentUserMsgs: string[],
 	options: GateOptions = {},
 ): Promise<GateDecision | null> {
-	// Body filled in task 2.3 (fetch + JSON.parse + AbortController).
-	void prompt;
-	void recentUserMsgs;
-	void options;
-	return null;
+	const ollamaUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
+	const model = options.model ?? DEFAULT_MODEL;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const messages = buildGatePrompt(prompt, recentUserMsgs);
+
+	let rawContent = "";
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const res = await fetch(`${ollamaUrl}/api/chat`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model,
+				messages,
+				stream: false,
+				options: { temperature: 0 },
+			}),
+			signal: controller.signal,
+		});
+		clearTimeout(timer);
+		const body: unknown = await res.json();
+		const msg = (body as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+		rawContent = typeof msg?.content === "string" ? msg.content : "";
+	} catch {
+		return null;
+	}
+
+	return parseGateResponse(rawContent);
 }

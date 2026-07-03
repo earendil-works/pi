@@ -20,10 +20,18 @@
 //   2. It forces the file to exist and the export set to be stable
 //      before any production code touches it.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { callGate, type GateDecision } from "../gate.ts";
 
 describe("gate.ts skeleton (task 2.1)", () => {
+	beforeEach(() => {
+		vi.spyOn(globalThis, "fetch").mockReset();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("exports callGate as a function", () => {
 		expect(typeof callGate).toBe("function");
 	});
@@ -50,22 +58,21 @@ describe("gate.ts skeleton (task 2.1)", () => {
 		expect(decision.search_query).toBe("");
 	});
 
-	// Placeholder body must return null — the "ollama down" / "skip
-	// recall" semantics from scenarios S5 / S6 / S7 in scenarios.md
-	// all funnel through the null return. With an empty options
-	// object and no prompt content, the stub has no information to
-	// act on, so null is the only contract-correct answer at this
-	// stage.
-	it("callGate returns null in placeholder body (no ollama call attempted)", async () => {
+	// callGate degrades to null on fetch rejection (S6/S7 scenarios
+	// in scenarios.md — ECONNREFUSED / timeout both funnel through
+	// the null return). Mocking fetch to reject validates the
+	// degradation path without requiring a running ollama.
+	it("callGate returns null when ollama is unreachable (ECONNREFUSED → S7)", async () => {
+		vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
 		const result = await callGate("hello", [], {});
 		expect(result).toBeNull();
 	});
 
-	// Smoke: even with prompts and history, the placeholder body
-	// does not branch on content. This is a regression guard against
-	// task 2.2 / 2.3 accidentally widening the input contract on
-	// the way in.
-	it("callGate returns null for non-empty prompts (still placeholder)", async () => {
+	// Even with full options the fetch failure path still returns
+	// null. This is a regression guard against any change that
+	// accidentally widens the null-return contract.
+	it("callGate returns null for non-empty prompts when ollama is unreachable", async () => {
+		vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
 		const result = await callGate(
 			"之前那个并发问题最后怎么解决的",
 			["我们之前用 bwa 做过引物验证吗", "做了 但是有个并发问题"],
