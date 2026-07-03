@@ -20,7 +20,7 @@
 | S11 | cosine < 0.65 不命中, 无二次 LLM, 直接 insert (省时间) | scenarios.md:L94-97 | unit-test | [x] |
 | S12 | 启动时 tag 字典加载: 扫 tags 列, 统计频次, top 50 缓存 | scenarios.md:L99-104 | unit-test | [x] |
 | S13 | 备份创建失败 (磁盘满): 脚本 abort, 0 atom 改动 | scenarios.md:L108-112 | unit-test | [x] |
-| S14 | 迁移期间 pi 在跑 (读写 memory.db): SQLITE_BUSY 5s 后 abort | scenarios.md:L114-121 | unit-test | [x] |
+| S14 | 迁移期间 pi 在跑 (读写 memory.db): SQLITE_BUSY 5s 后 abort | scenarios.md:L114-121 | unit-test | [-] |
 | S15 | 已迁移过 (二次执行) 标题带 "v2" 后缀: skip | scenarios.md:L125-129 | manual | [x] |
 | S16 | 70 个 active (用户预先 archive 20): 只处理 70, backup 对应全 DB | scenarios.md:L131-135 | unit-test | [x] |
 | S17 | 用户回滚: cp .bak 回去 + 重启 bge-m3 | scenarios.md:L137-141 | manual | [x] |
@@ -89,9 +89,10 @@
 > **证据**: `migration.test.ts: backup failure aborts safely` ✓
 > **源码**: `migrate-legacy-atoms.mts:80-100` (copyFile try/catch)
 
-### S14 SQLITE_BUSY 5s timeout
-> **证据**: `migration.test.ts: DB locked aborts after 5s timeout` ✓
-> **源码**: `storage.ts` open + busy_timeout 配置
+### S14 SQLITE_BUSY 5s timeout (deferred)
+> **状态**: [-] deferred — 本期未实现 busy_timeout
+> **理由**: better-sqlite3 默认在另一进程持锁时立即抛 SQLITE_BUSY，不带 5s 重试。当前 storage.ts init() 与 migrate script 均未执行 `PRAGMA busy_timeout = 5000`。
+> **Follow-up**: 在 storage.ts:init() 加 `this.db.pragma("busy_timeout = 5000")`，补对应 unit test。脚本层若 pi 持锁时跑 migrate，操作员会看到立即报错但 db 不会被半改（每次 markSupersededNoInsert 都在事务内）。
 
 ### S15 二次执行天然 idempotent
 > **证据**: 天然 idempotency 由 self-match guard + markSupersededNoInsert 保证，S4 直接覆盖
@@ -118,8 +119,8 @@
 > **源码**: `tag-vocab.ts:13-24` O(n) 扫描
 
 ### S21 LLM 不遵守 tag 规范
-> **证据**: extraction-dedup-confirm.test.ts case g/h/i + tag-vocab.test.ts normalizeTag 10 cases
-> **源码**: `tag-vocab.ts:40-62` normalizeTag + `extraction.ts:188-192` conceptTagCount warn
+> **证据**: extraction-dedup-confirm.test.ts case g/h/i + (l) + tag-vocab.test.ts normalizeTag 10 cases
+> **源码**: `tag-vocab.ts:40-62` normalizeTag + `extraction.ts:188-192` conceptTagCount warn + `extraction.ts:252` update-path merged tag normalize (MEDIUM #2 fix)
 
 ### R1 Migration Script
 > **证据**: `extensions/personal-assistant/scripts/migrate-legacy-atoms.mts:1-280` — 完整 CLI 脚本，含 --threshold 参数、parseArgs、printUsage、backup、JSON report

@@ -244,12 +244,16 @@ async function executeItem(
 						// UNIQUE partial index depends on this), and
 						// pass through to updateAtom (which bumps version
 						// + writes the new vector in one transaction).
+						// Tag normalization runs the merged tags through
+						// the same `normalizeTag` pipeline as the create
+						// path, so the corpus stays case-consistent even
+						// if the LLM emits a mixed-case merge body.
 						const mergedAtom: MemoryAtom = {
 							...similar.atom,
 							title: decision.merged.title,
 							summary: decision.merged.summary,
 							content: decision.merged.content,
-							tags: decision.merged.tags,
+							tags: decision.merged.tags.map((t) => normalizeTag(t)),
 							content_fingerprint: computeFingerprint(decision.merged.content),
 						};
 						await index.updateAtom(mergedAtom, vector);

@@ -314,4 +314,62 @@ describe("migrate-legacy-atoms.mts (integration)", () => {
 		// the substring `archived 0` proves the second run was empty.
 		expect(second.stdout).toMatch(/archived 0/);
 	});
+
+	it("S13: backup failure aborts safely (0 atoms changed)", async () => {
+		// beforeEach already seeded 6 active atoms (a1/b1/a2/b2/x/y).
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const beforeActive = idx.getActiveAtoms().length;
+		idx.close();
+
+		// Pre-create the backup path AS A DIRECTORY. copyFile() to a
+		// path that's an existing directory throws EISDIR — exactly
+		// the failure mode "disk full / target occupied" the scenario
+		// describes. The point isn't the specific errno, it's that
+		// backup creation fails BEFORE any markSupersededNoInsert
+		// fires.
+		const yyyymmdd = (() => {
+			const now = new Date();
+			return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+		})();
+		const backupDir = `${dbPath}.bak.${yyyymmdd}`;
+		const { mkdirSync, rmSync } = await import("node:fs");
+		mkdirSync(backupDir, { recursive: true });
+		try {
+			const result = runScript();
+			expect(result.status).not.toBe(0);
+			// The script should print a "refusing to migrate" / "backup
+			// failed" message — assert on substring rather than exact
+			// wording to keep the test decoupled from log phrasing.
+			const combined = (result.stdout + result.stderr).toLowerCase();
+			expect(combined).toMatch(/backup.*fail|refusing|migration aborted/);
+			// And critically: 0 atoms changed in the live db.
+			const verify = new MemoryIndex(dbPath);
+			await verify.init();
+			const afterActive = verify.getActiveAtoms().length;
+			expect(afterActive).toBe(beforeActive);
+			verify.close();
+		} finally {
+			rmSync(backupDir, { recursive: true, force: true });
+		}
+	});
+
+	it("S16: handles smaller active corpus (some pre-archived)", async () => {
+		// beforeEach seeded 6 active atoms. Manually pre-archive 1
+		// (b1) so the script sees 5 active. Asserts the script
+		// tolerates a partially-archived corpus and reports cleanly.
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		idx.getRawDb().prepare("UPDATE memory_index SET is_latest=0, superseded_at=? WHERE id=?").run(
+			Date.now() - 1000,
+			"b1",
+		);
+		const beforeActive = idx.getActiveAtoms().length;
+		expect(beforeActive).toBe(5);
+		idx.close();
+
+		const result = runScript();
+		expect(result.status).toBe(0);
+		expect(result.stdout).toMatch(/done/);
+	});
 });

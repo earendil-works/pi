@@ -572,6 +572,50 @@ describe("executeItem — cosine ≥ 0.65 命中 + LLM 二次确认", () => {
 
 		warnSpy.mockRestore();
 	});
+
+	it("(l) update path normalises LLM-merged tags (MEDIUM #2 regression guard)", async () => {
+		// Seed a hit atom with a clean lowercase tag set, vector = V_UNIT
+		// (so a new item embedded as V_COS_077 will see cosine 0.77
+		// between them and clear the 0.65 threshold).
+		const { insert: seedInsert } = seedHitAtom(index, {
+			id: "hit-merge",
+			title: "TypeScript strict preference",
+			summary: "User prefers TS strict + ESLint",
+			content: "User prefers TypeScript strict mode, with ESLint 强制",
+			tags: ["typescript", "eslint"],
+		});
+		await seedInsert();
+
+		// Reuse the cosine-0.77 vector for the new item so the
+		// storage layer's findMostSimilarEmbedding picks up the hit.
+		vi.mocked(embedText).mockResolvedValue(V_COS_077);
+
+		// LLM returns action=update with mixed-case merged tags.
+		const callLlm = vi.fn(async () =>
+			JSON.stringify({
+				action: "update",
+				merged: {
+					title: "TypeScript strict preference (updated)",
+					summary: "User prefers TS strict mode + ESLint 强制",
+					content: "User prefers TypeScript strict mode, with ESLint 强制, now with bug-fix rule",
+					tags: ["Amplicon", "BUG-FIX", "Concept/Refactor"],
+				},
+			}),
+		);
+
+		const item = makeNewItem({
+			content: "TypeScript strict mode, with ESLint 强制, now with bug-fix rule",
+			tags: ["typescript"],
+		});
+
+		const result = await __testing_executeItem(index, atomsDir, item, callLlm);
+
+		expect(result.status).toBe("update");
+		expect(result.atom).toBeDefined();
+		// MEDIUM #2 fix: merged tags must pass through normalizeTag,
+		// not be persisted raw. ASCII → lowercase, CJK unchanged.
+		expect(result.atom?.tags).toEqual(["amplicon", "bug-fix", "concept/refactor"]);
+	});
 });
 
 describe("executeItem — cosine < 0.65 不命中", () => {
