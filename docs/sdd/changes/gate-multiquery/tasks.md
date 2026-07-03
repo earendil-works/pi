@@ -58,7 +58,7 @@
   - **验证**: `npx tsx --no-warnings -e "import {rewriteQueries} from './extensions/personal-assistant/rewrite.ts'; await rewriteQueries('x'); console.log('ok')"` 输出 ok (skeleton 不爆)
   - **依赖**: 无
 
-- [ ] 3.2 **写 buildRewritePrompt + REWRITE_SYSTEM_PROMPT**
+- [x] 3.2 **写 buildRewritePrompt + REWRITE_SYSTEM_PROMPT**
   - **文件**: `extensions/personal-assistant/rewrite.ts` (Modify)
   - **内容**: 添加 `REWRITE_SYSTEM_PROMPT` (5 段规则: 1.输出格式 / 2.指代消解 / 3.复合拆分 / 4.单概念保留 / 5.去重不生造 每段 ≤30 字符). 导出 `buildRewritePrompt(query: string, recent: string[] | null): {role, content}[]` (system+user 形态,空 recent 显示 "Recent user messages: None"). User content 末尾 `Respond JSON only:`.
   - **验证**: `npx tsx -e "import {buildRewritePrompt} from './extensions/personal-assistant/rewrite.ts'; const m=buildRewritePrompt('x', null); console.assert(m[0].role==='system'); console.assert(m[1].content.includes('Respond JSON only')); console.log('ok')"` 输出 ok
