@@ -155,13 +155,13 @@
   - **验证**: `npm run check` 退出码 0
   - **依赖**: 6.1, 5.2
 
-- [ ] 6.3 **写复合 query 端到端 smoke script**
+- [x] 6.3 **写复合 query 端到端 smoke script**
   - **文件**: `/tmp/gate-multiquery-smoke.sh` (Create,临时不 commit)
   - **内容**: 5 个 curl POST `http://127.0.0.1:8741/api/memory/search` body=`{"query":"Q","filtered":true,"topK":20}` 测 5 复合 query: (1) "MGM项目的工时如何计算" 期望≥1 hit; (2) "bwa 并发问题怎么修" 期望 1 hit (单概念不拆); (3) "之前那个脚本有什么问题" 期望 webui 无上文,0 hits 或 1 weak hit; (4) "MGM 项目"; (5) "工时估算" 单概念. 检查 rerankScore 与 rerankTimeMs 字段存在.
   - **验证**: `bash /tmp/gate-multiquery-smoke.sh` 输出每条 query 的 hits 数,<5 行/条
   - **依赖**: 6.2
 
-- [ ] 6.4 **删除 smoke script,清理**
+- [x] 6.4 **删除 smoke script,清理**
   - **文件**: `/tmp/gate-multiquery-smoke.sh` (Delete)
   - **内容**: Smoke 跑完 review 结果 OK 后删除临时脚本 (per AGENTS.md ad-hoc script 规则)
   - **验证**: `ls /tmp/gate-multiquery-smoke.sh` 输出 No such file
