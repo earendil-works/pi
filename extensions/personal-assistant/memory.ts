@@ -63,6 +63,12 @@ import type { MemoryAtomType, RecallResult } from "./types.ts";
  * Minimal config shape consumed by memory.ts. Real config lives elsewhere
  * (settings-manager / webui) and is structurally compatible with this shape.
  * v1 had a much wider type; v2 narrows to only what the hooks actually read.
+ *
+ * `memory.gate` and `memory.rerank` (both default `enabled = true`, when
+ * the sub-object is omitted or when `enabled` is omitted inside it) gate
+ * the context-hook recall pipeline (spec R5 / design.md D6). Both are
+ * OPTIONAL so an older settings.json without these fields keeps loading —
+ * `loadConfig()` already coalesces missing keys via `JSON.parse + ?? {}`.
  */
 export interface PersonalAssistantConfig {
 	memory?: {
@@ -80,6 +86,12 @@ export interface PersonalAssistantConfig {
 		injection?: { maxCount?: number };
 		autoDecay?: boolean;
 		autoExtract?: boolean;
+		/** Context-hook gate (LLM decides need-memory + rewrites query).
+		 *  Default enabled when omitted; absence means "use default". */
+		gate?: { enabled?: boolean };
+		/** Context-hook cross-encoder rerank stage.
+		 *  Default enabled when omitted; absence means "use default". */
+		rerank?: { enabled?: boolean };
 		/**
 		 * tag alias mapping for `normalizeTags` (extensions/personal-assistant/tag-alias.ts).
 		 * Applied dual-side:写入侧折叠 atom.tags,查询侧折叠 query tokens。
@@ -632,79 +644,23 @@ export function registerMemory(pi: ExtensionAPI): void {
 		}
 	});
 
-	// before_agent_start — fire-and-forget recall of relevant atoms for the
-	// incoming user prompt. The result is stashed in `pendingMemorySearch`
-	// for the context hook to await on the same turn. Dynamic imports of
-	// search.ts / format.ts keep the cold-start cost off the critical path
-	// for sessions that never reach the context hook.
+	// before_agent_start — Task 5.1 cleanup-only.
 	//
-	// Surfaces a per-turn footer status (`memory` key) via `ctx.ui.setStatus`
-	// so the user sees "📦 N atoms · rule=X fact=Y process=Z · top=0.XXX" in
-	// the TUI status bar below the mode chip. Three observable states:
-	//   - hits found       → "📦 N atoms · rule=… fact=… process=… · top=0.XXX"
-	//   - empty recall     → "🔍 no memory match"
-	//   - recall failed    → "⚠ memory recall failed"
-	// The status reflects the most recent recall; older statuses are not
-	// remembered (no separate key per turn — single source of truth).
-	pi.on("before_agent_start", async (event, ctx) => {
-		const userMessage = (event as { prompt?: string }).prompt ?? "";
-		if (userMessage.length === 0) return;
-
-		const config = loadConfig();
-		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
-		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
-
-		const promise = (async (): Promise<FormattedMemory | null> => {
-			const index = new MemoryIndex(dbPath);
-			await index.init();
-			try {
-				const { recallAtoms } = await import("./search.ts");
-				const { formatMemoryContext } = await import("./format.ts");
-				let results: RecallResult[];
-				try {
-					// topK=20 matches design.md Decision 2 (per-type KNN pool;
-					// the post-scoring per-type cap is hard-coded at
-					// DEFAULT_TOP_K in search.ts).
-					// tagOverlapWeight / freshnessWeight / tagAliases are the
-					// runtime-configurable scoring knobs from
-					// PersonalAssistantConfig.memory — wired here so the
-					// agent's before_agent_start hook honors the same
-					// settings the webui search endpoint consumes.
-					const m = config.memory;
-					results = await recallAtoms(index, userMessage, {
-						topK: 20,
-						tagOverlapWeight: m?.tagOverlapWeight,
-						freshnessWeight: m?.freshnessWeight,
-						tagAliases: m?.tagAliases,
-					});
-				} catch (err) {
-					ctx.ui.setStatus("memory", "⚠ memory recall failed");
-					throw err;
-				}
-				if (results.length === 0) {
-					ctx.ui.setStatus("memory", "🔍 no memory match");
-				} else {
-					const byType = { rule: 0, fact: 0, process: 0 };
-					for (const r of results) byType[r.atom.type]++;
-					const topScore = results
-						.map((r) => r.score)
-						.reduce((a, b) => (b > a ? b : a), 0)
-						.toFixed(3);
-					ctx.ui.setStatus(
-						"memory",
-						`📦 ${results.length} atoms · rule=${byType.rule} fact=${byType.fact} process=${byType.process} · top=${topScore}`,
-					);
-				}
-				return formatMemoryContext(results, 4000);
-			} finally {
-				index.close();
-			}
-		})();
-		// Key by prompt to avoid stomping between concurrent turns. If a
-		// context hook arrives for a different prompt, it won't see this
-		// promise. (The hook reads by matching the event's last user
-		// message content against pending keys.)
-		pendingMemorySearches.set(userMessage, promise);
+	// Recall pipeline (search.ts / format.ts / gate / rerank / TUI status)
+	// moved to the context hook in Task 5.2: gate logic needs `messages[]`,
+	// which only the context hook exposes. This hook now exists ONLY to
+	// clear the module-level `pendingMemorySearches` Map — a defense-in-
+	// depth reset that prevents stale in-flight promises from leaking
+	// across sessions. `registerMemory` (line above) already resets the
+	// map at registration time; this hook is the per-turn belt-and-
+	// suspenders.
+	//
+	// The hook registration itself is preserved so the extension loader
+	// does not emit "unhandled before_agent_start" warnings — principle
+	// 8 (no backward-compat breakage) outweighs the temptation to remove
+	// the .on() call.
+	pi.on("before_agent_start", async (_event, _ctx) => {
+		pendingMemorySearches = new Map();
 	});
 
 	// context — await the pending recall (raced against an 8s timeout) and
