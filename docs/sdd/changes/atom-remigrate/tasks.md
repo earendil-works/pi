@@ -75,7 +75,7 @@
   - **验证**: `cd extensions/personal-assistant && grep -n "getEmbedding" storage.ts` 找到 1 行定义
   - **依赖**: 1.1 (无 markSupersededNoInsert 依赖, 可与 2.1 并行)
 
-- [ ] 2.5 **migration 集成测试 (含 idempotency)**
+- [x] 2.5 **migration 集成测试 (含 idempotency)**
   - **文件**: `extensions/personal-assistant/test/migration.test.ts` (Modify, 追加到 2.2 之后)
   - **内容**: 用 tmpdir 真实 MemoryIndex, 插入 90 个 atom (fixture 用 5-10 个真实 cluster pair + 1-2 个异类即可,不需要 90 个); 跑 `migrate-legacy-atoms.mts` (用 child_process.spawnSync + tsx); 断言: (a) backup 文件存在; (b) active atom 数减少 ≥ 17%; (c) 二次跑, 改动数 = 0; (d) 二进制 idempotent (重跑 0 个 markSupersededNoInsert 调用, 0 个 reindex); (e) 手动 spot-check 1-2 个 archived atom 的"赢"是否合理 (access_count 更高)。3-5 个 it()。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/migration.test.ts` 全 5+ case pass
@@ -148,7 +148,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts` 既有 case pass
   - **依赖**: 3.4
 
-- [ ] 3.7 **executeItem 改造: 加 normalizeTag + 概念性 tag 检测 + cosine 命中分支**
+- [x] 3.7 **executeItem 改造: 加 normalizeTag + 概念性 tag 检测 + cosine 命中分支**
   - **文件**: `extensions/personal-assistant/extraction.ts:123-149` (Modify)
   - **内容**: 改 `executeItem` 函数。完整新逻辑:
   1. **指纹 dedup (既有)**: `computeFingerprint` + `getActiveAtomByFingerprint` → skip
