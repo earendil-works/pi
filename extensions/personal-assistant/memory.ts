@@ -800,6 +800,21 @@ export function registerMemory(pi: ExtensionAPI): void {
 			}
 		} else {
 			gateStatus = "disabled";
+
+			// Rewrite — also runs when gate is disabled (B7 independent of gate)
+			if (rewriteEnabled) {
+				const rewriteT0 = performance.now();
+				const { rewriteQueries } = await import("./rewrite.ts");
+				const outcome = await rewriteQueries(current, recent, { timeoutMs: 1500 });
+				rewriteMs = performance.now() - rewriteT0;
+				if (Array.isArray(outcome)) {
+					subqueries = outcome;
+					rewriteStatus = "ok";
+				} else {
+					subqueries = outcome.subqueries;
+					rewriteStatus = outcome.reason;
+				}
+			} // else: leave rewriteStatus as "skip"
 		}
 
 		// 4. Open MemoryIndex and recall

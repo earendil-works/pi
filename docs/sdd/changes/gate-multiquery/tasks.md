@@ -115,7 +115,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/pipeline.test.ts` (4.6 完成后才过)
   - **依赖**: 4.4
 
-- [ ] 4.6 **更新 pipeline.test.ts 覆盖 rewrite 集成**
+- [x] 4.6 **更新 pipeline.test.ts 覆盖 rewrite 集成**
   - **文件**: `extensions/personal-assistant/test/pipeline.test.ts` (Modify)
   - **内容**: 加 `vi.mock("../rewrite.ts", () => ({ rewriteQueries: mockRewriteQueries }))` + mock 实现. 加 5 个 case: (a) gate pass + rewrite ok(2) → 2 路 recall + merge + rerank; (b) rewrite timeout → subqueries=[rawQuery] 单路 + rerank 用 rawQuery; (c) rewrite parse 失败 → fallback; (d) rewrite disabled → 单路 recall + rerank; (e) gate disabled + rewrite enabled → rewrite 仍执行 (B7). 现有 5 个 status assertion 改为支持新字段 rewrite=.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/pipeline.test.ts` (5 现有 + 5 新 = 10 测试全过)

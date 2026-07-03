@@ -8,6 +8,7 @@
 //   RW2 — rewrite enabled, gate pass, rewrite fallback: subqueries = [current], single recall
 //   RW3 — rewrite disabled: subqueries stays [current], single recall
 //   RW4 — gate skip (need_memory=false): rewrite NOT called
+//   RW5 — gate disabled: rewrite still called (B7 independent of gate)
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -323,9 +324,9 @@ describe("context hook rewrite stage (rewrite → multi-recall → merge)", () =
 	});
 
 	// -----------------------------------------------------------------------
-	// RW5 — gate disabled: rewrite NOT called
+	// RW5 — gate disabled: rewrite still called (B7 independent)
 	// -----------------------------------------------------------------------
-	it("RW5: gate disabled → rewrite NOT called, single recall", async () => {
+	it("RW5: gate disabled → rewrite called, multi-recall with subqueries", async () => {
 		mockFsSettings.value = JSON.stringify({
 			personalAssistant: {
 				memory: {
@@ -340,12 +341,16 @@ describe("context hook rewrite stage (rewrite → multi-recall → merge)", () =
 		const ctx = createMockCtx();
 		await contextHandler(event, ctx);
 
+		// Gate NOT called
 		expect(mockCallGate).not.toHaveBeenCalled();
-		expect(mockRewriteQueries).not.toHaveBeenCalled();
+		// Rewrite IS called (B7: independent of gate)
+		expect(mockRewriteQueries).toHaveBeenCalledTimes(1);
+		expect(mockRewriteQueries.mock.calls[0]![0]).toBe("bwa 有问题");
 
-		// recallAtoms called ONCE with current (no gate, no rewrite)
-		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
-		const recallArgs = mockRecallAtoms.mock.calls[0]!;
-		expect(recallArgs[1]).toBe("bwa 有问题");
+		// recallAtoms called 3 times (one per subquery)
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(3);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("bwa 有问题");
+		expect(mockRecallAtoms.mock.calls[1]![1]).toBe("问题是什么");
+		expect(mockRecallAtoms.mock.calls[2]![1]).toBe("如何解决");
 	});
 });

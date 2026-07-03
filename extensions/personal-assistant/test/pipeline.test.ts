@@ -51,6 +51,9 @@ const mockFormatMemoryContext = vi.hoisted(
 const mockRecallAtoms = vi.hoisted(
 	() => vi.fn<(...args: unknown[]) => Promise<RecallResult[]>>(),
 );
+const mockRewriteQueries = vi.hoisted(
+	() => vi.fn<(...args: unknown[]) => Promise<string[] | { reason: string; subqueries: string[] }>>(),
+);
 
 // Mock node:fs so loadConfig reads our controlled settings JSON.
 vi.mock("node:fs", async (importOriginal) => {
@@ -67,6 +70,7 @@ vi.mock("../gate.ts", () => ({ callGate: mockCallGate }));
 vi.mock("../rerank.ts", () => ({ rerankAndFilter: mockRerankAndFilter }));
 vi.mock("../format.ts", () => ({ formatMemoryContext: mockFormatMemoryContext }));
 vi.mock("../search.ts", () => ({ recallAtoms: mockRecallAtoms }));
+vi.mock("../rewrite.ts", () => ({ rewriteQueries: mockRewriteQueries }));
 vi.mock("../storage.ts", () => ({
 	MemoryIndex: class FakeMemoryIndex {
 		constructor(_dbPath: string) {
@@ -197,6 +201,9 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			recallResult("atom-4", "rule"),
 			recallResult("atom-5", "fact"),
 		]);
+
+		mockRewriteQueries.mockReset();
+		mockRewriteQueries.mockImplementation((query: unknown) => Promise.resolve([query as string]));
 
 		mockPi = createMockPi();
 		registerMemory(mockPi as unknown as ExtensionAPI);
@@ -567,6 +574,134 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 	});
 
 	// -----------------------------------------------------------------------
+	// Rewrite integration (Task 4.6)
+	// -----------------------------------------------------------------------
+
+	it("A: gate pass + rewrite ok(2) — 2 subqueries, recall called 2x, merged, reranked", async () => {
+		mockRewriteQueries.mockResolvedValue(["sub query 1", "sub query 2"]);
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRewriteQueries).toHaveBeenCalledTimes(1);
+		expect(mockRewriteQueries.mock.calls[0]![0]).toBe("bwa 有问题");
+
+		// recallAtoms called 2 times (one per subquery)
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(2);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("sub query 1");
+		expect(mockRecallAtoms.mock.calls[1]![1]).toBe("sub query 2");
+
+		// rerankAndFilter called with joined subqueries
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+		const rerankQuery = mockRerankAndFilter.mock.calls[0]![0] as string;
+		expect(rerankQuery).toBe("sub query 1 sub query 2");
+
+		// Format called and memory injected
+		expect(mockFormatMemoryContext).toHaveBeenCalledTimes(1);
+		const typedResult = result as { messages?: Array<{ role: string; content: string }> };
+		expect(typedResult.messages![0]!.content).toContain("formatted memory context");
+	});
+
+	it("B: rewrite timeout — fallback to single recall with raw query", async () => {
+		mockRewriteQueries.mockResolvedValue({ reason: "timeout", subqueries: ["bwa 有问题"] });
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRewriteQueries).toHaveBeenCalledTimes(1);
+
+		// Single recall with the raw query (from fallback)
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("bwa 有问题");
+
+		// Rerank uses the raw query
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+		expect(mockRerankAndFilter.mock.calls[0]![0]).toBe("bwa 有问题");
+
+		// Memory still injected
+		const typedResult = result as { messages?: Array<{ role: string; content: string }> };
+		expect(typedResult.messages![0]!.content).toContain("formatted memory context");
+	});
+
+	it("C: rewrite parse fail — fallback to single recall with raw query", async () => {
+		mockRewriteQueries.mockResolvedValue({ reason: "parse", subqueries: ["bwa 有问题"] });
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		expect(mockRewriteQueries).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("bwa 有问题");
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+		expect(mockRerankAndFilter.mock.calls[0]![0]).toBe("bwa 有问题");
+
+		const typedResult = result as { messages?: Array<{ role: string; content: string }> };
+		expect(typedResult.messages![0]!.content).toContain("formatted memory context");
+	});
+
+	it("D: rewrite disabled — single recall with raw query, rewrite not called", async () => {
+		mockFsSettings.value = JSON.stringify({
+			personalAssistant: {
+				memory: {
+					gate: { enabled: true },
+					rewrite: { enabled: false },
+					rerank: { enabled: true },
+				},
+			},
+		});
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		expect(mockCallGate).toHaveBeenCalledTimes(1);
+		// Rewrite NOT called when disabled
+		expect(mockRewriteQueries).not.toHaveBeenCalled();
+		// Single recall with raw query
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("bwa 有问题");
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+		expect(mockRerankAndFilter.mock.calls[0]![0]).toBe("bwa 有问题");
+
+		const typedResult = result as { messages?: Array<{ role: string; content: string }> };
+		expect(typedResult.messages![0]!.content).toContain("formatted memory context");
+	});
+
+	it("E: gate disabled but rewrite enabled — rewrite still executes (B7)", async () => {
+		mockFsSettings.value = JSON.stringify({
+			personalAssistant: {
+				memory: {
+					gate: { enabled: false },
+					rewrite: { enabled: true },
+					rerank: { enabled: true },
+				},
+			},
+		});
+
+		const event = defaultEvent();
+		const ctx = createMockCtx();
+		const result = await contextHandler(event, ctx);
+
+		// Gate NOT called
+		expect(mockCallGate).not.toHaveBeenCalled();
+		// Rewrite IS called (B7: independent of gate)
+		expect(mockRewriteQueries).toHaveBeenCalledTimes(1);
+		// Recall called with rewritten query
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("bwa 有问题");
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
+
+		const typedResult = result as { messages?: Array<{ role: string; content: string }> };
+		expect(typedResult.messages![0]!.content).toContain("formatted memory context");
+	});
+
+	// -----------------------------------------------------------------------
 	// Task 5.4 — debug log tests (single console.debug per pipeline run)
 	// -----------------------------------------------------------------------
 	describe("debug log (gate/rerank/latency)", () => {
@@ -580,7 +715,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			debugSpy.mockRestore();
 		});
 
-		it("D1: happy path — gate=pass rerank=ok", async () => {
+		it("D1: happy path — gate=pass rewrite=ok(1) rerank=ok", async () => {
 			const event = defaultEvent();
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
@@ -589,7 +724,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toMatch(/\[recall\]/);
 			expect(msg).toContain("gate=pass");
-			expect(msg).toContain("rewrite=timeout");
+			expect(msg).toContain("rewrite=ok(1)");
 			expect(msg).toContain("rerank=ok");
 			expect(msg).toContain("pre=5");
 			expect(msg).toContain("post=2");
@@ -625,7 +760,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=pass");
-			expect(msg).toContain("rewrite=timeout");
+			expect(msg).toContain("rewrite=ok(1)");
 			expect(msg).toContain("rerank=fallback(timeout)");
 		});
 
@@ -642,7 +777,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=pass");
-			expect(msg).toContain("rewrite=timeout");
+			expect(msg).toContain("rewrite=ok(1)");
 			expect(msg).toContain("rerank=fallback(http-error)");
 		});
 
@@ -683,6 +818,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 				personalAssistant: {
 					memory: {
 						gate: { enabled: false },
+						rewrite: { enabled: false },
 						rerank: { enabled: true },
 					},
 				},
