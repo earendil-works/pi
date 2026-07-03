@@ -48,6 +48,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { runDecay } from "./decay.ts";
 import { MemoryIndex } from "./storage.ts";
+import { recallAtoms } from "./search.ts";
 import {
 	runMemoryExtraction,
 	extractMemoriesWithCallLlm,
@@ -663,35 +664,153 @@ export function registerMemory(pi: ExtensionAPI): void {
 		pendingMemorySearches = new Map();
 	});
 
-	// context — await the pending recall (raced against an 8s timeout) and
-	// inject the formatted memory block into the last user message of the
-	// event. Non-destructive: the original event is returned unchanged if
-	// there is no pending search, no formatted text, or no user message to
-	// mutate. Modifications produce a fresh messages array — never the
-	// caller's array reference.
-	pi.on("context", async (event: ContextEvent, _ctx) => {
-		// Find the pending search by matching against the last user message
-		// of the event. Falls back to the most-recent entry if no match.
+	// context — gate→recall→rerank→format→inject pipeline (task 5.2).
+	//
+	// This handler replaces the old pendingMemorySearches async-fire pattern
+	// with a synchronous pipeline that runs within the hook's own body:
+	//
+	//   1. Extract current + recent user messages from event.messages[]
+	//   2. Load config and check gate.enabled (dynamic import ./gate.ts)
+	//   3. callGate(current, recent, {timeoutMs: 500})
+	//   4. If gate skips (null / need_memory=false) → setStatus + return
+	//   5. Open MemoryIndex (for recallAtoms hydration)
+	//   6. recallAtoms(index, search_query, {topK:20})
+	//   7. If rerank.enabled (dynamic import ./rerank.ts) → rerankAndFilter
+	//         Array.isArray branch: filtered results
+	//         RerankFallback branch: topK fallback + setStatus
+	//   8. Assign relativePath on each result
+	//   9. setStatus with pipeline outcome
+	//  10. If empty results → return event unchanged
+	//  11. formatMemoryContext(results, 4000) (dynamic import ./format.ts)
+	//  12. Inject formatted prefix into last user message
+	//  13. Return { messages: newMessages }
+	//
+	// Non-destructive: the original event reference is returned unchanged
+	// when no memory should be injected. Modifications produce a fresh
+	// messages array — never the caller's array reference.
+	//
+	// Dynamic imports for gate/rerank/format keep their modules off the
+	// cold-start path (design.md D6). Top-level imports for MemoryIndex /
+	// recallAtoms / loadConfig are unaffected.
+	pi.on("context", async (event: ContextEvent, ctx) => {
 		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
-		let lastUserPrompt = "";
+		if (messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
+
+		// 1. Extract current (last) and recent (up to 3 prior) user messages
+		const userMessages: string[] = [];
 		for (let i = messages.length - 1; i >= 0; i--) {
 			if (messages[i]?.role === "user") {
 				const content = messages[i]?.content;
-				lastUserPrompt = typeof content === "string" ? content : JSON.stringify(content);
-				break;
+				userMessages.unshift(
+					typeof content === "string" ? content : JSON.stringify(content),
+				);
+				if (userMessages.length >= 4) break;
 			}
 		}
-		// Find the pending search by matching against the last user message
-		// of the event. If no key matches AND the map has exactly one
-		// entry, fall back to that entry (handles prompt-mutation edge
-		// case). Otherwise no pending search.
-		let pending: Promise<FormattedMemory | null> | null = pendingMemorySearches.get(lastUserPrompt) ?? null;
-		if (!pending && pendingMemorySearches.size === 1) {
-			pending = Array.from(pendingMemorySearches.values())[0] ?? null;
+		if (userMessages.length === 0) return event as unknown as { messages?: AgentMessage[] };
+
+		const current = userMessages[userMessages.length - 1]!;
+		const recent = userMessages.slice(0, -1);
+
+		// 2. Load config + gate check
+		const config = loadConfig();
+
+		// 3. Gate decision (dynamic import)
+		const gateEnabled = config.memory?.gate?.enabled ?? true;
+		let searchQuery = current;
+		if (gateEnabled) {
+			const { callGate } = await import("./gate.ts");
+			const gateDecision = await callGate(current, recent, { timeoutMs: 500 });
+			if (!gateDecision || !gateDecision.need_memory) {
+				if (!gateDecision) {
+					ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
+				} else {
+					ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
+				}
+				return event as unknown as { messages?: AgentMessage[] };
+			}
+			// Use gate's rewritten search query for recall
+			if (gateDecision.search_query) searchQuery = gateDecision.search_query;
 		}
-		const result = await injectMemoryContext(event, pending);
-		if (pending) pendingMemorySearches.delete(lastUserPrompt);
-		return result;
+
+		// 4. Open MemoryIndex and recall
+		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+		const index = new MemoryIndex(dbPath);
+		await index.init();
+		try {
+			const results = await recallAtoms(index, searchQuery, { topK: 20 });
+
+			// 5. Rerank (dynamic import)
+			let finalResults: RecallResult[];
+			let rerankFallback = false;
+			const rerankEnabled = config.memory?.rerank?.enabled ?? true;
+			if (rerankEnabled && results.length > 0) {
+				const { rerankAndFilter } = await import("./rerank.ts");
+				const reranked = await rerankAndFilter(searchQuery, results);
+				if (Array.isArray(reranked)) {
+					finalResults = reranked;
+				} else {
+					finalResults = reranked.topK;
+					rerankFallback = true;
+				}
+			} else {
+				finalResults = results;
+			}
+
+			// 6. Assign relativePath
+			for (const r of finalResults) {
+				r.relativePath = `${r.atom.type}/${r.atom.id}.md`;
+			}
+
+			// 7. setStatus with pipeline outcome
+			if (rerankFallback) {
+				ctx.ui?.setStatus?.("memory", "⚠ rerank fallback");
+			} else if (finalResults.length === 0) {
+				ctx.ui?.setStatus?.("memory", "🔍 no memory match");
+			} else {
+				const rules = finalResults.filter((r) => r.atom.type === "rule").length;
+				const facts = finalResults.filter((r) => r.atom.type === "fact").length;
+				const processes = finalResults.filter((r) => r.atom.type === "process").length;
+				const maxRerankScore = Math.max(...finalResults.map((r) => r.rerankScore ?? 0));
+				ctx.ui?.setStatus?.(
+					"memory",
+					`📦 ${finalResults.length} atoms · rule=${rules} fact=${facts} process=${processes} · top=${maxRerankScore}`,
+				);
+			}
+
+			if (finalResults.length === 0) {
+				return event as unknown as { messages?: AgentMessage[] };
+			}
+
+			// 8. Format (dynamic import)
+			const { formatMemoryContext } = await import("./format.ts");
+			const formatted = formatMemoryContext(finalResults, 4000);
+
+			// 9. Inject into last user message
+			let lastUserIdx = -1;
+			for (let i = messages.length - 1; i >= 0; i--) {
+				if (messages[i]?.role === "user") {
+					lastUserIdx = i;
+					break;
+				}
+			}
+			if (lastUserIdx === -1) return event as unknown as { messages?: AgentMessage[] };
+
+			const lastUser = messages[lastUserIdx]!;
+			const originalContent =
+				typeof lastUser.content === "string"
+					? lastUser.content
+					: JSON.stringify(lastUser.content);
+			const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+			const memoryPrefix = `[Relevant memory context — atoms at ${atomsDir}]\n${formatted.text}\n\n[User message]\n`;
+			const newContent = memoryPrefix + originalContent;
+
+			const newMessages = [...messages];
+			newMessages[lastUserIdx] = { ...lastUser, content: newContent };
+			return { messages: newMessages as unknown as AgentMessage[] };
+		} finally {
+			index.close();
+		}
 	});
 
 	// memory_get tool — the ONLY programmatic strength-feedback entry.
