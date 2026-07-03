@@ -589,10 +589,11 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toMatch(/\[recall\]/);
 			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rewrite=timeout");
 			expect(msg).toContain("rerank=ok");
 			expect(msg).toContain("pre=5");
 			expect(msg).toContain("post=2");
-			expect(msg).toMatch(/latency \{gate:\d+ms recall:\d+ms rerank:\d+ms\}/);
+			expect(msg).toMatch(/latency \{gate:\d+ms rewrite:\d+ms recall:\d+ms rerank:\d+ms\}/);
 		});
 
 		it("D2: gate timeout — gate=timeout rerank=skip", async () => {
@@ -605,6 +606,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=timeout");
+			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -623,6 +625,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rewrite=timeout");
 			expect(msg).toContain("rerank=fallback(timeout)");
 		});
 
@@ -639,6 +642,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=pass");
+			expect(msg).toContain("rewrite=timeout");
 			expect(msg).toContain("rerank=fallback(http-error)");
 		});
 
@@ -652,6 +656,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=parse-fail");
+			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -667,6 +672,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=down");
+			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -689,6 +695,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			expect(debugSpy).toHaveBeenCalledTimes(1);
 			const msg = debugSpy.mock.calls[0]![0] as string;
 			expect(msg).toContain("gate=disabled");
+			expect(msg).toContain("rewrite=skip");
 			expect(msg).toContain("rerank=ok");
 			expect(msg).toContain("pre=5");
 			expect(msg).toContain("post=2");

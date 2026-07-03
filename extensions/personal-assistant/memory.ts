@@ -751,7 +751,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const reasonStr = rerankReason ? `(${rerankReason})` : "";
 				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 				console.debug(
-					`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+					`[recall] gate=${gateLabel} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
 				);
 				return event as unknown as { messages?: AgentMessage[] };
 			}
@@ -767,7 +767,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const reasonStr = rerankReason ? `(${rerankReason})` : "";
 				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 				console.debug(
-					`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+					`[recall] gate=${gateLabel} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
 				);
 				return event as unknown as { messages?: AgentMessage[] };
 			}
@@ -776,7 +776,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
 				const reasonStr = rerankReason ? `(${rerankReason})` : "";
 				console.debug(
-					`[recall] gate=${gateStatus} rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms recall:0ms rerank:0ms}`,
+					`[recall] gate=${gateStatus} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
 				);
 				return event as unknown as { messages?: AgentMessage[] };
 			}
@@ -866,8 +866,9 @@ export function registerMemory(pi: ExtensionAPI): void {
 			// 7b. Debug log — single per-call emission (task 5.4)
 			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 			const reasonStr = rerankReason ? `(${rerankReason})` : "";
+			const rewriteDisplay = rewriteStatus === "ok" ? `ok(${subqueries.length})` : rewriteStatus;
 			console.debug(
-				`[recall] gate=${gateLabel} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
+				`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms rewrite:${rewriteMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
 			);
 
 			if (finalResults.length === 0) {

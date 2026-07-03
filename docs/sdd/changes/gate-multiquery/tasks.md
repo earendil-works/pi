@@ -108,7 +108,7 @@
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/rerank.test.ts` (rerank 模块测试不动)
   - **依赖**: 4.3
 
-- [ ] 4.5 **debug log 加 rewrite 行 + 短路点同步更新**
+- [x] 4.5 **debug log 加 rewrite 行 + 短路点同步更新**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify) — 4 处 console.debug
   - **内容**: 单行 console.debug 模板从 `[recall] gate=X rerank=Y ... latency {gate:Nms recall:Nms rerank:Nms}` 改为 `[recall] gate=X rewrite=Y(N) rerank=Y(r) ... latency {gate:Nms rewrite:Nms recall:Nms rerank:Nms}`. rewrite=Y(N) 输出 `ok(2)` / `timeout` / `parse` / `unreachable` / `disabled` / `skip(pre-gate-skip)`.
   注: **短路点 log 必须同步修改**:memory.ts 现有 3 个早返 console.debug (Line 748 gate unknown / Line 764 GateError / Line 773 need_memory=false),全部在模板末段加 `rewrite=skip(pre-gate-skip)` 字段,覆盖"短路不调 rewrite"显式信号. happy path 进度 line 842-851 段也需要长模板加 rewrite 字段.
