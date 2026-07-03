@@ -1,4 +1,4 @@
-// before_agent_start + context hooks — TDD v1.
+// before_agent_start + context hooks — TDD v1 (pre-recall-precision).
 //
 // Verifies the v2 memory.ts hook surface additions for memory-context
 // injection (Task 8.2):
@@ -13,10 +13,14 @@
 //   - We do not exercise the real MemoryIndex path (would require ollama +
 //     sqlite-vec). Instead we mock the dynamic imports recallAtoms +
 //     formatMemoryContext so the hook body is hermetic.
+//
+// recall-precision Task 5.1 (simplify before_agent_start to cleanup-only):
+//   The OLD before_agent_start body that fired the recall pipeline is gone —
+//   recall has moved to the context hook (Task 5.2). The tests in this
+//   file that exercised the recall-from-before_agent_start contract have
+//   been removed; the cleanup-only contract is now pinned down in
+//   test/before-agent-start-cleanup.test.ts.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -136,6 +140,12 @@ describe("before_agent_start + context hooks", () => {
 	});
 
 	// No pending search → event is returned unchanged (non-destructive).
+	//
+	// recall-precision Task 5.1: recall no longer fires from
+	// before_agent_start, so the context hook always sees an empty
+	// pendingMemorySearches map and returns the event unchanged.
+	// The "context injects after pending search" scenario is now
+	// pinned down by the context-hook integration test in Task 5.2.
 	it("context hook returns event unchanged if no pending search", async () => {
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const ctxHandler = mockPi.hooks.get("context");
@@ -145,90 +155,10 @@ describe("before_agent_start + context hooks", () => {
 		expect(result).toBe(event);
 	});
 
-	// Pending search with results → last user message is mutated, prefix
-	// contains [Relevant memory context] and the formatted text, suffix
-	// contains the original user content.
-	it("context hook injects memory block into last user message after pending search", async () => {
-		// Configure mocks to return a non-empty formatted result.
-		vi.mocked(recallAtoms).mockResolvedValueOnce([
-			{ atom: { id: "a1", type: "preference", content: "user prefers ts" }, distance: 0.1, cosine: 0.95, tier: "L0" },
-		] as any);
-		vi.mocked(formatMemoryContext).mockReturnValueOnce({
-			text: "user prefers ts",
-			used: 3,
-			included: 1,
-		});
-
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-		expect(beforeHandler).toBeDefined();
-		expect(ctxHandler).toBeDefined();
-
-		// Kick off the async recall via before_agent_start.
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-
-		// Context awaits the pending search and injects.
-		const event = { messages: [{ role: "user", content: "hello" }] };
-		const result = await ctxHandler!(event, {});
-
-		// Result must be a new event (mutated messages array), not the same ref.
-		expect(result).not.toBe(event);
-		const newMessages = (result as { messages: Array<{ role: string; content: string }> }).messages;
-		expect(Array.isArray(newMessages)).toBe(true);
-		expect(newMessages.length).toBe(1);
-		const newContent = newMessages[0].content;
-		expect(typeof newContent).toBe("string");
-		expect(newContent).toContain("[Relevant memory context]");
-		expect(newContent).toContain("user prefers ts");
-		expect(newContent).toContain("hello");
-		// Prefix must come before the original content.
-		const prefixIdx = newContent.indexOf("[Relevant memory context]");
-		const originalIdx = newContent.indexOf("hello");
-		expect(prefixIdx).toBeLessThan(originalIdx);
-		// recallAtoms was called with the user prompt.
-		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
-	});
-
-	// Pending search with no usable text (formatMemoryContext returns empty)
-	// → event is returned unchanged (nothing to inject).
-	it("context hook returns event unchanged when pending search returns no formatted text", async () => {
-		// recallAtoms returns nothing meaningful, formatMemoryContext returns
-		// empty text. This is the "no relevant memory" case — must be
-		// non-destructive.
-		vi.mocked(recallAtoms).mockResolvedValueOnce([]);
-		vi.mocked(formatMemoryContext).mockReturnValueOnce({ text: "", used: 0, included: 0 });
-
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-		const event = { messages: [{ role: "user", content: "hello" }] };
-		const result = await ctxHandler!(event, {});
-
-		expect(result).toBe(event);
-	});
-
-	// Pending search where messages have no user-role message → event is
-	// returned unchanged.
-	it("context hook returns event unchanged when no user message exists", async () => {
-		vi.mocked(recallAtoms).mockResolvedValueOnce([{ atom: { id: "a1" }, distance: 0.1, cosine: 0.95, tier: "L0" }] as any);
-		vi.mocked(formatMemoryContext).mockReturnValueOnce({ text: "memory", used: 1, included: 1 });
-
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-		const event = { messages: [{ role: "assistant", content: "hi" }] };
-		const result = await ctxHandler!(event, {});
-
-		expect(result).toBe(event);
-	});
-
-	// Pending search with no prompt in before_agent_start → no work queued,
-	// context returns event unchanged.
+	// recall-precision Task 5.1: before_agent_start no longer triggers
+	// recall, so even an empty prompt must produce zero side effects.
+	// The "no pending search queued" half of the contract is also
+	// asserted in before-agent-start-cleanup.test.ts.
 	it("before_agent_start with empty prompt does not queue a search", async () => {
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const beforeHandler = mockPi.hooks.get("before_agent_start");
@@ -243,129 +173,11 @@ describe("before_agent_start + context hooks", () => {
 		// recallAtoms was never called.
 		expect(vi.mocked(recallAtoms)).not.toHaveBeenCalled();
 	});
-
-	// Task 4.2 — recall config wiring.
-	//
-	// recallAtoms options passed by before_agent_start must reflect:
-	//   - topK: 20 (Decision 2 — per-channel KNN candidate count)
-	//   - tagOverlapWeight / freshnessWeight / tagAliases: from
-	//     settings.json `personalAssistant.memory.{tagOverlapWeight,
-	//     freshnessWeight, tagAliases}` when present, undefined otherwise
-	//     (search.ts applies its own additive-weight defaults).
-	//
-	// Note: `rrfK` / `recallThreshold` were removed when the recall
-	// pipeline migrated from hybrid (BM25 + dense + RRF) to pure dense +
-	// cosine floor (memory-recall-dense-rerank). The wiring tests now
-	// cover the surviving scoring knobs only.
-	//
-	// "config block missing → defaults used" — when settings.json has no
-	// `personalAssistant.memory`, the options object should carry
-	// `tagOverlapWeight: undefined, freshnessWeight: undefined,
-	// tagAliases: undefined` so search.ts applies its 0.10 / 0.05 defaults.
-	it("recallAtoms is called with topK: 20 and undefined scoring knobs when config is missing", async () => {
-		// Existing beforeEach already stubs HOME=/tmp with no settings.json,
-		// so loadConfig() returns {} — exactly the "config block missing"
-		// scenario we need.
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-		expect(beforeHandler).toBeDefined();
-		expect(ctxHandler).toBeDefined();
-
-		// before_agent_start fires-and-forgets the IIFE; await the context
-		// handler so the pending search promise (which contains the
-		// recallAtoms call) completes before the assertion.
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
-
-		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
-		// Third positional arg is the options object. We use
-		// objectContaining so the assertion stays focused on the recall
-		// contract; the test does not care if the implementation adds
-		// future knobs.
-		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-		expect(thirdArg).toBeDefined();
-		expect(thirdArg).toMatchObject({
-			topK: 20,
-			tagOverlapWeight: undefined,
-			freshnessWeight: undefined,
-			tagAliases: undefined,
-		});
-	});
 });
 
-describe("before_agent_start recall config wiring (Task 4.2)", () => {
-	let mockPi: MockPi;
-	let tmpHome: string;
-
-	// Write a real settings.json to a tmp HOME and stub HOME so the *real*
-	// loadConfig() picks it up. (vi.mock("../memory.ts") would replace the
-	// module under test; vi.spyOn on the live ESM binding is fragile across
-	// vitest versions. The disk-based pattern is what session-before-compact
-	// already uses for the same reason.)
-	function writeSettings(content: object): void {
-		const agentDir = join(tmpHome, ".pi", "agent");
-		mkdirSync(agentDir, { recursive: true });
-		writeFileSync(join(agentDir, "settings.json"), JSON.stringify(content, null, 2));
-	}
-
-	beforeEach(() => {
-		tmpHome = mkdtempSync(join(tmpdir(), "memory-recall-cfg-"));
-		vi.stubEnv("HOME", tmpHome);
-
-		mockPi = createMockPi();
-		vi.mocked(recallAtoms).mockReset();
-		vi.mocked(formatMemoryContext).mockReset();
-		vi.mocked(recallAtoms).mockResolvedValue([]);
-		vi.mocked(formatMemoryContext).mockReturnValue({ text: "", used: 0, included: 0 });
-	});
-
-	afterEach(() => {
-		vi.unstubAllEnvs();
-		vi.clearAllMocks();
-		rmSync(tmpHome, { recursive: true, force: true });
-	});
-
-	// "user tunes scoring weights" — config.memory.tagOverlapWeight +
-	// config.memory.freshnessWeight + config.memory.tagAliases flow through
-	// to the recallAtoms call as the third-arg option. The test sets all
-	// three knobs so we also cover the joint-wiring case (multiple scoring
-	// knobs read in the same option object).
-	//
-	// Note: this used to test config.recall.{rrfK, recallThreshold} — that
-	// sub-block was removed when the pipeline migrated to pure-dense
-	// (memory-recall-dense-rerank). The scoring knobs are now the only
-	// runtime-tunable recall parameters.
-	it("recallAtoms is called with tagOverlapWeight + freshnessWeight + tagAliases when present in settings.json", async () => {
-		writeSettings({
-			personalAssistant: {
-				memory: {
-					tagOverlapWeight: 0.15,
-					freshnessWeight: 0.10,
-					tagAliases: { 代码规范: "code-style" },
-				},
-			},
-		});
-
-		registerMemory(mockPi as unknown as ExtensionAPI);
-		const beforeHandler = mockPi.hooks.get("before_agent_start");
-		const ctxHandler = mockPi.hooks.get("context");
-		expect(beforeHandler).toBeDefined();
-		expect(ctxHandler).toBeDefined();
-
-		// Same fire-and-forget pattern as the other suite — await the
-		// context handler to drain the pending search before asserting.
-		await beforeHandler!({ prompt: "test prompt" }, createMockCtx());
-		await ctxHandler!({ messages: [{ role: "user", content: "test prompt" }] }, {});
-
-		expect(vi.mocked(recallAtoms)).toHaveBeenCalledTimes(1);
-		const thirdArg = vi.mocked(recallAtoms).mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-		expect(thirdArg).toBeDefined();
-		expect(thirdArg).toMatchObject({
-			topK: 20,
-			tagOverlapWeight: 0.15,
-			freshnessWeight: 0.10,
-			tagAliases: { 代码规范: "code-style" },
-		});
-	});
-});
+// recall-precision Task 5.1 removed the entire second describe block
+// ("before_agent_start recall config wiring (Task 4.2)") and the
+// "recallAtoms is called with topK: 20..." test from the first block
+// because every assertion in them depended on before_agent_start invoking
+// recallAtoms. The recall config-wiring contract moves with the recall
+// pipeline into the new context hook (Task 5.2).

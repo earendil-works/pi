@@ -22,20 +22,31 @@
 // before-agent-start.test.ts — mock search.ts / format.ts / storage.ts so
 // the hook body is hermetic. Per-test return values are configured on
 // `recallAtoms` via vi.mocked(...).mockResolvedValueOnce / mockRejectedValueOnce.
+//
+// recall-precision Task 5.1:
+//   The setStatus("memory", …) indicator moved OFF the before_agent_start
+//   hook (cleanup-only now) and onto the new context hook in Task 5.2.
+//   The three "calls setStatus" assertions below were removed — they
+//   tested a contract that no longer exists at this hook. The
+//   "does NOT call setStatus when prompt is empty" regression guard is
+//   kept (now trivially true because the hook no longer calls setStatus
+//   at all) as a guard against accidental re-introduction.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// Mock the modules that memory.ts dynamically imports at hook-fire time.
+// Mock the modules that the OLD before_agent_start hook dynamically
+// imported. After Task 5.1 these imports are gone from the
+// before_agent_start body, but the mocks stay so the assertion
+// "recallAtoms was not called" is observable (the spy must exist for
+// vi.mocked(...).not.toHaveBeenCalled() to be meaningful).
 vi.mock("../search.ts", () => ({
 	recallAtoms: vi.fn(async () => []),
 }));
 
-vi.mock("../format.ts", () => ({
-	formatMemoryContext: vi.fn(() => ({ text: "", used: 0, included: 0 })),
-}));
-
-// Mock storage.ts so the hook body does not open a real sqlite DB.
+// Mock storage.ts defensively — the OLD body opened a MemoryIndex;
+// the new body does not. The mock keeps the module load path valid
+// in case any unrelated code path still imports it.
 vi.mock("../storage.ts", () => ({
 	MemoryIndex: class FakeMemoryIndex {
 		dbPath: string;
@@ -100,46 +111,18 @@ function createMockCtx(): MockCtx & { setStatusCalls: SetStatusCall[] } {
 	};
 }
 
-// Build a fully-shaped RecallResult so the indicator math (byType, topScore)
-// has the real fields it touches. RecallResult = { atom, distance, cosine, score }.
-function makeRecallResult(overrides: {
-	id: string;
-	type: "rule" | "fact" | "process";
-	score: number;
-}) {
-	return {
-		atom: {
-			id: overrides.id,
-			type: overrides.type,
-			title: `t-${overrides.id}`,
-			content: "c",
-			summary: "s",
-			tags: [],
-			importance: 0.5,
-			strength: 0.5,
-			access_count: 0,
-			version: 1,
-			is_latest: 1,
-			parent_id: null,
-			superseded_at: null,
-			archived: 0,
-			created_at: 0,
-			updated_at: 0,
-			last_access: null,
-			content_fingerprint: "fp",
-			source_session: null,
-		},
-		distance: 0.5,
-		cosine: 0.5,
-		score: overrides.score,
-	};
-}
-
 describe("before_agent_start memory status indicator", () => {
 	let mockPi: MockPi;
 	let mockCtx: MockCtx & { setStatusCalls: SetStatusCall[] };
 	let beforeHandler: HookHandler;
-	let contextHandler: HookHandler;
+
+	// recall-precision Task 5.1: this suite previously asserted that the
+	// before_agent_start hook called ctx.ui.setStatus("memory", ...) with
+	// hits / no-match / failure summaries. That contract moved to the
+	// new context hook (Task 5.2). The remaining regression guard keeps
+	// the strongest surviving invariant: "the hook never calls setStatus
+	// at all", which trivially covers the empty-prompt case AND every
+	// future regression where someone re-adds setStatus to this hook.
 
 	beforeEach(() => {
 		mockPi = createMockPi();
@@ -150,89 +133,25 @@ describe("before_agent_start memory status indicator", () => {
 
 		registerMemory(mockPi as unknown as ExtensionAPI);
 		const before = mockPi.hooks.get("before_agent_start");
-		const ctx = mockPi.hooks.get("context");
 		if (!before) throw new Error("before_agent_start hook not registered");
-		if (!ctx) throw new Error("context hook not registered");
 		beforeHandler = before;
-		contextHandler = ctx;
 	});
-
-	// Drain the pending recall before asserting. The before_agent_start hook
-	// fires the recall as a fire-and-forget promise and only stashes it in
-	// `pendingMemorySearches`; the context hook awaits that promise. Calling
-	// the context hook with a matching user message forces the recall to
-	// drain before setStatus is observed.
-	async function fireAndDrain(prompt: string): Promise<void> {
-		await beforeHandler({ prompt }, mockCtx);
-		await contextHandler({ messages: [{ role: "user", content: prompt }] }, mockCtx);
-	}
 
 	afterEach(() => {
 		vi.unstubAllEnvs();
 		vi.clearAllMocks();
 	});
 
-	it("calls setStatus('memory', ...) with hits summary when recall returns atoms", async () => {
-		vi.mocked(recallAtoms).mockResolvedValueOnce([
-			makeRecallResult({ id: "a1", type: "rule", score: 0.9 }),
-			makeRecallResult({ id: "b1", type: "fact", score: 0.7 }),
-			makeRecallResult({ id: "c1", type: "process", score: 0.5 }),
-		] as never);
+	it("does NOT call ctx.ui.setStatus from before_agent_start (Task 5.1 cleanup-only)", async () => {
+		// Fire with a non-empty prompt so the OLD body would have set a
+		// memory status; the new cleanup-only body must remain silent.
+		await beforeHandler({ prompt: "what did we decide about X?" }, mockCtx);
+		// Drain microtasks in case any deferred call slipped through.
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
 
-		await fireAndDrain("test prompt");
-
-		expect(mockCtx.setStatusCalls).toHaveLength(1);
-		const call = mockCtx.setStatusCalls[0];
-		expect(call.key).toBe("memory");
-		expect(call.text).toMatch(/^📦 3 atoms · rule=1 fact=1 process=1 · top=0\.900$/);
-	});
-
-	it("calls setStatus('memory', '🔍 no memory match') when recall returns empty", async () => {
-		vi.mocked(recallAtoms).mockResolvedValueOnce([]);
-
-		await fireAndDrain("test prompt");
-
-		expect(mockCtx.setStatusCalls).toHaveLength(1);
-		expect(mockCtx.setStatusCalls[0]).toEqual({
-			key: "memory",
-			text: "🔍 no memory match",
-		});
-	});
-
-	it("calls setStatus('memory', '⚠ memory recall failed') when recall throws", async () => {
-		vi.mocked(recallAtoms).mockRejectedValueOnce(new Error("sqlite boom"));
-
-		// Fire the hook (which queues the IIFE) and let the rejection propagate
-		// through the pending promise. We must NOT use fireAndDrain here because
-		// the context handler re-throws the pending rejection, which would
-		// surface as a failing assertion. setStatus is called inside the catch
-		// block before the re-throw, so a microtask flush is enough to observe
-		// the call. Attach an unhandled-rejection guard so the test runner
-		// doesn't fail on the expected rejection.
-		const unhandled: unknown[] = [];
-		const onUnhandled = (r: { reason: unknown }) => unhandled.push(r.reason);
-		process.on("unhandledRejection", onUnhandled);
-
-		try {
-			await beforeHandler({ prompt: "test prompt" }, mockCtx);
-			// Two microtask flushes: one for index.init(), one for the dynamic
-			// import, one for recallAtoms → catch → setStatus.
-			await new Promise((r) => setImmediate(r));
-			await new Promise((r) => setImmediate(r));
-			await new Promise((r) => setImmediate(r));
-
-			expect(mockCtx.setStatusCalls).toHaveLength(1);
-			expect(mockCtx.setStatusCalls[0]).toEqual({
-				key: "memory",
-				text: "⚠ memory recall failed",
-			});
-		} finally {
-			process.off("unhandledRejection", onUnhandled);
-			// The pending promise rejection will eventually fire unhandled; we
-			// recorded it above so it doesn't trip the runner. No additional
-			// assertion needed — the contract is that setStatus fired before
-			// the re-throw, which we already verified above.
-		}
+		expect(mockCtx.setStatusCalls).toHaveLength(0);
+		expect(vi.mocked(recallAtoms)).not.toHaveBeenCalled();
 	});
 
 	it("does NOT call setStatus when prompt is empty", async () => {
@@ -240,20 +159,5 @@ describe("before_agent_start memory status indicator", () => {
 
 		expect(mockCtx.setStatusCalls).toHaveLength(0);
 		expect(vi.mocked(recallAtoms)).not.toHaveBeenCalled();
-	});
-
-	it("counts rule/fact/process independently in the indicator", async () => {
-		vi.mocked(recallAtoms).mockResolvedValueOnce([
-			makeRecallResult({ id: "r1", type: "rule", score: 0.6 }),
-			makeRecallResult({ id: "r2", type: "rule", score: 0.5 }),
-			makeRecallResult({ id: "f1", type: "fact", score: 0.4 }),
-		] as never);
-
-		await fireAndDrain("test prompt");
-
-		expect(mockCtx.setStatusCalls).toHaveLength(1);
-		expect(mockCtx.setStatusCalls[0].text).toBe(
-			"📦 3 atoms · rule=2 fact=1 process=0 · top=0.600",
-		);
 	});
 });
