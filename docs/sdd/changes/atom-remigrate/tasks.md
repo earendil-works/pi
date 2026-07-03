@@ -221,7 +221,7 @@
   - **验证**: `cd extensions/personal-assistant && grep -n "reindexOne" bge-reindex.ts` 找到定义
   - **依赖**: 无
 
-- [ ] 3.10 **extraction-dedup-confirm.test.ts 新文件: 5 个边界 case + tag 归一化**
+- [x] 3.10 **extraction-dedup-confirm.test.ts 新文件: 5 个边界 case + tag 归一化**
   - **文件**: `extensions/personal-assistant/test/extraction-dedup-confirm.test.ts` (Create)
   - **内容**: describe "executeItem cosine 命中 + LLM 二次确认" — 5 个 it():
   - (a) cosine 0.65+ 命中 + LLM 返回 `update` → 旧 atom 字段更新, version+1 (mock `index.updateAtom` 验证调用)
@@ -251,19 +251,19 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction-dedup-confirm.test.ts` 全 case pass
   - **依赖**: 3.7, 3.8
 
-- [ ] 3.11 **executePlan 透传 callLlm 到 executeItem**
+- [x] 3.11 **executePlan 透传 callLlm 到 executeItem**
   - **文件**: `extensions/personal-assistant/extraction.ts:189-214` (Modify)
   - **内容**: `executePlan` 加 `callLlm?: (prompt: string) => Promise<string>` 参数 (向后兼容, undefined 时不传 executeItem 二次确认逻辑)。在 `for` loop 调 executeItem 时把 callLlm 透传:`executeItem(index, atomsDir, planItem.item, callLlm)`。同步更新 `executeParsedPlan` (line 304+) 调 `executePlan` 处, 把 extractMemoriesWithCallLlm 的 callLlm 传入 (已有)。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts` 既有 case pass (callLlm 可选, 老 case 不传也能跑)
   - **依赖**: 3.7
 
-- [ ] 3.12 **recall-quality test: precision@5 验证 (目标 1 验证)**
+- [x] 3.12 **recall-quality test: precision@5 验证 (目标 1 验证)**
   - **文件**: `extensions/personal-assistant/test/recall-quality.test.ts` (Modify, 新加 case; 或新建 `test/recall-quality.test.ts`)
   - **内容**: 用真实 90 atom corpus (备份到 test/fixtures/memory-90.db): 跑 (a) baseline (无 dedup) precision@5; (b) 跑 migration 脚本 (调 child_process.spawnSync); (c) 重跑同一 query, precision@5 ≥ 40%。10 个 query case, 跑 5 个真相关 query 验证。用户原 case "修复的脚本和修复逻辑给我" 包含在内。3 个 it()。
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-quality.test.ts` precision assertion pass
   - **依赖**: 2.5
 
-- [ ] 3.13 **CHANGELOG 更新 (fill existing ### Added / ### Changed 子段)**
+- [x] 3.13 **CHANGELOG 更新 (fill existing ### Added / ### Changed 子段)**
   - **文件**: `extensions/personal-assistant/CHANGELOG.md` (Modify)
   - **内容**: 当前 `## [Unreleased]` 下已有 `### Added (none in this change)` 和 `### Changed (covered above)` 占位子段。**不要**新建 `### Added` / `### Changed` (会重复子标题)。改法:
   1. 把 `### Added\n- (none in this change)` 改为:
