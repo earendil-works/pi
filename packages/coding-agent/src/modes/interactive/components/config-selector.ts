@@ -31,6 +31,13 @@ const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
 	themes: "Themes",
 };
 
+const RESOURCE_TYPE_DESCRIPTIONS: Record<ResourceType, string> = {
+	extensions: "Runs TypeScript or JavaScript code inside Pi.",
+	skills: "Adds reusable workflows and optional slash commands.",
+	prompts: "Adds prompt templates for repeatable requests.",
+	themes: "Changes how Pi looks in the terminal.",
+};
+
 interface ResourceItem {
 	path: string;
 	enabled: boolean;
@@ -54,6 +61,69 @@ interface ResourceGroup {
 	origin: "package" | "top-level";
 	source: string;
 	subgroups: ResourceSubgroup[];
+}
+
+type GroupStatus = "on" | "off" | "mixed";
+
+function padRight(text: string, width: number): string {
+	const truncated = truncateToWidth(text, width, "");
+	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
+}
+
+function renderKeyValue(label: string, value: string, width: number): string {
+	const prefix = theme.fg("muted", `${label}: `);
+	return truncateToWidth(`  ${prefix}${value}`, width, "");
+}
+
+function getGroupItems(group: ResourceGroup): ResourceItem[] {
+	return group.subgroups.flatMap((subgroup) => subgroup.items);
+}
+
+function getGroupCounts(group: ResourceGroup): { enabled: number; total: number } {
+	const items = getGroupItems(group);
+	return {
+		enabled: items.filter((item) => item.enabled).length,
+		total: items.length,
+	};
+}
+
+function getGroupStatus(group: ResourceGroup): GroupStatus {
+	const counts = getGroupCounts(group);
+	if (counts.enabled === 0) return "off";
+	if (counts.enabled === counts.total) return "on";
+	return "mixed";
+}
+
+function formatStatus(status: GroupStatus): string {
+	if (status === "on") return theme.fg("success", "[on] ");
+	if (status === "off") return theme.fg("dim", "[off]");
+	return theme.fg("warning", "[mix]");
+}
+
+function getScopeLabel(scope: ResourceGroup["scope"]): string {
+	if (scope === "project") return "This project";
+	if (scope === "user") return "All projects";
+	return "This session";
+}
+
+function getAddOnTitle(group: ResourceGroup): string {
+	if (group.origin === "package") {
+		const source = group.source.replace(/^npm:/, "");
+		if (source.startsWith("/") || source.startsWith(".") || source.startsWith("~")) {
+			return basename(source.replace(/\/+$/, ""));
+		}
+		return source;
+	}
+	return group.label;
+}
+
+function groupContainsSubagents(group: ResourceGroup): boolean {
+	const source = group.source.toLowerCase();
+	if (source.includes("subagent") || source.includes("sub-agent")) return true;
+	return getGroupItems(group).some((item) => {
+		const combined = `${item.displayName} ${item.path}`.toLowerCase();
+		return combined.includes("subagent") || combined.includes("sub-agent");
+	});
 }
 
 function formatBaseDir(baseDir: string): string {
@@ -181,16 +251,17 @@ class ConfigSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = theme.bold("Resource Configuration");
-		const sep = theme.fg("muted", " · ");
-		const hint = rawKeyHint("space", "toggle") + sep + rawKeyHint("esc", "close");
+		const title = theme.bold("Add-ons");
+		const sep = theme.fg("muted", " | ");
+		const hint =
+			rawKeyHint("space", "toggle") + sep + rawKeyHint("enter", "toggle") + sep + rawKeyHint("esc", "close");
 		const hintWidth = visibleWidth(hint);
 		const titleWidth = visibleWidth(title);
 		const spacing = Math.max(1, width - titleWidth - hintWidth);
 
 		return [
 			truncateToWidth(`${title}${" ".repeat(spacing)}${hint}`, width, ""),
-			theme.fg("muted", "Type to filter resources"),
+			theme.fg("muted", "Enable add-ons package-by-package, then tune individual abilities when needed."),
 		];
 	}
 }
@@ -208,7 +279,7 @@ class ResourceList implements Component, Focusable {
 
 	public onCancel?: () => void;
 	public onExit?: () => void;
-	public onToggle?: (item: ResourceItem, newEnabled: boolean) => void;
+	public onToggle?: () => void;
 
 	private _focused = false;
 	get focused(): boolean {
@@ -231,8 +302,8 @@ class ResourceList implements Component, Focusable {
 		this.cwd = cwd;
 		this.agentDir = agentDir;
 		this.searchInput = new Input();
-		// 8 lines of chrome: top spacer + top border + spacer + header (2 lines) + spacer + bottom spacer + bottom border
-		const chrome = 8;
+		// Header, borders, search chrome, and bottom padding.
+		const chrome = 10;
 		this.maxVisible = Math.max(5, (terminalHeight ?? 24) - chrome);
 		this.buildFlatList();
 		this.filteredItems = [...this.flatItems];
@@ -249,15 +320,16 @@ class ResourceList implements Component, Focusable {
 				}
 			}
 		}
-		// Start selection on first item (not header)
-		this.selectedIndex = this.flatItems.findIndex((e) => e.type === "item");
+		// Start selection on the first add-on.
+		this.selectedIndex = this.flatItems.findIndex((e) => e.type === "group" || e.type === "item");
 		if (this.selectedIndex < 0) this.selectedIndex = 0;
 	}
 
-	private findNextItem(fromIndex: number, direction: 1 | -1): number {
+	private findNextSelectable(fromIndex: number, direction: 1 | -1): number {
 		let idx = fromIndex + direction;
 		while (idx >= 0 && idx < this.filteredItems.length) {
-			if (this.filteredItems[idx].type === "item") {
+			const entry = this.filteredItems[idx];
+			if (entry.type === "group" || entry.type === "item") {
 				return idx;
 			}
 			idx += direction;
@@ -276,6 +348,22 @@ class ResourceList implements Component, Focusable {
 		const matchingItems = new Set<ResourceItem>();
 		const matchingSubgroups = new Set<ResourceSubgroup>();
 		const matchingGroups = new Set<ResourceGroup>();
+
+		for (const group of this.groups) {
+			if (
+				group.label.toLowerCase().includes(lowerQuery) ||
+				group.source.toLowerCase().includes(lowerQuery) ||
+				getAddOnTitle(group).toLowerCase().includes(lowerQuery)
+			) {
+				matchingGroups.add(group);
+				for (const subgroup of group.subgroups) {
+					matchingSubgroups.add(subgroup);
+					for (const item of subgroup.items) {
+						matchingItems.add(item);
+					}
+				}
+			}
+		}
 
 		for (const entry of this.flatItems) {
 			if (entry.type === "item") {
@@ -317,7 +405,7 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private selectFirstItem(): void {
-		const firstItemIndex = this.filteredItems.findIndex((e) => e.type === "item");
+		const firstItemIndex = this.filteredItems.findIndex((e) => e.type === "group" || e.type === "item");
 		this.selectedIndex = firstItemIndex >= 0 ? firstItemIndex : 0;
 	}
 
@@ -338,14 +426,37 @@ class ResourceList implements Component, Focusable {
 	invalidate(): void {}
 
 	render(width: number): string[] {
+		if (width >= 104) {
+			const gap = "   ";
+			const leftWidth = Math.max(48, Math.min(68, Math.floor((width - visibleWidth(gap)) * 0.56)));
+			const rightWidth = width - leftWidth - visibleWidth(gap);
+			const leftLines = this.renderList(leftWidth);
+			const rightLines = this.renderDetails(rightWidth);
+			const lineCount = Math.max(leftLines.length, rightLines.length);
+			const lines: string[] = [];
+
+			for (let i = 0; i < lineCount; i++) {
+				const left = padRight(leftLines[i] ?? "", leftWidth);
+				const right = rightLines[i] ?? "";
+				lines.push(truncateToWidth(`${left}${gap}${right}`, width, ""));
+			}
+
+			return lines;
+		}
+
+		return [...this.renderList(width), "", ...this.renderDetails(width)];
+	}
+
+	private renderList(width: number): string[] {
 		const lines: string[] = [];
 
 		// Search input
+		lines.push(theme.fg("muted", "  Search add-ons, sources, abilities"));
 		lines.push(...this.searchInput.render(width));
 		lines.push("");
 
 		if (this.filteredItems.length === 0) {
-			lines.push(theme.fg("muted", "  No resources found"));
+			lines.push(theme.fg("muted", "  No add-ons found"));
 			return lines;
 		}
 
@@ -361,28 +472,38 @@ class ResourceList implements Component, Focusable {
 			const isSelected = i === this.selectedIndex;
 
 			if (entry.type === "group") {
-				// Main group header (no cursor)
-				const groupLine = theme.fg("accent", theme.bold(entry.group.label));
-				lines.push(truncateToWidth(`  ${groupLine}`, width, ""));
+				const group = entry.group;
+				const cursor = isSelected ? "> " : "  ";
+				const counts = getGroupCounts(group);
+				const status = formatStatus(getGroupStatus(group));
+				const title = isSelected ? theme.bold(getAddOnTitle(group)) : getAddOnTitle(group);
+				const source = group.origin === "package" ? group.source : group.label;
+				const summary = theme.fg("muted", `${counts.enabled}/${counts.total} abilities`);
+				lines.push(truncateToWidth(`${cursor}${status} ${title} ${summary}`, width, ""));
+				lines.push(
+					truncateToWidth(`     ${theme.fg("dim", `${getScopeLabel(group.scope)} - ${source}`)}`, width, ""),
+				);
 			} else if (entry.type === "subgroup") {
 				// Subgroup header (indented, no cursor)
 				const subgroupLine = theme.fg("muted", entry.subgroup.label);
-				lines.push(truncateToWidth(`    ${subgroupLine}`, width, ""));
+				lines.push(truncateToWidth(`      ${subgroupLine}`, width, ""));
 			} else {
 				// Resource item (cursor only on items)
 				const item = entry.item;
 				const cursor = isSelected ? "> " : "  ";
 				const checkbox = item.enabled ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
 				const name = isSelected ? theme.bold(item.displayName) : item.displayName;
-				lines.push(truncateToWidth(`${cursor}    ${checkbox} ${name}`, width, "..."));
+				const type = theme.fg("dim", item.resourceType.slice(0, -1));
+				lines.push(truncateToWidth(`${cursor}      ${checkbox} ${name} ${type}`, width, "..."));
 			}
 		}
 
 		// Scroll indicator
 		if (startIndex > 0 || endIndex < this.filteredItems.length) {
-			const itemCount = this.filteredItems.filter((e) => e.type === "item").length;
+			const itemCount = this.filteredItems.filter((e) => e.type === "group" || e.type === "item").length;
 			const currentItemIndex =
-				this.filteredItems.slice(0, this.selectedIndex).filter((e) => e.type === "item").length + 1;
+				this.filteredItems.slice(0, this.selectedIndex).filter((e) => e.type === "group" || e.type === "item")
+					.length + 1;
 			lines.push(theme.fg("dim", `  (${currentItemIndex}/${itemCount})`));
 		}
 
@@ -393,17 +514,21 @@ class ResourceList implements Component, Focusable {
 		const kb = getKeybindings();
 
 		if (kb.matches(data, "tui.select.up")) {
-			this.selectedIndex = this.findNextItem(this.selectedIndex, -1);
+			this.selectedIndex = this.findNextSelectable(this.selectedIndex, -1);
 			return;
 		}
 		if (kb.matches(data, "tui.select.down")) {
-			this.selectedIndex = this.findNextItem(this.selectedIndex, 1);
+			this.selectedIndex = this.findNextSelectable(this.selectedIndex, 1);
 			return;
 		}
 		if (kb.matches(data, "tui.select.pageUp")) {
-			// Jump up by maxVisible, then find nearest item
+			// Jump up by maxVisible, then find nearest selectable entry
 			let target = Math.max(0, this.selectedIndex - this.maxVisible);
-			while (target < this.filteredItems.length && this.filteredItems[target].type !== "item") {
+			while (
+				target < this.filteredItems.length &&
+				this.filteredItems[target].type !== "group" &&
+				this.filteredItems[target].type !== "item"
+			) {
 				target++;
 			}
 			if (target < this.filteredItems.length) {
@@ -412,9 +537,13 @@ class ResourceList implements Component, Focusable {
 			return;
 		}
 		if (kb.matches(data, "tui.select.pageDown")) {
-			// Jump down by maxVisible, then find nearest item
+			// Jump down by maxVisible, then find nearest selectable entry
 			let target = Math.min(this.filteredItems.length - 1, this.selectedIndex + this.maxVisible);
-			while (target >= 0 && this.filteredItems[target].type !== "item") {
+			while (
+				target >= 0 &&
+				this.filteredItems[target].type !== "group" &&
+				this.filteredItems[target].type !== "item"
+			) {
 				target--;
 			}
 			if (target >= 0) {
@@ -432,11 +561,14 @@ class ResourceList implements Component, Focusable {
 		}
 		if (data === " " || kb.matches(data, "tui.select.confirm")) {
 			const entry = this.filteredItems[this.selectedIndex];
-			if (entry?.type === "item") {
+			if (entry?.type === "group") {
+				this.toggleGroup(entry.group);
+				this.onToggle?.();
+			} else if (entry?.type === "item") {
 				const newEnabled = !entry.item.enabled;
 				this.toggleResource(entry.item, newEnabled);
 				this.updateItem(entry.item, newEnabled);
-				this.onToggle?.(entry.item, newEnabled);
+				this.onToggle?.();
 			}
 			return;
 		}
@@ -444,6 +576,84 @@ class ResourceList implements Component, Focusable {
 		// Pass to search input
 		this.searchInput.handleInput(data);
 		this.filterItems(this.searchInput.getValue());
+	}
+
+	private getSelectedEntry(): FlatEntry | undefined {
+		return this.filteredItems[this.selectedIndex];
+	}
+
+	private getSelectedGroup(): ResourceGroup | undefined {
+		const entry = this.getSelectedEntry();
+		if (!entry) return undefined;
+		if (entry.type === "group") return entry.group;
+		if (entry.type === "subgroup") return entry.group;
+		return this.groups.find((group) => group.key === entry.item.groupKey);
+	}
+
+	private getSelectedItem(): ResourceItem | undefined {
+		const entry = this.getSelectedEntry();
+		return entry?.type === "item" ? entry.item : undefined;
+	}
+
+	private toggleGroup(group: ResourceGroup): void {
+		const nextEnabled = getGroupStatus(group) !== "on";
+		for (const item of getGroupItems(group)) {
+			if (item.enabled !== nextEnabled) {
+				this.toggleResource(item, nextEnabled);
+				this.updateItem(item, nextEnabled);
+			}
+		}
+	}
+
+	private renderDetails(width: number): string[] {
+		const group = this.getSelectedGroup();
+		if (!group) {
+			return [theme.bold("Add-on details"), theme.fg("muted", "  Select an add-on to inspect it.")];
+		}
+
+		const selectedItem = this.getSelectedItem();
+		const counts = getGroupCounts(group);
+		const status = getGroupStatus(group);
+		const lines: string[] = [];
+
+		lines.push(theme.bold("Add-on details"));
+		lines.push(truncateToWidth(`  ${formatStatus(status)} ${theme.bold(getAddOnTitle(group))}`, width, ""));
+		lines.push(renderKeyValue("Status", `${counts.enabled}/${counts.total} abilities enabled`, width));
+		lines.push(renderKeyValue("Scope", getScopeLabel(group.scope), width));
+		lines.push(renderKeyValue("Source", group.source, width));
+		lines.push(renderKeyValue("Kind", group.origin === "package" ? "Package" : "Local add-on folder", width));
+		lines.push("");
+
+		if (groupContainsSubagents(group)) {
+			lines.push(theme.fg("warning", "  Model fit: subagents are model-sensitive"));
+			lines.push(
+				...[
+					"  Local models are usually fine for scout/search roles.",
+					"  Use stronger models for planning, review, and parallel coordination.",
+					"  Keep paid-model fallback explicit before enabling many agents.",
+				].map((line) => truncateToWidth(theme.fg("muted", line), width, "")),
+			);
+			lines.push("");
+		}
+
+		lines.push(theme.bold("Selected ability"));
+		if (selectedItem) {
+			lines.push(renderKeyValue("Type", RESOURCE_TYPE_LABELS[selectedItem.resourceType].slice(0, -1), width));
+			lines.push(renderKeyValue("State", selectedItem.enabled ? "Enabled" : "Disabled", width));
+			lines.push(renderKeyValue("Name", selectedItem.displayName, width));
+			lines.push(renderKeyValue("Path", this.getDisplayPattern(selectedItem), width));
+			lines.push(
+				truncateToWidth(`  ${theme.fg("muted", RESOURCE_TYPE_DESCRIPTIONS[selectedItem.resourceType])}`, width, ""),
+			);
+		} else {
+			lines.push(theme.fg("muted", "  Select a specific ability to see exact path and impact."));
+		}
+		lines.push("");
+		lines.push(theme.bold("Security"));
+		lines.push(truncateToWidth(theme.fg("muted", "  Packages can run code and steer model behavior."), width, ""));
+		lines.push(truncateToWidth(theme.fg("muted", "  Review source before enabling third-party add-ons."), width, ""));
+
+		return lines;
 	}
 
 	private toggleResource(item: ResourceItem, enabled: boolean): void {
@@ -574,6 +784,13 @@ class ResourceList implements Component, Focusable {
 	private getPackageResourcePattern(item: ResourceItem): string {
 		const baseDir = item.metadata.baseDir ?? dirname(item.path);
 		return relative(baseDir, item.path);
+	}
+
+	private getDisplayPattern(item: ResourceItem): string {
+		if (item.metadata.origin === "package") {
+			return this.getPackageResourcePattern(item);
+		}
+		return this.getResourcePattern(item);
 	}
 }
 

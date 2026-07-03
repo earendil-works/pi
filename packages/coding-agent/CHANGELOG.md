@@ -7,6 +7,10 @@
 - Exported `convertToPng` for extension authors.
 - Exported `parseArgs` and type `Args` for extension authors.
 
+### Changed
+
+- Improved `pi config` so installed packages render as add-ons with package-level toggles, detail metadata, and subagent model-fit guidance.
+
 ### Fixed
 
 - Fixed the GitLab Duo custom provider example to use adaptive thinking for Claude models, expose xhigh thinking, and include newer verified model IDs ([#5201](https://github.com/earendil-works/pi/issues/5201)).
