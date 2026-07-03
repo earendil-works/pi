@@ -593,10 +593,10 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		expect(mockRecallAtoms.mock.calls[0]![1]).toBe("sub query 1");
 		expect(mockRecallAtoms.mock.calls[1]![1]).toBe("sub query 2");
 
-		// rerankAndFilter called with joined subqueries
-		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
-		const rerankQuery = mockRerankAndFilter.mock.calls[0]![0] as string;
-		expect(rerankQuery).toBe("sub query 1 sub query 2");
+		// rerankAndFilter called once per subquery
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(2);
+		expect(mockRerankAndFilter.mock.calls[0]![0] as string).toBe("sub query 1");
+		expect(mockRerankAndFilter.mock.calls[1]![0] as string).toBe("sub query 2");
 
 		// Format called and memory injected
 		expect(mockFormatMemoryContext).toHaveBeenCalledTimes(1);

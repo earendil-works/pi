@@ -40,7 +40,13 @@ interface PromptMsg {
 }
 
 interface AbortMsg {
-  type: "abort";
+	type: "abort";
+}
+
+interface CompactMsg {
+	type: "compact";
+	sessionId?: string;
+	customInstructions?: string;
 }
 
 interface SwitchSessionMsg {
@@ -60,7 +66,7 @@ interface ExtensionUIResponseMsg {
   cancelled?: true;
 }
 
-type ClientMessage = SubscribeMsg | UnsubscribeMsg | PromptMsg | AbortMsg | SwitchSessionMsg | ExtensionUIResponseMsg;
+type ClientMessage = SubscribeMsg | UnsubscribeMsg | PromptMsg | AbortMsg | CompactMsg | SwitchSessionMsg | ExtensionUIResponseMsg;
 
 // --- Client state ------------------------------------------------------------
 
@@ -269,16 +275,47 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           break;
         }
 
-        case "abort": {
-          const state = clients.get(ws)!;
-          const sessionId = state.activeSession;
-          if (!sessionId) {
-            sendError(ws, "No active session to abort.");
-            return;
-          }
-          pool.abort(sessionId);
-          break;
-        }
+case "abort": {
+			const state = clients.get(ws)!;
+			const sessionId = state.activeSession;
+			if (!sessionId) {
+				sendError(ws, "No active session to abort.");
+				return;
+			}
+			pool.abort(sessionId);
+			break;
+		}
+
+		case "compact": {
+			const compactCustomInstructions = (msg as CompactMsg).customInstructions;
+			if (
+				compactCustomInstructions !== undefined &&
+				(typeof compactCustomInstructions !== "string" ||
+					compactCustomInstructions.length === 0 ||
+					compactCustomInstructions.length > 4096)
+			) {
+				sendError(ws, "customInstructions must be a non-empty string up to 4096 chars");
+				return;
+			}
+			const state = clients.get(ws)!;
+			const sessionId =
+				typeof (msg as CompactMsg).sessionId === "string" && (msg as CompactMsg).sessionId
+					? (msg as CompactMsg).sessionId!
+					: state.activeSession;
+			if (!sessionId) {
+				sendError(ws, "No active session. Use subscribe or switch_session first.");
+				return;
+			}
+			pool
+				.compact(sessionId, compactCustomInstructions)
+				.then(() => {
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(JSON.stringify({ type: "compact_done", sessionId }));
+					}
+				})
+				.catch((err: Error) => sendError(ws, err.message));
+			break;
+		}
 
         case "switch_session": {
           const { sessionId } = msg;

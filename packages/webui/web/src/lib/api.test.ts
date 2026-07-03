@@ -244,6 +244,95 @@ describe("api", () => {
     });
   });
 
+  describe("getQuickCommands", () => {
+    it("returns empty array when settings has no webui section", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({}),
+      });
+      const result = await api.getQuickCommands();
+      expect(result).toEqual([]);
+    });
+
+    it("returns empty array when webui has no quickCommands", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ webui: {} }),
+      });
+      const result = await api.getQuickCommands();
+      expect(result).toEqual([]);
+    });
+
+    it("returns the validated list when quickCommands is present", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            webui: {
+              quickCommands: [
+                { name: "review", description: "Code review", prompt: "Review: $ARG" },
+                { name: "commit", prompt: "Make a commit" },
+              ],
+            },
+          }),
+      });
+      const result = await api.getQuickCommands();
+      expect(result).toEqual([
+        { name: "review", description: "Code review", prompt: "Review: $ARG" },
+        { name: "commit", prompt: "Make a commit" },
+      ]);
+    });
+
+    it("filters out malformed entries", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            webui: {
+              quickCommands: [
+                { name: "good", prompt: "x" },
+                { name: "", prompt: "x" },
+                { name: "no-prompt" },
+                null,
+                "string-not-object",
+              ],
+            },
+          }),
+      });
+      const result = await api.getQuickCommands();
+      expect(result).toEqual([{ name: "good", prompt: "x" }]);
+    });
+  });
+
+  describe("setQuickCommands", () => {
+    it("PATCHes /api/settings with webui.quickCommands", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(undefined),
+      });
+      await api.setQuickCommands([
+        { name: "review", description: "Code review", prompt: "Review: $ARG" },
+      ]);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/settings",
+        expect.objectContaining({
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            webui: {
+              quickCommands: [{ name: "review", description: "Code review", prompt: "Review: $ARG" }],
+            },
+          }),
+        }),
+      );
+    });
+  });
+
   describe("Message.parts type", () => {
     it("should accept text part", () => {
       const msg: Message = {

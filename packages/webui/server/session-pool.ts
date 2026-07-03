@@ -475,6 +475,60 @@ export class SessionPool extends EventEmitter {
 	}
 
 	/**
+	 * Send a `compact` RPC to the pi process and resolve when the matching
+	 * `response` line arrives on stdout. The pi process emits
+	 * `compaction_start` / `compaction_end` events on its own bus, which the
+	 * existing event proxy forwards to subscribed WS clients — the caller
+	 * does not need to interpret them.
+	 *
+	 * 30s timeout: compaction calls the model to summarize the branch, so
+	 * it can take noticeably longer than `setSessionName`. The pi session
+	 * aborts any in-flight agent loop before compacting, so this is safe to
+	 * call regardless of session_status.
+	 */
+	async compact(sessionId: string, customInstructions?: string): Promise<void> {
+		await this.spawnIfNeeded(sessionId);
+		const state = this.sessions.get(sessionId);
+		if (!state) throw new Error(`Session ${sessionId} not found`);
+		const corrId = crypto.randomUUID();
+		const msg =
+			JSON.stringify({
+				type: "compact",
+				id: corrId,
+				...(customInstructions ? { customInstructions } : {}),
+			}) + "\n";
+
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				state.proc.stdout?.off("data", onData);
+				reject(new Error("compact timed out after 30s"));
+			}, 30_000);
+
+			const onData = (chunk: Buffer | string) => {
+				const lines = chunk.toString().split("\n").filter((l) => l.trim());
+				for (const line of lines) {
+					try {
+						const evt = JSON.parse(line);
+						if (
+							evt.type === "response" &&
+							evt.command === "compact" &&
+							evt.id === corrId
+						) {
+							clearTimeout(timeout);
+							state.proc.stdout?.off("data", onData);
+							if (evt.success) resolve();
+							else reject(new Error(evt.error || "compact failed"));
+							return;
+						}
+					} catch {}
+				}
+			};
+			state.proc.stdout?.on("data", onData);
+			state.proc.stdin?.write(msg);
+		});
+	}
+
+	/**
 	 * Write an extension_ui_response message to a session's pi process stdin.
 	 * Used to forward user choices from webui modal back to the extension.
 	 * Silent no-op if session/proc is missing.

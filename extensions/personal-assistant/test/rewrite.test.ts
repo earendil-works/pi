@@ -353,9 +353,9 @@ describe("DEFAULT constants", () => {
 		expect(mod.DEFAULT_MODEL).toBe("qwen2.5:3b-instruct-q4_0");
 	});
 
-	it("DEFAULT_TIMEOUT_MS = 1500", async () => {
+	it("DEFAULT_TIMEOUT_MS = 5000", async () => {
 		const mod = await import("../rewrite.ts");
-		expect(mod.DEFAULT_TIMEOUT_MS).toBe(1500);
+		expect(mod.DEFAULT_TIMEOUT_MS).toBe(5000);
 	});
 
 	it("DEFAULT_MAX_SUBQUERIES = 3", async () => {

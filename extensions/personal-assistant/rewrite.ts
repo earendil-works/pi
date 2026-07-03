@@ -51,7 +51,7 @@ export type RewriteOutcome = string[] | RewriteFallback;
 
 export const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = "qwen2.5:3b-instruct-q4_0";
-export const DEFAULT_TIMEOUT_MS = 1500;
+export const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_MAX_SUBQUERIES = 3;
 
 // System prompt for the rewrite LLM (qwen2.5:3b-instruct-q4_0).
@@ -63,12 +63,12 @@ export const DEFAULT_MAX_SUBQUERIES = 3;
 //   4. 单概念保留 — 单一概念原样保留
 //   5. 去重不生造 — 不重复不生造无关内容
 export const REWRITE_SYSTEM_PROMPT =
-	"你是 query 改写助手. " +
-	"输出格式: JSON subqueries 1-3 条. " +
-	"指代消解: 替换指代词为具体概念. " +
-	"复合拆分: 多意图拆成独立子查询. " +
-	"单概念保留: 单一概念原样保留. " +
-	"去重不生造: 不重复不生造无关内容.";
+	"输出 JSON 含 subqueries (string数组). " +
+	"格式:{\"subqueries\":[\"概念1\",\"概念2\"]}. " +
+	"指代: 指代词换成具体名词. " +
+	"拆分: 多概念拆成2-3个独立子查询. " +
+	"单概念: 原样保留为一个子查询. " +
+	"去重: 不重复不生造.";
 
 /**
  * Build the ollama `/api/chat` `messages` array (system + user) for the

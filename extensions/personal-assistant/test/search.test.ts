@@ -1,24 +1,35 @@
-// recallAtoms — per-type top-3 KNN with multiplicative boost score.
+// recallAtoms — pass-through to the bge-m3 dual-channel RRF service.
 //
-// Contract (from design.md Decisions 2, 7, 8):
-//   - 3 independent vectorSearch calls (one per atom type), each capped at
-//     DEFAULT_TOP_K = 3 by `cosine × (1 + 0.3 × strength + 0.2 × importance)`.
-//   - Per-type lists sorted by score DESC, then interleaved round-robin so
-//     each type gets a turn. Sparse types skip their slot (never pad with
-//     cross-type items or placeholders).
-//   - cosine < 0.7 is dropped after the KNN returns (the dense cosine floor).
-//   - Results carry `{ atom, distance, cosine, score }` — no `file_path`.
-//   - Search is DISCOVERY ONLY: does NOT bump `access_count`. Programmatic
-//     strength feedback is the responsibility of the agent's `memory_get`
-//     tool (R-search-cheap / R-feedback-loop).
-//   - `embedText` returning null → `recallAtoms` returns `[]`. No FTS /
-//     keyword fallback (Decision 7).
+// Contract (mirrors the post-refactor pipeline):
+//   - `recallAtoms` makes a single `hybridSearch` HTTP call. The server
+//     applies dense + sparse floors, runs RRF fusion, and returns the
+//     pre-sorted top-K hits. The client does NOT re-rank, re-sort, or
+//     re-score. We just hydrate the full atom and propagate `rrf`,
+//     `dense_cos`, `sparse_score`.
+//   - Per-type cap, round-robin interleaving, and the multiplicative
+//     `score` formula are GONE. Server RRF order is the final order.
+//   - `topK` is the candidate pool size passed to the service. The
+//     service applies its own per-channel cap (TOP_K_PER_CHANNEL=20)
+//     and RRF top-K (TOP_K_FINAL=10) internally.
+//   - `filter.type` is forwarded to the service as a per-type server
+//     filter (server.py:95 type param).
+//   - `hybridSearch` returning [] (service down) → `recallAtoms` returns
+//     []. No fallback (Decision 7).
+//   - `threshold` overrides the dense floor (default 0.55).
+//   - Search is DISCOVERY ONLY: does NOT bump `access_count`. The
+//     `read` tool on atom files is the sole strength-feedback entry
+//     point (handled by the `tool_result` hook in memory.ts).
+//
+// The mock simulates the embedding service by reading `__COS:<value>`
+// sentinels from atom text and computing cosine locally via the
+// `embedText` mock's controlled vectors.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { embedText } from "../embed.ts";
+import { hybridSearch } from "../hybrid-search.ts";
 import { recallAtoms } from "../search.ts";
 import { MemoryIndex } from "../storage.ts";
-import type { MemoryAtom, RecallResult } from "../types.ts";
+import type { MemoryAtom, MemoryAtomType } from "../types.ts";
 
 // ---------------------------------------------------------------------------
 // Test scaffolding
@@ -57,24 +68,35 @@ const makeVec = (dominant: number): number[] => {
 };
 
 const V_UNIT = makeVec(1.0);
+const V_COS_09 = makeVec(0.9);
 const V_COS_07 = makeVec(0.7);
+const V_COS_06 = makeVec(0.6);
 const V_COS_05 = makeVec(0.5);
 const V_COS_04 = makeVec(0.4);
 const V_COS_0 = makeVec(0.0);
 
 const VECS_BY_CODE: Record<string, number[]> = {
 	"1": V_UNIT,
+	"0.9": V_COS_09,
 	"0.7": V_COS_07,
+	"0.6": V_COS_06,
 	"0.5": V_COS_05,
 	"0.4": V_COS_04,
 	"0": V_COS_0,
 };
 
-// Sentinels recognised by the controlled embedText mock. Tests that need
-// precise cosine values prefix the atom's content with `__COS:<code>` and
-// query with the literal string `__QUERY__`. The mock extracts the code
-// from anywhere in the embedText input — the joined `insertAtom` text
-// interleaves title/summary/content/tags, so a prefix-only match would miss.
+const cosine = (a: number[], b: number[]): number => {
+	let dot = 0;
+	let na = 0;
+	let nb = 0;
+	for (let i = 0; i < a.length; i++) {
+		dot += a[i]! * b[i]!;
+		na += a[i]! * a[i]!;
+		nb += b[i]! * b[i]!;
+	}
+	return dot / (Math.sqrt(na) * Math.sqrt(nb));
+};
+
 const QRY = "__QUERY__";
 const COS_RE = /__COS:([0-9.]+)/;
 
@@ -83,8 +105,6 @@ vi.mock("../embed.ts", async () => {
 	return {
 		...actual,
 		embedText: vi.fn(async (text: string) => {
-			// Default implementation — char-bag fallback. Per-test setup may
-			// override with `installControlledMock` for precise cosine values.
 			const arr = new Array(DIM).fill(0);
 			for (let i = 0; i < text.length; i++) {
 				arr[text.charCodeAt(i) % DIM] += 1;
@@ -96,7 +116,25 @@ vi.mock("../embed.ts", async () => {
 	};
 });
 
-/** Switch embedText to controlled vectors (recognises `QRY` + `__COS:` sentinels). */
+vi.mock("../hybrid-search.ts", async () => {
+	const actual = await vi.importActual<typeof import("../hybrid-search.ts")>(
+		"../hybrid-search.ts",
+	);
+	return {
+		...actual,
+		hybridSearch: vi.fn(async () => [] as never[]),
+	};
+});
+
+/**
+ * Re-implementation of the bge-m3 service's `hybrid_rrf` for tests:
+ * embed query, scan every atom, compute dense cosine, apply floor, return
+ * the top-K by RRF (`1 / (k_rrf + rank)`). Mirrors the contract the
+ * real service exposes so client-side changes don't drift from server
+ * behaviour. k_rrf=60 matches server.py:53.
+ */
+const kRrf = 60;
+
 const installControlledMock = (): void => {
 	vi.mocked(embedText).mockImplementation(async (text: string) => {
 		if (text === QRY) return V_UNIT;
@@ -107,10 +145,60 @@ const installControlledMock = (): void => {
 		}
 		return charBag(text);
 	});
+
+	vi.mocked(hybridSearch).mockImplementation(
+		async (
+			query: string,
+			topK: number,
+			options?: { denseFloor?: number; type?: MemoryAtomType },
+		) => {
+			const qVec = await embedText(query);
+			if (!qVec) return [];
+			const index: MemoryIndex = (globalThis as { __test_index?: MemoryIndex })
+				.__test_index!;
+			if (!index) return [];
+			const denseFloor = options?.denseFloor ?? 0.55;
+			const atoms = index.listAtoms({ archived: false });
+			const hits: Array<{
+				id: string;
+				title: string;
+				type: MemoryAtomType;
+				rank: number;
+				rrf: number;
+				dense_cos: number;
+				sparse_score: number;
+			}> = [];
+			for (const atom of atoms) {
+				if (options?.type && atom.type !== options.type) continue;
+				const text = `${atom.title}\n${atom.summary}\n${atom.content}\n${atom.tags.join(" ")}`;
+				const m = text.match(COS_RE);
+				if (!m) continue;
+				const aVec = await embedText(text);
+				if (!aVec) continue;
+				const cos = cosine(qVec, aVec);
+				if (cos < denseFloor) continue;
+				hits.push({
+					id: atom.id,
+					title: atom.title,
+					type: atom.type,
+					rank: 0,
+					rrf: cos, // placeholder, replaced after sort
+					dense_cos: cos,
+					sparse_score: 0,
+				});
+			}
+			hits.sort((a, b) => b.dense_cos - a.dense_cos);
+			return hits.slice(0, topK).map((h, i) => ({
+				...h,
+				rank: i + 1,
+				rrf: 1 / (kRrf + i),
+			}));
+		},
+	);
 };
 
-const installCharBagMock = (): void => {
-	vi.mocked(embedText).mockImplementation(async (text: string) => charBag(text));
+const installEmptyHybridMock = (): void => {
+	vi.mocked(hybridSearch).mockResolvedValue([]);
 };
 
 // ---------------------------------------------------------------------------
@@ -121,17 +209,16 @@ describe("recallAtoms", () => {
 	let index: MemoryIndex;
 
 	beforeEach(async () => {
-		// :memory: avoids WAL setup and per-test filesystem teardown. Search
-		// no longer reads from disk, so the atomsDir parameter is now just a
-		// signature-compat placeholder.
 		index = new MemoryIndex(":memory:");
 		await index.init();
+		(globalThis as { __test_index?: MemoryIndex }).__test_index = index;
 		vi.mocked(embedText).mockReset();
-		installCharBagMock();
+		vi.mocked(hybridSearch).mockReset();
 	});
 
 	afterEach(() => {
 		index.close();
+		delete (globalThis as { __test_index?: MemoryIndex }).__test_index;
 	});
 
 	const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
@@ -150,12 +237,7 @@ describe("recallAtoms", () => {
 		superseded_at: null,
 		archived: 0,
 		created_at: Date.now(),
-		// 1 year ago by default so the score-formula additive `0.05 ×
-		// freshness` term is `exp(-365/30) ≈ 5.2e-6` × 0.05 ≈ 2.6e-7
-		// (negligible). Keeps the multiplicative-formula tests
-		// (`toBeCloseTo(1.5, 5)`, `toBeCloseTo(1.05, 5)`) valid without
-		// accounting for the +0.05 freshness boost.
-		updated_at: Date.now() - 365 * 24 * 60 * 60 * 1000,
+		updated_at: Date.now(),
 		last_access: null,
 		content_fingerprint: `fp-${Math.random().toString(36).slice(2, 18)}`,
 		source_session: null,
@@ -169,349 +251,183 @@ describe("recallAtoms", () => {
 		await index.insertAtom(atom, emb);
 	};
 
-	// (a) KEEP AS-IS — embedText null → empty result, no fallback.
-	it("returns empty array when ollama is unreachable (no fallback)", async () => {
-		// Force the recall-time embedText call to return null. Earlier calls
-		// (none, since we don't insert any atoms here) still see the default.
-		vi.mocked(embedText).mockResolvedValueOnce(null);
+	// (a) hybridSearch returns [] (service down) → empty result, no fallback.
+	it("returns empty array when the embedding service is unreachable (no fallback)", async () => {
+		installEmptyHybridMock();
+		const a = sampleAtom({ title: "__COS:0.7 t", content: "match" });
+		await insertAtom(a);
 
 		const results = await recallAtoms(index, "test query");
 		expect(results).toEqual([]);
 	});
 
-	// (b) UPDATE — per-type cap: 3 atoms (1 per type) → 3 results max.
-	it("returns top-K results sorted by cosine (per-type cap)", async () => {
-		const rule = sampleAtom({
-			type: "rule",
-			content: "common keyword alpha rule content extended",
-		});
-		const fact = sampleAtom({
-			type: "fact",
-			content: "common keyword alpha fact content extended",
-		});
-		const process = sampleAtom({
-			type: "process",
-			content: "common keyword alpha process content extended",
-		});
-		await insertAtom(rule);
-		await insertAtom(fact);
-		await insertAtom(process);
-
-		const results = await recallAtoms(index, "common keyword alpha", {
-			topK: 5,
-		});
-		// One atom per type → at most one result per type → 3 total.
-		expect(results.length).toBe(3);
-		// Each result must carry a finite positive score (cosine > 0 against
-		// the query).
-		expect(results.every((r: RecallResult) => Number.isFinite(r.score) && r.score > 0)).toBe(true);
-		// Round-robin interleaves per-type lists in TYPES order
-		// (rule → fact → process); position 0 is therefore the rule atom.
-		expect(results[0]?.atom.id).toBe(rule.id);
-		expect(results[1]?.atom.id).toBe(fact.id);
-		expect(results[2]?.atom.id).toBe(process.id);
-	});
-
-	// (c) NEW — per-type cap = 3, even with topK > 3 and 5 matching atoms of
-	// a single type. We use one type only because sqlite-vec's `k = N` is a
-	// global KNN limit — with multiple types present, the top-N nearest may
-	// span types and the per-type filter trims the result below the cap. The
-	// per-type cap behaviour is best observed with a single type where every
-	// matching atom is in the global top-N.
-	it("respects per-type topK cap (3 per type)", async () => {
-		for (let i = 0; i < 5; i++) {
-			await insertAtom(
-				sampleAtom({
-					type: "rule",
-					content: `Common shared content marker ${i} unique words ${i * 100}`,
-				}),
-			);
-		}
-		const results = await recallAtoms(index, "Common shared content marker", {
-			topK: 20,
-		});
-		// Hard cap: only 3 of the 5 matching rule atoms surface, even though
-		// the caller asked for 20 and 5 cleared the cosine threshold.
-		expect(results.length).toBe(3);
-		expect(results.every((r: RecallResult) => r.atom.type === "rule")).toBe(true);
-	});
-
-	// (d) KEEP AS-IS — filter restricts KNN to a single type.
-	it("filters by type", async () => {
-		const rule = sampleAtom({ type: "rule", content: "Rule content unique alpha keyword" });
-		const fact = sampleAtom({ type: "fact", content: "Fact content unique beta keyword" });
-		await insertAtom(rule);
-		await insertAtom(fact);
-
-		const results = await recallAtoms(index, "alpha content keyword", {
-			filter: { type: "rule" },
-		});
-		expect(results.length).toBeGreaterThan(0);
-		expect(results.every((r: RecallResult) => r.atom.type === "rule")).toBe(true);
-	});
-
-	// (e) KEEP AS-IS — archived atoms are filtered out by the KNN query.
-	it("excludes archived atoms", async () => {
-		const a = sampleAtom({ content: "Active content gamma signal unique" });
-		const arch = sampleAtom({
-			content: "Archived content delta signal unique",
-			archived: 1,
-		});
-		await insertAtom(a);
-		await insertAtom(arch);
-
-		const results = await recallAtoms(index, "gamma signal unique");
-		expect(results.find((r: RecallResult) => r.atom.id === arch.id)).toBeUndefined();
-	});
-
-	// (f) KEEP AS-IS — superseded (is_latest=0) atoms are filtered out.
-	it("excludes superseded atoms (is_latest=0)", async () => {
-		const a = sampleAtom({ content: "Latest content epsilon signal unique" });
-		const sup = sampleAtom({
-			content: "Superseded content zeta signal unique",
-			is_latest: 0,
-		});
-		await insertAtom(a);
-		await insertAtom(sup);
-
-		const results = await recallAtoms(index, "epsilon signal unique");
-		expect(results.find((r: RecallResult) => r.atom.id === sup.id)).toBeUndefined();
-	});
-
-	// (g) REPLACE old file_path test — discovery-only shape: id + score only.
-	it("does NOT carry file_path (search is discovery-only with id+score)", async () => {
+	// (b) Server's RRF order is preserved verbatim — no client re-rank.
+	it("preserves server RRF order (no client re-rank, no per-type cap, no round-robin)", async () => {
 		installControlledMock();
-		const a = sampleAtom({
-			type: "process",
-			content: "__COS:1 discovery test xi signal unique",
-		});
-		await insertAtom(a);
+		// 6 facts with descending cosine. The old code would cap at 3 and
+		// round-robin. The new code returns all 6 in RRF (dense) order.
+		const atoms = [
+			sampleAtom({ id: "high", type: "fact", title: "__COS:0.9 a", content: "x" }),
+			sampleAtom({ id: "mid", type: "fact", title: "__COS:0.7 b", content: "x" }),
+			sampleAtom({ id: "low", type: "fact", title: "__COS:0.6 c", content: "x" }),
+			sampleAtom({ id: "rule1", type: "rule", title: "__COS:0.7 r1", content: "x" }),
+			sampleAtom({ id: "rule2", type: "rule", title: "__COS:0.6 r2", content: "x" }),
+			sampleAtom({ id: "proc1", type: "process", title: "__COS:0.7 p1", content: "x" }),
+		];
+		for (const a of atoms) await insertAtom(a);
+
+		const results = await recallAtoms(index, QRY, { topK: 10 });
+		// Server returns 6 in dense_cos DESC (= RRF DESC). Client does not cap.
+		const ids = results.map((r) => r.atom.id);
+		expect(ids).toEqual(["high", "mid", "rule1", "proc1", "low", "rule2"]);
+	});
+
+	// (c) filter.type is forwarded to the service.
+	it("forwards filter.type to the service", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "rule-a", type: "rule", title: "__COS:0.7 ra", content: "x" }),
+		);
+		await insertAtom(
+			sampleAtom({ id: "fact-a", type: "fact", title: "__COS:0.7 fa", content: "x" }),
+		);
+
+		const results = await recallAtoms(index, QRY, { filter: { type: "rule" } });
+		for (const r of results) {
+			expect(r.atom.type).toBe("rule");
+		}
+		expect(results.length).toBeGreaterThan(0);
+	});
+
+	// (d) Archived atoms are excluded by the mock.
+	it("excludes archived atoms (server-side filter)", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "live", type: "fact", title: "__COS:0.7 l", content: "x" }),
+		);
+		await insertAtom(
+			sampleAtom({
+				id: "dead",
+				type: "fact",
+				title: "__COS:0.7 d",
+				content: "x",
+				archived: 1,
+			}),
+		);
 
 		const results = await recallAtoms(index, QRY);
-		expect(results.length).toBeGreaterThan(0);
-		const first = results[0] as RecallResult;
-		// Runtime check: the new contract drops `file_path` from results.
-		// `RecallResult` no longer types the field, so use `hasOwn` rather
-		// than direct property access (which the type system rejects).
-		expect(Object.hasOwn(first, "file_path")).toBe(false);
-		// The agent reads full content via memory_get(atom.id) — id is the
-		// handle, not a path.
-		expect(first.atom.id).toBe(a.id);
+		const ids = results.map((r) => r.atom.id);
+		expect(ids).toContain("live");
+		expect(ids).not.toContain("dead");
 	});
 
-	// (h) NEW — every result carries the multiplicative score field.
-	it("returns score field for each result", async () => {
-		const a = sampleAtom({ content: "Score field test omicron signal unique" });
-		await insertAtom(a);
+	// (e) Superseded atoms are excluded by the mock.
+	it("excludes superseded atoms (is_latest=0)", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "latest", type: "fact", title: "__COS:0.7 l", content: "x" }),
+		);
+		await insertAtom(
+			sampleAtom({
+				id: "old",
+				type: "fact",
+				title: "__COS:0.7 o",
+				content: "x",
+				is_latest: 0,
+			}),
+		);
 
-		const results = await recallAtoms(index, "omicron signal unique");
+		const results = await recallAtoms(index, QRY);
+		const ids = results.map((r) => r.atom.id);
+		expect(ids).toContain("latest");
+		expect(ids).not.toContain("old");
+	});
+
+	// (f) Each result carries the server's RRF + dual-channel fields.
+	it("returns rrf / cosine / sparseScore from the server (no client score formula)", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "a", type: "fact", title: "__COS:0.7 x", content: "x" }),
+		);
+
+		const results = await recallAtoms(index, QRY);
 		expect(results.length).toBeGreaterThan(0);
 		for (const r of results) {
-			expect(typeof r.score).toBe("number");
-			expect(Number.isFinite(r.score)).toBe(true);
-			expect(r.score).toBeGreaterThan(0);
+			expect(typeof r.rrf).toBe("number");
+			expect(Number.isFinite(r.rrf)).toBe(true);
+			expect(typeof r.cosine).toBe("number");
+			expect(typeof r.sparseScore).toBe("number");
+			// The client no longer adds a `score` field.
+			expect((r as unknown as { score?: unknown }).score).toBeUndefined();
 		}
 	});
 
-	// (i) REPLACE old updateAccess test — search does NOT bump access_count.
-	it("does NOT bump access_count on search (programmatic feedback is via memory_get only)", async () => {
-		const a = sampleAtom({ content: "No bump test pi signal unique" });
-		await insertAtom(a);
-
-		await recallAtoms(index, "pi signal unique");
-		const got = index.getAtom(a.id);
-		// Strength feedback is the memory_get tool's job, not search's.
-		expect(got?.access_count).toBe(0);
-	});
-
-	// (j) NEW — sparse types skip their slot (no padding, no cross-type fill).
-	it("sparse type slot is skipped in round-robin", async () => {
-		// 1 rule + 0 fact + 2 process → round-robin yields:
-		//   round 0: rule[0], (fact[0]=undef skip), process[0]
-		//   round 1: (rule[1]=undef skip), (fact[1]=undef skip), process[1]
-		// Final: [rule, process, process] — fact is sparse, no padding.
-		const r1 = sampleAtom({
-			type: "rule",
-			content: "rule common content sigma marker",
-		});
-		const p1 = sampleAtom({
-			type: "process",
-			content: "process common content sigma marker",
-		});
-		const p2 = sampleAtom({
-			type: "process",
-			content: "process common content sigma marker two",
-		});
-		await insertAtom(r1);
-		await insertAtom(p1);
-		await insertAtom(p2);
-
-		const results = await recallAtoms(index, "sigma marker");
-		expect(results.length).toBe(3);
-		expect(results[0]?.atom.type).toBe("rule");
-		expect(results[1]?.atom.type).toBe("process");
-		expect(results[2]?.atom.type).toBe("process");
-	});
-
-	// (k) NEW — cosine below threshold is dropped after vectorSearch returns.
-	it("cosine below the dense floor (0.7) is dropped", async () => {
+	// (g) Search does NOT bump access_count (read-tool is the feedback entry).
+	it("does NOT bump access_count on search (programmatic feedback is via read tool only)", async () => {
 		installControlledMock();
-		const a = sampleAtom({
-			content: "__COS:0.4 below threshold atom rho signal",
-		});
+		const a = sampleAtom({ id: "a", type: "fact", title: "__COS:0.7 x", content: "x" });
 		await insertAtom(a);
+		const before = index.getAtom(a.id)!.access_count;
+
+		await recallAtoms(index, QRY);
+
+		const after = index.getAtom(a.id)!.access_count;
+		expect(after).toBe(before);
+	});
+
+	// (h) Cosine below the dense floor is dropped (server-side, default 0.55).
+	it("cosine below the dense floor (0.55) is dropped", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "high", type: "fact", title: "__COS:0.7 x", content: "x" }),
+		);
+		await insertAtom(
+			sampleAtom({ id: "low", type: "fact", title: "__COS:0.5 y", content: "x" }),
+		);
 
 		const results = await recallAtoms(index, QRY);
-		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
+		const ids = results.map((r) => r.atom.id);
+		expect(ids).toContain("high");
+		expect(ids).not.toContain("low");
 	});
 
-	// (l) NEW — cosine=0 forces score=0; even max boost cannot rescue it.
-	it("score formula: cosine=0 yields score=0 regardless of strength/importance", async () => {
+	// (i) The threshold option overrides the default dense floor.
+	it("threshold option overrides the default dense floor", async () => {
 		installControlledMock();
-		// Orthogonal vector (cosine=0 with query). Even at max boost
-		// (strength=1, importance=1), the multiplicative formula gives
-		// score = 0 × (1 + 0.3 + 0.2) = 0, and the cosine=0 result falls
-		// below the 0.5 threshold — so the atom never surfaces. An additive
-		// formula would give score = 0 + 0.3 + 0.2 = 0.5, landing on the
-		// threshold boundary; the multiplicative-anchor property is what
-		// keeps this atom out of results.
-		const a = sampleAtom({
-			content: "__COS:0 orthogonal atom tau signal",
-			strength: 1.0,
-			importance: 1.0,
-		});
-		await insertAtom(a);
+		await insertAtom(
+			sampleAtom({ id: "mid", type: "fact", title: "__COS:0.5 m", content: "x" }),
+		);
+
+		// Default 0.55 would drop it; threshold 0.40 keeps it.
+		const withLow = await recallAtoms(index, QRY, { threshold: 0.40 });
+		expect(withLow.find((r) => r.atom.id === "mid")).toBeDefined();
+
+		// Default would drop it.
+		const default_ = await recallAtoms(index, QRY);
+		expect(default_.find((r) => r.atom.id === "mid")).toBeUndefined();
+	});
+
+	// (j) Empty result when no atoms clear the floor.
+	it("returns empty when no atoms pass the dense floor", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "low", type: "fact", title: "__COS:0 x", content: "x" }),
+		);
 
 		const results = await recallAtoms(index, QRY);
-		expect(results.find((r: RecallResult) => r.atom.id === a.id)).toBeUndefined();
-	});
-
-	// (m) NEW — cosine=1 with max boost yields score=1.5.
-	it("score formula: cosine=1 with max boost yields score=1.5", async () => {
-		installControlledMock();
-		// score = 1 × (1 + 0.3 × 1 + 0.2 × 1) = 1.5.
-		const a = sampleAtom({
-			content: "__COS:1 perfect atom upsilon signal",
-			strength: 1.0,
-			importance: 1.0,
-		});
-		await insertAtom(a);
-
-		// threshold: 0 disables the cosine floor so this cosine=1 hit
-		// surfaces regardless of the default 0.7 floor. This isolates the
-		// score-formula math from the cosine floor gate.
-		const results = await recallAtoms(index, QRY, { threshold: 0 });
-		expect(results.length).toBe(1);
-		expect(results[0]?.atom.id).toBe(a.id);
-		expect(results[0]?.score).toBeCloseTo(1.5, 5);
-	});
-
-	// (n) NEW — score follows the multiplicative formula exactly.
-	it("score field follows the multiplicative formula", async () => {
-		installControlledMock();
-		// score = 0.7 × (1 + 0.3 × 1 + 0.2 × 1) = 0.7 × 1.5 = 1.05.
-		const a = sampleAtom({
-			content: "__COS:0.7 mid cosine atom phi signal",
-			strength: 1.0,
-			importance: 1.0,
-		});
-		await insertAtom(a);
-
-		// threshold: 0 disables the cosine floor so this cosine=0.7 hit
-		// surfaces regardless of the default 0.7 floor. This isolates the
-		// score-formula math from the cosine floor gate.
-		const results = await recallAtoms(index, QRY, { threshold: 0 });
-		expect(results.length).toBe(1);
-		expect(results[0]?.atom.id).toBe(a.id);
-		expect(results[0]?.score).toBeCloseTo(1.05, 5);
-	});
-
-	// (o) NEW — round-robin interleaves per-type slots in canonical order.
-	//
-	// We mock `index.vectorSearch` per type filter because sqlite-vec's
-	// `k = N` is a global KNN limit; with multiple types in the index, the
-	// top-N nearest can span types and the per-type filter trims the result
-	// below the per-type cap. Mocking isolates the round-robin algorithm
-	// from the KNN's global-k behaviour so we can exercise a 3+3+3 → 9
-	// result interleaving directly.
-	it("round-robin interleaves type slots", async () => {
-		// Build 3 atoms of each type so getAtom() inside search.ts can
-		// resolve every mocked id back to a real row.
-		const ruleAtoms: MemoryAtom[] = [];
-		const factAtoms: MemoryAtom[] = [];
-		const processAtoms: MemoryAtom[] = [];
-		for (let i = 0; i < 3; i++) {
-			ruleAtoms.push(
-				await (async () => {
-					const a = sampleAtom({
-						type: "rule",
-						content: `rule ${i} round robin common content chi marker`,
-					});
-					await insertAtom(a);
-					return a;
-				})(),
-			);
-			factAtoms.push(
-				await (async () => {
-					const a = sampleAtom({
-						type: "fact",
-						content: `fact ${i} round robin common content chi marker`,
-					});
-					await insertAtom(a);
-					return a;
-				})(),
-			);
-			processAtoms.push(
-				await (async () => {
-					const a = sampleAtom({
-						type: "process",
-						content: `process ${i} round robin common content chi marker`,
-					});
-					await insertAtom(a);
-					return a;
-				})(),
-			);
-		}
-
-		// Mock vectorSearch to return 3 per type. Distances are crafted so
-		// cosine = 1 - dist²/2 = 0.9 (well above the 0.5 threshold) and so
-		// that within-type ordering is stable: rule-0 < rule-1 < rule-2 by
-		// score (i.e., higher cosine first).
-		const makeEntries = (atoms: MemoryAtom[]) =>
-			atoms.map((a, i) => ({ id: a.id, distance: Math.sqrt(0.2) + i * 0.001 }));
-
-		index.vectorSearch = ((_embedding: number[], _k: number, filter?: { type?: string }) => {
-			if (filter?.type === "rule") return makeEntries(ruleAtoms);
-			if (filter?.type === "fact") return makeEntries(factAtoms);
-			if (filter?.type === "process") return makeEntries(processAtoms);
-			return [];
-		}) as typeof index.vectorSearch;
-
-		const results = await recallAtoms(index, "round robin common content chi marker");
-		expect(results.length).toBe(9);
-		// Round-robin interleaves per-type lists in TYPES order. Position k:
-		//   rule   at k ∈ {0, 3, 6}
-		//   fact   at k ∈ {1, 4, 7}
-		//   process at k ∈ {2, 5, 8}
-		expect(results[0]?.atom.type).toBe("rule");
-		expect(results[1]?.atom.type).toBe("fact");
-		expect(results[2]?.atom.type).toBe("process");
-		expect(results[3]?.atom.type).toBe("rule");
-		expect(results[4]?.atom.type).toBe("fact");
-		expect(results[5]?.atom.type).toBe("process");
-		expect(results[6]?.atom.type).toBe("rule");
-		expect(results[7]?.atom.type).toBe("fact");
-		expect(results[8]?.atom.type).toBe("process");
-		// And the within-type order must match the score-DESC order we
-		// mocked (rule-0 first, rule-1 second, rule-2 third).
-		expect(results[0]?.atom.id).toBe(ruleAtoms[0]!.id);
-		expect(results[3]?.atom.id).toBe(ruleAtoms[1]!.id);
-		expect(results[6]?.atom.id).toBe(ruleAtoms[2]!.id);
-	});
-
-	// (p) NEW — empty index yields empty result across all three type slots.
-	it("returns empty when all 3 types have zero matching atoms", async () => {
-		const results = await recallAtoms(index, "anything at all");
 		expect(results).toEqual([]);
 	});
+
+	// (k) RRF rank-0 contribution is 1/kRrf (≈ 0.01667 for kRrf=60).
+	it("RRF rank-0 contribution is 1/kRrf (kRrf=60 → ≈ 0.01667)", async () => {
+		installControlledMock();
+		await insertAtom(
+			sampleAtom({ id: "a", type: "fact", title: "__COS:0.9 a", content: "x" }),
+		);
+
+		const results = await recallAtoms(index, QRY);
+		expect(results[0]?.rrf).toBeCloseTo(1 / 60, 5);
+	});
 });
+
+// Helper exports for tests that need direct access to result shapes.

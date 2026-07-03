@@ -4,6 +4,22 @@
 
 ### Added
 
+- `/compact` slash command in the chat input. Sends the session's RPC `compact` command (with optional `customInstructions` after a space) and shows a "Compacting…" indicator while it runs. The indicator clears when the server replies with `compact_done` or when the pi process emits `compaction_end` (whichever arrives first).
+- User-defined **quick commands**: arbitrary `/<name>` shortcuts stored under `settings.webui.quickCommands` as `{name, description?, prompt}`. Anything typed after the command name is substituted into the prompt template as `$ARG`. Manage from a new `/commands` page (Terminal icon in the sidebar) or add inline from a bar docked above the chat input.
+- `api.compact(sessionId, customInstructions?)` on the webui client (waits for `compact_done`, 30s timeout).
+- `api.getQuickCommands()` / `api.setQuickCommands(commands)` for the settings round-trip.
+
+### Changed
+
+- WebSocket handler accepts a new `compact` message type. The server's existing `compaction_start` / `compaction_end` events are still forwarded as `session_event` and now also clear the "Compacting…" indicator.
+
+### Reserved names
+
+The following names cannot be used for user-defined quick commands (they conflict with webui-dispatched built-ins):
+
+- `compact` — triggers `api.compact()`
+- `new`, `model`, `bash` — reserved for future webui dispatch
+
 - **Memory page** (`/memory` sidebar route, `Brain` icon in IconRow): browse, edit, archive, and recall-test all memories persisted by the `pi-personal-assistant` extension.
   - 3-pane layout: list (30%, filterable by type/archived/tag/q/sort/limit), detail (70%, metadata + Markdown body editor), and collapsible search tester (real `rewriteQuery + searchAtomsWithScores` pipeline).
   - 6 new REST endpoints under `/api/memory`: `GET list`, `GET :id`, `PATCH :id`, `POST :id/archive`, `POST search`, `GET stats`.

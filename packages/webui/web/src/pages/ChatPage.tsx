@@ -5,10 +5,14 @@ import type { Message, InputImage, Part } from "../lib/api";
 import type { CardState } from "../components/AskUserQuestionCard";
 import { Title } from "../components/topbar/Title";
 import { Actions } from "../components/topbar/Actions";
+import { ContextIndicator } from "../components/topbar/ContextIndicator";
 import { ModelSelector } from "../components/topbar/ModelSelector";
 import { InputArea } from "../components/input/InputArea";
+import { QuickCommandsBar } from "../components/input/QuickCommandsBar";
 import ChatMessages from "../components/ChatMessages";
 import { ThinkingIndicator } from "../components/ThinkingIndicator";
+import { resolveSlashCommand } from "../lib/slash-commands";
+import { useQuickCommands } from "../lib/useQuickCommands";
 
 function buildParts(content: any): Part[] {
   if (!Array.isArray(content)) return [];
@@ -72,6 +76,7 @@ export default function ChatPage() {
   const [cardStates, setCardStates] = useState<Map<string, CardState>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgId = useRef<string | null>(null);
+  const quickCommandsState = useQuickCommands();
 
   // Load messages + current model + providers on mount / id change
   useEffect(() => {
@@ -263,6 +268,13 @@ export default function ChatPage() {
         } else if (e.status === "running") {
           setIsThinking(true);
         }
+      } else if (e.type === "compaction_end") {
+        // Compaction is not surfaced as a session_status transition by the
+        // session-pool, so we hook the pi process's compaction_end event
+        // here to clear the "Compacting..." indicator. The handleSubmit
+        // path also clears it after api.compact resolves, but this is the
+        // source of truth for non-manual compactions (threshold, overflow).
+        setIsThinking(false);
       } else if (e.type === "extension_ui_request") {
         // Filter: only handle "select" and "input" methods (the ones that
         // produce a card). Other methods (setTitle, setStatus, setWidget,
@@ -514,12 +526,39 @@ export default function ChatPage() {
 
   // Submit
   const handleSubmit = useCallback(() => {
-    const text = inputText.trim();
-    if (!text || !id) return;
+    const rawText = inputText.trim();
+    if (!rawText || !id) return;
     if (!ws.isOpen()) {
       alert("Connection not ready, please wait a moment and try again.");
       return;
     }
+
+    // Slash-command dispatch. /compact is local (RPC); user-defined quick
+    // commands are template-expanded into a normal prompt. Everything else
+    // (extension / prompt template / skill commands, plain text) falls
+    // through to the pi process.
+    const resolved = resolveSlashCommand(rawText, quickCommandsState.commands);
+    if (resolved.kind === "compact") {
+      setInputText("");
+      setInputImages([]);
+      setIsThinking(true);
+      api
+        .compact(id, resolved.customInstructions)
+        .catch((err: Error) => {
+          alert(`Compact failed: ${err.message}`);
+        })
+        .finally(() => {
+          // The pi process also emits `compaction_end` which the WS forwards —
+          // that path clears the indicator too. We clear here as a fallback
+          // for the success case where compact_done arrives but the pi
+          // compaction_end event is somehow delayed.
+          setIsThinking(false);
+        });
+      return;
+    }
+
+    const text = resolved.kind === "quick" ? resolved.expanded : rawText;
+
     setInputText("");
     setInputImages([]);
     // Optimistic user message
@@ -551,7 +590,7 @@ export default function ChatPage() {
     // session_status_changed("running") will arrive almost immediately and
     // re-affirm it. The first message_update will clear it.
     setIsThinking(true);
-  }, [inputText, inputImages, id]);
+  }, [inputText, inputImages, id, quickCommandsState.commands]);
 
   // Clear
   const handleClear = useCallback(() => {
@@ -607,20 +646,59 @@ export default function ChatPage() {
   const lastMessage = messages[messages.length - 1];
   const isLastMessageStreaming = isThinking && lastMessage?.role === "assistant";
 
+  // Context tokens used: walk backwards to the most recent assistant
+  // message with usage and report its input count. That's the closest
+  // signal we have for "how much context did the model actually see" —
+  // output-only turns inflate the number, but a fresh input-only turn
+  // (no output yet) intentionally surfaces as 0 so we don't show a
+  // stale prior number while the next stream is in flight.
+  let contextTokens: number | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "assistant" && typeof m.usage?.input === "number") {
+      contextTokens = m.usage.input;
+      break;
+    }
+  }
+
+  // Look up the active model's context window from /api/models. The
+  // denominator in "used / total" — falls through to undefined when the
+  // model isn't listed (e.g. a synthetic current-from-message with no
+  // models.json entry) so ContextIndicator can render "used only".
+  const currentModelMeta = currentModel
+    ? providers
+        .find((p: { name: string }) => p.name === currentModel.provider)
+        ?.models.find((m: { id: string; contextWindow?: number }) => m.id === currentModel.model)
+    : undefined;
+  const contextWindow = currentModelMeta?.contextWindow;
+
   return (
     <div className="flex flex-col h-full">
       {/* Topbar - sticky */}
       <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50">
         <Title title={title} messageCount={messageCount} />
         <div className="flex items-center gap-2">
+          <ContextIndicator tokens={contextTokens} contextWindow={contextWindow} />
           {currentModel && (
             <ModelSelector
               current={currentModel}
               providers={providers}
+              // Switching a session's model is per-session state, not a global
+              // preference: POST /api/sessions/:id/model writes a
+              // `model_change` entry to the session JSONL (so the next
+              // message starts on the new model via getSessionModel's
+              // most-recent-wins rule) and sends a `set_model` RPC to the
+                // spawned pi process so any in-flight turn can also honor it.
+                // `setDefaultModel` only updates settings.webui.defaultModel,
+                // which the running pi process never reads — calling it here
+                // flipped the dropdown UI but left the session actually
+                // running on the old model (regression bug — the UI looked
+                // changed but every subsequent prompt still used the old
+                // (provider, model) pair).
               onChange={async (sel) => {
                 setCurrentModel(sel);
                 try {
-                  await api.setDefaultModel(sel);
+                  await api.setSessionModel(id!, sel);
                 } catch (e) { console.error(e); }
               }}
             />
@@ -652,6 +730,15 @@ export default function ChatPage() {
           </span>
         </div>
       )}
+      {/* Quick commands bar (above input) — /compact + user-defined
+          quick commands. The bar is always rendered so users see and edit
+          their commands without leaving the chat. */}
+      <QuickCommandsBar
+        commands={quickCommandsState.commands}
+        onInsert={(name) => setInputText((prev) => `${prev ? `${prev} ` : ""}/${name} `)}
+        onSave={quickCommandsState.save}
+        onOpenManager={() => navigate("/commands")}
+      />
       {/* Input */}
       <InputArea
         images={inputImages}

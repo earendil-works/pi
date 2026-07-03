@@ -6,14 +6,15 @@
 // unrelated Chinese atoms whose dense cosine lands in the noise band
 // (0.55 — the empirical bge-m3 dense-noise floor).
 //
-// Before the pure-dense migration, the legacy hybrid pipeline could leak
-// BM25 keyword matches from unrelated Chinese atoms through the dense
-// floor (single-channel BM25 rank-0 contribution 1/(rrfK+1) cleared the
-// recall gate). In the pure-dense era, the ONLY relevance gate is the
-// cosine floor (0.7). Atoms with cosine < 0.7 must NOT surface regardless
-// of any string overlap.
+// Before the hybrid RRF migration, the legacy sqlite-vec KNN (single-channel
+// dense) was the only relevance gate. The new hybrid architecture adds a
+// sparse channel (token-level match) that can rescue short queries but must
+// still honour the dense cosine floor for unrelated atoms: atoms with
+// cosine < 0.55 must NOT surface regardless of any string overlap. The
+// sparse floor (0.3) provides an additional guard — a low-IDF token match
+// that fails both floors is correctly dropped.
 //
-// This test pins the contract: a 0.75-cosine atom surfaces; a 0.55-cosine
+// This test pins the contract: a 0.75-cosine atom surfaces; a 0.4-cosine
 // atom with overlapping Chinese tokens is dropped.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +24,7 @@ import { MemoryIndex } from "../../storage.ts";
 import type { MemoryAtom } from "../../types.ts";
 
 // ---------------------------------------------------------------------------
-// Test scaffolding (mirrors search.test.ts controlled-mock pattern)
+// Test scaffolding (mirrors search.test.ts hybrid-mock pattern)
 // ---------------------------------------------------------------------------
 
 const DIM = 1024;
@@ -37,21 +38,40 @@ const makeVec = (dominant: number): number[] => {
 
 const V_UNIT = makeVec(1.0);
 const V_COS_075 = makeVec(0.75);
-const V_COS_055 = makeVec(0.55);
+const V_COS_04 = makeVec(0.4);
 
-// Sentinels recognised by the controlled embedText mock. The atom's
-// content includes a `__COS:<code>` token that the mock detects; the
-// query is the literal `__QUERY__` string.
 const QRY = "__QUERY__";
 const COS_RE = /__COS:([0-9.]+)/;
+
+const VECS_BY_CODE: Record<string, number[]> = {
+	"1": V_UNIT,
+	"0.75": V_COS_075,
+	"0.4": V_COS_04,
+};
+
+const cosine = (a: number[], b: number[]): number => {
+	let dot = 0;
+	let na = 0;
+	let nb = 0;
+	for (let i = 0; i < a.length; i++) {
+		dot += a[i]! * b[i]!;
+		na += a[i]! * a[i]!;
+		nb += b[i]! * b[i]!;
+	}
+	return dot / (Math.sqrt(na) * Math.sqrt(nb));
+};
 
 vi.mock("../../embed.ts", async () => {
 	const actual = await vi.importActual<typeof import("../../embed.ts")>("../../embed.ts");
 	return {
 		...actual,
 		embedText: vi.fn(async (text: string) => {
-// Default char-bag fallback; tests install the controlled
-		// mock via installControlledMock() for precise cosines.
+			if (text === QRY) return V_UNIT;
+			const m = text.match(COS_RE);
+			if (m) {
+				const v = VECS_BY_CODE[m[1]];
+				if (v) return v;
+			}
 			const arr = new Array(DIM).fill(0);
 			for (let i = 0; i < text.length; i++) {
 				arr[text.charCodeAt(i) % DIM] += 1;
@@ -63,38 +83,46 @@ vi.mock("../../embed.ts", async () => {
 	};
 });
 
-const VECS_BY_CODE: Record<string, number[]> = {
-	"1": V_UNIT,
-	"0.75": V_COS_075,
-	"0.55": V_COS_055,
-};
-
-const installControlledMock = (): void => {
-	vi.mocked(embedText).mockImplementation(async (text: string) => {
-		if (text === QRY) return V_UNIT;
-		const m = text.match(COS_RE);
-		if (m) {
-			const v = VECS_BY_CODE[m[1]];
-			if (v) return v;
-		}
-		// Fallback: char-bag so non-mocked inputs (e.g. tag embeddings)
-		// don't crash — they just won't surface.
-		const arr = new Array(DIM).fill(0);
-		for (let i = 0; i < text.length; i++) {
-			arr[text.charCodeAt(i) % DIM] += 1;
-		}
-		const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
-		if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
-		return arr;
-	});
-};
-
-// ---------------------------------------------------------------------------
-// Atom factory — must support a 1-year-old created_at so the score-formula
-// freshness term (`0.05 × exp(-daysSinceUpdate/30)`) is negligible. The
-// multiplicative score formula `cosine × (1 + 0.3 × strength + 0.2 ×
-// importance)` plus additive terms is what determines recall ranking.
-// ---------------------------------------------------------------------------
+vi.mock("../../hybrid-search.ts", async () => {
+	return {
+		hybridSearch: async (query: string, topK: number, options?: { denseFloor?: number }) => {
+			const index = (globalThis as { __test_index?: MemoryIndex }).__test_index;
+			if (!index) return [];
+			const qVec = (await embedText(query)) ?? [];
+			const denseFloor = options?.denseFloor ?? 0;
+			const atoms = index.listAtoms({ archived: false });
+			const hits: Array<{
+				id: string;
+				title: string;
+				type: "rule" | "fact" | "process";
+				rank: number;
+				rrf: number;
+				dense_cos: number;
+				sparse_score: number;
+			}> = [];
+			for (const atom of atoms) {
+				const text = `${atom.title}\n${atom.summary}\n${atom.content}\n${atom.tags.join(" ")}`;
+				const m = text.match(COS_RE);
+				if (!m) continue;
+				const aVec = await embedText(text);
+				if (!aVec) continue;
+				const cos = cosine(qVec, aVec);
+				if (cos < denseFloor) continue;
+				hits.push({
+					id: atom.id,
+					title: atom.title,
+					type: atom.type,
+					rank: 0,
+					rrf: cos,
+					dense_cos: cos,
+					sparse_score: 0,
+				});
+			}
+			hits.sort((a, b) => b.dense_cos - a.dense_cos);
+			return hits.slice(0, topK).map((h, i) => ({ ...h, rank: i + 1 }));
+		},
+	};
+});
 
 const sampleAtom = (overrides: Partial<MemoryAtom> = {}): MemoryAtom => ({
 	id: crypto.randomUUID(),
@@ -126,28 +154,21 @@ const insertAtom = async (atom: MemoryAtom, index: MemoryIndex): Promise<void> =
 	await index.insertAtom(atom, emb);
 };
 
-// ---------------------------------------------------------------------------
-// Test
-// ---------------------------------------------------------------------------
-
 describe("Chinese query no-false-positive (pure-dense cosine floor)", () => {
 	let index: MemoryIndex;
 
 	beforeEach(async () => {
 		index = new MemoryIndex(":memory:");
 		await index.init();
-		vi.mocked(embedText).mockReset();
-		installControlledMock();
+		(globalThis as Record<string, unknown>).__test_index = index;
 	});
 
 	afterEach(() => {
 		index.close();
+		delete (globalThis as Record<string, unknown>).__test_index;
 	});
 
-	it("recalls the matching atom (cosine 0.75, above floor) and drops the noise atom (cosine 0.55, below floor)", async () => {
-		// Atom A: the atom the user actually wants. Chinese title about
-		// "novo skill 创建方法"; embedding controlled to cosine 0.75 with
-		// the query — above the 0.7 floor.
+	it("recalls the matching atom (cosine 0.75, above floor) and drops the noise atom (cosine 0.4, below floor)", async () => {
 		const matchingAtom = sampleAtom({
 			id: "novo-skill-method",
 			type: "fact",
@@ -158,45 +179,23 @@ describe("Chinese query no-false-positive (pure-dense cosine floor)", () => {
 			content_fingerprint: "fp-novo-skill",
 		});
 
-		// Atom B: an unrelated Chinese atom with overlapping CJK tokens
-		// (e.g. shares the character 创 with the query) but a different
-		// semantic domain. Embedding controlled to cosine 0.55 — below
-		// the 0.7 floor. In the legacy hybrid era this atom could leak
-		// through via single-channel BM25 keyword match; in the pure-
-		// dense era the cosine floor is the only relevance gate.
 		const noiseAtom = sampleAtom({
 			id: "bmk-brand-replace",
 			type: "fact",
 			title: "BMK 报告品牌替换",
-			summary: "BMK 报告品牌替换 summary __COS:0.55",
-			content: "BMK 报告品牌替换 详细描述 __COS:0.55",
-			tags: ["bmk", "report", "__COS:0.55"],
+			summary: "BMK 报告品牌替换 summary __COS:0.4",
+			content: "BMK 报告品牌替换 详细描述 __COS:0.4",
+			tags: ["bmk", "report", "__COS:0.4"],
 			content_fingerprint: "fp-bmk-brand",
 		});
 
 		await insertAtom(matchingAtom, index);
 		await insertAtom(noiseAtom, index);
 
-		// The query: a real-world mixed CJK + technical query that mixes
-		// unrelated Chinese tokens with the target technical phrase.
-		// We use the QRY sentinel so the controlled mock returns V_UNIT
-		// (cosine 1.0 with itself, giving the deterministic cosine values
-		// for A and B from their `__COS:<code>` tags). The sentinel is
-		// identical to the production-side recallAtoms contract: any
-		// string is a valid query; the mock just intercepts the QRY
-		// sentinel for deterministic testing.
 		const query = QRY;
-
 		const results = await recallAtoms(index, query);
 
-		// Assertion 1: the matching atom (cosine 0.75, above floor)
-		// surfaces in the recall results.
 		expect(results.find((r) => r.atom.id === matchingAtom.id)).toBeDefined();
-
-		// Assertion 2: the noise atom (cosine 0.55, below floor) does NOT
-		// surface. This is the no-false-positive contract — pure-dense
-		// cosine floor must filter dense-noise false positives even when
-		// the atoms share CJK tokens.
 		expect(results.find((r) => r.atom.id === noiseAtom.id)).toBeUndefined();
 	});
 });

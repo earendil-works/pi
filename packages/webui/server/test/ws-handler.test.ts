@@ -10,6 +10,7 @@ interface FakePool {
   unsubscribe: ReturnType<typeof vi.fn>;
   prompt: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
+  compact: ReturnType<typeof vi.fn>;
   spawnIfNeeded: ReturnType<typeof vi.fn>;
   broadcast: ReturnType<typeof vi.fn>;
   setSessionName: ReturnType<typeof vi.fn>;
@@ -25,6 +26,7 @@ function createFakePool(): FakePool {
     unsubscribe: vi.fn(),
     prompt: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
+    compact: vi.fn().mockResolvedValue(undefined),
     spawnIfNeeded: vi.fn().mockResolvedValue(undefined),
     broadcast: vi.fn(),
     setSessionName: vi.fn().mockResolvedValue(undefined),
@@ -666,6 +668,223 @@ describe("WsHandler", () => {
 
     expect(received).toContainEqual({ type: "error", message: "invalid prompt" });
     expect(pool.prompt).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // compact routing
+  // -------------------------------------------------------------------------
+  it("compact with active session → calls pool.compact, sends compact_done", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact", customInstructions: "summarize tightly" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.compact).toHaveBeenCalledWith("s1", "summarize tightly");
+    expect(received).toContainEqual({ type: "compact_done", sessionId: "s1" });
+
+    ws.close();
+  });
+
+  it("compact without customInstructions → passes undefined to pool.compact", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.compact).toHaveBeenCalledWith("s1", undefined);
+
+    ws.close();
+  });
+
+  it("compact without active session → sends error", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "compact" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: expect.stringContaining("No active session") });
+    expect(pool.compact).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  it("compact with empty customInstructions → sends error", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact", customInstructions: "" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: expect.stringContaining("customInstructions") });
+    expect(pool.compact).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  it("compact with non-string customInstructions → sends error", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact", customInstructions: 42 }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: expect.stringContaining("customInstructions") });
+    expect(pool.compact).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  it("compact with customInstructions over 4096 chars → sends error", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact", customInstructions: "x".repeat(4097) }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: expect.stringContaining("customInstructions") });
+    expect(pool.compact).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  it("compact preferring msg.sessionId over active session", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    // Subscribe to s1, then send compact with explicit sessionId s2
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact", sessionId: "s2", customInstructions: "hint" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.compact).toHaveBeenCalledWith("s2", "hint");
+    expect(received).toContainEqual({ type: "compact_done", sessionId: "s2" });
+
+    ws.close();
+  });
+
+  it("compact when pool.compact rejects → sends error to client", async () => {
+    const pool = createFakePool();
+    pool.compact.mockRejectedValueOnce(new Error("compact timed out after 30s"));
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "compact" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: "compact timed out after 30s" });
+    expect(received.some((m) => (m as { type: string }).type === "compact_done")).toBe(false);
 
     ws.close();
   });

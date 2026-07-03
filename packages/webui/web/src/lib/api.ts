@@ -56,7 +56,10 @@ export interface InputImage {
 }
 
 export interface ModelsResponse {
-  providers: Array<{ name: string; models: Array<{ id: string; name: string }> }>;
+  providers: Array<{
+    name: string;
+    models: Array<{ id: string; name: string; contextWindow?: number }>;
+  }>;
 }
 
 export interface Message {
@@ -73,6 +76,20 @@ export interface Message {
 export interface DeleteSessionResult {
   ok: boolean;
   atomsExtracted: number;
+}
+
+export interface QuickCommand {
+  name: string;
+  description?: string;
+  prompt: string;
+}
+
+function isQuickCommand(value: unknown): value is QuickCommand {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.name !== "string" || v.name.length === 0) return false;
+  if (typeof v.prompt !== "string") return false;
+  return true;
 }
 
 export interface ApiError extends Error {
@@ -109,9 +126,9 @@ export interface MemorySearchResult {
     title: string;
     summary: string;
     tags: string[];
-    distance: number;
     cosine: number;
-    score: number;
+    sparseScore: number;
+    rrf: number;
   }>;
   recallTimeMs: number;
 }
@@ -275,6 +292,70 @@ export const api = {
     return request<void>("/api/settings", {
       method: "PATCH",
       body: JSON.stringify({ webui: { defaultModel: `${model.provider}/${model.model}` } }),
+    });
+  },
+
+  /**
+   * Trigger the session's RPC `compact` command and resolve when the server
+   * replies with `compact_done`. The server echoes a generic `error` message
+   * if the RPC fails; we accept the first error whose message contains
+   * "compact" as our own — the chat page only initiates one compact at a
+   * time, so the heuristic is reliable in practice.
+   *
+   * 30s timeout mirrors `pool.compact` on the server. If we time out, the
+   * `compaction_end` event the pi process emits (forwarded through the
+   * session pool) will also clear the chat's "Compacting..." indicator —
+   * see ChatPage.
+   */
+  compact(sessionId: string, customInstructions?: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        unsubDone();
+        unsubError();
+        reject(new Error("compact timed out after 30s"));
+      }, 30_000);
+      const unsubDone = ws.subscribe("compact_done", (msg: unknown) => {
+        const m = msg as { sessionId?: string };
+        if (m?.sessionId !== sessionId) return;
+        clearTimeout(timer);
+        unsubDone();
+        unsubError();
+        resolve();
+      });
+      const unsubError = ws.subscribe("error", (msg: unknown) => {
+        const m = msg as { message?: string };
+        const text = typeof m?.message === "string" ? m.message : "";
+        if (!text.toLowerCase().includes("compact")) return;
+        clearTimeout(timer);
+        unsubDone();
+        unsubError();
+        reject(new Error(text));
+      });
+      ws.send({ type: "compact", sessionId, customInstructions });
+    });
+  },
+
+  /**
+   * Read the user-defined quick commands from settings. Returns an empty
+   * array if no commands are configured.
+   */
+  async getQuickCommands(): Promise<QuickCommand[]> {
+    const settings = await request<Record<string, unknown>>("/api/settings");
+    const webui = (settings?.webui ?? {}) as { quickCommands?: unknown };
+    const list = webui.quickCommands;
+    if (!Array.isArray(list)) return [];
+    return list.filter(isQuickCommand);
+  },
+
+  /**
+   * Replace the user-defined quick commands. Persisted via PATCH which
+   * deep-merges into settings.json — only `webui.quickCommands` is touched.
+   */
+  setQuickCommands(commands: QuickCommand[]): Promise<void> {
+    return request<void>("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webui: { quickCommands: commands } }),
     });
   },
 

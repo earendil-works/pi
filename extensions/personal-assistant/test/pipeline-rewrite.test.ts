@@ -211,7 +211,7 @@ describe("context hook rewrite stage (rewrite → multi-recall → merge)", () =
 		const rewriteArgs = mockRewriteQueries.mock.calls[0]!;
 		expect(rewriteArgs[0]).toBe("bwa 有问题");
 		expect(rewriteArgs[1]).toEqual([]);
-		expect(rewriteArgs[2]).toEqual({ timeoutMs: 1500 });
+		expect(rewriteArgs[2]).toEqual({ timeoutMs: 5000 });
 
 		// recallAtoms was called for EACH subquery (multi-recall)
 		expect(mockRecallAtoms).toHaveBeenCalledTimes(3);
@@ -221,10 +221,11 @@ describe("context hook rewrite stage (rewrite → multi-recall → merge)", () =
 		expect(recallCalls[1]![1]).toBe("问题是什么");
 		expect(recallCalls[2]![1]).toBe("如何解决");
 
-		// rerankAndFilter was called with joined subqueries
-		expect(mockRerankAndFilter).toHaveBeenCalledTimes(1);
-		const rerankArgs = mockRerankAndFilter.mock.calls[0]!;
-		expect(rerankArgs[0]).toBe("bwa 有问题 问题是什么 如何解决");
+		// rerankAndFilter called once per subquery
+		expect(mockRerankAndFilter).toHaveBeenCalledTimes(3);
+		expect(mockRerankAndFilter.mock.calls[0]![0]).toBe("bwa 有问题");
+		expect(mockRerankAndFilter.mock.calls[1]![0]).toBe("问题是什么");
+		expect(mockRerankAndFilter.mock.calls[2]![0]).toBe("如何解决");
 
 		// formatMemoryContext was called
 		expect(mockFormatMemoryContext).toHaveBeenCalledTimes(1);

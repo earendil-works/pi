@@ -1,11 +1,14 @@
 // Embedding layer for the memory v2 pipeline.
 //
 // Two responsibilities:
-//   1. embedText — single text → 1024-dim vector via ollama's /v1/embeddings.
-//      Returns null on any failure (timeout, non-OK, malformed body, parse
-//      error). Per design Decision 7 there is NO fallback to other embedding
-//      sources: a null tells the caller "ollama is down, skip vector ops for
-//      this item" — recall collapses to [] and extraction skips dedup.
+//   1. embedText — single text → 1024-dim vector via the local bge-m3
+//      embedding service. The service exposes an OpenAI-compatible
+//      /v1/embeddings endpoint, so the wire format is identical to ollama's
+//      — only the URL differs. Returns null on any failure (timeout, non-OK,
+//      malformed body, parse error). Per design Decision 7 there is NO
+//      fallback to other embedding sources: a null tells the caller
+//      "embedding service is down, skip vector ops for this item" — recall
+//      collapses to [] and extraction skips dedup.
 //   2. buildEmbeddableText — concatenate title + summary + content + tags for
 //      embedding. Per Decision 6 we embed full text, not just title: title-
 //      only embeddings have materially worse recall (agentmemory benchmark
@@ -19,27 +22,34 @@ import type { MemoryAtom } from "./types.ts";
 
 /**
  * Embedding configuration. Defaults match design.md:
- *   - ollama running locally at 127.0.0.1:11434
+ *   - bge-m3 embedding service at 127.0.0.1:11435 (FastAPI, replaces ollama).
+ *     The service exposes the same OpenAI-compatible
+ *     /v1/embeddings path that ollama served, so embedText's wire format
+ *     is unchanged.
  *   - bge-m3 (1024 dims)
  *   - 15s timeout (Decision 6)
  */
 export interface EmbedConfig {
-	/** Base URL of the ollama daemon, e.g. http://127.0.0.1:11434. */
+	/** Base URL of the embedding service (e.g. http://127.0.0.1:11435). */
 	ollamaUrl: string;
-	/** Model name as configured in ollama. bge-m3 produces 1024-dim vectors. */
+	/** Model name passed through to the embedding service. bge-m3 produces
+	 *  1024-dim vectors. */
 	model: string;
 	/** Per-call timeout in milliseconds. */
 	timeoutMs: number;
 }
 
 const DEFAULT_CONFIG: EmbedConfig = {
-	ollamaUrl: "http://127.0.0.1:11434",
+	ollamaUrl: "http://127.0.0.1:11435",
 	model: "bge-m3",
 	timeoutMs: 15000,
 };
 
 /**
- * Embed a single text via ollama's OpenAI-compatible /v1/embeddings endpoint.
+ * Embed a single text via the embedding service's OpenAI-compatible
+ * /v1/embeddings endpoint. Drop-in replacement for ollama — the request body
+ * ({model, input}) and response shape ({data:[{embedding:number[]}]}) are
+ * unchanged.
  *
  * Returns the embedding as a number[] on success, or null on any failure.
  * The caller must treat null as "embedding unavailable, skip vector logic"
@@ -79,7 +89,7 @@ export async function embedText(
 }
 
 /**
- * Type-safe accessor for the ollama /v1/embeddings response body.
+ * Type-safe accessor for the embedding service's response body.
  *
  * Returns the embedding array only if the body matches the expected shape:
  *   { data: [{ embedding: number[] }] }

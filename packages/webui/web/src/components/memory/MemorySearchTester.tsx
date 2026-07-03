@@ -1,31 +1,15 @@
 import { useState } from "react";
-import { api, type MemoryAtom } from "../../lib/api";
+import { api, type MemorySearchResult } from "../../lib/api";
 import { MemoryTypeBadge } from "./MemoryTypeBadge";
 
 interface MemorySearchTesterProps {
 	onSelectAtom: (id: string) => void;
 }
 
-interface SearchResult {
-	id: string;
-	type: MemoryAtom["type"];
-	title: string;
-	summary: string;
-	tags: string[];
-	distance: number;
-	cosine: number;
-	score: number;
-}
-
-interface SearchResponse {
-	results: SearchResult[];
-	recallTimeMs: number;
-}
-
 export function MemorySearchTester({ onSelectAtom }: MemorySearchTesterProps) {
 	const [query, setQuery] = useState("");
 	const [loading, setLoading] = useState(false);
-	const [result, setResult] = useState<SearchResponse | null>(null);
+	const [result, setResult] = useState<MemorySearchResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const runSearch = async () => {
@@ -33,7 +17,7 @@ export function MemorySearchTester({ onSelectAtom }: MemorySearchTesterProps) {
 		setLoading(true);
 		setError(null);
 		try {
-			const r = (await api.memory.search(query.trim(), 10)) as SearchResponse;
+			const r = await api.memory.search(query.trim(), 10);
 			setResult(r);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
@@ -83,7 +67,7 @@ export function MemorySearchTester({ onSelectAtom }: MemorySearchTesterProps) {
 										<MemoryTypeBadge type={r.type} />
 										<span className="font-medium text-sm">{r.title}</span>
 										<span className="ml-auto text-xs text-gray-500">
-											cos {r.cosine.toFixed(3)} · score {r.score.toFixed(3)}
+											rrf {r.rrf.toFixed(4)} · cos {r.cosine.toFixed(3)} · sparse {r.sparseScore.toFixed(3)}
 										</span>
 									</div>
 									<div className="text-xs text-gray-600 mt-1 line-clamp-2">{r.summary}</div>

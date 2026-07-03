@@ -252,4 +252,63 @@ describe("parseModelsJson", () => {
       expect(result.providers[1].models[0].id).toBe("mimo-v2.5");
     });
   });
+
+  // Schema-independent coverage for `contextWindow`. Frontend uses this
+  // for the topbar's "used / total" context indicator; an invalid /
+  // missing field must round-trip to `undefined` so the UI drops back
+  // to "used only" instead of showing a misleading denominator.
+  describe("contextWindow propagation", () => {
+    it("schema 1: extracts contextWindow when present on a model", () => {
+      const input = JSON.stringify({
+        providers: [
+          {
+            name: "anthropic",
+            models: [{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4", contextWindow: 200000 }],
+          },
+        ],
+      });
+      const result = parseModelsJson(input);
+      expect(result.providers[0].models[0]).toEqual({
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4",
+        contextWindow: 200000,
+      });
+    });
+
+    it("schema 4: extracts contextWindow under provider configs", () => {
+      const input = JSON.stringify({
+        providers: {
+          anthropic: { models: [{ id: "claude-sonnet-4-6", contextWindow: 200000 }] },
+        },
+      });
+      const result = parseModelsJson(input);
+      expect(result.providers[0].models[0].contextWindow).toBe(200000);
+    });
+
+    it("omits contextWindow (undefined) when the field is missing", () => {
+      const input = JSON.stringify({
+        providers: [{ name: "openai", models: [{ id: "gpt-4", name: "GPT-4" }] }],
+      });
+      const result = parseModelsJson(input);
+      expect(result.providers[0].models[0]).not.toHaveProperty("contextWindow");
+    });
+
+    it("ignores contextWindow when non-numeric / non-positive", () => {
+      const input = JSON.stringify({
+        providers: [
+          { name: "p1", models: [{ id: "m1", contextWindow: -1 }] },
+          { name: "p2", models: [{ id: "m2", contextWindow: "200000" }] },
+          { name: "p3", models: [{ id: "m3", contextWindow: null }] },
+        ],
+      });
+      const result = parseModelsJson(input);
+      // All three models should drop the field — UI must not render a
+      // misleading denominator when the source is malformed.
+      for (const provider of result.providers) {
+        for (const model of provider.models) {
+          expect(model).not.toHaveProperty("contextWindow");
+        }
+      }
+    });
+  });
 });

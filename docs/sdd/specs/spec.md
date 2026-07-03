@@ -1262,41 +1262,55 @@ MemoryIndex SHALL 用 `content_fingerprint = sha256(normalizeContent(content)).s
 - **WHEN** `normalizeContent(content)` 执行
 - **THEN** 返回 `"pdf 图片 提取"` (多个空格折叠成 1,小写,trim)
 
-#### Requirement: 余弦相似度去重阈值默认 0.92
-executePlan SHALL 用 cosine 相似度阈值 0.92 判定 supersede。cosine > 0.92 → supersede 旧 atom 并新建带 parent_id 的 atom;cosine ≤ 0.92 → 新建独立 atom。
+#### Requirement: supersedeIfSimilar Default Threshold
+The `supersedeIfSimilar` function in `extensions/personal-assistant/dedup.ts` SHALL use 0.65 as the default cosine similarity threshold for dedup decisions when the caller does not specify `threshold`. The function SHALL continue to accept an optional `threshold` parameter for callers that want a different value (e.g. CLI migration script with `--threshold=0.60`).
 
-##### Scenario: cosine > 0.92 触发 supersede
-- **GIVEN** atom A 已存在,embedding=[0.1, 0.2, ..., 0.5] (1024-dim)
-- **AND** 新 item.content 算出的 embedding=[0.11, 0.21, ..., 0.51]
-- **AND** cosine(A_emb, new_emb) = 0.93 > 0.92
-- **WHEN** executePlan 处理该 item
-- **THEN** atom A.is_latest=0
-- **AND** 新 atom B.is_latest=1, B.parent_id=A.id
-- **AND** A.strength transfer 到 B.strength
-- **AND** A.access_count transfer 到 B.access_count
+##### Scenario: Caller does not specify threshold — 0.65 used
+- **GIVEN** a write path calls `supersedeIfSimilar(index, atomsDir, newAtom, embedding)` without threshold arg
+- **WHEN** the function calls `index.findMostSimilarEmbedding(embedding, threshold)`
+- **THEN** it uses `0.65` as the threshold
 
-##### Scenario: cosine ≤ 0.92 创建独立 atom
-- **GIVEN** 现有 atom 都不与新 item 相似 (cosine 都 ≤ 0.92)
-- **WHEN** executePlan 处理新 item
-- **THEN** 新 atom C.is_latest=1, C.parent_id=null
-- **AND** DB 中现存 atom 的 is_latest 字段不变
+##### Scenario: Caller specifies threshold — that value used
+- **GIVEN** a write path calls `supersedeIfSimilar(index, atomsDir, newAtom, embedding, 0.80)`
+- **WHEN** the function calls `index.findMostSimilarEmbedding(embedding, threshold)`
+- **THEN** it uses `0.80` (caller's value, not the default)
 
-#### Requirement: SQLite 事务保证 supersede 原子性
-supersede 旧 atom (UPDATE is_latest=0) + 插入新 atom (INSERT) + 写 audit 必须用 `BEGIN IMMEDIATE` 包成一个事务。事务失败自动 rollback,DB 不留半状态。
+##### Scenario: Cosine 0.64 pair not merged
+- **GIVEN** corpus has 2 atoms with cosine 0.64
+- **WHEN** `supersedeIfSimilar` runs with default threshold
+- **THEN** pair is NOT merged (0.64 < 0.65)
 
-##### Scenario: 事务中插入新 atom 失败 → 旧 atom is_latest 仍是 1
-- **GIVEN** BEGIN TX 已执行,旧 atom A 已 UPDATE is_latest=0
-- **AND** INSERT 新 atom B 抛错 (e.g., UNIQUE 冲突)
-- **WHEN** 事务回滚
-- **THEN** atom A.is_latest 仍是 1 (rollback 恢复)
-- **AND** 新 atom B 不存在
+##### Scenario: Cosine 0.66 pair merged
+- **GIVEN** corpus has 2 atoms with cosine 0.66
+- **WHEN** `supersedeIfSimilar` runs with default threshold
+- **THEN** pair is merged (0.66 ≥ 0.65)
 
-##### Scenario: 成功提交事务后两 atom 状态正确
-- **GIVEN** atom A is_latest=1,parent_id=null
-- **WHEN** markSupersededTx(A.id, B.id) 成功执行
-- **THEN** A.is_latest=0, A.superseded_at 不为空
-- **AND** B.is_latest=1, B.parent_id=A.id
-- **AND** memory_audit 有 2 条记录 (A action='mark_superseded', B action='create')
+##### Scenario: Self-match guard — cosine 1.0 returns create
+- **GIVEN** caller is PATCHing an existing atom, the most similar match is the atom itself (cosine 1.0)
+- **WHEN** `supersedeIfSimilar` runs
+- **THEN** returns `{ status: "create", atom: newAtom }` (self-match guard, no superseded attempted that would fail PRIMARY KEY)
+
+#### Requirement: markSupersededTx Behavior (unchanged, but new no-insert variant)
+The `markSupersededTx` method in `extensions/personal-assistant/storage.ts` SHALL continue to perform INSERT new row + UPDATE old row in one transaction. A NEW companion method `markSupersededNoInsert(oldId, parentId, now)` SHALL perform ONLY the UPDATE (mark old as archived, set parent_id, set superseded_at) without inserting a new row, for use by the migration script where the "winner" atom already exists with a different id.
+
+##### Scenario: markSupersededTx inserts new row + marks old archived
+- **GIVEN** extract emits new item, `supersedeIfSimilar` finds hit
+- **WHEN** `markSupersededTx(hit.id, newAtom, embedding)` runs
+- **THEN** INSERT new row with new id + UPDATE old row `is_latest=0, superseded_at=now` in single transaction
+
+##### Scenario: markSupersededNoInsert only updates old row
+- **GIVEN** migration script identifies cluster pair (winner A, hit B)
+- **WHEN** `markSupersededNoInsert(B.id, A.id, now)` runs
+- **THEN** UPDATE `memory_index` SET `is_latest=0, parent_id=A.id, superseded_at=now` WHERE id=B.id
+- **AND** no INSERT of new row
+- **AND** B's vector in `memory_vectors` unchanged (content unchanged, vector still correct)
+
+##### Scenario: Migration script uses markSupersededNoInsert
+- **GIVEN** migration script processes corpus and finds 0.65 cosine pair (winner A, hit B)
+- **WHEN** script calls `markSupersededNoInsert(B.id, A.id, now)` for each pair
+- **THEN** B rows marked archived + parent_id=A
+- **AND** `getActiveAtoms()` no longer returns B
+- **AND** recall uses A only (B excluded from active corpus)
 
 #### Requirement: Extraction prompt 移除 LLM 决策字段
 Extraction prompt SHALL 不让 LLM 决定 create/update/skip,只让 LLM 输出 `{type, title, content, summary, tags, importance}`。LLM 不知道也不关心 dedup。
@@ -1867,3 +1881,388 @@ The webui `POST /api/memory/search` response MUST include `score` in each result
 - **WHEN** 客户端 PATCH 带 `If-Match:"5"`,tags=["新标签"],content="new"
 - **THEN** 服务端:校验 5 → 归一化 tags 与现有合并 → embed "new" → cosine 检查 → updateAtom 写 v=6,tags=["新标签","x"] → 写 .md 文件 → 广播 atom v=6 → 响应 200
 
+## Capability: recall-precision
+
+### Requirements
+
+#### Requirement: Recall gate via local LLM (qwen2.5:3b)
+memory recall pipeline SHALL 在 `context` hook 入口先经过 gate LLM 决策: 给定当前 user msg + 最近 2-3 条 user msg, 输出 `{need_memory: boolean, search_query: string}`。gate 走 ollama qwen2.5:3b-instruct-q4_0 (温度 0), 500ms 超时, 失败一律降级 skip 召回 (不 fallback 走原 RRF), TUI 显示对应状态。
+
+##### Scenario: 指代性 short query 被 gate 拦截 (S1)
+- **GIVEN** recent user msgs = ["把 search_3n_path.py 改成异步的", "改成异步后跑一下"], 当前 = "上面的脚本有问题"
+- **WHEN** gate 调用 qwen2.5:3b
+- **THEN** 输出 `{need_memory: false}`, recall 被跳过, TUI 显示 "🚫 gate skipped", 端到端延迟 < 500ms
+
+##### Scenario: 零信息量 ack query 被 gate 拦截 (S2)
+- **GIVEN** recent = ["列一下 TODO"], 当前 = "对"
+- **WHEN** gate 调用
+- **THEN** 输出 `{need_memory: false}`, 跳过 recall, status "🚫 gate skipped"
+
+##### Scenario: 历史回溯 query 被 gate 改写后召回 (S3)
+- **GIVEN** recent = ["我们之前用 bwa 做过引物验证", "做了 但是有个并发问题"], 当前 = "之前那个并发问题最后怎么解决的"
+- **WHEN** gate 调用
+- **THEN** 输出 `{need_memory: true, search_query: "bwa 引物验证 并发"}`, 后续 recallAtoms 用 `search_query` (非原 msg)
+
+##### Scenario: gate JSON 解析失败降级 skip (S5)
+- **GIVEN** qwen2.5-3b 返回不合法 JSON
+- **WHEN** gate 解析 (strip 前后非 `{...}` 段后重 parse) 仍失败
+- **THEN** 返回 null, skip 召回, status "🚫 gate skipped (parse failed)"
+
+##### Scenario: gate 500ms 超时 (S6)
+- **GIVEN** ollama 500ms 内未响应
+- **WHEN** AbortController 触发
+- **THEN** 返 null, status "⚠ gate timeout, skipped"
+
+##### Scenario: ollama 服务挂掉 (S7)
+- **GIVEN** ollama ECONNREFUSED
+- **WHEN** gate fetch 抛
+- **THEN** catch 内吞掉, status "⚠ gate down, skipped"
+
+#### Requirement: Cross-encoder rerank endpoint on bge-m3 server
+bge-m3 server SHALL 提供 `POST /api/rerank` 端点: 接收 `{query, hits: [{id, embeddable_text}]}`, 用 `BAAI/bge-reranker-v2-m3` cross-encoder 计算 score (normalize=True), 返回 `{scores: [{id, score}]}`。模型 lazy load, `/api/health` 报告 `reranker_loaded` 状态。
+
+##### Scenario: rerank 端点相关分正确区分相关/不相关 (R1)
+- **GIVEN** query="bwa 并发", hit_a="bwa 验证方案", hit_b="Python 爬虫"
+- **WHEN** POST /api/rerank
+- **THEN** hit_a score ≈ 0.85, hit_b score ≈ 0.0001, 差距 >0.5
+
+##### Scenario: reranker 未加载 503 (R5)
+- **GIVEN** server 启动后 FlagReranker 初始化失败
+- **WHEN** client POST
+- **THEN** server 返 503, client 检测 non-2xx → fallback 原 RRF top-3
+
+#### Requirement: rerank threshold + gap detection 截断
+`rerankAndFilter` SHALL 在 rerank score 上应用双重截断: threshold ≥0.5 过滤低分; 相邻 gap >0.15 处截断。同分按原 RRF rrf 二次排序。formatMemoryContext 按 rerankScore 降序。
+
+##### Scenario: threshold + gap 双截断 (R1)
+- **GIVEN** rerank scores = [0.92, 0.85, 0.55, 0.32, 0.21]
+- **WHEN** threshold ≥0.5 + gap>0.15 截断
+- **THEN** threshold 过 3 个, gap 在 0.85→0.55 = 0.30 > 0.15 截前 2 个 → 返 [0.92, 0.85]
+
+##### Scenario: 全部低于 threshold 不注入 (R3)
+- **GIVEN** scores = [0.48, 0.45, 0.42, 0.30]
+- **WHEN** threshold ≥0.5
+- **THEN** 所有 hit 被丢, 返 [], 不注入
+
+#### Requirement: pipeline 整合到 context hook
+memory.ts SHALL 把 gate→recallAtoms→rerankAndFilter→formatMemoryContext 整条 pipeline 整合到 `context` hook。gate/rerank/format 走 dynamic import 以保持 cold path 清洁。
+
+##### Scenario: 完整 happy path (P1)
+- **GIVEN** ContextEvent.messages 含最近 2-3 user msg
+- **WHEN** pipeline 触发
+- **THEN** gate→recallAtoms→rerankAndFilter→formatMemoryContext, 总 ~850ms
+
+##### Scenario: rerank/all-threshold-below 返回空 (R3)
+- **GIVEN** rerank 全 score <0.5
+- **WHEN** threshold 过滤
+- **THEN** 返回 [], status "🔍 no memory match"
+
+#### Requirement: 失败降级矩阵
+gate/rerank 各故障都对应明确降级行为: gate 失败 → skip 召回 (不注入); rerank 失败 → fallback 原 RRF top-3 (注入有精度下降); 全部低于 threshold → 不注入。
+
+##### Scenario: gate disabled (P5)
+- **GIVEN** settings.json `memory.gate.enabled=false`
+- **WHEN** context hook 触发
+- **THEN** 跳过 gate, 直接走 recallAtoms + rerank
+
+## Capability: migration-atom-remigrate
+
+One-shot memory corpus dedup + extract pipeline improvement to prevent future redundancy. Targets 90 legacy atoms + all future extract emissions.
+
+### Requirement: Legacy Atom Migration Script
+The system SHALL provide a one-shot script `migrate-legacy-atoms.mts` that performs programmatic 0.65-cosine deduplication against the active atom corpus, with backup + idempotency.
+
+#### Scenario: One-shot programmatic 0.65 dedup migration runs
+- **GIVEN** memory.db contains 90 active atoms (90 .md files in `atoms/{type}/`)
+- **AND** bge-m3 service runs at `127.0.0.1:11435` (not called by this script — content unchanged, vectors still correct)
+- **WHEN** user runs `npx tsx extensions/personal-assistant/scripts/migrate-legacy-atoms.mts`
+- **THEN** script backs up memory.db → `memory.db.bak.YYYYMMDD`
+- **AND** script reads 90 atoms, sorts by `(access_count DESC, last_access DESC NULLS LAST, created_at DESC)`
+- **AND** for each atom, script reads its embedding from `memory_vectors`, calls `findMostSimilarEmbedding(embedding, 0.65)`
+- **AND** if hit (not self), script calls `markSupersededNoInsert(hit.id, atom.id, now)` to mark hit archived
+- **AND** script outputs "migration done: 90 → 75 active (archived 15). Re-run idempotent."
+
+#### Scenario: Same-cluster 0.65+ cosine pair automatically merges
+- **GIVEN** corpus has 2 atoms: "扩增子物种注释结果文件" (embedding A) and "扩增子物种注释结果文件路径" (embedding B), A↔B dense cosine = 0.756
+- **AND** sort places A first (higher access_count or last_access)
+- **WHEN** script iterates to A
+- **THEN** `findMostSimilarEmbedding(A, 0.65)` returns B (cosine 0.756 ≥ 0.65)
+- **AND** script calls `markSupersededNoInsert(B.id, A.id, now)`: B marked is_latest=0, parent_id=A, superseded_at=now
+- **AND** A unchanged (id preserved, active, the "winner")
+- **WHEN** script later iterates to B
+- **THEN** B is already is_latest=0, `getActiveAtoms()` filters it out, script skips
+- **AND** recall shows only A (B excluded), precision improves
+
+#### Scenario: Atom content length is not expanded
+- **GIVEN** 2 atoms with cluster relation; one has 200-char content, the other 300-char
+- **WHEN** 0.65 dedup merge (hot atom wins)
+- **THEN** winner keeps original content (200 or 300 chars), no lengthening
+- **AND** bge-m3 vector still matches (content unchanged)
+- **AND** recall shows user the 200 or 300 char version, not 500 chars (token savings)
+
+#### Scenario: Idempotent re-run produces 0 changes
+- **GIVEN** first migration completed, corpus no longer has cosine ≥ 0.65 pairs (dedup terminal state)
+- **WHEN** user re-runs `npx tsx extensions/personal-assistant/scripts/migrate-legacy-atoms.mts`
+- **THEN** second run: for each atom, `findMostSimilarEmbedding(embedding, 0.65)` returns self (cosine 1.0)
+- **AND** self-match guard path, no-op
+- **AND** 0 markSupersededNoInsert calls, 0 reindex
+- **AND** report shows "0 changes (idempotent)"
+
+#### Scenario: Backup creation failure aborts migration safely
+- **GIVEN** memory.db is 4.4MB, target backup path disk is full
+- **WHEN** `cp memory.db memory.db.bak.YYYYMMDD` fails
+- **THEN** script aborts, logs "backup failed, refusing to migrate"
+- **AND** 0 atoms changed
+
+#### Scenario: User can rollback migration via backup file
+- **GIVEN** migration completed, user runs recall once and finds "扩增子" recall has 1 result but needed 2 (some cluster wrongly merged)
+- **WHEN** user runs `cp memory.db.bak.YYYYMMDD memory.db`
+- **AND** user restarts bge-m3 service (it auto-rebuilds in-memory index from db on startup)
+- **THEN** recall returns to pre-migration state (all ids present, all is_latest=1, content is pre-migration)
+
+#### Scenario: Re-run with lower threshold 30 days later
+- **GIVEN** first 0.65 dedup run completed, corpus 75 atoms, precision improved but 0.55-0.65 range cluster remnants
+- **WHEN** user runs `npx tsx migrate-legacy-atoms.mts --threshold=0.60` (script supports CLI threshold)
+- **THEN** second run with 0.60 dedup catches 36 new pairs (90 → 65)
+- **AND** 0 mis-merges (sample data shows all real clusters)
+- **AND** idempotent: 0.65-merged clusters not re-superseded by 0.60 (already archived)
+
+#### Scenario: 30 days later user wants to re-run on smaller corpus
+- **GIVEN** user manually archived 20 atoms before migration
+- **WHEN** script scans active atoms, only sees 70
+- **THEN** script only processes these 70, backup file size corresponds to full DB (90 rows)
+- **AND** log shows "found 70 active atoms (db has N total, N-70 are archived/superseded)"
+
+### Requirement: Cosine Dedup Threshold Alignment
+The system SHALL use a single cosine dedup threshold of 0.65 across all write paths, providing a 0.10 buffer above the recall floor (0.55) and catching real cluster pairs that the legacy 0.92 threshold missed.
+
+#### Scenario: supersedeIfSimilar uses 0.65 as default threshold
+- **GIVEN** a write path calls `supersedeIfSimilar(index, atomsDir, newAtom, embedding)` without specifying threshold
+- **WHEN** the function runs
+- **THEN** it calls `findMostSimilarEmbedding(embedding, 0.65)` (0.65 default, not 0.92)
+
+#### Scenario: 0.65 threshold catches real cluster pairs (X101SC)
+- **GIVEN** corpus has 2 atoms: "X101SC26052587 客户数据未回传" and "X101SC26052587 当前阻塞状态", cosine 0.708
+- **WHEN** 0.65 dedup runs
+- **THEN** pair is detected and merged (cosine 0.708 ≥ 0.65)
+
+#### Scenario: 0.65 threshold catches real cluster pairs (iCAMP)
+- **GIVEN** corpus has 2 atoms: "iCAMP分组柱状图顺序修复" and "iCAMP bar chart group order fix script", cosine 0.758
+- **WHEN** 0.65 dedup runs
+- **THEN** pair is detected and merged (cosine 0.758 ≥ 0.65)
+
+#### Scenario: 0.65 threshold does not over-merge (preserves 0.55-0.65 borderline)
+- **GIVEN** corpus has 2 atoms with cosine 0.58 (below 0.65)
+- **WHEN** 0.65 dedup runs
+- **THEN** pair is NOT merged (cosine 0.58 < 0.65, threshold not met)
+
+### Requirement: Extract Pipeline LLM 二次确认 Dedup
+The system SHALL, when `executeItem` finds a cosine ≥ 0.65 match between a new extraction item and an existing atom, call an LLM with both contents to determine the correct action (update / supersede / create / skip), rather than auto-superseding.
+
+#### Scenario: Cosine < 0.65 — no LLM call, direct insert
+- **GIVEN** extract emits a new topic item, `findMostSimilarEmbedding(0.65)` returns null or cosine < 0.65
+- **THEN** executeItem takes create path: `index.insertAtom` + `writeAtomToFile` + bge-m3 reindex
+- **AND** LLM dedup confirmation is NOT called (skip LLM cost for the 80% common case)
+- **AND** this is the typical new-topic case
+
+#### Scenario: Cosine ≥ 0.65 hit + LLM returns "update" — in-place merge
+- **GIVEN** user session mentions "check_seq.py 又改了输出格式,现在支持 JSON"
+- **AND** corpus has atom "check_seq.py 脚本位置与输出格式" (tsv format)
+- **WHEN** extract LLM emits an item, `executeItem` finds hit with cosine 0.77
+- **THEN** executeItem calls LLM 二次确认 with hit.atom + newItem contents
+- **AND** LLM returns `{ action: "update", merged: { title: "check_seq.py 脚本位置与输出格式", content: "原 content + 2026-07 新增 JSON 格式支持" } }`
+- **THEN** executeItem takes update path: `index.updateAtom(mergedAtom)` in-place, version+1, `writeAtomToFile`, bge-m3 reindex
+- **AND** old atom id preserved, new info merged in
+
+#### Scenario: Cosine ≥ 0.65 hit + LLM returns "supersede" — new atom replaces old
+- **GIVEN** extract emits "扩增子物种注释结果文件" (item), corpus has "扩增子物种注释结果文件路径" (hit, cosine 0.756)
+- **WHEN** LLM 二次确认 reviews hit+item
+- **THEN** LLM judges this as nearly synonymous (file vs file path, 2 char difference), returns `action: "supersede"`
+- **THEN** executeItem takes supersede path: `index.markSupersededTx(hit.id, item, embedding)`, hit marked archived+parent_id=item.id, item exists independently, `writeAtomToFile` + bge-m3 reindex
+
+#### Scenario: Cosine ≥ 0.65 hit + LLM returns "create" — independent new atom
+- **GIVEN** extract emits "iCAMP 分组柱状图顺序修复" (item), corpus has "iCAMP 分组顺序 Skill 注册信息" (hit, cosine 0.78)
+- **WHEN** LLM 二次确认 reviews hit+item
+- **THEN** LLM judges these are different topics (one is fix, one is Skill registration), returns `action: "create"`
+- **THEN** executeItem takes create path: hit unchanged, item inserted independently, `writeAtomToFile` + bge-m3 reindex
+- **AND** recall shows both atoms, user selects which is relevant
+
+#### Scenario: Cosine ≥ 0.65 hit + LLM returns "skip" — full duplicate, no-op
+- **GIVEN** LLM 二次确认 reviews hit+item, judges info fully duplicate (fingerprint dedup missed, but cosine 0.65+ matched)
+- **WHEN** LLM returns `action: "skip"`
+- **THEN** executeItem writes no files, item dropped, trace logs "dedup-confirm: skip"
+
+#### Scenario: LLM 二次确认 fails (timeout / JSON parse) — fallback to supersede
+- **GIVEN** LLM 二次确认 call hits 5s timeout or returns non-JSON
+- **THEN** executeItem takes fallback path: `action: "supersede"` (conservative, matches cosine 0.65 hit)
+- **AND** logs warn: "LLM dedup confirm failed for item X (hit Y), fell back to supersede"
+- **AND** does not interrupt, continues with next item
+
+### Requirement: Tag Vocabulary Injection
+The system SHALL compute a top-50 high-frequency tag vocabulary from the active corpus at extract time and inject it into `EXTRACT_PROMPT_V2` so the LLM reuses existing tags rather than inventing near-synonyms.
+
+#### Scenario: Tag dictionary loaded and injected at first extract
+- **GIVEN** corpus has 90 atoms loaded
+- **WHEN** `extractMemoriesWithCallLlm` is first called
+- **THEN** construct prompt by first calling `loadTagVocabulary(index)` (new function), scanning `memory_index.tags` column (JSON parse), tallying frequency, taking top 50
+- **AND** inject into prompt top: "## 现有 tag 字典 (优先复用,不要发明新近义 tag)\n" + comma-joined tags
+- **AND** tagVocabulary cached in-memory until session end (not recomputed per extract)
+
+#### Scenario: Tag dictionary injection prompt content
+- **GIVEN** session triggers `session_before_compact` extract
+- **WHEN** LLM receives prompt
+- **THEN** prompt contains a section:
+  ```
+  ## 现有 tag 字典 (优先复用,不要发明新近义 tag)
+  amplicon, 16S, MTB, R, 扩增子, 修复, bug, fix, position, location,
+  flow, process, rule, prefer, prefer-not, prefer-must, ...
+
+  ## Tag 规范
+  - 大小写归一: 全部 lowercase (中文不变)
+  - 同义合并: 写 "Amplicon" 视作 "amplicon"; 写 "Bug 修复" 视作 "bug fix"
+  - 概念性 tag 至少 1 个 (动作/类别)
+  - 总数 3-6 个
+  ```
+
+#### Scenario: LLM sees updatable new info and updates existing atom
+- **GIVEN** user session mentions "check_seq.py 又改了输出格式,现在支持 JSON"
+- **AND** corpus has atom "check_seq.py 脚本位置与输出格式" (tsv format)
+- **WHEN** extract LLM analyzes this new info
+- **THEN** LLM sees "## 主动更新,非扩张" rule in prompt
+- **AND** LLM decides: append "2026-07 新增 JSON 格式支持" to existing atom content, do NOT create new atom
+- **THEN** `executeItem` takes supersede path (cosine ≥ 0.65 hit, Decision 10), new version replaces old
+
+#### Scenario: LLM emits new item but program dedup catches it (fallback)
+- **GIVEN** LLM emits "check_seq.py 新增 JSON 格式支持" but missed the updatable existing atom
+- **WHEN** `executeItem` runs fingerprint dedup + 0.65 cosine dedup
+- **AND** new atom content_fingerprint matches existing → skip
+- **OR** new atom cosine ≥ 0.65 with existing → supersede
+- **THEN** existing atom content updated, new atom does not exist independently
+
+#### Scenario: Corpus empty — tag dictionary injection is empty string
+- **GIVEN** user first launch, corpus 0 atoms
+- **WHEN** first extract triggers
+- **THEN** `loadTagVocabulary` returns empty set, prompt's "## 现有 tag 字典" section reads "(空,自由 emit)"
+- **AND** no error, extract proceeds normally
+
+#### Scenario: Corpus at 1000 atoms — dictionary scan stays fast
+- **GIVEN** corpus has 1000 atoms
+- **WHEN** `loadTagVocabulary` scans all active atom tags columns
+- **THEN** single scan ~50ms, cached in-memory for the whole session
+- **AND** user does not perceive delay (session_before_compact already has 1-2s LLM call)
+
+### Requirement: Program-Side Tag Normalization
+The system SHALL normalize LLM-emitted tags in `executeItem` to ensure corpus-wide tag consistency, including lowercase folding, dictionary match priority, and concept-tag count check.
+
+#### Scenario: Tag lowercase normalization (Chinese unchanged)
+- **GIVEN** LLM emits `["Amplicon", "X101SC", "16S", "扩增子"]`
+- **WHEN** `normalizeTag` is called on each (no dictionary)
+- **THEN** result is `["amplicon", "x101sc", "16s", "扩增子"]` (Chinese unchanged via Unicode range detection)
+
+#### Scenario: Tag dictionary match priority (MGM stays MGM)
+- **GIVEN** dictionary contains "MGM"
+- **WHEN** `normalizeTag` is called on "MGM" with that dictionary
+- **THEN** returns "MGM" (not lowercased, because dictionary match takes priority)
+
+#### Scenario: Tag dictionary match priority (Amplicon folds to amplicon)
+- **GIVEN** dictionary contains "amplicon" (lowercase canonical)
+- **WHEN** `normalizeTag` is called on "Amplicon" with that dictionary
+- **THEN** returns "amplicon" (dictionary canonical form used)
+
+#### Scenario: LLM emits all-proper-noun tags — concept warning
+- **GIVEN** LLM emits `["Amplicon", "X101SC", "16S"]` (all proper nouns, no concept/* tags)
+- **WHEN** `conceptTagCount` runs on these tags
+- **THEN** returns 0
+- **AND** executeItem logs warn: "item X lacks concept tag (0/N tags are concept/*)"
+- **AND** item is still written (warning, not rejection — don't lose data)
+
+### Requirement: EXTRACT_PROMPT_V2 Active Update Rule
+The system SHALL include an "## 主动更新,非扩张" section in `EXTRACT_PROMPT_V2` instructing the LLM to prefer updating existing atoms over creating new ones when the new information belongs to an existing topic.
+
+#### Scenario: EXTRACT_PROMPT_V2 contains active-update rule
+- **WHEN** `EXTRACT_PROMPT_V2` is read
+- **THEN** it contains the section:
+  ```
+  ## 主动更新,非扩张 (重要!)
+
+  - 如果新信息可归入 corpus 已有的 atom (主题/对象/项目相同), 优先更新该 atom 的 content, 不要为这条信息创建新 atom
+  - 更新方式: 在 content 末尾追加新段落, 标注日期 (e.g. "2026-07 新增 JSON 格式支持")
+  - 仅在信息属于全新主题/新对象/新项目时才创建新 atom
+  - 这是 corpus 持续精炼的关键: 主动合并而非堆叠
+  ```
+
+### Requirement: ExecutePlan Signature (extended with callLlm)
+The `executePlan` function in `extensions/personal-assistant/extraction.ts` SHALL accept an optional `callLlm` parameter that is passed through to `executeItem` for the LLM 二次确认 dedup decision path. When `callLlm` is undefined, the legacy behavior is preserved (no LLM 二次确认, `supersedeIfSimilar` auto-supersede path).
+
+#### Scenario: executePlan with callLlm — LLM 二次确认 enabled
+- **GIVEN** `extractMemoriesWithCallLlm` calls `executePlan(index, atomsDir, plan, callLlm)` with the LLM callback
+- **WHEN** `executeItem` finds cosine ≥ 0.65 hit
+- **THEN** executeItem uses callLlm to confirm the dedup action
+- **AND** behavior follows the LLM 二次确认 scenarios above
+
+#### Scenario: executePlan without callLlm — legacy behavior
+- **GIVEN** a test calls `executePlan(index, atomsDir, plan)` without callLlm
+- **WHEN** executeItem runs
+- **THEN** executeItem skips LLM 二次确认, falls back to `supersedeIfSimilar` auto-supersede
+- **AND** legacy behavior preserved (backward compatibility)
+
+### Requirement: ExecuteItem Behavior (cosine hit → LLM 二次确认)
+The `executeItem` function in `extensions/personal-assistant/extraction.ts` SHALL, when finding a cosine ≥ 0.65 match between a new extraction item and an existing atom, call the LLM 二次确认 to determine the action (update/supersede/create/skip) rather than auto-supersede. The function SHALL also normalize tags and warn on missing concept tags before write.
+
+#### Scenario: executeItem normalizes tags before write
+- **GIVEN** LLM emits item with `tags: ["Amplicon", "16S", "扩增子"]`
+- **WHEN** executeItem processes this item
+- **THEN** it calls `normalizeTag` on each tag
+- **AND** writes the atom with `tags: ["amplicon", "16s", "扩增子"]` (lowercased, Chinese unchanged)
+
+#### Scenario: executeItem warns on missing concept tag
+- **GIVEN** LLM emits item with `tags: ["amplicon", "16s"]` (no concept/* tag)
+- **WHEN** executeItem processes this item
+- **THEN** it calls `conceptTagCount(tags)` → 0
+- **AND** logs warn: "item X lacks concept tag (0/2 tags are concept/*)"
+- **AND** still writes the atom (warn, not reject)
+
+#### Scenario: executeItem cosine ≥ 0.65 hit triggers LLM 二次确认
+- **GIVEN** new item embedding has cosine 0.77 with existing atom
+- **WHEN** executeItem calls `findMostSimilarEmbedding(embedding, 0.65)`
+- **THEN** it finds the hit
+- **AND** calls `confirmDedupAction(callLlm, hit.atom, newItem)` for the LLM 二次确认
+- **AND** applies the action returned by LLM (update/supersede/create/skip)
+
+#### Scenario: executeItem LLM 二次确认 returns update — in-place merge
+- **GIVEN** executeItem called `confirmDedupAction`, LLM returned `action: "update"` with `merged: { title, summary, content, tags }`
+- **WHEN** executeItem applies the action
+- **THEN** it calls `index.updateAtom(mergedAtom, embedding)` (in-place, version+1)
+- **AND** calls `writeAtomToFile(mergedAtom, atomsDir)`
+- **AND** calls bge-m3 `reindexOne(mergedAtom.id)` (HTTP, 5s timeout, failure logged warn)
+- **AND** returns `{ status: "update", atom: mergedAtom }`
+
+#### Scenario: executeItem LLM 二次确认 returns supersede — old archived, new independent
+- **GIVEN** executeItem called `confirmDedupAction`, LLM returned `action: "supersede"`
+- **WHEN** executeItem applies the action
+- **THEN** it calls `index.markSupersededTx(hit.id, newAtom, embedding)`
+- **AND** calls `writeAtomToFile(finalNew, atomsDir)`
+- **AND** calls bge-m3 `reindexOne(finalNew.id)`
+- **AND** returns `{ status: "supersede", atom: finalNew }`
+
+#### Scenario: executeItem LLM 二次确认 returns create — new independent, hit unchanged
+- **GIVEN** executeItem called `confirmDedupAction`, LLM returned `action: "create"`
+- **WHEN** executeItem applies the action
+- **THEN** it calls `index.insertAtom(newAtom, vector)` (hit unchanged)
+- **AND** calls `writeAtomToFile(newAtom, atomsDir)`
+- **AND** calls bge-m3 `reindexOne(newAtom.id)`
+- **AND** returns `{ status: "create", atom: newAtom }`
+
+#### Scenario: executeItem LLM 二次确认 returns skip — no-op
+- **GIVEN** executeItem called `confirmDedupAction`, LLM returned `action: "skip"`
+- **WHEN** executeItem applies the action
+- **THEN** it writes no files, makes no DB changes
+- **AND** logs trace: "dedup-confirm: skip"
+- **AND** returns `{ status: "skip", atom: hit.atom }` (the hit, not the new item)
+
+#### Scenario: executeItem LLM 二次确认 call fails — fallback to supersede
+- **GIVEN** executeItem called `confirmDedupAction`, LLM call timed out or returned non-JSON
+- **WHEN** executeItem catches the failure
+- **THEN** it falls back to `action: "supersede"` (conservative, matches cosine 0.65 hit)
+- **AND** logs warn: "LLM dedup confirm failed for item X (hit Y), fell back to supersede"
+- **AND** calls `index.markSupersededTx(hit.id, newAtom, embedding)` (same as scenario "LLM returns supersede")

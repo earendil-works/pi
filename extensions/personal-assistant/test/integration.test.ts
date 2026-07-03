@@ -28,6 +28,40 @@ vi.mock("../embed.ts", () => ({
 	CURRENT_EMBEDDABLE_TEXT_VERSION: 2,
 }));
 
+vi.mock("../hybrid-search.ts", async () => {
+	const cosine = (a: number[], b: number[]): number => {
+		let dot = 0, na = 0, nb = 0;
+		for (let i = 0; i < a.length; i++) {
+			dot += a[i]! * b[i]!;
+			na += a[i]! * a[i]!;
+			nb += b[i]! * b[i]!;
+		}
+		return dot / (Math.sqrt(na) * Math.sqrt(nb));
+	};
+	return {
+		hybridSearch: async (query: string, topK: number, options?: { denseFloor?: number }) => {
+			const index = (globalThis as Record<string, unknown>).__test_index as MemoryIndex | undefined;
+			if (!index) return [];
+			const qVec = mockEmbed(query);
+			const denseFloor = options?.denseFloor ?? 0;
+			const atoms = index.listAtoms({ archived: false });
+			const hits: Array<{
+				id: string; title: string; type: "rule" | "fact" | "process";
+				rank: number; rrf: number; dense_cos: number; sparse_score: number;
+			}> = [];
+			for (const atom of atoms) {
+				const text = `${atom.title}\n\n${atom.summary}\n\n${(atom.tags || []).join(" ")}`;
+				const aVec = mockEmbed(text);
+				const cos = cosine(qVec, aVec);
+				if (cos < denseFloor) continue;
+				hits.push({ id: atom.id, title: atom.title, type: atom.type, rank: 0, rrf: cos, dense_cos: cos, sparse_score: 0 });
+			}
+			hits.sort((a, b) => b.dense_cos - a.dense_cos);
+			return hits.slice(0, topK).map((h, i) => ({ ...h, rank: i + 1 }));
+		},
+	};
+});
+
 describe("integration: extraction → embedding → recall", () => {
 	let tmpDir: string;
 	let dbPath: string;
@@ -41,6 +75,7 @@ describe("integration: extraction → embedding → recall", () => {
 	});
 
 	afterEach(async () => {
+		delete (globalThis as Record<string, unknown>).__test_index;
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -74,10 +109,11 @@ describe("integration: extraction → embedding → recall", () => {
 		// Step 2: recallAtoms with related query
 		const index = new MemoryIndex(dbPath);
 		await index.init();
+		(globalThis as Record<string, unknown>).__test_index = index;
 		try {
 			// threshold: 0 to work around position-sensitive char-bigram mock embed.
-			// The pure-dense pipeline has no RRF gate to bypass — `threshold: 0`
-			// alone disables the cosine floor, letting the char-bigram mock's
+			// The hybrid RRF pipeline has no floor gate to bypass — `threshold: 0`
+			// alone disables the dense cosine floor, letting the char-bigram mock's
 			// ranking pass through without a floor check. Same pattern as the
 			// recall-quality tests — measure pure channel ranking without any
 			// gating policy interfering.

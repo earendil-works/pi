@@ -786,7 +786,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			if (rewriteEnabled) {
 				const rewriteT0 = performance.now();
 				const { rewriteQueries } = await import("./rewrite.ts");
-				const outcome = await rewriteQueries(current, recent, { timeoutMs: 1500 });
+				const outcome = await rewriteQueries(current, recent, { timeoutMs: 5000 });
 				rewriteMs = performance.now() - rewriteT0;
 				if (Array.isArray(outcome)) {
 					subqueries = outcome;
@@ -805,7 +805,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			if (rewriteEnabled) {
 				const rewriteT0 = performance.now();
 				const { rewriteQueries } = await import("./rewrite.ts");
-				const outcome = await rewriteQueries(current, recent, { timeoutMs: 1500 });
+				const outcome = await rewriteQueries(current, recent, { timeoutMs: 5000 });
 				rewriteMs = performance.now() - rewriteT0;
 				if (Array.isArray(outcome)) {
 					subqueries = outcome;
@@ -817,44 +817,66 @@ export function registerMemory(pi: ExtensionAPI): void {
 			} // else: leave rewriteStatus as "skip"
 		}
 
-		// 4. Open MemoryIndex and recall
+		// 4. Open MemoryIndex and per-subquery recall + rerank
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
-			const recallT0 = performance.now();
-			const allResults = await Promise.all(
-				subqueries.map((q) => recallAtoms(index, q, { topK: 20 })),
-			);
-			const results = mergeByAtomId(allResults);
-			recallMs = performance.now() - recallT0;
-			hybridCount = results.length;
-
-			// 5. Rerank (dynamic import)
-			let finalResults: RecallResult[];
-			let rerankFallback = false;
+			const retrievalT0 = performance.now();
 			const rerankEnabled = config.memory?.rerank?.enabled ?? true;
-			if (rerankEnabled && results.length > 0) {
-				const rerankT0 = performance.now();
+			let poolResults: RecallResult[][];
+			let rawTotal = 0;
+			let rerankFallback = false;
+			if (rerankEnabled) {
+				let recMs = 0;
+				let rerMs = 0;
 				const { rerankAndFilter } = await import("./rerank.ts");
-				const reranked = await rerankAndFilter(subqueries.join(" "), results);
-				rerankMs = performance.now() - rerankT0;
-				if (Array.isArray(reranked)) {
-					finalResults = reranked;
-					rerankStatus = reranked.length > 0 ? "ok" : "all-below";
-				} else {
-					finalResults = reranked.topK;
-					rerankFallback = true;
-					rerankStatus = "fallback";
-					rerankReason = reranked.reason;
-				}
-			} else if (!rerankEnabled) {
-				finalResults = results;
-				rerankStatus = "disabled";
+				const poolWithStatus = await Promise.all(
+					subqueries.map(async (sq) => {
+						const r0 = performance.now();
+						const sqResults = await recallAtoms(index, sq, { topK: 20 });
+						rawTotal += sqResults.length;
+						recMs += performance.now() - r0;
+						if (sqResults.length === 0) return { results: [] as RecallResult[], fallback: false };
+						const r1 = performance.now();
+						const scored = await rerankAndFilter(sq, sqResults);
+						rerMs += performance.now() - r1;
+						if (Array.isArray(scored)) return { results: scored, fallback: false };
+						rerankFallback = true;
+						rerankReason = scored.reason;
+						return { results: scored.topK, fallback: true };
+					}),
+				);
+				recallMs = recMs;
+				rerankMs = rerMs;
+				poolResults = poolWithStatus.map((p) => p.results);
 			} else {
-				finalResults = results;
-				rerankStatus = "skip";
+				poolResults = await Promise.all(
+					subqueries.map((q) => recallAtoms(index, q, { topK: 20 })),
+				);
 			}
+			// Merge all results: dedup by atom.id, keep highest rerankScore
+			const mergedResults = new Map<string, RecallResult>();
+			for (const pool of poolResults) {
+				for (const r of pool) {
+					const existing = mergedResults.get(r.atom.id);
+					if (!existing || (r.rerankScore ?? -1) > (existing.rerankScore ?? -1)) {
+						mergedResults.set(r.atom.id, r);
+					}
+				}
+			}
+			const results = [...mergedResults.values()].sort(
+				(a, b) => (b.rerankScore ?? 0) - (a.rerankScore ?? 0),
+			);
+			hybridCount = rawTotal;
+			rerankStatus = rerankFallback
+				? "fallback"
+				: results.length > 0
+					? "ok"
+					: "all-below";
+
+			// 5. Assign relativePath and prepare for inject
+			const finalResults = results;
 
 			// 6. Assign relativePath
 			for (const r of finalResults) {

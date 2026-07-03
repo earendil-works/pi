@@ -817,25 +817,183 @@ describe("SessionPool", () => {
 		expect(parsed.sessionId).toBe("s1");
 	});
 
-	// -------------------------------------------------------------------------
-	// (o) init skips session files with wrong type header
-	// -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// (o) init skips session files with wrong type header
+// -------------------------------------------------------------------------
 
-	it("(o) init skips session files with wrong type header", async () => {
-		const sessionsDir = join(tmpBase, ".pi", "agent", "sessions", "--test--");
-		await writeFile(
-			join(sessionsDir, "not-a-session.jsonl"),
-			JSON.stringify({
-				type: "not-a-session",
-				id: "should-skip",
-				timestamp: "2025-01-01T00:00:00Z",
-				cwd: "/test",
-			}) + "\n",
-		);
+it("(o) init skips session files with wrong type header", async () => {
+	const sessionsDir = join(tmpBase, ".pi", "agent", "sessions", "--test--");
+	await writeFile(
+		join(sessionsDir, "not-a-session.jsonl"),
+		JSON.stringify({
+			type: "not-a-session",
+			id: "should-skip",
+			timestamp: "2025-01-01T00:00:00Z",
+			cwd: "/test",
+		}) + "\n",
+	);
 
-		const pool = new SessionPool({ cwd: "/test" });
-		const ids = await pool.init();
+	const pool = new SessionPool({ cwd: "/test" });
+	const ids = await pool.init();
 
-		expect(ids).toHaveLength(0);
+	expect(ids).toHaveLength(0);
+});
+
+// -------------------------------------------------------------------------
+// compact
+// -------------------------------------------------------------------------
+
+it("(w) compact writes RPC with id and customInstructions, resolves on success", async () => {
+	const { proc } = makeMockProc();
+	proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+		if (event === "exit") setTimeout(() => cb(0, null), 0);
+		return proc;
 	});
+
+	const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+	await pool.spawnIfNeeded("s1");
+
+	let compactOnData: ((chunk: Buffer | string) => void) | null = null;
+	const origStdoutOn = proc.stdout.on;
+	proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+		if (event === "data") compactOnData = handler as (chunk: Buffer | string) => void;
+		return origStdoutOn.call(proc.stdout, event, handler);
+	});
+
+	let writtenCorrId: string | null = null;
+	let writtenMsg: Record<string, unknown> | null = null;
+	const origWrite = proc.stdin.write;
+	proc.stdin.write = vi.fn((msg: string) => {
+		const parsed = JSON.parse(msg.trim());
+		if (parsed.type === "compact") {
+			writtenCorrId = parsed.id;
+			writtenMsg = parsed;
+		}
+		return origWrite.call(proc.stdin, msg);
+	});
+
+	const compactPromise = pool.compact("s1", "summarize tightly");
+
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	expect(writtenCorrId).toBeTruthy();
+	expect(writtenMsg).toMatchObject({
+		type: "compact",
+		customInstructions: "summarize tightly",
+	});
+	expect(compactOnData).not.toBeNull();
+
+	compactOnData!(Buffer.from(JSON.stringify({ type: "response", command: "compact", id: writtenCorrId, success: true }) + "\n"));
+	await expect(compactPromise).resolves.toBeUndefined();
+});
+
+it("(w) compact without customInstructions omits the field", async () => {
+	const { proc } = makeMockProc();
+	proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+		if (event === "exit") setTimeout(() => cb(0, null), 0);
+		return proc;
+	});
+
+	const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+	await pool.spawnIfNeeded("s1");
+
+	let compactOnData: ((chunk: Buffer | string) => void) | null = null;
+	const origStdoutOn = proc.stdout.on;
+	proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+		if (event === "data") compactOnData = handler as (chunk: Buffer | string) => void;
+		return origStdoutOn.call(proc.stdout, event, handler);
+	});
+
+	let writtenCorrId: string | null = null;
+	let writtenMsg: Record<string, unknown> | null = null;
+	const origWrite = proc.stdin.write;
+	proc.stdin.write = vi.fn((msg: string) => {
+		const parsed = JSON.parse(msg.trim());
+		if (parsed.type === "compact") {
+			writtenCorrId = parsed.id;
+			writtenMsg = parsed;
+		}
+		return origWrite.call(proc.stdin, msg);
+	});
+
+	const compactPromise = pool.compact("s1");
+
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	expect(writtenCorrId).toBeTruthy();
+	expect(writtenMsg).not.toHaveProperty("customInstructions");
+	expect(writtenMsg).toMatchObject({ type: "compact" });
+
+	compactOnData!(Buffer.from(JSON.stringify({ type: "response", command: "compact", id: writtenCorrId, success: true }) + "\n"));
+	await expect(compactPromise).resolves.toBeUndefined();
+});
+
+it("(w) compact rejects on failure response", async () => {
+	const { proc } = makeMockProc();
+	proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+		if (event === "exit") setTimeout(() => cb(0, null), 0);
+		return proc;
+	});
+
+	const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+	await pool.spawnIfNeeded("s1");
+
+	let compactOnData: ((chunk: Buffer | string) => void) | null = null;
+	const origStdoutOn = proc.stdout.on;
+	proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+		if (event === "data") compactOnData = handler as (chunk: Buffer | string) => void;
+		return origStdoutOn.call(proc.stdout, event, handler);
+	});
+
+	let writtenCorrId: string | null = null;
+	const origWrite = proc.stdin.write;
+	proc.stdin.write = vi.fn((msg: string) => {
+		const parsed = JSON.parse(msg.trim());
+		if (parsed.type === "compact") writtenCorrId = parsed.id;
+		return origWrite.call(proc.stdin, msg);
+	});
+
+	const compactPromise = pool.compact("s1", "hint");
+
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	compactOnData!(Buffer.from(
+		JSON.stringify({ type: "response", command: "compact", id: writtenCorrId, success: false, error: "Nothing to compact (session too small)" }) + "\n",
+	));
+
+	await expect(compactPromise).rejects.toThrow("Nothing to compact");
+});
+
+it("(w) compact rejects on mismatched corrId", async () => {
+	const { proc } = makeMockProc();
+	proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+		if (event === "exit") setTimeout(() => cb(0, null), 0);
+		return proc;
+	});
+
+	const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+	await pool.spawnIfNeeded("s1");
+
+	let compactOnData: ((chunk: Buffer | string) => void) | null = null;
+	const origStdoutOn = proc.stdout.on;
+	proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+		if (event === "data") compactOnData = handler as (chunk: Buffer | string) => void;
+		return origStdoutOn.call(proc.stdout, event, handler);
+	});
+
+	const compactPromise = pool.compact("s1");
+
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	// Mismatched id — promise should NOT resolve
+	compactOnData!(Buffer.from(JSON.stringify({ type: "response", command: "compact", id: "wrong-id", success: true }) + "\n"));
+
+	const settled = await Promise.race([
+		compactPromise.then(() => "resolved"),
+		new Promise<"pending">((r) => setTimeout(() => r("pending"), 50)),
+	]);
+	expect(settled).toBe("pending");
+});
+
+// Note: compact's defensive `if (!state) throw` branch is unreachable in a
+// well-behaved session: spawnIfNeeded always re-spawns when state is missing.
+// Reaching it requires the proc to exit between spawnIfNeeded and the
+// state lookup, which is timing-sensitive — covered implicitly by the
+// existing proc-exit tests rather than pinned here.
 });

@@ -1,0 +1,11 @@
+phase: archive
+workflow: full
+change: recall-precision
+created_at: 2026-07-03
+base_ref: 1c3972b2792df96179adcdc9c77a785db8540d13
+tasks_total: 0
+tasks_done: 21
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true

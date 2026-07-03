@@ -81,6 +81,14 @@ export function MemoryDetail({ id, onArchive, onListRefresh }: MemoryDetailProps
     void fetchAtom();
 
     const eventSource = new EventSource(`/api/memory/${id}/stream`);
+    eventSource.onopen = () => {
+      // Mark connected on initial open + every auto-reconnect. Without
+      // this, the UI stays in "connection failed" state until the first
+      // `atom` event arrives — which never happens if no one is editing
+      // the atom concurrently. The EventSource `open` event is the
+      // authoritative signal that the stream is live.
+      setSseConnected(true);
+    };
     eventSource.addEventListener("atom", (event: MessageEvent) => {
       try {
         const incoming = JSON.parse(event.data) as MemoryAtom;

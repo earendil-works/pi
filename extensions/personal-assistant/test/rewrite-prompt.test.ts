@@ -19,13 +19,13 @@ describe("REWRITE_SYSTEM_PROMPT", () => {
 
 	it("contains exactly 5 rules (one per line or segment)", () => {
 		// Each rule should be separated by a recognizable delimiter.
-		// The 5 expected rules: 输出格式 / 指代消解 / 复合拆分 / 单概念保留 / 去重不生造
+		// The 5 expected rules: 格式 / 指代 / 拆分 / 单概念 / 去重
 		const rules = [
-			"输出格式",
-			"指代消解",
-			"复合拆分",
-			"单概念保留",
-			"去重不生造",
+			"格式",
+			"指代",
+			"拆分",
+			"单概念",
+			"去重",
 		];
 		for (const rule of rules) {
 			expect(REWRITE_SYSTEM_PROMPT).toContain(rule);

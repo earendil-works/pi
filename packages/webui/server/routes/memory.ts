@@ -815,60 +815,65 @@ export function registerPostSearch(
 				const t0 = Date.now();
 				let results: RecallResult[];
 				let rewriteTimeMs = 0;
+				let recallTimeMs = 0;
 				let rerankTimeMs = 0;
 
 				if (filtered) {
-					// Full pipeline: rewrite → multi-recall → merge → rerank
+					// Full pipeline: rewrite → per-subquery recall+rerank → merge
 					const { rewriteQueries } = await import(
 						"../../../../extensions/personal-assistant/rewrite.ts"
 					);
 					const tr = Date.now();
 					const rewriteOutcome = await rewriteQueries(query, null, {
-						timeoutMs: 1500,
+						timeoutMs: 5000,
 					});
 					rewriteTimeMs = Date.now() - tr;
 					const subqueries = Array.isArray(rewriteOutcome)
 						? rewriteOutcome
 						: rewriteOutcome.subqueries;
 
-					const { mergeByAtomId } = await import(
-						"../../../../extensions/personal-assistant/merge.ts"
+					const { rerankAndFilter } = await import(
+						"../../../../extensions/personal-assistant/rerank.ts"
 					);
-					results = mergeByAtomId(
-						await Promise.all(
-							subqueries.map((q) =>
-								recallAtoms(index, q, {
-									topK,
-									filter: type ? { type } : undefined,
-								}),
-							),
-						),
+					let recMs = 0;
+					let rerMs = 0;
+					const poolResults = await Promise.all(
+						subqueries.map(async (sq) => {
+							const r0 = Date.now();
+							const sqResults = await recallAtoms(index, sq, {
+								topK,
+								filter: type ? { type } : undefined,
+							});
+							recMs += Date.now() - r0;
+							if (sqResults.length === 0) return sqResults;
+							const r1 = Date.now();
+							const scored = await rerankAndFilter(sq, sqResults);
+							rerMs += Date.now() - r1;
+							return Array.isArray(scored) ? scored : scored.topK;
+						}),
 					);
-
-					if (results.length > 0) {
-						const { rerankAndFilter } = await import(
-							"../../../../extensions/personal-assistant/rerank.ts"
-						);
-						const t1 = Date.now();
-						const reranked = await rerankAndFilter(
-							subqueries.join(" "),
-							results,
-						);
-						rerankTimeMs = Date.now() - t1;
-						if (Array.isArray(reranked)) {
-							results = reranked;
-						} else {
-							results = reranked.topK;
+					recallTimeMs = recMs;
+					rerankTimeMs = rerMs;
+					// Merge all scored results: dedup by atom.id, keep highest rerankScore
+					const merged = new Map<string, RecallResult>();
+					for (const pool of poolResults) {
+						for (const r of pool) {
+							const existing = merged.get(r.atom.id);
+							if (!existing || (r.rerankScore ?? 0) > (existing.rerankScore ?? 0)) {
+								merged.set(r.atom.id, r);
+							}
 						}
 					}
+					results = [...merged.values()].sort(
+						(a, b) => (b.rerankScore ?? 0) - (a.rerankScore ?? 0),
+					);
 				} else {
 					results = await recallAtoms(index, query, {
 						topK,
 						filter: type ? { type } : undefined,
 					});
+					recallTimeMs = Date.now() - t0;
 				}
-
-				const recallTimeMs = Date.now() - t0 - rewriteTimeMs - rerankTimeMs;
 
 				res.json({
 					results: results.map((r) => ({

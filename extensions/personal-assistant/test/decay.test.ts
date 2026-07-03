@@ -50,19 +50,64 @@ describe("runDecay", () => {
 		await index.insertAtom(atom, new Array(1024).fill(0.01));
 	};
 
-	it("computes new strength with exp decay formula", async () => {
-		const a = sampleAtom({ strength: 1.0, importance: 0.5, last_access: Date.now() - 100 * 24 * 60 * 60 * 1000 });
+	// Reference atom: strength=1.0, importance=1.0, last_access = now - halfLifeDays.
+	// After one decay run with halfLifeDays=33, strength should be 0.5.
+	it("decays to 0.5 after one half-life (33 days) at importance=1", async () => {
+		const a = sampleAtom({
+			strength: 1.0,
+			importance: 1.0,
+			last_access: Date.now() - 33 * 24 * 60 * 60 * 1000,
+		});
 		await insertAtom(a);
-		const result = await runDecay(index, { baseDecay: 0.05 });
-		expect(result.decayed).toBe(1);
-		const got = index.getAtom(a.id);
-		expect(got!.strength).toBeLessThan(1.0); // decayed
+		await runDecay(index, { halfLifeDays: 33 });
+		const got = index.getAtom(a.id)!;
+		expect(got.strength).toBeCloseTo(0.5, 3);
+	});
+
+	// Half-life scales with importance. importance=2 → effective half-life = 66 days.
+	// After 33 days at importance=2, strength should be 0.707 (= 2^(-33/66)).
+	it("half-life scales with importance (importance=2 → 2x half-life)", async () => {
+		const a = sampleAtom({
+			strength: 1.0,
+			importance: 2.0,
+			last_access: Date.now() - 33 * 24 * 60 * 60 * 1000,
+		});
+		await insertAtom(a);
+		await runDecay(index, { halfLifeDays: 33 });
+		const got = index.getAtom(a.id)!;
+		expect(got.strength).toBeCloseTo(Math.SQRT1_2, 3); // 2^(-0.5) ≈ 0.7071
+	});
+
+	// importance=0.5 → effective half-life = 16.5 days. After 33 days strength = 0.25.
+	it("half-life scales with importance (importance=0.5 → 0.5x half-life)", async () => {
+		const a = sampleAtom({
+			strength: 1.0,
+			importance: 0.5,
+			last_access: Date.now() - 33 * 24 * 60 * 60 * 1000,
+		});
+		await insertAtom(a);
+		await runDecay(index, { halfLifeDays: 33 });
+		const got = index.getAtom(a.id)!;
+		expect(got.strength).toBeCloseTo(0.25, 3);
+	});
+
+	// Default config: halfLifeDays=33 if not passed.
+	it("uses halfLifeDays=33 as the default when not configured", async () => {
+		const a = sampleAtom({
+			strength: 1.0,
+			importance: 1.0,
+			last_access: Date.now() - 33 * 24 * 60 * 60 * 1000,
+		});
+		await insertAtom(a);
+		await runDecay(index); // no config — defaults
+		const got = index.getAtom(a.id)!;
+		expect(got.strength).toBeCloseTo(0.5, 3);
 	});
 
 	it("never archives rule type even at low strength", async () => {
 		const rule = sampleAtom({ type: "rule", strength: 0.01, importance: 0.01, last_access: Date.now() - 1000 * 24 * 60 * 60 * 1000 });
 		await insertAtom(rule);
-		const result = await runDecay(index, { archiveThreshold: 0.1 });
+		const result = await runDecay(index, { halfLifeDays: 33, archiveThreshold: 0.1 });
 		expect(result.archived).not.toContain(rule.id);
 		expect(index.getAtom(rule.id)?.archived).toBe(0);
 	});
@@ -70,7 +115,7 @@ describe("runDecay", () => {
 	it("archives fact with strength below threshold", async () => {
 		const fact = sampleAtom({ type: "fact", strength: 0.05, importance: 0.01, last_access: Date.now() - 1000 * 24 * 60 * 60 * 1000 });
 		await insertAtom(fact);
-		const result = await runDecay(index, { archiveThreshold: 0.1 });
+		const result = await runDecay(index, { halfLifeDays: 33, archiveThreshold: 0.1 });
 		expect(result.archived).toContain(fact.id);
 		expect(index.getAtom(fact.id)?.archived).toBe(1);
 	});
@@ -78,14 +123,14 @@ describe("runDecay", () => {
 	it("archives process with strength below threshold", async () => {
 		const proc = sampleAtom({ type: "process", strength: 0.05, importance: 0.01, last_access: Date.now() - 1000 * 24 * 60 * 60 * 1000 });
 		await insertAtom(proc);
-		const result = await runDecay(index, { archiveThreshold: 0.1 });
+		const result = await runDecay(index, { halfLifeDays: 33, archiveThreshold: 0.1 });
 		expect(result.archived).toContain(proc.id);
 	});
 
 	it("does NOT archive fact with strength above threshold", async () => {
 		const fact = sampleAtom({ type: "fact", strength: 0.5, importance: 0.8, last_access: Date.now() - 5 * 24 * 60 * 60 * 1000 });
 		await insertAtom(fact);
-		const result = await runDecay(index, { archiveThreshold: 0.1 });
+		const result = await runDecay(index, { halfLifeDays: 33, archiveThreshold: 0.1 });
 		expect(result.archived).not.toContain(fact.id);
 	});
 
@@ -95,7 +140,7 @@ describe("runDecay", () => {
 		const before = index.getRawDb().prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`).get(fact.id);
 		expect(before).toBeDefined();
 
-		await runDecay(index, { archiveThreshold: 0.1 });
+		await runDecay(index, { halfLifeDays: 33, archiveThreshold: 0.1 });
 
 		const after = index.getRawDb().prepare(`SELECT 1 FROM memory_vectors WHERE id = ?`).get(fact.id);
 		expect(after).toBeUndefined();
@@ -116,12 +161,12 @@ describe("runDecay", () => {
 	// of months. Fix: each decay run stamps last_access = now so the
 	// next run uses a fresh delta (the time since the last decay).
 	it("does not compound strength across multiple decay runs (regression)", async () => {
-		// Atom created 0.989 days ago, importance=0.6, baseDecay=0.025.
-		// Single decay run: factor = exp(-0.0253 * 0.989 / 0.6) = 0.959.
-		// Without the fix, 30 sequential runs give 0.959^30 = 0.291
-		// (the value observed in the user DB for a 1-day-old atom).
+		// Atom created 0.989 days ago, importance=0.6, halfLifeDays=33.
+		// lambda = ln(2)/33 ≈ 0.021.
+		// Single decay run: factor = exp(-0.021 * 0.989 / 0.6) ≈ 0.966.
+		// Without the fix, 30 sequential runs give 0.966^30 ≈ 0.354.
 		// With the fix, all 30 runs collapse to one effective run:
-		// strength should stay near 0.959 (not decay to 0.291).
+		// strength should stay near 0.966.
 		const a = sampleAtom({
 			importance: 0.6,
 			strength: 1.0,
@@ -130,22 +175,22 @@ describe("runDecay", () => {
 		});
 		await insertAtom(a);
 
-		// First decay run: should set strength to ~0.959 and stamp last_access.
-		const r1 = await runDecay(index, { baseDecay: 0.025 });
+		// First decay run: should set strength to ~0.966 and stamp last_access.
+		const r1 = await runDecay(index, { halfLifeDays: 33 });
 		expect(r1.decayed).toBe(1);
 		const after1 = index.getAtom(a.id)!;
 		const strengthAfter1 = after1.strength;
 		expect(strengthAfter1).toBeGreaterThan(0.95);
-		expect(strengthAfter1).toBeLessThan(0.97);
+		expect(strengthAfter1).toBeLessThan(0.98);
 		// Fix: last_access must be set after decay so subsequent runs
 		// use a fresh delta (instead of reusing created_at).
 		expect(after1.last_access).not.toBeNull();
 		expect(after1.last_access!).toBeGreaterThan(Date.now() - 1000);
 
 		// Subsequent runs within 1 hour of last decay must be skipped
-		// (no compounding), per the existing 1-hour throttle rule.
+		// (no compounding), per the 1-hour short-circuit rule.
 		// `last_access` is now set to ~now, so delta < 1/24 day → skip.
-		const r2 = await runDecay(index, { baseDecay: 0.025 });
+		const r2 = await runDecay(index, { halfLifeDays: 33 });
 		expect(r2.skipped).toBe(1);
 		expect(r2.decayed).toBe(0);
 		expect(index.getAtom(a.id)!.strength).toBeCloseTo(strengthAfter1, 10);

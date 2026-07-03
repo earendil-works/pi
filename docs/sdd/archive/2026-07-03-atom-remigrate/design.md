@@ -541,3 +541,6 @@ export function conceptTagCount(tags: string[]): number;
 - LLM 调用别的 prompt 路径 (e.g. webui 的 PATCH memory check)
 - 回填 source_session (那是另一个 change)
 - migration 跑 LLM 二次 catch-up (0.55-0.65 范围的 cluster)。可在 30 天 review 后决定要不要加,本次不需要
+
+
+<!-- archived-with: 2026-07-03-atom-remigrate | status: final -->

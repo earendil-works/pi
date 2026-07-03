@@ -160,7 +160,7 @@ describe("embedText", () => {
 
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 		const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-		expect(url).toBe("http://127.0.0.1:11434/v1/embeddings");
+		expect(url).toBe("http://127.0.0.1:11435/v1/embeddings");
 		expect(init.method).toBe("POST");
 		const body = JSON.parse(init.body as string) as { model: string; input: string };
 		expect(body.model).toBe("bge-m3");
@@ -217,12 +217,13 @@ describe("embedText", () => {
 });
 
 // loadConfig — single source of truth for EmbedConfig defaults.
-// Defaults match design.md: ollama bge-m3 at 127.0.0.1:11434, 15s timeout.
+// Defaults match design.md: bge-m3 embedding service at 127.0.0.1:11435
+// (FastAPI service replacing ollama), 15s timeout.
 describe("loadConfig", () => {
 	it("returns defaults when no overrides are given", () => {
 		const cfg = loadConfig();
 		expect(cfg).toEqual({
-			ollamaUrl: "http://127.0.0.1:11434",
+			ollamaUrl: "http://127.0.0.1:11435",
 			model: "bge-m3",
 			timeoutMs: 15000,
 		});
@@ -232,7 +233,7 @@ describe("loadConfig", () => {
 		const cfg = loadConfig({ model: "test-model" });
 		expect(cfg.model).toBe("test-model");
 		// Untouched fields keep their defaults.
-		expect(cfg.ollamaUrl).toBe("http://127.0.0.1:11434");
+		expect(cfg.ollamaUrl).toBe("http://127.0.0.1:11435");
 		expect(cfg.timeoutMs).toBe(15000);
 	});
 
@@ -241,6 +242,6 @@ describe("loadConfig", () => {
 		const cfg2 = loadConfig({ model: "model-b" });
 		expect(cfg1.model).toBe("model-a");
 		expect(cfg2.model).toBe("model-b");
-		expect(cfg2.ollamaUrl).toBe("http://127.0.0.1:11434");
+		expect(cfg2.ollamaUrl).toBe("http://127.0.0.1:11435");
 	});
 });

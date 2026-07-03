@@ -1,0 +1,11 @@
+phase: release
+workflow: full
+change: gate-multiquery
+created_at: 2026-07-03
+base_ref: ec283eb24bdb6b5787ea21d3a3828cd598b78b03
+tasks_total: 0
+tasks_done: 0
+isolation: branch
+verify_result: pass
+last_review_sha: 0aaa5ab9e82c56dc504e1b0a9b70bcb16add59be
+archived: false

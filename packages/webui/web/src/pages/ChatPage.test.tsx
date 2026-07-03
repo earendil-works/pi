@@ -1,6 +1,7 @@
 /// <reference types="vitest/globals" />
 import { describe, it, vi, beforeEach, afterEach, expect } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 
@@ -27,7 +28,7 @@ function createWsMock() {
 
 function createApiMock(opts: {
   messages?: unknown[];
-  models?: { providers: Array<{ name: string; models: Array<{ id: string; name: string }> }> };
+  models?: { providers: Array<{ name: string; models: Array<{ id: string; name: string; contextWindow?: number }> }> };
   settings?: Record<string, unknown>;
 } = {}) {
   return {
@@ -35,6 +36,8 @@ function createApiMock(opts: {
       getMessages: vi.fn().mockResolvedValue(opts.messages ?? []),
       getSettings: vi.fn().mockResolvedValue(opts.settings ?? {}),
       getModels: vi.fn().mockResolvedValue(opts.models ?? { providers: [] }),
+      getSessionModel: vi.fn().mockResolvedValue({ provider: null, model: null }),
+      setSessionModel: vi.fn().mockResolvedValue({ ok: true, provider: "x", model: "y" }),
       setDefaultModel: vi.fn().mockResolvedValue(undefined),
       listSessions: vi.fn().mockResolvedValue([]),
       createSession: vi.fn().mockResolvedValue({ id: "new-id" }),
@@ -1119,5 +1122,107 @@ describe("ChatPage", () => {
     });
   });
 
+  describe("Topbar context usage display", () => {
+    // Regression: the topbar used to show only "X messages" with no
+    // indication of how much context the running session had consumed.
+    // Users had to dig through per-message in/out numbers to estimate.
+    // ContextIndicator now surfaces the most-recent assistant turn's
+    // input token count as a colored chip in the topbar (formatted K/M/B
+    // via formatToken), with its own data-testid so it is visually
+    // distinct from the gray subtitle text.
+    it("renders the last assistant turn's context tokens as a chip in the topbar", async () => {
+      await renderChatPage("test-session-1", {
+        messages: [
+          { id: "u1", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "first" }], timestamp: "2026-01-01T00:00:00.000Z" },
+          { id: "a1", sessionId: "test-session-1", role: "assistant", parts: [{ type: "text", text: "first reply" }], timestamp: "2026-01-01T00:00:01.000Z", usage: { input: 12800, output: 50 } },
+          { id: "u2", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "second" }], timestamp: "2026-01-01T00:00:02.000Z" },
+          { id: "a2", sessionId: "test-session-1", role: "assistant", parts: [{ type: "text", text: "second reply" }], timestamp: "2026-01-01T00:00:03.000Z", usage: { input: 52400, output: 120 } },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // Most recent assistant input was 52400 → "52.4K ctx" (chip suffix
+      // chosen so the pill reads as a label, not a noun phrase).
+      const tokens = await screen.findByTestId("context-tokens");
+      expect(tokens).toHaveTextContent("52.4K ctx");
+    });
+
+    it("hides context chip when no assistant turn has usage yet", async () => {
+      await renderChatPage("test-session-1", {
+        messages: [
+          { id: "u1", sessionId: "test-session-1", role: "user", parts: [{ type: "text", text: "hi" }], timestamp: "2026-01-01T00:00:00.000Z" },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+      expect(screen.queryByTestId("context-tokens")).toBeNull();
+    });
+
+    // Preferred "used / total" mode: the active model has a contextWindow
+    // in /api/models. The chip should pull the window from
+    // `models.providers[*].models[*].contextWindow` and render it after
+    // a slash — that's the form that actually tells the user whether
+    // they're close to compaction (the "203 ctx" only-reading hid that).
+    it("renders 'used / total' when the active model has contextWindow", async () => {
+      await renderChatPage("test-session-1", {
+        messages: [
+          { id: "a1", sessionId: "test-session-1", role: "assistant", parts: [{ type: "text", text: "hi" }], timestamp: "2026-01-01T00:00:01.000Z", usage: { input: 52400, output: 50 }, provider: "anthropic", model: "claude-sonnet-4-6" },
+        ],
+        models: {
+          providers: [
+            { name: "anthropic", models: [{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4", contextWindow: 200000 }] },
+          ],
+        },
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+      const chip = await screen.findByTestId("context-tokens");
+      expect(chip).toHaveTextContent("52.4K / 200.0K ctx");
+    });
+  });
+
+  describe("ModelSelector integration", () => {
+    // Regression: the ModelSelector onChange used to call api.setDefaultModel
+    // (PATCH /api/settings.webui.defaultModel) instead of api.setSessionModel
+    // (POST /api/sessions/:id/model). The dropdown UI flipped, but the session
+    // kept running on the old (provider, model) because setDefaultModel only
+    // touched the global preference — pi's running process never re-reads it.
+    // Every subsequent prompt silently used the old model. Click → must hit
+    // setSessionModel with the active session id and the picked selection.
+    it("picking a different model in the dropdown calls setSessionModel(id, selection), not setDefaultModel", async () => {
+      const mocks = await renderChatPage("test-session-1", {
+        models: {
+          providers: [
+            { name: "anthropic", models: [{ id: "claude-sonnet-4-6", name: "Claude Sonnet 4" }] },
+            { name: "openai", models: [{ id: "gpt-4o", name: "GPT-4o" }] },
+          ],
+        },
+        settings: { defaultProvider: "anthropic", defaultModel: "claude-sonnet-4-6" },
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // Open the dropdown and pick the OpenAI model.
+      const user = userEvent.setup();
+      const dropdownButton = screen.getByRole("button", { name: /anthropic\/claude/i });
+      await user.click(dropdownButton);
+      await user.click(screen.getByRole("button", { name: "GPT-4o" }));
+
+      // Must hit the per-session endpoint with the active sessionId.
+      await waitFor(() => {
+        expect(mocks.api.setSessionModel).toHaveBeenCalledWith("test-session-1", {
+          provider: "openai",
+          model: "gpt-4o",
+        });
+      });
+      // Must NOT touch the global default — that was the bug.
+      expect(mocks.api.setDefaultModel).not.toHaveBeenCalled();
+    });
+  });
 
 });

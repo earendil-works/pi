@@ -1,6 +1,11 @@
 export interface Model {
   id: string;
   name: string;
+  // Model's context window in tokens, e.g. 200_000 for Sonnet 4.
+  // Reflected to the webui so the topbar can render "used / total"
+  // context usage. Optional because older models.json files / untyped
+  // models omit it — the UI gracefully falls back to "used only".
+  contextWindow?: number;
 }
 
 export interface Provider {
@@ -143,25 +148,51 @@ function parseModelsArray(value: unknown): Model[] {
     }
 
     const name = getModelName(item);
-    models.push({ id: item.id, name });
+    const contextWindow = getContextWindow(item);
+    models.push({
+      id: item.id,
+      name,
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+    });
   }
 
   return models;
 }
 
 function parseFlatModelsArray(arr: unknown[]): Model[] {
-  const models: Model[] = [];
+  if (!Array.isArray(arr)) {
+    return [];
+  }
 
+  const models: Model[] = [];
   for (const item of arr) {
     if (!isObject(item) || typeof item.id !== "string") {
       continue;
     }
 
     const name = getModelName(item);
-    models.push({ id: item.id, name });
+    const contextWindow = getContextWindow(item);
+    models.push({
+      id: item.id,
+      name,
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+    });
   }
 
   return models;
+}
+
+function getContextWindow(model: Record<string, unknown>): number | undefined {
+  // Accept either the canonical `contextWindow` (matches ModelDefinition
+  // in server/index.ts) or `context_window`. Invalid / non-numeric /
+  // non-positive inputs resolve to undefined so the UI can drop to a
+  // "used only" chip rather than display a misleading denominator.
+  const raw = (model as { contextWindow?: unknown; context_window?: unknown }).contextWindow
+    ?? (model as { context_window?: unknown }).context_window;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    return undefined;
+  }
+  return raw;
 }
 
 function getModelName(model: Record<string, unknown>): string {
