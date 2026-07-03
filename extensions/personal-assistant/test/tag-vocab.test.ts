@@ -126,6 +126,16 @@ describe("conceptTagCount", () => {
 		expect(conceptTagCount([])).toBe(0);
 	});
 
+	it("(S20) 1000-atom loadTagVocabulary completes in < 100ms", async () => {
+		const tags = ["mcp", "memory", "atom", "rule", "fact", "process", "concept/mcp", "concept/memory"];
+		await seed(tags, 1000);
+		const t0 = performance.now();
+		const result = loadTagVocabulary(index, 50);
+		const elapsed = performance.now() - t0;
+		expect(result.length).toBeGreaterThan(0);
+		expect(elapsed).toBeLessThan(100);
+	});
+
 	it("counts multiple concept/ tags but ignores 'concept' (no slash)", () => {
 		// Regression: must use startsWith("concept/"), not includes("concept").
 		expect(conceptTagCount(["concept/fix", "concept/location", "concept"])).toBe(2);
