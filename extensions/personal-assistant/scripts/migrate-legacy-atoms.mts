@@ -185,34 +185,22 @@ async function main(): Promise<void> {
 		const rows = stmt.all() as MemoryAtomRow[];
 		const sorted = rows.map(rowToAtom);
 
-		// 6. Dedup loop. We keep the higher-ranked atom (the one
-		//    currently being visited — sorted by access_count DESC first)
-		//    and mark the lower-ranked hit as superseded. Idempotent
+		// 6. Dedup loop. Sorted by access_count DESC → access DESC → created_at
+		//    DESC so the higher-ranked atom (currently being visited) wins each
+		//    cluster pair; the lower-ranked hit is marked superseded. Idempotent
 		//    because the second pass sees only canonical atoms.
 		//
-		//    The 4th arg `atom.id` is `excludeId`: we must NOT consider
-		//    the atom we're iterating against as a candidate, because its
-		//    own embedding is the query so cosine-with-self = 1.0 and
-		//    would otherwise always shadow the real neighbour. The
-		//    storage-layer `findMostSimilarEmbedding` skips rows where
-		//    `id = excludeId` (both at the SQL level and inside the
-		//    defensive in-loop guard), so the caller's self-match check
-		//    at `hit.atom.id !== atom.id` is now redundant — we keep it
-		//    as belt-and-suspenders for the next refactor that touches
-		//    the same area.
-		//
-		//    The is_latest re-check below is the second half of the
-		//    fix: when iteration N marks atom X as the loser of a
-		//    pair, iteration N+1 may then visit X's cluster mate X'
-		//    (still in `sorted` because we captured it before the loop
-		//    started). Without this re-check, X' would now find its
-		//    own canonical winner X as the "loser" and mark IT
-		//    superseded — over-archiving to BOTH sides of every pair
-		//    (4-atom corpus → 0 active instead of 2). Re-reading
-		//    is_latest here gives us: "the canonical winner of a
-		//    pair is whichever rank-ordered atom survived the first
-		//    supersede; everyone after that one gets the
-		//    unchangedCount++ treatment."
+		//    Two correctness guards below:
+		//    - `excludeId` stops the trivially-perfect self-match (cos=1.0)
+		//      from shadowing the real neighbour. The caller-side
+		//      `hit.atom.id !== atom.id` check is now redundant (storage layer
+		//      already filters) but kept as belt-and-suspenders.
+		//    - The is_latest re-check is the second half of the fix: when
+		//      iteration N marks atom X as a pair loser, iteration N+1 may
+		//      still visit X's cluster mate X' (still in `sorted` because we
+		//      captured it before the loop started). Without the re-check,
+		//      X' would mark its canonical winner X superseded too —
+		//      over-archiving to BOTH sides of every pair.
 		//    See docs/sdd/changes/atom-remigrate/design.md Decision 3.
 		let archivedCount = 0;
 		let unchangedCount = 0;

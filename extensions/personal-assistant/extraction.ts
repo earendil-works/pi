@@ -149,6 +149,45 @@ async function reindexOneOrWarn(atomId: string): Promise<void> {
 }
 
 /**
+ * Persist a "supersede" outcome: mark the hit atom as superseded, write the
+ * new atom body to the file store, and trigger bge-m3 to refresh the
+ * vector. Centralises the 3-line finalisation that every supersede path
+ * (LLM-confirm hit, LLM-confirm catch fallback, legacy path) repeats.
+ * Returns the post-markSupersededTx atom (its `parent_id` now points at
+ * the hit atom's id — the stable key `executePlan` surfaces to callers).
+ */
+async function persistSupersede(
+	index: MemoryIndex,
+	atomsDir: string,
+	oldId: string,
+	newAtom: MemoryAtom,
+	vector: number[],
+): Promise<MemoryAtom> {
+	const { newAtom: finalNew } = index.markSupersededTx(oldId, newAtom, vector);
+	await writeAtomToFile(finalNew, atomsDir);
+	await reindexOneOrWarn(finalNew.id);
+	return finalNew;
+}
+
+/**
+ * Persist a "create" outcome: insert the new atom + vector, write the file,
+ * trigger bge-m3 to refresh the vector. Centralises the 3-line finalisation
+ * that every create path (LLM-confirm create action, legacy fallback,
+ * no-cosine-hit) repeats.
+ */
+async function persistCreate(
+	index: MemoryIndex,
+	atomsDir: string,
+	newAtom: MemoryAtom,
+	vector: number[],
+): Promise<MemoryAtom> {
+	await index.insertAtom(newAtom, vector);
+	await writeAtomToFile(newAtom, atomsDir);
+	await reindexOneOrWarn(newAtom.id);
+	return newAtom;
+}
+
+/**
  * Execute a single extraction item against the index:
  *   1. fingerprint dedup: skip when an active atom with the same fingerprint
  *      exists (cheapest check, runs first).
@@ -229,13 +268,13 @@ async function executeItem(
 							console.warn(
 								`[extract] LLM dedup confirm returned "update" without merged, fell back to supersede for item "${item.title}" (hit ${similar.atom.id})`,
 							);
-							const { newAtom: finalNew } = index.markSupersededTx(
+							const finalNew = await persistSupersede(
+								index,
+								atomsDir,
 								similar.atom.id,
 								newAtom,
 								vector,
 							);
-							await writeAtomToFile(finalNew, atomsDir);
-							await reindexOneOrWarn(finalNew.id);
 							return { status: "supersede", atom: finalNew };
 						}
 						// In-place update of the hit atom: rewrite the four
@@ -262,21 +301,19 @@ async function executeItem(
 						return { status: "update", atom: mergedAtom };
 					}
 					case "supersede": {
-						const { newAtom: finalNew } = index.markSupersededTx(
+						const finalNew = await persistSupersede(
+							index,
+							atomsDir,
 							similar.atom.id,
 							newAtom,
 							vector,
 						);
-						await writeAtomToFile(finalNew, atomsDir);
-						await reindexOneOrWarn(finalNew.id);
 						return { status: "supersede", atom: finalNew };
 					}
 					case "create": {
 						// Cosine hit was a coincidence — keep both atoms.
-						await index.insertAtom(newAtom, vector);
-						await writeAtomToFile(newAtom, atomsDir);
-						await reindexOneOrWarn(newAtom.id);
-						return { status: "create", atom: newAtom };
+						const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
+						return { status: "create", atom: finalNew };
 					}
 					case "skip": {
 						console.log(
@@ -293,13 +330,13 @@ async function executeItem(
 				console.warn(
 					`[extract] LLM dedup confirm failed for item "${item.title}" (hit ${similar.atom.id}), fell back to supersede: ${err instanceof Error ? err.message : String(err)}`,
 				);
-				const { newAtom: finalNew } = index.markSupersededTx(
+				const finalNew = await persistSupersede(
+					index,
+					atomsDir,
 					similar.atom.id,
 					newAtom,
 					vector,
 				);
-				await writeAtomToFile(finalNew, atomsDir);
-				await reindexOneOrWarn(finalNew.id);
 				return { status: "supersede", atom: finalNew };
 			}
 		} else {
@@ -313,18 +350,14 @@ async function executeItem(
 				return { status: "supersede", atom: dedupResult.atom };
 			}
 			// supersedeIfSimilar returned "create" — no hit (e.g. self-match).
-			await index.insertAtom(newAtom, vector);
-			await writeAtomToFile(newAtom, atomsDir);
-			await reindexOneOrWarn(newAtom.id);
-			return { status: "create", atom: newAtom };
+			const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
+			return { status: "create", atom: finalNew };
 		}
 	}
 
 	// 4. No cosine hit — direct create.
-	await index.insertAtom(newAtom, vector);
-	await writeAtomToFile(newAtom, atomsDir);
-	await reindexOneOrWarn(newAtom.id);
-	return { status: "create", atom: newAtom };
+	const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
+	return { status: "create", atom: finalNew };
 }
 
 /**
@@ -391,20 +424,26 @@ export async function executePlan(
 
 	for (const planItem of plan.items) {
 		const result = await executeItem(index, atomsDir, planItem.item, callLlm);
-		if (result.status === "create" && result.atom) {
-			created.push(result.atom);
-		} else if (result.status === "supersede" && result.atom) {
-			// For supersede, `result.atom.parent_id` is set by
-			// `markSupersededTx` to the hit atom's id (the one being
-			// replaced) — that's the stable key audit/recall consumers
-			// expect here, NOT the new item's title.
-			superseded.push({ oldId: result.atom.parent_id ?? "", newAtom: result.atom });
-		} else if (result.status === "update" && result.atom) {
-			// For update, the hit atom is rewritten in place — its id is
-			// preserved, so `oldId === result.atom.id`.
-			updated.push({ oldId: result.atom.id, newAtom: result.atom });
-		} else if (result.status === "skip" && result.atom) {
-			skipped.push(result.atom);
+		if (!result.atom) continue;
+		switch (result.status) {
+			case "create":
+				created.push(result.atom);
+				break;
+			case "supersede":
+				// For supersede, `result.atom.parent_id` is set by
+				// `markSupersededTx` to the hit atom's id (the one being
+				// replaced) — that's the stable key audit/recall consumers
+				// expect here, NOT the new item's title.
+				superseded.push({ oldId: result.atom.parent_id ?? "", newAtom: result.atom });
+				break;
+			case "update":
+				// For update, the hit atom is rewritten in place — its id is
+				// preserved, so `oldId === result.atom.id`.
+				updated.push({ oldId: result.atom.id, newAtom: result.atom });
+				break;
+			case "skip":
+				skipped.push(result.atom);
+				break;
 		}
 	}
 
