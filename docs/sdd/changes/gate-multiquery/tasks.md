@@ -64,19 +64,19 @@
   - **验证**: `npx tsx -e "import {buildRewritePrompt} from './extensions/personal-assistant/rewrite.ts'; const m=buildRewritePrompt('x', null); console.assert(m[0].role==='system'); console.assert(m[1].content.includes('Respond JSON only')); console.log('ok')"` 输出 ok
   - **依赖**: 3.1
 
-- [ ] 3.3 **写 parseRewriteResponse 内部函数**
+- [x] 3.3 **写 parseRewriteResponse 内部函数**
   - **文件**: `extensions/personal-assistant/rewrite.ts` (Modify)
   - **内容**: 私有函数 `parseRewriteResponse(raw: string): string[] | "parse"`. JSON.parse 失败后 regex `/(\{[\s\S]*\})/` 提取再 parse. 成功后校验 `Array.isArray(parsed.subqueries)`, 元素全为 string, length≥1. 失败返 "parse". 输入返 `[]` 视为 parse 失败. 输入 5 条 `slice(0,3)` 截断 + console.debug `rewrite truncated 5→3`. 输入有重复 → Set 去重保序.
   - **验证**: `npx tsx -e "import './extensions/personal-assistant/rewrite.ts'; console.log('ok')"` - 不直接 export,所以验证靠单元测试 3.4
   - **依赖**: 3.2
 
-- [ ] 3.4 **写 rewrite.ts 单元测试 (mock fetch)**
+- [x] 3.4 **写 rewrite.ts 单元测试 (mock fetch)**
   - **文件**: `extensions/personal-assistant/test/rewrite.test.ts` (Create)
   - **内容**: 9 个 case: (1) success `{"subqueries":["a","b"]}` → string[]; (2) success `{"subqueries":["q"]}` 单元素 → string[]; (3) 空数组 → fallback parse + subqueries=[rawQuery]; (4) 5 条 → slice(0,3) 截断; (5) `["a","a","b"]` → `["a","b"]` 去重; (6) timeout → fallback timeout + subqueries=[rawQuery]; (7) ECONNREFUSED → fallback unreachable + subqueries=[rawQuery]; (8) 非合法 JSON → fallback parse; (9) success 但 subqueries 字段非数组 → fallback parse. 所有 mock 用 `mockJsonResponse` 同 gate-fetch.test.ts 模式.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/rewrite.test.ts` (9 个测试通过)
   - **依赖**: 3.2, 3.3
 
-- [ ] 3.5 **rewriteQueries body 实现 (fetch + AbortController + 整合 parseRewriteResponse)**
+- [x] 3.5 **rewriteQueries body 实现 (fetch + AbortController + 整合 parseRewriteResponse)**
   - **文件**: `extensions/personal-assistant/rewrite.ts:rewriteQueries body` (Modify)
   - **内容**: 集成 buildRewritePrompt → fetch `/api/chat` (model/messages/stream:false/options:temperature:0) → parseRewriteResponse. AbortController setTimeout(timeoutMs) clearTimeout. catch: AbortError → Fallback{reason:"timeout", subqueries:[query]}; TypeError → Fallback{reason:"unreachable", subqueries:[query]}; 其他 → Fallback{reason:"unreachable", subqueries:[query]}. 成功 parse:返 string[] | fallback{reason:"parse", subqueries:[query]}.
   - **验证**: `node ../../node_modules/vitest/dist/cli.js --run extensions/personal-assistant/test/rewrite.test.ts` (9 个测试全过,用 mock fetch 实际触发 path)

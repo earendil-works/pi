@@ -94,10 +94,82 @@ export function buildRewritePrompt(
 }
 
 /**
+ * Try to parse a raw LLM response string into a non-empty array of
+ * subqueries. Returns "parse" if parsing or validation fails.
+ *
+ * First attempts direct JSON.parse. If that fails, strips leading
+ * non-JSON text via regex /(\{[\s\S]*\})/ and retries.
+ *
+ * Validation rules (after successful parse):
+ *   - `parsed.subqueries` must be an Array of strings
+ *   - length must be >= 1 (empty array → "parse")
+ *   - duplicates are removed via Set (order preserved)
+ *   - if length > 3, truncated with console.debug log
+ *
+ * On any failure, the raw input's first 200 chars are logged via
+ * console.warn and "parse" is returned so the caller degrades to
+ * a fallback.
+ */
+function parseRewriteResponse(raw: string): string[] | "parse" {
+	const stripped = raw.trim();
+	if (stripped.length === 0) {
+		console.warn("[rewrite] empty response from LLM");
+		return "parse";
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripped);
+	} catch {
+		const match = stripped.match(/(\{[\s\S]*\})/);
+		if (!match) {
+			console.warn("[rewrite] parse failed, raw:", stripped.slice(0, 200));
+			return "parse";
+		}
+		try {
+			parsed = JSON.parse(match[1]);
+		} catch {
+			console.warn("[rewrite] parse failed after retry, raw:", stripped.slice(0, 200));
+			return "parse";
+		}
+	}
+
+	const obj = parsed as Record<string, unknown>;
+	if (!Array.isArray(obj.subqueries)) {
+		console.warn("[rewrite] schema invalid (subqueries not array), raw:", stripped.slice(0, 200));
+		return "parse";
+	}
+
+	if (obj.subqueries.length === 0) {
+		console.warn("[rewrite] empty subqueries array");
+		return "parse";
+	}
+
+	if (!obj.subqueries.every((s: unknown) => typeof s === "string")) {
+		console.warn("[rewrite] schema invalid (non-string element), raw:", stripped.slice(0, 200));
+		return "parse";
+	}
+
+	// Dedup preserving insertion order.
+	const subqueries: string[] = [...new Set(obj.subqueries)];
+
+	// Truncate to at most 3.
+	if (subqueries.length > 3) {
+		console.debug(`[rewrite] truncated ${subqueries.length}→3`);
+		return subqueries.slice(0, 3);
+	}
+
+	return subqueries;
+}
+
+/**
  * Decompose a user query into multiple sub-queries for parallel search.
  *
- * Skeleton: returns `[]` (a valid `string[]`) for all inputs.
- * Real implementation in tasks 3.2-3.5.
+ * Calls the configured ollama LLM with the prompt from
+ * `buildRewritePrompt`, parses the JSON response via
+ * `parseRewriteResponse`, and returns the subquery array on success or a
+ * `RewriteFallback` describing the failure reason on error — the caller
+ * discriminates with `Array.isArray(result)`.
  *
  * @param query   The user's original query.
  * @param recent  Optional recent user messages for context.
@@ -108,7 +180,42 @@ export async function rewriteQueries(
 	recent?: string[] | null,
 	options?: RewriteOptions,
 ): Promise<RewriteOutcome> {
-	void recent;
-	void options;
-	return [];
+	const ollamaUrl = options?.ollamaUrl ?? DEFAULT_OLLAMA_URL;
+	const model = options?.model ?? DEFAULT_MODEL;
+	const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const messages = buildRewritePrompt(query, recent ?? null);
+
+	let rawContent = "";
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const res = await fetch(`${ollamaUrl}/api/chat`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model,
+				messages,
+				stream: false,
+				options: { temperature: 0 },
+			}),
+			signal: controller.signal,
+		});
+		clearTimeout(timer);
+		const body: unknown = await res.json();
+		const msg = (body as Record<string, unknown>)?.message as
+			| Record<string, unknown>
+			| undefined;
+		rawContent = typeof msg?.content === "string" ? msg.content : "";
+	} catch (err) {
+		if (err instanceof Error && err.name === "AbortError") {
+			return { reason: "timeout", subqueries: [query] };
+		}
+		return { reason: "unreachable", subqueries: [query] };
+	}
+
+	const result = parseRewriteResponse(rawContent);
+	if (result === "parse") {
+		return { reason: "parse", subqueries: [query] };
+	}
+	return result;
 }
