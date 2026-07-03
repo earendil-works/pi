@@ -355,19 +355,25 @@ async function executeParsedPlan(
  * `(prompt) => response` callback. Webui passes its HTTP-side LLM call
  * here; the index lifecycle stays in the caller's hands so this function
  * is reusable inside a longer-lived process.
+ *
+ * `config.tagVocabulary` (optional) is forwarded to `buildExtractionPrompt`
+ * so the LLM sees the existing tag dictionary before proposing new tags —
+ * drives reuse over near-synonym invention. Caller is responsible for
+ * sourcing the vocabulary (memory.ts uses a size-keyed in-memory cache
+ * over `loadTagVocabulary`).
  */
 export async function extractMemoriesWithCallLlm(
 	callLlm: (prompt: string) => Promise<string>,
 	messages: Array<{ role: string; content: string }>,
 	index: MemoryIndex,
-	config: { atomsDir: string; model?: string },
+	config: { atomsDir: string; model?: string; tagVocabulary?: string[] },
 ): Promise<{
 	plan: ExtractionPlan;
 	created: MemoryAtom[];
 	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }> {
-	const prompt = buildExtractionPrompt(messages);
+	const prompt = buildExtractionPrompt(messages, { tagVocabulary: config.tagVocabulary });
 	const response = await callLlm(prompt);
 	const parsed = parseExtractionJson(response);
 	return executeParsedPlan(index, config.atomsDir, parsed, config.model ?? "unknown");
@@ -376,7 +382,7 @@ export async function extractMemoriesWithCallLlm(
 /** Options for the webui entry point. Bundles everything the caller has to know. */
 export interface RunMemoryExtractionOptions {
 	callLlm: (prompt: string) => Promise<string>;
-	config: { model?: string };
+	config: { model?: string; tagVocabulary?: string[] };
 	messages: Array<{ role: string; content: string }>;
 	dbPath: string;
 	atomsDir: string;
@@ -405,6 +411,7 @@ export async function runMemoryExtraction(
 		return await extractMemoriesWithCallLlm(opts.callLlm, opts.messages, index, {
 			atomsDir: opts.atomsDir,
 			model: opts.config.model,
+			tagVocabulary: opts.config.tagVocabulary,
 		});
 	} finally {
 		index.close();
