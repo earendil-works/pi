@@ -1593,15 +1593,17 @@ export class AgentSession {
 	}
 
 	/**
-	 * Cycle to next thinking level.
+	 * Cycle thinking level.
 	 * @returns New level, or undefined if model doesn't support thinking
 	 */
-	cycleThinkingLevel(): ThinkingLevel | undefined {
+	cycleThinkingLevel(direction = 1): ThinkingLevel | undefined {
 		if (!this.supportsThinking()) return undefined;
 
 		const levels = this.getAvailableThinkingLevels();
+		const step = direction < 0 ? -1 : 1;
 		const currentIndex = levels.indexOf(this.thinkingLevel);
-		const nextIndex = (currentIndex + 1) % levels.length;
+		const baseIndex = currentIndex >= 0 ? currentIndex : step > 0 ? -1 : 0;
+		const nextIndex = ((baseIndex + step) % levels.length + levels.length) % levels.length;
 		const nextLevel = levels[nextIndex];
 
 		this.setThinkingLevel(nextLevel);
