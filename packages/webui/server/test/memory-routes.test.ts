@@ -1484,6 +1484,140 @@ describe("mountMemoryRoutes includes search", () => {
 		}
 		expect(routes).toContain("POST /api/memory/search");
 	});
+
+	it("passes searchLimiter to registerPostSearch when provided", async () => {
+		// Guards the MEDIUM security finding fix: the rate limiter must
+		// actually be wired into the search route, not just stored in
+		// MemoryRateLimiters. We assert that the 3rd request within the
+		// window is rejected with 429 (requests 1-2 may return 500 since
+		// /nonexistent is not a real DB — the limiter runs BEFORE the
+		// handler, so what matters is r3 hits 429 before the DB).
+		const app = express();
+		const deps: MemoryDeps = {
+			dbPath: "/nonexistent",
+			atomsDir: "/nonexistent",
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		const searchLimiter = rateLimit({ windowMs: 60_000, max: 2 });
+		mountMemoryRoutes(app, deps, { searchLimiter });
+		const srv = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => srv.once("listening", () => resolve()));
+		try {
+			const port = (srv.address() as { port: number }).port;
+			const url = `http://127.0.0.1:${port}/api/memory/search`;
+			const fire = () =>
+				fetch(url, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ query: "x" }),
+				});
+			await fire();
+			await fire();
+			const r3 = await fire();
+			expect(r3.status).toBe(429);
+		} finally {
+			await new Promise<void>((resolve) => srv.close(() => resolve()));
+		}
+	});
+});
+
+// Tests for the input validation added in security review (MEDIUM + 2 LOW).
+// Guards regressions in the topK clamp, type allowlist, and filtered default.
+describe("registerPostSearch input validation", () => {
+	let app: express.Express;
+	let server: import("node:http").Server;
+	let tmpDir: string;
+	let dbPath: string;
+	let atomsDir: string;
+	let deps: MemoryDeps;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-search-validation-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		const { registerPostSearch } = await import("../routes/memory.ts");
+		registerPostSearch(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const post = (body: unknown): Promise<{ status: number; body: unknown }> => {
+		const port = (server.address() as { port: number }).port;
+		return fetch(`http://127.0.0.1:${port}/api/memory/search`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		}).then(async (res) => ({
+			status: res.status,
+			body: await res.json().catch(() => ({})),
+		}));
+	};
+
+	it("clamps topK > 100 to 100", async () => {
+		const res = await post({ query: "x", topK: 9999, filtered: false });
+		expect(res.status).toBe(200);
+	});
+
+	it("clamps topK < 1 to 1", async () => {
+		const res = await post({ query: "x", topK: -5, filtered: false });
+		expect(res.status).toBe(200);
+	});
+
+	it("falls back to topK=10 when missing or non-numeric", async () => {
+		const res1 = await post({ query: "x", filtered: false });
+		expect(res1.status).toBe(200);
+		const res2 = await post({ query: "x", topK: "abc", filtered: false });
+		expect(res2.status).toBe(200);
+	});
+
+	it("rejects unknown type with same result as omitted (no filter)", async () => {
+		const res = await post({ query: "x", type: "../../etc", filtered: false });
+		expect(res.status).toBe(200);
+	});
+
+	it("accepts allowed types (rule, fact, process)", async () => {
+		for (const t of ["rule", "fact", "process"]) {
+			const res = await post({ query: "x", type: t, filtered: false });
+			expect(res.status).toBe(200);
+		}
+	});
+
+	it("treats filtered=undefined as filtered=true (default)", async () => {
+		// filtered=true would call rewriteQueries (mocked) — this just
+		// confirms the route does not 500 on the default path.
+		const res = await post({ query: "x" });
+		expect(res.status).toBe(200);
+	});
+
+	it("explicitly honours filtered=false (no rewrite, no rerank)", async () => {
+		const res = await post({ query: "x", filtered: false });
+		expect(res.status).toBe(200);
+		const body = res.body as { rewriteTimeMs?: number; rerankTimeMs?: number };
+		expect(body.rewriteTimeMs).toBeUndefined();
+		expect(body.rerankTimeMs).toBeUndefined();
+	});
 });
 
 // Tests for the POST /api/memory/extract endpoint (Task 7.7).

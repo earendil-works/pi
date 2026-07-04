@@ -341,6 +341,12 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   // loopback dev API.
   const writeLimiter = rateLimit({ windowMs: 60_000, max: 60 });
   const extractLimiter = rateLimit({ windowMs: 60_000, max: 10 });
+  // searchLimiter (60/min/IP): the filtered search pipeline fans out to
+  // 1 ollama rewrite + up to 3 parallel recallAtoms + up to 3 reranks.
+  // A loopback-local actor that spams /api/memory/search can starve the
+  // shared ollama + bge-m3 services; cap the abuse surface even though
+  // the server itself is loopback-only.
+  const searchLimiter = rateLimit({ windowMs: 60_000, max: 60 });
   mountMemoryRoutes(
     app,
     {
@@ -349,7 +355,7 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
       settings,
       callLlm,
     },
-    { writeLimiter, extractLimiter },
+    { writeLimiter, extractLimiter, searchLimiter },
   );
 
   // Static files (SPA fallback) - mounted LAST as catch-all

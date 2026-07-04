@@ -33,7 +33,7 @@ import {
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
 import { recallAtoms } from "../../../../extensions/personal-assistant/search.ts";
-import type { RecallResult } from "../../../../extensions/personal-assistant/types.ts";
+import type { MemoryAtomType, RecallResult } from "../../../../extensions/personal-assistant/types.ts";
 import {
 	buildEmbeddableText,
 	embedText,
@@ -164,7 +164,14 @@ export interface MemoryDeps {
 export interface MemoryRateLimiters {
 	writeLimiter?: RequestHandler;
 	extractLimiter?: RequestHandler;
+	searchLimiter?: RequestHandler;
 }
+
+const ALLOWED_ATOM_TYPES: ReadonlySet<MemoryAtomType> = new Set([
+	"rule",
+	"fact",
+	"process",
+]);
 
 /**
  * Open a fresh MemoryIndex and apply the schema. Caller must close().
@@ -799,10 +806,20 @@ export function registerPostArchive(
 export function registerPostSearch(
 	app: express.Express,
 	deps: MemoryDeps,
+	searchLimiter?: RequestHandler,
 ): void {
-	app.post("/api/memory/search", express.json(), async (req, res) => {
+	const handler: RequestHandler = async (req, res) => {
 		try {
-			const { query, topK = 10, type, filtered = true } = req.body || {};
+			const { query } = req.body || {};
+			// Validate + clamp inputs before any LLM / vector call.
+			const rawTopK = Number.parseInt(req.body?.topK, 10);
+			const topK = Number.isFinite(rawTopK) ? Math.min(100, Math.max(1, rawTopK)) : 10;
+			const rawType = req.body?.type;
+			const type: MemoryAtomType | undefined =
+				typeof rawType === "string" && ALLOWED_ATOM_TYPES.has(rawType as MemoryAtomType)
+					? (rawType as MemoryAtomType)
+					: undefined;
+			const filtered = req.body?.filtered === false ? false : true;
 			if (typeof query !== "string" || query.length === 0) {
 				res
 					.status(400)
@@ -888,7 +905,13 @@ export function registerPostSearch(
 		} catch (err) {
 			internalErrorResponse(req, res, err);
 		}
-	});
+	};
+	app.post(
+		"/api/memory/search",
+		searchLimiter ?? ((_req, _res, next) => next()),
+		express.json(),
+		handler,
+	);
 }
 
 /**
@@ -1002,10 +1025,11 @@ export function mountMemoryRoutes(
 ): void {
 	const writeLimiter = limiters.writeLimiter;
 	const extractLimiter = limiters.extractLimiter;
+	const searchLimiter = limiters.searchLimiter;
 	// Static paths MUST register before /:id to avoid Express route shadowing
 	registerGetMemoryList(app, deps);
 	registerGetMemoryStats(app, deps);
-	registerPostSearch(app, deps);
+	registerPostSearch(app, deps, searchLimiter);
 	registerPostExtract(app, deps, extractLimiter);
 	// Parameterized paths last.
 	registerGetMemoryById(app, deps);
