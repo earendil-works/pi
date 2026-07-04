@@ -854,19 +854,11 @@ export function registerPostSearch(
 					);
 					recallTimeMs = recMs;
 					rerankTimeMs = rerMs;
-					// Merge all scored results: dedup by atom.id, keep highest rerankScore
-					const merged = new Map<string, RecallResult>();
-					for (const pool of poolResults) {
-						for (const r of pool) {
-							const existing = merged.get(r.atom.id);
-							if (!existing || (r.rerankScore ?? 0) > (existing.rerankScore ?? 0)) {
-								merged.set(r.atom.id, r);
-							}
-						}
-					}
-					results = [...merged.values()].sort(
-						(a, b) => (b.rerankScore ?? 0) - (a.rerankScore ?? 0),
+					// Merge per-subquery pools: dedup by atom.id, sort by rerankScore DESC.
+					const { mergeByRerankScore } = await import(
+						"../../../../extensions/personal-assistant/merge.ts"
 					);
+					results = mergeByRerankScore(poolResults);
 				} else {
 					results = await recallAtoms(index, query, {
 						topK,

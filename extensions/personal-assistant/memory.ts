@@ -49,7 +49,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { runDecay } from "./decay.ts";
 import { MemoryIndex } from "./storage.ts";
 import { recallAtoms } from "./search.ts";
-import { mergeByAtomId } from "./merge.ts";
 import {
 	runMemoryExtraction,
 	extractMemoriesWithCallLlm,
@@ -855,19 +854,9 @@ export function registerMemory(pi: ExtensionAPI): void {
 					subqueries.map((q) => recallAtoms(index, q, { topK: 20 })),
 				);
 			}
-			// Merge all results: dedup by atom.id, keep highest rerankScore
-			const mergedResults = new Map<string, RecallResult>();
-			for (const pool of poolResults) {
-				for (const r of pool) {
-					const existing = mergedResults.get(r.atom.id);
-					if (!existing || (r.rerankScore ?? -1) > (existing.rerankScore ?? -1)) {
-						mergedResults.set(r.atom.id, r);
-					}
-				}
-			}
-			const results = [...mergedResults.values()].sort(
-				(a, b) => (b.rerankScore ?? 0) - (a.rerankScore ?? 0),
-			);
+			// Merge per-subquery pools: dedup by atom.id, sort by rerankScore DESC.
+			const { mergeByRerankScore } = await import("./merge.ts");
+			const results = mergeByRerankScore(poolResults);
 			hybridCount = rawTotal;
 			rerankStatus = rerankFallback
 				? "fallback"

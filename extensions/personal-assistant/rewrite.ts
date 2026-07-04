@@ -104,13 +104,13 @@ export function buildRewritePrompt(
  *   - `parsed.subqueries` must be an Array of strings
  *   - length must be >= 1 (empty array → "parse")
  *   - duplicates are removed via Set (order preserved)
- *   - if length > 3, truncated with console.debug log
+ *   - if length > maxSubqueries, truncated with console.debug log
  *
  * On any failure, the raw input's first 200 chars are logged via
  * console.warn and "parse" is returned so the caller degrades to
  * a fallback.
  */
-function parseRewriteResponse(raw: string): string[] | "parse" {
+function parseRewriteResponse(raw: string, maxSubqueries: number): string[] | "parse" {
 	const stripped = raw.trim();
 	if (stripped.length === 0) {
 		console.warn("[rewrite] empty response from LLM");
@@ -153,10 +153,10 @@ function parseRewriteResponse(raw: string): string[] | "parse" {
 	// Dedup preserving insertion order.
 	const subqueries: string[] = [...new Set(obj.subqueries)];
 
-	// Truncate to at most 3.
-	if (subqueries.length > 3) {
-		console.debug(`[rewrite] truncated ${subqueries.length}→3`);
-		return subqueries.slice(0, 3);
+	// Truncate to at most maxSubqueries.
+	if (subqueries.length > maxSubqueries) {
+		console.debug(`[rewrite] truncated ${subqueries.length}→${maxSubqueries}`);
+		return subqueries.slice(0, maxSubqueries);
 	}
 
 	return subqueries;
@@ -183,6 +183,7 @@ export async function rewriteQueries(
 	const ollamaUrl = options?.ollamaUrl ?? DEFAULT_OLLAMA_URL;
 	const model = options?.model ?? DEFAULT_MODEL;
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const maxSubqueries = options?.maxSubqueries ?? DEFAULT_MAX_SUBQUERIES;
 	const messages = buildRewritePrompt(query, recent ?? null);
 
 	let rawContent = "";
@@ -213,7 +214,7 @@ export async function rewriteQueries(
 		return { reason: "unreachable", subqueries: [query] };
 	}
 
-	const result = parseRewriteResponse(rawContent);
+	const result = parseRewriteResponse(rawContent, maxSubqueries);
 	if (result === "parse") {
 		return { reason: "parse", subqueries: [query] };
 	}
