@@ -1,4 +1,4 @@
-phase: release
+phase: archive
 workflow: full
 change: gate-multiquery
 created_at: 2026-07-03
@@ -8,4 +8,4 @@ tasks_done: 0
 isolation: branch
 verify_result: pass
 last_review_sha: 0aaa5ab9e82c56dc504e1b0a9b70bcb16add59be
-archived: false
+archived: true

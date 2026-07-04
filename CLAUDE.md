@@ -124,3 +124,18 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - **tag 一致性是 LLM 的责任也是程序的责任**: LLM emit 优先复用字典;程序端做归一化兜底,概念性 tag 缺失则 warn。
 - **主动更新而非扩张**: LLM extract 看到新信息归入已有 atom,优先 update 而非 create。程序端 cosine 0.65 兜底 + LLM 二次确认 (目标 2)。
 - **新会话 30 天后 corpus tag 重复率 ≥ 2.0**:每个 tag 平均被 ≥ 2 atom 使用才算"字典成体系"。
+
+## gate-multiquery 原则
+
+- gate 只做二分 (`need_memory`),不再做 query rewrite — 单职责 LLM call 是小模型可靠性的边界条件,双任务让 3b 的两个产出都掉点
+- rewrite 是独立阶段,统一处理 disambiguation + multi-concept split,不与 gate 共享 prompt,失败降级到单 `[rawQuery]` 与今天等价
+- subquery 上限 3 是 LLM 行为护栏,不是性能护栏 — 阻止小模型在简单 query 上凑数生造低质子查询
+- 同 atom 被多 subquery 召回时,merge 取 rerankScore 最高那一路 — 每 subquery 独立 rerank 后 max(同 id) 比 join 后 rerank 数学上保真 (实际验证:复合 query "MGM项目的工时如何计算" join 后 MGM atom 0.97→0.34 跨过 0.5 threshold 死区)
+- rerank 拿的 query 是 per-subquery 独立打分,而非 joined 字符串 — cross-encoder 在复合 query 上加 disjoint 概念会互相稀释,导致两边都过不了 threshold
+- webui `filtered=true` 单一开关包含 rewrite+rerank 全链路 — 不为 rewrite 单独开 flag,避免组合爆炸配置
+- rewrite 失败不阻塞 pipeline — non-blocking 是 hard contract (AGENTS.md principle 6 既有原则,本变更复用)
+- gate 删除 `search_query` 字段是 breaking change on schema — 老 settings.json / 老 test 都要同步改,不允许保留向后兼容 (per AGENTS.md "不保留 backward compat")
+- 三阶段串行 (gate → rewrite → recall+rerank) 总时延 ≤3s,仍在 context hook 8s 预算内 — 每阶段 timeout 是硬约束 (gate 500ms / rewrite 5000ms / rerank 500ms),总 6000ms + recall 50ms + format 微秒级
+- merge helper 是 pure function,@sdd-guide 的 unit test 优先级高于 rewrite 的 mock fetch test
+- debug log 行扩展为 `[recall] gate=X rewrite=Y(N) recall=Z rerank=W ...` — `rewrite=Y(N)` 输出 `ok(2)` / `timeout` / `parse` / `[raw]`,单行可读
+- **webui search endpoint 安全门**: topK clamp 到 [1,100], type 必须 ∈ {rule,fact,process} allowlist, 60/min/IP rate limiter 保护 (loopback-only 但防本地 misbehavior)

@@ -294,3 +294,5 @@ Webui POST /api/memory/search (filtered=false):
 - **debug log 模板统一**: `[recall] gate=X rewrite=Y(N) recall=Z rerank=W(r) pre=P post=Q latency {gate:Nms rewrite:Nms recall:Nms rerank:Nms}`. 统一模板, 不破坏今天 7-branch 输出语义.
 
 - **不动 server.py**: 不要在 develop 阶段顺手改 server.py 的 `/api/rerank` 接口. joined query 对 server 是单字符串, server 不知它是复合. 完整通过现有接口契约工作.
+
+<!-- archived-with: 2026-07-04-gate-multiquery | status: final -->
