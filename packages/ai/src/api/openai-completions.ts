@@ -563,6 +563,10 @@ function buildParams(
 		(params as any).stream_options = { include_usage: true };
 	}
 
+	if (compat.requestsUsageAccounting) {
+		(params as any).usage = { include: true };
+	}
+
 	if (compat.supportsStore) {
 		params.store = false;
 	}
@@ -1114,6 +1118,7 @@ function parseChunkUsage(
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
+		cost?: number;
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1142,6 +1147,12 @@ function parseChunkUsage(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);
+	// OpenRouter reports the actual charged amount when the request opts in via
+	// `usage: { include: true }`. Prefer it over the registry-derived total,
+	// which is zero for custom-registered models: https://openrouter.ai/docs/use-cases/usage-accounting
+	if (typeof rawUsage.cost === "number" && rawUsage.cost >= 0) {
+		usage.cost.total = rawUsage.cost;
+	}
 	return usage;
 }
 
@@ -1256,6 +1267,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 			isNvidia ||
 			isAntLing
 		),
+		requestsUsageAccounting: isOpenRouter,
 	};
 }
 
@@ -1289,5 +1301,6 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		requestsUsageAccounting: model.compat.requestsUsageAccounting ?? detected.requestsUsageAccounting,
 	};
 }

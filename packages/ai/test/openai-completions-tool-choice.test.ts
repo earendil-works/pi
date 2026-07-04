@@ -1248,6 +1248,7 @@ describe("openai-completions tool_choice", () => {
 				supportsStrictMode: true,
 				sendSessionAffinityHeaders: false,
 				supportsLongCacheRetention: true,
+				requestsUsageAccounting: false,
 			},
 		);
 

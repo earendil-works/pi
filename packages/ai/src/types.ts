@@ -515,6 +515,8 @@ export interface OpenAICompletionsCompat {
 	sendSessionAffinityHeaders?: boolean;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** Whether to request provider-reported usage accounting (e.g. OpenRouter's `usage: { include: true }`, which returns actual charged cost). Default: auto-detected from URL. */
+	requestsUsageAccounting?: boolean;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */
