@@ -71,6 +71,10 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	return cell.isItalic();
 }
 
+function getPreviousLine(tui: TUI, index: number): string {
+	return (tui as unknown as { previousLines: string[] }).previousLines[index] ?? "";
+}
+
 describe("TUI Kitty image cleanup", () => {
 	it("clears reserved Kitty image rows before drawing appended image placements", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
@@ -675,6 +679,46 @@ describe("TUI differential rendering", () => {
 
 		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should trigger a full redraw");
 		assert.deepStrictEqual(terminal.getViewport(), ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]);
+
+		tui.stop();
+	});
+
+	it("keeps stable-height offscreen changes on the differential path", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		const lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		component.lines = lines;
+		tui.start();
+		await terminal.waitForRender();
+
+		const initialRedraws = tui.fullRedraws;
+		terminal.clearWrites();
+
+		component.lines = lines.map((line, index) => (index === 1 ? "Changed offscreen" : line));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Offscreen-only changes should not full redraw");
+		assert.ok(getPreviousLine(tui, 1).startsWith("Changed offscreen"));
+		assert.ok(!terminal.getWrites().includes("\x1b[2J"), "Offscreen-only changes should not clear the screen");
+
+		terminal.clearWrites();
+		component.lines = component.lines.map((line, index) => {
+			if (index === 2) return "Changed offscreen again";
+			if (index === 10) return "Changed visible";
+			return line;
+		});
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Mixed visible/offscreen changes should not full redraw");
+		assert.ok(getPreviousLine(tui, 2).startsWith("Changed offscreen again"));
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 7", "Line 8", "Line 9", "Changed visible", "Line 11"]);
+		assert.ok(terminal.getWrites().includes("Changed visible"), "Visible change should be rendered");
+		assert.ok(!terminal.getWrites().includes("Changed offscreen again"), "Offscreen change should stay cached");
 
 		tui.stop();
 	});

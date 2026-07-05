@@ -1401,11 +1401,50 @@ export class TUI extends Container {
 			return;
 		}
 
+		let renderFirstChanged = firstChanged;
+		const prevViewportBottom = prevViewportTop + height - 1;
+		const changedKittyImages = this.deleteChangedKittyImages(firstChanged, lastChanged);
+
+		// Stable-height changes above the viewport do not need a full redraw if
+		// visible rows can still be updated directly.
+		if (firstChanged < prevViewportTop) {
+			if (newLines.length !== this.previousLines.length) {
+				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
+
+			let firstVisibleChanged = -1;
+			const scanEnd = Math.min(lastChanged, prevViewportBottom, newLines.length - 1);
+			for (let i = prevViewportTop; i <= scanEnd; i++) {
+				if (newLines[i] !== this.previousLines[i]) {
+					firstVisibleChanged = i;
+					break;
+				}
+			}
+
+			if (firstVisibleChanged === -1) {
+				if (changedKittyImages.length > 0) {
+					this.terminal.write(`\x1b[?2026h${changedKittyImages}\x1b[?2026l`);
+				}
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				return;
+			}
+
+			renderFirstChanged = firstVisibleChanged;
+		}
+
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
 				let buffer = "\x1b[?2026h";
-				buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
+				buffer += changedKittyImages;
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
@@ -1450,20 +1489,11 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
-		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
-		}
-
 		// Render from first changed line to end
 		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
-		buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
-		const prevViewportBottom = prevViewportTop + height - 1;
-		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
+		buffer += changedKittyImages;
+		const moveTargetRow = appendStart ? firstChanged - 1 : renderFirstChanged;
 		if (moveTargetRow > prevViewportBottom) {
 			const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
 			const moveToBottom = height - 1 - currentScreenRow;
@@ -1487,11 +1517,11 @@ export class TUI extends Container {
 
 		buffer += appendStart ? "\r\n" : "\r"; // Move to column 0
 
-		// Only render changed lines (firstChanged to lastChanged), not all lines to end
+		// Only render changed lines (renderFirstChanged to lastChanged), not all lines to end
 		// This reduces flicker when only a single line changes (e.g., spinner animation)
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
-		for (let i = firstChanged; i <= renderEnd; i++) {
-			if (i > firstChanged) buffer += "\r\n";
+		for (let i = renderFirstChanged; i <= renderEnd; i++) {
+			if (i > renderFirstChanged) buffer += "\r\n";
 			const line = newLines[i];
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
