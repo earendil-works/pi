@@ -77,6 +77,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 		nvidia: "NVIDIA_API_KEY",
 		deepseek: "DEEPSEEK_API_KEY",
+		doubao: "ARK_API_KEY",
 		google: "GEMINI_API_KEY",
 		"google-vertex": "GOOGLE_CLOUD_API_KEY",
 		groq: "GROQ_API_KEY",
@@ -109,6 +110,10 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	return envVar ? [envVar] : undefined;
 }
 
+function hasDoubaoEnv(env?: ProviderEnv): boolean {
+	return !!getProviderEnvValue("ARK_API_KEY", env) && !!getProviderEnvValue("ARK_MODEL_ID", env);
+}
+
 /**
  * Find configured environment variables that can provide an API key for a provider.
  *
@@ -119,6 +124,10 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 export function findEnvKeys(provider: KnownProvider, env?: ProviderEnv): string[] | undefined;
 export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | undefined;
 export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | undefined {
+	if (provider === "doubao") {
+		return hasDoubaoEnv(env) ? ["ARK_API_KEY", "ARK_MODEL_ID"] : undefined;
+	}
+
 	const envVars = getApiKeyEnvVars(provider);
 	if (!envVars) return undefined;
 
@@ -134,6 +143,10 @@ export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | und
 export function getEnvApiKey(provider: KnownProvider, env?: ProviderEnv): string | undefined;
 export function getEnvApiKey(provider: string, env?: ProviderEnv): string | undefined;
 export function getEnvApiKey(provider: string, env?: ProviderEnv): string | undefined {
+	if (provider === "doubao") {
+		return hasDoubaoEnv(env) ? getProviderEnvValue("ARK_API_KEY", env) : undefined;
+	}
+
 	const envKeys = findEnvKeys(provider, env);
 	if (envKeys?.[0]) {
 		return getProviderEnvValue(envKeys[0], env);

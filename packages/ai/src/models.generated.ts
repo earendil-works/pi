@@ -9,6 +9,7 @@ import { CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
 import { DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
+import { DOUBAO_MODELS } from "./providers/doubao.models.ts";
 import { FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
 import { GOOGLE_MODELS } from "./providers/google.models.ts";
@@ -46,6 +47,7 @@ export const MODELS = {
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
 	"deepseek": DEEPSEEK_MODELS,
+        "doubao": DOUBAO_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
 	"google": GOOGLE_MODELS,

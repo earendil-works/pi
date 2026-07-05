@@ -109,6 +109,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - OpenAI
 - Azure OpenAI
 - DeepSeek
+- Doubao
 - NVIDIA NIM
 - Google Gemini
 - Google Vertex

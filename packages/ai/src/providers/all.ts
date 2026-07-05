@@ -10,6 +10,7 @@ import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
 import { deepseekProvider } from "./deepseek.ts";
+import { doubaoProvider } from "./doubao.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { googleProvider } from "./google.ts";
@@ -77,6 +78,7 @@ export function builtinProviders(): Provider[] {
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
 		deepseekProvider(),
+		doubaoProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
 		googleProvider(),

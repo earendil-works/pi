@@ -121,6 +121,7 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_HEADERS = {
@@ -192,6 +193,13 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	high: "high",
 	xhigh: "xhigh",
 } as const;
+
+const DOUBAO_COMPAT: OpenAICompletionsCompat = {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        maxTokensField: "max_tokens",
+};
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
@@ -324,6 +332,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+        const isDoubao = provider === "doubao" || baseUrl.includes("volces.com") || baseUrl.includes("bytedance.net/api/v3");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 
 	const isNonStandard =
@@ -341,10 +350,11 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+                isAntLing ||
+                isDoubao;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
+                baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isDoubao;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
@@ -356,7 +366,14 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
 		supportsReasoningEffort:
-			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
+                        !isGrok &&
+                        !isZai &&
+                        !isMoonshot &&
+                        !isTogether &&
+                        !isCloudflareAiGateway &&
+                        !isNvidia &&
+                        !isAntLing &&
+                        !isDoubao,
 		supportsUsageInStreaming: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
@@ -378,7 +395,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
-		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+                supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isDoubao,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(
@@ -386,7 +403,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 			isCloudflareWorkersAI ||
 			isCloudflareAiGateway ||
 			isNvidia ||
-			isAntLing
+                        isAntLing ||
+                        isDoubao
 		),
 	};
 }
@@ -1718,6 +1736,23 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...deepseekV4Models);
+
+        const doubaoModels: Model<"openai-completions">[] = [
+                {
+                        id: "doubao",
+                        name: "Doubao (ARK_MODEL_ID)",
+                        api: "openai-completions",
+                        baseUrl: DOUBAO_BASE_URL,
+                        provider: "doubao",
+                        reasoning: false,
+                        input: ["text"],
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                        contextWindow: 128000,
+                        maxTokens: 16000,
+                        compat: DOUBAO_COMPAT,
+                },
+        ];
+        allModels.push(...doubaoModels);
 
 	const antLingCompat: OpenAICompletionsCompat = {
 		supportsStore: false,
