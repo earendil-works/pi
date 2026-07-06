@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import type { ResolvedPaths } from "../src/core/package-manager.ts";
+import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
+import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 
 describe("package commands", () => {
@@ -26,6 +29,24 @@ describe("package commands", () => {
 
 	async function runPackageCommandDirectly(args: string[]): Promise<void> {
 		expect(await handlePackageCommand(args)).toBe(true);
+	}
+
+	function extensionPaths(
+		packageRoot: string,
+		source: string,
+		scope: "user" | "project",
+		names: string[],
+	): ResolvedPaths {
+		return {
+			extensions: names.map((name) => ({
+				path: join(packageRoot, "extensions", name),
+				enabled: true,
+				metadata: { source, scope, origin: "package", baseDir: packageRoot },
+			})),
+			skills: [],
+			prompts: [],
+			themes: [],
+		};
 	}
 
 	beforeEach(() => {
@@ -348,6 +369,37 @@ describe("package commands", () => {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
+	});
+
+	it("cycles project package overrides in config local mode", async () => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ packages: ["npm:pi-tools"] }));
+		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
+		const resolvedPaths = extensionPaths(join(tempDir, "pkg"), "npm:pi-tools", "user", ["bar.ts"]);
+		const selector = new ConfigSelectorComponent(
+			{ global: resolvedPaths, project: resolvedPaths },
+			settingsManager,
+			projectDir,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"project",
+		);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([
+			{ source: "npm:pi-tools", autoload: false, extensions: ["-extensions/bar.ts"] },
+		]);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([
+			{ source: "npm:pi-tools", autoload: false, extensions: ["+extensions/bar.ts"] },
+		]);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([]);
 	});
 
 	it("shows a friendly error for unknown install options", async () => {

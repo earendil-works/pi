@@ -1446,6 +1446,14 @@ export interface ProviderModelConfig {
 /** Extension factory function type. Supports both sync and async initialization. */
 export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
+export type InlineExtension =
+	| ExtensionFactory
+	| {
+			/** Display name shown as `<inline:name>` in the startup Extensions list. */
+			name: string;
+			factory: ExtensionFactory;
+	  };
+
 // ============================================================================
 // Loaded Extension Types
 // ============================================================================

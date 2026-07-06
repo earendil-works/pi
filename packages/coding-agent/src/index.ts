@@ -100,6 +100,7 @@ export type {
 	ExtensionWidgetOptions,
 	FindToolCallEvent,
 	GrepToolCallEvent,
+	InlineExtension,
 	InputEvent,
 	InputEventResult,
 	InputSource,

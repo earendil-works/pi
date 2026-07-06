@@ -84,6 +84,7 @@ export type {
 	GetThinkingLevelHandler,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
+	InlineExtension,
 	// Events - Input
 	InputEvent,
 	InputEventResult,

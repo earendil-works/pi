@@ -66,11 +66,13 @@ export type TransportSetting = Transport;
  * Package source for npm/git packages.
  * - String form: load all resources from the package
  * - Object form: filter which resources to load
+ * - autoload=false: start empty and only apply explicit resource patterns
  */
 export type PackageSource =
 	| string
 	| {
 			source: string;
+			autoload?: boolean;
 			extensions?: string[];
 			skills?: string[];
 			prompts?: string[];

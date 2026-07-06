@@ -15,7 +15,7 @@ import {
 	type SelfUpdatePackageTarget,
 	VERSION,
 } from "./config.ts";
-import type { ExtensionFactory } from "./core/extensions/types.ts";
+import type { InlineExtension } from "./core/extensions/types.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -85,6 +85,23 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
+}
+
+const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
+
+function printConfigCommandHelp(): void {
+	console.log(`${chalk.bold("Usage:")}
+  ${CONFIG_COMMAND_USAGE}
+
+Open the resource configuration TUI to enable or disable package resources.
+Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
+Press Tab in the TUI to switch between global and project-local modes.
+
+Options:
+  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
+  -a, --approve     Trust project-local files for this command with -l
+  -na, --no-approve Ignore project-local files for this command with -l
+`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {
@@ -466,20 +483,8 @@ function prepareWindowsNpmSelfUpdate(): void {
 	quarantineWindowsNativeDependencies(packageDir);
 }
 
-function parseProjectTrustOverride(args: readonly string[]): boolean | undefined {
-	let trustOverride: boolean | undefined;
-	for (const arg of args) {
-		if (arg === "--approve" || arg === "-a") {
-			trustOverride = true;
-		} else if (arg === "--no-approve" || arg === "-na") {
-			trustOverride = false;
-		}
-	}
-	return trustOverride;
-}
-
 export interface PackageCommandRuntimeOptions {
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }
 
 interface CommandSettingsResult {
@@ -502,7 +507,7 @@ async function createCommandSettingsManager(options: {
 	agentDir: string;
 	projectTrustOverride?: boolean;
 	useSavedProjectTrustOnly?: boolean;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }): Promise<CommandSettingsResult> {
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const projectTrustWarnings: string[] = [];
@@ -549,8 +554,36 @@ export async function handleConfigCommand(
 	args: string[],
 	runtimeOptions: PackageCommandRuntimeOptions = {},
 ): Promise<boolean> {
-	if (args[0] !== "config") {
+	const [command, ...rest] = args;
+	if (command !== "config") {
 		return false;
+	}
+
+	if (rest.includes("-h") || rest.includes("--help")) {
+		printConfigCommandHelp();
+		return true;
+	}
+
+	let local = false;
+	let projectTrustOverride: boolean | undefined;
+	for (const arg of rest) {
+		if (arg === "-l" || arg === "--local") {
+			local = true;
+		} else if (arg === "-a" || arg === "--approve") {
+			projectTrustOverride = true;
+		} else if (arg === "-na" || arg === "--no-approve") {
+			projectTrustOverride = false;
+		} else if (arg.startsWith("-")) {
+			console.error(chalk.red(`Unknown option ${arg} for "config".`));
+			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${CONFIG_COMMAND_USAGE}".`));
+			process.exitCode = 1;
+			return true;
+		} else {
+			console.error(chalk.red(`Unexpected argument ${arg}.`));
+			console.error(chalk.dim(`Usage: ${CONFIG_COMMAND_USAGE}`));
+			process.exitCode = 1;
+			return true;
+		}
 	}
 
 	const cwd = process.cwd();
@@ -558,19 +591,33 @@ export async function handleConfigCommand(
 	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
 		cwd,
 		agentDir,
-		projectTrustOverride: parseProjectTrustOverride(args),
+		projectTrustOverride,
 		extensionFactories: runtimeOptions.extensionFactories,
 	});
 	reportProjectTrustWarnings(projectTrustWarnings);
+	if (local && !settingsManager.isProjectTrusted()) {
+		console.error(chalk.red("Project is not trusted. Use --approve to modify local resource config."));
+		process.exitCode = 1;
+		return true;
+	}
 	reportSettingsErrors(settingsManager, "config command");
-	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-	const resolvedPaths = await packageManager.resolve();
+	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const globalResolvedPaths = await new DefaultPackageManager({
+		cwd,
+		agentDir,
+		settingsManager: globalSettingsManager,
+	}).resolve();
+	const projectResolvedPaths = settingsManager.isProjectTrusted()
+		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
+		: globalResolvedPaths;
 
 	await selectConfig({
-		resolvedPaths,
+		resolvedPaths: { global: globalResolvedPaths, project: projectResolvedPaths },
 		settingsManager,
 		cwd,
 		agentDir,
+		writeScope: local ? "project" : "global",
+		projectModeAvailable: settingsManager.isProjectTrusted(),
 	});
 
 	process.exit(0);

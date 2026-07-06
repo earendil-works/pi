@@ -378,10 +378,21 @@ function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "
  */
 export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
 	if (entry.type === "message") {
-		return [entry.message];
+		const message = entry.message;
+		// Session files are parsed without validation; old versions, forks, or
+		// hand-edited files can contain messages with null/missing content.
+		if (
+			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
+			message.content == null
+		) {
+			return [{ ...message, content: [] }];
+		}
+		return [message];
 	}
 	if (entry.type === "custom_message") {
-		return [createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp)];
+		return [
+			createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
+		];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
@@ -864,6 +875,7 @@ export class SessionManager {
 		this.fileEntries = [header];
 		this.byId.clear();
 		this.labelsById.clear();
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
 
