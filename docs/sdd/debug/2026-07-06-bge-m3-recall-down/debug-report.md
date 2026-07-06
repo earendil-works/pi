@@ -72,13 +72,30 @@ threshold 0.5 把所有会话式命中都砍掉。降到 **0.05** 是会话式�
 修改:`extensions/personal-assistant/rerank.ts:DEFAULT_THRESHOLD` 0.5 → 0.05,
 加注释解释双区段(cross-encoder 已知特性)。
 
-### d. 当前行为验证
-用户 query "你还记得MGM项目工时计算吗" 经过改后 pipeline:
-- rewrite → 子查询 (qwen2.5:3b 1.3s)
-- per-subquery recall (bge-m3 GPU FP16,~50ms)
-- per-subquery rerank (bge-reranker GPU,~95ms)
-- threshold 0.05 → MGM 命中 (rerankScore 0.97) survives,工时估算 0.005 被砍
-- final:1 hit (MGM 项目),user prompt 注入该 atom 的格式化文本
+### d. 当前行为验证 (post-deploy)
 
-仅 1 hit 是因为 rewrite 拆出的子查询里只有"MGM项目"一个召回到了候选;
-会话式"还记得"部分被 rewrite 拆出但没有召回到 — 这是 rewrite 的限制,不是 recall 的问题。
+用户 query 通过完整 pipeline (webui `/api/memory/search`,bge-m3 systemd 服务):
+
+| Query | Hits | MGM (fact) | 工时估算 (rule) |
+|-------|------|-----------|----------------|
+| "你还记得MGM项目工时计算吗" | **2** | rerank 0.973, cos 0.553 ✓ | rerank 0.459, cos 0.664 ✓ |
+| "MGM项目的工时如何计算" | **2** | rerank 0.973, cos 0.553 ✓ | rerank 0.234, cos 0.612 ✓ |
+
+时延:
+- rewrite (qwen2.5:3b local): ~1.2s
+- recall (bge-m3 GPU FP16, warm): ~60ms
+- rerank (bge-reranker GPU, warm): ~100ms
+
+Observability:
+- `embeddingServiceStatus: "up"` 出现在正常 webui response
+- `embeddingServiceStatus: "down"` 当 systemd 停 bge-m3 服务时,UI 可据此显示
+  "embedding service down" 而不是 "no memory match"
+
+阈值恢复 0.55 / 0.30 (同 `.opencode/plans/` 推荐):
+
+- rich query ("MGM项目的工时如何计算"): top-2 都过 0.55 → 2 hits
+- 全短 token query ("MGM"): 0 hits — bge-m3 dense channel 对单 token 天然 cosine 上限
+  ~0.40-0.50,这是 dense embedding 的固有行为,不是阈值问题
+- 会话式 compound query: cross-encoder 给会话式"还记得"前缀的子查询相对子查询的
+  单独打分反而比直接 compound 评分更高(0.459 vs 0.234),因为子查询"你还记..."
+  本身信心低了 → cross-encoder 接受更宽的语义相关性
