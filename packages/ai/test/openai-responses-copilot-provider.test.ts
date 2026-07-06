@@ -5,6 +5,11 @@ import type { Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
 
+interface CapturedResponsesPayload {
+	prompt_cache_key?: string;
+	session_id?: string;
+}
+
 function getHeader(headers: CapturedHeaders, name: string): string | null {
 	if (!headers) return null;
 	if (headers instanceof Headers) return headers.get(name);
@@ -24,11 +29,20 @@ function getHeader(headers: CapturedHeaders, name: string): string | null {
 async function captureOpenAIResponseHeaders(
 	options: Parameters<typeof streamOpenAIResponses>[2],
 	model: Model<"openai-responses"> = getModel("openai", "gpt-5.4"),
-): Promise<{ sessionId: string | null; clientRequestId: string | null }> {
-	const captured = { sessionId: null as string | null, clientRequestId: null as string | null };
+): Promise<{
+	sessionId: string | null;
+	clientRequestId: string | null;
+	xSessionId: string | null;
+}> {
+	const captured = {
+		sessionId: null as string | null,
+		clientRequestId: null as string | null,
+		xSessionId: null as string | null,
+	};
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
 		captured.sessionId = getHeader(init?.headers, "session_id");
 		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
+		captured.xSessionId = getHeader(init?.headers, "x-session-id");
 		return new Response("data: [DONE]\n\n", {
 			status: 200,
 			headers: { "content-type": "text/event-stream" },
@@ -176,12 +190,13 @@ describe("openai-responses provider defaults", () => {
 	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });
 
-		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
+		expect(captured.sessionId).toBe("session-123");
+		expect(captured.clientRequestId).toBe("session-123");
 	});
 
 	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
 		const sessionId = "x".repeat(67);
-		let capturedPayload: { prompt_cache_key?: string } | undefined;
+		let capturedPayload: Pick<CapturedResponsesPayload, "prompt_cache_key"> | undefined;
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response("data: [DONE]\n\n", {
 				status: 200,
@@ -199,7 +214,7 @@ describe("openai-responses provider defaults", () => {
 				apiKey: "test-key",
 				sessionId,
 				onPayload: (payload) => {
-					capturedPayload = payload as { prompt_cache_key?: string };
+					capturedPayload = payload as Pick<CapturedResponsesPayload, "prompt_cache_key">;
 				},
 			},
 		);
@@ -219,19 +234,105 @@ describe("openai-responses provider defaults", () => {
 		};
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
 
-		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
+		expect(captured.sessionId).toBe("session-123");
+		expect(captured.clientRequestId).toBe("session-123");
 	});
 
-	it("can omit the session_id header while preserving other cache-affinity headers", async () => {
+	it("uses OpenRouter session-affinity header when configured", async () => {
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "proxy",
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { sessionAffinityFormat: "openrouter" },
+		};
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders(
+			{
+				sessionId: "session-proxy",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			proxyModel,
+		);
+
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBeNull();
+		expect(captured.xSessionId).toBe("session-proxy");
+		expect(capturedPayload?.session_id).toBeUndefined();
+		expect(capturedPayload?.prompt_cache_key).toBe("session-proxy");
+	});
+
+	it("auto-detects OpenRouter session-affinity header for OpenRouter Responses endpoints", async () => {
+		const openRouterModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+		};
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders(
+			{
+				sessionId: "session-openrouter",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			openRouterModel,
+		);
+
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBeNull();
+		expect(captured.xSessionId).toBe("session-openrouter");
+		expect(capturedPayload?.session_id).toBeUndefined();
+		expect(capturedPayload?.prompt_cache_key).toBe("session-openrouter");
+	});
+
+	it("uses OpenAI no-session format when configured", async () => {
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "proxy",
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { sessionAffinityFormat: "openai-nosession" },
+		};
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders(
+			{
+				sessionId: "session-proxy",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			proxyModel,
+		);
+
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBe("session-proxy");
+		expect(captured.xSessionId).toBeNull();
+		expect(capturedPayload?.session_id).toBeUndefined();
+		expect(capturedPayload?.prompt_cache_key).toBe("session-proxy");
+	});
+
+	it("can omit OpenAI session_id header while preserving other affinity data", async () => {
 		const proxyModel: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),
 			provider: "opencode",
 			baseUrl: "https://proxy.example.com/v1",
-			compat: { sendSessionIdHeader: false },
+			compat: { sessionAffinityFormat: "openai-nosession" },
 		};
-		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders(
+			{
+				sessionId: "session-123",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			proxyModel,
+		);
 
-		expect(captured).toEqual({ sessionId: null, clientRequestId: "session-123" });
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBe("session-123");
+		expect(capturedPayload?.prompt_cache_key).toBe("session-123");
 	});
 
 	it("lets explicit headers override the default OpenAI cache-affinity headers", async () => {
@@ -243,13 +344,15 @@ describe("openai-responses provider defaults", () => {
 			},
 		});
 
-		expect(captured).toEqual({ sessionId: "override-session", clientRequestId: "override-request" });
+		expect(captured.sessionId).toBe("override-session");
+		expect(captured.clientRequestId).toBe("override-request");
 	});
 
 	it("omits OpenAI cache-affinity headers when cacheRetention is none", async () => {
 		const captured = await captureOpenAIResponseHeaders({ cacheRetention: "none", sessionId: "session-123" });
 
-		expect(captured).toEqual({ sessionId: null, clientRequestId: null });
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBeNull();
 	});
 
 	it.each([
