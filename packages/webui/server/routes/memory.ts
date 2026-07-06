@@ -834,6 +834,27 @@ export function registerPostSearch(
 				let rewriteTimeMs = 0;
 				let recallTimeMs = 0;
 				let rerankTimeMs = 0;
+				// Probe the bge-m3 service health up-front (cheap, 100ms
+				// budget). When the service is down, /api/search collapses
+				// to 0 hits but the caller sees "no memory match" without
+				// any signal pointing at the real cause. The status field
+				// on the response gives the UI a chance to surface
+				// "embedding service down" instead.
+				let embeddingServiceStatus: "up" | "down" = "up";
+				try {
+					const probeUrl = (
+						deps as { embeddingServiceUrl?: string }
+					).embeddingServiceUrl ?? "http://127.0.0.1:11435";
+					const controller = new AbortController();
+					const probeTimer = setTimeout(() => controller.abort(), 100);
+					const probeRes = await fetch(`${probeUrl}/api/health`, {
+						signal: controller.signal,
+					});
+					clearTimeout(probeTimer);
+					if (!probeRes.ok) embeddingServiceStatus = "down";
+				} catch {
+					embeddingServiceStatus = "down";
+				}
 
 				if (filtered) {
 					// Full pipeline: rewrite → per-subquery recall+rerank → merge
@@ -897,6 +918,7 @@ export function registerPostSearch(
 						...(r.rerankScore !== undefined ? { rerankScore: r.rerankScore } : {}),
 					})),
 					recallTimeMs,
+					embeddingServiceStatus,
 					...(filtered ? { rewriteTimeMs, rerankTimeMs } : {}),
 				});
 			} finally {

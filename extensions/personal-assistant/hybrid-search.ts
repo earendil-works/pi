@@ -77,12 +77,29 @@ export async function hybridSearch(
 			signal: controller.signal,
 		});
 		clearTimeout(timer);
-		if (!res.ok) return [];
+		if (!res.ok) {
+			// Non-OK response from the service. Surface as a structured
+			// warning so callers can distinguish "service up but rejecting"
+			// from "service reachable but no candidates" (both yield []).
+			console.warn(
+				`[bge-m3] /api/search returned ${res.status}; collapsing to 0 hits`,
+			);
+			return [];
+		}
 		const data: unknown = await res.json();
 		return readHits(data);
-	} catch {
+	} catch (err) {
 		// fetch rejected, AbortError on timeout, JSON parse error, etc.
-		// All collapse to [] — same graceful-degradation contract as embedText.
+		// Falls back to [] — same graceful-degradation contract as embedText.
+		// The warning surfaces service-unreachable in logs (operational
+		// diagnostic; see debug-report 2026-07-06-bge-m3-down).
+		const reason =
+			err instanceof Error
+				? err.name === "AbortError"
+					? "timeout"
+					: err.message
+				: String(err);
+		console.warn(`[bge-m3] /api/search unreachable: ${reason}`);
 		return [];
 	}
 }
