@@ -10,6 +10,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export default function (pi: ExtensionAPI) {
 	const checkpoints = new Map<string, string>();
 	let currentEntryId: string | undefined;
+	let isGitRepo: boolean | undefined;
+
+	pi.on("session_start", async (_event, ctx) => {
+		const { code } = await pi.exec("git", ["rev-parse", "--git-dir"], { cwd: ctx.cwd, timeout: 3_000 });
+		isGitRepo = code === 0;
+	});
 
 	// Track the current entry ID when user messages are saved
 	pi.on("tool_result", async (_event, ctx) => {
@@ -18,6 +24,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("turn_start", async () => {
+		if (isGitRepo !== true) return;
+
 		// Create a git stash entry before LLM makes changes
 		const { stdout } = await pi.exec("git", ["stash", "create"]);
 		const ref = stdout.trim();

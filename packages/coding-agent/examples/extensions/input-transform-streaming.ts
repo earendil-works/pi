@@ -16,6 +16,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const TRIGGER = /\b(changes?|diff|modified)\b/i;
 
 export default function (pi: ExtensionAPI) {
+	let isGitRepo: boolean | undefined;
+
+	pi.on("session_start", async (_event, ctx) => {
+		const { code } = await pi.exec("git", ["rev-parse", "--git-dir"], { cwd: ctx.cwd, timeout: 3_000 });
+		isGitRepo = code === 0;
+	});
+
 	pi.on("input", async (event) => {
 		// During steering, skip the exec call — corrections should be fast
 		if (event.streamingBehavior === "steer") {
@@ -23,6 +30,11 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (!TRIGGER.test(event.text)) {
+			return { action: "continue" };
+		}
+
+		// Skip git commands if not in a git repository
+		if (isGitRepo !== true) {
 			return { action: "continue" };
 		}
 
