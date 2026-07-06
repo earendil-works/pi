@@ -292,6 +292,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	vercelGatewayRouting: {},
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
+	disableToolStreaming: false,
 	supportsStrictMode: true,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
@@ -378,6 +379,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
+		disableToolStreaming: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
@@ -1298,6 +1300,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					// OpenCode Kimi K2.6 accepts Anthropic-style thinking objects
 					// and rejects string thinking values or combined reasoning_effort.
 					compat = { ...(compat ?? {}), thinkingFormat: "deepseek", supportsReasoningEffort: false };
+				}
+				if (variant.provider === "opencode-go" && modelId === "glm-5.2") {
+					compat = { ...(compat ?? {}), disableToolStreaming: true };
 				}
 
 				// Fix known mismatches between models.dev npm data and actual

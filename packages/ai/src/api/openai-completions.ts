@@ -1,10 +1,12 @@
 import OpenAI from "openai";
 import type {
+	ChatCompletion,
 	ChatCompletionAssistantMessageParam,
 	ChatCompletionChunk,
 	ChatCompletionContentPart,
 	ChatCompletionContentPartImage,
 	ChatCompletionContentPartText,
+	ChatCompletionCreateParamsNonStreaming,
 	ChatCompletionDeveloperMessageParam,
 	ChatCompletionMessageParam,
 	ChatCompletionSystemMessageParam,
@@ -139,6 +141,10 @@ type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletion
 	cache_control?: OpenAICompatCacheControl;
 };
 
+type ChatCompletionDeltaWithReasoning = ChatCompletionChunk.Choice.Delta & {
+	reasoning_content?: string;
+};
+
 function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
@@ -147,6 +153,68 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 		return "long";
 	}
 	return "short";
+}
+
+function toNonStreamingParams(
+	params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+): ChatCompletionCreateParamsNonStreaming {
+	const { stream_options: _streamOptions, ...rest } = params;
+	return { ...rest, stream: false };
+}
+
+async function* completionToChunks(completion: ChatCompletion): AsyncIterable<ChatCompletionChunk> {
+	const choice = completion.choices[0];
+	const message = choice?.message;
+	const base = {
+		id: completion.id,
+		created: completion.created,
+		model: completion.model,
+		object: "chat.completion.chunk" as const,
+	};
+
+	const messageFields = message as unknown as Record<string, unknown> | undefined;
+	const reasoning = messageFields?.reasoning_content ?? messageFields?.reasoning ?? messageFields?.reasoning_text;
+	if (typeof reasoning === "string" && reasoning.length > 0) {
+		const delta: ChatCompletionDeltaWithReasoning = { reasoning_content: reasoning };
+		yield {
+			...base,
+			choices: [{ index: choice.index, delta, finish_reason: null }],
+		};
+	}
+
+	if (message?.content) {
+		yield {
+			...base,
+			choices: [{ index: choice.index, delta: { content: message.content }, finish_reason: null }],
+		};
+	}
+
+	const functionToolCalls = message?.tool_calls?.filter((toolCall) => toolCall.type === "function") ?? [];
+	if (functionToolCalls.length > 0) {
+		yield {
+			...base,
+			choices: [
+				{
+					index: choice.index,
+					delta: {
+						tool_calls: functionToolCalls.map((toolCall, index) => ({
+							index,
+							id: toolCall.id,
+							type: toolCall.type,
+							function: toolCall.function,
+						})),
+					},
+					finish_reason: null,
+				},
+			],
+		};
+	}
+
+	yield {
+		...base,
+		choices: [{ index: choice?.index ?? 0, delta: {}, finish_reason: choice?.finish_reason ?? "stop" }],
+		usage: completion.usage,
+	};
 }
 
 export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptions> = (
@@ -191,9 +259,18 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: options?.maxRetries ?? 0,
 			};
-			const { data: openaiStream, response } = await client.chat.completions
-				.create(params, requestOptions)
-				.withResponse();
+			let openaiStream: AsyncIterable<ChatCompletionChunk>;
+			let response: Response;
+			if (compat.disableToolStreaming && context.tools && context.tools.length > 0) {
+				const nonStreamingParams = toNonStreamingParams(params);
+				const result = await client.chat.completions.create(nonStreamingParams, requestOptions).withResponse();
+				openaiStream = completionToChunks(result.data);
+				response = result.response;
+			} else {
+				const result = await client.chat.completions.create(params, requestOptions).withResponse();
+				openaiStream = result.data;
+				response = result.response;
+			}
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -1218,6 +1295,8 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
+	const isOpenCodeGoGlm52 =
+		(provider === "opencode-go" && model.id === "glm-5.2") || model.id === "opencode-go/glm-5.2";
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
@@ -1246,6 +1325,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
+		disableToolStreaming: isOpenCodeGoGlm52,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
@@ -1285,6 +1365,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
+		disableToolStreaming: model.compat.disableToolStreaming ?? detected.disableToolStreaming,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,

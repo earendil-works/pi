@@ -66,7 +66,7 @@ export const OPENCODE_GO_MODELS = {
 		api: "openai-completions",
 		provider: "opencode-go",
 		baseUrl: "https://opencode.ai/zen/go/v1",
-		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens"},
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"disableToolStreaming":true,"maxTokensField":"max_tokens"},
 		reasoning: true,
 		thinkingLevelMap: {"off":null,"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
 		input: ["text"],
