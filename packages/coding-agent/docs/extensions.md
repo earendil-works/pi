@@ -294,6 +294,7 @@ user sends prompt ────────────────────�
   │   │                                            │       │
   │   ├─► turn_start                               │       │
   │   ├─► context (can modify messages)            │       │
+  │   ├─► before_provider_headers (can mutate headers)     |
   │   ├─► before_provider_request (can inspect or replace payload)
   │   ├─► after_provider_response (status + headers, before stream consume)
   │   │                                            │       │
@@ -642,6 +643,24 @@ pi.on("context", async (event, ctx) => {
   return { messages: filtered };
 });
 ```
+
+#### before_provider_headers
+
+Fired after the outgoing HTTP headers are assembled. Use it to add, override, or remove request headers.
+
+Handlers mutate `event.headers` in place. Set a key to a string to add or override it, or to `null` to delete it.
+
+```typescript
+pi.on("before_provider_headers", (event, ctx) => {
+  // Add or override — e.g. a session id for gateway tracing/attribution
+  event.headers["x-session-id"] = ctx.sessionManager.getSessionId();
+
+  // Drop a tracking header pi adds for this call
+  event.headers["X-OpenRouter-Title"] = null;
+});
+```
+
+Runs once per provider request; retries reuse the same headers rather than re-firing the hook.
 
 #### before_provider_request
 
