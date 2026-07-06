@@ -60,7 +60,16 @@ export interface RerankFallback {
 
 const DEFAULT_SERVICE_URL = "http://127.0.0.1:11435";
 const DEFAULT_TIMEOUT_MS = 500;
-const DEFAULT_THRESHOLD = 0.5;
+// Cross-encoder scores cluster in two regimes:
+//   * Direct-keyword query ("MGM项目" / "工时估算") → ~0.97 confident
+//   * Conversational query ("你还记得X吗" / "X如何Y") → ~0.04 still relevant
+// Wrong atoms score ~0.0 with bimodal gap. The 0.5 threshold was set for
+// the direct-keyword case but kills conversational recall entirely. 0.05
+// keeps both bands above the noise floor (~0.001) while staying below
+// the direct-confident range. Gap detection (0.15) cuts the noise tail
+// where direct/confident hits sit apart from conversational tail. See
+// docs/sdd/debug/2026-07-06-bge-m3-recall-down/debug-report.md.
+const DEFAULT_THRESHOLD = 0.05;
 const DEFAULT_GAP = 0.15;
 
 /**

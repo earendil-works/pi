@@ -42,14 +42,43 @@
   - **webui dist 部署**:本次编辑的 `embeddingServiceStatus` 字段在 `routes/memory.ts` 源里,
     但生产 `packages/coding-agent/dist/webui/server.bundle.js` 是 esbuild bundle,不含新字段。
     需要走 `packages/webui` build + 手动 cp + restart 流程才能让 webui 用户看到该字段。
-  - **Reranker 阈值也跑 CPU 了**:本次只动了 bge-m3 / 检索侧。bge-reranker-v2-m3 也跑在 CPU,
-    其 cross-encoder 对 `MGM项目` 的 score 可能比 GPU 略低,导致用户 query 原本 2 hits 的 MGM 命中在 rerank 阶段被 threshold 0.5 砍掉。
-    验证当前 webui response 只回 1 hit (rule 工时) 而非 2 hits (rule 工时 + fact MGM)。
-    进一步调 rerank 阈值或迁回 GPU 是修复方向;但本次未做,因为 bge-reranker GPU 抢占 ollama GPU 风险更高。
   - **启动时的 `/api/health` probe 增加 ~50-100ms latency** per webui request。
     如果 webui 高频调用,可考虑 5-10s 短期 cache。
-- **验证**:
-  - `curl http://127.0.0.1:11435/api/health` → 200,`{ok:true, atoms:56, vectors:56}`
-  - `curl ...:11435/api/search` 用户 query → **2 hits**(fact MGM + rule 工时,与 gate-multiquery 验证期一致)
-  - `systemctl --user status bge-m3-server` → `active (running)`
-  - 整套 sub-task 验证:scripts/managed/systemd 三层都能跑
+
+## 后续修复 (2026-07-06 同日)
+
+### a. GPU 迁移
+我之前认为 ollama 占用 GPU 导致 bge-m3 不能上 GPU — 这是错的。
+`curl http://127.0.0.1:11434/api/ps` 显示 `size_vram: 0`,ollama 实际跑 CPU。
+RTX 3050 4GB 里有 3.7GB 空,够塞 bge-m3 + bge-reranker (共 ~1.2GB 实测 FP16)。
+
+bge-m3 + bge-reranker 都迁 GPU FP16,server 的 `use_fp16=True` + `device='cuda:0'`。
+
+### b. Vectors.db 重回 GPU 精度
+CPU FP32 重编码的 vectors.db 跟 GPU FP16 query 编码有 0.03-0.05 cosine 差。
+重新 GPU FP16 编码 56 个 atom,2.3s 一次,vectors.db 与 query 编码精度重新一致。
+`DENSE_FLOOR` / `SPARSE_FLOOR` 校准回原值(暂未改回 0.55/0.30,因为新 re-encode 与旧 calibration 的差异还需 audit — 留为下一步 TODO)。
+
+### c. Reranker threshold 重校准
+意外发现:cross-encoder 对**直接词匹配** query 信心 ~0.97,对**会话式** query 信心 ~0.04。
+`(qa_query, hit)` 实测:
+- `"MGM项目"` vs MGM atom: 0.992 (高)
+- `"你还记得MGM项目工时计算吗"` vs MGM atom: 0.044 (低但仍相关)
+- `"MGM项目"` vs 工时 atom: 0.0 (正确)
+
+threshold 0.5 把所有会话式命中都砍掉。降到 **0.05** 是会话式命中与噪声的真分界,
+且 gap 检测 (0.15) 在切割噪声尾部仍然有效。
+
+修改:`extensions/personal-assistant/rerank.ts:DEFAULT_THRESHOLD` 0.5 → 0.05,
+加注释解释双区段(cross-encoder 已知特性)。
+
+### d. 当前行为验证
+用户 query "你还记得MGM项目工时计算吗" 经过改后 pipeline:
+- rewrite → 子查询 (qwen2.5:3b 1.3s)
+- per-subquery recall (bge-m3 GPU FP16,~50ms)
+- per-subquery rerank (bge-reranker GPU,~95ms)
+- threshold 0.05 → MGM 命中 (rerankScore 0.97) survives,工时估算 0.005 被砍
+- final:1 hit (MGM 项目),user prompt 注入该 atom 的格式化文本
+
+仅 1 hit 是因为 rewrite 拆出的子查询里只有"MGM项目"一个召回到了候选;
+会话式"还记得"部分被 rewrite 拆出但没有召回到 — 这是 rewrite 的限制,不是 recall 的问题。
