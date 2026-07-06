@@ -263,17 +263,11 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	deleteSessionNoninvasive: "app.session.deleteNoninvasive",
 } as const satisfies Record<string, Keybinding>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAME_MIGRATIONS {
 	return key in KEYBINDING_NAME_MIGRATIONS;
 }
 
-function toKeybindingsConfig(value: unknown): KeybindingsConfig {
-	if (!isRecord(value)) return {};
-
+function toKeybindingsConfig(value: Record<string, unknown>): KeybindingsConfig {
 	const config: KeybindingsConfig = {};
 	for (const [key, binding] of Object.entries(value)) {
 		if (typeof binding === "string") {
@@ -331,7 +325,8 @@ function loadRawConfig(path: string): Record<string, unknown> | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-		return isRecord(parsed) ? parsed : undefined;
+		if (typeof parsed !== "object" || parsed === null) return undefined;
+		return parsed as Record<string, unknown>;
 	} catch {
 		return undefined;
 	}

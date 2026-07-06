@@ -24,27 +24,13 @@ const getImageTool: Tool<typeof getImageSchema> = {
 	parameters: getImageSchema,
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function isResponsePayload(value: unknown): value is { input: unknown[] } {
-	return isRecord(value) && Array.isArray(value.input);
-}
-
-function isFunctionCallOutputItem(
-	value: unknown,
-): value is { type: "function_call_output"; output: string | ResponseFunctionCallOutputItemList } {
-	return isRecord(value) && value.type === "function_call_output" && "output" in value;
-}
-
-function isInputTextItem(value: unknown): value is { type: "input_text"; text: string } {
-	return isRecord(value) && value.type === "input_text" && typeof value.text === "string";
-}
-
-function isInputImageItem(value: unknown): value is { type: "input_image"; image_url: string } {
-	return isRecord(value) && value.type === "input_image" && typeof value.image_url === "string";
-}
+type CapturedResponsePayload = { input?: unknown[] };
+type FunctionCallOutputItem = {
+	type: "function_call_output";
+	output: string | ResponseFunctionCallOutputItemList;
+};
+type InputTextItem = { type: "input_text"; text: string };
+type InputImageItem = { type: "input_image"; image_url: string };
 
 async function verifyToolResultImagesStayInFunctionCallOutput<TApi extends Api>(
 	model: Model<TApi>,
@@ -105,15 +91,19 @@ async function verifyToolResultImagesStayInFunctionCallOutput<TApi extends Api>(
 	expect(secondResponse.stopReason, `Error: ${secondResponse.errorMessage}`).toBe("stop");
 	expect(secondResponse.errorMessage).toBeFalsy();
 
-	expect(isResponsePayload(capturedPayload)).toBe(true);
-	if (!isResponsePayload(capturedPayload)) {
+	const responsePayload = capturedPayload as CapturedResponsePayload | undefined;
+	expect(Array.isArray(responsePayload?.input)).toBe(true);
+	if (!Array.isArray(responsePayload?.input)) {
 		throw new Error("Expected payload with input array");
 	}
+	const responseInput = responsePayload.input;
 
-	const functionCallOutputIndex = capturedPayload.input.findIndex((item) => isFunctionCallOutputItem(item));
+	const functionCallOutputIndex = responseInput.findIndex(
+		(item) => (item as { type?: unknown } | null)?.type === "function_call_output",
+	);
 	expect(functionCallOutputIndex).toBeGreaterThanOrEqual(0);
-	const functionCallOutput = capturedPayload.input[functionCallOutputIndex];
-	if (!isFunctionCallOutputItem(functionCallOutput)) {
+	const functionCallOutput = responseInput[functionCallOutputIndex] as FunctionCallOutputItem | undefined;
+	if (!functionCallOutput) {
 		throw new Error("Expected function_call_output item");
 	}
 
@@ -123,8 +113,12 @@ async function verifyToolResultImagesStayInFunctionCallOutput<TApi extends Api>(
 	}
 
 	const outputItems = functionCallOutput.output;
-	const textItem = outputItems.find((item) => isInputTextItem(item));
-	const imageItem = outputItems.find((item) => isInputImageItem(item));
+	const textItem = outputItems.find((item) => (item as { type?: unknown } | null)?.type === "input_text") as
+		| InputTextItem
+		| undefined;
+	const imageItem = outputItems.find((item) => (item as { type?: unknown } | null)?.type === "input_image") as
+		| InputImageItem
+		| undefined;
 
 	expect(textItem).toBeTruthy();
 	expect(imageItem).toBeTruthy();
@@ -135,9 +129,9 @@ async function verifyToolResultImagesStayInFunctionCallOutput<TApi extends Api>(
 	expect(textItem.text).toContain(toolText);
 	expect(imageItem.image_url.startsWith("data:image/png;base64,")).toBe(true);
 
-	const laterUserMessages = capturedPayload.input
+	const laterUserMessages = responseInput
 		.slice(functionCallOutputIndex + 1)
-		.filter((item) => isRecord(item) && item.role === "user");
+		.filter((item) => (item as { role?: unknown } | null)?.role === "user");
 	expect(laterUserMessages).toHaveLength(0);
 
 	const responseText = secondResponse.content

@@ -11,6 +11,7 @@
 - Fixed Amazon Bedrock prompt-cache points for Claude Fable 5 and Claude Sonnet 5 ([#6235](https://github.com/earendil-works/pi/issues/6235)).
 - Fixed DS4 server context overflow detection for `Prompt has ... tokens, but the configured context size is ... tokens` errors ([#6262](https://github.com/earendil-works/pi/issues/6262)).
 - Fixed OpenAI Codex WebSocket sessions to rotate cached connections before the backend's 60-minute limit, avoiding connection-limit failures on long sessions ([#6268](https://github.com/earendil-works/pi/issues/6268)).
+- Fixed OpenAI Responses and Azure OpenAI Responses requests to avoid sending `max_output_tokens` values below the provider minimum ([#6265](https://github.com/earendil-works/pi/issues/6265)).
 - Fixed retry classification for Cloudflare 524 timeout responses ([#6239](https://github.com/earendil-works/pi/issues/6239)).
 
 ### Added

@@ -34,14 +34,12 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
-		const id = uuidv7().slice(0, 8);
+		// The uuidv7 prefix is timestamp-derived and nearly constant between calls,
+		// so short ids must come from the random tail.
+		const id = uuidv7().slice(-8);
 		if (!byId.has(id)) return id;
 	}
 	return uuidv7();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function invalidSession(filePath: string, message: string, cause?: Error): SessionError {
@@ -63,24 +61,27 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 	} catch (error) {
 		throw invalidSession(filePath, "first line is not a valid session header", toError(error));
 	}
-	if (!isRecord(parsed)) throw invalidSession(filePath, "first line is not a valid session header");
-	if (parsed.type !== "session") throw invalidSession(filePath, "first line is not a valid session header");
-	if (parsed.version !== 3) throw invalidSession(filePath, "unsupported session version");
-	if (typeof parsed.id !== "string" || !parsed.id) throw invalidSession(filePath, "session header is missing id");
-	if (typeof parsed.timestamp !== "string" || !parsed.timestamp) {
+	if (typeof parsed !== "object" || parsed === null) {
+		throw invalidSession(filePath, "first line is not a valid session header");
+	}
+	const header = parsed as Partial<SessionHeader>;
+	if (header.type !== "session") throw invalidSession(filePath, "first line is not a valid session header");
+	if (header.version !== 3) throw invalidSession(filePath, "unsupported session version");
+	if (typeof header.id !== "string" || !header.id) throw invalidSession(filePath, "session header is missing id");
+	if (typeof header.timestamp !== "string" || !header.timestamp) {
 		throw invalidSession(filePath, "session header is missing timestamp");
 	}
-	if (typeof parsed.cwd !== "string" || !parsed.cwd) throw invalidSession(filePath, "session header is missing cwd");
-	if (parsed.parentSession !== undefined && typeof parsed.parentSession !== "string") {
+	if (typeof header.cwd !== "string" || !header.cwd) throw invalidSession(filePath, "session header is missing cwd");
+	if (header.parentSession !== undefined && typeof header.parentSession !== "string") {
 		throw invalidSession(filePath, "session header parentSession must be a string");
 	}
 	return {
 		type: "session",
 		version: 3,
-		id: parsed.id,
-		timestamp: parsed.timestamp,
-		cwd: parsed.cwd,
-		parentSession: parsed.parentSession,
+		id: header.id,
+		timestamp: header.timestamp,
+		cwd: header.cwd,
+		parentSession: header.parentSession,
 	};
 }
 
@@ -91,19 +92,28 @@ function parseEntryLine(line: string, filePath: string, lineNumber: number): Ses
 	} catch (error) {
 		throw invalidEntry(filePath, lineNumber, "is not valid JSON", toError(error));
 	}
-	if (!isRecord(parsed)) throw invalidEntry(filePath, lineNumber, "is not a valid session entry");
-	if (typeof parsed.type !== "string") throw invalidEntry(filePath, lineNumber, "is missing entry type");
-	if (typeof parsed.id !== "string" || !parsed.id) throw invalidEntry(filePath, lineNumber, "is missing entry id");
-	if (parsed.parentId !== null && typeof parsed.parentId !== "string") {
+	if (typeof parsed !== "object" || parsed === null) {
+		throw invalidEntry(filePath, lineNumber, "is not a valid session entry");
+	}
+	const entry = parsed as {
+		type?: unknown;
+		id?: unknown;
+		parentId?: unknown;
+		timestamp?: unknown;
+		targetId?: unknown;
+	};
+	if (typeof entry.type !== "string") throw invalidEntry(filePath, lineNumber, "is missing entry type");
+	if (typeof entry.id !== "string" || !entry.id) throw invalidEntry(filePath, lineNumber, "is missing entry id");
+	if (entry.parentId !== null && typeof entry.parentId !== "string") {
 		throw invalidEntry(filePath, lineNumber, "has invalid parentId");
 	}
-	if (typeof parsed.timestamp !== "string" || !parsed.timestamp) {
+	if (typeof entry.timestamp !== "string" || !entry.timestamp) {
 		throw invalidEntry(filePath, lineNumber, "is missing timestamp");
 	}
-	if (parsed.type === "leaf" && parsed.targetId !== null && typeof parsed.targetId !== "string") {
+	if (entry.type === "leaf" && entry.targetId !== null && typeof entry.targetId !== "string") {
 		throw invalidEntry(filePath, lineNumber, "has invalid targetId");
 	}
-	return parsed as unknown as SessionTreeEntry;
+	return entry as SessionTreeEntry;
 }
 
 function leafIdAfterEntry(entry: SessionTreeEntry): string | null {
