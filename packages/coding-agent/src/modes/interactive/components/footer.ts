@@ -99,10 +99,8 @@ export class FooterComponent implements Component {
 				totalCacheWrite += entry.message.usage.cacheWrite;
 				totalCost += entry.message.usage.cost.total;
 
-				const latestPromptTokens =
-					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
 				latestCacheHitRate =
-					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
+					entry.message.usage.input > 0 ? (entry.message.usage.cacheRead / entry.message.usage.input) * 100 : undefined;
 			}
 		}
 
