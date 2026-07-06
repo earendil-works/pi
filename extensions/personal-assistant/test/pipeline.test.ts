@@ -230,7 +230,7 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 		const gateArgs = mockCallGate.mock.calls[0]!;
 		expect(gateArgs[0]).toBe("bwa 有问题");
 		expect(gateArgs[1]).toEqual([]); // no recent messages
-		expect(gateArgs[2]).toEqual({ timeoutMs: 500 });
+		expect(gateArgs[2]).toEqual({ timeoutMs: 5000 });
 
 		// recallAtoms was called with the raw current prompt (GateDecision no longer includes search_query)
 		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
@@ -702,26 +702,20 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 	});
 
 	// -----------------------------------------------------------------------
-	// Task 5.4 — debug log tests (single console.debug per pipeline run)
+	// Task 5.4 — debug log tests (single emission per pipeline run, routed via setStatus)
 	// -----------------------------------------------------------------------
 	describe("debug log (gate/rerank/latency)", () => {
-		let debugSpy: ReturnType<typeof vi.spyOn>;
-
-		beforeEach(() => {
-			debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
-		});
-
-		afterEach(() => {
-			debugSpy.mockRestore();
-		});
+		const debugMessagesFor = (ctx: ReturnType<typeof createMockCtx>): string[] =>
+			ctx.setStatusCalls.filter((c) => c.key === "memory-debug").map((c) => c.text ?? "");
 
 		it("D1: happy path — gate=pass rewrite=ok(1) rerank=ok", async () => {
 			const event = defaultEvent();
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toMatch(/\[recall\]/);
 			expect(msg).toContain("gate=pass");
 			expect(msg).toContain("rewrite=ok(1)");
@@ -738,10 +732,12 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=timeout");
-			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
+			expect(msg).toContain("rewrite=skip");
+			expect(msg).not.toContain("pre-gate-skip");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -757,8 +753,9 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=pass");
 			expect(msg).toContain("rewrite=ok(1)");
 			expect(msg).toContain("rerank=fallback(timeout)");
@@ -774,8 +771,9 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=pass");
 			expect(msg).toContain("rewrite=ok(1)");
 			expect(msg).toContain("rerank=fallback(http-error)");
@@ -788,10 +786,12 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=parse-fail");
-			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
+			expect(msg).toContain("rewrite=skip");
+			expect(msg).not.toContain("pre-gate-skip");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -804,10 +804,12 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=down");
-			expect(msg).toContain("rewrite=skip(pre-gate-skip)");
+			expect(msg).toContain("rewrite=skip");
+			expect(msg).not.toContain("pre-gate-skip");
 			expect(msg).toContain("rerank=skip");
 			expect(msg).toContain("pre=0");
 			expect(msg).toContain("post=0");
@@ -828,13 +830,62 @@ describe("context hook pipeline (gate → recall → rerank → format → injec
 			const ctx = createMockCtx();
 			await contextHandler(event, ctx);
 
-			expect(debugSpy).toHaveBeenCalledTimes(1);
-			const msg = debugSpy.mock.calls[0]![0] as string;
+			const msgs = debugMessagesFor(ctx);
+			expect(msgs).toHaveLength(1);
+			const msg = msgs[0]!;
 			expect(msg).toContain("gate=disabled");
 			expect(msg).toContain("rewrite=skip");
 			expect(msg).toContain("rerank=ok");
 			expect(msg).toContain("pre=5");
 			expect(msg).toContain("post=2");
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Regression: agent-loop iterations must NOT trigger recall
+	// -----------------------------------------------------------------------
+	describe("regression: skip recall on agent-loop continuations", () => {
+		it("AG1: last message role is 'tool' → no recall, no gate call", async () => {
+			const event = {
+				messages: [
+					{ role: "user", content: "what is X?" },
+					{ role: "assistant", content: "thinking..." },
+					{ role: "tool", content: "result of X is Y" },
+				],
+			};
+			const ctx = createMockCtx();
+			const result = await contextHandler(event, ctx);
+
+			// No gate call, no recall, no rerank, no format, no status.
+			expect(mockCallGate).not.toHaveBeenCalled();
+			expect(mockRecallAtoms).not.toHaveBeenCalled();
+			expect(mockRerankAndFilter).not.toHaveBeenCalled();
+			expect(mockFormatMemoryContext).not.toHaveBeenCalled();
+			expect(ctx.setStatusCalls).toEqual([]);
+			// Event returned unmodified.
+			expect(result).toBe(event);
+		});
+
+		it("AG2: last message role is 'assistant' (mid-turn continuation) → no recall", async () => {
+			const event = {
+				messages: [
+					{ role: "user", content: "do thing" },
+					{ role: "assistant", content: "calling tool" },
+				],
+			};
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(mockCallGate).not.toHaveBeenCalled();
+			expect(mockRecallAtoms).not.toHaveBeenCalled();
+		});
+
+		it("AG3: regression guard — fresh user turn DOES still trigger gate", async () => {
+			const event = defaultEvent();
+			const ctx = createMockCtx();
+			await contextHandler(event, ctx);
+
+			expect(mockCallGate).toHaveBeenCalledTimes(1);
 		});
 	});
 });

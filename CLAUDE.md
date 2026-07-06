@@ -135,7 +135,7 @@ Verbatim from docs/sdd/changes/memory-v2-refactor/principles.md
 - webui `filtered=true` 单一开关包含 rewrite+rerank 全链路 — 不为 rewrite 单独开 flag,避免组合爆炸配置
 - rewrite 失败不阻塞 pipeline — non-blocking 是 hard contract (AGENTS.md principle 6 既有原则,本变更复用)
 - gate 删除 `search_query` 字段是 breaking change on schema — 老 settings.json / 老 test 都要同步改,不允许保留向后兼容 (per AGENTS.md "不保留 backward compat")
-- 三阶段串行 (gate → rewrite → recall+rerank) 总时延 ≤3s,仍在 context hook 8s 预算内 — 每阶段 timeout 是硬约束 (gate 500ms / rewrite 5000ms / rerank 500ms),总 6000ms + recall 50ms + format 微秒级
+- 三阶段串行 (gate → rewrite → recall+rerank) 总时延约 10.5s,可在 context hook 8s 预算外 — 已知 trade-off,2026-07-04 gate 从 500ms 延长到 5000ms 以覆盖冷启 ollama qwen2.5:3b 加载,warm 路径典型 2-3s。每阶段 timeout (gate 5000ms / rewrite 5000ms / rerank 500ms) + recall 50ms + format 微秒级。KNOWN RISK: 当前未把 AbortSignal 从 `pi.on("context")` 串到 callGate/rewriteQueries,phase 内 fetch 不会被父 deadline abort,慢 ollama 可能 stall 输入到 timeout 上限(security MEDIUM,属本修复 scope 外)。
 - merge helper 是 pure function,@sdd-guide 的 unit test 优先级高于 rewrite 的 mock fetch test
 - debug log 行扩展为 `[recall] gate=X rewrite=Y(N) recall=Z rerank=W ...` — `rewrite=Y(N)` 输出 `ok(2)` / `timeout` / `parse` / `[raw]`,单行可读
 - **webui search endpoint 安全门**: topK clamp 到 [1,100], type 必须 ∈ {rule,fact,process} allowlist, 60/min/IP rate limiter 保护 (loopback-only 但防本地 misbehavior)

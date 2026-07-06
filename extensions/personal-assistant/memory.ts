@@ -700,6 +700,11 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
 		if (messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
 
+		// Skip non-user continuations (tool results, assistant mid-turn).
+		if (messages[messages.length - 1]?.role !== "user") {
+			return event as unknown as { messages?: AgentMessage[] };
+		}
+
 		// 1. Extract current (last) and recent (up to 3 prior) user messages
 		const userMessages: string[] = [];
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -711,7 +716,6 @@ export function registerMemory(pi: ExtensionAPI): void {
 				if (userMessages.length >= 4) break;
 			}
 		}
-		if (userMessages.length === 0) return event as unknown as { messages?: AgentMessage[] };
 
 		const current = userMessages[userMessages.length - 1]!;
 		const recent = userMessages.slice(0, -1);
@@ -738,20 +742,30 @@ export function registerMemory(pi: ExtensionAPI): void {
 			parse: "parse-fail",
 			unreachable: "down",
 		};
+		const emitRecallDebug = (line: string) => {
+			if (ctx.ui?.setStatus) {
+				ctx.ui.setStatus("memory-debug", line);
+			} else {
+				console.debug(line);
+			}
+		};
+		const emitGateSkipDebug = () => {
+			const reasonStr = rerankReason ? `(${rerankReason})` : "";
+			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
+			emitRecallDebug(
+				`[recall] gate=${gateLabel} rewrite=skip rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
+			);
+		};
 		if (gateEnabled) {
 			gateT0 = performance.now();
 			const { callGate } = await import("./gate.ts");
-			const gateDecision = await callGate(current, recent, { timeoutMs: 500 });
+			const gateDecision = await callGate(current, recent, { timeoutMs: 5000 });
 			gateMs = performance.now() - gateT0;
 
 			if (gateDecision === null) {
 				gateStatus = "unknown";
 				ctx.ui?.setStatus?.("memory", "⚠ gate unknown, skipped");
-				const reasonStr = rerankReason ? `(${rerankReason})` : "";
-				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
-				console.debug(
-					`[recall] gate=${gateLabel} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
-				);
+				emitGateSkipDebug();
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			if (typeof gateDecision === "string") {
@@ -763,20 +777,13 @@ export function registerMemory(pi: ExtensionAPI): void {
 				} else if (gateDecision === "unreachable") {
 					ctx.ui?.setStatus?.("memory", "⚠ gate down, skipped");
 				}
-				const reasonStr = rerankReason ? `(${rerankReason})` : "";
-				const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
-				console.debug(
-					`[recall] gate=${gateLabel} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
-				);
+				emitGateSkipDebug();
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			if (!gateDecision.need_memory) {
 				gateStatus = "skip-false";
 				ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
-				const reasonStr = rerankReason ? `(${rerankReason})` : "";
-				console.debug(
-					`[recall] gate=${gateStatus} rewrite=skip(pre-gate-skip) rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
-				);
+				emitGateSkipDebug();
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			gateStatus = "pass";
@@ -893,7 +900,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 			const reasonStr = rerankReason ? `(${rerankReason})` : "";
 			const rewriteDisplay = rewriteStatus === "ok" ? `ok(${subqueries.length})` : rewriteStatus;
-			console.debug(
+			emitRecallDebug(
 				`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms rewrite:${rewriteMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
 			);
 
