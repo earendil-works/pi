@@ -1280,6 +1280,7 @@ export class Editor implements Component, Focusable {
 
 			this.state.lines[this.state.cursorLine] = before + after;
 			this.setCursorCol(this.state.cursorCol - graphemeLength);
+			this.pasteCounter--;
 		} else if (this.state.cursorLine > 0) {
 			this.pushUndoSnapshot();
 
