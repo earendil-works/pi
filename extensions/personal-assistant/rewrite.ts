@@ -97,17 +97,20 @@ export function buildRewritePrompt(
  * Try to parse a raw LLM response string into a non-empty array of
  * subqueries. Returns "parse" if parsing or validation fails.
  *
- * First attempts direct JSON.parse. If that fails, strips leading
- * non-JSON text via regex /(\{[\s\S]*\})/ and retries.
+ * Closed-loop repair: parse → schema-check. If the schema check
+ * fails for a *format* reason, try one of several targeted repairs
+ * and re-check. The loop terminates when either the schema passes
+ * or no repair produces a different parsed shape.
  *
- * If both attempts fail (typically because qwen2.5:3b dropped the closing
- * `}` or forgot to quote a key), applies surgical repairs before giving up:
+ * The repair set mirrors gate.ts:
+ *   1. tryRepairRewriteResponse — text-level (append `}`, quote
+ *      unquoted keys). Fires when JSON.parse itself throws.
+ *   2. tryRepairRewriteSucceededByAccident — handles the "succeeded
+ *      by accident" case where the model emits
+ *      `{"subqueries:[...]":...}` (key contains `:`), parseable but
+ *      with a key that swallowed the value.
  *
- *   1. Append missing closing `}` when bracket counts are unbalanced
- *   2. Quote unquoted JSON keys (`subqueries:[...]` → `"subqueries":[...]`)
- *   3. Cast string booleans / numbers at value position if needed
- *
- * Validation rules (after successful parse):
+ * Validation rules (after successful parse + schema check):
  *   - `parsed.subqueries` must be an Array of strings
  *   - length must be >= 1 (empty array → "parse")
  *   - duplicates are removed via Set (order preserved)
@@ -124,58 +127,81 @@ function parseRewriteResponse(raw: string, maxSubqueries: number): string[] | "p
 		return "parse";
 	}
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(stripped);
-	} catch {
-		const match = stripped.match(/(\{[\s\S]*\})/);
-		if (match) {
-			try {
-				parsed = JSON.parse(match[1]);
-			} catch {
-				parsed = undefined;
-			}
-		} else {
-			parsed = undefined;
-		}
-	}
-
+	// Step 1: parse. If JSON.parse fails, run text-level repair and retry.
+	let parsed: unknown = tryParseRewriteJson(stripped);
 	if (parsed === undefined) {
-		const repaired = tryRepairRewriteResponse(stripped);
-		if (repaired !== undefined) {
-			parsed = repaired;
-		} else {
+		parsed = tryRepairRewriteResponse(stripped);
+		if (parsed === undefined) {
 			console.warn("[rewrite] parse failed, raw:", stripped.slice(0, 200));
 			return "parse";
 		}
 	}
 
+	// Step 2: schema check + repair loop.
+	const MAX_REPAIR_ATTEMPTS = 4;
+	let lastSig = JSON.stringify(parsed);
+	for (let i = 0; i < MAX_REPAIR_ATTEMPTS; i++) {
+		const obj = parsed as Record<string, unknown>;
+		if (Array.isArray(obj.subqueries) && obj.subqueries.length > 0) {
+			// Validate element types. (Validation stays in the loop so a
+			// repair can produce a cleaner value type — e.g. casting
+			// a single-string array to a string array.)
+			const arr = obj.subqueries as unknown[];
+			if (arr.every((s: unknown) => typeof s === "string")) {
+				// Dedup preserving insertion order.
+				const subqueries: string[] = [...new Set(arr as string[])];
+				// Truncate to at most maxSubqueries.
+				if (subqueries.length > maxSubqueries) {
+					console.debug(`[rewrite] truncated ${subqueries.length}→${maxSubqueries}`);
+					return subqueries.slice(0, maxSubqueries);
+				}
+				return subqueries;
+			}
+		}
+
+		// Schema fail. Try one repair.
+		const next = tryOneRewriteRepair(parsed, stripped);
+		if (next === undefined) break;
+		const sig = JSON.stringify(next);
+		if (sig === lastSig) break;
+		lastSig = sig;
+		parsed = next;
+	}
+
+	// Determine the most informative log message.
 	const obj = parsed as Record<string, unknown>;
 	if (!Array.isArray(obj.subqueries)) {
 		console.warn("[rewrite] schema invalid (subqueries not array), raw:", stripped.slice(0, 200));
-		return "parse";
-	}
-
-	if (obj.subqueries.length === 0) {
+	} else if (obj.subqueries.length === 0) {
 		console.warn("[rewrite] empty subqueries array");
-		return "parse";
-	}
-
-	if (!obj.subqueries.every((s: unknown) => typeof s === "string")) {
+	} else {
 		console.warn("[rewrite] schema invalid (non-string element), raw:", stripped.slice(0, 200));
-		return "parse";
 	}
+	return "parse";
+}
 
-	// Dedup preserving insertion order.
-	const subqueries: string[] = [...new Set(obj.subqueries)];
-
-	// Truncate to at most maxSubqueries.
-	if (subqueries.length > maxSubqueries) {
-		console.debug(`[rewrite] truncated ${subqueries.length}→${maxSubqueries}`);
-		return subqueries.slice(0, maxSubqueries);
+function tryParseRewriteJson(stripped: string): unknown {
+	try {
+		return JSON.parse(stripped);
+	} catch {
+		const match = stripped.match(/(\{[\s\S]*\})/);
+		if (match) {
+			try {
+				return JSON.parse(match[1]);
+			} catch {
+				return undefined;
+			}
+		}
+		return undefined;
 	}
+}
 
-	return subqueries;
+function tryOneRewriteRepair(parsed: unknown, raw: string): unknown {
+	const accident = tryRepairRewriteSucceededByAccident(parsed);
+	if (accident !== undefined) return accident;
+	const textRepair = tryRepairRewriteResponse(raw);
+	if (textRepair !== undefined) return textRepair;
+	return undefined;
 }
 
 // Repair common JSON malformations in rewrite responses. Mirrors the
@@ -233,6 +259,45 @@ function repairRewriteKeys(raw: string): string | undefined {
 function repairRewriteCast(raw: string): string | undefined {
 	const candidate = raw.replace(/:\s*"true"\s*([,}])/g, ":true$1").replace(/:\s*"false"\s*([,}])/g, ":false$1");
 	return candidate === raw ? undefined : candidate;
+}
+
+// Repair the "succeeded by accident" case for rewrite. qwen2.5:3b
+// occasionally emits `{"subqueries:[...]":...}` where the model
+// intended `{"subqueries": [...]}` but dropped the key's closing
+// `"` early. JSON.parse accepts the malformed input by reading the
+// literal key as `"subqueries:[...]"` and pairing it with whatever
+// value the model wrote after it. The object has no `subqueries`
+// field, so the schema check fails.
+//
+// Detection: an object key contains a `:`. We split the key at the
+// first colon and pair the prefix with the parsed value. We only
+// fire this repair when the value is an array (the rewrite's
+// `subqueries` value type) — the gate's "succeeded by accident"
+// case (boolean values) is the same pattern but different value
+// type, and is handled by tryRepairSucceededByAccident in gate.ts.
+//
+// Returns the repaired object, or undefined if the shape doesn't
+// match (so the loop can try other repairs).
+function tryRepairRewriteSucceededByAccident(
+	parsed: unknown,
+): Record<string, unknown> | undefined {
+	if (typeof parsed !== "object" || parsed === null) return undefined;
+	const obj = parsed as Record<string, unknown>;
+	const result: Record<string, unknown> = {};
+	let mutated = false;
+	for (const [key, value] of Object.entries(obj)) {
+		const colonIdx = key.indexOf(":");
+		if (colonIdx > 0) {
+			const realKey = key.slice(0, colonIdx);
+			if (realKey.length > 0 && !realKey.includes(" ") && Array.isArray(value)) {
+				result[realKey] = value;
+				mutated = true;
+				continue;
+			}
+		}
+		result[key] = value;
+	}
+	return mutated ? result : undefined;
 }
 
 /**

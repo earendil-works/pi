@@ -370,6 +370,20 @@ describe("rewriteQueries", () => {
 		const body = JSON.parse(init!.body as string);
 		expect(body.format).toBe("json");
 	});
+
+	// Succeeded-by-accident recovery: qwen2.5:3b emits
+	// `{"subqueries:[]":["MGM"]}` — the key's closing `"` was dropped
+	// and the model wrote a stray `[]` then started the actual array.
+	// JSON.parse accepts the input by reading the literal key as
+	// `"subqueries:[]"` and the value as `["MGM"]`. The repair detects
+	// the `:` in the key and re-pairs the prefix with the parsed
+	// array value.
+	it("repairs succeeded-by-accident — key contains :", async () => {
+		const raw = '{"subqueries:[]":["MGM"]}';
+		vi.mocked(fetch).mockResolvedValueOnce(mockOllamaResponse(raw));
+		const result = await rewriteQueries("你还记得MGM项目吗");
+		expect(result).toEqual(["MGM"]);
+	});
 });
 
 // ---------------------------------------------------------------------------

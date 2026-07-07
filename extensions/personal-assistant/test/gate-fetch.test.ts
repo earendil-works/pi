@@ -291,6 +291,22 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 		expect(result).toEqual({ need_memory: false } satisfies GateDecision);
 	});
 
+	// "Succeeded by accident": qwen2.5:3b emits `{"need_memory:true}":true}`
+	// — the key's closing `"` was dropped, but JSON.parse accepts the input
+	// by reading `"need_memory:true}"` as the literal key name and `true`
+	// as the value. The object has no `need_memory` field. The text-level
+	// repair (close the open quote) on the original raw recovers the
+	// intended shape.
+	it("repairs succeeded-by-accident — {\"need_memory:true}\":true}", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory:true}":true}' },
+			}),
+		);
+		const result = await callGate("你还记得MGM项目吗", []);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
+	});
+
 	it("does NOT repair — completely unrecoverable garbage returns 'parse'", async () => {
 		vi.mocked(fetch).mockResolvedValueOnce(
 			mockJsonResponse({
