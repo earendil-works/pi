@@ -184,6 +184,17 @@ const DECAY_INTERVAL_MS = 60 * 60 * 1000;
 let lastDecayAt = 0;
 
 /**
+ * Drift-sweep interval. The tool_result hook catches write/edit drift
+ * immediately, but the agent can still drift .md files via bash (sed,
+ * vi, redirect) or by hand-editing outside pi. The periodic sweep
+ * closes that gap by walking atomsDir, comparing each .md's body
+ * fingerprint to the DB's content_fingerprint, and reindexing drifted
+ * atoms via bge-m3.
+ */
+const DRIFT_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastDriftSweepAt = 0;
+
+/**
  * Per-turn memory-context pipeline state. The before_agent_start hook
  * kicks off `recallAtoms` async and stores the promise here; the context
  * hook awaits it (with an 8s race timeout) and injects the formatted
@@ -634,6 +645,29 @@ export function registerMemory(pi: ExtensionAPI): void {
 					);
 				}
 			}
+
+			// 4. Drift sweep: walk atomsDir, find .md files whose body
+			//    no longer matches the DB's content_fingerprint, and
+			//    reindex them via bge-m3. Catches bash / manual / out-of-
+			//    pipeline edits that the tool_result hook can't see.
+			//    Throttled to once per DRIFT_SWEEP_INTERVAL_MS.
+			if (now - lastDriftSweepAt >= DRIFT_SWEEP_INTERVAL_MS) {
+				lastDriftSweepAt = now;
+				try {
+					const { runDriftSweep } = await import("./drift-sweep.ts");
+					const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+					const stats = await runDriftSweep(atomsDir, index);
+					if (stats.drifted > 0) {
+						console.log(
+							`[memory] drift sweep: checked=${stats.checked} drifted=${stats.drifted} reindexed=${stats.reindexed} failed=${stats.failed}`,
+						);
+					}
+				} catch (err) {
+					// Sweep is best-effort — a bge-m3 outage is logged but
+					// does not block session_start.
+					console.warn(`[memory] drift sweep failed: ${(err as Error).message}`);
+				}
+			}
 		} finally {
 			index.close();
 		}
@@ -1024,5 +1058,38 @@ export function registerMemory(pi: ExtensionAPI): void {
 				});
 		}
 	});
+
+	// Periodic drift sweep. The session_start hook above also runs the
+	// sweep (throttled to once per DRIFT_SWEEP_INTERVAL_MS), but in a
+	// long-running process the user may never trigger session_start
+	// again, so a wall-clock timer keeps drift from accumulating over
+	// days. The timer is unref'd so it never holds the process open
+	// past the agent loop's natural exit.
+	const driftTimer = setInterval(() => {
+		void (async () => {
+			const config = loadConfig();
+			const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+			const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+			const index = new MemoryIndex(dbPath);
+			try {
+				await index.init();
+				const { runDriftSweep } = await import("./drift-sweep.ts");
+				const stats = await runDriftSweep(atomsDir, index);
+				if (stats.drifted > 0) {
+					console.log(
+						`[memory] periodic drift sweep: checked=${stats.checked} drifted=${stats.drifted} reindexed=${stats.reindexed} failed=${stats.failed}`,
+					);
+				}
+			} catch (err) {
+				console.warn(`[memory] periodic drift sweep failed: ${(err as Error).message}`);
+			} finally {
+				index.close();
+			}
+		})();
+	}, DRIFT_SWEEP_INTERVAL_MS);
+	// unref: don't keep the process alive just for the drift sweep.
+	// The session_start hook handles the case where the process is
+	// already short-lived; this timer is for long-running processes.
+	if (typeof driftTimer.unref === "function") driftTimer.unref();
 }
 
