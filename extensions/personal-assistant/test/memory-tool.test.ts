@@ -279,3 +279,209 @@ describe("tool_result hook (bump access_count on read)", () => {
 		idx2.close();
 	});
 });
+
+describe("tool_result hook (vector sync on write/edit of atom file)", () => {
+	let dbPath: string;
+	let tmpDir: string;
+	let mockReindex: ReturnType<typeof vi.fn>;
+
+	beforeEach(async () => {
+		vi.resetModules();
+
+		// Re-mock bge-reindex fresh per test so each describe gets
+		// its own reindexOne spy (vi.mock at module level applies to
+		// both static and dynamic imports of the same module).
+		mockReindex = vi.fn(async (_id: string) => ({ ok: true }));
+		vi.doMock("../bge-reindex.ts", () => ({ reindexOne: mockReindex }));
+
+		const os = await import("node:os");
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-tool-reindex-test-"));
+
+		process.env.HOME = tmpDir;
+		dbPath = path.join(tmpDir, ".pi", "agent", "memory", "memory.db");
+
+		const memoryMod = await import("../memory.ts");
+		registerMemory = memoryMod.registerMemory;
+		const storageMod = await import("../storage.ts");
+		MemoryIndex = storageMod.MemoryIndex;
+		const embedMod = await import("../embed.ts");
+		embedText = embedMod.embedText;
+	});
+
+	afterEach(async () => {
+		process.env.ORIGINAL_HOME && (process.env.HOME = process.env.ORIGINAL_HOME);
+		vi.doUnmock("../bge-reindex.ts");
+		vi.restoreAllMocks();
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	it("calls reindexOne when a write tool updates an atom file", async () => {
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const atom = sampleAtom();
+		const text = `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${atom.tags.join(" ")}`;
+		const emb = await embedText(text);
+		if (!emb) throw new Error("mocked embedText returned null");
+		await idx.insertAtom(atom, emb);
+		idx.close();
+
+		const atomPath = path.join(tmpDir, ".pi", "agent", "memory", "atoms", atom.type, `${atom.id}.md`);
+		await handler({
+			type: "tool_result",
+			toolName: "write",
+			toolCallId: "call-w1",
+			input: { path: atomPath, content: "# updated content" },
+			content: [{ type: "text", text: "wrote" }],
+			isError: false,
+			details: undefined,
+		});
+
+		// reindexOne is called via the dynamic import in memory.ts;
+		// give the microtask queue a turn to drain before asserting.
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).toHaveBeenCalledWith(atom.id);
+	});
+
+	it("calls reindexOne when an edit tool updates an atom file", async () => {
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const atom = sampleAtom();
+		const text = `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${atom.tags.join(" ")}`;
+		const emb = await embedText(text);
+		if (!emb) throw new Error("mocked embedText returned null");
+		await idx.insertAtom(atom, emb);
+		idx.close();
+
+		const atomPath = path.join(tmpDir, ".pi", "agent", "memory", "atoms", atom.type, `${atom.id}.md`);
+		await handler({
+			type: "tool_result",
+			toolName: "edit",
+			toolCallId: "call-e1",
+			input: { path: atomPath, oldText: "old", newText: "new" },
+			content: [{ type: "text", text: "edited" }],
+			isError: false,
+			details: undefined,
+		});
+
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).toHaveBeenCalledWith(atom.id);
+	});
+
+	it("does NOT call reindexOne when write targets a non-atom file", async () => {
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		await handler({
+			type: "tool_result",
+			toolName: "write",
+			toolCallId: "call-w2",
+			input: { path: path.join(tmpDir, "some", "other", "file.md"), content: "x" },
+			content: [{ type: "text", text: "wrote" }],
+			isError: false,
+			details: undefined,
+		});
+
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).not.toHaveBeenCalled();
+	});
+
+	it("does NOT call reindexOne when the write errors out", async () => {
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const atom = sampleAtom();
+		const text = `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${atom.tags.join(" ")}`;
+		const emb = await embedText(text);
+		if (!emb) throw new Error("mocked embedText returned null");
+		await idx.insertAtom(atom, emb);
+		idx.close();
+
+		const atomPath = path.join(tmpDir, ".pi", "agent", "memory", "atoms", atom.type, `${atom.id}.md`);
+		await handler({
+			type: "tool_result",
+			toolName: "write",
+			toolCallId: "call-w3",
+			input: { path: atomPath, content: "x" },
+			content: [{ type: "text", text: "permission denied" }],
+			isError: true,
+			details: undefined,
+		});
+
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).not.toHaveBeenCalled();
+	});
+
+	it("does NOT call reindexOne for non-write/edit tool results (e.g. read)", async () => {
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const atom = sampleAtom();
+		const text = `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${atom.tags.join(" ")}`;
+		const emb = await embedText(text);
+		if (!emb) throw new Error("mocked embedText returned null");
+		await idx.insertAtom(atom, emb);
+		idx.close();
+
+		const atomPath = path.join(tmpDir, ".pi", "agent", "memory", "atoms", atom.type, `${atom.id}.md`);
+		await handler({
+			type: "tool_result",
+			toolName: "read",
+			toolCallId: "call-r1",
+			input: { path: atomPath },
+			content: [{ type: "text", text: "content" }],
+			isError: false,
+			details: undefined,
+		});
+
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).not.toHaveBeenCalled();
+	});
+
+	it("does NOT throw when reindexOne returns ok: false (best-effort)", async () => {
+		mockReindex.mockResolvedValueOnce({ ok: false, error: "service down" });
+		const pi = makeFakePi();
+		registerMemory(pi as unknown as Parameters<typeof registerMemory>[0]);
+		const handler = pi._handlers.get("tool_result")!;
+
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const atom = sampleAtom();
+		const text = `${atom.title}\n\n${atom.summary}\n\n${atom.content}\n\n${atom.tags.join(" ")}`;
+		const emb = await embedText(text);
+		if (!emb) throw new Error("mocked embedText returned null");
+		await idx.insertAtom(atom, emb);
+		idx.close();
+
+		const atomPath = path.join(tmpDir, ".pi", "agent", "memory", "atoms", atom.type, `${atom.id}.md`);
+		// Should not throw — best-effort sync, the agent's write still succeeds.
+		expect(() =>
+			handler({
+				type: "tool_result",
+				toolName: "write",
+				toolCallId: "call-w4",
+				input: { path: atomPath, content: "x" },
+				content: [{ type: "text", text: "wrote" }],
+				isError: false,
+				details: undefined,
+			}),
+		).not.toThrow();
+
+		await new Promise((r) => setTimeout(r, 20));
+		expect(mockReindex).toHaveBeenCalledWith(atom.id);
+	});
+});

@@ -929,32 +929,42 @@ export function registerMemory(pi: ExtensionAPI): void {
 		}
 	});
 
-	// tool_result hook — strength-feedback via read-tool interception.
+	// tool_result hook — strength feedback + vector sync via tool interception.
 	//
-	// Search (`recallAtoms`) is deliberately bump-free: surfacing a candidate
-	// in context is not the same as the LLM acting on it. Only when the
-	// agent actually reads the atom file does it count as a feedback
-	// signal. The bump is the path from "search hit" to "this is worth
-	// surfacing again" — without it, every search would converge to the
-	// same ranking and the memory system would stop learning from agent
-	// behaviour.
+	// The hook fires on every tool_result. The behaviour depends on the
+	// tool that produced the result:
 	//
-	// The hook fires on every tool_result. It only acts when:
-	//   - toolName === "read"
-	//   - the read succeeded (isError === false)
-	//   - the input path is an atom file under the configured atomsDir
-	//     (matches `${atomsDir}/<type>/<uuid>.md`, after `~/` → home-dir
-	//     expansion if the path uses a leading tilde)
+	//   read   — strength feedback. Bump `access_count` / `last_access`
+	//            for the matched atom so the strength-decay loop keeps it
+	//            visible. Search (`recallAtoms`) is deliberately bump-free:
+	//            surfacing a candidate in context is not the same as the
+	//            LLM acting on it, and the strength signal only reflects
+	//            actual reads.
 	//
-	// On match, it bumps `access_count` and stamps `last_access` for the
-	// matched atom. No other side effects.
+	//   write / edit — vector sync. When the agent mutates an atom .md
+	//            file directly (bypassing the extraction pipeline), the
+	//            on-disk content drifts from the cached vector and the
+	//            fingerprint stored in the DB. We call reindexOne so the
+	//            bge-m3 service recomputes dense + sparse vectors for the
+	//            new content. Without this, future recalls would rank
+	//            against stale embeddings.
+	//
+	// Both branches share the same atom-path detection
+	// (`${atomsDir}/<type>/<uuid>.md`, with `~/` → home-dir expansion).
+	// Both are best-effort: a failed DB write or reindex call never
+	// surfaces to the user and never interrupts the agent loop.
 	//
 	// The atomsDir regex is rebuilt each hook call so it always tracks
 	// the live `config.memory.atomsDir` override (in case the user
 	// reloaded with a different path).
 	pi.on("tool_result", (event) => {
-		if (event.toolName !== "read") return;
 		if (event.isError) return;
+
+		// Resolve the path that was touched. read/write/edit all carry
+		// `path` in input; bash commands are intentionally ignored (the
+		// agent can still drift the file via bash, but drift detection
+		// for that path is a separate concern — typically a periodic
+		// sweep over content_fingerprint, out of scope here).
 		const rawPath = event.input.path;
 		if (typeof rawPath !== "string") return;
 
@@ -970,20 +980,49 @@ export function registerMemory(pi: ExtensionAPI): void {
 		const match = makeAtomPathRegex(atomsDir).exec(path);
 		if (!match) return;
 
-		const index = new MemoryIndex(DEFAULT_DB_PATH);
-		index.init()
-			.then(() => {
-				try {
-					index.updateAccess(match[2]!);
-				} finally {
-					index.close();
-				}
-			})
-			.catch(() => {
-				// Strength-feedback bump is best-effort. A failed DB
-				// write on a read-tool result should never surface to
-				// the user or interrupt the agent loop.
-			});
+		const atomId = match[2]!;
+
+		if (event.toolName === "read") {
+			// Strength-feedback bump. Sync, but non-blocking: the
+			// best-effort index.updateAccess returns immediately and we
+			// never throw on a missed write.
+			const index = new MemoryIndex(DEFAULT_DB_PATH);
+			index.init()
+				.then(() => {
+					try {
+						index.updateAccess(atomId);
+					} finally {
+						index.close();
+					}
+				})
+				.catch(() => {});
+		} else if (event.toolName === "write" || event.toolName === "edit") {
+			// Vector sync. We do NOT update the DB content row here —
+			// the only writer that produces a MemoryAtom row is the
+			// extraction pipeline. The on-disk .md file is the
+			// canonical source of text; the bge-m3 service reads it
+			// during reindex and produces a fresh vector. The DB
+			// content_fingerprint will be stale until the next
+			// extraction run, but the vector matches the .md on disk,
+			// which is what recall actually uses.
+			//
+			// Lazy-import reindexOne to keep the bge-m3 client out of
+			// the cold-start import graph (mirrors the gate/rewrite
+			// dynamic-import pattern in this file).
+			import("./bge-reindex.ts")
+				.then(({ reindexOne }) => reindexOne(atomId))
+				.then((res) => {
+					if (!res.ok) {
+						console.warn(
+							`[memory] reindex after ${event.toolName} ${path} failed: ${res.error ?? "unknown"}`,
+						);
+					}
+				})
+				.catch(() => {
+					// Best-effort: a missing bge-m3 service or network
+					// hiccup must never surface to the user.
+				});
+		}
 	});
 }
 
