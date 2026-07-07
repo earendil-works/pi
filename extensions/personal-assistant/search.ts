@@ -9,8 +9,23 @@
 //
 //   1. Hydrate the full atom from local sqlite (the service returns
 //      id+title only; the LLM block needs `summary` + `type` + `tags`).
-//   2. Propagate `rrf`, `dense_cos`, `sparse_score` into `RecallResult`
+//   2. Refresh `content` from the on-disk .md file when available, so
+//      recall returns the freshest text the user / agent has produced
+//      even if the DB content row is stale (see content-source below).
+//   3. Propagate `rrf`, `dense_cos`, `sparse_score` into `RecallResult`
 //      for `formatMemoryContext` to consume.
+//
+// Content source: the on-disk .md file is the canonical text source
+// for an atom. The DB `memory_index.content` column is a snapshot
+// taken at extraction time and becomes stale whenever the agent or
+// the user edits the .md file directly. The drift-sweep keeps the
+// vector in sync, but the DB row's text content only catches up at
+// the next extraction run — which may not happen for months. To
+// avoid serving stale text to the LLM, recall reads the .md body and
+// overrides `atom.content` in the returned `RecallResult`. The DB
+// row is left untouched (drift is recovered transparently on the
+// next extraction); the .md file is the source of truth and the
+// recall path reads it directly.
 //
 // Architecture notes:
 //   - `dense_cos` and `sparse_score` are both surfaces of the service's
@@ -29,7 +44,9 @@
 //     into LLM prompt. Same graceful-degradation principle as
 //     `embedText` returning null.
 
+import { join } from "node:path";
 import { hybridSearch } from "./hybrid-search.ts";
+import { readAtomFromFile } from "./file-store.ts";
 import type { MemoryIndex } from "./storage.ts";
 import type { MemoryAtom, MemoryAtomType, RecallResult } from "./types.ts";
 
@@ -54,7 +71,10 @@ const DEFAULT_DENSE_COSINE_FLOOR = 0.55;
  * Options for `recallAtoms`. `topK` bounds the total candidate count
  * pulled from the service (default 20 — the service then takes its own
  * top-10 internally). `filter` narrows the search to a single atom
- * type. `embeddingServiceUrl` overrides the service URL.
+ * type. `embeddingServiceUrl` overrides the service URL. `atomsDir`
+ * is the on-disk atom directory; when set, recall reads the .md body
+ * for each hit and overrides `atom.content` so the LLM sees the
+ * freshest text.
  *
  * No client-side re-ranking options exist — the server's RRF output is
  * the sole ranking signal.
@@ -71,6 +91,13 @@ export interface RecallOptions {
 	/** Embedding service base URL (defaults to the FastAPI bge-m3 service
 	 *  at 127.0.0.1:11435). */
 	embeddingServiceUrl?: string;
+	/** Atom file directory. When set, recall reads `${atomsDir}/${type}/${id}.md`
+	 *  for each hit and overrides `atom.content` with the .md body. The
+	 *  .md file is the canonical text source — it stays fresh across
+	 *  write/edit tool calls and the periodic drift sweep; the DB row
+	 *  only catches up at the next extraction run. Falls back to the DB
+	 *  content if the .md is missing or malformed. */
+	atomsDir?: string;
 }
 
 /**
@@ -104,9 +131,27 @@ async function recallAtomsSingleSegment(
 
 	// Hydrate and propagate service ranking verbatim.
 	const results: RecallResult[] = [];
+	const atomsDir = options.atomsDir;
 	for (const h of allHits) {
-		const atom = index.getAtom(h.id);
-		if (!atom) continue;
+		const dbAtom = index.getAtom(h.id);
+		if (!dbAtom) continue;
+
+		// Refresh content from the on-disk .md when atomsDir is
+		// supplied. The DB row is a snapshot; the .md body is the
+		// canonical text after the user / agent edits it directly.
+		// We only override the `content` field — title, summary, tags
+		// stay on the DB row to keep the change surface tight. The
+		// readAtomFromFile call is a one-shot file read; with the
+		// default topK=5 this is <5ms total in practice.
+		let atom = dbAtom;
+		if (atomsDir) {
+			const filePath = join(atomsDir, dbAtom.type, `${dbAtom.id}.md`);
+			const parsed = await readAtomFromFile(filePath);
+			if (parsed && parsed.atom.content !== dbAtom.content) {
+				atom = { ...dbAtom, content: parsed.atom.content };
+			}
+		}
+
 		results.push({
 			atom,
 			cosine: h.dense_cos,

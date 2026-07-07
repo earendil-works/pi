@@ -201,39 +201,46 @@ export function registerGetMemoryById(
 	app: express.Express,
 	deps: MemoryDeps,
 ): void {
-	app.get("/api/memory/:id", async (req, res) => {
-		try {
-			const index = await createIndex(deps.dbPath);
+		app.get("/api/memory/:id", async (req, res) => {
 			try {
-				const atom = index.getAtom(req.params.id);
-				if (!atom) {
-					res.status(404).json({ error: "atom not found" });
-					return;
+				const index = await createIndex(deps.dbPath);
+				try {
+					const atom = index.getAtom(req.params.id);
+					if (!atom) {
+						res.status(404).json({ error: "atom not found" });
+						return;
+					}
+					const filePath = path.join(
+						deps.atomsDir,
+						atom.type,
+						`${atom.id}.md`,
+					);
+					// readAtomFromFile is called WITHOUT expectedHash — the
+					// .md file is the canonical text source and the user
+					// may have edited the body directly (via write/edit
+					// tool or via bash) without re-running the extraction
+					// pipeline, leaving the frontmatter's
+					// content_fingerprint stale. Validating against the
+					// stale fingerprint would suppress the very content
+					// the user is trying to read. The hash check is
+					// appropriate for the L1 hydration path inside
+					// extraction, not for the read-side UI.
+					// readAtomFromFile returns null only on missing file
+					// or malformed frontmatter — both collapse to
+					// content="" so the UI can still render metadata.
+					const result = await readAtomFromFile(filePath);
+					if (!result) {
+						res.json({ ...atom, content: "" });
+						return;
+					}
+					res.json({ ...atom, content: result.atom.content });
+				} finally {
+					index.close();
 				}
-				const filePath = path.join(
-					deps.atomsDir,
-					atom.type,
-					`${atom.id}.md`,
-				);
-				// readAtomFromFile returns null on missing file, malformed
-				// frontmatter, OR hash mismatch (when expectedHash is given).
-				// All three collapse to "no content" — never a 500.
-				const result = await readAtomFromFile(
-					filePath,
-					atom.content_fingerprint,
-				);
-				if (!result) {
-					res.json({ ...atom, content: "" });
-					return;
-				}
-				res.json({ ...atom, content: result.atom.content });
-			} finally {
-				index.close();
+			} catch (err) {
+				internalErrorResponse(req, res, err);
 			}
-		} catch (err) {
-			internalErrorResponse(req, res, err);
-		}
-	});
+		});
 }
 
 /**
@@ -881,6 +888,7 @@ export function registerPostSearch(
 							const sqResults = await recallAtoms(index, sq, {
 								topK,
 								filter: type ? { type } : undefined,
+								atomsDir: deps.atomsDir,
 							});
 							recMs += Date.now() - r0;
 							if (sqResults.length === 0) return sqResults;
@@ -896,14 +904,15 @@ export function registerPostSearch(
 					const { mergeByRerankScore } = await import(
 						"../../../../extensions/personal-assistant/merge.ts"
 					);
-					results = mergeByRerankScore(poolResults);
-				} else {
-					results = await recallAtoms(index, query, {
-						topK,
-						filter: type ? { type } : undefined,
-					});
-					recallTimeMs = Date.now() - t0;
-				}
+				results = mergeByRerankScore(poolResults);
+			} else {
+				results = await recallAtoms(index, query, {
+					topK,
+					filter: type ? { type } : undefined,
+					atomsDir: deps.atomsDir,
+				});
+				recallTimeMs = Date.now() - t0;
+			}
 
 				res.json({
 					results: results.map((r) => ({

@@ -849,6 +849,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 
 		// 4. Open MemoryIndex and per-subquery recall + rerank
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
@@ -864,7 +865,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				const poolWithStatus = await Promise.all(
 					subqueries.map(async (sq) => {
 						const r0 = performance.now();
-						const sqResults = await recallAtoms(index, sq, { topK: 20 });
+						const sqResults = await recallAtoms(index, sq, { topK: 20, atomsDir });
 						rawTotal += sqResults.length;
 						recMs += performance.now() - r0;
 						if (sqResults.length === 0) return { results: [] as RecallResult[], fallback: false };
@@ -882,7 +883,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				poolResults = poolWithStatus.map((p) => p.results);
 			} else {
 				poolResults = await Promise.all(
-					subqueries.map((q) => recallAtoms(index, q, { topK: 20 })),
+					subqueries.map((q) => recallAtoms(index, q, { topK: 20, atomsDir })),
 				);
 			}
 			// Merge per-subquery pools: dedup by atom.id, sort by rerankScore DESC.
@@ -951,7 +952,6 @@ export function registerMemory(pi: ExtensionAPI): void {
 				typeof lastUser.content === "string"
 					? lastUser.content
 					: JSON.stringify(lastUser.content);
-			const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 			const memoryPrefix = `[Relevant memory context — atoms at ${atomsDir}]\n${formatted.text}\n\n[User message]\n`;
 			const newContent = memoryPrefix + originalContent;
 
