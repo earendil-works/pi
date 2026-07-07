@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel, stream } from "../src/compat.ts";
 import type { Api, Context, ImageContent, Model, StreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
+import { requireJsonToolCall } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
@@ -108,14 +109,15 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 			expect(event.contentIndex).toBe(index);
 			expect(toolCall.type).toBe("toolCall");
 			if (toolCall.type === "toolCall") {
-				expect(toolCall.name).toBe("math_operation");
+				const jsonToolCall = requireJsonToolCall(toolCall, "stream test toolcall_delta");
+				expect(jsonToolCall.name).toBe("math_operation");
 				accumulatedToolArgs += event.delta;
 				// Check that we have a parsed arguments object during streaming
-				expect(toolCall.arguments).toBeDefined();
-				expect(typeof toolCall.arguments).toBe("object");
+				expect(jsonToolCall.arguments).toBeDefined();
+				expect(typeof jsonToolCall.arguments).toBe("object");
 				// The arguments should be partially populated as we stream
 				// At minimum it should be an empty object, never undefined
-				expect(toolCall.arguments).not.toBeNull();
+				expect(jsonToolCall.arguments).not.toBeNull();
 			}
 		}
 		if (event.type === "toolcall_end") {
@@ -124,12 +126,13 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 			expect(event.contentIndex).toBe(index);
 			expect(toolCall.type).toBe("toolCall");
 			if (toolCall.type === "toolCall") {
-				expect(toolCall.name).toBe("math_operation");
+				const jsonToolCall = requireJsonToolCall(toolCall, "stream test toolcall_end");
+				expect(jsonToolCall.name).toBe("math_operation");
 				JSON.parse(accumulatedToolArgs);
-				expect(toolCall.arguments).not.toBeUndefined();
-				expect((toolCall.arguments as any).a).toBe(15);
-				expect((toolCall.arguments as any).b).toBe(27);
-				expect((toolCall.arguments as any).operation).oneOf(["add", "subtract", "multiply", "divide"]);
+				expect(jsonToolCall.arguments).not.toBeUndefined();
+				expect(jsonToolCall.arguments.a).toBe(15);
+				expect(jsonToolCall.arguments.b).toBe(27);
+				expect(jsonToolCall.arguments.operation).oneOf(["add", "subtract", "multiply", "divide"]);
 			}
 		}
 	}
@@ -300,11 +303,12 @@ async function multiTurn<TApi extends Api>(model: Model<TApi>, options?: StreamO
 				hasSeenToolCalls = true;
 
 				// Process the tool call
-				expect(block.name).toBe("math_operation");
-				expect(block.id).toBeTruthy();
-				expect(block.arguments).toBeTruthy();
+				const jsonBlock = requireJsonToolCall(block, "stream test recursive tool call");
+				expect(jsonBlock.name).toBe("math_operation");
+				expect(jsonBlock.id).toBeTruthy();
+				expect(jsonBlock.arguments).toBeTruthy();
 
-				const { a, b, operation } = block.arguments;
+				const { a, b, operation } = jsonBlock.arguments;
 				let result: number;
 				switch (operation) {
 					case "add":

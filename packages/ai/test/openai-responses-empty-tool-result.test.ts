@@ -29,7 +29,7 @@ describe("OpenAI Responses convertResponsesMessages empty tool result", () => {
 		const now = Date.now();
 		const assistant: AssistantMessage = {
 			role: "assistant",
-			content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "true" } }],
+			content: [{ type: "toolCall", inputType: "json", id: "tool-1", name: "bash", arguments: { command: "true" } }],
 			api: model.api,
 			provider: model.provider,
 			model: model.id,

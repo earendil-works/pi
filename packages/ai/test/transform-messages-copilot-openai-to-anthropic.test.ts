@@ -96,6 +96,7 @@ describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: "call_123",
 						name: "bash",
 						arguments: { command: "ls" },
@@ -140,6 +141,7 @@ describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
 			makeAssistantMessage([
 				{
 					type: "toolCall",
+					inputType: "json",
 					id: "call_123|fc_123",
 					name: "read",
 					arguments: { path: "README.md" },
@@ -164,8 +166,8 @@ describe("OpenAI to Anthropic session migration for Copilot Claude", () => {
 		const messages: Message[] = [
 			{ role: "user", content: "run commands", timestamp: Date.now() },
 			makeAssistantMessage([
-				{ type: "toolCall", id: "call_1|fc_1", name: "read", arguments: { path: "README.md" } },
-				{ type: "toolCall", id: "call_2|fc_2", name: "bash", arguments: { command: "pwd" } },
+				{ type: "toolCall", inputType: "json", id: "call_1|fc_1", name: "read", arguments: { path: "README.md" } },
+				{ type: "toolCall", inputType: "json", id: "call_2|fc_2", name: "bash", arguments: { command: "pwd" } },
 			]),
 			{
 				role: "toolResult",

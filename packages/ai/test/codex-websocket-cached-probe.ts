@@ -17,7 +17,16 @@ import {
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
+import type {
+	AssistantMessage,
+	Context,
+	JsonToolCall,
+	Message,
+	Model,
+	Tool,
+	ToolResultMessage,
+	Transport,
+} from "../src/types.ts";
 
 type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -131,7 +140,7 @@ function deterministicProbeTool(): Tool {
 	};
 }
 
-function executeTool(call: Extract<AssistantMessage["content"][number], { type: "toolCall" }>): ToolResultMessage {
+function executeTool(call: JsonToolCall): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: call.id,
@@ -217,8 +226,7 @@ async function main(): Promise<void> {
 			turnCacheRead += message.usage.cacheRead;
 			turnCacheWrite += message.usage.cacheWrite;
 			const toolCalls = message.content.filter(
-				(block): block is Extract<AssistantMessage["content"][number], { type: "toolCall" }> =>
-					block.type === "toolCall",
+				(block): block is JsonToolCall => block.type === "toolCall" && block.inputType === "json",
 			);
 			console.log(
 				[

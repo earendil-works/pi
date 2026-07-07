@@ -17,6 +17,8 @@ import type {
 	ChatTemplateKwargValue,
 	Context,
 	ImageContent,
+	JsonTool,
+	JsonToolCall,
 	Message,
 	Model,
 	OpenAICompletionsCompat,
@@ -28,10 +30,10 @@ import type {
 	StreamOptions,
 	TextContent,
 	ThinkingContent,
-	Tool,
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { requireJsonToolCall, requireJsonTools } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -197,7 +199,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			interface StreamingToolCallBlock extends ToolCall {
+			interface StreamingToolCallBlock extends JsonToolCall {
 				partialArgs?: string;
 				streamIndex?: number;
 			}
@@ -286,6 +288,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						type: "toolCall",
 						id: toolCall.id || "",
 						name: toolCall.function?.name || "",
+						inputType: "json",
 						arguments: {},
 						partialArgs: "",
 						streamIndex,
@@ -579,8 +582,9 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertTools(context.tools, compat);
+	const jsonTools = requireJsonTools(context.tools, "OpenAI Completions");
+	if (jsonTools && jsonTools.length > 0) {
+		params.tools = convertTools(jsonTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
@@ -973,7 +977,9 @@ export function convertMessages(
 				assistantMsg.content = assistantText;
 			}
 
-			const toolCalls = msg.content.filter(isToolCallBlock);
+			const toolCalls = msg.content
+				.filter(isToolCallBlock)
+				.map((tc) => requireJsonToolCall(tc, "OpenAI Completions replay"));
 			if (toolCalls.length > 0) {
 				assistantMsg.tool_calls = toolCalls.map((tc) => ({
 					id: tc.id,
@@ -1093,7 +1099,7 @@ export function convertMessages(
 }
 
 function convertTools(
-	tools: Tool[],
+	tools: JsonTool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
 	return tools.map((tool) => ({

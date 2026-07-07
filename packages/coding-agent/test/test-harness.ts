@@ -17,6 +17,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	JsonToolCall,
 	Model,
 	SimpleStreamOptions,
 	StopReason,
@@ -25,7 +26,7 @@ import type {
 	ToolCall,
 	Usage,
 } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, requireJsonToolCall } from "@earendil-works/pi-ai";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -127,6 +128,7 @@ function buildAssistantMessage(resp: FauxResponse): AssistantMessage {
 		for (const tc of resp.toolCalls) {
 			content.push({
 				type: "toolCall",
+				inputType: "json",
 				id: tc.id ?? `faux_tc_${++toolCallIdCounter}`,
 				name: tc.name,
 				arguments: tc.args,
@@ -224,8 +226,12 @@ function streamWithDeltas(stream: AssistantMessageEventStream, message: Assistan
 				partial: { ...partial },
 			});
 		} else if (block.type === "toolCall") {
-			const argsJson = JSON.stringify(block.arguments);
-			partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
+			const jsonBlock = requireJsonToolCall(block, "Test harness streaming");
+			const argsJson = JSON.stringify(jsonBlock.arguments);
+			partial.content = [
+				...partial.content,
+				{ type: "toolCall", inputType: "json", id: jsonBlock.id, name: jsonBlock.name, arguments: {} },
+			];
 			stream.push({ type: "toolcall_start", contentIndex: i, partial: { ...partial } });
 
 			for (const chunk of chunkString(argsJson)) {
@@ -233,11 +239,11 @@ function streamWithDeltas(stream: AssistantMessageEventStream, message: Assistan
 			}
 
 			// Final toolcall has the real parsed arguments
-			(partial.content[i] as ToolCall).arguments = block.arguments;
+			(partial.content[i] as JsonToolCall).arguments = jsonBlock.arguments;
 			stream.push({
 				type: "toolcall_end",
 				contentIndex: i,
-				toolCall: block,
+				toolCall: jsonBlock,
 				partial: { ...partial },
 			});
 		}

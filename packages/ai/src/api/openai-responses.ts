@@ -15,6 +15,7 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
+import { requireJsonTools } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -245,8 +246,9 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+	const jsonTools = requireJsonTools(context.tools, "OpenAI Responses");
+	if (jsonTools && jsonTools.length > 0) {
+		params.tools = convertResponsesTools(jsonTools);
 	}
 
 	if (model.reasoning) {

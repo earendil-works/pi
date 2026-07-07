@@ -20,6 +20,7 @@ import type {
 	ThinkingLevel,
 	ToolCall,
 } from "../types.ts";
+import { requireJsonTools } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -190,6 +191,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 								type: "toolCall",
 								id: toolCallId,
 								name: part.functionCall.name || "",
+								inputType: "json",
 								arguments: (part.functionCall.args as Record<string, any>) ?? {},
 								...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }),
 							};
@@ -346,6 +348,7 @@ function buildParams(
 	options: GoogleOptions = {},
 ): GenerateContentParameters {
 	const contents = convertMessages(model, context);
+	const jsonTools = requireJsonTools(context.tools, "Google Generative AI");
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -358,10 +361,10 @@ function buildParams(
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(jsonTools?.length ? { tools: convertTools(jsonTools) } : {}),
 	};
 
-	if (context.tools && context.tools.length > 0 && options.toolChoice) {
+	if (jsonTools && jsonTools.length > 0 && options.toolChoice) {
 		config.toolConfig = {
 			functionCallingConfig: {
 				mode: mapToolChoice(options.toolChoice),

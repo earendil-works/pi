@@ -7,6 +7,8 @@ import {
 	type AssistantMessage,
 	type Context,
 	EventStream,
+	isJsonToolCall,
+	type JsonToolCall,
 	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
@@ -23,6 +25,10 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+function toolCallEventArgs(toolCall: AgentToolCall): Record<string, any> {
+	return isJsonToolCall(toolCall) ? toolCall.arguments : { input: toolCall.input };
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -390,7 +396,7 @@ async function failToolCallsFromTruncatedMessage(
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
-			args: toolCall.arguments,
+			args: toolCallEventArgs(toolCall),
 		});
 		const finalized: FinalizedToolCallOutcome = {
 			toolCall,
@@ -448,7 +454,7 @@ async function executeToolCallsSequential(
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
-			args: toolCall.arguments,
+			args: toolCallEventArgs(toolCall),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -503,7 +509,7 @@ async function executeToolCallsParallel(
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
-			args: toolCall.arguments,
+			args: toolCallEventArgs(toolCall),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -585,7 +591,7 @@ function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): b
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
 }
 
-function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall): AgentToolCall {
+function prepareToolCallArguments(tool: AgentTool<any>, toolCall: JsonToolCall): JsonToolCall {
 	if (!tool.prepareArguments) {
 		return toolCall;
 	}
@@ -611,6 +617,14 @@ async function prepareToolCall(
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(`Tool ${toolCall.name} not found`),
+			isError: true,
+		};
+	}
+
+	if (!isJsonToolCall(toolCall)) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult(`Tool ${toolCall.name} uses unsupported freeform input`),
 			isError: true,
 		};
 	}
@@ -686,7 +700,7 @@ async function executePreparedToolCall(
 							type: "tool_execution_update",
 							toolCallId: prepared.toolCall.id,
 							toolName: prepared.toolCall.name,
-							args: prepared.toolCall.arguments,
+							args: toolCallEventArgs(prepared.toolCall),
 							partialResult,
 						}),
 					),

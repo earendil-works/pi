@@ -24,6 +24,7 @@ describe("OpenAI Responses foreign tool call ID normalization", () => {
 			content: [
 				{
 					type: "toolCall",
+					inputType: "json",
 					id: COPILOT_RAW_TOOL_CALL_ID,
 					name: "edit",
 					arguments: { path: "src/styles/app.css" },

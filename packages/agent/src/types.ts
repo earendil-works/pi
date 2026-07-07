@@ -5,11 +5,11 @@ import type {
 	AssistantMessageEventStream,
 	Context,
 	ImageContent,
+	JsonTool,
 	Message,
 	Model,
 	SimpleStreamOptions,
 	TextContent,
-	Tool,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
@@ -368,7 +368,7 @@ export interface AgentToolResult<T> {
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
 /** Tool definition used by the agent runtime. */
-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
+export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends JsonTool<TParameters> {
 	/** Human-readable label for UI display. */
 	label: string;
 	/**

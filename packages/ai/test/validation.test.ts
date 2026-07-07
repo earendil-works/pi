@@ -1,16 +1,16 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { Tool, ToolCall } from "../src/types.ts";
+import type { JsonTool, JsonToolCall } from "../src/types.ts";
 import { validateToolArguments } from "../src/utils/validation.ts";
 
 function createToolCallWithPlainSchema(
-	schema: Tool["parameters"],
+	schema: JsonTool["parameters"],
 	value: unknown,
 ): {
-	tool: Tool;
-	toolCall: ToolCall;
+	tool: JsonTool;
+	toolCall: JsonToolCall;
 } {
-	const tool: Tool = {
+	const tool: JsonTool = {
 		name: "echo",
 		description: "Echo tool",
 		parameters: {
@@ -19,11 +19,12 @@ function createToolCallWithPlainSchema(
 				value: schema,
 			},
 			required: ["value"],
-		} as Tool["parameters"],
+		} as JsonTool["parameters"],
 	};
 
-	const toolCall: ToolCall = {
+	const toolCall: JsonToolCall = {
 		type: "toolCall",
+		inputType: "json",
 		id: "tool-1",
 		name: "echo",
 		arguments: { value },
@@ -35,15 +36,16 @@ function createToolCallWithPlainSchema(
 describe("validateToolArguments", () => {
 	it("still validates when Function constructor is unavailable", () => {
 		const originalFunction = globalThis.Function;
-		const tool: Tool = {
+		const tool: JsonTool = {
 			name: "echo",
 			description: "Echo tool",
 			parameters: Type.Object({
 				count: Type.Number(),
 			}),
 		};
-		const toolCall: ToolCall = {
+		const toolCall: JsonToolCall = {
 			type: "toolCall",
+			inputType: "json",
 			id: "tool-1",
 			name: "echo",
 			arguments: { count: "42" as unknown as number },
@@ -62,30 +64,30 @@ describe("validateToolArguments", () => {
 
 	it("coerces serialized plain JSON schemas with AJV-compatible primitive rules", () => {
 		const passingCases: Array<{
-			schema: Tool["parameters"];
+			schema: JsonTool["parameters"];
 			input: unknown;
 			expected: unknown;
 		}> = [
-			{ schema: { type: "number" } as Tool["parameters"], input: "42", expected: 42 },
-			{ schema: { type: "number" } as Tool["parameters"], input: true, expected: 1 },
-			{ schema: { type: "number" } as Tool["parameters"], input: null, expected: 0 },
-			{ schema: { type: "integer" } as Tool["parameters"], input: "42", expected: 42 },
-			{ schema: { type: "boolean" } as Tool["parameters"], input: "true", expected: true },
-			{ schema: { type: "boolean" } as Tool["parameters"], input: "false", expected: false },
-			{ schema: { type: "boolean" } as Tool["parameters"], input: 1, expected: true },
-			{ schema: { type: "boolean" } as Tool["parameters"], input: 0, expected: false },
-			{ schema: { type: "string" } as Tool["parameters"], input: null, expected: "" },
-			{ schema: { type: "string" } as Tool["parameters"], input: true, expected: "true" },
-			{ schema: { type: "null" } as Tool["parameters"], input: "", expected: null },
-			{ schema: { type: "null" } as Tool["parameters"], input: 0, expected: null },
-			{ schema: { type: "null" } as Tool["parameters"], input: false, expected: null },
+			{ schema: { type: "number" } as JsonTool["parameters"], input: "42", expected: 42 },
+			{ schema: { type: "number" } as JsonTool["parameters"], input: true, expected: 1 },
+			{ schema: { type: "number" } as JsonTool["parameters"], input: null, expected: 0 },
+			{ schema: { type: "integer" } as JsonTool["parameters"], input: "42", expected: 42 },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: "true", expected: true },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: "false", expected: false },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: 1, expected: true },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: 0, expected: false },
+			{ schema: { type: "string" } as JsonTool["parameters"], input: null, expected: "" },
+			{ schema: { type: "string" } as JsonTool["parameters"], input: true, expected: "true" },
+			{ schema: { type: "null" } as JsonTool["parameters"], input: "", expected: null },
+			{ schema: { type: "null" } as JsonTool["parameters"], input: 0, expected: null },
+			{ schema: { type: "null" } as JsonTool["parameters"], input: false, expected: null },
 			{
-				schema: { type: ["number", "string"] } as Tool["parameters"],
+				schema: { type: ["number", "string"] } as JsonTool["parameters"],
 				input: "1",
 				expected: "1",
 			},
 			{
-				schema: { type: ["boolean", "number"] } as Tool["parameters"],
+				schema: { type: ["boolean", "number"] } as JsonTool["parameters"],
 				input: "1",
 				expected: 1,
 			},
@@ -99,13 +101,13 @@ describe("validateToolArguments", () => {
 
 	it("rejects invalid coercions for serialized plain JSON schemas", () => {
 		const failingCases: Array<{
-			schema: Tool["parameters"];
+			schema: JsonTool["parameters"];
 			input: unknown;
 		}> = [
-			{ schema: { type: "boolean" } as Tool["parameters"], input: "1" },
-			{ schema: { type: "boolean" } as Tool["parameters"], input: "0" },
-			{ schema: { type: "null" } as Tool["parameters"], input: "null" },
-			{ schema: { type: "integer" } as Tool["parameters"], input: "42.1" },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: "1" },
+			{ schema: { type: "boolean" } as JsonTool["parameters"], input: "0" },
+			{ schema: { type: "null" } as JsonTool["parameters"], input: "null" },
+			{ schema: { type: "integer" } as JsonTool["parameters"], input: "42.1" },
 		];
 
 		for (const testCase of failingCases) {

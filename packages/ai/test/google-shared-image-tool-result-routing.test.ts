@@ -29,9 +29,9 @@ function makeContext(model: { api: string; provider: string; id: string }): Cont
 			{
 				role: "assistant",
 				content: [
-					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" } },
-					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "image.png" } },
-					{ type: "toolCall", id: "call_b", name: "read", arguments: { path: "b.txt" } },
+					{ type: "toolCall", inputType: "json", id: "call_a", name: "read", arguments: { path: "a.txt" } },
+					{ type: "toolCall", inputType: "json", id: "call_img", name: "read", arguments: { path: "image.png" } },
+					{ type: "toolCall", inputType: "json", id: "call_b", name: "read", arguments: { path: "b.txt" } },
 				],
 				api: model.api,
 				provider: model.provider,

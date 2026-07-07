@@ -341,12 +341,35 @@ export interface ImageContent {
 	mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
-export interface ToolCall {
+export interface JsonToolCall {
 	type: "toolCall";
 	id: string;
 	name: string;
+	inputType: "json";
 	arguments: Record<string, any>;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
+}
+
+export interface FreeformToolCall {
+	type: "toolCall";
+	id: string;
+	name: string;
+	inputType: "freeform";
+	input: string;
+	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
+}
+
+export type ToolCall = JsonToolCall | FreeformToolCall;
+
+export function isJsonToolCall(toolCall: ToolCall): toolCall is JsonToolCall {
+	return toolCall.inputType === "json";
+}
+
+export function requireJsonToolCall(toolCall: ToolCall, context: string): JsonToolCall {
+	if (!isJsonToolCall(toolCall)) {
+		throw new Error(`${context} does not support freeform tool call "${toolCall.name}"`);
+	}
+	return toolCall;
 }
 
 export interface Usage {
@@ -430,10 +453,46 @@ export interface AssistantImages {
 
 import type { TSchema } from "typebox";
 
-export interface Tool<TParameters extends TSchema = TSchema> {
+export interface JsonTool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
+}
+
+export interface FreeformToolFormat {
+	type: "grammar";
+	syntax: "lark";
+	definition: string;
+}
+
+export interface FreeformTool {
+	type: "freeform";
+	name: string;
+	description: string;
+	format: FreeformToolFormat;
+}
+
+export type Tool<TParameters extends TSchema = TSchema> = JsonTool<TParameters> | FreeformTool;
+
+export function isJsonTool<TParameters extends TSchema = TSchema>(
+	tool: Tool<TParameters>,
+): tool is JsonTool<TParameters> {
+	return !("type" in tool && tool.type === "freeform");
+}
+
+export function requireJsonTools<TParameters extends TSchema = TSchema>(
+	tools: Tool<TParameters>[] | undefined,
+	provider: string,
+): JsonTool<TParameters>[] | undefined {
+	if (!tools) return undefined;
+	const jsonTools: JsonTool<TParameters>[] = [];
+	for (const tool of tools) {
+		if (!isJsonTool(tool)) {
+			throw new Error(`${provider} does not support freeform tool "${tool.name}"`);
+		}
+		jsonTools.push(tool);
+	}
+	return jsonTools;
 }
 
 export interface Context {

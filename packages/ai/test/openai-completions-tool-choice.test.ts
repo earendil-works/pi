@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
 import { getModel, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
+import { requireJsonToolCall } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
@@ -357,7 +358,7 @@ describe("openai-completions tool_choice", () => {
 			model: "glm-5.2",
 			content: [
 				{ type: "thinking", thinking: "prior reasoning", thinkingSignature: "reasoning_content" },
-				{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
+				{ type: "toolCall", inputType: "json", id: "call_1", name: "read", arguments: { path: "README.md" } },
 			],
 			usage: {
 				input: 0,
@@ -759,7 +760,9 @@ describe("openai-completions tool_choice", () => {
 		}
 		expect(toolCall.id).toBe("functions.read:0");
 		expect(toolCall.name).toBe("read");
-		expect(toolCall.arguments).toEqual({ path: "README.md" });
+		expect(requireJsonToolCall(toolCall, "OpenAI completions tool-choice test").arguments).toEqual({
+			path: "README.md",
+		});
 		expect(toolCall).not.toHaveProperty("streamIndex");
 		expect(toolCall).not.toHaveProperty("partialArgs");
 	});
@@ -976,22 +979,32 @@ describe("openai-completions tool_choice", () => {
 		}
 		expect(readCall.id).toBe("tc_read_initial");
 		expect(readCall.name).toBe("read");
-		expect(readCall.arguments).toEqual({ path: "README.md" });
+		expect(requireJsonToolCall(readCall, "OpenAI completions tool-choice read call test").arguments).toEqual({
+			path: "README.md",
+		});
 		expect(readCall).not.toHaveProperty("streamIndex");
 		expect(readCall).not.toHaveProperty("partialArgs");
 		expect(grepCall.id).toBe("tc_grep_initial");
 		expect(grepCall.name).toBe("grep");
-		expect(grepCall.arguments).toEqual({ pattern: "TODO", path: "src" });
+		expect(requireJsonToolCall(grepCall, "OpenAI completions tool-choice grep call test").arguments).toEqual({
+			pattern: "TODO",
+			path: "src",
+		});
 		expect(grepCall).not.toHaveProperty("streamIndex");
 		expect(grepCall).not.toHaveProperty("partialArgs");
 		expect(listCall.id).toBe("tc_list_no_index");
 		expect(listCall.name).toBe("list");
-		expect(listCall.arguments).toEqual({ path: "packages/ai" });
+		expect(requireJsonToolCall(listCall, "OpenAI completions tool-choice list call test").arguments).toEqual({
+			path: "packages/ai",
+		});
 		expect(listCall).not.toHaveProperty("streamIndex");
 		expect(listCall).not.toHaveProperty("partialArgs");
 		expect(writeCall.id).toBe("tc_write_no_index");
 		expect(writeCall.name).toBe("write");
-		expect(writeCall.arguments).toEqual({ path: "out.txt", content: "ok" });
+		expect(requireJsonToolCall(writeCall, "OpenAI completions tool-choice write call test").arguments).toEqual({
+			path: "out.txt",
+			content: "ok",
+		});
 		expect(writeCall).not.toHaveProperty("streamIndex");
 		expect(writeCall).not.toHaveProperty("partialArgs");
 	});
@@ -1095,7 +1108,9 @@ describe("openai-completions tool_choice", () => {
 			api: "openai-completions",
 			provider: "xiaomi",
 			model: "mimo-v2.5-pro",
-			content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
+			content: [
+				{ type: "toolCall", inputType: "json", id: "call_1", name: "read", arguments: { path: "README.md" } },
+			],
 			usage: {
 				input: 0,
 				output: 0,
@@ -1214,7 +1229,13 @@ describe("openai-completions tool_choice", () => {
 						model: "kimi-k2.6",
 						content: [
 							{ type: "thinking", thinking: "think", thinkingSignature: "reasoning" },
-							{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "call_1",
+								name: "read",
+								arguments: { path: "README.md" },
+							},
 						],
 						usage: {
 							input: 0,

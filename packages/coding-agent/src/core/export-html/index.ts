@@ -194,7 +194,8 @@ function preRenderCustomTools(
 		if (msg.role === "assistant" && Array.isArray(msg.content)) {
 			for (const block of msg.content) {
 				if (block.type === "toolCall" && !TEMPLATE_RENDERED_TOOLS.has(block.name)) {
-					const callHtml = toolRenderer.renderCall(block.id, block.name, block.arguments);
+					const args = block.inputType === "json" ? block.arguments : { input: block.input };
+					const callHtml = toolRenderer.renderCall(block.id, block.name, args);
 					if (callHtml) {
 						renderedTools[block.id] = { callHtml };
 					}

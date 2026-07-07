@@ -362,7 +362,13 @@ describe("Agent.continue() with faux provider", () => {
 				role: "assistant",
 				content: [
 					{ type: "text", text: "Let me calculate that." },
-					{ type: "toolCall", id: "calc-1", name: "calculate", arguments: { expression: "5 + 3" } },
+					{
+						type: "toolCall",
+						inputType: "json",
+						id: "calc-1",
+						name: "calculate",
+						arguments: { expression: "5 + 3" },
+					},
 				],
 				api: model.api,
 				provider: model.provider,

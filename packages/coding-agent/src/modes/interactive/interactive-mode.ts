@@ -2909,11 +2909,12 @@ export class InteractiveMode {
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
+							const args = content.inputType === "json" ? content.arguments : { input: content.input };
 							if (!this.pendingTools.has(content.id)) {
 								const component = new ToolExecutionComponent(
 									content.name,
 									content.id,
-									content.arguments,
+									args,
 									{
 										showImages: this.settingsManager.getShowImages(),
 										imageWidthCells: this.settingsManager.getImageWidthCells(),
@@ -2928,7 +2929,7 @@ export class InteractiveMode {
 							} else {
 								const component = this.pendingTools.get(content.id);
 								if (component) {
-									component.updateArgs(content.arguments);
+									component.updateArgs(args);
 								}
 							}
 						}
@@ -3309,10 +3310,11 @@ export class InteractiveMode {
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
+						const args = content.inputType === "json" ? content.arguments : { input: content.input };
 						const component = new ToolExecutionComponent(
 							content.name,
 							content.id,
-							content.arguments,
+							args,
 							{
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),

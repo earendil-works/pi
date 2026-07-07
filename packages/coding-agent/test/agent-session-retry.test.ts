@@ -270,7 +270,13 @@ describe("AgentSession retry", () => {
 							stopReason: "toolUse",
 							content: [
 								{ type: "text", text: "Looking that up now." },
-								{ type: "toolCall", id: "call_1", name: "echo", arguments: { text: "hello" } },
+								{
+									type: "toolCall",
+									inputType: "json",
+									id: "call_1",
+									name: "echo",
+									arguments: { text: "hello" },
+								},
 							],
 						};
 						stream.push({ type: "start", partial: msg });

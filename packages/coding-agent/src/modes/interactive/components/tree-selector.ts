@@ -257,8 +257,14 @@ class TreeList implements Component {
 				if (Array.isArray(content)) {
 					for (const block of content) {
 						if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall") {
-							const tc = block as { id: string; name: string; arguments: Record<string, unknown> };
-							this.toolCallMap.set(tc.id, { name: tc.name, arguments: tc.arguments });
+							const tc = block as { id: string; name: string } & (
+								| { inputType: "json"; arguments: Record<string, unknown> }
+								| { inputType: "freeform"; input: string }
+							);
+							this.toolCallMap.set(tc.id, {
+								name: tc.name,
+								arguments: tc.inputType === "json" ? tc.arguments : { input: tc.input },
+							});
 						}
 					}
 				}

@@ -4,6 +4,7 @@ import type {
 	AssistantMessageEventStream,
 	Context,
 	ImageContent,
+	JsonToolCall,
 	Message,
 	Model,
 	SimpleStreamOptions,
@@ -15,6 +16,7 @@ import type {
 	ToolResultMessage,
 	Usage,
 } from "../types.ts";
+import { requireJsonToolCall } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
 
 const DEFAULT_API = "faux";
@@ -54,11 +56,16 @@ export function fauxThinking(thinking: string): ThinkingContent {
 	return { type: "thinking", thinking };
 }
 
-export function fauxToolCall(name: string, arguments_: ToolCall["arguments"], options: { id?: string } = {}): ToolCall {
+export function fauxToolCall(
+	name: string,
+	arguments_: JsonToolCall["arguments"],
+	options: { id?: string } = {},
+): JsonToolCall {
 	return {
 		type: "toolCall",
 		id: options.id ?? randomId("tool"),
 		name,
+		inputType: "json",
 		arguments: arguments_,
 	};
 }
@@ -168,7 +175,8 @@ function assistantContentToText(content: Array<TextContent | ThinkingContent | T
 			if (block.type === "thinking") {
 				return block.thinking;
 			}
-			return `${block.name}:${JSON.stringify(block.arguments)}`;
+			const toolCall = requireJsonToolCall(block, "Faux provider transcript serialization");
+			return `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
 		})
 		.join("\n");
 }
@@ -374,9 +382,13 @@ async function streamWithDeltas(
 			continue;
 		}
 
-		partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
+		const jsonBlock = requireJsonToolCall(block, "Faux provider streaming");
+		partial.content = [
+			...partial.content,
+			{ type: "toolCall", id: jsonBlock.id, name: jsonBlock.name, inputType: "json", arguments: {} },
+		];
 		stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });
-		for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {
+		for (const chunk of splitStringByTokenSize(JSON.stringify(jsonBlock.arguments), minTokenSize, maxTokenSize)) {
 			await scheduleChunk(chunk, tokensPerSecond);
 			if (signal?.aborted) {
 				const aborted = createAbortedMessage(partial);
@@ -386,8 +398,8 @@ async function streamWithDeltas(
 			}
 			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 		}
-		(partial.content[index] as ToolCall).arguments = block.arguments;
-		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
+		(partial.content[index] as JsonToolCall).arguments = jsonBlock.arguments;
+		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: jsonBlock, partial: { ...partial } });
 	}
 
 	if (message.stopReason === "error" || message.stopReason === "aborted") {

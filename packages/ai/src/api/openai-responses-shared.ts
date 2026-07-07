@@ -18,15 +18,17 @@ import type {
 	AssistantMessage,
 	Context,
 	ImageContent,
+	JsonTool,
+	JsonToolCall,
 	Model,
 	StopReason,
 	TextContent,
 	TextSignatureV1,
 	ThinkingContent,
-	Tool,
 	ToolCall,
 	Usage,
 } from "../types.ts";
+import { requireJsonToolCall } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -197,7 +199,7 @@ export function convertResponsesMessages<TApi extends Api>(
 						phase: parsedSignature?.phase,
 					} satisfies ResponseOutputMessage);
 				} else if (block.type === "toolCall") {
-					const toolCall = block as ToolCall;
+					const toolCall = requireJsonToolCall(block as ToolCall, "OpenAI Responses replay");
 					const [callId, itemIdRaw] = toolCall.id.split("|");
 					let itemId: string | undefined = itemIdRaw;
 
@@ -270,7 +272,7 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+export function convertResponsesTools(tools: JsonTool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const strict = options?.strict === undefined ? false : options.strict;
 	return tools.map((tool) => ({
 		type: "function",
@@ -285,7 +287,7 @@ export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesT
 // Stream processing
 // =============================================================================
 
-type StreamingToolCall = ToolCall & { partialJson: string };
+type StreamingToolCall = JsonToolCall & { partialJson: string };
 
 type ResponsesOutputSlot =
 	| { type: "thinking"; block: ThinkingContent; contentIndex: number }
@@ -334,6 +336,7 @@ export async function processResponsesStream<TApi extends Api>(
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
+				inputType: "json",
 				arguments: {},
 				partialJson: item.arguments || "",
 			};

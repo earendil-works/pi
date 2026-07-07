@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, ToolCall } from "../src/types.ts";
+import { requireJsonToolCall } from "../src/types.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -160,7 +161,8 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const toolCall = result.content.find((block): block is ToolCall => block.type === "toolCall");
 		expect(toolCall).toBeDefined();
-		expect(toolCall?.arguments).toEqual({
+		if (!toolCall) throw new Error("Expected tool call");
+		expect(requireJsonToolCall(toolCall, "Anthropic SSE test").arguments).toEqual({
 			path: "A\\H",
 			text: "col1\tcol2",
 		});

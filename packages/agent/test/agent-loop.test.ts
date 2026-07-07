@@ -273,7 +273,7 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					// First call: return tool call
 					const message = createAssistantMessage(
-						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
 						"toolUse",
 					);
 					stream.push({ type: "done", reason: "toolUse", message });
@@ -344,7 +344,7 @@ describe("agentLoop with AgentMessage", () => {
 					// produce arguments that validate but are silently truncated, so
 					// nothing in this message may execute.
 					const message = createAssistantMessage(
-						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hel" } }],
+						[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hel" } }],
 						"length",
 					);
 					stream.push({ type: "done", reason: "length", message });
@@ -421,7 +421,7 @@ describe("agentLoop with AgentMessage", () => {
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
-						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
 						"toolUse",
 					);
 					stream.push({ type: "done", reason: "toolUse", message });
@@ -497,6 +497,7 @@ describe("agentLoop with AgentMessage", () => {
 						[
 							{
 								type: "toolCall",
+								inputType: "json",
 								id: "tool-1",
 								name: "edit",
 								arguments: { oldText: "before", newText: "after" },
@@ -571,8 +572,14 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
-							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "tool-2",
+								name: "echo",
+								arguments: { value: "second" },
+							},
 						],
 						"toolUse",
 					);
@@ -676,8 +683,14 @@ describe("agentLoop with AgentMessage", () => {
 					// First call: return two tool calls
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
-							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "tool-2",
+								name: "echo",
+								arguments: { value: "second" },
+							},
 						],
 						"toolUse",
 					);
@@ -773,8 +786,14 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "slow", arguments: { value: "first" } },
-							{ type: "toolCall", id: "tool-2", name: "slow", arguments: { value: "second" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "slow", arguments: { value: "first" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "tool-2",
+								name: "slow",
+								arguments: { value: "second" },
+							},
 						],
 						"toolUse",
 					);
@@ -867,8 +886,8 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "slow", arguments: { value: "a" } },
-							{ type: "toolCall", id: "tool-2", name: "fast", arguments: { value: "b" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "slow", arguments: { value: "a" } },
+							{ type: "toolCall", inputType: "json", id: "tool-2", name: "fast", arguments: { value: "b" } },
 						],
 						"toolUse",
 					);
@@ -942,8 +961,14 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
-							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "tool-2",
+								name: "echo",
+								arguments: { value: "second" },
+							},
 						],
 						"toolUse",
 					);
@@ -1017,7 +1042,15 @@ describe("agentLoop with AgentMessage", () => {
 						type: "done",
 						reason: "toolUse",
 						message: createAssistantMessage(
-							[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+							[
+								{
+									type: "toolCall",
+									inputType: "json",
+									id: "tool-1",
+									name: "echo",
+									arguments: { value: "hello" },
+								},
+							],
 							"toolUse",
 						),
 					});
@@ -1093,7 +1126,7 @@ describe("agentLoop with AgentMessage", () => {
 			queueMicrotask(() => {
 				if (llmCalls === 1) {
 					const message = createAssistantMessage(
-						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
@@ -1170,7 +1203,7 @@ describe("agentLoop with AgentMessage", () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
-					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+					[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
 					"toolUse",
 				);
 				mockStream.push({ type: "done", reason: "toolUse", message });
@@ -1224,8 +1257,14 @@ describe("agentLoop with AgentMessage", () => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
 						[
-							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
-							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{
+								type: "toolCall",
+								inputType: "json",
+								id: "tool-2",
+								name: "echo",
+								arguments: { value: "second" },
+							},
 						],
 						"toolUse",
 					);
@@ -1287,7 +1326,7 @@ describe("agentLoop with AgentMessage", () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
-					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+					[{ type: "toolCall", inputType: "json", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
 					"toolUse",
 				);
 				mockStream.push({ type: "done", reason: "toolUse", message });

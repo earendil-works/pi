@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { convertTools } from "../src/api/google-shared.ts";
-import type { Tool } from "../src/types.ts";
+import type { JsonTool } from "../src/types.ts";
 
-function makeTool(parameters: Record<string, unknown>): Tool {
+function makeTool(parameters: Record<string, unknown>): JsonTool {
 	return {
 		name: "test_tool",
 		description: "A test tool",
-		parameters: parameters as Tool["parameters"],
+		parameters: parameters as JsonTool["parameters"],
 	};
 }
 

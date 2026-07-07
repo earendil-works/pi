@@ -241,7 +241,7 @@ describe("harness compaction", () => {
 			...assistant,
 			content: [
 				{ type: "thinking", thinking: "thinking" },
-				{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "file.ts" } },
+				{ type: "toolCall", inputType: "json", id: "call-1", name: "read", arguments: { path: "file.ts" } },
 			],
 		};
 		const customString: AgentMessage = {
@@ -368,7 +368,9 @@ describe("harness compaction", () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1"));
 		const assistantMessage: AssistantMessage = {
 			...createAssistantMessage("assistant msg 1"),
-			content: [{ type: "toolCall", id: "tool-1", name: "write", arguments: { path: "written.ts" } }],
+			content: [
+				{ type: "toolCall", inputType: "json", id: "tool-1", name: "write", arguments: { path: "written.ts" } },
+			],
 		};
 		const a1 = createMessageEntry(assistantMessage, u1.id);
 		const compaction1: CompactionEntry = {
@@ -634,7 +636,9 @@ describe("harness compaction", () => {
 		const u1 = createMessageEntry(createUserMessage("read a file"));
 		const assistantMessage: AssistantMessage = {
 			...createAssistantMessage("calling tool", createMockUsage(1000, 200)),
-			content: [{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "src/index.ts" } }],
+			content: [
+				{ type: "toolCall", inputType: "json", id: "tool-1", name: "read", arguments: { path: "src/index.ts" } },
+			],
 		};
 		const a1 = createMessageEntry(assistantMessage, u1.id);
 		const u2 = createMessageEntry(createUserMessage("continue"), a1.id);

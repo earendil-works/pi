@@ -300,7 +300,7 @@ describe("Agent", () => {
 						type: "done",
 						reason: "toolUse",
 						message: createAssistantToolUseMessage([
-							{ type: "toolCall", id: "call-1", name: "delayed_tool", arguments: {} },
+							{ type: "toolCall", inputType: "json", id: "call-1", name: "delayed_tool", arguments: {} },
 						]),
 					});
 				});
@@ -375,8 +375,8 @@ describe("Agent", () => {
 						type: "done",
 						reason: "toolUse",
 						message: createAssistantToolUseMessage([
-							{ type: "toolCall", id: "call-1", name: "settled_tool", arguments: {} },
-							{ type: "toolCall", id: "call-2", name: "slow_tool", arguments: {} },
+							{ type: "toolCall", inputType: "json", id: "call-1", name: "settled_tool", arguments: {} },
+							{ type: "toolCall", inputType: "json", id: "call-2", name: "slow_tool", arguments: {} },
 						]),
 					});
 				});
@@ -653,7 +653,7 @@ describe("Agent", () => {
 				queueMicrotask(() => {
 					if (requestCount === 1) {
 						const message = createAssistantToolUseMessage([
-							{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+							{ type: "toolCall", inputType: "json", id: "tool-1", name: "noop", arguments: {} },
 						]);
 						stream.push({ type: "done", reason: "toolUse", message });
 						return;

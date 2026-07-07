@@ -2,7 +2,8 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { completeSimple, getModel } from "../src/compat.ts";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
-import type { Api, Context, Model, StopReason, Tool, ToolCall, ToolResultMessage } from "../src/types.ts";
+import type { Api, Context, JsonToolCall, Model, StopReason, Tool, ToolCall, ToolResultMessage } from "../src/types.ts";
+import { requireJsonToolCall } from "../src/types.ts";
 import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
@@ -28,7 +29,7 @@ type CalculatorArguments = {
 	operation: CalculatorOperation;
 };
 
-function asCalculatorArguments(args: ToolCall["arguments"]): CalculatorArguments {
+function asCalculatorArguments(args: JsonToolCall["arguments"]): CalculatorArguments {
 	if (typeof args !== "object" || args === null) {
 		throw new Error("Tool arguments must be an object");
 	}
@@ -47,7 +48,8 @@ function asCalculatorArguments(args: ToolCall["arguments"]): CalculatorArguments
 }
 
 function evaluateCalculatorCall(toolCall: ToolCall): number {
-	const { a, b, operation } = asCalculatorArguments(toolCall.arguments);
+	const jsonToolCall = requireJsonToolCall(toolCall, "interleaved thinking calculator test");
+	const { a, b, operation } = asCalculatorArguments(jsonToolCall.arguments);
 	switch (operation) {
 		case "add":
 			return a + b;

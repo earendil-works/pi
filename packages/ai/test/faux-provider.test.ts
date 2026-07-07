@@ -61,7 +61,7 @@ describe("faux provider", () => {
 
 		expect(response.content).toEqual([
 			{ type: "thinking", thinking: "think" },
-			{ type: "toolCall", id: expect.any(String), name: "echo", arguments: { text: "hi" } },
+			{ type: "toolCall", inputType: "json", id: expect.any(String), name: "echo", arguments: { text: "hi" } },
 			{ type: "text", text: "done" },
 		]);
 		expect(response.stopReason).toBe("toolUse");
@@ -553,6 +553,7 @@ describe("faux provider", () => {
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: "tool-1",
 						name: "echo",
 						arguments: { text: "abcdefghijklmnopqrstuvwxyz", count: 123456789 },

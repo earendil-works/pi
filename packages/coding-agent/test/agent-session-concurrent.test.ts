@@ -392,8 +392,8 @@ describe("AgentSession concurrent prompt guard", () => {
 					const message: AssistantMessage = {
 						role: "assistant",
 						content: [
-							{ type: "toolCall", id: "toolu_1", name: "dummy", arguments: { q: "x" } },
-							{ type: "toolCall", id: "toolu_2", name: "dummy", arguments: { q: "y" } },
+							{ type: "toolCall", inputType: "json", id: "toolu_1", name: "dummy", arguments: { q: "x" } },
+							{ type: "toolCall", inputType: "json", id: "toolu_2", name: "dummy", arguments: { q: "y" } },
 						],
 						api: "anthropic-messages",
 						provider: "anthropic",
@@ -540,7 +540,7 @@ describe("AgentSession concurrent prompt guard", () => {
 						role: "assistant",
 						content: [
 							{ type: "text", text: "calling tool" },
-							{ type: "toolCall", id: "toolu_1", name: "dummy", arguments: { q: "x" } },
+							{ type: "toolCall", inputType: "json", id: "toolu_1", name: "dummy", arguments: { q: "x" } },
 						],
 						api: "anthropic-messages",
 						provider: "anthropic",

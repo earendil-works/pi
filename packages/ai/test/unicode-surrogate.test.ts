@@ -48,6 +48,7 @@ async function testEmojiInToolResults<TApi extends Api>(llm: Model<TApi>, option
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: toolCallId,
 						name: "test_tool",
 						arguments: {},
@@ -134,6 +135,7 @@ async function testRealWorldLinkedInData<TApi extends Api>(llm: Model<TApi>, opt
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: toolCallId,
 						name: "linkedin_skill",
 						arguments: {},
@@ -223,6 +225,7 @@ async function testUnpairedHighSurrogate<TApi extends Api>(llm: Model<TApi>, opt
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: toolCallId,
 						name: "test_tool",
 						arguments: {},

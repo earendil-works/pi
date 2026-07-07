@@ -50,7 +50,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(
 			createAssistantMessage([
 				{ type: "text", text: "calling tool" },
-				{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+				{ type: "toolCall", inputType: "json", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
 			]),
 		);
 		const rendered = component.render(60).join("\n");

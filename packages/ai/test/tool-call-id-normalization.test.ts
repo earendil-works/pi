@@ -198,6 +198,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 			content: [
 				{
 					type: "toolCall",
+					inputType: "json",
 					id: FAILING_TOOL_CALL_ID,
 					name: "echo",
 					arguments: { message: "hello" },

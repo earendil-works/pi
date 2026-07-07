@@ -3,7 +3,8 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import type { Context, ImageContent, JsonTool, Model, StopReason, TextContent } from "../types.ts";
+import { requireJsonToolCall } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -155,12 +156,13 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						});
 					}
 				} else if (block.type === "toolCall") {
-					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
+					const jsonBlock = requireJsonToolCall(block, "Google message replay");
+					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, jsonBlock.thoughtSignature);
 					const part: Part = {
 						functionCall: {
-							name: block.name,
-							args: block.arguments ?? {},
-							...(requiresToolCallId(model.id) ? { id: block.id } : {}),
+							name: jsonBlock.name,
+							args: jsonBlock.arguments ?? {},
+							...(requiresToolCallId(model.id) ? { id: jsonBlock.id } : {}),
 						},
 						...(thoughtSignature && { thoughtSignature }),
 					};
@@ -270,7 +272,7 @@ function sanitizeForOpenApi(schema: unknown): unknown {
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
  */
 export function convertTools(
-	tools: Tool[],
+	tools: JsonTool[],
 	useParameters = false,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
 	if (tools.length === 0) return undefined;

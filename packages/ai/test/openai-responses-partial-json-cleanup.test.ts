@@ -2,6 +2,7 @@ import type { ResponseStreamEvent } from "openai/resources/responses/responses.j
 import { describe, expect, it, vi } from "vitest";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
+import { requireJsonToolCall } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
 function createOutput(model: Model<"openai-responses">): AssistantMessage {
@@ -91,7 +92,10 @@ describe("openai responses partialJson cleanup", () => {
 		if (!persistedToolCall || persistedToolCall.type !== "toolCall") {
 			throw new Error("Expected toolCall block");
 		}
-		expect(persistedToolCall.arguments).toEqual({ path: "README.md", content: "updated" });
+		expect(requireJsonToolCall(persistedToolCall, "OpenAI Responses partial JSON cleanup test").arguments).toEqual({
+			path: "README.md",
+			content: "updated",
+		});
 		expect("partialJson" in persistedToolCall).toBe(false);
 
 		const emittedEvents = pushSpy.mock.calls.map(([event]) => event as AssistantMessageEvent);

@@ -264,6 +264,7 @@ describe("openai-completions empty tools handling", () => {
 						content: [
 							{
 								type: "toolCall",
+								inputType: "json",
 								id: "t1",
 								name: "noop",
 								arguments: {},

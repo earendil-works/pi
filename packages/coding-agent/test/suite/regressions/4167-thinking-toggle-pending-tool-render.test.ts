@@ -93,6 +93,7 @@ function createAssistantToolCallMessage(): AssistantMessage {
 		content: [
 			{
 				type: "toolCall",
+				inputType: "json",
 				id: TOOL_CALL_ID,
 				name: TOOL_NAME,
 				arguments: { delayMs: 10_000 },

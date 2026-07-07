@@ -31,6 +31,7 @@ function makeContext(model: { api: string; provider: string; id: string }, thoug
 				content: [
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: "call_1",
 						name: "bash",
 						arguments: { command: "echo hi" },
@@ -38,6 +39,7 @@ function makeContext(model: { api: string; provider: string; id: string }, thoug
 					},
 					{
 						type: "toolCall",
+						inputType: "json",
 						id: "call_2",
 						name: "bash",
 						arguments: { command: "ls -la" },

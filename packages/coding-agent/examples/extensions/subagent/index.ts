@@ -209,7 +209,13 @@ function getDisplayItems(messages: Message[]): DisplayItem[] {
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
 				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
+				else if (part.type === "toolCall") {
+					items.push({
+						type: "toolCall",
+						name: part.name,
+						args: part.inputType === "json" ? part.arguments : { input: part.input },
+					});
+				}
 			}
 		}
 	}

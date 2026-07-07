@@ -35,6 +35,7 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
+import { requireJsonTools } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import {
 	appendAssistantMessageDiagnostic,
@@ -506,8 +507,9 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		body.tools = convertResponsesTools(context.tools, { strict: null });
+	const jsonTools = requireJsonTools(context.tools, "OpenAI Codex Responses");
+	if (jsonTools && jsonTools.length > 0) {
+		body.tools = convertResponsesTools(jsonTools, { strict: null });
 	}
 
 	if (options?.reasoningEffort !== undefined) {

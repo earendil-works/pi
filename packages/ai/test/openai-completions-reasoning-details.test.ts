@@ -105,6 +105,7 @@ describe("openai-completions reasoning_details streaming", () => {
 		const toolCall = assistantMessage.content.find((block) => block.type === "toolCall");
 		expect(toolCall).toMatchObject({
 			type: "toolCall",
+			inputType: "json",
 			id: "call_1",
 			name: "read",
 			arguments: { path: "README.md" },

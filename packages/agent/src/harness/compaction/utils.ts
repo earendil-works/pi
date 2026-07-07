@@ -112,10 +112,12 @@ export function serializeConversation(messages: Message[]): string {
 				} else if (block.type === "thinking") {
 					thinkingParts.push(block.thinking);
 				} else if (block.type === "toolCall") {
-					const args = block.arguments as Record<string, unknown>;
-					const argsStr = Object.entries(args)
-						.map(([k, v]) => `${k}=${safeJsonStringify(v)}`)
-						.join(", ");
+					const argsStr =
+						block.inputType === "json"
+							? Object.entries(block.arguments)
+									.map(([k, v]) => `${k}=${safeJsonStringify(v)}`)
+									.join(", ")
+							: `input=${block.input}`;
 					toolCalls.push(`${block.name}(${argsStr})`);
 				}
 			}

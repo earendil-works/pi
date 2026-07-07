@@ -58,7 +58,12 @@ const extractToolCallLines = (content: unknown): string[] => {
 			continue;
 		}
 
-		const args = block.arguments ?? {};
+		const args =
+			"inputType" in block && block.inputType === "freeform"
+				? { input: (block as unknown as { input: string }).input }
+				: "arguments" in block
+					? block.arguments
+					: {};
 		toolCalls.push(`Tool ${block.name} was called with args ${JSON.stringify(args)}`);
 	}
 
