@@ -53,26 +53,28 @@ describe("gate.ts skeleton (task 2.1)", () => {
 		expect(decision.need_memory).toBe(false);
 	});
 
-	// callGate degrades to null on fetch rejection (S6/S7 scenarios
-	// in scenarios.md — ECONNREFUSED / timeout both funnel through
-	// the null return). Mocking fetch to reject validates the
-	// degradation path without requiring a running ollama.
-	it("callGate returns null when ollama is unreachable (ECONNREFUSED → S7)", async () => {
+	// callGate degrades to a typed error on fetch rejection (S6/S7 in
+	// scenarios.md — ECONNREFUSED → "unreachable", timeout → "timeout").
+	// Mocking fetch to reject validates the degradation path without
+	// requiring a running ollama. The contract was widened from null →
+	// "unreachable" so the TUI can surface a specific failure mode; this
+	// test pins the post-widening behaviour.
+	it("callGate returns 'unreachable' when ollama is unreachable (ECONNREFUSED → S7)", async () => {
 		vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
 		const result = await callGate("hello", [], {});
-		expect(result).toBeNull();
+		expect(result).toBe("unreachable");
 	});
 
-	// Even with full options the fetch failure path still returns
-	// null. This is a regression guard against any change that
-	// accidentally widens the null-return contract.
-	it("callGate returns null for non-empty prompts when ollama is unreachable", async () => {
+	// Even with full options the fetch failure path still returns the
+	// typed error. Regression guard against any further widening of the
+	// return-value contract.
+	it("callGate returns 'unreachable' for non-empty prompts when ollama is unreachable", async () => {
 		vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
 		const result = await callGate(
 			"之前那个并发问题最后怎么解决的",
 			["我们之前用 bwa 做过引物验证吗", "做了 但是有个并发问题"],
 			{ ollamaUrl: "http://127.0.0.1:11434", model: "qwen2.5:3b-instruct-q4_0", timeoutMs: 500 },
 		);
-		expect(result).toBeNull();
+		expect(result).toBe("unreachable");
 	});
 });

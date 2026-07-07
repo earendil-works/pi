@@ -247,15 +247,23 @@ describe("R2 — threshold drops low-score hits", () => {
 // ---------------------------------------------------------------------------
 // R3 — all below threshold (3.3 fills body)
 // 3.3 implements the threshold filter producing the empty array.
+//
+// Threshold reference: DEFAULT_THRESHOLD = 0.05 (post 2026-07-07
+// calibration — see commit 7daa39286 fix(ai): recalibrate reranker
+// threshold for conversational queries). The cross-encoder has a dual
+// regime: ~0.97 for direct-keyword relevance, ~0.04 for conversational.
+// 0.05 is the lower edge of the conversational band; scores just below
+// are noise and should be discarded.
 // ---------------------------------------------------------------------------
 describe("R3 — all hits below threshold", () => {
 	it("returns [] when every rerank score is below threshold", async () => {
-		// R3 scenario: [0.48,0.45,0.42,0.30] all < 0.5 => return []
+		// R3 scenario: scores in the noise floor below threshold = 0.05
+		// → all discarded.
 		const scores = [
-			{ id: "1", score: 0.48 },
-			{ id: "2", score: 0.45 },
-			{ id: "3", score: 0.42 },
-			{ id: "4", score: 0.30 },
+			{ id: "1", score: 0.04 },
+			{ id: "2", score: 0.03 },
+			{ id: "3", score: 0.02 },
+			{ id: "4", score: 0.01 },
 		];
 		mockSuccessResponse(scores);
 		const hits = ["1", "2", "3", "4"].map((id) => makeHit(id));

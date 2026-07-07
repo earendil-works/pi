@@ -198,6 +198,20 @@ const installControlledMock = (): void => {
 };
 
 const installEmptyHybridMock = (): void => {
+	// Re-install a working embedText mock (beforeEach.mockReset cleared
+	// the default char-bag implementation) so insertAtom can produce a
+	// vector for the test atom. The point of this test is that
+	// hybridSearch returns [] — embedText is a precondition, not the
+	// unit under test.
+	vi.mocked(embedText).mockImplementation(async (text: string) => {
+		const arr = new Array(DIM).fill(0);
+		for (let i = 0; i < text.length; i++) {
+			arr[text.charCodeAt(i) % DIM] += 1;
+		}
+		const norm = Math.sqrt(arr.reduce((s, v) => s + v * v, 0));
+		if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i] /= norm;
+		return arr;
+	});
 	vi.mocked(hybridSearch).mockResolvedValue([]);
 };
 
