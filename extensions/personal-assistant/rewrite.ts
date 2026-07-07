@@ -100,6 +100,13 @@ export function buildRewritePrompt(
  * First attempts direct JSON.parse. If that fails, strips leading
  * non-JSON text via regex /(\{[\s\S]*\})/ and retries.
  *
+ * If both attempts fail (typically because qwen2.5:3b dropped the closing
+ * `}` or forgot to quote a key), applies surgical repairs before giving up:
+ *
+ *   1. Append missing closing `}` when bracket counts are unbalanced
+ *   2. Quote unquoted JSON keys (`subqueries:[...]` → `"subqueries":[...]`)
+ *   3. Cast string booleans / numbers at value position if needed
+ *
  * Validation rules (after successful parse):
  *   - `parsed.subqueries` must be an Array of strings
  *   - length must be >= 1 (empty array → "parse")
@@ -122,14 +129,23 @@ function parseRewriteResponse(raw: string, maxSubqueries: number): string[] | "p
 		parsed = JSON.parse(stripped);
 	} catch {
 		const match = stripped.match(/(\{[\s\S]*\})/);
-		if (!match) {
-			console.warn("[rewrite] parse failed, raw:", stripped.slice(0, 200));
-			return "parse";
+		if (match) {
+			try {
+				parsed = JSON.parse(match[1]);
+			} catch {
+				parsed = undefined;
+			}
+		} else {
+			parsed = undefined;
 		}
-		try {
-			parsed = JSON.parse(match[1]);
-		} catch {
-			console.warn("[rewrite] parse failed after retry, raw:", stripped.slice(0, 200));
+	}
+
+	if (parsed === undefined) {
+		const repaired = tryRepairRewriteResponse(stripped);
+		if (repaired !== undefined) {
+			parsed = repaired;
+		} else {
+			console.warn("[rewrite] parse failed, raw:", stripped.slice(0, 200));
 			return "parse";
 		}
 	}
@@ -160,6 +176,63 @@ function parseRewriteResponse(raw: string, maxSubqueries: number): string[] | "p
 	}
 
 	return subqueries;
+}
+
+// Repair common JSON malformations in rewrite responses. Mirrors the
+// gate repair strategy (see gate.ts `tryRepairGateResponse`) — same
+// patterns observed in qwen2.5:3b output, plus the chained progression
+// from brace-append to keys-quote.
+function tryRepairRewriteResponse(raw: string): Record<string, unknown> | undefined {
+	let candidate: string | undefined = raw;
+	const stages = [repairRewriteBrace, repairRewriteKeys, repairRewriteCast];
+	for (const stage of stages) {
+		if (candidate === undefined) return undefined;
+		const next = stage(candidate);
+		if (next !== undefined) candidate = next;
+		if (candidate === undefined) return undefined;
+		try {
+			const parsed = JSON.parse(candidate);
+			if (typeof parsed === "object" && parsed !== null) {
+				return parsed as Record<string, unknown>;
+			}
+			return undefined;
+		} catch {
+			// try the next stage on the current (possibly-improved) candidate
+		}
+	}
+	return undefined;
+}
+
+function repairRewriteBrace(raw: string): string | undefined {
+	const opens = (raw.match(/\{/g) ?? []).length;
+	const closes = (raw.match(/\}/g) ?? []).length;
+	if (opens !== closes + 1) return undefined;
+	return raw.replace(/,\s*$/, "") + "}";
+}
+
+function repairRewriteKeys(raw: string): string | undefined {
+	const knownFields = ["subqueries"];
+	let candidate = raw;
+	for (const field of knownFields) {
+		candidate = candidate.replace(
+			new RegExp(`([,{]\\s*"\\s*)(${field})(?=\\s*:)`, "g"),
+			`$1${field}"`,
+		);
+	}
+	if (candidate === raw) {
+		for (const field of knownFields) {
+			candidate = candidate.replace(
+				new RegExp(`([,{]\\s*)(${field})(?=\\s*:)`, "g"),
+				`$1"${field}"`,
+			);
+		}
+	}
+	return candidate === raw ? undefined : candidate;
+}
+
+function repairRewriteCast(raw: string): string | undefined {
+	const candidate = raw.replace(/:\s*"true"\s*([,}])/g, ":true$1").replace(/:\s*"false"\s*([,}])/g, ":false$1");
+	return candidate === raw ? undefined : candidate;
 }
 
 /**
@@ -197,6 +270,7 @@ export async function rewriteQueries(
 				model,
 				messages,
 				stream: false,
+				format: "json",
 				options: { temperature: 0 },
 			}),
 			signal: controller.signal,

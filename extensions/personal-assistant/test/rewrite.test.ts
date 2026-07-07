@@ -336,6 +336,40 @@ describe("rewriteQueries", () => {
 		expect(body.messages[1].role).toBe("user");
 		expect(body.messages[1].content).toContain("bwa 并发");
 	});
+
+	// ── Repair: malformed JSON recovery (2026-07-07 regression) ──
+	//
+	// qwen2.5:3b at temperature=0 occasionally drops closing braces and
+	// forgets to quote keys. Mirrors the gate-side regression — see
+	// gate-fetch.test.ts comments for context.
+
+	it("repairs missing closing brace — {\"subqueries:[...]", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockOllamaResponse(
+				'{"subqueries:["MGM项目", "工时"]',
+			),
+		);
+		const result = await rewriteQueries("你还记得MGM项目吗");
+		expect(result).toEqual(["MGM项目", "工时"]);
+	});
+
+	it("repairs unquoted key entirely — {subqueries:[]}", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockOllamaResponse('{"subqueries":["MGM项目"]}'),
+		);
+		const result = await rewriteQueries("你还记得MGM项目吗");
+		expect(result).toEqual(["MGM项目"]);
+	});
+
+	it("sends format: 'json' to ollama /api/chat (source-level JSON constraint)", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockOllamaResponse(JSON.stringify({ subqueries: ["rewritten"] })),
+		);
+		await rewriteQueries("hello");
+		const [, init] = vi.mocked(fetch).mock.calls[0]!;
+		const body = JSON.parse(init!.body as string);
+		expect(body.format).toBe("json");
+	});
 });
 
 // ---------------------------------------------------------------------------

@@ -241,4 +241,82 @@ describe("callGate fetch + JSON parse + retry + timeout (task 2.3)", () => {
 		expect(body.messages[1].role).toBe("user");
 		expect(body.messages[1].content).toContain("bwa 并发");
 	});
+
+	// ── Repair: malformed JSON recovery (2026-07-07 regression) ──
+	//
+	// qwen2.5:3b at temperature=0 occasionally emits `{"need_memory:true}`
+	// — missing closing `}` AND unquoted key. With format: "json" plumbed
+	// upstream this should be near-zero frequency, but as defence-in-depth
+	// the parser tries a sequence of repairs before giving up. These tests
+	// protect the recovery path so a future change cannot silently start
+	// treating recoverable outputs as parse-fail.
+
+	it("repairs missing closing brace — {\"need_memory:true}  (unquoted key + missing })", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory:true}' },
+			}),
+		);
+		const result = await callGate("你还记得MGM项目吗", []);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
+	});
+
+	it("repairs missing closing brace when key IS quoted — {\"need_memory\":true", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory":true' },
+			}),
+		);
+		const result = await callGate("之前看过哪个项目", []);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
+	});
+
+	it("repairs string boolean — {\"need_memory\":\"true\"} → true", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory":"true"}' },
+			}),
+		);
+		const result = await callGate("MGM项目工时", []);
+		expect(result).toEqual({ need_memory: true } satisfies GateDecision);
+	});
+
+	it("repairs string boolean false — {\"need_memory\":\"false\"} → false", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory":"false"}' },
+			}),
+		);
+		const result = await callGate("继续", []);
+		expect(result).toEqual({ need_memory: false } satisfies GateDecision);
+	});
+
+	it("does NOT repair — completely unrecoverable garbage returns 'parse'", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: "不是JSON, 不是注释, 就是乱文本" },
+			}),
+		);
+		const result = await callGate("test", []);
+		expect(result).toBe("parse");
+	});
+
+	// ── format: "json" header — must be sent to ollama ─────────────
+	//
+	// `format: "json"` is the upstream defence that constrains ollama to
+	// emit syntactically valid JSON. The repair path above is the
+	// second line of defence; both must coexist. If a future refactor
+	// accidentally drops `format`, this test fires.
+
+	it("sends format: 'json' to ollama /api/chat (source-level JSON constraint)", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(
+			mockJsonResponse({
+				message: { content: '{"need_memory":false}' },
+			}),
+		);
+		await callGate("hello", []);
+		const [, init] = vi.mocked(fetch).mock.calls[0]!;
+		const body = JSON.parse(init!.body as string);
+		expect(body.format).toBe("json");
+	});
 });
