@@ -375,6 +375,40 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
+		// Regression: loadContextFileFromDir used to return only the first
+		// match per directory, so a same-dir {AGENTS.md, SOUL.md, USER.md}
+		// would silently drop SOUL.md and USER.md. Each candidate is now
+		// collected independently and the agent gets all of them.
+		it("should load all candidates in the same directory (AGENTS.md + SOUL.md + USER.md)", async () => {
+			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines");
+			writeFileSync(join(cwd, "SOUL.md"), "# Personality");
+			writeFileSync(join(cwd, "USER.md"), "# User preferences");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles.some((f) => f.path.endsWith("AGENTS.md"))).toBe(true);
+			expect(agentsFiles.some((f) => f.path.endsWith("SOUL.md"))).toBe(true);
+			expect(agentsFiles.some((f) => f.path.endsWith("USER.md"))).toBe(true);
+		});
+
+		it("should load all candidates in the global agent dir too", async () => {
+			writeFileSync(join(agentDir, "AGENTS.md"), "Global project");
+			writeFileSync(join(agentDir, "SOUL.md"), "Global soul");
+			writeFileSync(join(agentDir, "USER.md"), "Global user");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles.filter((f) => f.path.includes(agentDir)).map((f) => f.path.split("/").pop())).toEqual([
+				"AGENTS.md",
+				"SOUL.md",
+				"USER.md",
+			]);
+		});
+
 		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");

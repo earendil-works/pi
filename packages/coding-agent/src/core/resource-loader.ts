@@ -63,22 +63,23 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
+function loadContextFileFromDir(dir: string): Array<{ path: string; content: string }> {
 	const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD", "SOUL.md", "USER.md"];
+	const found: Array<{ path: string; content: string }> = [];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
 			try {
-				return {
+				found.push({
 					path: filePath,
 					content: readFileSync(filePath, "utf-8"),
-				};
+				});
 			} catch (error) {
 				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
 			}
 		}
 	}
-	return null;
+	return found;
 }
 
 export function loadProjectContextFiles(options: {
@@ -91,10 +92,11 @@ export function loadProjectContextFiles(options: {
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
-	if (globalContext) {
-		contextFiles.push(globalContext);
-		seenPaths.add(globalContext.path);
+	for (const f of loadContextFileFromDir(resolvedAgentDir)) {
+		if (!seenPaths.has(f.path)) {
+			contextFiles.push(f);
+			seenPaths.add(f.path);
+		}
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
@@ -103,10 +105,11 @@ export function loadProjectContextFiles(options: {
 	const root = resolve("/");
 
 	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
-		if (contextFile && !seenPaths.has(contextFile.path)) {
-			ancestorContextFiles.unshift(contextFile);
-			seenPaths.add(contextFile.path);
+		for (const f of loadContextFileFromDir(currentDir)) {
+			if (!seenPaths.has(f.path)) {
+				ancestorContextFiles.unshift(f);
+				seenPaths.add(f.path);
+			}
 		}
 
 		if (currentDir === root) break;
