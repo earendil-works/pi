@@ -183,6 +183,37 @@ async function createIndex(dbPath: string): Promise<MemoryIndex> {
 }
 
 /**
+ * Override `content` on each atom in `atoms` with the corresponding
+ * .md body from disk (when present and matching the atom's type/id).
+ * The .md file is the canonical text source — it stays fresh across
+ * write/edit tool calls and the periodic drift sweep, while the DB
+ * content column is a snapshot that only catches up at the next
+ * extraction run. Read-side consumers (webui list / detail, search
+ * format block) should serve the .md body so the user always sees
+ * the latest text, regardless of extraction cadence.
+ *
+ * Falls back to the DB content (no override) when the .md is missing,
+ * malformed, or the body matches the DB column (avoid creating a
+ * fresh object allocation in the in-sync case).
+ */
+async function freshenContentFromDisk(
+	atoms: MemoryAtom[],
+	atomsDir: string,
+): Promise<MemoryAtom[]> {
+	const updated = await Promise.all(
+		atoms.map(async (atom) => {
+			const filePath = path.join(atomsDir, atom.type, `${atom.id}.md`);
+			const parsed = await readAtomFromFile(filePath);
+			if (parsed && parsed.atom.content !== atom.content) {
+				return { ...atom, content: parsed.atom.content };
+			}
+			return atom;
+		}),
+	);
+	return updated;
+}
+
+/**
  * GET /api/memory/:id — return the full atom (DB row) plus the .md body.
  *
  * This endpoint is a UI preview only — reading an atom via the webui does NOT
@@ -289,6 +320,7 @@ export function registerGetMemoryList(
 				atoms = atoms.filter((a) => a.tags.includes(tag));
 			}
 			atoms = atoms.slice(offset, offset + limit);
+			atoms = await freshenContentFromDisk(atoms, deps.atomsDir);
 			res.json(atoms);
 			} finally {
 				index.close();

@@ -388,6 +388,47 @@ describe("GET /api/memory", () => {
 		const res = await fetchAt("/api/memory?limit=2&offset=1");
 		expect(res.body).toHaveLength(2);
 	});
+
+	it("overrides atom.content with the .md body when they differ", async () => {
+		// Insert one atom with DB content "DB content", then write a
+		// .md file with a different body. The list endpoint must
+		// return the .md body, not the DB column.
+		const id = randomUUID();
+		await insertAtom({
+			id,
+			type: "rule",
+			title: "Test",
+			content: "DB content: original",
+			content_fingerprint: "fp-list-drift",
+		});
+		const fp = path.join(atomsDir, "rule", `${id}.md`);
+		await fs.mkdir(path.dirname(fp), { recursive: true });
+		await fs.writeFile(
+			fp,
+			`---\nid: "${id}"\ntype: "rule"\ntitle: "Test"\nsummary: "S"\ntags: ["a"]\nimportance: 0.5\nstrength: 0.5\naccess_count: 0\nversion: 1\nis_latest: 1\nparent_id: null\nsuperseded_at: null\narchived: 0\ncreated_at: 0\nupdated_at: 0\nlast_access: null\ncontent_fingerprint: "fp-list-drift"\nsource_session: null\n---\n\nFRESH .md body for list\n`,
+			"utf8",
+		);
+		const res = await fetchAt("/api/memory");
+		const body = res.body as Array<{ id: string; content: string }>;
+		const atom = body.find((a) => a.id === id);
+		expect(atom?.content).toBe("FRESH .md body for list");
+	});
+
+	it("keeps DB content when .md is missing (graceful fallback)", async () => {
+		const id = randomUUID();
+		await insertAtom({
+			id,
+			type: "rule",
+			title: "NoFile",
+			content: "DB content: kept when no .md",
+			content_fingerprint: "fp-no-file",
+		});
+		// No .md written.
+		const res = await fetchAt("/api/memory");
+		const body = res.body as Array<{ id: string; content: string }>;
+		const atom = body.find((a) => a.id === id);
+		expect(atom?.content).toBe("DB content: kept when no .md");
+	});
 });
 
 describe("mountMemoryRoutes", () => {
