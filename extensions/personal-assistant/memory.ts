@@ -9,14 +9,15 @@
 //   - storage.ts    — MemoryIndex (sqlite + sqlite-vec)
 //   - embed.ts      — embedText
 //   - search.ts     — recallAtoms (discovery-only; results carry `id` + `score`)
-//   - format.ts     — formatMemoryContext (renders summaries + id blocks for memory_get routing)
+//   - format.ts     — formatMemoryContext (renders summaries + file: lines
+//                     for the LLM's read tool to follow up on search results)
 //
 // What memory.ts still owns:
 //   - registerMemory(pi) — wires session_before_compact + session_start + the
-//     before_agent_start / context memory-injection pipeline + the `memory_get`
-//     tool. The tool is the ONLY programmatic entry point that records
-//     strength feedback for a specific atom (bump `access_count` /
-//     `last_access` via `index.updateAccess`). Search does NOT bump — see
+//     before_agent_start / context memory-injection pipeline + a tool_result
+//     hook on the read tool. The hook is the ONLY programmatic entry point
+//     that records strength feedback for a specific atom (bump `access_count`
+//     / `last_access` via `index.updateAccess`). Search does NOT bump — see
 //     search.ts for the discovery-only invariant.
 //   - loadConfig()       — reads personal-assistant config (graceful fallback to {})
 //   - re-exports the v2 entry points / types so index.ts keeps its current shape
@@ -28,15 +29,15 @@
 //     so a chatty session does not thrash the DB.
 //   - before_agent_start kicks off recallAtoms async and stashes the promise in
 //     the module-level `pendingMemorySearch`; context awaits it (raced against
-//     an 8s timeout) and injects the formatted block (summary + id per atom)
-//     into the last user message. The LLM calls `memory_get(id)` to fetch the
-//     full body — that call is the sole programmatic strength-feedback signal.
+//     an 8s timeout) and injects the formatted block (summary + relative path
+//     per atom) into the last user message. The LLM calls the read tool on
+//     the formatted file path to fetch the full body — that read fires the
+//     tool_result hook in registerMemory which records the strength feedback.
 //     Non-destructive: original event is returned if nothing to inject.
-//   - `memory_get` is registered as a tool on `pi` so the agent can explicitly
-//     hydrate a search result. The execute body opens a fresh `MemoryIndex`,
-//     looks up the atom, and ONLY on a successful hit calls `index.updateAccess`
-//     — that bump is the sole programmatic strength-feedback signal. Missing
-//     atoms return a "not found" result without writing anything.
+//   - The read-tool hook in registerMemory is the only entry that bumps
+//     strength. Missing atom paths (read of a non-atom file or a path that
+//     doesn't match `${atomsDir}/<type>/<uuid>.md`) are ignored. Failed DB
+//     writes are best-effort and never surface to the user.
 //   - loadConfig returns {} on any failure — never throws. Real config wiring
 //     is external (see SettingsManager / webui routes).
 
@@ -202,40 +203,29 @@ let pendingMemorySearches = new Map<string, Promise<FormattedMemory | null>>();
 const CONTEXT_RECALL_TIMEOUT_MS = 8_000;
 
 // ---------------------------------------------------------------------------
-// memory_get tool schema
+// Tool-result hook — strength-feedback via read-tool interception
 // ---------------------------------------------------------------------------
 
 /**
- * TypeBox schema for the `memory_get` tool. `id` is a UUID produced by the
- * memory pipeline (see storage.ts `crypto.randomUUID()`); the LLM gets this
- * id from a `recallAtoms` search result and passes it back to hydrate the
- * atom's full content. Defined at module level so the schema object is
- * stable across `registerMemory` invocations (extension reloads).
+ * Pattern that matches a read-tool input whose path lives under the
+ * configured atoms directory. Three capture groups:
+ *   1. atomsDir (the absolute base, e.g. /home/qjh/.pi/agent/memory/atoms)
+ *   2. atom type (rule | fact | process)
+ *   3. atom id (UUID)
+ *
+ * The atomsDir prefix is captured as a literal so the regex compiles
+ * against the actual configured path (which can be overridden via
+ * `config.memory.atomsDir`). Any path that doesn't match this pattern
+ * is left alone — the hook only fires for read calls that targeted an
+ * atom file.
  */
-const MemoryGetParams = Type.Object({
-	id: Type.String({ description: "Atom UUID from a search result" }),
-});
-
-/**
- * Discriminated details payload for the `memory_get` tool. Two variants:
- *   - success: every field the LLM may want from a hydrated atom.
- *   - not_found: explicit "no such atom" signal so callers can branch on
- *     `details.error` without parsing the content text.
- */
-type MemoryGetDetails =
-	| {
-			error: "not_found";
-			id: string;
-	  }
-	| {
-			id: string;
-			type: MemoryAtomType;
-			title: string;
-			content: string;
-			summary: string;
-			tags: string[];
-			importance: number;
-	  };
+function makeAtomPathRegex(atomsDir: string): RegExp {
+	// Escape regex metachars in the directory path (the user's home
+	// directory can in principle contain characters like `.` that are
+	// regex-significant).
+	const escaped = atomsDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`^${escaped}/(rule|fact|process)/([0-9a-f-]{36})\\.md$`);
+}
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep memory.ts as the single import surface for callers
@@ -939,75 +929,61 @@ export function registerMemory(pi: ExtensionAPI): void {
 		}
 	});
 
-	// memory_get tool — the ONLY programmatic strength-feedback entry.
+	// tool_result hook — strength-feedback via read-tool interception.
 	//
 	// Search (`recallAtoms`) is deliberately bump-free: surfacing a candidate
-	// in context is not the same as the LLM acting on it. Only an explicit
-	// `memory_get(id)` call from the agent counts as a feedback signal, and
-	// it must increment `access_count` / stamp `last_access` so the
-	// strength-feedback loop can keep the atom visible. The bump is the
-	// path from "search hit" to "this is worth surfacing again" — without
-	// it, every search would converge to the same ranking and the memory
-	// system would stop learning from agent behaviour.
+	// in context is not the same as the LLM acting on it. Only when the
+	// agent actually reads the atom file does it count as a feedback
+	// signal. The bump is the path from "search hit" to "this is worth
+	// surfacing again" — without it, every search would converge to the
+	// same ranking and the memory system would stop learning from agent
+	// behaviour.
 	//
-	// Tool contract (see specs/memory-search-decoupled/spec.md):
-	//   - parameters: { id: string (UUID) }
-	//   - success: { content: [{ type: "text", text: "<title>\n<summary>\n<content>" }],
-	//                details: { id, type, title, content, summary, tags, importance } }
-	//   - not found: { content: [{ type: "text", text: "atom not found: <id>" }],
-	//                  details: { error: "not_found", id } }
-	//   - updateAccess is called ONLY on the success branch; missing ids
-	//     never modify any row.
-	pi.registerTool({
-		name: "memory_get",
-		label: "Memory Get",
-		description:
-			"Fetch the full content of an atom by id. Use this to hydrate a search result before acting on it. Bumps the atom's access_count so the strength-feedback loop keeps it visible.",
-		promptSnippet: "Fetch full content of a memory atom.",
-		parameters: MemoryGetParams,
-		async execute(
-			_toolCallId,
-			params,
-			_signal,
-			_onUpdate,
-			_ctx,
-		): Promise<AgentToolResult<MemoryGetDetails>> {
-			const index = new MemoryIndex(DEFAULT_DB_PATH);
-			await index.init();
-			try {
-				const atom = index.getAtom(params.id);
-				if (atom === null) {
-					return {
-						content: [
-							{ type: "text", text: `atom not found: ${params.id}` },
-						],
-						details: { error: "not_found", id: params.id },
-					};
+	// The hook fires on every tool_result. It only acts when:
+	//   - toolName === "read"
+	//   - the read succeeded (isError === false)
+	//   - the input path is an atom file under the configured atomsDir
+	//     (matches `${atomsDir}/<type>/<uuid>.md`, after `~/` → home-dir
+	//     expansion if the path uses a leading tilde)
+	//
+	// On match, it bumps `access_count` and stamps `last_access` for the
+	// matched atom. No other side effects.
+	//
+	// The atomsDir regex is rebuilt each hook call so it always tracks
+	// the live `config.memory.atomsDir` override (in case the user
+	// reloaded with a different path).
+	pi.on("tool_result", (event) => {
+		if (event.toolName !== "read") return;
+		if (event.isError) return;
+		const rawPath = event.input.path;
+		if (typeof rawPath !== "string") return;
+
+		// Expand a leading `~/` to the home directory so the atomsDir
+		// regex (which is anchored to the absolute home) matches paths
+		// the LLM happens to write in shell-friendly form.
+		const path = rawPath.startsWith("~/") || rawPath === "~"
+			? join(homedir(), rawPath.slice(1))
+			: rawPath;
+
+		const config = loadConfig();
+		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+		const match = makeAtomPathRegex(atomsDir).exec(path);
+		if (!match) return;
+
+		const index = new MemoryIndex(DEFAULT_DB_PATH);
+		index.init()
+			.then(() => {
+				try {
+					index.updateAccess(match[2]!);
+				} finally {
+					index.close();
 				}
-				// Strength-feedback bump — the sole programmatic entry.
-				// Must run after the null-check so missing ids never write.
-				index.updateAccess(atom.id);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `${atom.title}\n${atom.summary}\n${atom.content}`,
-						},
-					],
-					details: {
-						id: atom.id,
-						type: atom.type,
-						title: atom.title,
-						content: atom.content,
-						summary: atom.summary,
-						tags: atom.tags,
-						importance: atom.importance,
-					},
-				};
-			} finally {
-				index.close();
-			}
-		},
+			})
+			.catch(() => {
+				// Strength-feedback bump is best-effort. A failed DB
+				// write on a read-tool result should never surface to
+				// the user or interrupt the agent loop.
+			});
 	});
 }
 

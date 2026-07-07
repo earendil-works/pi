@@ -8,10 +8,12 @@ import {
 
 // buildEmbeddableText — concatenates title + summary + tags for embedding.
 // `content` is deliberately NOT included: recall is discovery-only (results
-// carry `atom.id`; full content is fetched by `memory_get` on demand), and
-// embedding the long content dilutes the curated title/summary/tags signal
-// with incidental token mentions. See `CURRENT_EMBEDDABLE_TEXT_VERSION = 2`
-// in embed.ts for the design rationale + migration story.
+// carry `atom.relativePath`; full content is fetched by the `read` tool
+// on demand and the read's tool_result hook records the strength feedback
+// by bumping `access_count` on the matched atom), and embedding the long
+// content dilutes the curated title/summary/tags signal with incidental
+// token mentions. See `CURRENT_EMBEDDABLE_TEXT_VERSION = 2` in embed.ts
+// for the design rationale + migration story.
 describe("buildEmbeddableText", () => {
 	it("concatenates title, summary, tags with \\n\\n separators (content omitted)", () => {
 		const text = buildEmbeddableText({

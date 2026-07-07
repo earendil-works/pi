@@ -101,7 +101,7 @@ function createMockPi(): MockPi {
 			hooks.set(hookName, handler);
 		},
 		registerTool: () => {
-			// no-op — tool tests live in this file's sibling suite if added later
+			// no-op — tool assertions live in test/memory-tool.test.ts
 		},
 	};
 }

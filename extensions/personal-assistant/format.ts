@@ -1,11 +1,15 @@
 // formatMemoryBlock / formatMemoryContext — pure renderers for recall results.
 //
-// Architecture constraints (from design.md):
+// Architecture constraints:
 //   - Search is discovery-only; results carry {id, type, title, summary, tags,
 //     cosine, sparseScore, rrf, relativePath}.
 //   - Each block: [type] title / summary / file: <relativePath>
-//     The agent calls the `read` tool on the full path to fetch full content.
-//     The base directory is disclosed in the context injection prefix.
+//     The agent uses the `read` tool on the full path to fetch full content.
+//     The `read` tool's tool_result hook in memory.ts is the sole programmatic
+//     strength-feedback entry — it bumps `access_count` and stamps `last_access`
+//     for the matched atom. The base directory is disclosed in the context
+//     injection prefix so the LLM can resolve `<relativePath>` to an absolute
+//     path for the read call.
 //   - Token estimate: Math.ceil(text.length / 2.5) — rough, deterministic, no
 //     tokenizer dependency. (R49: strict budget, never exceed.)
 //   - Sort by rerankScore DESC (cross-encoder rerank is the new ranking
@@ -25,7 +29,9 @@ import type { RecallResult } from "./types.ts";
  *   file: <relativePath>
  *
  * The LLM uses the `file:` line to call the `read` tool with the full path
- * (base dir from the context prefix + relative path).
+ * (atomsDir from the context prefix + relative path). The `read` tool's
+ * tool_result hook in memory.ts then records the strength feedback by
+ * bumping `access_count` for the matched atom.
  */
 export function formatMemoryBlock(result: RecallResult): string {
 	const { atom } = result;
