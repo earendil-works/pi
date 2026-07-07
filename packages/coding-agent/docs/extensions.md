@@ -111,12 +111,16 @@ pi -e ./my-extension.ts
 
 Extensions are auto-discovered from trusted locations. Project-local `.pi/extensions` entries load only after the project is trusted.
 
-| Location | Scope |
-|----------|-------|
-| `~/.pi/agent/extensions/*.ts` | Global (all projects) |
-| `~/.pi/agent/extensions/*/index.ts` | Global (subdirectory) |
-| `.pi/extensions/*.ts` | Project-local |
-| `.pi/extensions/*/index.ts` | Project-local (subdirectory) |
+| Location | Scope | Discovery |
+|----------|-------|-----------|
+| `~/.pi/agent/extensions/*.ts` | Global (all projects) | Auto-discovered |
+| `~/.pi/agent/extensions/*/index.ts` | Global (subdirectory) | Auto-discovered |
+| `~/.pi/agent/npm/node_modules/*/*.ts` | Global (subdirectory for extensions installed via npm) | Loaded from global settings.json (below) |
+| `~/.pi/agent/git/*/*/*/*.ts` | Global (subdirectory for extensions installed via git) | Loaded from global settings.json (below) |
+| `.pi/extensions/*.ts` | Project-local | Auto-discovered |
+| `.pi/extensions/*/index.ts` | Project-local (subdirectory) | Auto-discovered |
+| `.pi/npm/npm/node_modules/*/*.ts` | Project-local (subdirectory for extensions installed via npm) | Loaded from local settings.json (below) |
+| `.pi/git/*/*/*/*.ts` | Project-local (subdirectory for extensions installed via git) | Loaded from local settings.json (below) |
 
 Additional paths via `settings.json`:
 
