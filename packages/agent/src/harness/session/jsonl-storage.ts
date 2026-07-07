@@ -12,6 +12,7 @@ interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	metadata?: Record<string, unknown>;
 }
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
@@ -75,6 +76,12 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 	if (header.parentSession !== undefined && typeof header.parentSession !== "string") {
 		throw invalidSession(filePath, "session header parentSession must be a string");
 	}
+	if (
+		header.metadata !== undefined &&
+		(typeof header.metadata !== "object" || header.metadata === null || Array.isArray(header.metadata))
+	) {
+		throw invalidSession(filePath, "session header metadata must be an object");
+	}
 	return {
 		type: "session",
 		version: 3,
@@ -82,6 +89,7 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 		timestamp: header.timestamp,
 		cwd: header.cwd,
 		parentSession: header.parentSession,
+		metadata: header.metadata,
 	};
 }
 
@@ -127,6 +135,7 @@ function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSess
 		cwd: header.cwd,
 		path,
 		parentSessionPath: header.parentSession,
+		metadata: header.metadata,
 	};
 }
 
@@ -205,6 +214,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			cwd: string;
 			sessionId: string;
 			parentSessionPath?: string;
+			metadata?: Record<string, unknown>;
 		},
 	): Promise<JsonlSessionStorage> {
 		const header: SessionHeader = {
@@ -214,6 +224,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			timestamp: new Date().toISOString(),
 			cwd: options.cwd,
 			parentSession: options.parentSessionPath,
+			metadata: options.metadata,
 		};
 		getFileSystemResultOrThrow(
 			await fs.writeFile(filePath, `${JSON.stringify(header)}\n`),
