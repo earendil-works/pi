@@ -10,7 +10,6 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "../types.ts";
-import { requireJsonTools } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -129,8 +128,9 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
+				// partialJson/partialInput are only streaming scratch buffers; never persist them.
 				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { partialInput?: string }).partialInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatAzureOpenAIError(error);
@@ -274,9 +274,8 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	const jsonTools = requireJsonTools(context.tools, "Azure OpenAI Responses");
-	if (jsonTools && jsonTools.length > 0) {
-		params.tools = convertResponsesTools(jsonTools);
+	if (context.tools && context.tools.length > 0) {
+		params.tools = convertResponsesTools(context.tools);
 	}
 
 	if (model.reasoning) {

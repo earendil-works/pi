@@ -35,7 +35,6 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
-import { requireJsonTools } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import {
 	appendAssistantMessageDiagnostic,
@@ -440,8 +439,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				// partialJson is only a streaming scratch buffer; never persist it.
+				// partialJson/partialInput are only streaming scratch buffers; never persist them.
 				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { partialInput?: string }).partialInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -507,9 +507,8 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	const jsonTools = requireJsonTools(context.tools, "OpenAI Codex Responses");
-	if (jsonTools && jsonTools.length > 0) {
-		body.tools = convertResponsesTools(jsonTools, { strict: null });
+	if (context.tools && context.tools.length > 0) {
+		body.tools = convertResponsesTools(context.tools, { strict: null });
 	}
 
 	if (options?.reasoningEffort !== undefined) {
@@ -1436,7 +1435,7 @@ async function processWebSocketStream(
 		} else if (useCachedContext && entry && output.responseId) {
 			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
 				includeSystemPrompt: false,
-			}).filter((item) => item.type !== "function_call_output");
+			}).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,
 				lastResponseId: output.responseId,

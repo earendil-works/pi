@@ -35,6 +35,10 @@ export interface CompactionDetails {
 	modifiedFiles: string[];
 }
 
+function estimateToolCallChars(block: { name: string; inputType?: string; arguments?: unknown; input?: string }): number {
+	return block.name.length + (block.inputType === "freeform" ? (block.input ?? "").length : JSON.stringify(block.arguments ?? {}).length);
+}
+
 /**
  * Extract file operations from messages and previous compaction entries.
  */
@@ -255,9 +259,7 @@ export function estimateTokens(message: AgentMessage): number {
 				} else if (block.type === "thinking") {
 					chars += block.thinking.length;
 				} else if (block.type === "toolCall") {
-					chars +=
-						block.name.length +
-						(block.inputType === "json" ? JSON.stringify(block.arguments).length : block.input.length);
+					chars += estimateToolCallChars(block);
 				}
 			}
 			return Math.ceil(chars / 4);
