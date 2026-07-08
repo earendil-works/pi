@@ -39,13 +39,19 @@ interface PreviousRequest {
 	promptTokens: number;
 	modelKey: string;
 	timestamp: number;
+	/**
+	 * Sticky: some earlier request in this scan segment reported cache activity.
+	 * Distinguishes a total miss on a cache-read-only provider (OpenAI-style,
+	 * writes unreported) from a provider that never reports caching at all.
+	 */
+	reportedCache: boolean;
 }
 
 /**
  * Compute the cache miss for one assistant message relative to the previous
  * request. Returns undefined when nothing is counted: first turn, after a
- * reset, no cache activity reported (provider without cache support), or miss
- * below the noise floor.
+ * reset, no cache activity ever reported (provider without cache support), or
+ * miss below the noise floor.
  */
 function detectMiss(
 	prev: PreviousRequest | undefined,
@@ -54,7 +60,12 @@ function detectMiss(
 ): CacheMiss | undefined {
 	const usage = message.usage;
 	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-	if (!prev || promptTokens <= 0 || usage.cacheRead + usage.cacheWrite === 0) return undefined;
+	// A zero-cache turn only counts when cache activity was reported before:
+	// on cache-read-only providers that is a total miss, while on providers
+	// that never report caching it means nothing.
+	if (!prev || promptTokens <= 0 || (usage.cacheRead + usage.cacheWrite === 0 && !prev.reportedCache)) {
+		return undefined;
+	}
 
 	const missedTokens = Math.min(prev.promptTokens, promptTokens) - usage.cacheRead;
 	if (missedTokens <= NOISE_FLOOR_TOKENS) return undefined;
@@ -78,7 +89,7 @@ function detectMiss(
 	};
 }
 
-function asPreviousRequest(message: AssistantMessage): PreviousRequest | undefined {
+function asPreviousRequest(message: AssistantMessage, reportedCache: boolean): PreviousRequest | undefined {
 	const usage = message.usage;
 	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	if (promptTokens <= 0) return undefined;
@@ -86,6 +97,7 @@ function asPreviousRequest(message: AssistantMessage): PreviousRequest | undefin
 		promptTokens,
 		modelKey: `${message.provider}/${message.model}`,
 		timestamp: message.timestamp,
+		reportedCache: reportedCache || usage.cacheRead + usage.cacheWrite > 0,
 	};
 }
 
@@ -113,7 +125,7 @@ function scan(
 				totals.missCount += 1;
 				misses.set(entry.message, miss);
 			}
-			prev = asPreviousRequest(entry.message) ?? prev;
+			prev = asPreviousRequest(entry.message, prev?.reportedCache ?? false) ?? prev;
 		}
 	}
 	return { prev, totals, misses };
