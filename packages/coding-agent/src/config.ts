@@ -491,6 +491,26 @@ export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
+function getLocalGitVersionInfo(): string | undefined {
+	const packageDir = getPackageDir();
+	const root = resolve(packageDir, "..", "..");
+	// Quick escape path for when we are not running from git (majority of the time).
+	if (!existsSync(join(root, ".git")) || resolve(packageDir) !== resolve(root, "packages", "coding-agent")) {
+		return undefined;
+	}
+
+	const shortCommit = readCommandOutput("git", ["-C", root, "rev-parse", "--short", "HEAD"]);
+	if (!shortCommit) return undefined;
+
+	const branch = readCommandOutput("git", ["-C", root, "branch", "--show-current"]);
+	const tag = readCommandOutput("git", ["-C", root, "describe", "--tags", "--exact-match", "HEAD"]);
+	const refs = [branch, tag].filter((ref, index, values): ref is string => !!ref && values.indexOf(ref) === index);
+
+	return ` (${refs.length > 0 ? `${shortCommit} ${refs.join("/")}` : shortCommit})`;
+}
+
+export const DISPLAY_VERSION: string = `${VERSION}${getLocalGitVersionInfo() ?? ""}`;
+
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
