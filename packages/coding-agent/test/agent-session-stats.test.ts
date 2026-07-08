@@ -87,7 +87,6 @@ describe("AgentSession.getSessionStats", () => {
 			syncAgentMessages(session, sessionManager);
 
 			const stats = session.getSessionStats();
-			expect(stats.cacheWaste).toEqual({ missedTokens: 0, missedCost: 0, missCount: 0 });
 			expect(stats.contextUsage).toEqual(session.getContextUsage());
 			expect(stats.contextUsage?.tokens).toBe(200);
 			expect(stats.contextUsage?.contextWindow).toBe(model.contextWindow);

@@ -528,14 +528,6 @@ Response:
       "total": 105000
     },
     "cost": 0.45,
-    "perModel": [
-      {"provider": "anthropic", "model": "claude-sonnet-4-5", "cost": 0.45, "tokens": 105000}
-    ],
-    "cacheWaste": {
-      "missedTokens": 0,
-      "missedCost": 0,
-      "missCount": 0
-    },
     "contextUsage": {
       "tokens": 60000,
       "contextWindow": 200000,
@@ -545,7 +537,7 @@ Response:
 }
 ```
 
-`tokens` contains assistant usage totals across all session entries, including history that was compacted away. `perModel` breaks cost and tokens down by the provider/model that served each request, sorted by cost descending. `cacheWaste` reports prompt tokens (and estimated cost) re-billed due to prompt-cache misses. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
+`tokens` contains assistant usage totals across all session entries, including history that was compacted away. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
 

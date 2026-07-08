@@ -41,7 +41,6 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
-import { type CacheWasteTotals, computeCacheWaste } from "./cache-stats.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -239,10 +238,6 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
-	/** Cost/token totals per provider/model actually used, sorted by cost descending. */
-	perModel: Array<{ provider: string; model: string; cost: number; tokens: number }>;
-	/** Tokens/cost re-billed due to cache misses across the session. */
-	cacheWaste: CacheWasteTotals;
 	contextUsage?: ContextUsage;
 }
 
@@ -2989,10 +2984,8 @@ export class AgentSession {
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
-		const perModel = new Map<string, { provider: string; model: string; cost: number; tokens: number }>();
 
-		const entries = this.sessionManager.getEntries();
-		for (const entry of entries) {
+		for (const entry of this.sessionManager.getEntries()) {
 			if (entry.type !== "message") continue;
 			totalMessages++;
 			const message = entry.message;
@@ -3010,18 +3003,6 @@ export class AgentSession {
 				totalCacheRead += usage.cacheRead;
 				totalCacheWrite += usage.cacheWrite;
 				totalCost += usage.cost.total;
-
-				// Group by the model that actually served the request (e.g. OpenRouter
-				// `auto` resolves to a concrete responseModel).
-				const modelId = assistantMsg.responseModel ?? assistantMsg.model;
-				const key = `${assistantMsg.provider}/${modelId}`;
-				let bucket = perModel.get(key);
-				if (!bucket) {
-					bucket = { provider: assistantMsg.provider, model: modelId, cost: 0, tokens: 0 };
-					perModel.set(key, bucket);
-				}
-				bucket.cost += usage.cost.total;
-				bucket.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 			}
 		}
 
@@ -3041,8 +3022,6 @@ export class AgentSession {
 				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
-			perModel: Array.from(perModel.values()).sort((a, b) => b.cost - a.cost),
-			cacheWaste: computeCacheWaste(entries, this._modelRegistry),
 			contextUsage: this.getContextUsage(),
 		};
 	}
