@@ -1,0 +1,54 @@
+[project]
+name = "pi-mono-python"
+version = "0.1.0"
+description = "Python port of pi-mono TypeScript implementation"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.109.0",
+  "openai",
+  "google-genai",
+  "mistralai",
+  "boto3",
+  "httpx",
+  "pydantic",
+  "PyYAML",
+  "Pillow",
+]
+
+[project.scripts]
+pi = "pi_mono.coding_agent.__main__:run"
+pi-ai = "pi_mono.ai.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "mypy",
+  "black"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "e2e: real provider tests requiring PI_E2E_PROVIDER",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = ["E731"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/pi_mono/coding_agent/core/extensions/loader.py" = ["E402"]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+

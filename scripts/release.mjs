@@ -168,6 +168,7 @@ console.log();
 console.log("Regenerating release artifacts...");
 run("npm --prefix packages/ai run generate-models");
 run("npm --prefix packages/ai run generate-image-models");
+run("python python/scripts/generate_models.py");
 run("npm run shrinkwrap:coding-agent");
 console.log();
 

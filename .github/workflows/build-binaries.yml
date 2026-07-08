@@ -124,6 +124,21 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python package
+        run: pip install -e "./python[dev]"
+
+      - name: Pytest
+        working-directory: python
+        run: PYTHONPATH=src pytest -q
+
+      - name: Check Python model catalogs
+        run: python python/scripts/generate_models.py --check
+
       - name: Verify release artifacts are committed
         run: git diff --exit-code
 

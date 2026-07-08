@@ -40,3 +40,73 @@ jobs:
 
       - name: Test
         run: npm test
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python package
+        run: pip install -e "./python[dev]"
+
+      - name: Pytest
+        working-directory: python
+        run: PYTHONPATH=src pytest -q
+
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python package
+        run: pip install -e "./python[dev]"
+
+      - name: Ruff check
+        working-directory: python
+        run: PYTHONPATH=src ruff check src/pi_mono/coding_agent
+
+      - name: Ruff format check
+        working-directory: python
+        run: ruff format --check src/pi_mono/coding_agent
+
+      - name: Mypy (P3 modules)
+        working-directory: python
+        run: |
+          PYTHONPATH=src mypy --config-file mypy-ci.ini \
+            src/pi_mono/utils/semver.py \
+            src/pi_mono/utils/windows_self_update.py \
+            src/pi_mono/utils/child_process.py \
+            src/pi_mono/coding_agent/migrations.py \
+            src/pi_mono/coding_agent/utils/clipboard_image.py \
+            src/pi_mono/coding_agent/modes/interactive/model_search.py \
+            src/pi_mono/coding_agent/modes/interactive/theme/theme.py
+
+  python-model-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check Python model catalogs
+        run: python python/scripts/generate_models.py --check

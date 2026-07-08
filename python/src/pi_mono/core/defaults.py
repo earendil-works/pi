@@ -1,0 +1,1 @@
+DEFAULT_THINKING_LEVEL: str = "medium"
