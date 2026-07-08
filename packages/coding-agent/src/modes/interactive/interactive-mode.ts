@@ -3385,7 +3385,7 @@ export class InteractiveMode {
 	}
 
 	private addCacheMissNotice(miss: CacheMiss): void {
-		if (miss.missedTokens < 20_000 && miss.missedCost < 0.05) return;
+		if (miss.missedTokens < 20_000 && miss.missedCost < 0.1) return;
 
 		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
 		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
