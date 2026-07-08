@@ -41,6 +41,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { type CacheWasteTotals, computeCacheWaste } from "./cache-stats.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -238,6 +239,10 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	/** Cost/token totals per provider/model actually used, sorted by cost descending. */
+	perModel: Array<{ provider: string; model: string; cost: number; tokens: number }>;
+	/** Tokens/cost re-billed due to cache misses across the session. */
+	cacheWaste: CacheWasteTotals;
 	contextUsage?: ContextUsage;
 }
 
@@ -2969,30 +2974,54 @@ export class AgentSession {
 	}
 
 	/**
-	 * Get session statistics.
+	 * Get session statistics. Aggregates over ALL session entries (including
+	 * history that was compacted away), so token/cost totals reflect what was
+	 * actually billed across the session.
 	 */
 	getSessionStats(): SessionStats {
-		const state = this.state;
-		const userMessages = state.messages.filter((m) => m.role === "user").length;
-		const assistantMessages = state.messages.filter((m) => m.role === "assistant").length;
-		const toolResults = state.messages.filter((m) => m.role === "toolResult").length;
-
+		let userMessages = 0;
+		let assistantMessages = 0;
+		let toolResults = 0;
+		let totalMessages = 0;
 		let toolCalls = 0;
 		let totalInput = 0;
 		let totalOutput = 0;
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
+		const perModel = new Map<string, { provider: string; model: string; cost: number; tokens: number }>();
 
-		for (const message of state.messages) {
-			if (message.role === "assistant") {
+		const entries = this.sessionManager.getEntries();
+		for (const entry of entries) {
+			if (entry.type !== "message") continue;
+			totalMessages++;
+			const message = entry.message;
+			if (message.role === "user") {
+				userMessages++;
+			} else if (message.role === "toolResult") {
+				toolResults++;
+			} else if (message.role === "assistant") {
+				assistantMessages++;
 				const assistantMsg = message as AssistantMessage;
 				toolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
-				totalInput += assistantMsg.usage.input;
-				totalOutput += assistantMsg.usage.output;
-				totalCacheRead += assistantMsg.usage.cacheRead;
-				totalCacheWrite += assistantMsg.usage.cacheWrite;
-				totalCost += assistantMsg.usage.cost.total;
+				const usage = assistantMsg.usage;
+				totalInput += usage.input;
+				totalOutput += usage.output;
+				totalCacheRead += usage.cacheRead;
+				totalCacheWrite += usage.cacheWrite;
+				totalCost += usage.cost.total;
+
+				// Group by the model that actually served the request (e.g. OpenRouter
+				// `auto` resolves to a concrete responseModel).
+				const modelId = assistantMsg.responseModel ?? assistantMsg.model;
+				const key = `${assistantMsg.provider}/${modelId}`;
+				let bucket = perModel.get(key);
+				if (!bucket) {
+					bucket = { provider: assistantMsg.provider, model: modelId, cost: 0, tokens: 0 };
+					perModel.set(key, bucket);
+				}
+				bucket.cost += usage.cost.total;
+				bucket.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 			}
 		}
 
@@ -3003,7 +3032,7 @@ export class AgentSession {
 			assistantMessages,
 			toolCalls,
 			toolResults,
-			totalMessages: state.messages.length,
+			totalMessages,
 			tokens: {
 				input: totalInput,
 				output: totalOutput,
@@ -3012,6 +3041,8 @@ export class AgentSession {
 				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
+			perModel: Array.from(perModel.values()).sort((a, b) => b.cost - a.cost),
+			cacheWaste: computeCacheWaste(entries, this._modelRegistry),
 			contextUsage: this.getContextUsage(),
 		};
 	}
