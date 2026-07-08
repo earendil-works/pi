@@ -452,21 +452,23 @@ export function registerMemory(pi: ExtensionAPI): void {
 			headers[authHeader] = authHeader === "Authorization" ? `Bearer ${auth.apiKey}` : auth.apiKey;
 		}
 
-		// maxTokens budget for the extraction response. Same pattern pi core
-		// uses for /compact (harness/compaction/compaction.ts: `min(0.8 *
-		// reserveTokens, model.maxTokens)`): scale with the model's own
-		// maxTokens so reasoning models (deepseek-v4-flash 8k, minimax M3
-		// 131k) get budget proportional to their capability, while a hard
-		// 8192 ceiling stops the worst-case model from being asked to write
-		// 100k tokens of JSON. The previous hardcoded 2048 was a v1
-		// leftover that truncated reasoning models mid-think.
-		//
-		// 8192 covers a generous extraction (40+ atoms with full content +
-		// tags) and stays well under any model's maxTokens.
-		const extractionMaxTokens = Math.min(
-			model.maxTokens > 0 ? Math.floor(0.8 * model.maxTokens) : 4096,
-			8192,
-		);
+		// maxTokens budget for the extraction response. Scale with the
+		// model's own maxTokens so reasoning models (MiniMax-M3 128k,
+		// deepseek-v4-flash 8k) get budget proportional to their capability.
+		// The previous 8192 hard ceiling capped MiniMax-M3 at 8192 despite
+		// the model supporting 128k — reasoning models need output room for
+		// thinking + JSON, and 8192 was too tight for large extractions.
+		const extractionMaxTokens = model.maxTokens > 0 ? Math.floor(0.8 * model.maxTokens) : 4096;
+
+		// Warn when the input prompt is very large (>50k tokens), since
+		// extraction quality degrades with huge inputs regardless of output
+		// budget.
+		const approxInputTokens = Math.floor(messages.reduce((sum, m) => sum + m.content.length, 0) / 3.5);
+		if (approxInputTokens > 50000) {
+			console.warn(
+				`[extract] input is ~${approxInputTokens} tokens from ${messages.length} messages — extraction quality may degrade at this size (consider more frequent compaction)`,
+			);
+		}
 
 		const callLlm = async (prompt: string): Promise<string> => {
 			const response = await completeSimple(

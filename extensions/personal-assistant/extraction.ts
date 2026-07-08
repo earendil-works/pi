@@ -10,6 +10,7 @@ import { MemoryIndex } from "./storage.ts";
 import { normalizeTag, conceptTagCount } from "./tag-vocab.ts";
 import { confirmDedupAction } from "./extraction-dedup-confirm.ts";
 import { reindexOne } from "./bge-reindex.ts";
+import { recallAtoms } from "./search.ts";
 import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
 
 // normalizeContent: strip extra whitespace, trim, lowercase
@@ -95,6 +96,10 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 - 更新方式: 在 content 末尾追加新段落, 标注日期 (e.g. "2026-07 新增 JSON 格式支持")
 - 仅在信息属于全新主题/新对象/新项目时才创建新 atom
 - 这是 corpus 持续精炼的关键: 主动合并而非堆叠
+
+## 已有知识库 (重要! 不要重复提取已有知识)
+
+下面列出知识库中已有的 atom (按相关度 + 修改时间排序)。如果新信息与已有 atom 主题相同, 不要创建新 atom — 返回空 items 即可, 代码侧的 dedup 会处理更新。仅在确认是全新主题时才创建。
 
 ## Output Schema (严格 JSON)
 
@@ -523,6 +528,8 @@ export function scoreUserTone(messages: Array<{ role: string; content: string }>
  */
 export interface BuildExtractionPromptOptions {
 	tagVocabulary?: string[];
+	/** Existing atoms to show the LLM so it doesn't create duplicates. */
+	existingAtoms?: Array<{ type: string; title: string; summary: string }>;
 }
 
 export function buildExtractionPrompt(
@@ -538,7 +545,10 @@ export function buildExtractionPrompt(
 	const tagDictSection = tagDict.length > 0
 		? `\n\n## 现有 tag 字典 (优先复用, 不要发明新近义 tag)\n${tagDict.join(", ")}`
 		: "";
-	return `${EXTRACT_PROMPT_V2}${tagDictSection}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
+	const corpusSection = opts?.existingAtoms && opts.existingAtoms.length > 0
+		? `\n\n## 已有知识库 (${opts.existingAtoms.length} 条)\n${opts.existingAtoms.map((a, i) => `${i + 1}. [${a.type}] ${a.title} — ${a.summary}`).join("\n")}\n`
+		: "";
+	return `${EXTRACT_PROMPT_V2}${tagDictSection}${corpusSection}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
 }
 
 /**
@@ -619,10 +629,80 @@ export async function extractMemoriesWithCallLlm(
 	updated: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }> {
-	const prompt = buildExtractionPrompt(messages, { tagVocabulary: config.tagVocabulary });
+	// Collect existing atoms to inject into the prompt so the LLM doesn't
+	// create duplicates. Two sources, deduped by atom id:
+	//   1. recall top-20: semantic matches against user messages (catches
+	//      same-topic atoms the LLM would otherwise re-extract)
+	//   2. recently modified top-100: by updated_at DESC, catches atoms
+	//      too new to have a bge-m3 vector yet (reindex lag / 404 gap)
+	const existingAtoms = await collectExistingAtoms(index, messages);
+	const prompt = buildExtractionPrompt(messages, {
+		tagVocabulary: config.tagVocabulary,
+		existingAtoms,
+	});
 	const response = await callLlm(prompt);
 	const parsed = parseExtractionJson(response);
+	if (!parsed) {
+		// Log the raw response so 0-atom extractions are diagnosable. Without
+		// this, a model returning non-JSON (e.g. a truncated response, a
+		// refusal, or thinking-block-only output) silently produces 0 items
+		// with no clue why. Truncate to 2000 chars to avoid flooding the log.
+		const preview = response.length > 2000 ? `${response.slice(0, 2000)}…(${response.length} chars total)` : response;
+		console.warn(`[extract] parseExtractionJson returned null — raw LLM response (model=${config.model ?? "unknown"}):\n${preview}`);
+	}
 	return executeParsedPlan(index, config.atomsDir, parsed, config.model ?? "unknown", callLlm);
+}
+
+/**
+ * Collect existing atoms for the extraction prompt. Combines:
+ *   - recall top-20 (semantic match against user messages)
+ *   - recently modified top-100 (by updated_at DESC)
+ * Deduped by atom id. Returns {type, title, summary} for each.
+ */
+async function collectExistingAtoms(
+	index: MemoryIndex,
+	messages: Array<{ role: string; content: string }>,
+): Promise<Array<{ type: string; title: string; summary: string }>> {
+	const seen = new Set<string>();
+	const result: Array<{ type: string; title: string; summary: string }> = [];
+
+	// 1. Recall: use user messages as the query (most information-dense)
+	const userText = messages
+		.filter((m) => m.role === "user")
+		.map((m) => m.content)
+		.join(" ")
+		.slice(0, 4000);
+
+	if (userText.trim().length > 0) {
+		try {
+			const hits = await recallAtoms(index, userText, { topK: 20 });
+			for (const hit of hits) {
+				if (seen.has(hit.atom.id)) continue;
+				seen.add(hit.atom.id);
+				result.push({
+					type: hit.atom.type,
+					title: hit.atom.title,
+					summary: hit.atom.summary,
+				});
+			}
+		} catch {
+			// recall failure is non-fatal — we still have the recent-atoms path
+		}
+	}
+
+	// 2. Recently modified: top-100 by created_at DESC (listAtoms default order)
+	const recent = index.listAtoms();
+	for (const atom of recent.slice(0, 100)) {
+		if (seen.has(atom.id)) continue;
+		seen.add(atom.id);
+		result.push({
+			type: atom.type,
+			title: atom.title,
+			summary: atom.summary,
+		});
+	}
+
+	return result;
 }
 
 /** Options for the webui entry point. Bundles everything the caller has to know. */
