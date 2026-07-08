@@ -56,6 +56,27 @@ describe("validateItems — transition rules (existing behavior preserved)", () 
 	});
 });
 
+describe("validateItems — pending → completed is allowed (regression: full-list re-send with one pending flipped to completed)", () => {
+	it("pending → completed across two calls returns null", () => {
+		const before = makeItems("pending");
+		const after = makeItems("completed");
+		expect(validateItems(after, before)).toBeNull();
+	});
+
+	it("full-list re-send where one pending item flips to completed in one batch returns null", () => {
+		const before = [
+			{ id: "tx-1", content: "step 1", status: "pending" as const },
+			{ id: "tx-2", content: "step 2", status: "pending" as const },
+			{ id: "tx-3", content: "step 3", status: "pending" as const },
+		];
+		expect(validateItems(before)).toBeNull();
+		const after = before.map((it, i) =>
+			i === 2 ? { ...it, status: "completed" as const } : it,
+		);
+		expect(validateItems(after, before)).toBeNull();
+	});
+});
+
 describe("validateItems — content validation", () => {
 	it("rejects item with empty content", () => {
 		const items: TodoItem[] = [{ id: "1", content: "", status: "pending" }];

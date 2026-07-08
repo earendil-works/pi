@@ -721,7 +721,7 @@ type TodoStatus = TodoItem["status"];
 const VALID_STATUSES: TodoStatus[] = ["pending", "in_progress", "completed", "cancelled"];
 
 const VALID_TRANSITIONS: Record<TodoStatus, TodoStatus[]> = {
-	pending: ["in_progress", "cancelled"],
+	pending: ["in_progress", "completed", "cancelled"],
 	in_progress: ["completed", "cancelled", "pending"],
 	completed: ["pending"],
 	cancelled: ["pending"],
@@ -730,10 +730,12 @@ const VALID_TRANSITIONS: Record<TodoStatus, TodoStatus[]> = {
 const MAX_IN_PROGRESS = 3;
 const MAX_ITEMS = 20;
 const PLAN_REMINDER_INTERVAL = 8;
+const MAX_FOLLOWUP_NUDGES = 3;
 
 let todoItems: TodoItem[] = [];
 let roundsSinceTodo = 0;
 let contextCount = 0;
+let followUpNudges = 0;
 
 function renderTodos(): string {
 	if (todoItems.length === 0) return "No todos.";
@@ -829,6 +831,7 @@ export function registerTools(pi: ExtensionAPI): void {
 		todoItems = [];
 		roundsSinceTodo = 0;
 		contextCount = 0;
+		followUpNudges = 0;
 
 		// Layer A: Inject remote paths prompt if satellite MCP server has remotePathPattern
 		const mcpConfig = loadMcpConfig();
@@ -897,22 +900,47 @@ export function registerTools(pi: ExtensionAPI): void {
 	// Hook: turn_end — detect todowrite usage, update counter
 	// ============================================================================
 
-	pi.on("turn_end", (event: TurnEndEvent) => {
+	pi.on("turn_end", async (event: TurnEndEvent) => {
 		const messageContent = "content" in event.message ? event.message.content : undefined;
 		const blocks = Array.isArray(messageContent) ? messageContent : [];
 		const usedTodo = blocks.some(
 			(block: { type: string; name?: string }) => block.type === "tool_use" && block.name === "todowrite",
 		);
 
+		const hasActiveItems = todoItems.some(
+			(t) => t.status === "pending" || t.status === "in_progress",
+		);
+
 		if (usedTodo) {
 			roundsSinceTodo = 0;
-		} else {
-			const hasActiveItems = todoItems.some(
+		} else if (hasActiveItems) {
+			roundsSinceTodo++;
+		}
+
+		// Prevent premature stop: if the model made no tool calls this turn
+		// (about to stop) but there are still incomplete todos, inject a
+		// follow-up message to force another turn. Safety-limited to avoid
+		// infinite nudge loops.
+		const stopReason =
+			"stopReason" in event.message
+				? (event.message as { stopReason?: string }).stopReason
+				: undefined;
+		if (
+			event.toolResults.length === 0 &&
+			hasActiveItems &&
+			stopReason !== "error" &&
+			stopReason !== "aborted" &&
+			followUpNudges < MAX_FOLLOWUP_NUDGES
+		) {
+			const activeCount = todoItems.filter(
 				(t) => t.status === "pending" || t.status === "in_progress",
+			).length;
+			await pi.sendUserMessage(
+				`<hmr note>You have ${activeCount} incomplete todo item(s) but made no tool calls this turn. Continue working on pending/in_progress todos, or mark them as cancelled if they are no longer needed. Do not stop until all items are completed or cancelled.</hmr note>`,
+				{ deliverAs: "followUp" },
 			);
-			if (hasActiveItems) {
-				roundsSinceTodo++;
-			}
+			followUpNudges++;
+			roundsSinceTodo = 0;
 		}
 
 		// Clear the per-turn bash-intent budget so the next turn starts fresh.
