@@ -537,7 +537,7 @@ Response:
 }
 ```
 
-`tokens` contains assistant usage totals across all session entries, including history that was compacted away. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
+`tokens` contains assistant usage totals for the current session state. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
 
