@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { defineTool } from "../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -112,7 +113,7 @@ describe("AgentSession dynamic tool registration", () => {
 			sessionManager,
 			resourceLoader,
 			customTools: [
-				{
+				defineTool({
 					name: "sdk_tool",
 					label: "SDK Tool",
 					description: "Tool registered through createAgentSession",
@@ -121,7 +122,7 @@ describe("AgentSession dynamic tool registration", () => {
 						content: [{ type: "text", text: "ok" }],
 						details: {},
 					}),
-				},
+				}),
 			],
 		});
 

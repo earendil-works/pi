@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { JsonAgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -40,7 +40,7 @@ describe("AgentSession bash and persistence characterization", () => {
 		const toolRelease = new Promise<void>((resolve) => {
 			releaseToolExecution = resolve;
 		});
-		const waitTool: AgentTool = {
+		const waitTool: JsonAgentTool = {
 			name: "wait",
 			label: "Wait",
 			description: "Wait for release",
@@ -133,7 +133,7 @@ describe("AgentSession bash and persistence characterization", () => {
 	});
 
 	it("persists user, assistant, toolResult, and custom messages in order", async () => {
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo text back",

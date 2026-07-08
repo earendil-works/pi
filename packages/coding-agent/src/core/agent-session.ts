@@ -866,13 +866,25 @@ export class AgentSession {
 	 * Get all configured tools with name, description, parameter schema, prompt guidelines, and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
-			name: definition.name,
-			description: definition.description,
-			parameters: definition.parameters,
-			promptGuidelines: definition.promptGuidelines,
-			sourceInfo,
-		}));
+		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => {
+			if ("parameters" in definition) {
+				return {
+					name: definition.name,
+					description: definition.description,
+					parameters: definition.parameters,
+					promptGuidelines: definition.promptGuidelines,
+					sourceInfo,
+				};
+			}
+			return {
+				type: "freeform",
+				name: definition.name,
+				description: definition.description,
+				format: definition.format,
+				promptGuidelines: definition.promptGuidelines,
+				sourceInfo,
+			};
+		});
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -2457,7 +2469,7 @@ export class AgentSession {
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
-		for (const tool of wrappedExtensionTools as AgentTool[]) {
+		for (const tool of wrappedExtensionTools) {
 			toolRegistry.set(tool.name, tool);
 		}
 		this._toolRegistry = toolRegistry;

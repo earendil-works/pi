@@ -20,6 +20,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	FreeformToolFormat,
 	ImageContent,
 	Model,
 	OAuthCredentials,
@@ -431,10 +432,7 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	isError: boolean;
 }
 
-/**
- * Tool definition for registerTool().
- */
-export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
+interface ToolDefinitionBase {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
 	/** Human-readable label for UI */
@@ -445,14 +443,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
-	/** Parameter schema (TypeBox) */
-	parameters: TParams;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
 	renderShell?: "default" | "self";
-
-	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
-	prepareArguments?: (args: unknown) => Static<TParams>;
-
 	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
@@ -461,8 +453,18 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+}
 
-	/** Execute the tool. */
+/** JSON tool definition for registerTool(). */
+export interface JsonToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>
+	extends ToolDefinitionBase {
+	/** Parameter schema (TypeBox) */
+	parameters: TParams;
+
+	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
+	prepareArguments?: (args: unknown) => Static<TParams>;
+
+	/** Execute the JSON tool. */
 	execute(
 		toolCallId: string,
 		params: Static<TParams>,
@@ -483,7 +485,40 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	) => Component;
 }
 
-type AnyToolDefinition = ToolDefinition<any, any, any>;
+/** Freeform tool definition for registerTool(). */
+export interface FreeformToolDefinition<TDetails = unknown, TState = any> extends ToolDefinitionBase {
+	type: "freeform";
+	format: FreeformToolFormat;
+
+	/** Execute the freeform tool with raw model-provided input. */
+	execute(
+		toolCallId: string,
+		input: string,
+		signal: AbortSignal | undefined,
+		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
+		ctx: ExtensionContext,
+	): Promise<AgentToolResult<TDetails>>;
+
+	/** Custom rendering for tool call display */
+	renderCall?: (input: string, theme: Theme, context: ToolRenderContext<TState, string>) => Component;
+
+	/** Custom rendering for tool result display */
+	renderResult?: (
+		result: AgentToolResult<TDetails>,
+		options: ToolRenderResultOptions,
+		theme: Theme,
+		context: ToolRenderContext<TState, string>,
+	) => Component;
+}
+
+/** Tool definition for registerTool(). Bare ToolDefinition is the JSON/freeform union; ToolDefinition<typeof schema> is JSON-only. */
+export type ToolDefinition<TParams extends TSchema | never = never, TDetails = unknown, TState = any> = [
+	TParams,
+] extends [never]
+	? JsonToolDefinition<any, any, any> | FreeformToolDefinition<any, any>
+	: JsonToolDefinition<TParams, TDetails, TState>;
+
+type AnyToolDefinition = JsonToolDefinition<any, any, any> | FreeformToolDefinition<any, any>;
 
 /**
  * Preserve parameter inference for standalone tool definitions.
@@ -493,9 +528,13 @@ type AnyToolDefinition = ToolDefinition<any, any, any>;
  * `unknown`.
  */
 export function defineTool<TParams extends TSchema, TDetails = unknown, TState = any>(
-	tool: ToolDefinition<TParams, TDetails, TState>,
-): ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition {
-	return tool as ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition;
+	tool: JsonToolDefinition<TParams, TDetails, TState>,
+): JsonToolDefinition<TParams, TDetails, TState>;
+export function defineTool<TDetails = unknown, TState = any>(
+	tool: FreeformToolDefinition<TDetails, TState>,
+): FreeformToolDefinition<TDetails, TState>;
+export function defineTool(tool: AnyToolDefinition): AnyToolDefinition {
+	return tool;
 }
 
 // ============================================================================
@@ -1216,8 +1255,9 @@ export interface ExtensionAPI {
 
 	/** Register a tool that the LLM can call. */
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
-		tool: ToolDefinition<TParams, TDetails, TState>,
+		tool: JsonToolDefinition<TParams, TDetails, TState>,
 	): void;
+	registerTool<TDetails = unknown, TState = any>(tool: FreeformToolDefinition<TDetails, TState>): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -1518,10 +1558,14 @@ export type GetSessionNameHandler = () => string | undefined;
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
-	sourceInfo: SourceInfo;
-};
+/** Tool info with schema or freeform format, prompt guidelines, and source metadata. */
+export type ToolInfo =
+	| (Pick<JsonToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+			sourceInfo: SourceInfo;
+	  })
+	| (Pick<FreeformToolDefinition, "type" | "name" | "description" | "format" | "promptGuidelines"> & {
+			sourceInfo: SourceInfo;
+	  });
 
 export type GetAllToolsHandler = () => ToolInfo[];
 

@@ -3,7 +3,7 @@ import { Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
-import type { ToolDefinition } from "../src/core/extensions/types.ts";
+import type { JsonToolDefinition, ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
@@ -11,7 +11,7 @@ import { ToolExecutionComponent } from "../src/modes/interactive/components/tool
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
-function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
+function createBaseToolDefinition(name = "custom_tool"): JsonToolDefinition {
 	return {
 		name,
 		label: name,
@@ -296,7 +296,7 @@ describe("ToolExecutionComponent parity", () => {
 
 	test("shares renderer state across custom call and result slots", () => {
 		type RenderState = { token?: string };
-		const toolDefinition: ToolDefinition<any, unknown, RenderState> = {
+		const toolDefinition: JsonToolDefinition<any, unknown, RenderState> = {
 			...createBaseToolDefinition(),
 			renderCall: (_args, _theme, context) => {
 				context.state.token ??= "shared-token";
@@ -323,7 +323,7 @@ describe("ToolExecutionComponent parity", () => {
 	});
 
 	test("exposes args in render result context", () => {
-		const toolDefinition: ToolDefinition = {
+		const toolDefinition: JsonToolDefinition = {
 			...createBaseToolDefinition(),
 			renderCall: () => new Text("call", 0, 0),
 			renderResult: (_result, _options, _theme, context) =>

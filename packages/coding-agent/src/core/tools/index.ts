@@ -78,7 +78,7 @@ import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.t
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
 import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
 
-export type Tool = AgentTool<any>;
+export type Tool = AgentTool;
 export type ToolDef = ToolDefinition<any, any>;
 export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
 export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);

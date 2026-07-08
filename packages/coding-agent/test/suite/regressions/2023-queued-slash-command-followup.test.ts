@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { JsonAgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -21,7 +21,7 @@ describe("issue #2023 queued slash-command follow-up", () => {
 		const toolRelease = new Promise<void>((resolve) => {
 			releaseToolExecution = resolve;
 		});
-		const waitTool: AgentTool = {
+		const waitTool: JsonAgentTool = {
 			name: "wait",
 			label: "Wait",
 			description: "Wait for the test to release execution",

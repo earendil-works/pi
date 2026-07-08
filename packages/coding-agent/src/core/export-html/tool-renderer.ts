@@ -8,7 +8,12 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderContext } from "../extensions/types.ts";
+import type {
+	FreeformToolDefinition,
+	JsonToolDefinition,
+	ToolDefinition,
+	ToolRenderContext,
+} from "../extensions/types.ts";
 import { ansiLinesToHtml } from "./ansi-to-html.ts";
 
 export interface ToolHtmlRendererDeps {
@@ -53,6 +58,24 @@ function trimRenderedResultLines(lines: string[]): string[] {
 	while (start < end && isBlankRenderedLine(lines[start])) start++;
 	while (end > start && isBlankRenderedLine(lines[end - 1])) end--;
 	return lines.slice(start, end);
+}
+
+function renderJsonCall(
+	toolDef: JsonToolDefinition,
+	args: unknown,
+	theme: Theme,
+	context: ToolRenderContext,
+): Component | undefined {
+	return toolDef.renderCall?.(args, theme, context);
+}
+
+function renderFreeformCall(
+	toolDef: FreeformToolDefinition,
+	args: unknown,
+	theme: Theme,
+	context: ToolRenderContext,
+): Component | undefined {
+	return typeof args === "string" ? toolDef.renderCall?.(args, theme, context) : undefined;
 }
 
 export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRenderer {
@@ -104,11 +127,21 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 					return undefined;
 				}
 
-				const component = toolDef.renderCall(
-					args,
-					theme,
-					createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
-				);
+				const component =
+					"parameters" in toolDef
+						? renderJsonCall(
+								toolDef,
+								args,
+								theme,
+								createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
+							)
+						: renderFreeformCall(
+								toolDef,
+								args,
+								theme,
+								createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
+							);
+				if (!component) return undefined;
 				renderedCallComponents.set(toolCallId, component);
 				const lines = component.render(width);
 				return ansiLinesToHtml(lines);

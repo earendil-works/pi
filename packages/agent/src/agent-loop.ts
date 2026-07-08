@@ -21,6 +21,7 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
+	JsonAgentTool,
 	StreamFn,
 } from "./types.ts";
 
@@ -28,6 +29,10 @@ export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
 function toolCallEventArgs(toolCall: AgentToolCall): Record<string, any> {
 	return isJsonToolCall(toolCall) ? toolCall.arguments : { input: toolCall.input };
+}
+
+function isJsonAgentTool(tool: AgentTool): tool is JsonAgentTool<any> {
+	return !("type" in tool && tool.type === "freeform");
 }
 
 /**
@@ -564,7 +569,7 @@ async function executeToolCallsParallel(
 type PreparedToolCall = {
 	kind: "prepared";
 	toolCall: AgentToolCall;
-	tool: AgentTool<any>;
+	tool: JsonAgentTool<any>;
 	args: unknown;
 };
 
@@ -591,7 +596,7 @@ function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): b
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
 }
 
-function prepareToolCallArguments(tool: AgentTool<any>, toolCall: JsonToolCall): JsonToolCall {
+function prepareToolCallArguments(tool: JsonAgentTool<any>, toolCall: JsonToolCall): JsonToolCall {
 	if (!tool.prepareArguments) {
 		return toolCall;
 	}
@@ -625,6 +630,13 @@ async function prepareToolCall(
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(`Tool ${toolCall.name} uses unsupported freeform input`),
+			isError: true,
+		};
+	}
+	if (!isJsonAgentTool(tool)) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult(`Tool ${toolCall.name} does not accept JSON input`),
 			isError: true,
 		};
 	}

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, JsonAgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -22,7 +22,7 @@ async function createWaitingHarness(
 	const toolRelease = new Promise<void>((resolve) => {
 		releaseToolExecution = resolve;
 	});
-	const waitTool: AgentTool = {
+	const waitTool: JsonAgentTool = {
 		name: "wait",
 		label: "Wait",
 		description: "Wait for release",

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { JsonAgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -169,7 +169,7 @@ describe("AgentSession retry and event characterization", () => {
 
 	it("waits for the full loop when retry recovery produces tool calls", async () => {
 		const toolRuns: string[] = [];
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo text back",
@@ -259,7 +259,7 @@ describe("AgentSession retry and event characterization", () => {
 
 	it("emits the expected event order for a tool call turn", async () => {
 		const toolRuns: string[] = [];
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo text back",

@@ -4,6 +4,7 @@ import type {
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
+	FreeformTool,
 	ImageContent,
 	JsonTool,
 	Message,
@@ -327,8 +328,8 @@ export interface AgentState {
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
 	/** Available tools. Assigning a new array copies the top-level array. */
-	set tools(tools: AgentTool<any>[]);
-	get tools(): AgentTool<any>[];
+	set tools(tools: AgentTool[]);
+	get tools(): AgentTool[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
@@ -367,22 +368,9 @@ export interface AgentToolResult<T> {
  */
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-/** Tool definition used by the agent runtime. */
-export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends JsonTool<TParameters> {
+interface AgentToolBase {
 	/** Human-readable label for UI display. */
 	label: string;
-	/**
-	 * Optional compatibility shim for raw tool-call arguments before schema validation.
-	 * Must return an object that matches `TParameters`.
-	 */
-	prepareArguments?: (args: unknown) => Static<TParameters>;
-	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
-	execute: (
-		toolCallId: string,
-		params: Static<TParameters>,
-		signal?: AbortSignal,
-		onUpdate?: AgentToolUpdateCallback<TDetails>,
-	) => Promise<AgentToolResult<TDetails>>;
 	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
@@ -393,6 +381,38 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	executionMode?: ToolExecutionMode;
 }
 
+/** JSON-schema tool definition used by the agent runtime. */
+export interface JsonAgentTool<TParameters extends TSchema = TSchema, TDetails = any>
+	extends JsonTool<TParameters>,
+		AgentToolBase {
+	/**
+	 * Optional compatibility shim for raw tool-call arguments before schema validation.
+	 * Must return an object that matches `TParameters`.
+	 */
+	prepareArguments?: (args: unknown) => Static<TParameters>;
+	/** Execute the JSON tool call. Throw on failure instead of encoding errors in `content`. */
+	execute: (
+		toolCallId: string,
+		params: Static<TParameters>,
+		signal?: AbortSignal,
+		onUpdate?: AgentToolUpdateCallback<TDetails>,
+	) => Promise<AgentToolResult<TDetails>>;
+}
+
+/** Freeform tool definition used by the agent runtime. */
+export interface FreeformAgentTool<TDetails = any> extends FreeformTool, AgentToolBase {
+	/** Execute the freeform tool call with the raw model-provided input. */
+	execute: (
+		toolCallId: string,
+		input: string,
+		signal?: AbortSignal,
+		onUpdate?: AgentToolUpdateCallback<TDetails>,
+	) => Promise<AgentToolResult<TDetails>>;
+}
+
+/** Tool definition used by the agent runtime. */
+export type AgentTool = JsonAgentTool | FreeformAgentTool;
+
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
 	/** System prompt included with the request. */
@@ -400,7 +420,7 @@ export interface AgentContext {
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for this run. */
-	tools?: AgentTool<any>[];
+	tools?: AgentTool[];
 }
 
 /**

@@ -9,7 +9,7 @@ import {
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
+import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, JsonAgentTool } from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -239,7 +239,7 @@ describe("agentLoop with AgentMessage", () => {
 	it("should handle tool calls and results", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -310,7 +310,7 @@ describe("agentLoop with AgentMessage", () => {
 	it("should not execute tool calls from a length-truncated assistant message", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -383,7 +383,7 @@ describe("agentLoop with AgentMessage", () => {
 	it("should execute mutated beforeToolCall args without revalidation", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: Array<string | number> = [];
-		const tool: AgentTool<typeof toolSchema, { value: string | number }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string | number }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -446,7 +446,7 @@ describe("agentLoop with AgentMessage", () => {
 		const replaceSchema = Type.Object({ oldText: Type.String(), newText: Type.String() });
 		const toolSchema = Type.Object({ edits: Type.Array(replaceSchema) });
 		const executed: Array<Array<{ oldText: string; newText: string }>> = [];
-		const tool: AgentTool<typeof toolSchema, { count: number }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { count: number }> = {
 			name: "edit",
 			label: "Edit",
 			description: "Edit tool",
@@ -532,7 +532,7 @@ describe("agentLoop with AgentMessage", () => {
 			releaseFirst = resolve;
 		});
 
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -627,7 +627,7 @@ describe("agentLoop with AgentMessage", () => {
 	it("should inject queued messages after all tool calls complete", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -745,7 +745,7 @@ describe("agentLoop with AgentMessage", () => {
 			releaseFirst = resolve;
 		});
 
-		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
+		const slowTool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "slow",
 			label: "Slow",
 			description: "Slow tool",
@@ -833,7 +833,7 @@ describe("agentLoop with AgentMessage", () => {
 			releaseSlow = resolve;
 		});
 
-		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
+		const slowTool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "slow",
 			label: "Slow",
 			description: "Slow tool",
@@ -851,7 +851,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		};
 
-		const fastTool: AgentTool<typeof toolSchema, { value: string }> = {
+		const fastTool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "fast",
 			label: "Fast",
 			description: "Fast tool",
@@ -921,7 +921,7 @@ describe("agentLoop with AgentMessage", () => {
 			releaseFirst = resolve;
 		});
 
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -994,7 +994,7 @@ describe("agentLoop with AgentMessage", () => {
 
 	it("should use prepareNextTurn snapshot before continuing", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -1076,7 +1076,7 @@ describe("agentLoop with AgentMessage", () => {
 	it("should stop after the current turn when shouldStopAfterTurn returns true", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -1172,7 +1172,7 @@ describe("agentLoop with AgentMessage", () => {
 
 	it("should stop after a tool batch when every tool result sets terminate=true", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -1224,7 +1224,7 @@ describe("agentLoop with AgentMessage", () => {
 
 	it("should continue after parallel tool calls when not all tool results terminate", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",
@@ -1295,7 +1295,7 @@ describe("agentLoop with AgentMessage", () => {
 
 	it("should allow afterToolCall to mark a tool batch as terminating", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+		const tool: JsonAgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo tool",

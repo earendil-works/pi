@@ -81,8 +81,9 @@ describe("createAgentSession session manager defaults", () => {
 		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
 
 		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", { command: "pwd" });
+		expect(bashTool && "parameters" in bashTool).toBe(true);
+		if (!bashTool || !("parameters" in bashTool)) throw new Error("bash tool not found");
+		const result = await bashTool.execute("test", { command: "pwd" });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)

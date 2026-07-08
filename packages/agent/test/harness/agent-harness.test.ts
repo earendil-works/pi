@@ -13,7 +13,7 @@ import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
 import { Session } from "../../src/harness/session/session.ts";
 import type { PromptTemplate, Skill } from "../../src/harness/types.ts";
-import type { AgentMessage, AgentTool } from "../../src/types.ts";
+import type { AgentMessage, AgentTool, JsonAgentTool } from "../../src/types.ts";
 import { calculateTool } from "../utils/calculate.ts";
 import { getCurrentTimeTool } from "../utils/get-current-time.ts";
 
@@ -469,7 +469,7 @@ describe("AgentHarness", () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		type AppTool = AgentTool<typeof calculateTool.parameters, undefined> & { source: "builtin" | "extension" };
+		type AppTool = JsonAgentTool<typeof calculateTool.parameters, undefined> & { source: "builtin" | "extension" };
 		const inspectTool: AppTool = { ...calculateTool, name: "inspect", source: "builtin" };
 		const searchTool: AppTool = { ...calculateTool, name: "search", source: "extension" };
 		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AppTool>({

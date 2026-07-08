@@ -77,7 +77,7 @@ function createMutableAgentState(
 		get tools() {
 			return tools;
 		},
-		set tools(nextTools: AgentTool<any>[]) {
+		set tools(nextTools: AgentTool[]) {
 			tools = nextTools.slice();
 		},
 		get messages() {

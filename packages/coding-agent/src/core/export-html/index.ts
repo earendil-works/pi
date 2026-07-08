@@ -132,7 +132,10 @@ interface SessionData {
 	entries: ReturnType<SessionManager["getEntries"]>;
 	leafId: string | null;
 	systemPrompt?: string;
-	tools?: Array<Pick<ToolDefinition, "name" | "description" | "parameters">>;
+	tools?: Array<
+		| Pick<Extract<ToolDefinition, { parameters: unknown }>, "name" | "description" | "parameters">
+		| Pick<Extract<ToolDefinition, { type: "freeform" }>, "type" | "name" | "description" | "format">
+	>;
 	/** Pre-rendered HTML for custom tool calls/results, keyed by tool call ID */
 	renderedTools?: Record<string, RenderedToolHtml>;
 }
@@ -266,7 +269,12 @@ export async function exportSessionToHtml(
 		entries,
 		leafId: sm.getLeafId(),
 		systemPrompt: state?.systemPrompt,
-		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+		tools: state?.tools?.map((tool) => {
+			if ("parameters" in tool) {
+				return { name: tool.name, description: tool.description, parameters: tool.parameters };
+			}
+			return { type: "freeform" as const, name: tool.name, description: tool.description, format: tool.format };
+		}),
 		renderedTools,
 	};
 

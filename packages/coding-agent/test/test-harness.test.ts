@@ -3,7 +3,7 @@
  * Validates that the faux provider and session factory work correctly.
  */
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { JsonAgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,7 +49,7 @@ describe("test harness", () => {
 
 	it("tool call response triggers tool execution", async () => {
 		let toolExecuted = false;
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo back",
@@ -195,7 +195,7 @@ describe("test harness", () => {
 	});
 
 	it("streams tool call deltas", async () => {
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo back",
@@ -222,7 +222,7 @@ describe("test harness", () => {
 	});
 
 	it("streams thinking then text then tool call in order", async () => {
-		const echoTool: AgentTool = {
+		const echoTool: JsonAgentTool = {
 			name: "echo",
 			label: "Echo",
 			description: "Echo back",

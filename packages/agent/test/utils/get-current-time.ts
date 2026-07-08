@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import type { AgentTool, AgentToolResult } from "../../src/types.ts";
+import type { AgentToolResult, JsonAgentTool } from "../../src/types.ts";
 
 export interface GetCurrentTimeResult extends AgentToolResult<{ utcTimestamp: number }> {}
 
@@ -35,7 +35,7 @@ const getCurrentTimeSchema = Type.Object({
 
 type GetCurrentTimeParams = Static<typeof getCurrentTimeSchema>;
 
-export const getCurrentTimeTool: AgentTool<typeof getCurrentTimeSchema, { utcTimestamp: number }> = {
+export const getCurrentTimeTool: JsonAgentTool<typeof getCurrentTimeSchema, { utcTimestamp: number }> = {
 	label: "Current Time",
 	name: "get_current_time",
 	description: "Get the current date and time",
