@@ -60,7 +60,7 @@ import {
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
-import { CACHE_TTL_MS, detectCacheMiss } from "../../core/cache-stats.ts";
+import { CACHE_TTL_MS, type CacheMiss, collectCacheMisses, detectCacheMiss } from "../../core/cache-stats.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -3277,6 +3277,9 @@ export class InteractiveMode {
 	): void {
 		this.pendingTools.clear();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
+		// Cache-miss notices are not persisted; re-derive them from the full entry
+		// list and re-inject them after the assistant messages that paid for them.
+		const cacheMisses = collectCacheMisses(this.sessionManager.getEntries(), this.session.modelRegistry);
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -3328,6 +3331,10 @@ export class InteractiveMode {
 						}
 					}
 				}
+				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+					const miss = cacheMisses.get(message);
+					if (miss) this.addCacheMissNotice(miss);
+				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = renderedPendingTools.get(message.toolCallId);
@@ -3374,7 +3381,11 @@ export class InteractiveMode {
 	private maybeShowCacheMissNotice(message: AssistantMessage): void {
 		// Entries don't contain `message` yet: message_end fires before persistence.
 		const miss = detectCacheMiss(this.sessionManager.getEntries(), message, this.session.modelRegistry);
-		if (!miss || (miss.missedTokens < 20_000 && miss.missedCost < 0.05)) return;
+		if (miss) this.addCacheMissNotice(miss);
+	}
+
+	private addCacheMissNotice(miss: CacheMiss): void {
+		if (miss.missedTokens < 20_000 && miss.missedCost < 0.05) return;
 
 		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
 		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
@@ -5597,13 +5608,21 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "Tool Results:")} ${stats.toolResults}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n\n`;
 		info += `${theme.bold("Tokens")}\n`;
-		info += `${theme.fg("dim", "Input:")} ${stats.tokens.input.toLocaleString()} ${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
-		if (stats.tokens.cacheRead > 0 || stats.tokens.cacheWrite > 0) {
-			const promptTokens = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
-			const hitRate =
-				promptTokens > 0 ? ` (${((stats.tokens.cacheRead / promptTokens) * 100).toFixed(1)}% hit)` : "";
-			info += `${theme.fg("dim", "Cache:")} ${stats.tokens.cacheRead.toLocaleString()} ${theme.fg("dim", "read")} ${stats.tokens.cacheWrite.toLocaleString()} ${theme.fg("dim", "written")}${theme.fg("dim", hitRate)}\n`;
+		// "Input" is the full prompt volume. With cache activity, split it into
+		// cached (served from cache) vs uncached (everything else) - the only
+		// provider-independent split. Cache writes, where reported, are a detail
+		// of the uncached portion.
+		const { input, cacheRead, cacheWrite } = stats.tokens;
+		const promptTokens = input + cacheRead + cacheWrite;
+		info += `${theme.fg("dim", "Input:")} ${promptTokens.toLocaleString()}\n`;
+		if (promptTokens > 0 && (cacheRead > 0 || cacheWrite > 0)) {
+			const hitRate = theme.fg("dim", `(${((cacheRead / promptTokens) * 100).toFixed(1)}%)`);
+			info += `  ${theme.fg("dim", "Cached:")} ${cacheRead.toLocaleString()} ${hitRate}\n`;
+			const written =
+				cacheWrite > 0 ? ` ${theme.fg("dim", `(${cacheWrite.toLocaleString()} written to cache)`)}` : "";
+			info += `  ${theme.fg("dim", "Uncached:")} ${(input + cacheWrite).toLocaleString()}${written}\n`;
 		}
+		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {

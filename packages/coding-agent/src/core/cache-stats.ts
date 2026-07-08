@@ -92,9 +92,10 @@ function asPreviousRequest(message: AssistantMessage): PreviousRequest | undefin
 function scan(
 	entries: SessionEntry[],
 	models: ModelPriceSource,
-): { prev: PreviousRequest | undefined; totals: CacheWasteTotals } {
+): { prev: PreviousRequest | undefined; totals: CacheWasteTotals; misses: Map<AssistantMessage, CacheMiss> } {
 	let prev: PreviousRequest | undefined;
 	const totals: CacheWasteTotals = { missedTokens: 0, missedCost: 0, missCount: 0 };
+	const misses = new Map<AssistantMessage, CacheMiss>();
 
 	for (const entry of entries) {
 		if (entry.type === "compaction" || entry.type === "branch_summary") {
@@ -110,11 +111,12 @@ function scan(
 				totals.missedTokens += miss.missedTokens;
 				totals.missedCost += miss.missedCost;
 				totals.missCount += 1;
+				misses.set(entry.message, miss);
 			}
 			prev = asPreviousRequest(entry.message) ?? prev;
 		}
 	}
-	return { prev, totals };
+	return { prev, totals, misses };
 }
 
 /**
@@ -123,6 +125,18 @@ function scan(
  */
 export function computeCacheWaste(entries: SessionEntry[], models: ModelPriceSource): CacheWasteTotals {
 	return scan(entries, models).totals;
+}
+
+/**
+ * All counted cache misses across a session, keyed by the assistant message
+ * (by reference) that paid for them. Used to re-derive transcript notices when
+ * rebuilding the chat from entries (resume, post-compaction rebuild).
+ */
+export function collectCacheMisses(
+	entries: SessionEntry[],
+	models: ModelPriceSource,
+): Map<AssistantMessage, CacheMiss> {
+	return scan(entries, models).misses;
 }
 
 /**

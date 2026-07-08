@@ -1,6 +1,11 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { computeCacheWaste, detectCacheMiss, type ModelPriceSource } from "../src/core/cache-stats.ts";
+import {
+	collectCacheMisses,
+	computeCacheWaste,
+	detectCacheMiss,
+	type ModelPriceSource,
+} from "../src/core/cache-stats.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
@@ -86,6 +91,15 @@ describe("computeCacheWaste", () => {
 		const b = assistant({ input: 110_000 });
 		const totals = computeCacheWaste([entry(a), entry(b)], models);
 		expect(totals.missedTokens).toBe(0);
+	});
+});
+
+describe("collectCacheMisses", () => {
+	it("maps counted misses to their assistant messages by reference", () => {
+		const missTurn = assistant({ cacheWrite: 110_000, cost: { cacheWrite: 0.4125 }, timestamp: 120_000 });
+		const misses = collectCacheMisses([entry(turn1), entry(turn2), entry(missTurn)], models);
+		expect(misses.size).toBe(1);
+		expect(misses.get(missTurn)?.missedTokens).toBe(105_000);
 	});
 });
 
