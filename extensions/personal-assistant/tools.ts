@@ -855,6 +855,7 @@ export function registerTools(pi: ExtensionAPI): void {
 			"  3. Mark steps as completed when done — update after EVERY step, do not batch completions",
 			"  4. Up to 3 items can be in_progress at a time (for parallel workflows)",
 			"  5. Simple single-step tasks do not need a plan — use Todowrite only when it helps",
+			"  6. ALWAYS send the COMPLETE list including completed (done) items — never drop finished items from the array",
 			"",
 			"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
 		].join("\n");
@@ -986,14 +987,29 @@ export function registerTools(pi: ExtensionAPI): void {
 				};
 			}
 
-			todoItems = items.map((item) => ({
+			const reconciled = items.map((item) => ({
 				id: item.id,
 				content: item.content.trim(),
 				status: item.status as TodoStatus,
 			}));
+			// Preserve completed/cancelled items the model dropped from the
+			// array. The tool contract says "send the COMPLETE list" but in
+			// practice the model often omits done items after a status flip,
+			// which used to erase them from the display. We pull them back:
+			// inserted before new items so the "done" history stays visible.
+			const newIds = new Set(reconciled.map((t) => t.id));
+			const orphaned = todoItems.filter(
+				(t) => (t.status === "completed" || t.status === "cancelled") && !newIds.has(t.id),
+			);
+			todoItems = [...orphaned, ...reconciled];
+
+			const contentText = renderTodos();
+			const reapplied = orphaned.length > 0
+				? `${contentText}\n\nNote: ${orphaned.length} completed/cancelled item(s) were omitted from your list and have been preserved. Always send the FULL list including done items.`
+				: contentText;
 
 			return {
-				content: [{ type: "text", text: renderTodos() }],
+				content: [{ type: "text", text: reapplied }],
 				details: { items: todoItems },
 			};
 		},

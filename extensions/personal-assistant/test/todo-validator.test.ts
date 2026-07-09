@@ -95,9 +95,12 @@ describe("todowrite tool — execute integration", () => {
 	let execute: Execute;
 
 	beforeEach(() => {
+		const handlers: Record<string, (event: unknown) => unknown> = {};
 		const tools = new Map<string, { name: string; execute: Execute }>();
 		const pi = {
-			on: (_event: string, _handler: unknown) => {},
+			on: (event: string, handler: (event: unknown) => unknown) => {
+				handlers[event] = handler;
+			},
 			registerTool: (tool: { name: string; execute: Execute }) => {
 				tools.set(tool.name, tool);
 			},
@@ -106,6 +109,7 @@ describe("todowrite tool — execute integration", () => {
 		const tool = tools.get("todowrite");
 		if (!tool) throw new Error("todowrite tool not registered");
 		execute = tool.execute;
+		handlers["before_agent_start"]({ systemPrompt: "" });
 	});
 
 	it("transcript bug scenario: full-list re-send with one item flipped to in_progress succeeds", async () => {
@@ -187,5 +191,98 @@ describe("todowrite tool — execute integration", () => {
 		expect(trigger.details.currentTodos).toContain("task a");
 		expect(trigger.details.currentTodos).toContain("task b");
 		expect(trigger.details.currentTodos).toMatch(/1\/2 completed/);
+	});
+});
+
+describe("todowrite — preserves completed/cancelled items the model dropped (merge defense)", () => {
+	type Execute = (
+		toolCallId: string,
+		params: { items: TodoItem[] },
+	) => Promise<{ content: Array<{ type: string; text: string }>; details: { error?: string; items?: TodoItem[]; currentTodos?: string } }>;
+
+	let execute: Execute;
+
+	beforeEach(() => {
+		const handlers: Record<string, (event: unknown) => unknown> = {};
+		const tools = new Map<string, { name: string; execute: Execute }>();
+		const pi = {
+			on: (event: string, handler: (event: unknown) => unknown) => {
+				handlers[event] = handler;
+			},
+			registerTool: (tool: { name: string; execute: Execute }) => {
+				tools.set(tool.name, tool);
+			},
+		};
+		registerTools(pi as unknown as Parameters<typeof registerTools>[0]);
+		const tool = tools.get("todowrite");
+		if (!tool) throw new Error("todowrite tool not registered");
+		execute = tool.execute;
+		// Reset module-level todoItems via the before_agent_start handler
+		// to prevent leakage from prior tests in this file.
+		handlers["before_agent_start"]({ systemPrompt: "" });
+	});
+
+	it("RED: model drops completed ids from a status-flip update -> execute preserves them", async () => {
+		const firstList: TodoItem[] = [
+			{ id: "d1", content: "step 1", status: "completed" },
+			{ id: "d2", content: "step 2", status: "completed" },
+			{ id: "d3", content: "step 3", status: "completed" },
+			{ id: "d4", content: "step 4", status: "in_progress" },
+			{ id: "d5", content: "step 5", status: "pending" },
+			{ id: "d6", content: "step 6", status: "pending" },
+		];
+		const r1 = await execute("c1", { items: firstList });
+		expect(r1.details.error).toBeUndefined();
+		expect(r1.details.items).toHaveLength(6);
+
+		const dropped: TodoItem[] = [
+			{ id: "d4", content: "step 4", status: "completed" },
+			{ id: "d6", content: "step 6", status: "in_progress" },
+		];
+		const r2 = await execute("c2", { items: dropped });
+		expect(r2.details.error).toBeUndefined();
+
+		const ids = r2.details.items?.map((i) => i.id);
+		expect(ids).toEqual(["d1", "d2", "d3", "d4", "d6"]);
+
+		expect(r2.details.items?.find((i) => i.id === "d5")).toBeUndefined();
+
+		expect(r2.content[0]?.text).toMatch(/4\/5 completed/);
+		expect(r2.content[0]?.text).toMatch(/preserved/i);
+	});
+
+	it("cancelled orphans are also preserved", async () => {
+		const firstList: TodoItem[] = [
+			{ id: "a1", content: "x", status: "cancelled" },
+			{ id: "a2", content: "y", status: "completed" },
+			{ id: "a3", content: "z", status: "in_progress" },
+		];
+		await execute("c1", { items: firstList });
+
+		const dropped: TodoItem[] = [{ id: "a3", content: "z", status: "completed" }];
+		const r2 = await execute("c2", { items: dropped });
+		const ids = r2.details.items?.map((i) => i.id);
+		expect(ids).toEqual(["a1", "a2", "a3"]);
+		expect(r2.details.items?.find((i) => i.id === "a1")?.status).toBe("cancelled");
+	});
+
+	it("no orphans -> no note appended, behavior unchanged", async () => {
+		const firstList: TodoItem[] = [
+			{ id: "b1", content: "x", status: "completed" },
+			{ id: "b2", content: "y", status: "in_progress" },
+		];
+		await execute("c1", { items: firstList });
+
+		const fullUpdate: TodoItem[] = [
+			{ id: "b1", content: "x", status: "completed" },
+			{ id: "b2", content: "y", status: "completed" },
+		];
+		const r2 = await execute("c2", { items: fullUpdate });
+		expect(r2.details.error).toBeUndefined();
+		expect(r2.details.items).toEqual([
+			{ id: "b1", content: "x", status: "completed" },
+			{ id: "b2", content: "y", status: "completed" },
+		]);
+		expect(r2.content[0]?.text).not.toMatch(/preserved/i);
 	});
 });
