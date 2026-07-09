@@ -91,7 +91,7 @@ export const OPENAI_CODEX_MODELS = {
 			cacheRead: 0.1,
 			cacheWrite: 0,
 		},
-		contextWindow: 272000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-codex-responses">,
 	"gpt-5.6-sol": {
@@ -109,7 +109,7 @@ export const OPENAI_CODEX_MODELS = {
 			cacheRead: 0.5,
 			cacheWrite: 0,
 		},
-		contextWindow: 272000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-codex-responses">,
 	"gpt-5.6-terra": {
@@ -127,7 +127,7 @@ export const OPENAI_CODEX_MODELS = {
 			cacheRead: 0.25,
 			cacheWrite: 0,
 		},
-		contextWindow: 272000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-codex-responses">,
 } as const;
