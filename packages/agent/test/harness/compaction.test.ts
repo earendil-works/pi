@@ -650,6 +650,88 @@ describe("harness compaction", () => {
 	});
 });
 
+describe("serializeConversation — drops harness-injected hmr/reminder user messages", () => {
+	const userText = (text: string): Message => ({
+		role: "user",
+		content: [{ type: "text", text }],
+		timestamp: Date.now(),
+	});
+	const assistantText = (text: string): Message => ({
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-sonnet-4-5",
+		usage: createMockUsage(0, 0),
+		stopReason: "stop",
+		timestamp: Date.now(),
+	});
+	const toolResultText = (text: string): Message => ({
+		role: "toolResult",
+		toolCallId: "tc1",
+		toolName: "read",
+		content: [{ type: "text", text }],
+		isError: false,
+		timestamp: Date.now(),
+	});
+
+	it("drops a user message whose entire content is a single <hmr note>", () => {
+		const messages = convertMessages([userText("<hmr note>You have 1 incomplete todo...</hmr note>")]);
+		expect(serializeConversation(messages)).toBe("");
+	});
+
+	it("drops a user message with only <reminder>...</reminder>", () => {
+		const messages = convertMessages([userText("<reminder>Update your todos.</reminder>")]);
+		expect(serializeConversation(messages)).toBe("");
+	});
+
+	it("drops a user message with multiple concatenated hmr blocks (legacy noise)", () => {
+		const messages = convertMessages([
+			userText("<hmr note>foo</hmr note>\n\n<hmr>bar</hmr>\n\n<reminder>baz</reminder>"),
+		]);
+		expect(serializeConversation(messages)).toBe("");
+	});
+
+	it("preserves a real user message even when it mentions '<hmr note>' in the middle", () => {
+		const messages = convertMessages([userText("Hello <hmr note>x</hmr note> world")]);
+		const result = serializeConversation(messages);
+		expect(result).toContain("Hello");
+		expect(result).toContain("world");
+		expect(result).not.toBe("");
+	});
+
+	it("preserves assistant messages unconditionally (only user-role is filtered)", () => {
+		const messages = convertMessages([assistantText("<hmr note>x</hmr note>")]);
+		const result = serializeConversation(messages);
+		expect(result).toContain("[Assistant]:");
+		expect(result).toContain("<hmr note>x</hmr note>");
+	});
+
+	it("preserves toolResult messages unconditionally", () => {
+		const messages = convertMessages([toolResultText("<hmr note>x</hmr note>")]);
+		const result = serializeConversation(messages);
+		expect(result).toContain("[Tool result]:");
+		expect(result).toContain("<hmr note>x</hmr note>");
+	});
+
+	it("preserves a mixed sequence: real user, hmr-only user, real user — only the middle one is dropped", () => {
+		const messages = convertMessages([
+			userText("real ask"),
+			userText("<hmr note>noise</hmr note>"),
+			userText("more context"),
+		]);
+		const result = serializeConversation(messages);
+		expect(result).toContain("[User]: real ask");
+		expect(result).toContain("[User]: more context");
+		expect(result).not.toContain("<hmr note>");
+	});
+
+	it("whitespace-only-around-hmr is still pure noise", () => {
+		const messages = convertMessages([userText("   \n\n<hmr note>x</hmr note>\n\n   ")]);
+		expect(serializeConversation(messages)).toBe("");
+	});
+});
+
 function convertMessages(messages: Message[]): Message[] {
 	return messages;
 }

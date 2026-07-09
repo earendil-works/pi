@@ -98,20 +98,28 @@ function truncateForSummary(text: string, maxChars: number): string {
 	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
 }
 
+function extractUserText(msg: Message): string {
+	if (typeof msg.content === "string") return msg.content;
+	return msg.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("");
+}
+
+function isHmrOnlyNoise(text: string): boolean {
+	return /^\s*(<(?:hmr(?:\s+note)?|reminder)>[\s\S]*?<\/\s*(?:hmr(?:\s+note)?|reminder)>\s*)+\s*$/.test(text);
+}
+
 /** Serialize LLM messages to plain text for summarization prompts. */
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
-			const content =
-				typeof msg.content === "string"
-					? msg.content
-					: msg.content
-							.filter((c): c is { type: "text"; text: string } => c.type === "text")
-							.map((c) => c.text)
-							.join("");
-			if (content) parts.push(`[User]: ${content}`);
+			const content = extractUserText(msg);
+			if (!content) continue;
+			if (isHmrOnlyNoise(content)) continue;
+			parts.push(`[User]: ${content}`);
 		} else if (msg.role === "assistant") {
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
