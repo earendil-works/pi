@@ -98,6 +98,32 @@ describe("AssistantMessageComponent", () => {
 		expect(updatedLines.some((line) => line.startsWith("reasoning"))).toBe(true);
 	});
 
+	test("does not render OpenAI Responses comment separators in thinking", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{
+					type: "thinking",
+					thinking:
+						"**Planning CI test suite optimization**\n\n<!-- -->\n\n**Evaluating test duration reduction strategies**\n\n<!-- -->",
+				},
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			0,
+		);
+		const rendered = component
+			.render(100)
+			.map((line) => stripAnsi(line))
+			.join("\n");
+
+		expect(rendered).toContain("Planning CI test suite optimization");
+		expect(rendered).toContain("Evaluating test duration reduction strategies");
+		expect(rendered).not.toContain("<!-- -->");
+	});
+
 	test("uses configured output padding for user messages", () => {
 		initTheme("dark");
 

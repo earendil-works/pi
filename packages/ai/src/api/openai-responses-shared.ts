@@ -63,6 +63,10 @@ function parseTextSignature(
 	return { id: signature };
 }
 
+function sanitizeResponsesReasoningText(text: string): string {
+	return text.replace(/[ \t]*<!--\s*-->[ \t]*/g, "").replace(/\n{3,}/g, "\n\n");
+}
+
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	resolveServiceTier?: (
@@ -394,11 +398,12 @@ export async function processResponsesStream<TApi extends Api>(
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
 			if (!slot) continue;
-			slot.block.thinking += event.delta;
+			const previousThinking = slot.block.thinking;
+			slot.block.thinking = sanitizeResponsesReasoningText(slot.block.thinking + event.delta);
 			stream.push({
 				type: "thinking_delta",
 				contentIndex: slot.contentIndex,
-				delta: event.delta,
+				delta: slot.block.thinking.slice(previousThinking.length),
 				partial: output,
 			});
 		} else if (event.type === "response.reasoning_summary_part.done") {
@@ -477,7 +482,9 @@ export async function processResponsesStream<TApi extends Api>(
 			if (item.type === "reasoning" && slot?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
 				const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
-				slot.block.thinking = summaryText || contentText || slot.block.thinking;
+				slot.block.thinking = sanitizeResponsesReasoningText(
+					summaryText || contentText || slot.block.thinking,
+				).trimEnd();
 				slot.block.thinkingSignature = JSON.stringify(item);
 				stream.push({
 					type: "thinking_end",

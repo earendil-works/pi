@@ -6,6 +6,13 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
+function sanitizeThinkingDisplayText(text: string): string {
+	return text
+		.replace(/[ \t]*<!--\s*-->[ \t]*/g, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
 /**
  * Component that renders a complete assistant message
  */
@@ -87,7 +94,8 @@ export class AssistantMessageComponent extends Container {
 		this.contentContainer.clear();
 
 		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
+			(c) =>
+				(c.type === "text" && c.text.trim()) || (c.type === "thinking" && sanitizeThinkingDisplayText(c.thinking)),
 		);
 
 		if (hasVisibleContent) {
@@ -101,12 +109,19 @@ export class AssistantMessageComponent extends Container {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme));
-			} else if (content.type === "thinking" && content.thinking.trim()) {
+			} else if (content.type === "thinking") {
+				const thinkingText = sanitizeThinkingDisplayText(content.thinking);
+				if (!thinkingText) continue;
+
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
 				const hasVisibleContentAfter = message.content
 					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
+					.some(
+						(c) =>
+							(c.type === "text" && c.text.trim()) ||
+							(c.type === "thinking" && sanitizeThinkingDisplayText(c.thinking)),
+					);
 
 				if (this.hideThinkingBlock) {
 					// Show static thinking label when hidden
@@ -119,7 +134,7 @@ export class AssistantMessageComponent extends Container {
 				} else {
 					// Thinking traces in thinkingText color, italic
 					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), this.outputPad, 0, this.markdownTheme, {
+						new Markdown(thinkingText, this.outputPad, 0, this.markdownTheme, {
 							color: (text: string) => theme.fg("thinkingText", text),
 							italic: true,
 						}),
