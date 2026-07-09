@@ -730,12 +730,10 @@ const VALID_TRANSITIONS: Record<TodoStatus, TodoStatus[]> = {
 const MAX_IN_PROGRESS = 3;
 const MAX_ITEMS = 20;
 const PLAN_REMINDER_INTERVAL = 8;
-const MAX_FOLLOWUP_NUDGES = 3;
 
 let todoItems: TodoItem[] = [];
 let roundsSinceTodo = 0;
 let contextCount = 0;
-let followUpNudges = 0;
 
 function renderTodos(): string {
 	if (todoItems.length === 0) return "No todos.";
@@ -831,7 +829,6 @@ export function registerTools(pi: ExtensionAPI): void {
 		todoItems = [];
 		roundsSinceTodo = 0;
 		contextCount = 0;
-		followUpNudges = 0;
 
 		// Layer A: Inject remote paths prompt if satellite MCP server has remotePathPattern
 		const mcpConfig = loadMcpConfig();
@@ -915,32 +912,6 @@ export function registerTools(pi: ExtensionAPI): void {
 			roundsSinceTodo = 0;
 		} else if (hasActiveItems) {
 			roundsSinceTodo++;
-		}
-
-		// Prevent premature stop: if the model made no tool calls this turn
-		// (about to stop) but there are still incomplete todos, inject a
-		// follow-up message to force another turn. Safety-limited to avoid
-		// infinite nudge loops.
-		const stopReason =
-			"stopReason" in event.message
-				? (event.message as { stopReason?: string }).stopReason
-				: undefined;
-		if (
-			event.toolResults.length === 0 &&
-			hasActiveItems &&
-			stopReason !== "error" &&
-			stopReason !== "aborted" &&
-			followUpNudges < MAX_FOLLOWUP_NUDGES
-		) {
-			const activeCount = todoItems.filter(
-				(t) => t.status === "pending" || t.status === "in_progress",
-			).length;
-			await pi.sendUserMessage(
-				`<hmr note>You have ${activeCount} incomplete todo item(s) but made no tool calls this turn. Continue working on pending/in_progress todos, or mark them as cancelled if they are no longer needed. Do not stop until all items are completed or cancelled.</hmr note>`,
-				{ deliverAs: "followUp" },
-			);
-			followUpNudges++;
-			roundsSinceTodo = 0;
 		}
 
 		// Clear the per-turn bash-intent budget so the next turn starts fresh.

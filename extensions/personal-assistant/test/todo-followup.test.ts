@@ -69,7 +69,7 @@ async function setTodos(execute: Execute, statuses: Array<TodoItem["status"]>): 
 	if (result.details.error) throw new Error(`Failed to set todos: ${result.details.error}`);
 }
 
-describe("turn_end follow-up injection — prevent premature stop with active todos", () => {
+describe("turn_end does not force continuation (Claude Code-style)", () => {
 	let setup: MockSetup;
 
 	beforeEach(() => {
@@ -78,17 +78,15 @@ describe("turn_end follow-up injection — prevent premature stop with active to
 		setup.handlers["before_agent_start"]({ systemPrompt: "" });
 	});
 
-	it("injects follow-up when model stops (no tool calls) with active todos", async () => {
+	it("does NOT inject follow-up when model stops with no tool calls and active todos (prevents dead loop)", async () => {
 		await setTodos(setup.execute, ["pending", "in_progress", "completed"]);
 
 		await setup.handlers["turn_end"](makeTurnEnd([]));
 
-		expect(setup.sendUserMessageCalls).toHaveLength(1);
-		expect(setup.sendUserMessageCalls[0]?.options?.deliverAs).toBe("followUp");
-		expect(setup.sendUserMessageCalls[0]?.content).toMatch(/2 incomplete todo item/);
+		expect(setup.sendUserMessageCalls).toHaveLength(0);
 	});
 
-	it("does NOT inject follow-up when model made tool calls (still working)", async () => {
+	it("does NOT inject follow-up when model made tool calls", async () => {
 		await setTodos(setup.execute, ["pending", "in_progress"]);
 
 		await setup.handlers["turn_end"](makeTurnEnd([{ role: "toolResult", content: [], toolCallId: "tc1", timestamp: Date.now() }]));
@@ -114,41 +112,21 @@ describe("turn_end follow-up injection — prevent premature stop with active to
 		expect(setup.sendUserMessageCalls).toHaveLength(0);
 	});
 
-	it("safety limit: stops nudging after MAX_FOLLOWUP_NUDGES (3)", async () => {
+	it("context-hook still nudges at roundsSinceTodo >= 3 (Claude Code-style soft nag, no forced continuation)", async () => {
 		await setTodos(setup.execute, ["pending", "in_progress"]);
 
-		for (let i = 0; i < 5; i++) {
-			await setup.handlers["turn_end"](makeTurnEnd([]));
-		}
-
-		expect(setup.sendUserMessageCalls).toHaveLength(3);
-	});
-
-	it("before_agent_start resets the nudge counter", async () => {
-		await setTodos(setup.execute, ["pending"]);
-
-		// Exhaust the nudge limit
-		for (let i = 0; i < 3; i++) {
-			await setup.handlers["turn_end"](makeTurnEnd([]));
-		}
-		expect(setup.sendUserMessageCalls).toHaveLength(3);
-
-		// Reset via before_agent_start (also clears todoItems)
-		setup.handlers["before_agent_start"]({ systemPrompt: "" });
-		// Re-set todos since before_agent_start cleared them
-		await setTodos(setup.execute, ["pending"]);
-
-		// Should nudge again
+		// Three text-only turns increment roundsSinceTodo to 3. turn_end must NOT
+		// force a follow-up — that would reset the counter and starve the
+		// context-hook nag (the dead-loop root cause).
 		await setup.handlers["turn_end"](makeTurnEnd([]));
-		expect(setup.sendUserMessageCalls).toHaveLength(4);
-	});
-
-	it("nudge message includes active item count", async () => {
-		await setTodos(setup.execute, ["pending", "pending", "in_progress", "in_progress", "completed"]);
-
+		await setup.handlers["turn_end"](makeTurnEnd([]));
 		await setup.handlers["turn_end"](makeTurnEnd([]));
 
-		expect(setup.sendUserMessageCalls).toHaveLength(1);
-		expect(setup.sendUserMessageCalls[0]?.content).toMatch(/4 incomplete todo item/);
+		const messages: AgentMessage[] = [];
+		setup.handlers["context"]({ messages });
+
+		expect(messages).toHaveLength(1);
+		const pushed = messages[0] as { content?: Array<{ type: string; text?: string }> };
+		expect(pushed.content?.[0]?.text).toMatch(/todos stale/);
 	});
 });
