@@ -3,11 +3,14 @@ import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
-import { theme } from "../theme/theme.ts";
+import { type Theme, theme } from "../theme/theme.ts";
+
+type ToolCallInputType = "json" | "freeform";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	inputType?: ToolCallInputType;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -21,7 +24,8 @@ export class ToolExecutionComponent extends Container {
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
 	private toolCallId: string;
-	private args: any;
+	private callPayload: unknown;
+	private inputType?: ToolCallInputType;
 	private expanded = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
@@ -43,7 +47,7 @@ export class ToolExecutionComponent extends Container {
 	constructor(
 		toolName: string,
 		toolCallId: string,
-		args: any,
+		args: unknown,
 		options: ToolExecutionOptions = {},
 		toolDefinition: ToolDefinition | undefined,
 		ui: TUI,
@@ -52,7 +56,8 @@ export class ToolExecutionComponent extends Container {
 		super();
 		this.toolName = toolName;
 		this.toolCallId = toolCallId;
-		this.args = args;
+		this.callPayload = args;
+		this.inputType = options.inputType;
 		this.toolDefinition = toolDefinition;
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
 		this.showImages = options.showImages ?? true;
@@ -112,9 +117,29 @@ export class ToolExecutionComponent extends Container {
 		return this.toolDefinition.renderShell ?? this.builtInToolDefinition.renderShell ?? "default";
 	}
 
+	private getInputType(): ToolCallInputType {
+		if (this.inputType) return this.inputType;
+		const definition = this.toolDefinition ?? this.builtInToolDefinition;
+		return definition && "type" in definition && definition.type === "freeform" ? "freeform" : "json";
+	}
+
+	private getRenderArgs(): unknown {
+		if (this.getInputType() !== "freeform") return this.callPayload;
+		if (typeof this.callPayload === "string") return this.callPayload;
+		if (
+			this.callPayload !== null &&
+			typeof this.callPayload === "object" &&
+			"input" in this.callPayload &&
+			typeof this.callPayload.input === "string"
+		) {
+			return this.callPayload.input;
+		}
+		return "";
+	}
+
 	private getRenderContext(lastComponent: Component | undefined): ToolRenderContext {
 		return {
-			args: this.args,
+			args: this.getRenderArgs(),
 			toolCallId: this.toolCallId,
 			invalidate: () => {
 				this.invalidate();
@@ -144,8 +169,8 @@ export class ToolExecutionComponent extends Container {
 		return new Text(theme.fg("toolOutput", output), 0, 0);
 	}
 
-	updateArgs(args: any): void {
-		this.args = args;
+	updateArgs(args: unknown): void {
+		this.callPayload = args;
 		this.updateDisplay();
 	}
 
@@ -266,13 +291,19 @@ export class ToolExecutionComponent extends Container {
 			}
 			renderContainer.clear();
 
-			const callRenderer = this.getCallRenderer();
+			const callRenderer = this.getCallRenderer() as
+				| ((args: unknown, theme: Theme, context: ToolRenderContext) => Component)
+				| undefined;
 			if (!callRenderer) {
 				renderContainer.addChild(this.createCallFallback());
 				hasContent = true;
 			} else {
 				try {
-					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
+					const component = callRenderer(
+						this.getRenderArgs(),
+						theme,
+						this.getRenderContext(this.callRendererComponent),
+					);
 					this.callRendererComponent = component;
 					renderContainer.addChild(component);
 					hasContent = true;
@@ -364,7 +395,8 @@ export class ToolExecutionComponent extends Container {
 
 	private formatToolExecution(): string {
 		let text = theme.fg("toolTitle", theme.bold(this.toolName));
-		const content = JSON.stringify(this.args, null, 2);
+		const renderArgs = this.getRenderArgs();
+		const content = typeof renderArgs === "string" ? renderArgs : JSON.stringify(renderArgs, null, 2);
 		if (content) {
 			text += `\n\n${content}`;
 		}

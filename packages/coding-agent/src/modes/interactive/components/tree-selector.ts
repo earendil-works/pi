@@ -100,7 +100,7 @@ export type FilterMode = "default" | "no-tools" | "user-only" | "labeled-only" |
 /** Tool call info for lookup */
 interface ToolCallInfo {
 	name: string;
-	arguments: Record<string, unknown>;
+	arguments: unknown;
 }
 
 class TreeList implements Component {
@@ -263,7 +263,7 @@ class TreeList implements Component {
 							);
 							this.toolCallMap.set(tc.id, {
 								name: tc.name,
-								arguments: tc.inputType === "json" ? tc.arguments : { input: tc.input },
+								arguments: tc.inputType === "json" ? tc.arguments : tc.input,
 							});
 						}
 					}
@@ -905,7 +905,8 @@ class TreeList implements Component {
 		return false;
 	}
 
-	private formatToolCall(name: string, args: Record<string, unknown>): string {
+	private formatToolCall(name: string, args: unknown): string {
+		const recordArgs = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
 		const shortenPath = (p: string): string => {
 			const home = process.env.HOME || process.env.USERPROFILE || "";
 			if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
@@ -914,9 +915,9 @@ class TreeList implements Component {
 
 		switch (name) {
 			case "read": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
-				const offset = args.offset as number | undefined;
-				const limit = args.limit as number | undefined;
+				const path = shortenPath(String(recordArgs.path || recordArgs.file_path || ""));
+				const offset = recordArgs.offset as number | undefined;
+				const limit = recordArgs.limit as number | undefined;
 				let display = path;
 				if (offset !== undefined || limit !== undefined) {
 					const start = offset ?? 1;
@@ -926,15 +927,15 @@ class TreeList implements Component {
 				return `[read: ${display}]`;
 			}
 			case "write": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
+				const path = shortenPath(String(recordArgs.path || recordArgs.file_path || ""));
 				return `[write: ${path}]`;
 			}
 			case "edit": {
-				const path = shortenPath(String(args.path || args.file_path || ""));
+				const path = shortenPath(String(recordArgs.path || recordArgs.file_path || ""));
 				return `[edit: ${path}]`;
 			}
 			case "bash": {
-				const rawCmd = String(args.command || "");
+				const rawCmd = String(recordArgs.command || "");
 				const cmd = rawCmd
 					.replace(/[\n\t]/g, " ")
 					.trim()
@@ -942,23 +943,22 @@ class TreeList implements Component {
 				return `[bash: ${cmd}${rawCmd.length > 50 ? "..." : ""}]`;
 			}
 			case "grep": {
-				const pattern = String(args.pattern || "");
-				const path = shortenPath(String(args.path || "."));
+				const pattern = String(recordArgs.pattern || "");
+				const path = shortenPath(String(recordArgs.path || "."));
 				return `[grep: /${pattern}/ in ${path}]`;
 			}
 			case "find": {
-				const pattern = String(args.pattern || "");
-				const path = shortenPath(String(args.path || "."));
+				const pattern = String(recordArgs.pattern || "");
+				const path = shortenPath(String(recordArgs.path || "."));
 				return `[find: ${pattern} in ${path}]`;
 			}
 			case "ls": {
-				const path = shortenPath(String(args.path || "."));
+				const path = shortenPath(String(recordArgs.path || "."));
 				return `[ls: ${path}]`;
 			}
 			default: {
-				// Custom tool - show name and truncated JSON args
-				const argsStr = JSON.stringify(args).slice(0, 40);
-				return `[${name}: ${argsStr}${JSON.stringify(args).length > 40 ? "..." : ""}]`;
+				const argsStr = typeof args === "string" ? args : JSON.stringify(args);
+				return `[${name}: ${argsStr.slice(0, 40)}${argsStr.length > 40 ? "..." : ""}]`;
 			}
 		}
 	}

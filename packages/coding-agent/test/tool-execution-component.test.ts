@@ -3,7 +3,7 @@ import { Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
-import type { JsonToolDefinition, ToolDefinition } from "../src/core/extensions/types.ts";
+import type { FreeformToolDefinition, JsonToolDefinition, ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
@@ -17,6 +17,20 @@ function createBaseToolDefinition(name = "custom_tool"): JsonToolDefinition {
 		label: name,
 		description: "custom tool",
 		parameters: Type.Any(),
+		execute: async () => ({
+			content: [{ type: "text", text: "ok" }],
+			details: {},
+		}),
+	};
+}
+
+function createFreeformToolDefinition(name = "freeform_tool"): FreeformToolDefinition {
+	return {
+		type: "freeform",
+		name,
+		label: name,
+		description: "freeform tool",
+		format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
 		execute: async () => ({
 			content: [{ type: "text", text: "ok" }],
 			details: {},
@@ -342,6 +356,58 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("arg:bar");
+	});
+
+	test("passes string input to freeform call renderers", () => {
+		let renderedInput: string | undefined;
+		let contextInput: string | undefined;
+		const toolDefinition: FreeformToolDefinition<unknown, { seen?: boolean }> = {
+			...createFreeformToolDefinition(),
+			renderCall: (input, _theme, context) => {
+				renderedInput = input;
+				contextInput = context.args;
+				return new Text(input, 0, 0);
+			},
+		};
+
+		const component = new ToolExecutionComponent(
+			"freeform_tool",
+			"tool-freeform-1",
+			"raw freeform input",
+			{ inputType: "freeform" },
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("raw freeform input");
+		expect(renderedInput).toBe("raw freeform input");
+		expect(contextInput).toBe("raw freeform input");
+	});
+
+	test("updates freeform call renderers with latest streamed input", () => {
+		const seenInputs: string[] = [];
+		const toolDefinition: FreeformToolDefinition = {
+			...createFreeformToolDefinition(),
+			renderCall: (input) => {
+				seenInputs.push(input);
+				return new Text(input, 0, 0);
+			},
+		};
+
+		const component = new ToolExecutionComponent(
+			"freeform_tool",
+			"tool-freeform-2",
+			"partial",
+			{ inputType: "freeform" },
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateArgs("partial plus delta");
+
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("partial plus delta");
+		expect(seenInputs.at(-1)).toBe("partial plus delta");
 	});
 
 	test("falls back when custom renderers are absent", () => {

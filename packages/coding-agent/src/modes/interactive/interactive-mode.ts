@@ -2909,7 +2909,7 @@ export class InteractiveMode {
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
-							const args = content.inputType === "json" ? content.arguments : { input: content.input };
+							const args = content.inputType === "json" ? content.arguments : content.input;
 							if (!this.pendingTools.has(content.id)) {
 								const component = new ToolExecutionComponent(
 									content.name,
@@ -2918,6 +2918,7 @@ export class InteractiveMode {
 									{
 										showImages: this.settingsManager.getShowImages(),
 										imageWidthCells: this.settingsManager.getImageWidthCells(),
+										inputType: content.inputType,
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -2981,6 +2982,7 @@ export class InteractiveMode {
 			case "tool_execution_start": {
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
+					const toolDefinition = this.getRegisteredToolDefinition(event.toolName);
 					component = new ToolExecutionComponent(
 						event.toolName,
 						event.toolCallId,
@@ -2988,8 +2990,12 @@ export class InteractiveMode {
 						{
 							showImages: this.settingsManager.getShowImages(),
 							imageWidthCells: this.settingsManager.getImageWidthCells(),
+							inputType:
+								toolDefinition && "type" in toolDefinition && toolDefinition.type === "freeform"
+									? "freeform"
+									: undefined,
 						},
-						this.getRegisteredToolDefinition(event.toolName),
+						toolDefinition,
 						this.ui,
 						this.sessionManager.getCwd(),
 					);
@@ -3310,7 +3316,7 @@ export class InteractiveMode {
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
-						const args = content.inputType === "json" ? content.arguments : { input: content.input };
+						const args = content.inputType === "json" ? content.arguments : content.input;
 						const component = new ToolExecutionComponent(
 							content.name,
 							content.id,
@@ -3318,6 +3324,7 @@ export class InteractiveMode {
 							{
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),
+								inputType: content.inputType,
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,
