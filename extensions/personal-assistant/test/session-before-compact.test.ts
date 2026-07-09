@@ -61,7 +61,7 @@ vi.mock("../extraction.ts", async () => {
 						generatedAt: Date.now(),
 					},
 					created: [],
-					superseded: [],
+					updated: [],
 					skipped: [],
 				};
 			},

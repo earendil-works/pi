@@ -135,7 +135,7 @@ async function main() {
         atomsDir: ATOMS_DIR,
       });
       const dt = Date.now() - t0;
-      console.log(`  ${dt}ms: created=${result.created.length} superseded=${result.superseded.length} skipped=${result.skipped.length}`);
+      console.log(`  ${dt}ms: created=${result.created.length} updated=${result.updated.length} skipped=${result.skipped.length}`);
       console.log(`  Plan items: ${result.plan.items.length}`);
 
       for (const a of result.created) {

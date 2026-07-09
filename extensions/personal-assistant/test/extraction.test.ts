@@ -7,18 +7,8 @@ import { MemoryIndex } from "../storage.ts";
 import { embedText } from "../embed.ts";
 import type { ExtractionItem, ExtractionPlan } from "../types.ts";
 
-// Mock embed.ts so tests don't require a live ollama. The mock factory must be
-// hoisted (vitest hoists vi.mock calls to the top of the file), so it applies
-// to every test in this file.
-//
-// Why char-bag instead of a position-based hash: storage.findMostSimilarEmbedding
-// converts sqlite-vec's L2 distance to cosine via `1 - distance/2`. That formula
-// is exact only when the true cosine is close to 1 (which it isn't, in general).
-// To make the supersede threshold (0.92) reachable in tests without standing up
-// a real embedder, the mock needs to produce vectors whose true cosine is in the
-// 0.99+ range for "similar" texts — and that requires aggregating by character
-// (so lexical overlap dominates the comparison) plus L2 normalization (so the
-// formula maps back to a usable cosine value).
+// char-bag mock: gives deterministic vectors so tests don't need a live embedder.
+// Hoisted by vitest — applies to every test in this file.
 vi.mock("../embed.ts", async () => {
 	const actual = await vi.importActual<typeof import("../embed.ts")>("../embed.ts");
 	return {
@@ -37,7 +27,7 @@ vi.mock("../embed.ts", async () => {
 	};
 });
 
-describe("executePlan", () => {
+describe("executePlan — create / skip / fingerprint dedup", () => {
 	let index: MemoryIndex;
 	let tmpDir: string;
 	let atomsDir: string;
@@ -73,11 +63,11 @@ describe("executePlan", () => {
 		generatedAt: Date.now(),
 	});
 
-	it("creates a new atom when no existing similar atom", async () => {
+	it("creates a new atom when no existing atom has matching fingerprint", async () => {
 		const plan = makePlan([makeItem({ title: "New Rule" })]);
 		const result = await executePlan(index, atomsDir, plan);
 		expect(result.created).toHaveLength(1);
-		expect(result.superseded).toHaveLength(0);
+		expect(result.updated).toHaveLength(0);
 		expect(result.skipped).toHaveLength(0);
 	});
 
@@ -113,7 +103,7 @@ describe("executePlan", () => {
 		expect(result.created).toHaveLength(0);
 	});
 
-	it("supersedes when similar atom found above threshold", async () => {
+	it("similar content does NOT auto-supersede (no cosine gate)", async () => {
 		// Insert first atom.
 		await executePlan(
 			index,
@@ -121,37 +111,18 @@ describe("executePlan", () => {
 			makePlan([makeItem({ content: "User prefers TypeScript strict mode in all projects", title: "Old" })]),
 		);
 
-		// Very similar content (single-char drop at end) clears the threshold
-		// in the char-bag mock and triggers the supersede path.
+		// Even with near-identical content the new plan must NOT trigger any
+		// superseded bucket (it doesn't exist). Without oldId the second item
+		// becomes a fresh create, not an in-place update — relying on the LLM
+		// to emit oldId for true merges.
 		const result = await executePlan(
 			index,
 			atomsDir,
 			makePlan([makeItem({ content: "User prefers TypeScript strict mode in all project", title: "New" })]),
 		);
-		expect(result.superseded.length).toBeGreaterThanOrEqual(1);
-		expect(result.created).toHaveLength(0);
-	});
-
-	it("transfers signals when superseding (new atom inherits access_count etc.)", async () => {
-		// Insert first atom, bump its access_count, then supersede.
-		const first = makeItem({ content: "Database uses PostgreSQL with connection pooling", title: "v1" });
-		const r1 = await executePlan(index, atomsDir, makePlan([first]));
-		const oldId = r1.created[0].id;
-		index.updateAccess(oldId);
-		index.updateAccess(oldId);
-		expect(index.getAtom(oldId)?.access_count).toBe(2);
-
-		// Similar content triggers supersede.
-		const result = await executePlan(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "Database uses PostgreSQL with connection pool", title: "v2" })]),
-		);
-		expect(result.superseded.length).toBeGreaterThanOrEqual(1);
-		const sup = result.superseded[0];
-		expect(sup).toBeDefined();
-		const newAtom = sup.newAtom;
-		expect(newAtom.access_count).toBe(2);
+		expect(result.created).toHaveLength(1);
+		expect(result.updated).toHaveLength(0);
+		expect(result.skipped).toHaveLength(0);
 	});
 
 	it("processes multiple items in a single plan", async () => {
@@ -161,165 +132,28 @@ describe("executePlan", () => {
 			makeItem({ title: "Item C", content: "Third item content for multi-test" }),
 		]);
 		const result = await executePlan(index, atomsDir, plan);
-		expect(result.created.length + result.superseded.length + result.skipped.length).toBe(3);
+		expect(result.created.length + result.updated.length + result.skipped.length).toBe(3);
 	});
 
 	it("handles empty plan gracefully", async () => {
 		const plan = makePlan([]);
 		const result = await executePlan(index, atomsDir, plan);
 		expect(result.created).toHaveLength(0);
-		expect(result.superseded).toHaveLength(0);
+		expect(result.updated).toHaveLength(0);
 		expect(result.skipped).toHaveLength(0);
 	});
 
-	it("returns superseded entry with newAtom populated", async () => {
-		await executePlan(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "Initial fact about Python type hints", title: "v1" })]),
-		);
-		const result = await executePlan(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "Initial fact about Python type hint.", title: "v2" })]),
-		);
-		expect(result.superseded.length).toBeGreaterThanOrEqual(1);
-		const entry = result.superseded[0];
-		expect(entry.newAtom.id).toBeTruthy();
-		expect(entry.newAtom.is_latest).toBe(1);
-		// oldId must point at the SUPERSEDED atom (the one being replaced),
-		// not at the new item's title. The superseded atom is the one in
-		// `index.getActiveAtoms()` BEFORE this second executePlan ran.
-		expect(entry.oldId).toBeTruthy();
-		expect(entry.oldId).not.toBe(entry.newAtom.id);
-		expect(entry.oldId).not.toBe("v2");
-	});
-
 	it("tolerates embedding failure: still writes .md file", async () => {
-		// Force embedText to return null for this single call (simulates ollama down).
 		vi.mocked(embedText).mockResolvedValueOnce(null);
 
 		const plan = makePlan([makeItem({ title: "NoEmbed", content: "Content when embedder is down" })]);
 		const result = await executePlan(index, atomsDir, plan);
-		// Should still create (just without vector).
 		expect(result.created.length).toBeGreaterThanOrEqual(1);
 		const atom = result.created[0];
 		expect(atom).toBeDefined();
 		const filePath = path.join(atomsDir, atom.type, `${atom.id}.md`);
 		const exists = await fs.stat(filePath).then(() => true).catch(() => false);
 		expect(exists).toBe(true);
-	});
-
-	// -------------------------------------------------------------------------
-	// Task 3.7: LLM 二次确认 dedup path (callLlm signature forwarding)
-	// -------------------------------------------------------------------------
-	// When callLlm is provided AND a cosine ≥ 0.65 hit exists, executeItem must
-	// defer to confirmDedupAction(callLlm, hit, newItem, cosine) and route the
-	// returned action into the correct result bucket. This pair of tests
-	// exercises the "update" and "skip" actions end-to-end through executePlan.
-	//
-	// Setup: pre-seed an atom via executePlan (no callLlm, so legacy supersede
-	// path runs and creates the atom cleanly), then add a similar-content item
-	// with callLlm provided. The charBag mock produces a near-identical vector
-	// for the second item so the cosine gate fires.
-
-	it("LLM 二次确认 action=update — updates existing atom fields", async () => {
-		// Seed: similar content so cosine ≥ 0.65 in the charBag mock.
-		await executePlan(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "User prefers TypeScript strict mode in all projects", title: "Old TS" })]),
-		);
-
-		const callLlm = vi.fn(async (_prompt: string) =>
-			JSON.stringify({
-				action: "update",
-				merged: {
-					title: "TS strict preference (updated)",
-					summary: "TS strict 偏好, 配合 ESLint 强制",
-					content: "User prefers TypeScript strict mode in all projects.\n2026-07 新增 ESLint 强制",
-					tags: ["typescript", "eslint"],
-				},
-			}),
-		);
-
-		// Cast executePlan — Task 3.7 extends the signature with a 4th callLlm
-		// arg + an `updated` bucket; this test exercises the new shape.
-		// The cast is a future-compat guard — once the implementation lands
-		// the cast is a no-op, but it keeps the test self-documenting.
-		const execPlanWithLlm = executePlan as unknown as (
-			i: typeof index,
-			d: string,
-			p: ExtractionPlan,
-			c?: typeof callLlm,
-		) => Promise<{
-			created: unknown[];
-			superseded: unknown[];
-			updated: Array<{ oldId: string; newAtom: { id: string; title: string; content: string; tags: string[] } }>;
-			skipped: unknown[];
-		}>;
-		const result = await execPlanWithLlm(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "User prefers TypeScript strict mode in all project", title: "New TS" })]),
-			callLlm,
-		);
-
-		// Forwarded: callLlm was invoked exactly once (proves the parameter
-		// reaches the cosine-hit branch in executeItem).
-		expect(callLlm).toHaveBeenCalledTimes(1);
-		// Update routed to the `updated` bucket; nothing created/skipped/superseded.
-		expect(result.updated).toHaveLength(1);
-		expect(result.created).toHaveLength(0);
-		expect(result.skipped).toHaveLength(0);
-		expect(result.superseded).toHaveLength(0);
-		// Merged atom carries the LLM-supplied content.
-		const updated = result.updated[0]?.newAtom;
-		expect(updated).toBeDefined();
-		expect(updated?.title).toBe("TS strict preference (updated)");
-		expect(updated?.content).toContain("ESLint 强制");
-		expect(updated?.tags).toEqual(["typescript", "eslint"]);
-		// oldId must equal the updated atom's id (in-place rewrite keeps the id).
-		expect(result.updated[0]?.oldId).toBe(updated?.id);
-	});
-
-	it("LLM 二次确认 action=skip — drops the new item, no new row written", async () => {
-		// Seed: create the atom that will be hit.
-		const seeded = await executePlan(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "Database uses PostgreSQL with connection pooling", title: "DB Old" })]),
-		);
-		const seededId = seeded.created[0]!.id;
-
-		const callLlm = vi.fn(async () => JSON.stringify({ action: "skip" }));
-
-		const execPlanWithLlm = executePlan as unknown as (
-			a: typeof index,
-			b: string,
-			c: ExtractionPlan,
-			d?: typeof callLlm,
-		) => Promise<{
-			created: unknown[];
-			superseded: unknown[];
-			updated: unknown[];
-			skipped: Array<{ id: string }>;
-		}>;
-		const result = await execPlanWithLlm(
-			index,
-			atomsDir,
-			makePlan([makeItem({ content: "Database uses PostgreSQL with connection pool", title: "DB New" })]),
-			callLlm,
-		);
-
-		expect(callLlm).toHaveBeenCalledTimes(1);
-		// Skip routed to the `skipped` bucket; nothing created/superseded/updated.
-		expect(result.skipped).toHaveLength(1);
-		expect(result.created).toHaveLength(0);
-		expect(result.superseded).toHaveLength(0);
-		expect(result.updated).toHaveLength(0);
-		// The skipped atom is the seeded one (its id is what we return).
-		expect(result.skipped[0]?.id).toBe(seededId);
 	});
 });
 

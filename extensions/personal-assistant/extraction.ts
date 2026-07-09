@@ -5,10 +5,15 @@ import { promises as fs } from "node:fs";
 import { z } from "zod";
 import { embedText, buildEmbeddableText } from "./embed.ts";
 import { writeAtomToFile } from "./file-store.ts";
-import { supersedeIfSimilar } from "./dedup.ts";
+// supersedeIfSimilar (dedup.ts) is intentionally NOT imported here — that
+// helper still exists for webui PATCH path, but the extract pipeline no
+// longer falls back to its cosine gate. update / create decisions are made
+// solely by the Phase-1 LLM via oldId (or omission).
 import { MemoryIndex } from "./storage.ts";
 import { normalizeTag, conceptTagCount } from "./tag-vocab.ts";
-import { confirmDedupAction } from "./extraction-dedup-confirm.ts";
+// confirmDedupAction + DEDUP_CONFIRM_PROMPT (extraction-dedup-confirm.ts)
+// are intentionally NOT imported here. The Phase-2 LLM 二次确认 pass no
+// longer runs; the Phase-1 LLM is the sole decision-maker via oldId.
 import { reindexOne } from "./bge-reindex.ts";
 import { recallAtoms } from "./search.ts";
 import type { MemoryAtom, ExtractionItem, ExtractionPlan, ExtractionResult } from "./types.ts";
@@ -31,6 +36,10 @@ export function computeFingerprint(content: string): string {
 // by some models) don't fail validation — we only use the 6 known fields.
 export const extractionPlanSchema = z.object({
 	items: z.array(z.object({
+		// Optional update reference: when present, marks this item as a
+		// merge into the atom with the given id (in-place update). When
+		// omitted, behaves as a fresh create.
+		oldId: z.string().uuid().optional(),
 		type: z.enum(["rule", "fact", "process"]),
 		title: z.string().min(1).max(200),
 		content: z.string().min(10).max(5000),
@@ -84,22 +93,22 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 
 ## Dedup 策略 (重要!)
 
-代码会自动处理 dedup, 你不需要担心:
-- 内容指纹 (sha256) → 完全重复跳过
-- 余弦相似度 ≥ 0.65 → 旧 atom 自动 superseded
+- 内容指纹 (sha256) → 完全重复跳过 (代码侧自动, 你不需要管)
+- 你负责 update vs create 的语义决策 (见下)
 
-所以你只管 emit, 不需要 emit "skip" 或 "merge" 类标记。
+不再走 LLM 二次确认或余弦 gate:你的 oldId 字段是唯一的 update 引用方式。
 
 ## 主动更新,非扩张 (重要!)
 
-- 如果新信息可归入 corpus 已有的 atom (主题/对象/项目相同), 优先更新该 atom 的 content, 不要为这条信息创建新 atom
-- 更新方式: 在 content 末尾追加新段落, 标注日期 (e.g. "2026-07 新增 JSON 格式支持")
-- 仅在信息属于全新主题/新对象/新项目时才创建新 atom
-- 这是 corpus 持续精炼的关键: 主动合并而非堆叠
+- 如果新信息可归入 corpus 已有的 atom (主题/对象/项目相同), 在该 item 上设 oldId 为原子的 id,content 字段填合并后的内容(原 content 末尾追加新段落, 标注日期 e.g. "2026-07 新增 JSON 格式支持")
+- 仅在信息属于全新主题/新对象/新项目时才创建新 atom(省略 oldId)
+- 不要为同一段信息既 update 又 create;无法归属时倾向于 create
 
 ## 已有知识库 (重要! 不要重复提取已有知识)
 
-下面列出知识库中已有的 atom (按相关度 + 修改时间排序)。如果新信息与已有 atom 主题相同, 不要创建新 atom — 返回空 items 即可, 代码侧的 dedup 会处理更新。仅在确认是全新主题时才创建。
+下面列出 recall top-K 高相关召回的 atom (按相关度排序)。每条带 id / summary / content 截断预览 / .md 路径。
+- 你只能看到 top-K 召回,其它 atom 也存在但不在此列出 — 看不到的不一定意味着新建
+- 若你认为新信息可归入某条, 用其 id 填 oldId,系统就地更新;若确认是全新主题, 省略 oldId
 
 ## Output Schema (严格 JSON)
 
@@ -107,6 +116,8 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 {
   "items": [
     {
+      "oldId": "<uuid>",            // 可选;存在时 = update 该原子 (合并 content)
+      // (omitted oldId = create 新 atom)
       "type": "rule" | "fact" | "process",
       "title": "短标题 (≤ 50 字)",
       "content": "2-4 段正文, 用 \\\\n 分隔",
@@ -124,15 +135,11 @@ export const EXTRACT_PROMPT_V2 = `你是一个 memory extraction agent。从对�
 // Test-only access to executeItem
 // ---------------------------------------------------------------------------
 //
-// `executeItem` is module-private so the public surface stays narrow. Tests
-// that need direct access (extraction-dedup-confirm.test.ts scenarios a-i)
-// import this alias instead of reaching into a private symbol via a cast.
-// The leading underscore + comment make the "internal-only, do not import
-// from app code" intent loud. tsgo enforces the visibility boundary; the
-// name itself is a soft convention.
-
-/** @internal — test-only access to executeItem (otherwise private). */
-export const __testing_executeItem = executeItem;
+// `executeItem` is module-private so the public surface stays narrow.
+// (No test-only alias is exported — the integration surface is
+// `executePlan`, and older tests that reached for the alias via
+// `extraction-dedup-confirm.test.ts` were retired when the dedup LLM
+// confirm path was removed.)
 
 // ---------------------------------------------------------------------------
 // executePlan — execute extraction items against the memory index
@@ -154,31 +161,9 @@ async function reindexOneOrWarn(atomId: string): Promise<void> {
 }
 
 /**
- * Persist a "supersede" outcome: mark the hit atom as superseded, write the
- * new atom body to the file store, and trigger bge-m3 to refresh the
- * vector. Centralises the 3-line finalisation that every supersede path
- * (LLM-confirm hit, LLM-confirm catch fallback, legacy path) repeats.
- * Returns the post-markSupersededTx atom (its `parent_id` now points at
- * the hit atom's id — the stable key `executePlan` surfaces to callers).
- */
-async function persistSupersede(
-	index: MemoryIndex,
-	atomsDir: string,
-	oldId: string,
-	newAtom: MemoryAtom,
-	vector: number[],
-): Promise<MemoryAtom> {
-	const { newAtom: finalNew } = index.markSupersededTx(oldId, newAtom, vector);
-	await writeAtomToFile(finalNew, atomsDir);
-	await reindexOneOrWarn(finalNew.id);
-	return finalNew;
-}
-
-/**
  * Persist a "create" outcome: insert the new atom + vector, write the file,
  * trigger bge-m3 to refresh the vector. Centralises the 3-line finalisation
- * that every create path (LLM-confirm create action, legacy fallback,
- * no-cosine-hit) repeats.
+ * that every create path (no oldId, unknown oldId fallback) goes through.
  */
 async function persistCreate(
 	index: MemoryIndex,
@@ -196,31 +181,30 @@ async function persistCreate(
  * Execute a single extraction item against the index:
  *   1. fingerprint dedup: skip when an active atom with the same fingerprint
  *      exists (cheapest check, runs first).
- *   2. tag normalization: trim/lowercase/dictionary-match via
- *      `normalizeTag`, then warn if no `concept/*` tag is present (R10).
- *   3. cosine dedup gate: when embedding + a ≥ 0.65 hit is found:
- *      - with `callLlm`: ask the LLM to disambiguate update/supersede/
- *        create/skip via `confirmDedupAction`. Failures (timeout,
- *        non-JSON, schema mismatch) collapse to the conservative
- *        "supersede" fallback so the corpus never silently absorbs an
- *        unconfirmed duplicate.
- *      - without `callLlm`: legacy supersede path via `supersedeIfSimilar`.
- *   4. create: insertAtom + writeAtomToFile + bge-m3 reindex.
- *   5. every write path (update / supersede / create) ends with
- *      `reindexOneOrWarn` so the dense channel stays in sync.
+ *   2. tag normalization + concept-tag presence check (R10).
+ *   3. update path: when item.oldId is present and points to an existing
+ *      active atom, rewrite that atom in place with the new content.
+ *      When item.oldId is set but the atom cannot be found, warn-log and
+ *      fall through to create (the LLM may have guessed an id; we don't
+ *      want a hard fail).
+ *   4. create path: insertAtom + writeAtomToFile + bge-m3 reindex.
  *
- * Returns the outcome (skip / supersede / update / create) and the resulting
- * atom when applicable. Embedding failures collapse to "create with
- * zero-vector" so the file write still happens — sqlite-vec accepts zero
- * vectors and downstream recall simply misses this atom until a real
- * embedding lands.
+ * The LLM in Phase 1 is the sole decision-maker (no cosine gate, no LLM
+ * 二次确认). When it emits oldId, we trust the id explicitly; when it
+ * omits oldId, we trust it means "fresh create". Both branches end
+ * with `reindexOneOrWarn` so the dense channel stays in sync.
+ *
+ * Returns the outcome (skip / update / create) and the resulting atom.
+ * Embedding failures collapse to "create with zero-vector" so the file
+ * write still happens — sqlite-vec accepts zero vectors and downstream
+ * recall simply misses this atom until a real embedding lands.
  */
 async function executeItem(
 	index: MemoryIndex,
 	atomsDir: string,
-	item: ExtractionItem,
-	callLlm?: (prompt: string) => Promise<string>,
-): Promise<{ status: "skip" | "supersede" | "update" | "create"; atom?: MemoryAtom }> {
+	item: ExtractionItem & { oldId?: string },
+	_callLlm?: (prompt: string) => Promise<string>,
+): Promise<{ status: "skip" | "update" | "create"; atom?: MemoryAtom }> {
 	const fingerprint = computeFingerprint(item.content);
 
 	// 1. Fingerprint dedup — cheapest check first.
@@ -229,9 +213,7 @@ async function executeItem(
 		return { status: "skip", atom: existing };
 	}
 
-	// 2. Tag normalization + concept-tag presence check. normalizeTag is
-	// pure (no I/O) so the warn is safe to log here; we don't gate on the
-	// concept count, just log when the LLM failed to emit a `concept/*` tag.
+	// 2. Tag normalization + concept-tag presence check.
 	const normalizedTags = item.tags.map((t) => normalizeTag(t));
 	const conceptCount = conceptTagCount(normalizedTags);
 	if (conceptCount === 0) {
@@ -239,128 +221,41 @@ async function executeItem(
 			`[extract] item "${item.title}" lacks concept tag (0/${normalizedTags.length} tags are concept/*)`,
 		);
 	}
-	const itemWithNormTags: ExtractionItem = { ...item, tags: normalizedTags };
+	const itemWithNormTags = { ...item, tags: normalizedTags };
 
+	// 3. Update path by oldId — no second-pass LLM confirm.
+	if (itemWithNormTags.oldId) {
+		const target = index.getAtom(itemWithNormTags.oldId);
+		if (target && target.is_latest === 1 && target.archived === 0) {
+			const mergedAtom: MemoryAtom = {
+				...target,
+				type: itemWithNormTags.type,
+				title: itemWithNormTags.title,
+				content: itemWithNormTags.content,
+				summary: itemWithNormTags.summary,
+				tags: normalizedTags,
+				importance: itemWithNormTags.importance,
+				content_fingerprint: fingerprint,
+				updated_at: Date.now(),
+			};
+			const embeddableText = buildEmbeddableText(mergedAtom);
+			const embedding = await embedText(embeddableText);
+			const vector = embedding ?? new Array(1024).fill(0);
+			await index.updateAtom(mergedAtom, vector);
+			await writeAtomToFile(mergedAtom, atomsDir);
+			await reindexOneOrWarn(mergedAtom.id);
+			return { status: "update", atom: mergedAtom };
+		}
+		console.warn(
+			`[extract] item.oldId=${itemWithNormTags.oldId} not found in active atoms, falling back to create for item "${itemWithNormTags.title}"`,
+		);
+	}
+
+	// 4. Create path.
 	const newAtom = buildAtomFromItem(itemWithNormTags, fingerprint);
 	const embeddableText = buildEmbeddableText(newAtom);
 	const embedding = await embedText(embeddableText);
 	const vector = embedding ?? new Array(1024).fill(0);
-
-	// 3. Cosine dedup gate. Self-match (similar.atom.id === newAtom.id) is
-	// a "no hit" case for the LLM-confirmation path — there is no other
-	// atom to disambiguate against, so we drop down to the create branch.
-	const similar = embedding ? index.findMostSimilarEmbedding(embedding, 0.65) : null;
-
-	if (similar && similar.atom.id !== newAtom.id) {
-		if (callLlm) {
-			// LLM 二次确认 path (target 2 core). Any failure here is a
-			// conservative fallback to "supersede" so a transient LLM
-			// outage doesn't silently absorb unconfirmed duplicates.
-			try {
-				const decision = await confirmDedupAction(
-					callLlm,
-					similar.atom,
-					itemWithNormTags,
-					similar.cosine,
-				);
-				switch (decision.action) {
-					case "update": {
-						if (!decision.merged) {
-							// LLM said "update" but gave us no merged body —
-							// treat as a soft error and fall back to
-							// supersede. Without a merged body, an in-place
-							// update would be a no-op anyway.
-							console.warn(
-								`[extract] LLM dedup confirm returned "update" without merged, fell back to supersede for item "${item.title}" (hit ${similar.atom.id})`,
-							);
-							const finalNew = await persistSupersede(
-								index,
-								atomsDir,
-								similar.atom.id,
-								newAtom,
-								vector,
-							);
-							return { status: "supersede", atom: finalNew };
-						}
-						// In-place update of the hit atom: rewrite the four
-						// mutable content fields, recompute the fingerprint
-						// from the new content (the active-fingerprint
-						// UNIQUE partial index depends on this), and
-						// pass through to updateAtom (which bumps version
-						// + writes the new vector in one transaction).
-						// Tag normalization runs the merged tags through
-						// the same `normalizeTag` pipeline as the create
-						// path, so the corpus stays case-consistent even
-						// if the LLM emits a mixed-case merge body.
-						const mergedAtom: MemoryAtom = {
-							...similar.atom,
-							title: decision.merged.title,
-							summary: decision.merged.summary,
-							content: decision.merged.content,
-							tags: decision.merged.tags.map((t) => normalizeTag(t)),
-							content_fingerprint: computeFingerprint(decision.merged.content),
-						};
-						await index.updateAtom(mergedAtom, vector);
-						await writeAtomToFile(mergedAtom, atomsDir);
-						await reindexOneOrWarn(mergedAtom.id);
-						return { status: "update", atom: mergedAtom };
-					}
-					case "supersede": {
-						const finalNew = await persistSupersede(
-							index,
-							atomsDir,
-							similar.atom.id,
-							newAtom,
-							vector,
-						);
-						return { status: "supersede", atom: finalNew };
-					}
-					case "create": {
-						// Cosine hit was a coincidence — keep both atoms.
-						const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
-						return { status: "create", atom: finalNew };
-					}
-					case "skip": {
-						console.log(
-							`[extract] dedup-confirm: skip item "${item.title}" (hit ${similar.atom.id})`,
-						);
-						return { status: "skip", atom: similar.atom };
-					}
-				}
-			} catch (err) {
-				// LLM call failed (non-JSON, schema mismatch, timeout
-				// propagated from callLlm). Conservative fallback:
-				// supersede. A failed confirm must not silently merge
-				// the new info into the hit atom.
-				console.warn(
-					`[extract] LLM dedup confirm failed for item "${item.title}" (hit ${similar.atom.id}), fell back to supersede: ${err instanceof Error ? err.message : String(err)}`,
-				);
-				const finalNew = await persistSupersede(
-					index,
-					atomsDir,
-					similar.atom.id,
-					newAtom,
-					vector,
-				);
-				return { status: "supersede", atom: finalNew };
-			}
-		} else {
-			// No callLlm — legacy supersede path. Preserves the v1
-			// behaviour exactly so callers that haven't adopted the
-			// LLM-confirmation pass (e.g. tests) still get a deterministic
-			// supersede on a cosine hit.
-			const dedupResult = await supersedeIfSimilar(index, atomsDir, newAtom, embedding);
-			if (dedupResult.status === "supersede") {
-				await reindexOneOrWarn(dedupResult.atom.id);
-				return { status: "supersede", atom: dedupResult.atom };
-			}
-			// supersedeIfSimilar returned "create" — no hit (e.g. self-match).
-			const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
-			return { status: "create", atom: finalNew };
-		}
-	}
-
-	// 4. No cosine hit — direct create.
 	const finalNew = await persistCreate(index, atomsDir, newAtom, vector);
 	return { status: "create", atom: finalNew };
 }
@@ -396,20 +291,19 @@ function buildAtomFromItem(item: ExtractionItem, fingerprint: string): MemoryAto
 }
 
 /**
- * Process every item in the plan sequentially and return four buckets:
- *   - created: new atoms written to DB + file (no cosine hit, or LLM said "create")
- *   - superseded: pairs of (oldId, newAtom) for atoms replaced by similar content
- *   - updated: pairs of (oldId, newAtom) for atoms the LLM chose to merge into
- *     (update action from confirmDedupAction — the `oldId` is a stable key
- *     for callers; the returned `newAtom` IS the hit atom post-rewrite)
- *   - skipped: existing atoms that matched the fingerprint exactly OR that
- *     the LLM chose to skip after a cosine-confirm pass
+ * Process every item in the plan sequentially and return three buckets:
+ *   - created: new atoms written to DB + file (no oldId, fresh insert)
+ *   - updated:  pairs of (oldId, newAtom) for atoms the LLM merged into via
+ *     oldId (in-place rewrite preserves the id; the new content stays on the
+ *     same atom row). oldId here equals newAtom.id.
+ *   - skipped:  existing atoms that matched the item fingerprint exactly
+ *     (sha256 of normalised content) — the LLM re-emitted a duplicate.
  *
  * Items are processed in order — the spec is sequential, not parallel.
  *
- * `callLlm` is forwarded to every `executeItem` call so a cosine hit can be
- * disambiguated by the LLM before the write. Optional — omitting it falls
- * back to the legacy "auto-supersede on cosine hit" path.
+ * The `callLlm` parameter is retained for backward source compatibility with
+ * callers (webui/CLI) that historically passed an LLM closure; `executeItem`
+ * no longer routes through it (no second-pass dedup confirm in this design).
  */
 export async function executePlan(
 	index: MemoryIndex,
@@ -418,28 +312,19 @@ export async function executePlan(
 	callLlm?: (prompt: string) => Promise<string>,
 ): Promise<{
 	created: MemoryAtom[];
-	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	updated: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }> {
 	const created: MemoryAtom[] = [];
-	const superseded: Array<{ oldId: string; newAtom: MemoryAtom }> = [];
 	const updated: Array<{ oldId: string; newAtom: MemoryAtom }> = [];
 	const skipped: MemoryAtom[] = [];
 
 	for (const planItem of plan.items) {
-		const result = await executeItem(index, atomsDir, planItem.item, callLlm);
+		const result = await executeItem(index, atomsDir, planItem.item as ExtractionItem & { oldId?: string }, callLlm);
 		if (!result.atom) continue;
 		switch (result.status) {
 			case "create":
 				created.push(result.atom);
-				break;
-			case "supersede":
-				// For supersede, `result.atom.parent_id` is set by
-				// `markSupersededTx` to the hit atom's id (the one being
-				// replaced) — that's the stable key audit/recall consumers
-				// expect here, NOT the new item's title.
-				superseded.push({ oldId: result.atom.parent_id ?? "", newAtom: result.atom });
 				break;
 			case "update":
 				// For update, the hit atom is rewritten in place — its id is
@@ -452,7 +337,7 @@ export async function executePlan(
 		}
 	}
 
-	return { created, superseded, updated, skipped };
+	return { created, updated, skipped };
 }
 
 /**
@@ -528,9 +413,20 @@ export function scoreUserTone(messages: Array<{ role: string; content: string }>
  */
 export interface BuildExtractionPromptOptions {
 	tagVocabulary?: string[];
-	/** Existing atoms to show the LLM so it doesn't create duplicates. */
-	existingAtoms?: Array<{ type: string; title: string; summary: string }>;
+	/** Top-K recalled atoms with full content preview, surfaced in the
+	 *  corpus section so the LLM can decide update-vs-create via oldId. */
+	recalledAtoms?: Array<{
+		id: string;
+		type: string;
+		title: string;
+		summary: string;
+		content: string;
+		path: string;
+	}>;
 }
+
+export const RECALL_TOP_K = 20;
+export const CONTENT_PREVIEW_CHARS = 300;
 
 export function buildExtractionPrompt(
 	messages: Array<{ role: string; content: string }>,
@@ -545,8 +441,13 @@ export function buildExtractionPrompt(
 	const tagDictSection = tagDict.length > 0
 		? `\n\n## 现有 tag 字典 (优先复用, 不要发明新近义 tag)\n${tagDict.join(", ")}`
 		: "";
-	const corpusSection = opts?.existingAtoms && opts.existingAtoms.length > 0
-		? `\n\n## 已有知识库 (${opts.existingAtoms.length} 条)\n${opts.existingAtoms.map((a, i) => `${i + 1}. [${a.type}] ${a.title} — ${a.summary}`).join("\n")}\n`
+	const corpusSection = opts?.recalledAtoms && opts.recalledAtoms.length > 0
+		? `\n\n## 高相关已有知识库 (recall top-${opts.recalledAtoms.length}, ${CONTENT_PREVIEW_CHARS}-字预览)\n${opts.recalledAtoms.map((a, i) => {
+			const preview = a.content.length > CONTENT_PREVIEW_CHARS
+				? `${a.content.slice(0, CONTENT_PREVIEW_CHARS).trimEnd()}\n[…(截断,共 ${a.content.length} 字)]`
+				: a.content;
+			return `### ${i + 1}. [${a.type}] ${a.title}\n- id: ${a.id}\n- summary: ${a.summary}\n- content: ${preview}\n- path: ${a.path}`;
+		}).join("\n\n")}\n`
 		: "";
 	return `${EXTRACT_PROMPT_V2}${tagDictSection}${corpusSection}\n\n${toneHint}## Messages\n\n${messagesText}\n\n## Output (JSON only)`;
 }
@@ -560,7 +461,7 @@ export function buildExtractionPrompt(
  * effect so the audit trail captures every run, including the empty ones.
  *
  * `callLlm` is forwarded to `executePlan` → `executeItem` so a cosine hit
- * can be disambiguated by the LLM before the write (Task 3.7 target 2).
+ * (no LLM 二次确认 in this design — the LLM is the sole decision-maker).
  */
 async function executeParsedPlan(
 	index: MemoryIndex,
@@ -571,7 +472,6 @@ async function executeParsedPlan(
 ): Promise<{
 	plan: ExtractionPlan;
 	created: MemoryAtom[];
-	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	updated: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }> {
@@ -579,7 +479,6 @@ async function executeParsedPlan(
 		return {
 			plan: { items: [], modelUsed, generatedAt: Date.now() },
 			created: [],
-			superseded: [],
 			updated: [],
 			skipped: [],
 		};
@@ -602,14 +501,12 @@ async function executeParsedPlan(
  * here; the index lifecycle stays in the caller's hands so this function
  * is reusable inside a longer-lived process.
  *
- * The same `callLlm` closure is used TWICE: first to produce the
- * extraction plan (via `buildExtractionPrompt`), then — if a cosine
- * ≥ 0.65 hit is found during execution — to disambiguate the
- * update/supersede/create/skip action (via `confirmDedupAction`,
- * Task 3.7 target 2). Re-using the same closure means the caller
- * only wires up the LLM once and gets the dedup confirmation pass
- * for free. The 5s timeout the caller applies to `callLlm` covers
- * both passes.
+ * The `callLlm` closure is used ONCE (via `buildExtractionPrompt`) to
+ * produce the extraction plan — update vs create is fully resolved in
+ * that single LLM call via the `oldId` field on each emitted item. There
+ * is no second-pass dedup confirm; the same closure is forwarded to
+ * `executePlan` only for backward compatibility with webui callers that
+ * historically passed one, but `executeItem` no longer invokes it.
  *
  * `config.tagVocabulary` (optional) is forwarded to `buildExtractionPrompt`
  * so the LLM sees the existing tag dictionary before proposing new tags —
@@ -625,20 +522,15 @@ export async function extractMemoriesWithCallLlm(
 ): Promise<{
 	plan: ExtractionPlan;
 	created: MemoryAtom[];
-	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	updated: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }> {
-	// Collect existing atoms to inject into the prompt so the LLM doesn't
-	// create duplicates. Two sources, deduped by atom id:
-	//   1. recall top-20: semantic matches against user messages (catches
-	//      same-topic atoms the LLM would otherwise re-extract)
-	//   2. recently modified top-100: by updated_at DESC, catches atoms
-	//      too new to have a bge-m3 vector yet (reindex lag / 404 gap)
-	const existingAtoms = await collectExistingAtoms(index, messages);
+	// Collect recall top-K atoms (id + summary + content preview + path) so
+	// the LLM can pick an oldId for update targets in the items it emits.
+	const recalledAtoms = await collectRecalledAtoms(index, messages, config.atomsDir);
 	const prompt = buildExtractionPrompt(messages, {
 		tagVocabulary: config.tagVocabulary,
-		existingAtoms,
+		recalledAtoms,
 	});
 	const response = await callLlm(prompt);
 	const parsed = parseExtractionJson(response);
@@ -654,54 +546,46 @@ export async function extractMemoriesWithCallLlm(
 }
 
 /**
- * Collect existing atoms for the extraction prompt. Combines:
- *   - recall top-20 (semantic match against user messages)
- *   - recently modified top-100 (by updated_at DESC)
- * Deduped by atom id. Returns {type, title, summary} for each.
+ * Collect recall top-K atoms with full content preview and .md path, so the
+ * LLM can target an update via oldId without going through a second-pass
+ * cosine gate. The id + path pair is the only authoritative update reference.
+ *
+ * Returns one row per atom id (recall dedups internally). Empty array on
+ * recall failure (non-fatal — the LLM still sees the messages and can emit
+ * creates, but loses the corpus dedup cue).
  */
-async function collectExistingAtoms(
+async function collectRecalledAtoms(
 	index: MemoryIndex,
 	messages: Array<{ role: string; content: string }>,
-): Promise<Array<{ type: string; title: string; summary: string }>> {
-	const seen = new Set<string>();
-	const result: Array<{ type: string; title: string; summary: string }> = [];
-
-	// 1. Recall: use user messages as the query (most information-dense)
+	atomsDir: string,
+): Promise<Array<{ id: string; type: string; title: string; summary: string; content: string; path: string }>> {
 	const userText = messages
 		.filter((m) => m.role === "user")
 		.map((m) => m.content)
 		.join(" ")
 		.slice(0, 4000);
+	if (userText.trim().length === 0) return [];
 
-	if (userText.trim().length > 0) {
-		try {
-			const hits = await recallAtoms(index, userText, { topK: 20 });
-			for (const hit of hits) {
-				if (seen.has(hit.atom.id)) continue;
-				seen.add(hit.atom.id);
-				result.push({
-					type: hit.atom.type,
-					title: hit.atom.title,
-					summary: hit.atom.summary,
-				});
-			}
-		} catch {
-			// recall failure is non-fatal — we still have the recent-atoms path
-		}
+	let hits;
+	try {
+		hits = await recallAtoms(index, userText, { topK: RECALL_TOP_K });
+	} catch {
+		return [];
 	}
 
-	// 2. Recently modified: top-100 by created_at DESC (listAtoms default order)
-	const recent = index.listAtoms();
-	for (const atom of recent.slice(0, 100)) {
-		if (seen.has(atom.id)) continue;
-		seen.add(atom.id);
+	const result: Array<{ id: string; type: string; title: string; summary: string; content: string; path: string }> = [];
+	for (const hit of hits.slice(0, RECALL_TOP_K)) {
+		const a = hit.atom;
+		const fullContent = (a.content ?? "").toString();
 		result.push({
-			type: atom.type,
-			title: atom.title,
-			summary: atom.summary,
+			id: a.id,
+			type: a.type,
+			title: a.title,
+			summary: a.summary,
+			content: fullContent,
+			path: `${atomsDir}/${a.type}/${a.id}.md`,
 		});
 	}
-
 	return result;
 }
 
@@ -718,7 +602,6 @@ export interface RunMemoryExtractionOptions {
 export interface RunMemoryExtractionResult {
 	plan: ExtractionPlan;
 	created: MemoryAtom[];
-	superseded: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	updated: Array<{ oldId: string; newAtom: MemoryAtom }>;
 	skipped: MemoryAtom[];
 }

@@ -1061,10 +1061,10 @@ export function registerPostExtract(
 					generatedAt: result.plan.generatedAt,
 				},
 				created: result.created.length,
-				superseded: result.superseded.length,
+				updated: result.updated.length,
 				skipped: result.skipped.length,
 				createdIds: result.created.map((a) => a.id),
-				supersededPairs: result.superseded.map((s) => ({
+				updatedPairs: result.updated.map((s: { oldId: string; newAtom: { id: string } }) => ({
 					oldId: s.oldId,
 					newId: s.newAtom.id,
 				})),

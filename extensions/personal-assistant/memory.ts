@@ -530,16 +530,17 @@ export function registerMemory(pi: ExtensionAPI): void {
 			// Completion notify — user can immediately see whether the
 			// extraction produced atoms or was a no-op (LLM returned 0
 			// items, or all items were duplicates of existing atoms).
-			// "skipping" counts cover the duplicate-suppression path.
+			// Without the cosine supersede path the buckets are now just
+			// created + updated + skipped.
 			const created = result.created.length;
-			const superseded = result.superseded.length;
+			const updated = result.updated.length;
 			const skipped = result.skipped.length;
-			const total = created + superseded + skipped;
+			const total = created + updated + skipped;
 			notifySafely(
 				ctx,
 				total === 0
 					? "memory: extraction complete — 0 atoms (nothing new to remember)"
-					: `memory: extraction complete — ${created} new, ${superseded} updated, ${skipped} unchanged (of ${result.plan.items.length} proposed)`,
+					: `memory: extraction complete — ${created} new, ${updated} updated, ${skipped} unchanged (of ${result.plan.items.length} proposed)`,
 				"info",
 			);
 		} finally {

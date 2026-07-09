@@ -12,14 +12,22 @@ describe("EXTRACT_PROMPT_V2", () => {
 		expect(EXTRACT_PROMPT_V2).toContain("2-4 段");
 	});
 
-	it("instructs NOT to emit skip/merge markers (dedup auto)", () => {
-		expect(EXTRACT_PROMPT_V2).toMatch(/dedup.*自动|自动.*dedup/i);
+	it("instructs that fingerprint dedup is auto and oldId is the update channel", () => {
+		expect(EXTRACT_PROMPT_V2).toMatch(/指纹.{0,20}跳过|oldId.*update|oldId.*唯一.*update/i);
+	});
+
+	it("no longer instructs LLM to skip its own emit (Phase-2 dedup confirm removed)", () => {
+		// The old wording "代码侧的 dedup 会处理更新" implied silent skip-by-cosine.
+		// The new wording says fingerprint dedup runs automatic, while oldId is
+		// the LLM's only update reference — explicit, no implicit skip.
+		expect(EXTRACT_PROMPT_V2).not.toMatch(/无需 emit|代码侧.*处理.*更新.*返回空 items/);
 	});
 
 	it("specifies JSON output schema", () => {
 		expect(EXTRACT_PROMPT_V2).toContain('"items"');
 		expect(EXTRACT_PROMPT_V2).toContain('"type"');
 		expect(EXTRACT_PROMPT_V2).toContain('"content"');
+		expect(EXTRACT_PROMPT_V2).toContain('"oldId"');
 	});
 });
 

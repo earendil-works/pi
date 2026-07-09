@@ -88,7 +88,7 @@ describe("runMemoryExtraction", () => {
 		const result = await runMemoryExtraction(opts);
 		expect(result.created).toHaveLength(0);
 		expect(result.plan.items).toHaveLength(0);
-		expect(result.superseded).toHaveLength(0);
+		expect(result.updated).toHaveLength(0);
 		expect(result.skipped).toHaveLength(0);
 	});
 
