@@ -1,0 +1,11 @@
+phase: archive
+workflow: quickfix
+change: filter-compact-hmr
+created_at: 2026-07-09
+base_ref: 4524616a7c70137f278c84ee5d87601b80bbbf68
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true
