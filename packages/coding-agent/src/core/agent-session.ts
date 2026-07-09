@@ -1540,6 +1540,7 @@ export class AgentSession {
 		}
 
 		const previousModel = this.model;
+		this.abortRetry();
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
 		this.agent.state.model = model;
 		this.sessionManager.appendModelChange(model.provider, model.id);
@@ -2599,6 +2600,7 @@ export class AgentSession {
 		}
 
 		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		this._retryAbortController = new AbortController();
 
 		this._emit({
 			type: "auto_retry_start",
@@ -2615,7 +2617,6 @@ export class AgentSession {
 		}
 
 		// Wait with exponential backoff (abortable)
-		this._retryAbortController = new AbortController();
 		try {
 			await sleep(delayMs, this._retryAbortController.signal);
 		} catch {

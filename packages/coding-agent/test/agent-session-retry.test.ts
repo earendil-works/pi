@@ -170,6 +170,28 @@ describe("AgentSession retry", () => {
 		expect(created.session.isRetrying).toBe(false);
 	});
 
+	it("setModel cancels an in-flight retry instead of resuming the old turn", async () => {
+		const created = createSession({ failCount: 99, maxRetries: 3 });
+		const retryEnds: string[] = [];
+		const nextModel = getModel("anthropic", "claude-opus-4-8")!;
+
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") {
+				void created.session.setModel(nextModel);
+			}
+			if (event.type === "auto_retry_end") {
+				retryEnds.push(event.finalError ?? "");
+			}
+		});
+
+		await created.session.prompt("Test");
+
+		expect(created.getCallCount()).toBe(1);
+		expect(created.session.model?.id).toBe(nextModel.id);
+		expect(created.session.isRetrying).toBe(false);
+		expect(retryEnds).toContain("Retry cancelled");
+	});
+
 	it("retries provider network_error failures", async () => {
 		const created = createSession({ failCount: 0 });
 		let callCount = 0;
