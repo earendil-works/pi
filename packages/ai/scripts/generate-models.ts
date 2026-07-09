@@ -1417,20 +1417,22 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					const m = model as ModelsDevModel;
 					if (m.tool_call !== true) continue;
 
+					const isMiniMaxM3 = modelId === "MiniMax-M3";
+
 					models.push({
 						id: modelId,
 						name: m.name || modelId,
 						api: "anthropic-messages",
 						provider,
 						// MiniMax's Anthropic-compatible API - SDK appends /v1/messages
-						baseUrl,
+						baseUrl: isMiniMaxM3 ? `${baseUrl}/v1` : baseUrl,
 						reasoning: m.reasoning === true,
 						input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 						cost: {
-							input: m.cost?.input || 0,
-							output: m.cost?.output || 0,
-							cacheRead: m.cost?.cache_read || 0,
-							cacheWrite: m.cost?.cache_write || 0,
+							input: isMiniMaxM3 ? 0.6 : m.cost?.input || 0,
+							output: isMiniMaxM3 ? 2.4 : m.cost?.output || 0,
+							cacheRead: isMiniMaxM3 ? 0.12 : m.cost?.cache_read || 0,
+							cacheWrite: isMiniMaxM3 ? 0 : m.cost?.cache_write || 0,
 						},
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
