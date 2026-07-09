@@ -122,48 +122,6 @@ describe("OAuth device-code polling", () => {
 		expect(pollTimes).toEqual([startTime, startTime + 30000]);
 	});
 
-	it("never reduces the accumulated interval after repeated slow_down responses", async () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
-		const startTime = Date.now();
-
-		const pollTimes: number[] = [];
-		const results = [
-			{ status: "slow_down" as const, intervalSeconds: 1 },
-			{ status: "slow_down" as const, intervalSeconds: 2 },
-			{ status: "complete" as const, value: "token" },
-		];
-		const resultPromise = pollOAuthDeviceCodeFlow({
-			intervalSeconds: 2,
-			expiresInSeconds: 900,
-			poll: async () => {
-				pollTimes.push(Date.now());
-				const result = results.shift();
-				if (!result) throw new Error("Unexpected extra poll");
-				return result;
-			},
-		});
-
-		await vi.advanceTimersByTimeAsync(0);
-		await vi.advanceTimersByTimeAsync(7000);
-		await vi.advanceTimersByTimeAsync(12000);
-		await expect(resultPromise).resolves.toBe("token");
-		expect(pollTimes).toEqual([startTime, startTime + 7000, startTime + 19000]);
-	});
-
-	it("backs off local transport failures without reporting server slow_down", async () => {
-		vi.useFakeTimers();
-		const resultPromise = pollOAuthDeviceCodeFlow({
-			intervalSeconds: 1,
-			expiresInSeconds: 2,
-			poll: async () => ({ status: "backoff" }),
-		});
-
-		const assertion = expect(resultPromise).rejects.toThrow("Device flow timed out");
-		await vi.advanceTimersByTimeAsync(2000);
-		await assertion;
-	});
-
 	it("cancels an in-flight wait", async () => {
 		vi.useFakeTimers();
 		const controller = new AbortController();

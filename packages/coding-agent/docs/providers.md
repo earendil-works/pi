@@ -18,7 +18,6 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
-- xAI (Grok subscription)
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
@@ -35,14 +34,6 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
-
-### xAI (Grok subscription)
-
-- Run `/login xai`, then select **Use a subscription**
-- Uses a device code at xAI's account site; no local callback server is started
-- OAuth access tokens authenticate the same `https://api.x.ai/v1` models as the `xai` provider
-- Uses xAI's shared public Grok CLI client registration; the client ID is public, but access still depends on the account's subscription entitlements
-- `XAI_API_KEY` remains available through **Use an API key**
 
 ## API Keys
 

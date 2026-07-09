@@ -69,7 +69,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Cerebras**
 - **Cloudflare AI Gateway**
 - **Cloudflare Workers AI**
-- **xAI** (API key or Grok subscription OAuth device flow)
+- **xAI**
 - **OpenRouter**
 - **Vercel AI Gateway**
 - **ZAI Coding Plan (Global)** (with separate China provider)
@@ -1367,7 +1367,6 @@ Several providers support OAuth authentication instead of static API keys:
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
-- **xAI** (Grok subscription via device code)
 
 Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(callbacks)` runs the interactive flow and returns a credential, `refresh(credential)` exchanges the refresh token, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Refresh is automatic: `models.getAuth()` and the request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh.
 
@@ -1435,11 +1434,11 @@ npx @earendil-works/pi-ai login anthropic    # login to specific provider
 npx @earendil-works/pi-ai list               # list available providers
 ```
 
-Credentials are saved to `auth.json` in the current directory with user-only `0600` permissions.
+Credentials are saved to `auth.json` in the current directory.
 
 ### Programmatic OAuth
 
-The legacy flow functions remain available via the `@earendil-works/pi-ai/oauth` entry point (`loginAnthropic`, `loginOpenAICodex`, `loginGitHubCopilot`, `loginXaiOAuth`, `refreshOAuthToken`, `getOAuthApiKey`); credential storage is the caller's responsibility there. New code should prefer the provider-owned `OAuthAuth` shown above — it composes with the credential store and gets locked auto-refresh for free.
+The legacy flow functions remain available via the `@earendil-works/pi-ai/oauth` entry point (`loginAnthropic`, `loginOpenAICodex`, `loginGitHubCopilot`, `refreshOAuthToken`, `getOAuthApiKey`); credential storage is the caller's responsibility there. New code should prefer the provider-owned `OAuthAuth` shown above — it composes with the credential store and gets locked auto-refresh for free.
 
 Provider notes:
 
@@ -1448,8 +1447,6 @@ Provider notes:
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
-
-**xAI**: `/login xai` uses the OAuth device-code grant without a callback server. It uses xAI's shared public Grok CLI client registration and sends the resulting access token to the existing `https://api.x.ai/v1` provider. API-key authentication through `XAI_API_KEY` remains available for the same provider.
 
 ## Migrating from the Old Global API
 

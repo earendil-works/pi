@@ -62,7 +62,6 @@
 		"https-proxy-agent": "7.0.6",
 		"openai": "6.26.0",
 		"partial-json": "0.1.7",
-		"proper-lockfile": "4.1.2",
 		"typebox": "1.1.38"
 	},
 	"keywords": [
@@ -87,7 +86,6 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
-		"@types/proper-lockfile": "4.1.4",
 		"canvas": "3.2.3",
 		"vitest": "4.1.9"
 	}

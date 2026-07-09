@@ -3,11 +3,9 @@ import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { createModels } from "../src/models.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
-import { xaiProvider } from "../src/providers/xai.ts";
 import { anthropicOAuth } from "../src/utils/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/utils/oauth/github-copilot.ts";
 import { openaiCodexOAuth } from "../src/utils/oauth/openai-codex.ts";
-import { xaiOAuth } from "../src/utils/oauth/xai.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -25,11 +23,6 @@ describe.sequential("OAuthAuth adapters", () => {
 
 	it("openai-codex toAuth derives the api key from the access token", async () => {
 		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
-		expect(auth).toEqual({ apiKey: "token" });
-	});
-
-	it("xai toAuth derives the api key from the access token", async () => {
-		const auth = await xaiOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 
@@ -99,21 +92,6 @@ describe.sequential("OAuthAuth adapters", () => {
 });
 
 describe("OAuth through Models.getAuth (lazy load chain)", () => {
-	it("keeps XAI_API_KEY auth on the OAuth-capable xai provider", async () => {
-		const models = createModels({
-			authContext: {
-				env: async (name) => (name === "XAI_API_KEY" ? "xai-api-key" : undefined),
-				fileExists: async () => false,
-			},
-		});
-		models.setProvider(xaiProvider());
-
-		const model = models.getModels("xai")[0];
-		const result = await models.getAuth(model);
-		expect(result?.auth.apiKey).toBe("xai-api-key");
-		expect(result?.source).toBe("XAI_API_KEY");
-	});
-
 	it("resolves stored anthropic oauth credentials via the lazy flow import", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("anthropic", async () => ({
@@ -147,26 +125,5 @@ describe("OAuth through Models.getAuth (lazy load chain)", () => {
 		const result = await models.getAuth(model);
 		expect(result?.auth.apiKey).toBe(access);
 		expect(result?.auth.baseUrl).toBe("https://api.business.githubcopilot.com");
-	});
-
-	it("resolves stored xai oauth credentials through the existing xai provider", async () => {
-		const credentials = new InMemoryCredentialStore();
-		await credentials.modify("xai", async () => ({
-			type: "oauth",
-			access: "xai-oauth-access-token",
-			refresh: "r",
-			expires: Date.now() + 60_000,
-		}));
-		const models = createModels({ credentials });
-		const provider = xaiProvider();
-		expect(provider.auth.apiKey).toBeDefined();
-		expect(provider.auth.oauth).toBeDefined();
-		models.setProvider(provider);
-
-		const model = models.getModels("xai")[0];
-		const result = await models.getAuth(model);
-		expect(result?.auth.apiKey).toBe("xai-oauth-access-token");
-		expect(result?.source).toBe("OAuth");
-		expect(model.baseUrl).toBe("https://api.x.ai/v1");
 	});
 });

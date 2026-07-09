@@ -1,7 +1,6 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
-import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
-import { loadXaiOAuth } from "../utils/oauth/load.ts";
 import { XAI_MODELS } from "./xai.models.ts";
 
 export function xaiProvider(): Provider<"openai-completions"> {
@@ -9,10 +8,7 @@ export function xaiProvider(): Provider<"openai-completions"> {
 		id: "xai",
 		name: "xAI",
 		baseUrl: "https://api.x.ai/v1",
-		auth: {
-			apiKey: envApiKeyAuth("xAI API key", ["XAI_API_KEY"]),
-			oauth: lazyOAuth({ name: "xAI (Grok subscription)", load: loadXaiOAuth }),
-		},
+		auth: { apiKey: envApiKeyAuth("xAI API key", ["XAI_API_KEY"]) },
 		models: Object.values(XAI_MODELS),
 		api: openAICompletionsApi(),
 	});
