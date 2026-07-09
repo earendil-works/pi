@@ -24,6 +24,7 @@ import {
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
+	keyHint,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -817,7 +818,7 @@ export default function (pi: ExtensionAPI) {
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
 					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
-					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`)}`;
 				}
 				const usageStr = formatUsageStats(r.usage, r.model);
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
@@ -915,7 +916,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
 				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+				text += `\n${theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`)}`;
 				return new Text(text, 0, 0);
 			}
 
@@ -1004,7 +1005,7 @@ export default function (pi: ExtensionAPI) {
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
 					if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
 				}
-				if (!expanded) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+				if (!expanded) text += `\n${theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`)}`;
 				return new Text(text, 0, 0);
 			}
 
