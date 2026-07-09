@@ -1,0 +1,11 @@
+phase: archive
+workflow: quickfix
+change: preserve-completed-todos
+created_at: 2026-07-09
+base_ref: 6a88cf5a8f238bbe2f357a4daac1fe2a06cc7a36
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true
