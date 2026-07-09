@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import lockfile from "proper-lockfile";
 import { getOAuthProvider, getOAuthProviders } from "./utils/oauth/index.ts";
 import type { OAuthCredentials, OAuthProviderId } from "./utils/oauth/types.ts";
 
 const AUTH_FILE = "auth.json";
+const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 const PROVIDERS = getOAuthProviders();
 
 function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
@@ -22,7 +25,55 @@ function loadAuth(): Record<string, { type: "oauth" } & OAuthCredentials> {
 }
 
 function saveAuth(auth: Record<string, { type: "oauth" } & OAuthCredentials>): void {
-	writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf-8");
+	const tempFile = `${AUTH_FILE}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(tempFile, JSON.stringify(auth, null, 2), {
+			...AUTH_FILE_WRITE_OPTIONS,
+			flag: "wx",
+		});
+		chmodSync(tempFile, 0o600);
+		renameSync(tempFile, AUTH_FILE);
+	} finally {
+		rmSync(tempFile, { force: true });
+	}
+}
+
+async function saveProviderAuth(providerId: OAuthProviderId, credentials: OAuthCredentials): Promise<void> {
+	let compromisedError: Error | undefined;
+	const release = await lockfile.lock(AUTH_FILE, {
+		realpath: false,
+		retries: {
+			retries: 10,
+			factor: 2,
+			minTimeout: 100,
+			maxTimeout: 1000,
+			randomize: true,
+		},
+		stale: 30_000,
+		onCompromised: (error) => {
+			compromisedError = error;
+		},
+	});
+	let saveError: unknown;
+	try {
+		if (compromisedError) throw compromisedError;
+		const auth = loadAuth();
+		auth[providerId] = { type: "oauth", ...credentials };
+		saveAuth(auth);
+		if (compromisedError) throw compromisedError;
+	} catch (error) {
+		saveError = error;
+	}
+
+	let releaseError: unknown;
+	try {
+		await release();
+	} catch (error) {
+		releaseError = error;
+	}
+
+	if (saveError) throw saveError;
+	if (releaseError) throw releaseError;
 }
 
 async function login(providerId: OAuthProviderId): Promise<void> {
@@ -62,9 +113,7 @@ async function login(providerId: OAuthProviderId): Promise<void> {
 			onProgress: (msg) => console.log(msg),
 		});
 
-		const auth = loadAuth();
-		auth[providerId] = { type: "oauth", ...credentials };
-		saveAuth(auth);
+		await saveProviderAuth(providerId, credentials);
 
 		console.log(`\nCredentials saved to ${AUTH_FILE}`);
 	} finally {

@@ -5,6 +5,7 @@
 ### Added
 
 - Added the opt-in `max` thinking level across CLI, SDK, RPC, model selection, and themes. Custom themes can define `thinkingMax`; existing themes fall back to `thinkingXhigh`.
+- Added `/login xai` support for Grok subscription OAuth through a device-code flow, alongside existing xAI API-key authentication.
 
 ## [0.80.5] - 2026-07-09
 

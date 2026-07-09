@@ -10,6 +10,7 @@ const SLOW_DOWN_INTERVAL_INCREMENT_MS = 5000;
 
 type OAuthDeviceCodeIncompletePollResult =
 	| { status: "pending" }
+	| { status: "backoff" }
 	| { status: "slow_down"; intervalSeconds?: number }
 	| { status: "failed"; message: string };
 
@@ -73,17 +74,21 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 		if (result.status === "failed") {
 			throw new Error(result.message);
 		}
-		if (result.status === "slow_down") {
-			slowDownResponses += 1;
-			// Use the server-provided interval when given (GitHub reports the new required minimum
-			// in `interval`); trusting only a client-tracked value risks polling early forever under
-			// WSL/VM clock drift. Otherwise apply RFC 8628 section 3.5: increase by 5 seconds.
-			intervalMs =
+		if (result.status === "slow_down" || result.status === "backoff") {
+			if (result.status === "slow_down") {
+				slowDownResponses += 1;
+			}
+			// RFC 8628 requires increasing the current interval by 5 seconds. A server-provided
+			// interval is an additional minimum (GitHub reports one under clock drift), never a
+			// replacement that may reduce an interval increased by an earlier slow_down response.
+			const serverIntervalMs =
+				result.status === "slow_down" &&
 				typeof result.intervalSeconds === "number" &&
 				Number.isFinite(result.intervalSeconds) &&
 				result.intervalSeconds > 0
-					? Math.max(MINIMUM_INTERVAL_MS, Math.floor(result.intervalSeconds * 1000))
-					: Math.max(MINIMUM_INTERVAL_MS, intervalMs + SLOW_DOWN_INTERVAL_INCREMENT_MS);
+					? Math.floor(result.intervalSeconds * 1000)
+					: 0;
+			intervalMs = Math.max(MINIMUM_INTERVAL_MS, intervalMs + SLOW_DOWN_INTERVAL_INCREMENT_MS, serverIntervalMs);
 		}
 
 		const remainingMs = deadline - Date.now();

@@ -5,10 +5,12 @@
 ### Added
 
 - Added a separate opt-in `max` thinking level, including native `xhigh` and `max` support for GPT-5.6 and Anthropic adaptive-thinking effort metadata matching Anthropic's documentation: `max` on all adaptive Claude models, native `xhigh` on Opus 4.7/4.8, Sonnet 5, and Fable 5 only.
+- Added xAI Grok subscription authentication through a hardened OAuth device-code flow while retaining `XAI_API_KEY` support on the existing `xai` provider.
 
 ### Fixed
 
 - Fixed post-compaction output-token budgeting to ignore stale assistant usage from before the compaction boundary ([#6464](https://github.com/earendil-works/pi/issues/6464)).
+- Fixed the standalone OAuth CLI to lock credential updates and replace `auth.json` atomically with user-only permissions instead of losing concurrent updates or following an existing symlink.
 
 ## [0.80.5] - 2026-07-09
 
