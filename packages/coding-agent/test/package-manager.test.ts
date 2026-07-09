@@ -845,7 +845,16 @@ Content`,
 
 			await packageManager.install(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith("pnpm", ["install"], { cwd: targetDir });
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"pnpm",
+				[
+					"install",
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				],
+				{ cwd: targetDir },
+			);
 		});
 
 		it("should update git package dependencies with --omit=dev", async () => {
@@ -908,9 +917,107 @@ Content`,
 
 			await packageManager.update(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith("mise", ["exec", "node@20", "--", "pnpm", "install"], {
-				cwd: targetDir,
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"mise",
+				[
+					"exec",
+					"node@20",
+					"--",
+					"pnpm",
+					"install",
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				],
+				{
+					cwd: targetDir,
+				},
+			);
+		});
+
+		it("should reinstall git package dependencies on resolve when node_modules is missing", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(targetDir, { recursive: true });
+			// Checkout exists with runtime dependencies but no node_modules (e.g. after git clean -fdx).
+			writeFileSync(
+				join(targetDir, "package.json"),
+				JSON.stringify({ name: "repo", version: "1.0.0", dependencies: { croner: "^10.0.0" } }),
+			);
+			settingsManager.setPackages([source]);
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.resolve();
+
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
+		});
+
+		it("should use plain install when reinstalling missing git package dependencies with npmCommand configured", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["pnpm"],
 			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(targetDir, { recursive: true });
+			writeFileSync(
+				join(targetDir, "package.json"),
+				JSON.stringify({ name: "repo", version: "1.0.0", dependencies: { croner: "^10.0.0" } }),
+			);
+			settingsManager.setPackages([source]);
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.resolve();
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"pnpm",
+				[
+					"install",
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				],
+				{ cwd: targetDir },
+			);
+		});
+
+		it("should not reinstall git package dependencies on resolve when node_modules exists", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(targetDir, { recursive: true });
+			writeFileSync(
+				join(targetDir, "package.json"),
+				JSON.stringify({ name: "repo", version: "1.0.0", dependencies: { croner: "^10.0.0" } }),
+			);
+			mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+			settingsManager.setPackages([source]);
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.resolve();
+
+			expect(runCommandSpy).not.toHaveBeenCalledWith("npm", expect.any(Array), expect.anything());
+		});
+
+		it("should not reinstall git package dependencies on resolve when package has no dependencies", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(targetDir, { recursive: true });
+			writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
+			settingsManager.setPackages([source]);
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.resolve();
+
+			expect(runCommandSpy).not.toHaveBeenCalledWith("npm", expect.any(Array), expect.anything());
 		});
 
 		it("should use npmCommand argv for npm root lookup and invalidate cached root when npmCommand changes", () => {

@@ -1289,8 +1289,15 @@ export class DefaultPackageManager implements PackageManager {
 				if (!existsSync(installedPath)) {
 					const installed = await installMissing();
 					if (!installed) continue;
-				} else if (resolvedScope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
-					await this.refreshTemporaryGitSource(parsed, resolvedSource);
+				} else {
+					if (resolvedScope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
+						await this.refreshTemporaryGitSource(parsed, resolvedSource);
+					}
+					// A git checkout can lose its node_modules after a manual `git clean -fdx`, a
+					// fresh clone by another tool, or a partial state. The load path only checks for
+					// the checkout directory, so reinstall runtime dependencies when they are missing
+					// to avoid loading extensions with broken imports (e.g. `Cannot find module`).
+					await this.ensureGitPackageDependencies(installedPath, resolvedScope);
 				}
 				metadata.baseDir = installedPath;
 				this.collectPackageResources(installedPath, accumulator, filter, metadata);
@@ -1761,6 +1768,17 @@ export class DefaultPackageManager implements PackageManager {
 	private getGitDependencyInstallArgs(): string[] {
 		const configuredCommand = this.settingsManager.getNpmCommand();
 		if (configuredCommand && configuredCommand.length > 0) {
+			// pnpm exits non-zero on unapproved build scripts ([ERR_PNPM_IGNORED_BUILDS]), which would
+			// abort install/update/restore even though dependencies are installed successfully. Mirror
+			// the npm-package install flags so git package installs stay pnpm-friendly.
+			if (this.getPackageManagerName() === "pnpm") {
+				return [
+					"install",
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				];
+			}
 			return ["install"];
 		}
 		return ["install", "--omit=dev"];
@@ -1881,6 +1899,40 @@ export class DefaultPackageManager implements PackageManager {
 		if (existsSync(packageJsonPath)) {
 			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
 		}
+	}
+
+	/**
+	 * Reinstall runtime dependencies for an existing git checkout when its node_modules is missing.
+	 *
+	 * The load path (`resolvePackageSources`) only checks for the checkout directory, not for
+	 * `node_modules`. A checkout can lose its dependencies after a manual `git clean -fdx`, a
+	 * fresh clone by another tool, or a partial state, which leaves extensions importing third-party
+	 * packages (e.g. `croner`) unable to load with `Cannot find module`. This restores them.
+	 *
+	 * Only packages that declare runtime `dependencies` are reinstalled: a no-deps checkout has
+	 * nothing to restore, and `npm install` does not create `node_modules` for such packages, so
+	 * checking for it would cause spurious reinstalls on every startup for npm users.
+	 */
+	private async ensureGitPackageDependencies(targetDir: string, scope: SourceScope): Promise<void> {
+		if (isOfflineModeEnabled()) return;
+		const packageJsonPath = join(targetDir, "package.json");
+		if (!existsSync(packageJsonPath)) return;
+		if (existsSync(join(targetDir, "node_modules"))) return;
+		let pkg: { dependencies?: Record<string, string> };
+		try {
+			pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { dependencies?: Record<string, string> };
+		} catch {
+			return;
+		}
+		if (!pkg.dependencies || Object.keys(pkg.dependencies).length === 0) return;
+		await this.withProgress(
+			"install",
+			targetDir,
+			`Restoring dependencies for ${relative(this.getBaseDirForScope(scope), targetDir) || targetDir}...`,
+			async () => {
+				await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			},
+		);
 	}
 
 	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string): Promise<void> {
