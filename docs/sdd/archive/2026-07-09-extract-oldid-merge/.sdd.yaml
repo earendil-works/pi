@@ -1,0 +1,11 @@
+phase: archive
+workflow: quickfix
+change: extract-oldid-merge
+created_at: 2026-07-09
+base_ref: 338c22a25082e9ddba0c33531586c01564bf310d
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+last_review_sha: null
+archived: true
