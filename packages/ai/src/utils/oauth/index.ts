@@ -5,6 +5,8 @@
  * for OAuth-based providers:
  * - Anthropic (Claude Pro/Max)
  * - GitHub Copilot
+ * - OpenAI Codex (ChatGPT Plus/Pro)
+ * - xAI Grok (SuperGrok)
  */
 
 // Anthropic
@@ -27,6 +29,8 @@ export {
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
 } from "./openai-codex.ts";
+// xAI Grok OAuth (SuperGrok)
+export { loginXaiOAuth, refreshXaiOAuthToken, xaiOAuthProvider } from "./xai.ts";
 
 export * from "./types.ts";
 
@@ -37,12 +41,14 @@ export * from "./types.ts";
 import { anthropicOAuthProvider } from "./anthropic.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
+import { xaiOAuthProvider } from "./xai.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	xaiOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(

@@ -30,6 +30,7 @@ import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
+import { XAI_OAUTH_MODELS } from "./providers/xai-oauth.models.ts";
 import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
 import { XIAOMI_TOKEN_PLAN_AMS_MODELS } from "./providers/xiaomi-token-plan-ams.models.ts";
 import { XIAOMI_TOKEN_PLAN_CN_MODELS } from "./providers/xiaomi-token-plan-cn.models.ts";
@@ -67,6 +68,7 @@ export const MODELS = {
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,
+	"xai-oauth": XAI_OAUTH_MODELS,
 	"xiaomi": XIAOMI_MODELS,
 	"xiaomi-token-plan-ams": XIAOMI_TOKEN_PLAN_AMS_MODELS,
 	"xiaomi-token-plan-cn": XIAOMI_TOKEN_PLAN_CN_MODELS,
