@@ -3,14 +3,12 @@
 ## [Unreleased]
 
 ### Added
-
-- `/compact` slash command in the chat input. Sends the session's RPC `compact` command (with optional `customInstructions` after a space) and shows a "Compacting…" indicator while it runs. The indicator clears when the server replies with `compact_done` or when the pi process emits `compaction_end` (whichever arrives first).
 - User-defined **quick commands**: arbitrary `/<name>` shortcuts stored under `settings.webui.quickCommands` as `{name, description?, prompt}`. Anything typed after the command name is substituted into the prompt template as `$ARG`. Manage from a new `/commands` page (Terminal icon in the sidebar) or add inline from a bar docked above the chat input.
 - `api.compact(sessionId, customInstructions?)` on the webui client (waits for `compact_done`, 30s timeout).
 - `api.getQuickCommands()` / `api.setQuickCommands(commands)` for the settings round-trip.
 
 ### Changed
-
+- `POST /api/memory/extract` response shape rename (extract-oldid-merge, personal-assistant change): the top-level `superseded` field is renamed → `updated`, and `supersededPairs` → `updatedPairs`. Webui callers reading these on the success response must switch the field name. Also propagates to the underlying `RunMemoryExtractionResult` TypeScript contract — webui-server-side scripts using `result.superseded` from memory.ts must switch to `result.updated`. (Coordinated with extensions/personal-assistant CHANGELOG breaking-changes entry.)
 - WebSocket handler accepts a new `compact` message type. The server's existing `compaction_start` / `compaction_end` events are still forwarded as `session_event` and now also clear the "Compacting…" indicator.
 
 ### Reserved names

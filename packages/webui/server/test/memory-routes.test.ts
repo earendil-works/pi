@@ -1798,18 +1798,18 @@ describe("POST /api/memory/extract", () => {
 		});
 		expect(res.status).toBe(200);
 		expect(res.data.created).toBe(0);
-		expect(res.data.superseded).toBe(0);
+		expect(res.data.updated).toBe(0);
 		expect(res.data.skipped).toBe(0);
 		const createdIds = res.data.createdIds as unknown[];
 		expect(createdIds).toHaveLength(0);
 	});
 
-	it("returns supersededPairs and skippedIds as arrays", async () => {
+	it("returns updatedPairs and skippedIds as arrays", async () => {
 		const res = await fetchAt("/api/memory/extract", {
 			messages: [{ role: "user", content: "x" }],
 		});
 		expect(res.status).toBe(200);
-		expect(Array.isArray(res.data.supersededPairs)).toBe(true);
+		expect(Array.isArray(res.data.updatedPairs)).toBe(true);
 		expect(Array.isArray(res.data.skippedIds)).toBe(true);
 	});
 });

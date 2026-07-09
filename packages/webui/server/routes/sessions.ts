@@ -313,14 +313,14 @@ async function extractAtomsSafely(
 		// here for the same return-value contract the DELETE handler
 		// already advertises.
 		const created = result.created.length;
-		const superseded = result.superseded.length;
+		const updated = result.updated.length;
 		const skipped = result.skipped.length;
-		const atomsWritten = created + superseded;
+		const atomsWritten = created + updated;
 		const itemsProposed = result.plan?.items.length ?? 0;
 		console.log(
 			`[memory] session ${sessionId ?? "<unknown>"}: extraction complete — ` +
 				`${atomsWritten} atoms written ` +
-				`(${created} new, ${superseded} updated, ${skipped} unchanged; ` +
+				`(${created} new, ${updated} updated, ${skipped} unchanged; ` +
 				`${itemsProposed} proposed) in ${elapsedMs}ms`,
 		);
 		return atomsWritten;

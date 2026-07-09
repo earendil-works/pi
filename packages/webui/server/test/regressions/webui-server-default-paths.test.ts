@@ -52,7 +52,7 @@ describe("createApp() passes dbPath/atomsDir to mountSessionsRoutes", () => {
 			},
 			atomsWritten: 0,
 			created: [],
-			superseded: [],
+			updated: [],
 			skipped: [],
 		});
 
