@@ -2359,6 +2359,12 @@ export class InteractiveMode {
 		this.editorContainer.clear();
 
 		if (factory) {
+			// Reload keybindings before creating the custom editor to ensure
+			// user overrides from keybindings.json are applied. This avoids a
+			// race where setEditorComponent is called by extensions during
+			// session reload before the reload handler updates keybindings.
+			this.keybindings.reload();
+
 			// Create the custom editor with tui, theme, and keybindings
 			const newEditor = factory(this.ui, getEditorTheme(), this.keybindings);
 
