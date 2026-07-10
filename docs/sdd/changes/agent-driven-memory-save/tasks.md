@@ -33,7 +33,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `recallPipeline topK default 20` and `recallPipeline passes recent to rewrite` tests PASS; mock fixtures provide stub `recallAtoms` and `rewriteQueries`.
   - **依赖**: 1.1
 
-- [ ] 1.3 **Add embedding service health probe (webui-only opt-in)**
+- [x] 1.3 **Add embedding service health probe (webui-only opt-in)**
   - **文件**: `extensions/personal-assistant/recall.ts` (Modify)
   - **内容**: When `opts.embeddingServiceUrlProbe === true`, run a 100ms `fetch(embeddingServiceUrl + "/api/health")` and set `status.embeddingServiceStatus` to `"up"` (2xx) or `"down"` (non-2xx / abort / network error). TUI callers pass `false` or omit.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `recallPipeline embedding probe up/down` tests PASS with mock fetch.
@@ -59,7 +59,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save create fingerprint miss` test PASS: DB 1 row, .md exists, reindexOne called with the new id.
   - **依赖**: 2.1
 
-- [ ] 2.3 **Implement skipped path (fingerprint hit)**
+- [x] 2.3 **Implement skipped path (fingerprint hit)**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: In `id` absent branch, when `index.getActiveAtomByFingerprint(fp)` returns an atom, return `{action:"skipped", reason:"duplicate_content", existing_id: existing.id}`. Increment counter even on skip.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save fingerprint hit skip` test PASS: DB unchanged, .md not written, reindexOne not called.
