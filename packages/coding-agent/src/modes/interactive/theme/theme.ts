@@ -804,7 +804,20 @@ const THEME_KEY_OLD = Symbol.for("@mariozechner/pi-coding-agent:theme");
 // This ensures all module instances (tsx, jiti) see the same theme
 export const theme: Theme = new Proxy({} as Theme, {
 	get(_target, prop) {
-		const t = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+		let t = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+		// Library hosts embed pi without the TUI and never call initTheme().
+		// Bootstrap a builtin theme on first access instead of throwing, so
+		// shared code paths that read `theme` stay usable. An explicit initTheme()
+		// call still wins; if even the builtin cannot be loaded we keep the
+		// original error so misconfiguration stays visible.
+		if (!t) {
+			try {
+				setGlobalTheme(loadTheme("dark"));
+				t = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+			} catch {
+				t = undefined;
+			}
+		}
 		if (!t) throw new Error("Theme not initialized. Call initTheme() first.");
 		return (t as unknown as Record<string | symbol, unknown>)[prop];
 	},

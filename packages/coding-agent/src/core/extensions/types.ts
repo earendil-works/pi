@@ -1551,6 +1551,8 @@ export interface ExtensionRuntimeState {
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
 	invalidate: (message?: string) => void;
+	/** Clears the stale marker so a reused runtime can be reactivated by bindCore(). */
+	clearInvalidation?: () => void;
 	/**
 	 * Register or unregister a provider.
 	 *

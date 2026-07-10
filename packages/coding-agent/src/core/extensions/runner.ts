@@ -315,6 +315,9 @@ export class ExtensionRunner {
 			unregisterProvider?: (name: string) => void;
 		},
 	): void {
+		// A runtime reused across sessions may still carry the stale marker from
+		// the previous session's dispose(); clear it before rebinding.
+		this.runtime.clearInvalidation?.();
 		// Copy actions into the shared runtime (all extension APIs reference this)
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
