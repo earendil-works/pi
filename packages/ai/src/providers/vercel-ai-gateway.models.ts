@@ -945,7 +945,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		cost: {
 			input: 0.14,
 			output: 0.28,
-			cacheRead: 0.0028,
+			cacheRead: 0.028,
 			cacheWrite: 0,
 		},
 		contextWindow: 1000000,
@@ -1400,7 +1400,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		cost: {
 			input: 1.25,
 			output: 4.25,

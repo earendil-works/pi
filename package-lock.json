@@ -5115,10 +5115,10 @@
 		},
 		"packages/agent": {
 			"name": "@earendil-works/pi-agent-core",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.80.5",
+				"@earendil-works/pi-ai": "^0.80.6",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -5467,7 +5467,7 @@
 		},
 		"packages/ai": {
 			"name": "@earendil-works/pi-ai",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -5773,12 +5773,12 @@
 		},
 		"packages/coding-agent": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.80.5",
-				"@earendil-works/pi-ai": "^0.80.5",
-				"@earendil-works/pi-tui": "^0.80.5",
+				"@earendil-works/pi-agent-core": "^0.80.6",
+				"@earendil-works/pi-ai": "^0.80.6",
+				"@earendil-works/pi-tui": "^0.80.6",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -5819,32 +5819,32 @@
 		},
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic": {
 			"name": "pi-extension-custom-provider-anthropic",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.52.0"
 			}
 		},
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo": {
 			"name": "pi-extension-custom-provider-gitlab-duo",
-			"version": "0.80.5"
+			"version": "0.80.6"
 		},
 		"packages/coding-agent/examples/extensions/gondolin": {
 			"name": "pi-extension-gondolin",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"dependencies": {
 				"@earendil-works/gondolin": "0.12.0"
 			}
 		},
 		"packages/coding-agent/examples/extensions/sandbox": {
 			"name": "pi-extension-sandbox",
-			"version": "1.10.5",
+			"version": "1.10.6",
 			"dependencies": {
 				"@anthropic-ai/sandbox-runtime": "0.0.26"
 			}
 		},
 		"packages/coding-agent/examples/extensions/with-deps": {
 			"name": "pi-extension-with-deps",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"dependencies": {
 				"ms": "2.1.3"
 			},
@@ -6140,10 +6140,10 @@
 		},
 		"packages/orchestrator": {
 			"name": "@earendil-works/pi-orchestrator",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-coding-agent": "^0.80.5"
+				"@earendil-works/pi-coding-agent": "^0.80.6"
 			},
 			"devDependencies": {
 				"shx": "0.4.0"
@@ -6154,7 +6154,7 @@
 		},
 		"packages/tui": {
 			"name": "@earendil-works/pi-tui",
-			"version": "0.80.5",
+			"version": "0.80.6",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",

@@ -181,4 +181,13 @@ describe("bedrock endpoint resolution", () => {
 
 		expect(config.region).toBe("us-gov-west-1");
 	});
+
+	it("uses the generic API key option as a Bedrock bearer token", async () => {
+		const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+
+		const config = await captureClientConfig(model, { apiKey: "bedrock-api-key" });
+
+		expect(config.token).toEqual({ token: "bedrock-api-key" });
+		expect(config.authSchemePreference).toEqual(["httpBearerAuth"]);
+	});
 });
