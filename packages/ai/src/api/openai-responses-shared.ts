@@ -79,7 +79,7 @@ export interface OpenAIResponsesStreamOptions {
 
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
-	deferredToolsByMessageIndex?: ReadonlyMap<number, readonly Tool[]>;
+	deferredTools?: ReadonlyMap<string, Tool>;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -88,82 +88,6 @@ export interface ConvertResponsesToolsOptions {
 }
 
 type OpenAIFunctionTool = Extract<OpenAITool, { type: "function" }>;
-
-export interface OpenAIResponsesToolPlacement {
-	prefixTools: Tool[];
-	deferredToolsByMessageIndex: Map<number, Tool[]>;
-}
-
-function mergeToolListsByName(baseTools: Tool[] | undefined, added: ReadonlyMap<string, Tool>): Tool[] {
-	const merged = new Map<string, Tool>();
-	const order: string[] = [];
-	for (const tool of baseTools ?? []) {
-		if (!merged.has(tool.name)) order.push(tool.name);
-		merged.set(tool.name, tool);
-	}
-	for (const tool of added.values()) {
-		if (!merged.has(tool.name)) order.push(tool.name);
-		merged.set(tool.name, tool);
-	}
-	return order.map((name) => merged.get(name)!);
-}
-
-export function resolveOpenAIResponsesToolPlacement(context: Context): OpenAIResponsesToolPlacement {
-	interface AddedToolOccurrence {
-		tool: Tool;
-		placement: "deferred" | "folded";
-		messageIndex: number;
-		count: number;
-		hasPriorToolUse: boolean;
-	}
-
-	const usedToolNames = new Set<string>();
-	const latestAddedTools = new Map<string, AddedToolOccurrence>();
-	for (const [messageIndex, msg] of context.messages.entries()) {
-		if (msg.role === "assistant") {
-			for (const block of msg.content) {
-				if (block.type === "toolCall") {
-					usedToolNames.add(block.name);
-				}
-			}
-			continue;
-		}
-		if (msg.role !== "user" && msg.role !== "toolResult") continue;
-		if (!msg.addedTools?.length) continue;
-		const placement = msg.role === "toolResult" ? "deferred" : "folded";
-		for (const tool of msg.addedTools) {
-			latestAddedTools.set(tool.name, {
-				tool,
-				placement,
-				messageIndex,
-				count: (latestAddedTools.get(tool.name)?.count ?? 0) + 1,
-				hasPriorToolUse: usedToolNames.has(tool.name),
-			});
-		}
-	}
-
-	const folded = new Map<string, Tool>();
-	const deferredToolsByMessageIndex = new Map<number, Tool[]>();
-	for (const [name, occurrence] of latestAddedTools) {
-		if (occurrence.placement === "deferred" && occurrence.count === 1 && !occurrence.hasPriorToolUse) {
-			const tools = deferredToolsByMessageIndex.get(occurrence.messageIndex) ?? [];
-			tools.push(occurrence.tool);
-			deferredToolsByMessageIndex.set(occurrence.messageIndex, tools);
-		} else {
-			folded.set(name, occurrence.tool);
-		}
-	}
-
-	const deferredNames = new Set(
-		Array.from(deferredToolsByMessageIndex.values())
-			.flat()
-			.map((tool) => tool.name),
-	);
-	return {
-		prefixTools: mergeToolListsByName(context.tools, folded).filter((tool) => !deferredNames.has(tool.name)),
-		deferredToolsByMessageIndex,
-	};
-}
 
 // =============================================================================
 // Message conversion
@@ -176,6 +100,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
 	const messages: ResponseInput = [];
+	const loadedToolNames = new Set<string>();
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -342,20 +267,25 @@ export function convertResponsesMessages<TApi extends Api>(
 				output,
 			});
 
-			const deferredTools = options?.deferredToolsByMessageIndex?.get(msgIndex);
-			if (deferredTools && deferredTools.length > 0) {
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${deferredTools.map((tool) => tool.name).join(",")}`)}`;
+			const deferredTools: Tool[] = [];
+			for (const name of msg.addedToolNames ?? []) {
+				const tool = options?.deferredTools?.get(name);
+				if (!tool || loadedToolNames.has(name)) continue;
+				loadedToolNames.add(name);
+				deferredTools.push(tool);
+			}
+			if (deferredTools.length > 0) {
+				const names = deferredTools.map((tool) => tool.name);
+				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
 				messages.push({
 					type: "tool_search_call",
-					id: `tsc_${shortHash(searchCallId)}`,
 					call_id: searchCallId,
 					execution: "client",
 					status: "completed",
-					arguments: { query: deferredTools.map((tool) => tool.name).join(" "), limit: deferredTools.length },
+					arguments: { query: names.join(" "), limit: names.length },
 				} satisfies ResponseInputItem);
 				messages.push({
 					type: "tool_search_output",
-					id: `tso_${shortHash(searchCallId)}`,
 					call_id: searchCallId,
 					execution: "client",
 					status: "completed",

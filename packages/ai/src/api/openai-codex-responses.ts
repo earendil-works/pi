@@ -36,6 +36,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -46,12 +47,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	processResponsesStream,
-	resolveOpenAIResponsesToolPlacement,
-} from "./openai-responses-shared.ts";
+import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -486,10 +482,10 @@ function buildRequestBody(
 	context: Context,
 	options?: OpenAICodexResponsesOptions,
 ): RequestBody {
-	const toolPlacement = resolveOpenAIResponsesToolPlacement(context);
+	const toolPlacement = splitDeferredTools(context, true);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
-		deferredToolsByMessageIndex: toolPlacement.deferredToolsByMessageIndex,
+		deferredTools: toolPlacement.deferred,
 	});
 
 	const body: RequestBody = {
@@ -513,8 +509,8 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.prefixTools.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.prefixTools, { strict: null });
+	if (toolPlacement.immediate.length > 0) {
+		body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null });
 	}
 
 	if (options?.reasoningEffort !== undefined) {

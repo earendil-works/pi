@@ -377,13 +377,6 @@ export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
-	/**
-	 * Tools introduced into the conversation at this message's position.
-	 * Providers with native transcript-anchored tool loading keep these out of
-	 * the cached prefix; all other providers fold them into the request tool
-	 * list. Tools listed here override same-named entries in `Context.tools`.
-	 */
-	addedTools?: Tool[];
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -409,14 +402,11 @@ export interface ToolResultMessage<TDetails = any> {
 	content: (TextContent | ImageContent)[]; // Supports text and images
 	details?: TDetails;
 	/**
-	 * Tools introduced into the conversation at this message's position.
-	 * On Anthropic models that support tool references, these are sent as
-	 * `defer_loading` definitions plus a `tool_reference` block inside this
-	 * tool result, so the cached prefix stays untouched. All other providers
-	 * fold them into the request tool list. Tools listed here override
-	 * same-named entries in `Context.tools`.
+	 * Names from `Context.tools` that became available after this result.
+	 * Providers with native deferred tool loading use this as the load point;
+	 * other providers ignore it and use `Context.tools` normally.
 	 */
-	addedTools?: Tool[];
+	addedToolNames?: string[];
 	isError: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -541,6 +531,8 @@ export interface OpenAIResponsesCompat {
 	sendSessionIdHeader?: boolean;
 	/** Whether the provider supports `prompt_cache_retention: "24h"`. Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** Whether the provider supports client-executed tool search for deferred tools. Default: true for OpenAI. */
+	supportsToolSearch?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -590,13 +582,9 @@ export interface AnthropicMessagesCompat {
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
 	/**
-	 * Whether the provider supports `defer_loading` tool definitions and
-	 * `tool_reference` content blocks inside tool results. When true, tools
-	 * anchored to tool-result messages via `addedTools` are spliced into the
-	 * transcript without entering the cached prefix. When false, such tools are
-	 * folded into the request tool list instead (one-time cache miss).
-	 * Default: true for first-party Anthropic models except Haiku and
-	 * pre-4.5 models; false for other providers.
+	 * Whether the provider supports deferred tools loaded by `tool_reference`
+	 * blocks in tool results. Default: true for first-party Anthropic models
+	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
 }

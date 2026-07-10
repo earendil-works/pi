@@ -21,7 +21,6 @@ import type {
 	Tool,
 	ToolCall,
 } from "../types.ts";
-import { unionContextTools } from "../utils/added-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -250,8 +249,7 @@ function buildChatPayload(
 		messages: toChatMessages(messages, model.input.includes("image")),
 	};
 
-	const effectiveTools = unionContextTools(context);
-	if (effectiveTools?.length) payload.tools = toFunctionTools(effectiveTools);
+	if (context.tools?.length) payload.tools = toFunctionTools(context.tools);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);

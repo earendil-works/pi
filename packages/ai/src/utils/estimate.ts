@@ -1,5 +1,4 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
-import { collectAddedTools, unionContextTools } from "./added-tools.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -113,25 +112,17 @@ function isMessageArray(value: Context | readonly Message[]): value is readonly 
 }
 
 export function estimateContextTokens(context: Context | readonly Message[]): ContextUsageEstimate {
-	if (isMessageArray(context)) {
-		const estimate = estimateMessages(context);
-		const addedTools =
-			estimate.lastUsageIndex === null
-				? collectAddedTools(context)
-				: collectAddedTools(context.slice(estimate.lastUsageIndex + 1));
-		const addedToolTokens = estimateToolsTokens([...addedTools.values()]);
-		return {
-			tokens: estimate.tokens + addedToolTokens,
-			usageTokens: estimate.usageTokens,
-			trailingTokens: estimate.trailingTokens + addedToolTokens,
-			lastUsageIndex: estimate.lastUsageIndex,
-		};
-	}
+	if (isMessageArray(context)) return estimateMessages(context);
 
 	const estimate = estimateMessages(context.messages);
 	if (estimate.lastUsageIndex !== null) {
-		const addedTools = collectAddedTools(context.messages.slice(estimate.lastUsageIndex + 1));
-		const addedToolTokens = estimateToolsTokens([...addedTools.values()]);
+		const addedNames = new Set(
+			context.messages
+				.slice(estimate.lastUsageIndex + 1)
+				.filter((message) => message.role === "toolResult")
+				.flatMap((message) => message.addedToolNames ?? []),
+		);
+		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => addedNames.has(tool.name)));
 		return {
 			tokens: estimate.tokens + addedToolTokens,
 			usageTokens: estimate.usageTokens,
@@ -141,8 +132,7 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 	}
 
 	const prefixTokens =
-		(context.systemPrompt ? estimateTextTokens(context.systemPrompt) : 0) +
-		estimateToolsTokens(unionContextTools(context));
+		(context.systemPrompt ? estimateTextTokens(context.systemPrompt) : 0) + estimateToolsTokens(context.tools);
 
 	return {
 		tokens: estimate.tokens + prefixTokens,

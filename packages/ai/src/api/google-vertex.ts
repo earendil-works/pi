@@ -24,7 +24,6 @@ import type {
 	ThinkingContent,
 	ToolCall,
 } from "../types.ts";
-import { unionContextTools } from "../utils/added-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -455,14 +454,13 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
-	const effectiveTools = unionContextTools(context);
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(effectiveTools && effectiveTools.length > 0 && { tools: convertTools(effectiveTools) }),
+		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
 	};
 
-	if (effectiveTools && effectiveTools.length > 0 && options.toolChoice) {
+	if (context.tools && context.tools.length > 0 && options.toolChoice) {
 		config.toolConfig = {
 			functionCallingConfig: {
 				mode: mapToolChoice(options.toolChoice),

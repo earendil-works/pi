@@ -107,7 +107,7 @@ describe("extension active tools next-turn refresh", () => {
 					addedToolNames.push(
 						context.messages
 							.filter((message) => message.role === "toolResult")
-							.flatMap((message) => message.addedTools?.map((tool) => tool.name) ?? []),
+							.flatMap((message) => message.addedToolNames ?? []),
 					);
 					return fauxAssistantMessage("done");
 				},
