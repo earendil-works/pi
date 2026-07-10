@@ -1049,13 +1049,13 @@ function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
-function buildToolResultBlock(
+function convertToolResult(
 	msg: ToolResultMessage,
 	isOAuthToken: boolean,
 	deferredToolNames: ReadonlySet<string>,
 	loadedToolNames: Set<string>,
 	normalizeToolName: (name: string) => string,
-): ContentBlockParam {
+): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
 		const normalizedName = normalizeToolName(name);
@@ -1066,12 +1066,21 @@ function buildToolResultBlock(
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
 		});
 	}
+	const convertedContent = convertContentBlocks(msg.content);
 	// Anthropic rejects tool references mixed with ordinary tool-result content.
 	return {
-		type: "tool_result",
-		tool_use_id: msg.toolCallId,
-		content: references.length > 0 ? references : convertContentBlocks(msg.content),
-		is_error: msg.isError,
+		toolResult: {
+			type: "tool_result",
+			tool_use_id: msg.toolCallId,
+			content: references.length > 0 ? references : convertedContent,
+			is_error: msg.isError,
+		},
+		siblingContent:
+			references.length === 0
+				? []
+				: typeof convertedContent === "string"
+					? [{ type: "text", text: convertedContent }]
+					: convertedContent,
 	};
 }
 
@@ -1187,31 +1196,30 @@ function convertMessages(
 				content: blocks,
 			});
 		} else if (msg.role === "toolResult") {
-			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint
+			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint.
 			const toolResults: ContentBlockParam[] = [];
-
-			// Add the current tool result
-			toolResults.push(
-				buildToolResultBlock(msg, isOAuthToken, deferredToolNames, loadedToolNames, normalizeToolName),
-			);
-
-			// Look ahead for consecutive toolResult messages
-			let j = i + 1;
+			const siblingContent: ContentBlockParam[] = [];
+			let j = i;
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
-				const nextMsg = transformedMessages[j] as ToolResultMessage; // We know it's a toolResult
-				toolResults.push(
-					buildToolResultBlock(nextMsg, isOAuthToken, deferredToolNames, loadedToolNames, normalizeToolName),
+				const converted = convertToolResult(
+					transformedMessages[j] as ToolResultMessage,
+					isOAuthToken,
+					deferredToolNames,
+					loadedToolNames,
+					normalizeToolName,
 				);
+				toolResults.push(converted.toolResult);
+				siblingContent.push(...converted.siblingContent);
 				j++;
 			}
 
-			// Skip the messages we've already processed
+			// Skip the messages we've already processed.
 			i = j - 1;
 
-			// Add a single user message with all tool results
+			// Displaced reference-bearing results must follow every tool_result block.
 			params.push({
 				role: "user",
-				content: toolResults,
+				content: [...toolResults, ...siblingContent],
 			});
 		}
 	}

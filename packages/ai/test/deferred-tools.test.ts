@@ -10,15 +10,22 @@ interface AnthropicToolPayload {
 	defer_loading?: boolean;
 }
 
+interface AnthropicContentBlock {
+	type: string;
+	text?: string;
+	tool_use_id?: string;
+	content?: string | Array<{ type: string; tool_name?: string }>;
+	source?: {
+		type: string;
+		media_type: string;
+		data: string;
+	};
+}
+
 interface AnthropicPayload {
 	tools?: AnthropicToolPayload[];
 	messages: Array<{
-		content:
-			| string
-			| Array<{
-					type: string;
-					content?: string | Array<{ type: string; tool_name?: string }>;
-			  }>;
+		content: string | AnthropicContentBlock[];
 	}>;
 }
 
@@ -109,13 +116,19 @@ async function capturePayload<T>(model: Model<Api>, context: Context, apiKey = "
 	return captured;
 }
 
-function findAnthropicToolResult(payload: AnthropicPayload) {
+function findAnthropicToolResultContent(payload: AnthropicPayload): AnthropicContentBlock[] {
 	for (const message of payload.messages) {
-		if (typeof message.content === "string") continue;
-		const result = message.content.find((block) => block.type === "tool_result");
-		if (result) return result;
+		if (typeof message.content !== "string" && message.content.some((block) => block.type === "tool_result")) {
+			return message.content;
+		}
 	}
 	throw new Error("No tool result in payload");
+}
+
+function findAnthropicToolResult(payload: AnthropicPayload): AnthropicContentBlock {
+	const result = findAnthropicToolResultContent(payload).find((block) => block.type === "tool_result");
+	if (!result) throw new Error("No tool result in payload");
+	return result;
 }
 
 function openAIToolNames(payload: OpenAIPayload): string[] {
@@ -133,6 +146,41 @@ describe("deferred tools", () => {
 
 		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
 		expect(findAnthropicToolResult(payload).content).toEqual([{ type: "tool_reference", tool_name: "late_tool" }]);
+	});
+
+	it("preserves tool output as sibling content after emitting references", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.content = [
+			{ type: "toolCall", id: "call_1", name: "base_tool", arguments: {} },
+			{ type: "toolCall", id: "call_2", name: "base_tool", arguments: {} },
+		];
+		const firstResult = context.messages[2] as ToolResultMessage;
+		firstResult.content = [
+			{ type: "text", text: "work completed" },
+			{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+		];
+		context.messages.splice(3, 0, {
+			...makeToolResult([]),
+			toolCallId: "call_2",
+			content: [{ type: "text", text: "second result" }],
+		});
+
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(findAnthropicToolResultContent(payload)).toMatchObject([
+			{
+				type: "tool_result",
+				tool_use_id: "call_1",
+				content: [{ type: "tool_reference", tool_name: "late_tool" }],
+			},
+			{ type: "tool_result", tool_use_id: "call_2", content: "second result" },
+			{ type: "text", text: "work completed" },
+			{
+				type: "image",
+				source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" },
+			},
+		]);
 	});
 
 	it("loads a tool introduced by OpenAI history after switching to Anthropic", async () => {
