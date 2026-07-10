@@ -27,7 +27,7 @@
   - **依赖**: 无
   - **前置阅读**: `extensions/personal-assistant/search.ts:171`, `extensions/personal-assistant/rewrite.ts:316`, `extensions/personal-assistant/rerank.ts:88`, `extensions/personal-assistant/merge.ts`
 
-- [ ] 1.2 **Implement recallPipeline rewrite→recall→rerank→merge core**
+- [x] 1.2 **Implement recallPipeline rewrite→recall→rerank→merge core**
   - **文件**: `extensions/personal-assistant/recall.ts` (Modify)
   - **内容**: Body runs: `rewriteQueries(query, recent ?? null)` (line 316) → `Promise.all(subqueries.map(async sq => { recallAtoms(index, sq, {topK, filter, atomsDir}) then rerankAndFilter(sq, results) }))` → `mergeByRerankScore(poolResults)`. Return `{results, status}` with timings measured via `performance.now()`.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `recallPipeline topK default 20` and `recallPipeline passes recent to rewrite` tests PASS; mock fixtures provide stub `recallAtoms` and `rewriteQueries`.
