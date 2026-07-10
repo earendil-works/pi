@@ -700,6 +700,8 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
 
+			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
+
 			const normalizedModel: Model<any> = {
 				id: modelKey,
 				name: model.name,
@@ -714,7 +716,7 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 					cacheRead: cacheReadCost,
 					cacheWrite: cacheWriteCost,
 				},
-				contextWindow: model.context_length || 4096,
+				contextWindow,
 				maxTokens: model.top_provider?.max_completion_tokens || 4096,
 			};
 			models.push(normalizedModel);
