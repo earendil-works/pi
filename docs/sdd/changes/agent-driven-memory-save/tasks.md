@@ -20,7 +20,7 @@
 
 ## 1. Foundation: shared recallPipeline
 
-- [ ] 1.1 **Create recall.ts with `recallPipeline` signature and topK default**
+- [x] 1.1 **Create recall.ts with `recallPipeline` signature and topK default**
   - **文件**: `extensions/personal-assistant/recall.ts` (Create)
   - **内容**: Define `RecallPipelineOptions` interface (query, recent?, topK?, filter?, rerankEnabled?, atomsDir, embeddingServiceUrl?, embeddingServiceUrlProbe?) and `recallPipeline(index, opts)` returning `{results, status}` where status includes `{rewrite, rerank, recallMs, rewriteMs, rerankMs, embeddingServiceStatus?}`. Default `topK` to 20. Default `rerankEnabled` to true. Body throws "not implemented" stub.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — test imports `recallPipeline`, asserts signature compiles and default topK=20 in unit test (test fails because stub throws).
