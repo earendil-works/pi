@@ -212,22 +212,120 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 			_onUpdate,
 			ctx,
 		) {
-			// Tasks 2.2 + 2.3 cover the create and skip branches. The id-bearing
-			// paths land in 2.4 (overwrite) and 2.5 (id-not-found). For now,
-			// anything that isn't a clean create or skip surfaces as a thrown
-			// error so the test contract is unambiguous — task 2.6 will
-			// revisit error handling for the `id_not_found` outcome (it
+			// Tasks 2.2 + 2.3 cover the create and skip branches. Task 2.4
+			// lands the overwrite branch (id present, atom exists); task 2.5
+			// will land the id_not_found envelope (id present, atom missing).
+			// For now, anything that isn't create/skip/overwrite surfaces as a
+			// thrown error so the test contract is unambiguous — task 2.6
+			// will revisit error handling for the `id_not_found` outcome (it
 			// should return a typed error envelope, not throw).
-			if (params.id !== undefined) {
-				throw new Error("not implemented: memory_save overwrite-by-id path lands in task 2.4");
-			}
-
 			const dbPath = join(homedir(), ".pi", "agent", "memory", "memory.db");
 			const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
 
 			const index = new MemoryIndex(dbPath);
 			await index.init();
 			try {
+				if (params.id !== undefined) {
+					// Task 2.4 — overwrite-by-id (in-place UPDATE).
+					// Mirrors `extraction.ts:executeItem` step 3 (line 227-252)
+					// but WITHOUT the `is_latest === 1 && archived === 0` guard:
+					// the agent explicitly supplies an id, so the agent can
+					// update any atom they have the id for (including archived
+					// or superseded ones — the agent intentionally chose it).
+					// The output preserves `id`, `is_latest`, `archived`,
+					// `parent_id`, `superseded_at`, `source_session`,
+					// `created_at`, `access_count`, `strength` from the
+					// existing row. `version` is auto-bumped by SQL
+					// `version = version + 1` (storage.ts:194) — we do NOT
+					// pass a manual version field; the typed `MemoryAtom`
+					// requires one but the SQL ignores the passed value.
+					const existing = index.getAtom(params.id);
+					if (!existing) {
+						// Task 2.5 will replace this throw with:
+						//   return { details: {action:"error", error:"id_not_found", id} }
+						// per scenarios.md:L37 and design.md § 数据流 overwrite
+						// 分支 null-arm. Until 2.5 lands, throw to keep the
+						// contract unambiguous for the test fixture.
+						throw new Error(
+							`not implemented: memory_save id_not_found path lands in task 2.5 (id=${params.id})`,
+						);
+					}
+
+					const fingerprint = computeFingerprint(params.content);
+					const normalizedTags = normalizeTags(params.tags ?? []);
+
+					const now = Date.now();
+					const mergedAtom: MemoryAtom = {
+						...existing,
+						type: params.type,
+						title: params.title,
+						summary: params.summary,
+						content: params.content,
+						tags: normalizedTags,
+						importance: params.importance,
+						content_fingerprint: fingerprint,
+						updated_at: now,
+						// Explicit defaults even though `...existing` covers them —
+						// makes the in-place semantics obvious to a future reader
+						// and protects against a future change to `existing`
+						// (e.g. adding an unset optional field).
+						id: existing.id,
+						version: existing.version, // SQL ignores this; bump is SQL-side.
+						is_latest: existing.is_latest,
+						archived: existing.archived,
+						parent_id: existing.parent_id,
+						superseded_at: existing.superseded_at,
+						source_session: existing.source_session,
+						created_at: existing.created_at,
+						access_count: existing.access_count,
+						strength: existing.strength,
+						last_access: existing.last_access,
+					};
+
+					// Embeddable text version 2 (embed.ts:135) — title + summary
+					// + tags only. Recall is discovery, content dilutes signal.
+					const embeddableText = buildEmbeddableText({
+						title: mergedAtom.title,
+						summary: mergedAtom.summary,
+						tags: mergedAtom.tags,
+					});
+					// Explicit 15s timeout per embed.ts DEFAULT_CONFIG and the
+					// spec's "Decision 6" — preserves a hard upper bound even
+					// if the embed default ever moves.
+					const embedding = await embedText(embeddableText, { timeoutMs: 15000 });
+					const vectorWasNull = embedding === null;
+					const vector = embedding ?? new Array(1024).fill(0);
+
+					// Three-step finalisation, mirrors create-path (line ~313):
+					//   1. in-place UPDATE row + vector (SQL bumps `version`),
+					//   2. write .md sidecar for L1 hydration in recall,
+					//   3. ask bge-m3 to refresh its dense+sparse index.
+					await index.updateAtom(mergedAtom, vector);
+					await writeAtomToFile(mergedAtom, atomsDir);
+					await reindexOne(mergedAtom.id);
+
+					// Counter increment for the overwrite path. The spec says
+					// the counter increments on every call regardless of
+					// outcome; 2.6 will hoist this alongside create/skip to a
+					// single shared location.
+					incrementSegmentMemorySaveCount();
+
+					const result: MemorySaveResult = {
+						action: "updated",
+						id: mergedAtom.id,
+						embedding: vectorWasNull ? "skipped" : "ok",
+					};
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Updated atom ${mergedAtom.id} (${mergedAtom.type}: ${mergedAtom.title})`,
+							},
+						],
+						details: result,
+					};
+				}
+
 				const fingerprint = computeFingerprint(params.content);
 				const existing = index.getActiveAtomByFingerprint(fingerprint);
 				if (existing) {

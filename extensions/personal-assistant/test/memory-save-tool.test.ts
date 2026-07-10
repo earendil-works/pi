@@ -506,4 +506,144 @@ describe("memory_save execute (RED — scaffold throws 'not implemented')", () =
 		// 5. Assert the counter incremented by 1 (skip counts as a call).
 		expect(mod.getSegmentMemorySaveCount()).toBe(1);
 	});
+
+	// Task 2.4 — overwrite path (id present, atom exists) — scenarios.md:L15.
+	// Pre-insert an atom with id "a-123", content "old content"; then call
+	// memory_save with the same id but new content/title/summary/tags/importance.
+	// Expected outcome (per storage.ts:194 SQL `version = version + 1`):
+	//   - details.action === "updated"
+	//   - details.id === "a-123"
+	//   - details.embedding === "ok" (mock returns a real vector) or "skipped"
+	//     (when the embedder is down — accepting either keeps the test aligned
+	//     with the create-path test's looser assertion)
+	//   - DB row content/title/summary/tags/importance match the new params,
+	//     version bumped (1 → 2), is_latest=1, archived preserved
+	//   - .md file overwritten (we pre-write a stale .md so overwriting is
+	//     observable rather than only creatable)
+	//   - segmentMemorySaveCount incremented by 1
+	it("overwrite path: returns {action: 'updated', id, embedding} when id is supplied and atom exists", async () => {
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+
+		// 1. Pre-insert atom a-123 with version=1, is_latest=1, archived=0,
+		// and a stable fingerprint so we can detect that the overwrite keeps
+		// the same row id but writes new content/title/summary/tags/importance.
+		const oldContent = "Original content for atom a-123 overwrite test scenario";
+		const { computeFingerprint } = await import("../extraction.ts");
+		const oldFingerprint = computeFingerprint(oldContent);
+		const existingId = "a-123";
+		const oldCreatedAt = Date.now() - 10_000; // arbitrary, just need consistency
+		await idx.insertAtom(
+			{
+				id: existingId,
+				type: "rule" as const,
+				title: "Old title before overwrite",
+				summary: "Old summary line before overwrite",
+				content: oldContent,
+				tags: ["old"],
+				importance: 0.4,
+				strength: 0.6,
+				access_count: 2,
+				version: 1,
+				is_latest: 1 as const,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0 as const,
+				created_at: oldCreatedAt,
+				updated_at: oldCreatedAt,
+				last_access: null,
+				content_fingerprint: oldFingerprint,
+				source_session: "session-old",
+			},
+			new Array(1024).fill(0.05),
+		);
+
+		// Pre-write a stale .md so we can observe the overwrite (writeAtomToFile
+		// fs.writeFile replaces the body; we put a sentinel string in the old
+		// file that the new content will replace).
+		const atomsDir = path.join(tmpDir, ".pi", "agent", "memory", "atoms");
+		const staleFilePath = path.join(atomsDir, "rule", `${existingId}.md`);
+		await fs.mkdir(path.dirname(staleFilePath), { recursive: true });
+		await fs.writeFile(
+			staleFilePath,
+			"---\nid: \"a-123\"\n---\n\nSTALE_BODY_SENTINEL\n",
+			"utf8",
+		);
+
+		idx.close();
+
+		// 2. Call memory_save with the same id, new content.
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+		const result = await tool.execute(
+			"call-4",
+			{
+				id: existingId,
+				type: "rule" as const,
+				title: "new title",
+				content: "new content for atom a-123 overwrite test scenario",
+				summary: "new summary",
+				tags: ["new"],
+				importance: 0.8,
+			},
+			undefined,
+			undefined,
+			{ ui: { notify: () => {} } },
+		);
+
+		// 3. Assert the result shape (relaxed to match create-path test, since
+		// the mock always returns a real vector, this should be "ok"; we still
+		// accept "skipped" so a future embedder-down mock path doesn't break
+		// the contract).
+		expect(result.details.action).toBe("updated");
+		expect(result.details.id).toBe(existingId);
+		expect(["ok", "skipped"]).toContain(result.details.embedding);
+
+		// 4. Assert the DB row reflects the new fields, version is bumped
+		// (1 → 2 by SQL `version = version + 1` in storage.ts:194), is_latest
+		// and archived are preserved (overwrite is in-place, not a recreate).
+		const verifyIdx = new MemoryIndex(dbPath);
+		await verifyIdx.init();
+		try {
+			const updated = verifyIdx.getAtom(existingId);
+			expect(updated).not.toBeNull();
+			expect(updated!.content).toBe(
+				"new content for atom a-123 overwrite test scenario",
+			);
+			expect(updated!.title).toBe("new title");
+			expect(updated!.summary).toBe("new summary");
+			expect(updated!.tags).toEqual(["new"]);
+			expect(updated!.importance).toBeCloseTo(0.8, 5);
+			expect(updated!.version).toBe(2); // 1 + 1 by SQL
+			expect(updated!.is_latest).toBe(1);
+			expect(updated!.archived).toBe(0); // preserved
+			// Continuity fields preserved across overwrite:
+			expect(updated!.id).toBe(existingId);
+			expect(updated!.source_session).toBe("session-old");
+			expect(updated!.created_at).toBe(oldCreatedAt);
+			expect(updated!.access_count).toBe(2);
+			expect(updated!.strength).toBeCloseTo(0.6, 5);
+			// updated_at must move forward (overwrite touches this column);
+			// we don't pin an absolute value, only that it's >= oldCreatedAt.
+			expect(updated!.updated_at).toBeGreaterThanOrEqual(oldCreatedAt);
+
+			// getActiveAtoms should still see exactly 1 row (overwrite does
+			// NOT insert; no new row from this call).
+			const allActive = verifyIdx.getActiveAtoms();
+			expect(allActive).toHaveLength(1);
+			expect(allActive[0].id).toBe(existingId);
+		} finally {
+			verifyIdx.close();
+		}
+
+		// 5. Assert the .md file was overwritten (writeAtomToFile is called
+		// after updateAtom; the sentinel must be gone, and the new content
+		// should be in the body).
+		const overwrittenBody = await fs.readFile(staleFilePath, "utf8");
+		expect(overwrittenBody).not.toContain("STALE_BODY_SENTINEL");
+		expect(overwrittenBody).toContain("new content for atom a-123");
+		expect(overwrittenBody).toContain('title: "new title"');
+
+		// 6. Assert the counter incremented by 1.
+		expect(mod.getSegmentMemorySaveCount()).toBe(1);
+	});
 });
