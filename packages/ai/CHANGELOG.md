@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed the GitHub Copilot `mai-code-1-flash-picker` model to route through the `/responses` endpoint.
 - Fixed Amazon Bedrock requests to use the generic `apiKey` stream option as a Bedrock bearer token.
 
 ## [0.80.6] - 2026-07-09
