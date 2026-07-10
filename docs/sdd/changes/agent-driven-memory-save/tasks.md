@@ -39,7 +39,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `recallPipeline embedding probe up/down` tests PASS with mock fetch.
   - **依赖**: 1.2
 
-- [ ] 1.4 **Add topK clamp to [1, 100]**
+- [x] 1.4 **Add topK clamp to [1, 100]**
   - **文件**: `extensions/personal-assistant/recall.ts` (Modify)
   - **内容**: At entry, if `opts.topK !== undefined`, clamp `Math.max(1, Math.min(100, opts.topK))`. Default 20 when undefined or NaN. `opts.recent ?? null` normalizes null/undefined.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `recallPipeline topK clamp to [1,100]` tests PASS: 0 → 1, 200 → 100, undefined → 20.
