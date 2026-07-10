@@ -28,6 +28,7 @@ import {
 	type RecallPipelineResult,
 	type RecallPipelineStatus,
 } from "../recall.ts";
+import type { RerankFallback } from "../rerank.ts";
 import type { MemoryIndex } from "../storage.ts";
 import type { MemoryAtom, MemoryAtomType, RecallResult } from "../types.ts";
 
@@ -380,5 +381,59 @@ describe("recallPipeline behavior (RED in 1.1, GREEN in 1.2+)", () => {
 
 		expect(out.results).toBe(merged);
 		expect(out.results).toHaveLength(2);
+	});
+
+	// -----------------------------------------------------------------------
+	// Multi-subquery rerankStatus aggregation (task 1.2 review fix)
+	// -----------------------------------------------------------------------
+
+	it("status.rerank === 'fallback' is sticky across subqueries (sticky priority)", async () => {
+		// Scenario: rewrite returns two subqueries. subq1's rerank returns a
+		// `RerankFallback` (rerank service unreachable) — the worst case.
+		// subq2's rerank returns successful `RecallResult[]`. With a naive
+		// `rerankStatus = ...` closure assignment, the final value is whichever
+		// subquery's microtask writes last — making a "fallback" silently
+		// maskable by a later "ok". Downstream consumers (TUI setStatus,
+		// webui response, format.ts warning injection) depend on
+		// `status.rerank === "fallback"` to surface the degradation signal,
+		// so this MUST be sticky.
+		//
+		// Determinism: subq1's mock resolves immediately; subq2's mock
+		// resolves on the next microtask tick. In the buggy code subq2's
+		// `rerankStatus = "ok"` runs LAST → final value is "ok" (the bug).
+		// In the fixed code "fallback" sticks → final value is "fallback".
+		const subq1Hit = recallResult("from-subq1", "rule");
+		const subq2Hit = recallResult("from-subq2", "fact");
+		const fallback: RerankFallback = {
+			reason: "unreachable",
+			topK: [subq1Hit],
+		};
+
+		mockRewriteQueries.mockResolvedValue(["subq1", "subq2"]);
+		mockRecallAtoms.mockImplementation(
+			async (_idx: unknown, sq: unknown) =>
+				sq === "subq1" ? [subq1Hit] : [subq2Hit],
+		);
+		mockRerankAndFilter.mockImplementation(async (sq: unknown) => {
+			if (sq === "subq1") {
+				// Resolves immediately → `rerankStatus = "fallback"` runs first.
+				return fallback;
+			}
+			// Resolves one microtask later → `rerankStatus = "ok"` runs
+			// second. In the buggy code this LAST write wins ("ok"),
+			// silently masking the fallback signal.
+			return Promise.resolve().then(() => [subq2Hit]);
+		});
+		mockMergeByRerankScore.mockImplementation(
+			(groups: RecallResult[][]) => groups.flat(),
+		);
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+		});
+
+		// "fallback" must stick — even though subq2 finished later with "ok".
+		expect(out.status.rerank).toBe("fallback");
 	});
 });

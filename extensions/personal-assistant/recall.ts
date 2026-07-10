@@ -179,6 +179,15 @@ export async function recallPipeline(
 	// -----------------------------------------------------------------
 	let recallMs = 0;
 	let rerankMs = 0;
+	// Sticky-priority aggregation across subqueries (review fix for 1.2).
+	// `rerankStatus` is shared across the parallel `subqueries.map(...)`
+	// branches, and `Promise.all` awaits whichever microtask finishes
+	// last. A naive `rerankStatus = ...` assignment would let a later
+	// "ok" subquery silently mask an earlier "fallback" / "all-below",
+	// losing the degradation signal that downstream consumers (TUI
+	// `setStatus`, webui response, `format.ts` warning injection) depend
+	// on. Priority (worst → least): "all-below" > "fallback" > "skip" >
+	// "ok". We only ever upgrade; never downgrade.
 	let rerankStatus: RecallPipelineStatus["rerank"] = "skip";
 
 	const poolResults = await Promise.all(
@@ -206,13 +215,25 @@ export async function recallPipeline(
 				// going in) means the threshold cut every hit — surface this as
 				// `all-below` so the caller can distinguish "service returned
 				// nothing usable" from "service returned the right hits".
-				rerankStatus = scored.length === 0 ? "all-below" : "ok";
+				// Sticky: only set "ok" from "skip" (don't downgrade from a
+				// previously-observed "fallback" / "all-below"), and "all-below"
+				// from anything less severe.
+				if (scored.length === 0) {
+					if (rerankStatus !== "all-below") rerankStatus = "all-below";
+				} else if (rerankStatus === "skip") {
+					rerankStatus = "ok";
+				}
 				return scored;
 			}
 			// `RerankFallback` shape — service unreachable / http-error /
 			// shape-mismatch / timeout. The .topK field holds the pre-rerank
 			// RRF ranking so the caller still gets the best-effort top hits.
-			rerankStatus = "fallback";
+			// Sticky: only set "fallback" from "skip" or "ok" (i.e. never
+			// downgrade an already-observed "all-below" — both are degradation
+			// signals, and "all-below" is strictly worse in the priority order).
+			if (rerankStatus === "skip" || rerankStatus === "ok") {
+				rerankStatus = "fallback";
+			}
 			return scored.topK;
 		}),
 	);
