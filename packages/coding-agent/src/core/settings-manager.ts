@@ -126,6 +126,7 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	autoUpdateOnNewSession?: boolean; // default: false - automatically run 'pi update --all' when starting a new session
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
