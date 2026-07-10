@@ -420,4 +420,90 @@ describe("memory_save execute (RED — scaffold throws 'not implemented')", () =
 		);
 		expect(mod.getSegmentMemorySaveCount()).toBe(1);
 	});
+
+	// Task 2.3 — fingerprint-hit skip path (scenarios.md:L13).
+	// Pre-insert an atom with a known content, then call memory_save
+	// with the same content (no id). Expected outcome:
+	//   - details.action === "skipped"
+	//   - details.reason === "duplicate_content"
+	//   - details.existing_id === pre-inserted atom id
+	//   - DB unchanged (no new row)
+	//   - segmentMemorySaveCount incremented by 1 (counter counts calls,
+	//     not successes)
+	it("skip path: returns {action: 'skipped', reason: 'duplicate_content', existing_id} when fingerprint matches an existing active atom", async () => {
+		// 1. Pre-insert an atom with a known content_fingerprint. Use the
+		// real `computeFingerprint` from extraction.ts so any future
+		// change to the normalization rule (whitespace, case) stays in
+		// sync with the tool — the test would otherwise silently drift.
+		const { computeFingerprint } = await import("../extraction.ts");
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		const duplicateContent = "Content that already exists in the database for fingerprint dedup test";
+		const fingerprint = computeFingerprint(duplicateContent);
+
+		const existingId = "a-789";
+		const existingAtom = {
+			id: existingId,
+			type: "rule" as const,
+			title: "Existing rule",
+			summary: "Existing rule summary line",
+			content: duplicateContent,
+			tags: ["existing"],
+			importance: 0.7,
+			strength: 1.0,
+			access_count: 0,
+			version: 1,
+			is_latest: 1 as const,
+			parent_id: null,
+			superseded_at: null,
+			archived: 0 as const,
+			created_at: Date.now(),
+			updated_at: Date.now(),
+			last_access: null,
+			content_fingerprint: fingerprint,
+			source_session: null,
+		};
+		await idx.insertAtom(existingAtom, new Array(1024).fill(0.01));
+		idx.close();
+
+		// 2. Call memory_save with the same content (no id).
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+		const result = await tool.execute(
+			"call-3",
+			{
+				type: "rule" as const,
+				title: "Different title (does not matter — fingerprint wins)",
+				content: duplicateContent,
+				summary: "A different summary line",
+				importance: 0.3,
+			},
+			undefined,
+			undefined,
+			{ ui: { notify: () => {} } },
+		);
+
+		// 3. Assert the result shape.
+		expect(result.details).toEqual({
+			action: "skipped",
+			reason: "duplicate_content",
+			existing_id: existingId,
+		});
+
+		// 4. Assert the DB is unchanged (still exactly 1 row, the pre-inserted atom).
+		const verifyIdx = new MemoryIndex(dbPath);
+		await verifyIdx.init();
+		try {
+			const allAtoms = verifyIdx.getActiveAtoms();
+			expect(allAtoms).toHaveLength(1);
+			expect(allAtoms[0].id).toBe(existingId);
+			expect(allAtoms[0].content).toBe(duplicateContent);
+			expect(allAtoms[0].version).toBe(1);
+			expect(allAtoms[0].access_count).toBe(0);
+		} finally {
+			verifyIdx.close();
+		}
+
+		// 5. Assert the counter incremented by 1 (skip counts as a call).
+		expect(mod.getSegmentMemorySaveCount()).toBe(1);
+	});
 });

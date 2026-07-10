@@ -1,20 +1,24 @@
 // memory_save tool — agent-driven memory write path.
 //
-// Task 2.2 create path:
+// Task 2.2 create path + Task 2.3 fingerprint-hit skip:
 //   - Defines the TypeBox parameter schema (MemorySaveParams) that gates
 //     tool input at dispatch time (per spec R2: "memory_save validates
 //     input via TypeBox schema").
 //   - Owns the module-level segmentMemorySaveCount + its 3 helpers
 //     (get / increment / reset). The increment is wired into the create
-//     path in 2.2 — task 2.6 will hoist it to the top of the execute
-//     body so it fires on every outcome (created / updated / skipped /
-//     error) per the principle "计入调用而不计入成功".
-//   - Implements the create (no id, fingerprint miss) branch:
-//     validate → computeFingerprint → getActiveAtomByFingerprint(null) →
-//     embedText(buildEmbeddableText(...)) → insertAtom + writeAtomToFile +
-//     reindexOne → return {action: "created", id, embedding}. Tasks
-//     2.3 / 2.4 / 2.5 land the skipped / overwrite / id-not-found
-//     branches as additional return paths in this same execute body.
+//     path (2.2) and the skip path (2.3) inline at the end of each
+//     branch — task 2.6 will hoist it to a single shared location so it
+//     fires on every outcome (created / updated / skipped / error) per
+//     the principle "计入调用而不计入成功".
+//   - Implements two of the four outcomes:
+//       2.2  create   (no id, fingerprint miss) → insertAtom +
+//             writeAtomToFile + reindexOne → {action: "created", id, embedding}.
+//       2.3  skipped  (no id, fingerprint hit) → return
+//             {action: "skipped", reason: "duplicate_content", existing_id}
+//             with no storage I/O.
+//   - Tasks 2.4 / 2.5 land the overwrite (id present, atom exists) and
+//     id_not_found (id present, atom missing) branches as additional
+//     return paths in this same execute body.
 //
 // Counter semantics (from the spec, "agent save counter increments on
 // every memory_save call"):
@@ -172,22 +176,23 @@ export function resetSegmentMemorySaveCount(): void {
 /**
  * Register the `memory_save` tool on the given extension api.
  *
- * Task 2.2 wires the create path:
+ * Tasks 2.2 + 2.3 wire the create / skip paths:
  *   - When `params.id` is absent: computeFingerprint → getActiveAtomByFingerprint.
- *     On fingerprint miss, build a new MemoryAtom, embed via embedText (with
- *     1024-dim zero-vector fallback when the embedder is down), then
- *     insertAtom + writeAtomToFile + reindexOne, and return
- *     {action: "created", id, embedding}.
+ *     On fingerprint hit (2.3), return {action: "skipped", reason:
+ *     "duplicate_content", existing_id} with no I/O. On fingerprint miss,
+ *     build a new MemoryAtom, embed via embedText (with 1024-dim zero-vector
+ *     fallback when the embedder is down), then insertAtom + writeAtomToFile +
+ *     reindexOne, and return {action: "created", id, embedding}.
  *
- * Tasks 2.3 / 2.4 / 2.5 add the other branches in the same execute body:
- *   - 2.3 — fingerprint hit (no id) → {action: "skipped", existing_id}
+ * Tasks 2.4 / 2.5 add the other branches in the same execute body:
  *   - 2.4 — id present, atom exists → in-place updateAtom + return
  *           {action: "updated", id, embedding}
  *   - 2.5 — id present, atom missing → {action: "error", error: "id_not_found"}
  *
- * Task 2.6 hoists `incrementSegmentMemorySaveCount()` to the top of this
- * execute body so it fires on every call (currently it only fires on the
- * create-success path; the scaffold tests don't exercise the other paths).
+ * Task 2.6 hoists `incrementSegmentMemorySaveCount()` to a single shared
+ * location at the end of this execute body so it fires on every call
+ * (currently it is inlined in the create and skip branches; the
+ * scaffold tests don't exercise update / error paths yet).
  */
 export function registerMemorySave(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -207,12 +212,12 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 			_onUpdate,
 			ctx,
 		) {
-			// Task 2.2 covers the create branch only. The id-bearing path lands
-			// in 2.4 (overwrite) and 2.5 (id-not-found); the fingerprint-hit
-			// skip lands in 2.3. For now, anything that isn't a clean create
-			// surfaces as a thrown error so the test contract is unambiguous —
-			// task 2.6 will revisit error handling for the `id_not_found`
-			// outcome (it should return a typed error envelope, not throw).
+			// Tasks 2.2 + 2.3 cover the create and skip branches. The id-bearing
+			// paths land in 2.4 (overwrite) and 2.5 (id-not-found). For now,
+			// anything that isn't a clean create or skip surfaces as a thrown
+			// error so the test contract is unambiguous — task 2.6 will
+			// revisit error handling for the `id_not_found` outcome (it
+			// should return a typed error envelope, not throw).
 			if (params.id !== undefined) {
 				throw new Error("not implemented: memory_save overwrite-by-id path lands in task 2.4");
 			}
@@ -226,11 +231,30 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 				const fingerprint = computeFingerprint(params.content);
 				const existing = index.getActiveAtomByFingerprint(fingerprint);
 				if (existing) {
-					// Task 2.3 will replace this throw with
-					// {action: "skipped", reason: "duplicate_content", existing_id: existing.id}.
-					throw new Error(
-						`not implemented: memory_save fingerprint-hit skip path lands in task 2.3 (matched existing id=${existing.id})`,
-					);
+					// Task 2.3 — fingerprint hit (no id, duplicate content).
+					// No storage / file / reindex I/O per design.md § "数据流
+					// (memory_save, create 路径)" branch 1. The matched atom's
+					// version / updated_at / access_count stay unchanged.
+					// The counter still increments: the agent called the tool
+					// and we deliberately deduped, which is a real save
+					// attempt (per principle "counter 计入调用而不计入成功").
+					// 2.6 will hoist this increment alongside the create-path
+					// one so a single shared location covers all outcomes.
+					incrementSegmentMemorySaveCount();
+					const skipResult: MemorySaveResult = {
+						action: "skipped",
+						reason: "duplicate_content",
+						existing_id: existing.id,
+					};
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Skipped: content already exists as atom ${existing.id}`,
+							},
+						],
+						details: skipResult,
+					};
 				}
 
 				const normalizedTags = normalizeTags(params.tags ?? []);
