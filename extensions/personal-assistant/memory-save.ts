@@ -1,18 +1,20 @@
 // memory_save tool — agent-driven memory write path.
 //
-// Task 2.1 scaffold:
+// Task 2.2 create path:
 //   - Defines the TypeBox parameter schema (MemorySaveParams) that gates
 //     tool input at dispatch time (per spec R2: "memory_save validates
 //     input via TypeBox schema").
 //   - Owns the module-level segmentMemorySaveCount + its 3 helpers
-//     (get / increment / reset). The increment is called from the
-//     execute body — wired in 2.2+ once the real create / update /
-//     skip / error branches land; the helpers and the counter are
-//     stable from 2.1 so downstream hooks (session_before_compact in
-//     task 4.1) can import them without a 2.2 dependency.
-//   - Exposes registerMemorySave(pi) which registers the tool with a
-//     scaffold execute body that throws "not implemented". Tasks 2.2+
-//     replace the throw with the real implementation.
+//     (get / increment / reset). The increment is wired into the create
+//     path in 2.2 — task 2.6 will hoist it to the top of the execute
+//     body so it fires on every outcome (created / updated / skipped /
+//     error) per the principle "计入调用而不计入成功".
+//   - Implements the create (no id, fingerprint miss) branch:
+//     validate → computeFingerprint → getActiveAtomByFingerprint(null) →
+//     embedText(buildEmbeddableText(...)) → insertAtom + writeAtomToFile +
+//     reindexOne → return {action: "created", id, embedding}. Tasks
+//     2.3 / 2.4 / 2.5 land the skipped / overwrite / id-not-found
+//     branches as additional return paths in this same execute body.
 //
 // Counter semantics (from the spec, "agent save counter increments on
 // every memory_save call"):
@@ -26,14 +28,25 @@
 //     attempted to save (and we deliberately deduped) — that is a
 //     real save attempt, not a no-op.
 //
-// The real execute body (2.2+) reuses the same helpers from
-// extraction.ts (computeFingerprint, normalizeContent) and the
-// storage layer (MemoryIndex.insertAtom / updateAtom / getAtom /
-// getActiveAtomByFingerprint). The wiring lives in 2.2+ to keep this
-// scaffold diff focused on the schema + counter + registration shape.
+// The execute body reuses the same helpers from extraction.ts
+// (computeFingerprint) and the storage layer (MemoryIndex.insertAtom /
+// getActiveAtomByFingerprint). The writeAtomToFile + reindexOne calls
+// match the extraction.ts persistCreate() pattern so the on-disk
+// layout and the bge-m3 service state stay in sync across both write
+// paths (extraction pipeline and agent-driven memory_save).
 
-import { Type, type TSchema } from "typebox";
+import { Type, type Static } from "typebox";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { computeFingerprint } from "./extraction.ts";
+import { writeAtomToFile } from "./file-store.ts";
+import { embedText, buildEmbeddableText } from "./embed.ts";
+import { MemoryIndex } from "./storage.ts";
+import { normalizeTags } from "./tag-alias.ts";
+import { reindexOne } from "./bge-reindex.ts";
+import type { MemoryAtom } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // TypeBox schema
@@ -63,7 +76,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
  *     to the active session id in 2.2+; for 2.1 scaffold it is
  *     silently dropped.
  */
-export const MemorySaveParams: TSchema = Type.Object({
+export const MemorySaveParams = Type.Object({
 	id: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
 	type: Type.Union([
 		Type.Literal("rule"),
@@ -146,16 +159,22 @@ export function resetSegmentMemorySaveCount(): void {
 /**
  * Register the `memory_save` tool on the given extension api.
  *
- * Task 2.1 scaffold: the execute body throws "not implemented". The
- * real create / update / skip / error branches land in 2.2+ as
- * straight-line replacements of the throw.
+ * Task 2.2 wires the create path:
+ *   - When `params.id` is absent: computeFingerprint → getActiveAtomByFingerprint.
+ *     On fingerprint miss, build a new MemoryAtom, embed via embedText (with
+ *     1024-dim zero-vector fallback when the embedder is down), then
+ *     insertAtom + writeAtomToFile + reindexOne, and return
+ *     {action: "created", id, embedding}.
  *
- * The throw is intentionally a plain `Error` (not a typed result
- * envelope) because the runtime / model harness treats thrown errors
- * as tool failures — exactly the RED state we want for tasks 2.2+ to
- * turn GREEN against. If the scaffold returned a fake success
- * envelope, the 2.2+ tests would have a confusing "everything is
- * green today, but the assertions are wrong" failure mode.
+ * Tasks 2.3 / 2.4 / 2.5 add the other branches in the same execute body:
+ *   - 2.3 — fingerprint hit (no id) → {action: "skipped", existing_id}
+ *   - 2.4 — id present, atom exists → in-place updateAtom + return
+ *           {action: "updated", id, embedding}
+ *   - 2.5 — id present, atom missing → {action: "error", error: "id_not_found"}
+ *
+ * Task 2.6 hoists `incrementSegmentMemorySaveCount()` to the top of this
+ * execute body so it fires on every call (currently it only fires on the
+ * create-success path; the scaffold tests don't exercise the other paths).
  */
 export function registerMemorySave(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -168,8 +187,125 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 		promptSnippet:
 			"Save a fact, rule, or process to durable memory.",
 		parameters: MemorySaveParams,
-		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-			throw new Error("not implemented");
+		async execute(
+			_toolCallId,
+			params: Static<typeof MemorySaveParams>,
+			_signal,
+			_onUpdate,
+			ctx,
+		) {
+			// Task 2.2 covers the create branch only. The id-bearing path lands
+			// in 2.4 (overwrite) and 2.5 (id-not-found); the fingerprint-hit
+			// skip lands in 2.3. For now, anything that isn't a clean create
+			// surfaces as a thrown error so the test contract is unambiguous —
+			// task 2.6 will revisit error handling for the `id_not_found`
+			// outcome (it should return a typed error envelope, not throw).
+			if (params.id !== undefined) {
+				throw new Error("not implemented: memory_save overwrite-by-id path lands in task 2.4");
+			}
+
+			const dbPath = join(homedir(), ".pi", "agent", "memory", "memory.db");
+			const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
+
+			const index = new MemoryIndex(dbPath);
+			await index.init();
+			try {
+				const fingerprint = computeFingerprint(params.content);
+				const existing = index.getActiveAtomByFingerprint(fingerprint);
+				if (existing) {
+					// Task 2.3 will replace this throw with
+					// {action: "skipped", reason: "duplicate_content", existing_id: existing.id}.
+					throw new Error(
+						`not implemented: memory_save fingerprint-hit skip path lands in task 2.3 (matched existing id=${existing.id})`,
+					);
+				}
+
+				const normalizedTags = normalizeTags(params.tags ?? []);
+
+				// Resolve source_session: explicit param wins, else fall back to
+				// the active session id from ctx.sessionManager (read-only at
+				// tool-execution time). Tests pass a stub ctx without
+				// sessionManager, so this collapses to null — that's fine,
+				// source_session is provenance-only and never gates writes.
+				const currentSessionId =
+					(ctx as { sessionManager?: { getSessionId(): string | undefined } }).sessionManager?.getSessionId() ??
+					null;
+				const sourceSession = params.source_session ?? currentSessionId;
+
+				const now = Date.now();
+				const newAtom: MemoryAtom = {
+					id: randomUUID(),
+					type: params.type,
+					title: params.title,
+					summary: params.summary,
+					content: params.content,
+					tags: normalizedTags,
+					importance: params.importance,
+					// Fresh-atom defaults: strength starts at 1.0 (mirrors
+					// extraction.ts:278 buildAtomFromItem; the decay loop will
+					// modulate from there on the next session_start).
+					strength: 1.0,
+					access_count: 0,
+					version: 1,
+					is_latest: 1,
+					parent_id: null,
+					superseded_at: null,
+					archived: 0,
+					created_at: now,
+					updated_at: now,
+					last_access: null,
+					content_fingerprint: fingerprint,
+					source_session: sourceSession,
+				};
+
+				// Embeddable text version 2 (embed.ts:135) drops `content` —
+				// title + summary + tags only. Recall is discovery-only, so
+				// embedding the verbose content dilutes the curated signal.
+				const embeddableText = buildEmbeddableText({
+					title: newAtom.title,
+					summary: newAtom.summary,
+					tags: newAtom.tags,
+				});
+				// Explicit 15s timeout (matches embed.ts DEFAULT_CONFIG and
+				// the spec's "Decision 6" — preserves a hard upper bound even
+				// if the embed.ts default ever moves).
+				const embedding = await embedText(embeddableText, { timeoutMs: 15000 });
+				const vectorWasNull = embedding === null;
+				const vector = embedding ?? new Array(1024).fill(0);
+
+				// Three-step finalisation (mirrors extraction.ts:168 persistCreate):
+				//   1. atomic DB insert (row + vector in one transaction),
+				//   2. write .md sidecar for L1 hydration in recall,
+				//   3. ask bge-m3 to refresh its dense+sparse index.
+				// reindexOne is non-blocking (never throws — collapses to
+				// {ok:false,error}); the worst case on bge-m3 outage is one
+				// stale vector until the next reindex trigger.
+				await index.insertAtom(newAtom, vector);
+				await writeAtomToFile(newAtom, atomsDir);
+				await reindexOne(newAtom.id);
+
+				// Counter increment for the create path (task 2.6 will hoist
+				// this to the top of execute so skip / update / error also
+				// count — see "Counter semantics" header).
+				incrementSegmentMemorySaveCount();
+
+				const result: MemorySaveResult = {
+					action: "created",
+					id: newAtom.id,
+					embedding: vectorWasNull ? "skipped" : "ok",
+				};
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Created atom ${newAtom.id} (${newAtom.type}: ${newAtom.title})`,
+						},
+					],
+					details: result,
+				};
+			} finally {
+				index.close();
+			}
 		},
 	});
 }
