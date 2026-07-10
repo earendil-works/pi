@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
-// recallPipeline — shared TUI / webui recall entry point (task 1.1 scaffold).
+// recallPipeline — shared TUI / webui recall entry point.
 //
 // This module is the single recall entry point used by both:
 //   - the TUI `context` hook (personal-assistant memory.ts:726)
 //   - the webui `POST /api/memory/search` route (webui routes/memory.ts:845)
 //
-// The pipeline runs `rewrite → recall → rerank → merge`. The gate decision
-// lives in the caller (not in the pipeline) so that this helper stays a
-// pure function over `(index, opts) → {results, status}`.
+// The pipeline runs `probe → rewrite → recall → rerank → merge`. The gate
+// decision lives in the caller (not in the pipeline) so that this helper
+// stays a pure function over `(index, opts) → {results, status}`. The
+// probe step is opt-in via `embeddingServiceUrlProbe: true` and is a
+// webui-only concern.
 //
 // Architecture decisions honoured here (see docs/sdd/changes/agent-driven-memory-save/design.md
 // § Architecture, § 8 "抽出 recallPipeline() 共享 helper", § 9 "recallPipeline 接受 recent
@@ -20,13 +22,16 @@
 //     `null` and `undefined` are both treated as "no recent context" — the
 //     rewrite prompt falls back to the "Recent user messages: None" placeholder.
 //   - `embeddingServiceUrlProbe` is a webui-only opt-in. When `true`, a
-//     100ms `/api/health` probe populates `status.embeddingServiceStatus`.
-//     TUI callers pass `false` or omit.
+//     100ms `/api/health` probe populates `status.embeddingServiceStatus`
+//     ("up" on 2xx, "down" on non-2xx / abort / network error). TUI
+//     callers pass `false` or omit; the field stays undefined and no
+//     fetch is issued.
 //
 // Task 1.2 implements the core pipeline body: `rewrite → recall → rerank →
-// merge`. The 8 behavior tests in `test/recall-pipeline.test.ts` turn GREEN
-// here. Task 1.3 fills in the `embeddingServiceUrlProbe` branch; task 1.4
-// adds the [1, 100] clamp on `topK`.
+// merge`. Task 1.3 fills in the `embeddingServiceUrlProbe` probe branch
+// (runs before the rewrite step so its latency never contaminates the
+// per-stage `*Ms` timings — it only shows up in wall-clock total). Task
+// 1.4 adds the [1, 100] clamp on `topK`.
 // ---------------------------------------------------------------------------
 
 import { mergeByRerankScore } from "./merge.ts";
@@ -35,6 +40,19 @@ import { rewriteQueries } from "./rewrite.ts";
 import { recallAtoms } from "./search.ts";
 import type { MemoryIndex } from "./storage.ts";
 import type { MemoryAtomType, RecallResult } from "./types.ts";
+
+/**
+ * Default probe URL. Matches `hybrid-search.ts:40 DEFAULT_EMBEDDING_SERVICE_URL`
+ * and `embed.ts DEFAULT_CONFIG.ollamaUrl`. The bge-m3 + bge-reranker
+ * services expose `/api/health` on the same port; when the service is up
+ * but `/api/health` lies (3xx redirects, 4xx/5xx errors) the probe
+ * correctly reports "down". Network-level errors (ECONNREFUSED,
+ * abort-on-timeout) are caught by the outer try and also report "down".
+ */
+const DEFAULT_EMBEDDING_SERVICE_URL = "http://127.0.0.1:11435";
+
+/** Probe timeout. Same budget as `packages/webui/server/routes/memory.ts:888`. */
+const PROBE_TIMEOUT_MS = 100;
 
 /**
  * Options for the shared `recallPipeline` helper.
@@ -54,10 +72,15 @@ import type { MemoryAtomType, RecallResult } from "./types.ts";
  *   - `filter`                  — narrow recall to a single atom type.
  *   - `rerankEnabled`           — default `true`. When `false`, skip rerank and return
  *                                 the raw RRF pool.
- *   - `embeddingServiceUrl`     — override the bge-m3 / rerank service URL.
- *   - `embeddingServiceUrlProbe` — webui-only. When `true`, probe `/api/health` and
- *                                   populate `status.embeddingServiceStatus`.
+ *   - `embeddingServiceUrl`     — override the bge-m3 / rerank service URL (also
+ *                                 used as the probe base URL when probe=true).
+ *   - `embeddingServiceUrlProbe` — webui-only. When `true`, probe `/api/health`
+ *                                 (100ms budget) and populate
+ *                                 `status.embeddingServiceStatus` ("up" | "down").
+ *                                 TUI callers pass `false` or omit; field stays
+ *                                 `undefined` and no fetch is issued.
  */
+
 export interface RecallPipelineOptions {
 	query: string;
 	recent?: string[] | null;
@@ -137,7 +160,47 @@ export async function recallPipeline(
 	const rerankEnabled = opts.rerankEnabled ?? true;
 
 	// -----------------------------------------------------------------
-	// Step 1: Rewrite — decompose `query` (with optional `recent`) into
+	// Step 1: Probe (opt-in) — webui-only `/api/health` check, 100ms
+	// budget. When `opts.embeddingServiceUrlProbe === true`, hit the
+	// embedding service once before any recall work, set
+	// `embeddingServiceStatus` to "up" (2xx response) or "down"
+	// (non-2xx / abort / network error). TUI callers pass `false` or
+	// omit, in which case the field stays undefined and no fetch
+	// occurs at all.
+	//
+	// The probe runs BEFORE the rewrite step so its latency never
+	// contaminates `recallMs` / `rewriteMs` / `rerankMs` — those three
+	// measurements stay scoped to their named stage. The probe may
+	// cost up to 100ms; that budget shows up only in wall-clock total,
+	// not in any `*Ms` field on the returned status.
+	//
+	// Best-effort: any throw (network error, AbortError on timeout,
+	// malformed URL, etc.) is caught and reported as "down". This is
+	// a hard contract — a probe failure MUST NEVER break the pipeline.
+	// Mirrors the pattern at packages/webui/server/routes/memory.ts:882-896.
+	// -----------------------------------------------------------------
+	let embeddingServiceStatus: "up" | "down" | undefined;
+	if (opts.embeddingServiceUrlProbe === true) {
+		const probeUrl =
+			opts.embeddingServiceUrl ?? DEFAULT_EMBEDDING_SERVICE_URL;
+		try {
+			const controller = new AbortController();
+			const probeTimer = setTimeout(
+				() => controller.abort(),
+				PROBE_TIMEOUT_MS,
+			);
+			const probeRes = await fetch(`${probeUrl}/api/health`, {
+				signal: controller.signal,
+			});
+			clearTimeout(probeTimer);
+			embeddingServiceStatus = probeRes.ok ? "up" : "down";
+		} catch {
+			embeddingServiceStatus = "down";
+		}
+	}
+
+	// -----------------------------------------------------------------
+	// Step 2: Rewrite — decompose `query` (with optional `recent`) into
 	// a list of subqueries for parallel recall. `rewriteQueries` returns
 	// either `string[]` (success) or `RewriteFallback` (degraded single-
 	// element `[rawQuery]` array with a failure `reason`). The fallback
@@ -159,13 +222,6 @@ export async function recallPipeline(
 		rewriteStatus = rewriteOutcome.reason;
 		subqueries = rewriteOutcome.subqueries;
 	}
-
-	// -----------------------------------------------------------------
-	// Step 2: Probe — task 1.3 adds the `embeddingServiceUrlProbe`
-	// 100ms `/api/health` branch and populates `status.embeddingServiceStatus`.
-	// For 1.2 the field stays undefined so the 8 behavior tests in
-	// `test/recall-pipeline.test.ts` see only the core pipeline stages.
-	// -----------------------------------------------------------------
 
 	// -----------------------------------------------------------------
 	// Step 3: Recall + Rerank — parallel across subqueries. Each branch
@@ -253,6 +309,7 @@ export async function recallPipeline(
 			recallMs,
 			rewriteMs,
 			rerankMs,
+			embeddingServiceStatus,
 		},
 	};
 }

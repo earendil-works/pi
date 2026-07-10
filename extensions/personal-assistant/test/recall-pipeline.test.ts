@@ -21,7 +21,7 @@
 //   - "webui embedding service status from pipeline" → (1.3) embeddingServiceStatus when probe=true
 // ---------------------------------------------------------------------------
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	recallPipeline,
 	type RecallPipelineOptions,
@@ -435,5 +435,175 @@ describe("recallPipeline behavior (RED in 1.1, GREEN in 1.2+)", () => {
 
 		// "fallback" must stick — even though subq2 finished later with "ok".
 		expect(out.status.rerank).toBe("fallback");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Suite 3: embeddingServiceStatus probe (task 1.3) — RED before 1.3 body is
+// implemented. The pipeline's "Step 2: Probe" branch is currently empty
+// (TODO placeholder) so `status.embeddingServiceStatus` is never set, even
+// when the caller asks for the probe. Tests 1 and 2 must FAIL.
+//
+// Scenarios covered (from docs/sdd/changes/agent-driven-memory-save/specs
+// /tui-webui-recall-parity/spec.md § "recallPipeline exposes pipeline
+// timing and status metadata"):
+//   - "webui embedding service status from pipeline"  → probe + 2xx → "up"
+//   - "webui embedding service down surfaces status" → probe + 5xx / throw
+//                                                       → "down"
+//   - TUI probe=false / omitted                        → field undefined,
+//                                                       fetch NOT called
+//
+// fetch is mocked via globalThis.fetch (assignment + restore in afterEach)
+// since `vi.mock("../search.ts")` etc. don't intercept the global fetch.
+// All four pipeline stages are still mocked at the module level via the
+// vi.mock() calls at the top of the file — so the only `fetch` calls
+// inside `recallPipeline` come from the probe branch itself.
+// ---------------------------------------------------------------------------
+
+describe("recallPipeline embedding probe", () => {
+	let originalFetch: typeof fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		// Pipeline-stage fixture: a single subquery, no recall hits, no
+		// rerank hits. The probe suite exercises the probe branch only —
+		// the downstream stages stay inert.
+		mockRewriteQueries.mockReset();
+		mockRewriteQueries.mockImplementation(async (q: unknown) => [q as string]);
+		mockRecallAtoms.mockReset();
+		mockRecallAtoms.mockResolvedValue([]);
+		mockRerankAndFilter.mockReset();
+		mockRerankAndFilter.mockResolvedValue([]);
+		mockMergeByRerankScore.mockReset();
+		mockMergeByRerankScore.mockImplementation(
+			(groups: RecallResult[][]) => groups.flat(),
+		);
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("status.embeddingServiceStatus === 'up' when probe=true and /api/health returns 2xx", async () => {
+		// Scenario: webui route passes embeddingServiceUrlProbe: true. The
+		// bge-m3 service is healthy and /api/health returns 200. The
+		// response body the webui hands back to the client must include
+		// `embeddingServiceStatus: "up"`.
+		const fetchSpy = vi.fn(
+			async () => new Response("ok", { status: 200 }),
+		) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+			embeddingServiceUrl: "http://127.0.0.1:11435",
+			embeddingServiceUrlProbe: true,
+		});
+
+		expect(out.status.embeddingServiceStatus).toBe("up");
+		// /api/health must be called exactly once with the override URL.
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(fetchSpy).toHaveBeenCalledWith(
+			"http://127.0.0.1:11435/api/health",
+			expect.objectContaining({ signal: expect.any(Object) as unknown as AbortSignal }),
+		);
+	});
+
+	it("status.embeddingServiceStatus === 'down' when probe=true and /api/health returns non-2xx", async () => {
+		// Scenario: webui route passes embeddingServiceUrlProbe: true. The
+		// bge-m3 service is up but /api/health reports 500. Surface "down"
+		// so the UI can show "embedding service down" instead of "no
+		// memory match" with no cause hint.
+		globalThis.fetch = vi.fn(
+			async () => new Response("boom", { status: 500 }),
+		) as unknown as typeof fetch;
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+			embeddingServiceUrlProbe: true,
+		});
+
+		expect(out.status.embeddingServiceStatus).toBe("down");
+	});
+
+	it("status.embeddingServiceStatus === 'down' when probe=true and fetch throws (network / abort)", async () => {
+		// Scenario: bge-m3 service is down — fetch rejects before the 100ms
+		// timeout OR the AbortController aborts after 100ms. Either way the
+		// probe must catch and report "down" — never throw out of the
+		// pipeline.
+		globalThis.fetch = vi.fn(async () => {
+			throw new Error("ECONNREFUSED");
+		}) as unknown as typeof fetch;
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+			embeddingServiceUrlProbe: true,
+		});
+
+		expect(out.status.embeddingServiceStatus).toBe("down");
+	});
+
+	it("status.embeddingServiceStatus stays undefined when embeddingServiceUrlProbe is omitted (TUI default)", async () => {
+		// Scenario: TUI context hook calls recallPipeline without
+		// embeddingServiceUrlProbe. The probe branch must be entirely
+		// skipped — no fetch, no status field. Fetch is the strongest
+		// assertion here: in the mocked test environment, fetch is only
+		// called from the probe branch, so a successful assertion of
+		// `not.toHaveBeenCalled()` proves the flag was honored.
+		const fetchSpy = vi.fn(async () => {
+			throw new Error("fetch should not be called when probe is omitted");
+		}) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(out.status.embeddingServiceStatus).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("status.embeddingServiceStatus stays undefined when embeddingServiceUrlProbe === false (TUI explicit false)", async () => {
+		// Scenario: TUI passes probe=false explicitly. Same semantics as
+		// omitted — the probe branch is gated by `=== true`, so false and
+		// undefined are identical at the type level and at runtime.
+		const fetchSpy = vi.fn(async () => {
+			throw new Error("fetch should not be called when probe is false");
+		}) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		const out = await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+			embeddingServiceUrlProbe: false,
+		});
+
+		expect(out.status.embeddingServiceStatus).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("uses http://127.0.0.1:11435 as probe URL when embeddingServiceUrl is omitted", async () => {
+		// Default URL matches hybrid-search.ts:40 DEFAULT_EMBEDDING_SERVICE_URL
+		// — same default the bge-m3 rerank service uses. Falls back when
+		// the caller only sets probe=true without overriding the URL.
+		const fetchSpy = vi.fn(
+			async () => new Response("ok", { status: 200 }),
+		) as unknown as typeof fetch;
+		globalThis.fetch = fetchSpy;
+
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+			embeddingServiceUrlProbe: true,
+		});
+
+		expect(fetchSpy).toHaveBeenCalledWith(
+			"http://127.0.0.1:11435/api/health",
+			expect.anything(),
+		);
 	});
 });
