@@ -1056,7 +1056,6 @@ function buildToolResultBlock(
 	loadedToolNames: Set<string>,
 	normalizeToolName: (name: string) => string,
 ): ContentBlockParam {
-	const converted = convertContentBlocks(msg.content);
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
 		const normalizedName = normalizeToolName(name);
@@ -1067,24 +1066,11 @@ function buildToolResultBlock(
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
 		});
 	}
-	if (references.length === 0) {
-		return {
-			type: "tool_result",
-			tool_use_id: msg.toolCallId,
-			content: converted,
-			is_error: msg.isError,
-		};
-	}
-	const blocks =
-		typeof converted === "string"
-			? converted.trim().length > 0
-				? [{ type: "text" as const, text: converted }]
-				: []
-			: converted;
+	// Anthropic rejects tool references mixed with ordinary tool-result content.
 	return {
 		type: "tool_result",
 		tool_use_id: msg.toolCallId,
-		content: [...blocks, ...references],
+		content: references.length > 0 ? references : convertContentBlocks(msg.content),
 		is_error: msg.isError,
 	};
 }

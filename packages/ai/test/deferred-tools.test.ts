@@ -132,11 +132,20 @@ describe("deferred tools", () => {
 		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
 
 		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
-		const content = findAnthropicToolResult(payload).content;
-		expect(
-			Array.isArray(content) &&
-				content.some((block) => block.type === "tool_reference" && block.tool_name === "late_tool"),
-		).toBe(true);
+		expect(findAnthropicToolResult(payload).content).toEqual([{ type: "tool_reference", tool_name: "late_tool" }]);
+	});
+
+	it("loads a tool introduced by OpenAI history after switching to Anthropic", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.api = "openai-responses";
+		assistant.provider = "openai";
+		assistant.model = "gpt-5.4";
+
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-8"), context);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "late_tool", defer_loading: true }]);
+		expect(findAnthropicToolResult(payload).content).toEqual([{ type: "tool_reference", tool_name: "late_tool" }]);
 	});
 
 	it("does not resurrect a marked tool missing from Context.tools", async () => {
