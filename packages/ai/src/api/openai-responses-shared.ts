@@ -594,7 +594,11 @@ export async function processResponsesStream<TApi extends Api>(
 					partial: output,
 				});
 				outputSlots.delete(event.output_index);
-			} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.inputType === "freeform") {
+			} else if (
+				item.type === "custom_tool_call" &&
+				slot?.type === "toolCall" &&
+				slot.block.inputType === "freeform"
+			) {
 				slot.block.input = item.input || slot.block.partialInput;
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries raw input.

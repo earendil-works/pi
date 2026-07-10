@@ -35,8 +35,16 @@ export interface CompactionDetails {
 	modifiedFiles: string[];
 }
 
-function estimateToolCallChars(block: { name: string; inputType?: string; arguments?: unknown; input?: string }): number {
-	return block.name.length + (block.inputType === "freeform" ? (block.input ?? "").length : JSON.stringify(block.arguments ?? {}).length);
+function estimateToolCallChars(block: {
+	name: string;
+	inputType?: string;
+	arguments?: unknown;
+	input?: string;
+}): number {
+	return (
+		block.name.length +
+		(block.inputType === "freeform" ? (block.input ?? "").length : JSON.stringify(block.arguments ?? {}).length)
+	);
 }
 
 /**

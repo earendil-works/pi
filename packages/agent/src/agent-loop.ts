@@ -684,7 +684,14 @@ async function prepareToolCall(
 		};
 	}
 
-	const blocked = await runBeforeToolCallHook(currentContext, assistantMessage, toolCall, toolCall.input, config, signal);
+	const blocked = await runBeforeToolCallHook(
+		currentContext,
+		assistantMessage,
+		toolCall,
+		toolCall.input,
+		config,
+		signal,
+	);
 	if (blocked) return blocked;
 	return {
 		kind: "prepared",
