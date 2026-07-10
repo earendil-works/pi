@@ -646,4 +646,72 @@ describe("memory_save execute (RED — scaffold throws 'not implemented')", () =
 		// 6. Assert the counter incremented by 1.
 		expect(mod.getSegmentMemorySaveCount()).toBe(1);
 	});
+
+	// Task 2.5 — id_not_found error path (scenarios.md S7, spec.md L39-44).
+	// Pre-state: empty DB (no atom with id "a-ghost"). Call memory_save
+	// with `id: "a-ghost"` and any valid content. Expected outcome:
+	//   - details.action === "error"
+	//   - details.error === "id_not_found"
+	//   - details.id === "a-ghost"
+	//   - DB unchanged (still zero atoms)
+	//   - No .md file was created (writeAtomToFile must not have run)
+	//   - segmentMemorySaveCount incremented by 1 (the counter tracks
+	//     "agent tried to write", not "agent successfully wrote" — per
+	//     principle "counter 计入调用而不计入成功")
+	it("id_not_found path: returns {action: 'error', error: 'id_not_found', id} when id is supplied but DB has no such atom", async () => {
+		// 1. Empty DB — just init + close so the file exists.
+		const idx = new MemoryIndex(dbPath);
+		await idx.init();
+		idx.close();
+
+		const atomsDir = path.join(tmpDir, ".pi", "agent", "memory", "atoms");
+
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+		const ghostId = "a-ghost";
+		const result = await tool.execute(
+			"call-5",
+			{
+				id: ghostId,
+				type: "fact" as const,
+				title: "ghost title",
+				content: "content for ghost atom id_not_found test scenario",
+				summary: "ghost summary line",
+				tags: ["ghost"],
+				importance: 0.4,
+			},
+			undefined,
+			undefined,
+			{ ui: { notify: () => {} } },
+		);
+
+		// 2. Assert the error envelope shape exactly (spec.md L43,
+		// scenarios.md S7 line 40).
+		expect(result.details).toEqual({
+			action: "error",
+			error: "id_not_found",
+			id: ghostId,
+		});
+
+		// 3. Assert the DB is unchanged (still zero atoms — no insert).
+		const verifyIdx = new MemoryIndex(dbPath);
+		await verifyIdx.init();
+		try {
+			const ghost = verifyIdx.getAtom(ghostId);
+			expect(ghost).toBeNull();
+			expect(verifyIdx.getActiveAtoms()).toHaveLength(0);
+		} finally {
+			verifyIdx.close();
+		}
+
+		// 4. Assert the .md file was NOT created under atomsDir. The
+		// type "fact" subdir would be the canonical writeAtomToFile
+		// destination; assert the dir/file does not exist.
+		const ghostMdPath = path.join(atomsDir, "fact", `${ghostId}.md`);
+		await expect(fs.stat(ghostMdPath)).rejects.toThrow();
+
+		// 5. Assert the counter incremented by 1 — the call still
+		// counts even though it returned an error envelope (per
+		// principle "counter 计入调用").
+		expect(mod.getSegmentMemorySaveCount()).toBe(1);
+	});
 });

@@ -137,6 +137,7 @@ export type MemorySaveResult =
 	| {
 			action: "error";
 			error: "id_not_found" | "invalid_type" | "content_too_short";
+			id?: string;
 			details?: unknown;
 	  };
 
@@ -241,14 +242,30 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 					// requires one but the SQL ignores the passed value.
 					const existing = index.getAtom(params.id);
 					if (!existing) {
-						// Task 2.5 will replace this throw with:
-						//   return { details: {action:"error", error:"id_not_found", id} }
-						// per scenarios.md:L37 and design.md § 数据流 overwrite
-						// 分支 null-arm. Until 2.5 lands, throw to keep the
-						// contract unambiguous for the test fixture.
-						throw new Error(
-							`not implemented: memory_save id_not_found path lands in task 2.5 (id=${params.id})`,
-						);
+						// Task 2.5 — id_not_found envelope (scenarios.md S7 line 37-40,
+						// spec.md L39-44). No insertAtom / updateAtom /
+						// writeAtomToFile / reindexOne (per spec L44). The
+						// counter still increments below — the spec says it
+						// counts every memory_save invocation, including
+						// error outcomes (principle "counter 计入调用而不
+						// 计入成功"). 2.6 will hoist the increment alongside
+						// create / skip / update so a single shared location
+						// covers all outcomes.
+						incrementSegmentMemorySaveCount();
+						const errorResult: MemorySaveResult = {
+							action: "error",
+							error: "id_not_found",
+							id: params.id,
+						};
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Error: no atom found with id ${params.id}`,
+								},
+							],
+							details: errorResult,
+						};
 					}
 
 					const fingerprint = computeFingerprint(params.content);
