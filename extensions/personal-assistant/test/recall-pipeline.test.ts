@@ -439,10 +439,11 @@ describe("recallPipeline behavior (RED in 1.1, GREEN in 1.2+)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: embeddingServiceStatus probe (task 1.3) — RED before 1.3 body is
-// implemented. The pipeline's "Step 2: Probe" branch is currently empty
-// (TODO placeholder) so `status.embeddingServiceStatus` is never set, even
-// when the caller asks for the probe. Tests 1 and 2 must FAIL.
+// Suite 3: embeddingServiceStatus probe (task 1.3) — GREEN after 1.3 body
+// is implemented. The pipeline's probe branch runs BEFORE the rewrite
+// step when opts.embeddingServiceUrlProbe === true (TUI callers pass
+// false or omit; webui passes true). Probe is best-effort: never throws
+// out of the pipeline.
 //
 // Scenarios covered (from docs/sdd/changes/agent-driven-memory-save/specs
 // /tui-webui-recall-parity/spec.md § "recallPipeline exposes pipeline
