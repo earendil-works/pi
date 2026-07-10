@@ -80,7 +80,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 // ============================================================================
 
 export interface OpenAICodexResponsesOptions extends StreamOptions {
-	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
@@ -511,10 +511,11 @@ function buildRequestBody(
 	}
 
 	if (options?.reasoningEffort !== undefined) {
+		const requestEffort = options.reasoningEffort === "ultra" ? "max" : options.reasoningEffort;
 		const effort =
 			options.reasoningEffort === "none"
 				? (model.thinkingLevelMap?.off ?? "none")
-				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
+				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? requestEffort);
 		if (effort !== null) {
 			body.reasoning = {
 				effort,

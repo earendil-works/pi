@@ -400,7 +400,7 @@ function buildParams(
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
+type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max" | "ultra">;
 
 function isGemma4Model(model: Model<"google-generative-ai">): boolean {
 	return /gemma-?4/.test(model.id.toLowerCase());

@@ -71,7 +71,7 @@ export type KnownImagesProvider = "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 export type ChatTemplateKwargValue =

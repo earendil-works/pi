@@ -11,7 +11,7 @@ function mockToken(): string {
 	return `aaa.${payload}.bbb`;
 }
 
-describe("max thinking level", () => {
+describe("ultra thinking level", () => {
 	it("is opt-in for ordinary reasoning models", () => {
 		const model: Model<"openai-completions"> = {
 			id: "ordinary-reasoning",
@@ -27,47 +27,33 @@ describe("max thinking level", () => {
 		};
 
 		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high"]);
-		expect(clampThinkingLevel(model, "max")).toBe("high");
+		expect(clampThinkingLevel(model, "ultra")).toBe("high");
 	});
 
-	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] as const)(
-		"exposes xhigh and max for openai-codex/%s",
-		(modelId) => {
-			const model = getModel("openai-codex", modelId);
-			expect(model).toBeDefined();
-			expect(model?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
-			expect(getSupportedThinkingLevels(model!).slice(0, 7)).toEqual([
-				"off",
-				"minimal",
-				"low",
-				"medium",
-				"high",
-				"xhigh",
-				"max",
-			]);
-		},
-	);
-
-	it("supports a hole between high and max", () => {
-		const model: Model<"openai-completions"> = {
-			id: "high-and-max",
-			name: "High and Max",
-			api: "openai-completions",
-			provider: "test",
-			baseUrl: "https://example.com/v1",
-			reasoning: true,
-			thinkingLevelMap: { xhigh: null, max: "max" },
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 128000,
-			maxTokens: 4096,
-		};
-
-		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high", "max"]);
-		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
+	it.each(["gpt-5.6-sol", "gpt-5.6-terra"] as const)("exposes ultra for openai-codex/%s", (modelId) => {
+		const model = getModel("openai-codex", modelId);
+		expect(model).toBeDefined();
+		expect(model?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max", ultra: "max" });
+		expect(getSupportedThinkingLevels(model!)).toEqual([
+			"off",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+			"ultra",
+		]);
 	});
 
-	it("sends max to the Codex Responses API", async () => {
+	it("does not expose ultra for openai-codex/gpt-5.6-luna", () => {
+		const model = getModel("openai-codex", "gpt-5.6-luna")!;
+		expect(model.thinkingLevelMap?.ultra).toBeUndefined();
+		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+		expect(clampThinkingLevel(model, "ultra")).toBe("max");
+	});
+
+	it("sends max to the Codex Responses API when ultra is selected", async () => {
 		const model = getModel("openai-codex", "gpt-5.6-sol")!;
 		const context: Context = {
 			systemPrompt: "You are a helpful assistant.",
@@ -77,7 +63,7 @@ describe("max thinking level", () => {
 
 		await streamSimpleOpenAICodexResponses(model, context, {
 			apiKey: mockToken(),
-			reasoning: "max",
+			reasoning: "ultra",
 			onPayload: (request) => {
 				payload = request;
 				throw new Error("payload captured");
