@@ -71,7 +71,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save overwrite id exists` test PASS: DB row updated, version bumped via SQL, .md overwritten.
   - **依赖**: 2.3
 
-- [ ] 2.5 **Implement id-not-found error path**
+- [x] 2.5 **Implement id-not-found error path**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: When `id` present and `index.getAtom(id)` returns null, return `{action:"error", error:"id_not_found", id}`. No writes.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save overwrite id not found` test PASS: returns id_not_found, DB unchanged.
@@ -137,7 +137,7 @@
 
 ## 5. TUI: context hook uses recallPipeline
 
-- [ ] 5.1 **Refactor context hook to call recallPipeline**
+- [x] 5.1 **Refactor context hook to call recallPipeline**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: In `context` hook (line 726), replace the inline rewrite+recall+rerank+merge block (rewriteQueries at line 821 / 840, then the inline Promise.all recall + rerank + merge around line 858-901, then `mergeByRerankScore(poolResults)` at line 894) with a single call: `recallPipeline(index, {query: current, recent, topK: 20, rerankEnabled, atomsDir, embeddingServiceUrlProbe: false})`. Pass the **single** user message string as `query` — `recallPipeline` does the rewrite internally per design Decision 8.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `TUI context hook calls recallPipeline with recent + single query string` test PASS (mock pi captures hook registration; mock recallPipeline called with `query: <single string>`, `recent: ["msg1","msg2","msg3"]`, `topK: 20`).
@@ -151,7 +151,7 @@
 
 ## 6. Webui: registerPostSearch uses recallPipeline
 
-- [ ] 6.1 **Refactor registerPostSearch to call recallPipeline**
+- [x] 6.1 **Refactor registerPostSearch to call recallPipeline**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: In `registerPostSearch` handler (line 845+), replace the inline `rewriteQueries` + `Promise.all(subqueries.map(...))` + `mergeByRerankScore` block (line 898-947) with a single call: `const {results, status} = await recallPipeline(index, {query, recent: Array.isArray(req.body?.recent) ? req.body.recent : null, topK: clamp(parseInt(req.body?.topK) || 20, 1, 100), filter: type ? {type} : undefined, rerankEnabled: filtered !== false, atomsDir: deps.atomsDir, embeddingServiceUrl: deps.embeddingServiceUrl, embeddingServiceUrlProbe: true})`.
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui /api/memory/search calls recallPipeline` test PASS (mock recallPipeline invoked with expected opts).
