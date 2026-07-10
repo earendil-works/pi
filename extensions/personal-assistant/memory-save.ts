@@ -34,6 +34,19 @@
 // match the extraction.ts persistCreate() pattern so the on-disk
 // layout and the bge-m3 service state stay in sync across both write
 // paths (extraction pipeline and agent-driven memory_save).
+//
+// Path resolution: dbPath / atomsDir are computed at execute time via
+// `homedir()` (resolving to whatever process.env.HOME is at call time).
+// The test fixture relies on this — it sets HOME AFTER importing
+// memory-save.ts, then expects execute to open a DB at the new HOME.
+// `memory.ts` exports `DEFAULT_DB_PATH` / `DEFAULT_ATOMS_DIR` as the
+// canonical path strings (AGENTS.md Principle 9 "One Explicit Home");
+// a future task will add `config.memory?.dbPath ?? DEFAULT_DB_PATH`
+// plumbing + a matching `loadConfig` mock in the test fixture so user
+// overrides are honored. For 2.2 the dynamic `homedir()` is correct
+// but the path strings appear in two places (memory.ts and here);
+// an integration test should pin them to the same value when
+// `loadConfig` is added.
 
 import { Type, type Static } from "typebox";
 import { homedir } from "node:os";
