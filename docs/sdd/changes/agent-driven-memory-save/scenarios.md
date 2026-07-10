@@ -114,7 +114,7 @@
 ### Scenario: segment 内先 save 后 compact (中间无任何 save)
 - **GIVEN** segment turn 1-3 agent 调过 `memory_save`;turn 4-10 没有任何 save;turn 11 触发 compact
 - **WHEN** safety net 检查 `segmentMemorySaveCount`
-- **THEN** counter 仍是 turn 3 时的值(>0),safety net 跳过;counter 仅在 `before_agent_start` 重置
+- **THEN** counter 仍是 turn 3 时的值(>0),safety net 跳过;counter 在 `session_start` 与 `session_compact` 重置,**不在** `before_agent_start` 重置(per-turn 不重置才能正确累积 per-segment)
 
 ### Scenario: tool_call hook 高频调用性能
 - **GIVEN** agent 每 turn 调 5-10 个 tool,每个 tool_call 走 hook
