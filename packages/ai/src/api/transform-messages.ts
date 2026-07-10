@@ -160,6 +160,10 @@ export function transformMessages<TApi extends Api>(
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
 	let existingToolResultIds = new Set<string>();
+	// Index in `result` where the current turn's user message was pushed. Used to
+	// erase an entire incomplete turn (not just the aborted assistant message) when
+	// that turn ends in error/abort. See rationale below.
+	let turnStartIndex: number | null = null;
 	const insertSyntheticToolResults = () => {
 		if (pendingToolCalls.length > 0) {
 			for (const tc of pendingToolCalls) {
@@ -186,13 +190,19 @@ export function transformMessages<TApi extends Api>(
 			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
 			insertSyntheticToolResults();
 
-			// Skip errored/aborted assistant messages entirely.
-			// These are incomplete turns that shouldn't be replayed:
+			// Skip errored/aborted turns entirely, including the user message that
+			// started them. These are incomplete turns that shouldn't be replayed:
 			// - May have partial content (reasoning without message, incomplete tool calls)
 			// - Replaying them can cause API errors (e.g., OpenAI "reasoning without following item")
 			// - The model should retry from the last valid state
 			const assistantMsg = msg as AssistantMessage;
 			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				if (turnStartIndex !== null) {
+					result.length = turnStartIndex;
+				}
+				pendingToolCalls = [];
+				existingToolResultIds = new Set();
+				turnStartIndex = null;
 				continue;
 			}
 
@@ -210,6 +220,7 @@ export function transformMessages<TApi extends Api>(
 		} else if (msg.role === "user") {
 			// User message interrupts tool flow - insert synthetic results for orphaned calls
 			insertSyntheticToolResults();
+			turnStartIndex = result.length;
 			result.push(msg);
 		} else {
 			result.push(msg);
