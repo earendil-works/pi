@@ -65,7 +65,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save fingerprint hit skip` test PASS: DB unchanged, .md not written, reindexOne not called.
   - **依赖**: 2.2
 
-- [ ] 2.4 **Implement overwrite path (id present, atom exists)**
+- [x] 2.4 **Implement overwrite path (id present, atom exists)**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: When `id` present: `index.getAtom(id)`; if found, build `mergedAtom = {...existing, type, title, summary, content, tags, importance, content_fingerprint: computeFingerprint(content), updated_at: Date.now()}`. `embedText` → `index.updateAtom(mergedAtom, vector)` + `writeAtomToFile(mergedAtom, atomsDir)` + `reindexOne(mergedAtom.id)`. Return `{action:"updated", id, embedding}`.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save overwrite id exists` test PASS: DB row updated, version bumped via SQL, .md overwritten.
