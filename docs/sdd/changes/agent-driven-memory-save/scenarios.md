@@ -2,116 +2,131 @@
 
 ## 正常流程
 
-### 场景: agent 主动新增 atom (无 id, 无相似)
-- **GIVEN** 当前 DB 内无 cosine ≥ 0.65 的相似 atom;agent 决定"记住:用户偏好用 bun 而不是 npm"
+### Scenario: agent 主动新增 atom (无 id, fingerprint 不命中)
+- **GIVEN** 当前 DB 内无相同 fingerprint 的 atom;agent 决定"记住:用户偏好用 bun 而不是 npm"
 - **WHEN** agent 调用 `memory_save({type:"rule", title:"...", content:"...", tags:["preference"], importance:0.7})`
-- **THEN** tool 返回 `{ok:true, id:"<新 uuid>", action:"created"}`;`writeAtomToFile` 写 `.md`;`MemoryIndex.insertAtom` 入 DB;embedding 成功后 `upsertVector`;recall 路径可命中该 atom
+- **THEN** tool: `computeFingerprint(content)` → 未命中 → `embedText(buildEmbeddableText(...), 15s)` → `insertAtom(newAtom, vector)` → `writeAtomToFile(newAtom, atomsDir)` → `reindexOne(newAtom.id)` → 返 `{action:"created", id:<uuid>}`;DB `memory_index` 1 row;`memory_vectors` 1 row;.md 已写;bge-m3 已重编码
 
-### 场景: agent overwrite 已有 atom (id 复用)
+### Scenario: agent fingerprint 命中已有 atom (无 id, 重复内容)
+- **GIVEN** DB 已存在 active atom `a-789`,其 `content_fingerprint` 与 agent 新写入的 content 相同
+- **WHEN** `memory_save({type:"rule", title:"new title", content:"same content", ...})` (无 id)
+- **THEN** tool: `computeFingerprint` → `index.getActiveAtomByFingerprint(fp)` 命中 → 返 `{action:"skipped", reason:"duplicate_content", existing_id:"a-789"}`,不写入任何文件或 DB 行
+
+### Scenario: agent overwrite 已有 atom (id 复用, in-place update)
 - **GIVEN** DB 存在 atom `a-123`(recall 看到 summary);agent 决定更新它的内容
-- **WHEN** agent 调用 `memory_save({id:"a-123", type:"rule", title:"...", content:"new content", tags:[...], importance:0.7})`
-- **THEN** tool 找到 `a-123` → `deleteVector(a-123)` → 删旧 `.md` 文件 → `insertAtom` 用相同 id 写入新 row(version+1, is_latest=1)→ `writeAtomToFile` 写新 `.md` → `upsertVector` 新 embedding;返回 `{ok:true, id:"a-123", action:"overwritten"}`
+- **WHEN** `memory_save({id:"a-123", type:"rule", title:"...", content:"new content", tags:[...], importance:0.7})`
+- **THEN** tool: `index.getAtom("a-123")` 命中 → `embedText` → `index.updateAtom(mergedAtom, vector)`(in-place UPDATE,SQL `version = version + 1` 自动 bump)→ `writeAtomToFile` overwrite .md → `reindexOne` → 返 `{action:"updated", id:"a-123"}`;DB row 复用 id,version 自增;.md 内容更新
 
-### 场景: 冲突检测后 agent 决定 overwrite-with-id
-- **GIVEN** DB 存在 atom `a-456`(cosine 与新内容 ≥ 0.65);agent 第一次调用无 id 的 save
-- **WHEN** `memory_save({type:"fact", title, content, tags, importance})`
-- **THEN** tool 返回 `{conflict:{id:"a-456", score:0.78, title:"..."}}`,不写入;agent 看到 conflict 后调 `memory_save({id:"a-456", type:"fact", content:"new content", ...})` 走 overwrite 路径,旧 atom `a-456` 的 file/row/vector 全清,新 atom 复用 id `a-456` 入库,返回 `{ok:true, id:"a-456", action:"overwritten"}`
+### Scenario: safety net 在 agent save ≥ 1 时跳过
+- **GIVEN** 当前 session segment 内 agent 已调用过 `memory_save`(无论成功或被 fingerprint 拒);compact 被触发
+- **WHEN** `session_before_compact` hook 入口检查 `segmentMemorySaveCount >= 1`
+- **THEN** hook 直接 `return undefined`,compact 继续,不跑抽取
 
-### 场景: safety net 在 0 save 时触发
-- **GIVEN** 当前 session segment 内 agent 未调用 `memory_save` 任何一次;compact 被触发
-- **WHEN** `session_before_compact` hook 跑
-- **THEN** 跳过条件:`agentSaveCount == 0` 不满足 → 直接 `return undefined`,compact 继续,不跑抽取
-
-### 场景: safety net 实际跑抽取
-- **GIVEN** segment 内 `agentSaveCount == 0`;`session_before_compact` 触发
+### Scenario: safety net 在 0 save 时跑抽取
+- **GIVEN** segment 内 `segmentMemorySaveCount == 0`;`session_before_compact` 触发
 - **WHEN** hook 进入 safety net 路径
-- **THEN** 读最近 `tool_call` log(空);执行 `extractMemoriesWithCallLlm`;产物写入 `~/.pi/agent/memory/inbox/YYYY-MM-DD-<session>-<n>.md`(不进 atoms 主库);`ctx.ui.notify("memory: <N> candidates → inbox")`;compact 继续
+- **THEN** 执行 `runCompactExtraction` 原流程(LLM 抽取 → `executeItem` → fingerprint + oldId dedup);`ctx.ui.notify` 显示提取进度;compact 继续
+
+### Scenario: TUI 与 webui 通过同一 recallPipeline 召回
+- **GIVEN** agent 在 TUI 调 context hook;同时 user 在 webui MemorySearchTester 输入相同 query "BWA 引物验证"
+- **WHEN** TUI context hook 调 `recallPipeline(index, {query, recent: [前 3 条 user msg], topK: 20, ...})`;webui `/api/memory/search` 调 `recallPipeline(index, {query, recent: null, topK: 20, ...})`
+- **THEN** 两路径内部跑相同的 `rewriteQueries` (recent 不同) → `recallAtoms(topK:20)` × subqueries → `rerankAndFilter` (threshold 0.05, gap 0.15) → `mergeByRerankScore`;最终返回 atoms 与 rrf 一致(仅 `recent` 影响 rewrite 的 subqueries,进而影响候选集)
 
 ## 异常流程
 
-### 场景: agent 提供 id 但 DB 不存在
+### Scenario: agent 提供 id 但 DB 不存在
 - **GIVEN** agent 调 `memory_save({id:"a-ghost", ...})`,DB 无 `a-ghost`
-- **WHEN** tool 执行
-- **THEN** 返回 `{ok:false, error:"id_not_found", id:"a-ghost"}`,不写入任何文件或 DB 行;agent 收到 error,可选择去掉 id 重试(走 create 路径)
+- **WHEN** tool 调 `index.getAtom("a-ghost")`
+- **THEN** 返 `{action:"error", error:"id_not_found", id:"a-ghost"}`,不写入任何文件或 DB 行;agent 收到后可选择去掉 id 重试(走 create 路径)
 
-### 场景: embedding 服务不可达 (15s 超时)
-- **GIVEN** ollama / bge-m3 服务 down 或 ECONNREFUSED
-- **WHEN** tool 调 `embedText(content, {timeoutMs: 15000})`
-- **THEN** `embedText` 返回 `null`;tool 跳过 cosine dedup,直接走 `insertAtom` + `writeAtomToFile`;返回 `{ok:true, id:"<new>", action:"created", embedding:"skipped"}`;`memory_vectors` 缺该 atom 行,后续 recall 走 sparse channel 兜底
+### Scenario: 嵌入服务不可达 (15s 超时或 ECONNREFUSED)
+- **GIVEN** ollama / bge-m3 embed endpoint 不可达
+- **WHEN** tool 调 `embedText(embeddable, {timeoutMs: 15000})`
+- **THEN** `embedText` 返回 `null`;tool 沿用 `extraction.ts:243, 258` 模式:`vector = null ?? new Array(1024).fill(0)`;`insertAtom` / `updateAtom` 用 zero vector;`reindexOne` 仍调(让 bge-m3 服务读 .md 重编码);atom 落库,recall 走 bge-m3 sparse channel 兜底
 
-### 场景: agent 用 `write` 工具直接落盘 atom 文件
+### Scenario: agent 用 `write` 工具直接落盘 atom 文件
 - **GIVEN** agent 调 `write({path:"~/.pi/agent/memory/atoms/process/foo.md", content:"..."})`
 - **WHEN** `tool_call` hook 命中路径解析
-- **THEN** hook 返回 `{block:true, reason:"memory atoms must be written via memory_save tool, not direct file write"}`;`write` 工具不执行;agent 收到 error
+- **THEN** hook 返 `{block: true, reason:"memory atoms must be written via memory_save tool"}`;`write` 工具不执行
 
-### 场景: agent 用 `bash` heredoc 写 atom 文件
+### Scenario: agent 用 `bash` heredoc 写 atom 文件
 - **GIVEN** agent 调 `bash({command:"cat > ~/.pi/agent/memory/atoms/process/foo.md <<EOF\n...\nEOF"})`
-- **WHEN** `tool_call` hook 解析命令,匹配 `>` / `>>` / `tee ` + 命中 `atoms/**` 路径
-- **THEN** hook 返回 block error,bash 不执行
+- **WHEN** `tool_call` hook 解析命令,匹配 `>` / `>>` / `tee` + 解析后命中 `atoms/**`
+- **THEN** hook 返 block error,bash 不执行
 
-### 场景: agent `read` 已有 atom 文件 (合法路径)
+### Scenario: agent `read` 已有 atom 文件 (合法路径, hook 不拦截)
 - **GIVEN** agent 调 `read({path:"~/.pi/agent/memory/atoms/process/a-123.md"})`
 - **WHEN** hook 检查是读操作 (无 `>` / `>>` / `tee`)
-- **THEN** hook 不拦截,read 正常返回 atom 内容
+- **THEN** hook 不拦截,read 正常返回内容;`tool_result` hook(memory.ts:997)后续 bump `access_count`
 
-### 场景: writer 自洽 (写自己的 .md 文件不触发 hook)
-- **GIVEN** `memory_save` tool 内部调 `writeAtomToFile` → `fs.writeFile(<atoms path>)`
-- **WHEN** 这一调用是 module-level 函数,非 agent tool_call
-- **THEN** tool_call hook 不触发(fs.writeFile 是 Node API,不经 tool_call);writer 不被自阻断
+### Scenario: writer 自洽 (writeAtomToFile 自身不触发 hook)
+- **GIVEN** `memory_save` 内部调 `writeAtomToFile` → `fs.writeFile(<atoms path>)`
+- **WHEN** 这是 Node fs 直调,非 agent tool_call
+- **THEN** tool_call hook 不触发,writer 不被自阻断
 
-### 场景: safety net 抽取失败
-- **GIVEN** `personalAssistant.memory.extraction.{provider,model}` 未配置 / auth 失败 / LLM 调用报错
-- **WHEN** safety net 跑抽取
-- **THEN** catch 内吞 error,`ctx.ui.notify("memory: safety net skipped, <reason>")`,return `undefined`,compact 继续
+### Scenario: safety net 抽取失败
+- **GIVEN** `personalAssistant.memory.extraction.{provider,model}` 未配置 / auth 失败 / LLM 报错
+- **WHEN** safety net 跑 `runCompactExtraction` 抛错
+- **THEN** catch 内吞 error,`ctx.ui.notify("memory: safety net skipped, <reason>", "warn")`,`return undefined`,compact 继续(不再 `cancel: true`)
 
-### 场景: 抽取 LLM 返回 0 candidates
-- **GIVEN** safety net 跑抽取,LLM 返回 `items: []`
-- **WHEN** `executePlan` 处理空列表
-- **THEN** 写入 `~/.pi/agent/memory/inbox/empty-<ts>.md`(空文件作为"已检查"标记)或直接 return;inbox 不堆积垃圾
+### Scenario: webui 调用 recallPipeline 时 bge-m3 服务挂掉
+- **GIVEN** bge-m3 服务不可达
+- **WHEN** webui `/api/memory/search` 调 `recallPipeline` → 内部 `recallAtoms` → `hybridSearch` → fetch `/api/search` 抛 ECONNREFUSED
+- **THEN** `hybridSearch` graceful 返 `[]`(search.ts:99 `console.warn` 提示);`recallPipeline` 内部 continue(无候选 → rerank 跳过 → merge 空数组);响应 `{results: [], embeddingServiceStatus: "down", ...}`;前端 MemorySearchTester 显示 "0 results"
+
+### Scenario: TUI context hook 中 recallPipeline 全部退化
+- **GIVEN** gate 通过;rewrite 失败(LLM timeout);recallAtoms 失败(bge-m3 down);rerank 跳过
+- **WHEN** `recallPipeline` 内部全部 fallback
+- **THEN** 返回 `results: []`;context hook 检测空结果 → 不注入 LLM context,直接 return 原 event;`ctx.ui.setStatus("memory", "🔍 no memory match")`
 
 ## 边界条件
 
-### 场景: importance 边界值 0 与 10
-- **GIVEN** agent 调 `memory_save({importance:0, ...})` 或 `importance:10, ...`
-- **WHEN** tool schema 校验
-- **THEN** 通过(MemoryAtom.importance 是 number 类型,无 schema 上下界约束);atom 落库,importance 字段原样存;decay 计算时 importance=0 的 atom 自然衰减最快
+### Scenario: importance 边界值 0 与 1
+- **GIVEN** agent 调 `memory_save({importance:0, ...})` 或 `importance:1, ...`
+- **WHEN** tool schema 校验 (Type.Number min/max 由 TypeBox 约束)
+- **THEN** 通过(importance 上下界 [0,1] 由 TypeBox schema 强制);atom 落库,`importance` 字段原样存;decay 计算时 importance=0 的 atom 自然衰减最快,importance=1 衰减最慢
 
-### 场景: title 长度 200 边界
-- **GIVEN** `writeAtomToFile.isSafeFilename` 限制 id 长度 ≤ 200;title 无硬限制
-- **WHEN** title 极长
-- **THEN** 写入成功,但 frontmatter `title: "..."` 行可能过长;若 DB schema 对 title 有长度限制则截断(由 `atomToRow` 决定)
+### Scenario: title 长度 200 边界
+- **GIVEN** `extractionPlanSchema` 限制 `title.max(200)`;`writeAtomToFile.isSafeFilename` 限制 `id.length <= 200`
+- **WHEN** agent 传 `title` 长度 1 / 100 / 200
+- **THEN** 通过;201 应被 TypeBox schema 拒
 
-### 场景: content 空字符串
-- **GIVEN** agent 调 `memory_save({content:"", ...})`
-- **WHEN** tool 校验
-- **THEN** schema 拒绝(MemoryAtom.content 语义上必填非空);返回 `{ok:false, error:"content_required"}`
+### Scenario: content 极短(< 10 字符)
+- **GIVEN** `extractionPlanSchema` 限制 `content.min(10)`
+- **WHEN** agent 传 `content: "x"`(< 10 chars)
+- **THEN** schema 拒绝;返 `{action:"error", error:"content_too_short"}`
 
-### 场景: tags 数组为空 vs 字段缺失
-- **GIVEN** agent 调 `memory_save({tags:[], ...})` vs `memory_save({...})`(无 tags)
+### Scenario: tags 数组为空 vs 字段缺失
+- **GIVEN** `memory_save({tags:[], ...})` vs `memory_save({...})`(无 tags 字段)
 - **WHEN** tool 处理
-- **THEN** 两种等价:落库时 `tags = []`,`normalizeTags` 后仍 `[]`;embeddable text 不含 tags 段
+- **THEN** 两种等价:落库时 `tags = []`,`normalizeTags` 后仍 `[]`;`buildEmbeddableText` 不含 tags 段
 
-### 场景: type 不在白名单
+### Scenario: type 不在白名单
 - **GIVEN** agent 调 `memory_save({type:"opinion", ...})`
-- **WHEN** schema 校验
-- **THEN** 拒绝,返回 `{ok:false, error:"invalid_type", allowed:["rule","fact","process"]}`
+- **WHEN** schema 校验 (Type.Union 不含 "opinion")
+- **THEN** 拒绝,返 `{action:"error", error:"invalid_type", allowed:["rule","fact","process"]}`
 
-### 场景: safety net 触发条件 = 1
-- **GIVEN** segment 内 agent 调过 1 次 `memory_save`(即使该 save 被 conflict 拒)
-- **WHEN** `session_before_compact` 触发
-- **THEN** `agentSaveCount >= 1` → safety net 跳过;说明:count 计入"调用",不计入"成功"
+### Scenario: agent 短时间多次 save (counter 累积)
+- **GIVEN** segment 内 agent 调 5 次 `memory_save`(部分成功部分被 fingerprint 拒)
+- **WHEN** 每次 `memory_save` execute 入口 `segmentMemorySaveCount++`
+- **THEN** counter = 5;compact 触发时 safety net 跳过(>=1);计数与成功/失败无关,只与"agent 主动调用过"相关
 
-### 场景: agent 调 save 后立刻在同一 turn 被 recall 命中
-- **GIVEN** agent save 新 atom;同一 turn 内 system prompt 重新构建,recall path 跑
-- **WHEN** recall 查 `memory_vectors`
-- **THEN** 若 embedding 成功 → 命中新 atom;若 embedding 失败 → sparse channel 可能命中(取决于 BM25 是否已索引);不命中是合法行为(graceful degradation)
+### Scenario: segment 内先 save 后 compact (中间无任何 save)
+- **GIVEN** segment turn 1-3 agent 调过 `memory_save`;turn 4-10 没有任何 save;turn 11 触发 compact
+- **WHEN** safety net 检查 `segmentMemorySaveCount`
+- **THEN** counter 仍是 turn 3 时的值(>0),safety net 跳过;counter 仅在 `before_agent_start` 重置
 
-### 场景: safety net 产物 inbox 文件堆积
-- **GIVEN** safety net 跑过 N 次,每次写一个 inbox 文件
-- **WHEN** 后台无清扫
-- **THEN** inbox 目录文件数线性增长;**本变更不在 scope 内解决**(后续独立 change 可加 cron 清理);inbox 不参与 recall,不影响主路径
-
-### 场景: tool_call hook 高频调用性能
+### Scenario: tool_call hook 高频调用性能
 - **GIVEN** agent 每 turn 调 5-10 个 tool,每个 tool_call 走 hook
 - **WHEN** hook 检查路径
 - **THEN** 单次 hook 路径 resolve + 正则匹配 < 1ms;非 memory 路径快速返回 undefined,无显著开销
+
+### Scenario: webui 调 recallPipeline 时 `recent` 字段缺失
+- **GIVEN** webui 请求体 `{query: "...", topK: 20}` 无 `recent` 字段
+- **WHEN** webui 调 `recallPipeline(index, {query, recent: undefined, topK: 20, ...})`
+- **THEN** `recallPipeline` 内部 `recent ?? null` 传给 `rewriteQueries`;`rewriteQueries` 用 `null` 拼 prompt(`Recent user messages: None`);与 webui 当前行为一致(无回归);TUI 与 webui 唯一差异是 `recent` 有无
+
+### Scenario: recallPipeline 的 topK 参数边界
+- **GIVEN** webui 请求 `{query: "...", topK: 200}`
+- **WHEN** `recallPipeline` 内部 clamp `topK` 到 [1, 100]
+- **THEN** topK > 100 截到 100;topK < 1 截到 1;NaN / undefined 用默认 20(与 TUI 对齐)
