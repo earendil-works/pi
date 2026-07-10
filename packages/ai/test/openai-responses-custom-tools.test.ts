@@ -5,7 +5,7 @@ import {
 	convertResponsesTools,
 	processResponsesStream,
 } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, ToolCall } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
 const model: Model<"openai-responses"> = {
@@ -154,6 +154,49 @@ describe("OpenAI Responses custom tools", () => {
 				type: "custom_tool_call_output",
 				call_id: "call_patch",
 				output: "ok",
+			},
+		]);
+	});
+
+	it("replays legacy JSON tool calls without inputType as function items", () => {
+		const legacyToolCall = {
+			type: "toolCall",
+			id: "call_bash|fc_bash",
+			name: "bash",
+			arguments: { command: "pwd" },
+		} as unknown as ToolCall;
+		const context: Context = {
+			messages: [
+				{
+					...createOutput(),
+					content: [legacyToolCall],
+					stopReason: "toolUse",
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call_bash|fc_bash",
+					toolName: "bash",
+					content: [{ type: "text", text: "/tmp" }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			],
+		};
+
+		const input = convertResponsesMessages(model, context, new Set(["openai"]), { includeSystemPrompt: false });
+
+		expect(input).toEqual([
+			{
+				type: "function_call",
+				id: "fc_bash",
+				call_id: "call_bash",
+				name: "bash",
+				arguments: '{"command":"pwd"}',
+			},
+			{
+				type: "function_call_output",
+				call_id: "call_bash",
+				output: "/tmp",
 			},
 		]);
 	});

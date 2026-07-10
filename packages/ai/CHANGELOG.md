@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed legacy JSON tool calls without an `inputType` discriminator being replayed as malformed freeform calls.
+
 ## [0.80.6] - 2026-07-09
 
 ### Added

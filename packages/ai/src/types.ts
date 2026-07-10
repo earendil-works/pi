@@ -363,7 +363,8 @@ export interface FreeformToolCall {
 export type ToolCall = JsonToolCall | FreeformToolCall;
 
 export function isJsonToolCall(toolCall: ToolCall): toolCall is JsonToolCall {
-	return toolCall.inputType === "json";
+	// Sessions saved before freeform tool support have arguments but no inputType discriminator.
+	return toolCall.inputType === "json" || (toolCall.inputType === undefined && "arguments" in toolCall);
 }
 
 export function requireJsonToolCall(toolCall: ToolCall, context: string): JsonToolCall {
