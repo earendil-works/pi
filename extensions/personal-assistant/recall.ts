@@ -156,7 +156,21 @@ export async function recallPipeline(
 	// Defaults applied at the entry boundary so downstream stages see
 	// normalized values and the test suite can probe the call shape
 	// without the body re-applying defaults per subquery.
-	const topK = opts.topK ?? 20;
+	//
+	// `topK` (task 1.4) is clamped to the closed interval [1, 100]. Anything
+	// outside that range — including non-finite values such as `NaN`,
+	// `Infinity`, `-Infinity` — falls back to the default 20. This
+	// matches the TUI's own default and aligns webui callers with it
+	// (architecture constraint: design.md § Decisions § 9 "topK 默认 20,
+	// 与 TUI 当前行为对齐"). The clamp runs ONCE at the entry; the
+	// normalized `topK` is what reaches `recallAtoms`, not the raw
+	// `opts.topK` — `recallAtoms` itself is intentionally NaN/clamp-naive
+	// so the pipeline owns the policy.
+	const rawTopK = opts.topK;
+	const topK =
+		typeof rawTopK === "number" && Number.isFinite(rawTopK)
+			? Math.max(1, Math.min(100, rawTopK))
+			: 20;
 	const rerankEnabled = opts.rerankEnabled ?? true;
 
 	// -----------------------------------------------------------------

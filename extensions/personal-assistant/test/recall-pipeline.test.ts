@@ -608,3 +608,170 @@ describe("recallPipeline embedding probe", () => {
 		);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Suite 4: topK clamp (task 1.4) — GREEN only after task 1.4 implements
+// the [1, 100] clamp at the pipeline entry. Each test asserts the value
+// `recallAtoms` receives is the CLAMPED value (not the raw `opts.topK`),
+// guaranteeing the clamp happens before the recall step.
+//
+// Scenarios covered (specs/tui-webui-recall-parity/spec.md §
+// "recallPipeline default topK is 20" + scenarios.md S25):
+//   - topK = 200      → clamped to 100 (Scenario: webui topK clamped to [1, 100])
+//   - topK = 0        → clamped to 1   (Scenario: webui topK clamped to [1, 100])
+//   - topK = -5       → clamped to 1   (Scenario: webui topK clamped to [1, 100])
+//   - topK = NaN      → default 20    (Scenario: recallPipeline 的 topK 参数边界)
+//   - topK = undefined → default 20    (Scenario: recallPipeline 的 topK 参数边界)
+//   - topK = 50       → passes through (in-range)
+//   - topK = 1        → stays 1       (lower boundary, no clamp needed)
+//   - topK = 100      → stays 100     (upper boundary, no clamp needed)
+//
+// All tests use a fresh mock setup (no embedding probe — keeps the suite
+// narrow and focused on the topK clamp behavior). The probe false branch
+// is the same code path the prior "TUI default" tests exercise, so probe
+// behavior is unchanged here.
+// ---------------------------------------------------------------------------
+
+describe("recallPipeline topK clamp", () => {
+	beforeEach(() => {
+		// Fresh fixture per test: 1 subquery, no recall hits. The suite
+		// only asserts on the topK value passed to `recallAtoms` — the
+		// downstream stages stay inert (empty arrays propagate through
+		// to mergeByRerankScore which just concatenates groups).
+		mockRewriteQueries.mockReset();
+		mockRewriteQueries.mockImplementation(async (q: unknown) => [q as string]);
+		mockRecallAtoms.mockReset();
+		mockRecallAtoms.mockResolvedValue([]);
+		mockRerankAndFilter.mockReset();
+		mockRerankAndFilter.mockResolvedValue([]);
+		mockMergeByRerankScore.mockReset();
+		mockMergeByRerankScore.mockImplementation((groups: RecallResult[][]) =>
+			groups.flat(),
+		);
+	});
+
+	it("clamps topK = 0 to 1", async () => {
+		// Scenario: webui sends topK: 0. The pipeline MUST clamp up to 1
+		// before the recall step — recallAtoms with topK: 0 would return
+		// zero hits, producing a misleading "no memory match" status.
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: 0,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(1);
+	});
+
+	it("clamps topK = -5 to 1", async () => {
+		// Scenario: webui sends a negative topK. Same rationale as 0 —
+		// anything ≤ 0 yields zero hits, so the floor clamps to 1.
+		// `Math.max(1, Math.min(100, -5)) === 1`.
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: -5,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(1);
+	});
+
+	it("clamps topK = 200 down to 100", async () => {
+		// Scenario: webui sends topK: 200 (Scenario S25 in scenarios.md).
+		// The pipeline MUST clamp down to 100 before the recall step —
+		// unbounded topK would force recall to return hundreds of hits
+		// and blow past the rerank budget. `Math.max(1, Math.min(100, 200)) === 100`.
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: 200,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(100);
+	});
+
+	it("leaves topK = 50 unchanged (in-range)", async () => {
+		// In-range value reaches recallAtoms verbatim. Sanity check that
+		// the clamp does not rewrite valid inputs — only out-of-range
+		// ones. Without this, a buggy `topK = 20` default would silently
+		// override a perfectly valid caller-specified 50.
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: 50,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(50);
+	});
+
+	it("leaves topK = 1 unchanged (lower boundary)", async () => {
+		// Boundary value: the lower edge of the closed interval [1, 100].
+		// The clamp is `< 1` → 1, not `≤ 1` → 1, so 1 passes through.
+		// This guards against an off-by-one in the floor (`Math.max(1, 1)` is 1).
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: 1,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(1);
+	});
+
+	it("leaves topK = 100 unchanged (upper boundary)", async () => {
+		// Boundary value: the upper edge of the closed interval [1, 100].
+		// The clamp is `> 100` → 100, not `≥ 100` → 100, so 100 passes
+		// through. This guards against an off-by-one in the ceiling
+		// (`Math.min(100, 100)` is 100).
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: 100,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(100);
+	});
+
+	it("defaults topK to 20 when opts.topK is undefined", async () => {
+		// Scenario: TUI omits topK; webui body omits topK. Both code paths
+		// must produce the same recall pool size — TUI vs webui parity on
+		// the default (architecture constraint, design.md § Decisions § 9).
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(20);
+	});
+
+	it("defaults topK to 20 when opts.topK is NaN", async () => {
+		// Scenario: NaN from JSON parsing or arithmetic upstream. `??`
+		// does NOT catch NaN (NaN is neither null nor undefined), so a
+		// naive `opts.topK ?? 20` would forward NaN to recallAtoms and
+		// silently break the recall pool. The clamp branch
+		// `Number.isFinite(rawTopK)` correctly identifies NaN as
+		// non-finite and falls back to 20.
+		await recallPipeline(fakeIndex(), {
+			query: "test",
+			topK: Number.NaN,
+			atomsDir: "/tmp/atoms",
+		});
+
+		expect(mockRecallAtoms).toHaveBeenCalledTimes(1);
+		const opts = mockRecallAtoms.mock.calls[0]![2] as { topK?: number };
+		expect(opts.topK).toBe(20);
+	});
+});
