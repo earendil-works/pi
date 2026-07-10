@@ -44,6 +44,35 @@ describe("AgentSession model and extension characterization", () => {
 		).toEqual([`${nextModel.provider}/${nextModel.id}`]);
 	});
 
+	it("exposes live scoped models to extensions without exposing mutable session state", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: false },
+			],
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		const modelOne = harness.getModel("faux-1")!;
+		const modelTwo = harness.getModel("faux-2")!;
+		harness.session.setScopedModels([{ model: modelOne, thinkingLevel: "high" }, { model: modelTwo }]);
+
+		const scopedModels = extensionApi?.getScopedModels();
+		expect(scopedModels).toEqual([{ model: modelOne, thinkingLevel: "high" }, { model: modelTwo }]);
+
+		scopedModels?.pop();
+		if (scopedModels?.[0]) scopedModels[0].thinkingLevel = "low";
+		expect(extensionApi?.getScopedModels()).toEqual([
+			{ model: modelOne, thinkingLevel: "high" },
+			{ model: modelTwo },
+		]);
+	});
+
 	it("cycles through scoped models and preserves the scoped thinking preference", async () => {
 		const harness = await createHarness({
 			models: [

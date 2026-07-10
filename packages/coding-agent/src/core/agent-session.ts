@@ -2342,6 +2342,7 @@ export class AgentSession {
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
+				getScopedModels: () => this.scopedModels.map((scopedModel) => ({ ...scopedModel })),
 				setModel: async (model) => {
 					if (!this.modelRegistry.hasConfiguredAuth(model)) return false;
 					await this.setModel(model);

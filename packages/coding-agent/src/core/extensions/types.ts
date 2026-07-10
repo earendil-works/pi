@@ -50,6 +50,7 @@ import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
+import type { ScopedModel } from "../model-resolver.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -1312,6 +1313,9 @@ export interface ExtensionAPI {
 	// Model and Thinking Level
 	// =========================================================================
 
+	/** Get the models currently configured for scoped cycling. */
+	getScopedModels(): ScopedModel[];
+
 	/** Set the current model. Returns false if no API key available. */
 	setModel(model: Model<any>): Promise<boolean>;
 
@@ -1531,6 +1535,8 @@ export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
 export type RefreshToolsHandler = () => void;
 
+export type GetScopedModelsHandler = () => ScopedModel[];
+
 export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
@@ -1577,6 +1583,7 @@ export interface ExtensionActions {
 	setActiveTools: SetActiveToolsHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
+	getScopedModels: GetScopedModelsHandler;
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;

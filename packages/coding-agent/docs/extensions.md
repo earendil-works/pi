@@ -1639,6 +1639,15 @@ Typical `sourceInfo.source` values:
 - `sdk` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
 
+### pi.getScopedModels()
+
+Get a snapshot of the current session's scoped model list in cycle order. Returns an empty array when no model scope is configured. Each entry contains `model` and an optional `thinkingLevel`; mutating the returned array or its entries does not change the session scope.
+
+```typescript
+const scopedModels = pi.getScopedModels();
+const scopedIds = scopedModels.map(({ model }) => `${model.provider}/${model.id}`);
+```
+
 ### pi.setModel(model)
 
 Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
