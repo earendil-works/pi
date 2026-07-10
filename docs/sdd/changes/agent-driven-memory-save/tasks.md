@@ -53,7 +53,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — schema validation tests PASS (TypeBox rejects invalid type / content_too_short); counter accessors PASS.
   - **依赖**: 无
 
-- [ ] 2.2 **Implement create path (fingerprint miss)**
+- [x] 2.2 **Implement create path (fingerprint miss)**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: When `id` absent: `computeFingerprint(content)` → `index.getActiveAtomByFingerprint(fp)`; if null, build new MemoryAtom with `randomUUID()`, `embedText(buildEmbeddableText({title, summary, tags}), 15s)` → `vector ?? new Array(1024).fill(0)`, then `index.insertAtom(atom, vector)` + `writeAtomToFile(atom, atomsDir)` + `reindexOne(atom.id)`. Return `{action:"created", id, embedding: vectorWasNull ? "skipped" : "ok"}`.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save create fingerprint miss` test PASS: DB 1 row, .md exists, reindexOne called with the new id.
