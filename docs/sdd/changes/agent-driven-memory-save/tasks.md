@@ -47,7 +47,7 @@
 
 ## 2. Tooling: memory_save + segment counter
 
-- [ ] 2.1 **Create memory-save.ts with TypeBox schema and module-level counter**
+- [x] 2.1 **Create memory-save.ts with TypeBox schema and module-level counter**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Create)
   - **内容**: Define `MemorySaveParams` TypeBox schema: `id?`, `type` union (rule/fact/process), `title` 1-200, `content` 10-5000, `summary` 5-500, `tags?` array, `importance` 0-1 number, `source_session?`. Module-level `let segmentMemorySaveCount = 0`. Export `getSegmentMemorySaveCount()`, `incrementSegmentMemorySaveCount()`, `resetSegmentMemorySaveCount()`. Tool `execute` body throws "not implemented".
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — schema validation tests PASS (TypeBox rejects invalid type / content_too_short); counter accessors PASS.
