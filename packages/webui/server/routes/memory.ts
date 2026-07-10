@@ -32,7 +32,7 @@ import {
 	writeAtomToFile,
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
-import { recallAtoms } from "../../../../extensions/personal-assistant/search.ts";
+import { recallPipeline } from "../../../../extensions/personal-assistant/recall.ts";
 import type { MemoryAtomType, RecallResult } from "../../../../extensions/personal-assistant/types.ts";
 import {
 	buildEmbeddableText,
@@ -151,6 +151,17 @@ export interface MemoryDeps {
 	settings: PersonalAssistantConfig;
 	callLlm: (prompt: string) => Promise<string>;
 	embedTimeoutMs?: number;
+	/**
+	 * Override for the bge-m3 / bge-reranker base URL. When present,
+	 * the search route forwards it to `recallPipeline` so both the
+	 * `/api/health` probe and the per-stage fetch (search, rerank) hit
+	 * the configured endpoint. Defaults to the upstream default in
+	 * `recallPipeline` (`http://127.0.0.1:11435`) when omitted.
+	 *
+	 * Optional: tests and many prod deployments rely on the default;
+	 * the field is purely an override hook.
+	 */
+	embeddingServiceUrl?: string;
 }
 
 /**
@@ -814,32 +825,47 @@ export function registerPostArchive(
  * POST /api/memory/search — recall ranked atoms in discovery-only mode.
  *
  * Body:
- *   - `query`  (required) — non-empty string to embed and search.
- *   - `topK`   (optional, default 10) — max candidates to return.
- *   - `type`   (optional) — restrict recall to a single atom type.
+ *   - `query`    (required) — non-empty string to embed and search.
+ *   - `topK`     (optional, default 20) — max candidates per subquery.
+ *                Clamped to [1, 100] by `recallPipeline`.
+ *   - `type`     (optional) — restrict recall to a single atom type.
+ *   - `filtered` (optional, default true) — when false, skip the
+ *                rewrite → rerank stage and run a single raw recall.
+ *   - `recent`   (optional, default null) — recent user messages for
+ *                anaphora resolution; must be `string[]` if supplied.
  *
- * Response:
- *   - `results`: ranked list of `{ id, type, title, summary, tags, cosine, sparseScore, rrf }`. Empty when no atoms match or
- *     the bge-m3 service is unreachable (hybridSearch → []).
- *   - `recallTimeMs`: wall-clock ms spent inside `recallAtoms`.
- *   - `rrf` is the server's RRF score from dual-channel fusion; it is the
- *     sole ranking signal. The client no longer re-ranks — `formatMemoryContext`
- *     sorts by `rrf` DESC before prompt injection.
- *
- * Discovery-only contract (R-search-cheap):
- *   - No `formattedText`, no `tier` field, no `tokenBudgetUsed`, no `file_path`.
- *     Search is pure vector retrieval; full content is fetched on demand via
- *     `GET /api/memory/:id` (Task 7.3).
+ * Response shape (preserved for backward compat):
+ *   - `results`: ranked list of `{ id, type, title, summary, tags,
+ *     cosine, sparseScore, rrf }`. The optional `rerankScore` field
+ *     is included per-result only when the rerank stage ran and
+ *     produced a score.
+ *   - `recallTimeMs` — wall-clock ms spent inside the recall stage.
+ *   - `embeddingServiceStatus` — `"up"` | `"down"` from the `/api/health`
+ *     probe (webui-only opt-in via `embeddingServiceUrlProbe: true`).
+ *   - `rewriteTimeMs`, `rerankTimeMs` — included only when `filtered`
+ *     (defaults to true). The pipeline-derived timings replace the
+ *     inline `Date.now()` deltas that the route used to compute.
  *
  * Architecture constraints:
- *   - recallAtoms is imported via the relative extensions/personal-assistant
- *     path (same as MemoryIndex) — the package is not in the workspace and
- *     `index.ts` only re-exports runMemoryExtraction.
- *   - Per-route `express.json()` so other handlers stay payload-free.
+ *   - `recallPipeline` is the SHARED recall entry point used by both
+ *     the TUI context hook (extensions/personal-assistant/memory.ts)
+ *     and this route. The previous inline rewrite → recall → rerank →
+ *     merge block (lines 882-947 in the pre-6.1 file) has been
+ *     replaced with a single call. Inline reimplementation is
+ *     prohibited by the agent-driven-memory-save contract; both
+ *     consumers should go through the pipeline so probe behavior,
+ *     timing semantics, and rerank threshold rules stay aligned.
+ *   - The embedding service URL probe now lives inside `recallPipeline`
+ *     (gated by `embeddingServiceUrlProbe: true`). The route used to
+ *     `fetch(${probeUrl}/api/health)` directly; that probe is gone.
+ *     The probe runs BEFORE the rewrite step so its latency doesn't
+ *     contaminate the per-stage `*Ms` timings surfaced in the response.
  *
  * Status codes:
  *   - 200: search ran (results may be empty).
- *   - 400: query missing or empty.
+ *   - 400: query missing/empty, `recent` not a `string[]`, or invalid
+ *          `type`/`topK` shape (topK numeric coercion is forgiving —
+ *          non-numeric values fall back to the pipeline default 20).
  *   - 500: only for genuine DB / vector errors.
  */
 export function registerPostSearch(
@@ -850,101 +876,70 @@ export function registerPostSearch(
 	const handler: RequestHandler = async (req, res) => {
 		try {
 			const { query } = req.body || {};
-			// Validate + clamp inputs before any LLM / vector call.
-			const rawTopK = Number.parseInt(req.body?.topK, 10);
-			const topK = Number.isFinite(rawTopK) ? Math.min(100, Math.max(1, rawTopK)) : 10;
-			const rawType = req.body?.type;
-			const type: MemoryAtomType | undefined =
-				typeof rawType === "string" && ALLOWED_ATOM_TYPES.has(rawType as MemoryAtomType)
-					? (rawType as MemoryAtomType)
-					: undefined;
-			const filtered = req.body?.filtered === false ? false : true;
+			// Validate `query` up front: must be a non-empty string. Other
+			// fields are tolerant (topK coerces, type is allowlisted,
+			// filtered defaults to true, recent is optional).
 			if (typeof query !== "string" || query.length === 0) {
 				res
 					.status(400)
 					.json({ error: "query must be a non-empty string" });
 				return;
 			}
+			// topK: route pre-clamp matches the spec expression. The
+			// pipeline also clamps internally so this is belt-and-braces,
+			// but having both gives us a stable default at the route
+			// boundary (parseInt("abc") → NaN → || 20 → clamp 20).
+			const rawTopK = Number.parseInt(req.body?.topK, 10);
+			const topK =
+				Number.isFinite(rawTopK)
+					? Math.min(100, Math.max(1, rawTopK))
+					: 20;
+			const rawType = req.body?.type;
+			const type: MemoryAtomType | undefined =
+				typeof rawType === "string" && ALLOWED_ATOM_TYPES.has(rawType as MemoryAtomType)
+					? (rawType as MemoryAtomType)
+					: undefined;
+			const filtered = req.body?.filtered === false ? false : true;
+			// recent: TUI sends up to 3 prior user messages; webui
+			// historically passed `null` from the MemorySearchTester UI.
+			// If the caller supplies it, it must be a string[]. Anything
+			// else (object, number, mixed array, etc.) is a 400 — we do
+			// NOT silently coerce because the rewrite stage assumes a
+			// string-array contract.
+			const rawRecent = req.body?.recent;
+			let recent: string[] | null;
+			if (rawRecent === undefined || rawRecent === null) {
+				recent = null;
+			} else if (
+				Array.isArray(rawRecent) &&
+				rawRecent.every((x) => typeof x === "string")
+			) {
+				recent = rawRecent as string[];
+			} else {
+				res
+					.status(400)
+					.json({ error: "recent must be a string[] when supplied" });
+				return;
+			}
 
 			const index = await createIndex(deps.dbPath);
 			try {
-				const t0 = Date.now();
-				let results: RecallResult[];
-				let rewriteTimeMs = 0;
-				let recallTimeMs = 0;
-				let rerankTimeMs = 0;
-				// Probe the bge-m3 service health up-front (cheap, 100ms
-				// budget). When the service is down, /api/search collapses
-				// to 0 hits but the caller sees "no memory match" without
-				// any signal pointing at the real cause. The status field
-				// on the response gives the UI a chance to surface
-				// "embedding service down" instead.
-				let embeddingServiceStatus: "up" | "down" = "up";
-				try {
-					const probeUrl = (
-						deps as { embeddingServiceUrl?: string }
-					).embeddingServiceUrl ?? "http://127.0.0.1:11435";
-					const controller = new AbortController();
-					const probeTimer = setTimeout(() => controller.abort(), 100);
-					const probeRes = await fetch(`${probeUrl}/api/health`, {
-						signal: controller.signal,
-					});
-					clearTimeout(probeTimer);
-					if (!probeRes.ok) embeddingServiceStatus = "down";
-				} catch {
-					embeddingServiceStatus = "down";
-				}
-
-				if (filtered) {
-					// Full pipeline: rewrite → per-subquery recall+rerank → merge
-					const { rewriteQueries } = await import(
-						"../../../../extensions/personal-assistant/rewrite.ts"
-					);
-					const tr = Date.now();
-					const rewriteOutcome = await rewriteQueries(query, null, {
-						timeoutMs: 5000,
-					});
-					rewriteTimeMs = Date.now() - tr;
-					const subqueries = Array.isArray(rewriteOutcome)
-						? rewriteOutcome
-						: rewriteOutcome.subqueries;
-
-					const { rerankAndFilter } = await import(
-						"../../../../extensions/personal-assistant/rerank.ts"
-					);
-					let recMs = 0;
-					let rerMs = 0;
-					const poolResults = await Promise.all(
-						subqueries.map(async (sq) => {
-							const r0 = Date.now();
-							const sqResults = await recallAtoms(index, sq, {
-								topK,
-								filter: type ? { type } : undefined,
-								atomsDir: deps.atomsDir,
-							});
-							recMs += Date.now() - r0;
-							if (sqResults.length === 0) return sqResults;
-							const r1 = Date.now();
-							const scored = await rerankAndFilter(sq, sqResults);
-							rerMs += Date.now() - r1;
-							return Array.isArray(scored) ? scored : scored.topK;
-						}),
-					);
-					recallTimeMs = recMs;
-					rerankTimeMs = rerMs;
-					// Merge per-subquery pools: dedup by atom.id, sort by rerankScore DESC.
-					const { mergeByRerankScore } = await import(
-						"../../../../extensions/personal-assistant/merge.ts"
-					);
-				results = mergeByRerankScore(poolResults);
-			} else {
-				results = await recallAtoms(index, query, {
+				// Single shared recall entry point — TUI and webui both run
+				// the same probe → rewrite → recall → rerank → merge
+				// pipeline. Setting `embeddingServiceUrlProbe: true` opt-
+				// ins to the `/api/health` probe (webui-only); the TUI
+				// callers pass `false` to skip it.
+				const { results, status } = await recallPipeline(index, {
+					query,
+					recent,
 					topK,
 					filter: type ? { type } : undefined,
+					rerankEnabled: filtered,
+					rewriteEnabled: filtered,
 					atomsDir: deps.atomsDir,
+					embeddingServiceUrl: deps.embeddingServiceUrl,
+					embeddingServiceUrlProbe: true,
 				});
-				recallTimeMs = Date.now() - t0;
-			}
 
 				res.json({
 					results: results.map((r) => ({
@@ -958,9 +953,11 @@ export function registerPostSearch(
 						rrf: r.rrf,
 						...(r.rerankScore !== undefined ? { rerankScore: r.rerankScore } : {}),
 					})),
-					recallTimeMs,
-					embeddingServiceStatus,
-					...(filtered ? { rewriteTimeMs, rerankTimeMs } : {}),
+					recallTimeMs: status.recallMs,
+					embeddingServiceStatus: status.embeddingServiceStatus,
+					...(filtered
+						? { rewriteTimeMs: status.rewriteMs, rerankTimeMs: status.rerankMs }
+						: {}),
 				});
 			} finally {
 				index.close();

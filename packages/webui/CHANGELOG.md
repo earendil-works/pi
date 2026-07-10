@@ -10,6 +10,7 @@
 ### Changed
 - `POST /api/memory/extract` response shape rename (extract-oldid-merge, personal-assistant change): the top-level `superseded` field is renamed → `updated`, and `supersededPairs` → `updatedPairs`. Webui callers reading these on the success response must switch the field name. Also propagates to the underlying `RunMemoryExtractionResult` TypeScript contract — webui-server-side scripts using `result.superseded` from memory.ts must switch to `result.updated`. (Coordinated with extensions/personal-assistant CHANGELOG breaking-changes entry.)
 - WebSocket handler accepts a new `compact` message type. The server's existing `compaction_start` / `compaction_end` events are still forwarded as `session_event` and now also clear the "Compacting…" indicator.
+- `POST /api/memory/search` now delegates to the shared `recallPipeline` from `extensions/personal-assistant/recall.ts` (single recall entry point shared with the TUI). The inline rewrite → recall → rerank → merge block (and the inline `/api/health` probe) is gone; behaviour and response shape are preserved verbatim, and the timings now come from the pipeline's per-stage `performance.now()` deltas. `topK` defaults to 20 (matching the pipeline + TUI default) instead of 10 at the route boundary; the pipeline still clamps to `[1, 100]`. The optional `recent` field is now accepted; when supplied it must be `string[]` (else 400). `MemoryDeps.embeddingServiceUrl` is now an explicit optional override (was previously read via an inline type cast).
 
 ### Reserved names
 
