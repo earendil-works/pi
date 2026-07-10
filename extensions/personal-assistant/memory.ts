@@ -49,13 +49,13 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { runDecay } from "./decay.ts";
 import { MemoryIndex } from "./storage.ts";
-import { recallAtoms } from "./search.ts";
+import { recallPipeline } from "./recall.ts";
 import {
 	runMemoryExtraction,
 	extractMemoriesWithCallLlm,
 	writeExtractionReport,
 } from "./extraction.ts";
-import type { MemoryAtomType, RecallResult } from "./types.ts";
+import type { MemoryAtomType } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -695,34 +695,31 @@ export function registerMemory(pi: ExtensionAPI): void {
 		pendingMemorySearches = new Map();
 	});
 
-	// context — gate→recall→rerank→format→inject pipeline (task 5.2).
+	// context — gate→recallPipeline→format→inject pipeline (task 5.2).
 	//
-	// This handler replaces the old pendingMemorySearches async-fire pattern
-	// with a synchronous pipeline that runs within the hook's own body:
+	// This handler runs the shared recall pipeline within the hook's own body:
 	//
 	//   1. Extract current + recent user messages from event.messages[]
 	//   2. Load config and check gate.enabled (dynamic import ./gate.ts)
 	//   3. callGate(current, recent, {timeoutMs: 500})
 	//   4. If gate skips (null / need_memory=false) → setStatus + return
-	//   5. Open MemoryIndex (for recallAtoms hydration)
-	//   6. recallAtoms(index, search_query, {topK:20})
-	//   7. If rerank.enabled (dynamic import ./rerank.ts) → rerankAndFilter
-	//         Array.isArray branch: filtered results
-	//         RerankFallback branch: topK fallback + setStatus
-	//   8. Assign relativePath on each result
-	//   9. setStatus with pipeline outcome
-	//  10. If empty results → return event unchanged
-	//  11. formatMemoryContext(results, 4000) (dynamic import ./format.ts)
-	//  12. Inject formatted prefix into last user message
-	//  13. Return { messages: newMessages }
+	//   5. Open MemoryIndex
+	//   6. recallPipeline(index, {query: current, recent, topK: 20, ...})
+	//      (the shared pipeline owns rewrite → recall → rerank → merge)
+	//   7. Assign relativePath on each result
+	//   8. setStatus with pipeline outcome
+	//   9. If empty results → return event unchanged
+	//  10. formatMemoryContext(results, 4000) (dynamic import ./format.ts)
+	//  11. Inject formatted prefix into last user message
+	//  12. Return { messages: newMessages }
 	//
 	// Non-destructive: the original event reference is returned unchanged
 	// when no memory should be injected. Modifications produce a fresh
 	// messages array — never the caller's array reference.
 	//
-	// Dynamic imports for gate/rerank/format keep their modules off the
-	// cold-start path (design.md D6). Top-level imports for MemoryIndex /
-	// recallAtoms / loadConfig are unaffected.
+	// Dynamic imports for gate/format keep their modules off the cold-start
+	// path (design.md D6). Top-level imports for MemoryIndex /
+	// recallPipeline / loadConfig are unaffected.
 	pi.on("context", async (event: ContextEvent, ctx) => {
 		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
 		if (messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
@@ -752,19 +749,14 @@ export function registerMemory(pi: ExtensionAPI): void {
 
 		// 3. Gate decision (dynamic import)
 		const gateEnabled = config.memory?.gate?.enabled ?? true;
-		let subqueries: string[] = [current];
 		let gateStatus = "disabled";
 		let gateMs = 0;
 		let gateT0 = 0;
-		let hybridCount = 0;
 		let finalCount = 0;
 		let recallMs = 0;
 		let rerankStatus = "skip";
-		let rerankReason: string | undefined;
 		let rerankMs = 0;
-		let rewriteStatus = "skip";
 		let rewriteMs = 0;
-		const rewriteEnabled = config.memory?.rewrite?.enabled ?? true;
 		const gateLogLabels: Record<string, string> = {
 			parse: "parse-fail",
 			unreachable: "down",
@@ -777,10 +769,9 @@ export function registerMemory(pi: ExtensionAPI): void {
 			}
 		};
 		const emitGateSkipDebug = () => {
-			const reasonStr = rerankReason ? `(${rerankReason})` : "";
 			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
 			emitRecallDebug(
-				`[recall] gate=${gateLabel} rewrite=skip rerank=${rerankStatus}${reasonStr} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
+				`[recall] gate=${gateLabel} rewrite=skip rerank=${rerankStatus} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
 			);
 		};
 		if (gateEnabled) {
@@ -814,90 +805,32 @@ export function registerMemory(pi: ExtensionAPI): void {
 				return event as unknown as { messages?: AgentMessage[] };
 			}
 			gateStatus = "pass";
-
-			// 3a. Rewrite (dynamic import) — gate pass only
-			if (rewriteEnabled) {
-				const rewriteT0 = performance.now();
-				const { rewriteQueries } = await import("./rewrite.ts");
-				const outcome = await rewriteQueries(current, recent, { timeoutMs: 5000 });
-				rewriteMs = performance.now() - rewriteT0;
-				if (Array.isArray(outcome)) {
-					subqueries = outcome;
-					rewriteStatus = "ok";
-				} else {
-					subqueries = outcome.subqueries;
-					rewriteStatus = outcome.reason;
-				}
-			} else {
-				rewriteStatus = "disabled";
-			}
 		} else {
 			gateStatus = "disabled";
-
-			// Rewrite — also runs when gate is disabled (B7 independent of gate)
-			if (rewriteEnabled) {
-				const rewriteT0 = performance.now();
-				const { rewriteQueries } = await import("./rewrite.ts");
-				const outcome = await rewriteQueries(current, recent, { timeoutMs: 5000 });
-				rewriteMs = performance.now() - rewriteT0;
-				if (Array.isArray(outcome)) {
-					subqueries = outcome;
-					rewriteStatus = "ok";
-				} else {
-					subqueries = outcome.subqueries;
-					rewriteStatus = outcome.reason;
-				}
-			} // else: leave rewriteStatus as "skip"
 		}
 
-		// 4. Open MemoryIndex and per-subquery recall + rerank
+		// 4. Open MemoryIndex and run the shared recall pipeline
 		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
 		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
 		const index = new MemoryIndex(dbPath);
 		await index.init();
 		try {
-			const retrievalT0 = performance.now();
 			const rerankEnabled = config.memory?.rerank?.enabled ?? true;
-			let poolResults: RecallResult[][];
-			let rawTotal = 0;
-			let rerankFallback = false;
-			if (rerankEnabled) {
-				let recMs = 0;
-				let rerMs = 0;
-				const { rerankAndFilter } = await import("./rerank.ts");
-				const poolWithStatus = await Promise.all(
-					subqueries.map(async (sq) => {
-						const r0 = performance.now();
-						const sqResults = await recallAtoms(index, sq, { topK: 20, atomsDir });
-						rawTotal += sqResults.length;
-						recMs += performance.now() - r0;
-						if (sqResults.length === 0) return { results: [] as RecallResult[], fallback: false };
-						const r1 = performance.now();
-						const scored = await rerankAndFilter(sq, sqResults);
-						rerMs += performance.now() - r1;
-						if (Array.isArray(scored)) return { results: scored, fallback: false };
-						rerankFallback = true;
-						rerankReason = scored.reason;
-						return { results: scored.topK, fallback: true };
-					}),
-				);
-				recallMs = recMs;
-				rerankMs = rerMs;
-				poolResults = poolWithStatus.map((p) => p.results);
-			} else {
-				poolResults = await Promise.all(
-					subqueries.map((q) => recallAtoms(index, q, { topK: 20, atomsDir })),
-				);
-			}
-			// Merge per-subquery pools: dedup by atom.id, sort by rerankScore DESC.
-			const { mergeByRerankScore } = await import("./merge.ts");
-			const results = mergeByRerankScore(poolResults);
-			hybridCount = rawTotal;
-			rerankStatus = rerankFallback
-				? "fallback"
-				: results.length > 0
-					? "ok"
-					: "all-below";
+			const rewriteEnabled = config.memory?.rewrite?.enabled ?? true;
+			const { results, status } = await recallPipeline(index, {
+				query: current,
+				recent,
+				topK: 20,
+				filter: undefined,
+				rerankEnabled,
+				atomsDir,
+				embeddingServiceUrlProbe: false,
+				...(rewriteEnabled ? {} : { rewriteEnabled: false }),
+			});
+			recallMs = status.recallMs;
+			rerankMs = status.rerankMs;
+			rewriteMs = status.rewriteMs;
+			rerankStatus = status.rerank;
 
 			// 5. Assign relativePath and prepare for inject
 			const finalResults = results;
@@ -909,7 +842,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			finalCount = finalResults.length;
 
 			// 7. setStatus with pipeline outcome
-			if (rerankFallback) {
+			if (status.rerank === "fallback") {
 				ctx.ui?.setStatus?.("memory", "⚠ rerank fallback");
 			} else if (finalResults.length === 0) {
 				ctx.ui?.setStatus?.("memory", "🔍 no memory match");
@@ -926,10 +859,17 @@ export function registerMemory(pi: ExtensionAPI): void {
 
 			// 7b. Debug log — single per-call emission (task 5.4)
 			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
-			const reasonStr = rerankReason ? `(${rerankReason})` : "";
-			const rewriteDisplay = rewriteStatus === "ok" ? `ok(${subqueries.length})` : rewriteStatus;
+			const rewriteDisplay =
+				status.rewrite === "ok"
+					? `ok(${status.subqueryCount ?? 1})`
+					: status.rewrite;
+			const rerankReason =
+				status.rerank === "fallback" && status.rerankReason
+					? `(${status.rerankReason})`
+					: "";
+			const candidateCount = status.candidateCount ?? finalCount;
 			emitRecallDebug(
-				`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${rerankStatus}${reasonStr} pre=${hybridCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms rewrite:${rewriteMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
+				`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${rerankStatus}${rerankReason} pre=${candidateCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms rewrite:${rewriteMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
 			);
 
 			if (finalResults.length === 0) {

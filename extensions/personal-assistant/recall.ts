@@ -35,7 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import { mergeByRerankScore } from "./merge.ts";
-import { rerankAndFilter } from "./rerank.ts";
+import { rerankAndFilter, type RerankFallbackReason } from "./rerank.ts";
 import { rewriteQueries } from "./rewrite.ts";
 import { recallAtoms } from "./search.ts";
 import type { MemoryIndex } from "./storage.ts";
@@ -54,6 +54,9 @@ const DEFAULT_EMBEDDING_SERVICE_URL = "http://127.0.0.1:11435";
 /** Probe timeout. Same budget as `packages/webui/server/routes/memory.ts:888`. */
 const PROBE_TIMEOUT_MS = 100;
 
+/** Rewrite timeout used by the TUI inline path before this pipeline was shared. */
+const REWRITE_TIMEOUT_MS = 5_000;
+
 /**
  * Options for the shared `recallPipeline` helper.
  *
@@ -70,6 +73,8 @@ const PROBE_TIMEOUT_MS = 100;
  *                                 `null` and `undefined` are both treated as "no recent".
  *   - `topK`                    — candidates per subquery. Default 20. Clamped to [1, 100].
  *   - `filter`                  — narrow recall to a single atom type.
+ *   - `rewriteEnabled`          — default `true`. When `false`, skip rewrite and use
+ *                                 the raw query as the only subquery.
  *   - `rerankEnabled`           — default `true`. When `false`, skip rerank and return
  *                                 the raw RRF pool.
  *   - `embeddingServiceUrl`     — override the bge-m3 / rerank service URL (also
@@ -86,6 +91,7 @@ export interface RecallPipelineOptions {
 	recent?: string[] | null;
 	topK?: number;
 	filter?: { type?: MemoryAtomType };
+	rewriteEnabled?: boolean;
 	rerankEnabled?: boolean;
 	embeddingServiceUrl?: string;
 	atomsDir: string;
@@ -115,6 +121,9 @@ export type RecallPipelineStatus = {
 	recallMs: number;
 	rewriteMs: number;
 	rerankMs: number;
+	subqueryCount?: number;
+	candidateCount?: number;
+	rerankReason?: RerankFallbackReason;
 	embeddingServiceStatus?: "up" | "down";
 };
 
@@ -172,6 +181,7 @@ export async function recallPipeline(
 			? Math.max(1, Math.min(100, rawTopK))
 			: 20;
 	const rerankEnabled = opts.rerankEnabled ?? true;
+	const rewriteEnabled = opts.rewriteEnabled ?? true;
 
 	// -----------------------------------------------------------------
 	// Step 1: Probe (opt-in) — webui-only `/api/health` check, 100ms
@@ -221,20 +231,28 @@ export async function recallPipeline(
 	// branch keeps the pipeline producing *something* rather than
 	// producing a no-memory-match status from a parser failure.
 	// -----------------------------------------------------------------
-	const rewriteStart = performance.now();
-	const rewriteOutcome = await rewriteQueries(opts.query, opts.recent ?? null);
-	const rewriteMs = performance.now() - rewriteStart;
-
+	let rewriteMs = 0;
 	let rewriteStatus: RecallPipelineStatus["rewrite"];
 	let subqueries: string[];
-	if (Array.isArray(rewriteOutcome)) {
-		rewriteStatus = "ok";
-		subqueries = rewriteOutcome;
+	if (rewriteEnabled) {
+		const rewriteStart = performance.now();
+		const rewriteOutcome = await rewriteQueries(opts.query, opts.recent ?? null, {
+			timeoutMs: REWRITE_TIMEOUT_MS,
+		});
+		rewriteMs = performance.now() - rewriteStart;
+
+		if (Array.isArray(rewriteOutcome)) {
+			rewriteStatus = "ok";
+			subqueries = rewriteOutcome;
+		} else {
+			// reason ∈ "timeout" | "parse" | "unreachable" — directly assignable
+			// to RecallPipelineStatus["rewrite"] (subset of the union).
+			rewriteStatus = rewriteOutcome.reason;
+			subqueries = rewriteOutcome.subqueries;
+		}
 	} else {
-		// reason ∈ "timeout" | "parse" | "unreachable" — directly assignable
-		// to RecallPipelineStatus["rewrite"] (subset of the union).
-		rewriteStatus = rewriteOutcome.reason;
-		subqueries = rewriteOutcome.subqueries;
+		rewriteStatus = "skip";
+		subqueries = [opts.query];
 	}
 
 	// -----------------------------------------------------------------
@@ -259,6 +277,8 @@ export async function recallPipeline(
 	// on. Priority (worst → least): "all-below" > "fallback" > "skip" >
 	// "ok". We only ever upgrade; never downgrade.
 	let rerankStatus: RecallPipelineStatus["rerank"] = "skip";
+	let candidateCount = 0;
+	let rerankReason: RerankFallbackReason | undefined;
 
 	const poolResults = await Promise.all(
 		subqueries.map(async (sq) => {
@@ -269,6 +289,7 @@ export async function recallPipeline(
 				embeddingServiceUrl: opts.embeddingServiceUrl,
 				atomsDir: opts.atomsDir,
 			});
+			candidateCount += sqResults.length;
 			recallMs += performance.now() - recallStart;
 
 			if (sqResults.length === 0) return [] as RecallResult[];
@@ -303,6 +324,7 @@ export async function recallPipeline(
 			// signals, and "all-below" is strictly worse in the priority order).
 			if (rerankStatus === "skip" || rerankStatus === "ok") {
 				rerankStatus = "fallback";
+				rerankReason = scored.reason;
 			}
 			return scored.topK;
 		}),
@@ -323,6 +345,9 @@ export async function recallPipeline(
 			recallMs,
 			rewriteMs,
 			rerankMs,
+			subqueryCount: subqueries.length,
+			candidateCount,
+			rerankReason,
 			embeddingServiceStatus,
 		},
 	};
