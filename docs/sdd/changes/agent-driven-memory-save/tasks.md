@@ -179,30 +179,40 @@
 
 - [ ] 7.1 **Full typecheck + lint pass**
   - **验证**: `npm run check` exits 0 with no errors / warnings / infos.
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.2 **Full vitest suite passes**
   - **验证**: `npm test` exits 0; all pre-existing tests still pass (no regressions).
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.3 **memory-save-tool unit tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — all 7 unit cases pass.
+  - **依赖**: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3
 
 - [ ] 7.4 **recall-pipeline unit tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — all 5 unit cases pass.
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.5 **webui memory-routes integration tests pass**
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — all tests pass including new recent / topK-20 cases.
+  - **依赖**: 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.6 **Regression: extraction pipeline tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts test/extraction-oldid.test.ts test/extraction-prompt.test.ts` — fingerprint + oldId behavior unchanged.
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.7 **Regression: webui PATCH route tests pass (supersedeIfSimilar 0.65 unchanged)**
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `PATCH /api/memory/:id` cases pass.
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
 - [ ] 7.8 **Manual smoke: agent memory_save three outcomes**
   - **验证**: `npm run build` then `./packages/coding-agent/dist/cli.js --help | grep memory_save` confirms tool registered; run interactive session in tmux, call `memory_save` with each outcome path; verify UI / log shows correct action.
+  - **依赖**: 3.1, 3.2, 3.3, 3.4
 
 - [ ] 7.9 **Manual smoke: agent direct write blocked**
   - **验证**: in tmux session, agent attempts `write({path: "~/.pi/agent/memory/atoms/process/test.md", content: "x"})` → tool_call returns block error, file not written.
+  - **依赖**: 3.1, 3.2, 3.3, 3.4
 
 - [ ] 7.10 **Manual smoke: TUI + webui same query → same recall**
   - **验证**: in tmux session, agent asks "BWA 引物验证"; simultaneously webui MemorySearchTester queries same string; both return identical id list + rrf scores (modulo recent context).
+  - **依赖**: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
