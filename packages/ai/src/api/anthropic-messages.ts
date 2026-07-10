@@ -924,9 +924,11 @@ function buildParams(
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
 		compat.supportsToolReferences,
+		normalizeToolName,
 	);
 	let immediateTools = toolPlacement.immediate;
 	let deferredTools = [...toolPlacement.deferred.values()];
@@ -934,7 +936,7 @@ function buildParams(
 		immediateTools = deferredTools;
 		deferredTools = [];
 	}
-	const deferredToolNames = new Set(deferredTools.map((tool) => tool.name));
+	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages: convertMessages(
@@ -943,6 +945,7 @@ function buildParams(
 			cacheControl,
 			compat.allowEmptySignature,
 			deferredToolNames,
+			normalizeToolName,
 		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
@@ -1051,12 +1054,14 @@ function buildToolResultBlock(
 	isOAuthToken: boolean,
 	deferredToolNames: ReadonlySet<string>,
 	loadedToolNames: Set<string>,
+	normalizeToolName: (name: string) => string,
 ): ContentBlockParam {
 	const converted = convertContentBlocks(msg.content);
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
-		if (!deferredToolNames.has(name) || loadedToolNames.has(name)) continue;
-		loadedToolNames.add(name);
+		const normalizedName = normalizeToolName(name);
+		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
+		loadedToolNames.add(normalizedName);
 		references.push({
 			type: "tool_reference",
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
@@ -1090,6 +1095,7 @@ function convertMessages(
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
 	deferredToolNames: ReadonlySet<string> = new Set(),
+	normalizeToolName: (name: string) => string = (name) => name,
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 	const loadedToolNames = new Set<string>();
@@ -1199,13 +1205,17 @@ function convertMessages(
 			const toolResults: ContentBlockParam[] = [];
 
 			// Add the current tool result
-			toolResults.push(buildToolResultBlock(msg, isOAuthToken, deferredToolNames, loadedToolNames));
+			toolResults.push(
+				buildToolResultBlock(msg, isOAuthToken, deferredToolNames, loadedToolNames, normalizeToolName),
+			);
 
 			// Look ahead for consecutive toolResult messages
 			let j = i + 1;
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
 				const nextMsg = transformedMessages[j] as ToolResultMessage; // We know it's a toolResult
-				toolResults.push(buildToolResultBlock(nextMsg, isOAuthToken, deferredToolNames, loadedToolNames));
+				toolResults.push(
+					buildToolResultBlock(nextMsg, isOAuthToken, deferredToolNames, loadedToolNames, normalizeToolName),
+				);
 				j++;
 			}
 

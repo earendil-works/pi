@@ -6,6 +6,7 @@ import { estimateContextTokens } from "../src/utils/estimate.ts";
 
 interface AnthropicToolPayload {
 	name: string;
+	description?: string;
 	defer_loading?: boolean;
 }
 
@@ -94,10 +95,10 @@ function makeContext(tools: Tool[], addedToolNames = ["late_tool"]): Context {
 	};
 }
 
-async function capturePayload<T>(model: Model<Api>, context: Context): Promise<T> {
+async function capturePayload<T>(model: Model<Api>, context: Context, apiKey = "fake-key"): Promise<T> {
 	let captured: T | undefined;
 	const stream = streamSimple({ ...model, baseUrl: "http://127.0.0.1:9" }, context, {
-		apiKey: "fake-key",
+		apiKey,
 		onPayload: (payload) => {
 			captured = payload as T;
 			throw new PayloadCaptured();
@@ -119,6 +120,10 @@ function findAnthropicToolResult(payload: AnthropicPayload) {
 
 function openAIToolNames(payload: OpenAIPayload): string[] {
 	return (payload.tools ?? []).map((tool) => tool.name ?? tool.function?.name ?? "");
+}
+
+function makeCodexToken(): string {
+	return `header.${btoa(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account" } }))}.signature`;
 }
 
 describe("deferred tools", () => {
@@ -153,6 +158,52 @@ describe("deferred tools", () => {
 		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
 	});
 
+	it("normalizes OAuth names before checking prior tool usage", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("read")], ["read"]);
+		const assistant = context.messages[1] as AssistantMessage;
+		assistant.content = [{ type: "toolCall", id: "call_1", name: "Read", arguments: {} }];
+		const payload = await capturePayload<AnthropicPayload>(
+			getModel("anthropic", "claude-opus-4-6"),
+			context,
+			"sk-ant-oat-fake",
+		);
+
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool", "Read"]);
+		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+		const content = findAnthropicToolResult(payload).content;
+		expect(Array.isArray(content) && content.some((block) => block.type === "tool_reference")).toBe(false);
+	});
+
+	it("matches OAuth-canonicalized markers to active tools", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("read")], ["Read"]);
+		const payload = await capturePayload<AnthropicPayload>(
+			getModel("anthropic", "claude-opus-4-6"),
+			context,
+			"sk-ant-oat-fake",
+		);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "Read", defer_loading: true }]);
+		const content = findAnthropicToolResult(payload).content;
+		expect(
+			Array.isArray(content) &&
+				content.some((block) => block.type === "tool_reference" && block.tool_name === "Read"),
+		).toBe(true);
+	});
+
+	it("deduplicates active tools after OAuth canonicalization", async () => {
+		const context: Context = {
+			messages: [makeUserMessage(1)],
+			tools: [makeTool("read"), { ...makeTool("Read"), description: "Canonical definition" }],
+		};
+		const payload = await capturePayload<AnthropicPayload>(
+			getModel("anthropic", "claude-opus-4-6"),
+			context,
+			"sk-ant-oat-fake",
+		);
+
+		expect(payload.tools).toMatchObject([{ name: "Read", description: "Canonical definition" }]);
+	});
+
 	it("uses the normal tool list when Anthropic tool references are unsupported", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const models: Model<"anthropic-messages">[] = [
@@ -173,6 +224,8 @@ describe("deferred tools", () => {
 
 		expect(payload.tools).toMatchObject([{ name: "late_tool" }]);
 		expect(payload.tools?.[0]?.defer_loading).toBeUndefined();
+		const content = findAnthropicToolResult(payload).content;
+		expect(Array.isArray(content) && content.some((block) => block.type === "tool_reference")).toBe(false);
 	});
 
 	it("supports explicit Anthropic compatibility overrides", async () => {
@@ -189,7 +242,7 @@ describe("deferred tools", () => {
 
 	it("loads an OpenAI Responses tool through client tool search", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
-		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.2"), context);
+		const payload = await capturePayload<OpenAIPayload>(getModel("openai", "gpt-5.4"), context);
 		const searchCall = payload.input?.find((item): item is OpenAIToolSearchCall => item.type === "tool_search_call");
 		const searchOutput = payload.input?.find(
 			(item): item is OpenAIToolSearchOutput => item.type === "tool_search_output",
@@ -201,9 +254,20 @@ describe("deferred tools", () => {
 		expect(searchOutput?.tools).toMatchObject([{ type: "function", name: "late_tool", defer_loading: true }]);
 	});
 
-	it("uses the normal tool list when OpenAI tool search is disabled", async () => {
+	it.each(["gpt-5.2", "gpt-5.4-nano", "gpt-5.5-pro"] as const)(
+		"uses the normal tool list for unsupported OpenAI model %s",
+		async (modelId) => {
+			const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+			const payload = await capturePayload<OpenAIPayload>(getModel("openai", modelId), context);
+
+			expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
+			expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+		},
+	);
+
+	it("uses the normal tool list when OpenAI tool search is explicitly disabled", async () => {
 		const model: Model<"openai-responses"> = {
-			...getModel("openai", "gpt-5.2"),
+			...getModel("openai", "gpt-5.4"),
 			provider: "openai-proxy",
 			compat: { supportsToolSearch: false },
 		};
@@ -212,6 +276,25 @@ describe("deferred tools", () => {
 
 		expect(openAIToolNames(payload)).toEqual(["base_tool", "late_tool"]);
 		expect(payload.input?.some((item) => item.type === "tool_search_output")).toBe(false);
+	});
+
+	it("uses tool search only for supported Codex models", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+		const supported = await capturePayload<OpenAIPayload>(
+			getModel("openai-codex", "gpt-5.4"),
+			context,
+			makeCodexToken(),
+		);
+		const unsupported = await capturePayload<OpenAIPayload>(
+			getModel("openai-codex", "gpt-5.3-codex-spark"),
+			context,
+			makeCodexToken(),
+		);
+
+		expect(openAIToolNames(supported)).toEqual(["base_tool"]);
+		expect(supported.input?.some((item) => item.type === "tool_search_output")).toBe(true);
+		expect(openAIToolNames(unsupported)).toEqual(["base_tool", "late_tool"]);
+		expect(unsupported.input?.some((item) => item.type === "tool_search_output")).toBe(false);
 	});
 
 	it("leaves providers without deferred loading unchanged", async () => {
