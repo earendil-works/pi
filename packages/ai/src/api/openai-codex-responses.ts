@@ -266,6 +266,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				apiKey,
 				websocketRequestId,
 			);
+			const websocketUrl = resolveCodexWebSocketUrl(model.baseUrl);
+			const websocketOwner: WebSocketConnectionOwner = { endpoint: websocketUrl, accountId };
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
@@ -282,9 +284,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					websocketStarted = false;
 					try {
 						await processWebSocketStream(
-							resolveCodexWebSocketUrl(model.baseUrl),
+							websocketUrl,
 							body,
 							websocketHeaders,
+							websocketOwner,
 							output,
 							stream,
 							model,
@@ -771,10 +774,17 @@ interface CachedWebSocketContinuationState {
 	lastResponseItems: ResponseInput;
 }
 
+interface WebSocketConnectionOwner {
+	endpoint: string;
+	accountId: string;
+}
+
 interface CachedWebSocketConnection {
 	socket: WebSocketLike;
+	owner: WebSocketConnectionOwner;
 	busy: boolean;
 	createdAt: number;
+	retired?: boolean;
 	idleTimer?: ReturnType<typeof setTimeout>;
 	continuation?: CachedWebSocketContinuationState;
 }
@@ -956,8 +966,33 @@ function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocke
 	entry.idleTimer = setTimeout(() => {
 		if (entry.busy) return;
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
-		websocketSessionCache.delete(sessionId);
+		if (websocketSessionCache.get(sessionId) === entry) {
+			websocketSessionCache.delete(sessionId);
+		}
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
+}
+
+function websocketOwnersEqual(a: WebSocketConnectionOwner, b: WebSocketConnectionOwner): boolean {
+	return a.endpoint === b.endpoint && a.accountId === b.accountId;
+}
+
+function retireWebSocketEntry(
+	sessionId: string,
+	entry: CachedWebSocketConnection,
+	reason: "owner_changed" | "superseded",
+): void {
+	entry.retired = true;
+	entry.continuation = undefined;
+	if (entry.idleTimer) {
+		clearTimeout(entry.idleTimer);
+		entry.idleTimer = undefined;
+	}
+	if (websocketSessionCache.get(sessionId) === entry) {
+		websocketSessionCache.delete(sessionId);
+	}
+	if (!entry.busy) {
+		closeWebSocketSilently(entry.socket, 1000, reason);
+	}
 }
 
 async function connectWebSocket(
@@ -1041,6 +1076,7 @@ async function connectWebSocket(
 async function acquireWebSocket(
 	url: string,
 	headers: Headers,
+	owner: WebSocketConnectionOwner,
 	sessionId: string | undefined,
 	signal?: AbortSignal,
 	connectTimeoutMs?: number,
@@ -1066,7 +1102,9 @@ async function acquireWebSocket(
 			clearTimeout(cached.idleTimer);
 			cached.idleTimer = undefined;
 		}
-		if (!cached.busy && isWebSocketSessionExpired(cached)) {
+		if (!websocketOwnersEqual(cached.owner, owner)) {
+			retireWebSocketEntry(sessionId, cached, "owner_changed");
+		} else if (!cached.busy && isWebSocketSessionExpired(cached)) {
 			closeWebSocketSilently(cached.socket, 1000, "connection_age_limit");
 			websocketSessionCache.delete(sessionId);
 		} else if (!cached.busy && isWebSocketReusable(cached.socket)) {
@@ -1076,9 +1114,16 @@ async function acquireWebSocket(
 				entry: cached,
 				reused: true,
 				release: ({ keep } = {}) => {
-					if (!keep || !isWebSocketReusable(cached.socket)) {
+					if (
+						cached.retired ||
+						websocketSessionCache.get(sessionId) !== cached ||
+						!keep ||
+						!isWebSocketReusable(cached.socket)
+					) {
 						closeWebSocketSilently(cached.socket);
-						websocketSessionCache.delete(sessionId);
+						if (websocketSessionCache.get(sessionId) === cached) {
+							websocketSessionCache.delete(sessionId);
+						}
 						return;
 					}
 					cached.busy = false;
@@ -1086,7 +1131,7 @@ async function acquireWebSocket(
 				},
 			};
 		}
-		if (cached.busy) {
+		if (!cached.retired && cached.busy) {
 			const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
 			return {
 				socket,
@@ -1096,21 +1141,30 @@ async function acquireWebSocket(
 				},
 			};
 		}
-		if (!isWebSocketReusable(cached.socket)) {
+		if (!cached.retired && !isWebSocketReusable(cached.socket)) {
 			closeWebSocketSilently(cached.socket);
 			websocketSessionCache.delete(sessionId);
 		}
 	}
 
 	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
+	const entry: CachedWebSocketConnection = { socket, owner, busy: true, createdAt: Date.now() };
+	const superseded = websocketSessionCache.get(sessionId);
+	if (superseded) {
+		retireWebSocketEntry(sessionId, superseded, "superseded");
+	}
 	websocketSessionCache.set(sessionId, entry);
 	return {
 		socket,
 		entry,
 		reused: false,
 		release: ({ keep } = {}) => {
-			if (!keep || !isWebSocketReusable(entry.socket)) {
+			if (
+				entry.retired ||
+				websocketSessionCache.get(sessionId) !== entry ||
+				!keep ||
+				!isWebSocketReusable(entry.socket)
+			) {
 				closeWebSocketSilently(entry.socket);
 				if (entry.idleTimer) clearTimeout(entry.idleTimer);
 				if (websocketSessionCache.get(sessionId) === entry) {
@@ -1374,6 +1428,7 @@ async function processWebSocketStream(
 	url: string,
 	body: RequestBody,
 	headers: Headers,
+	owner: WebSocketConnectionOwner,
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
@@ -1385,6 +1440,7 @@ async function processWebSocketStream(
 	const { socket, entry, reused, release } = await acquireWebSocket(
 		url,
 		headers,
+		owner,
 		options?.sessionId,
 		options?.signal,
 		websocketConnectTimeoutMs,
@@ -1434,7 +1490,7 @@ async function processWebSocketStream(
 		);
 		if (options?.signal?.aborted) {
 			keepConnection = false;
-		} else if (useCachedContext && entry && output.responseId) {
+		} else if (useCachedContext && entry && !entry.retired && output.responseId) {
 			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
 				includeSystemPrompt: false,
 			}).filter((item) => item.type !== "function_call_output");

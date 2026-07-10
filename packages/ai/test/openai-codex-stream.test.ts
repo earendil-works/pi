@@ -10,7 +10,8 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
+import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
@@ -27,12 +28,12 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function mockToken(): string {
+function mockToken(accountId = "acc_test", signature = "bbb"): string {
 	const payload = Buffer.from(
-		JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_test" } }),
+		JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } }),
 		"utf8",
 	).toString("base64");
-	return `aaa.${payload}.bbb`;
+	return `aaa.${payload}.${signature}`;
 }
 
 function decodeCodexRequestBody(body: RequestInit["body"] | undefined): Record<string, unknown> | null {
@@ -90,6 +91,150 @@ function buildSSEPayload({
 	}
 
 	return `${events.join("\n\n")}\n\n`;
+}
+
+type SyntheticWebSocketBehavior = "complete" | "fail-before-output" | "fail-after-output" | "hold";
+
+interface SyntheticWebSocketBody {
+	input?: unknown[];
+	previous_response_id?: string;
+}
+
+interface SyntheticWebSocketConnection {
+	accountId: string;
+	url: string;
+	bodies: SyntheticWebSocketBody[];
+	closes: Array<{ code?: number; reason?: string }>;
+	open(): void;
+}
+
+function createSyntheticWebSocketHarness(options: { autoOpen?: boolean } = {}) {
+	const connections: SyntheticWebSocketConnection[] = [];
+	const requests: Array<{ accountId: string; body: SyntheticWebSocketBody }> = [];
+	const behaviors: SyntheticWebSocketBehavior[] = [];
+	const heldCompletions: Array<() => void> = [];
+	let responseSequence = 0;
+
+	class SyntheticWebSocket {
+		static OPEN = 1;
+		static CLOSED = 3;
+		readyState = SyntheticWebSocket.OPEN;
+		private readonly connection: SyntheticWebSocketConnection;
+		private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+		constructor(url: string, init?: { headers?: Record<string, string> }) {
+			this.connection = {
+				accountId: init?.headers?.["chatgpt-account-id"] ?? "missing",
+				url,
+				bodies: [],
+				closes: [],
+				open: () => this.dispatch("open", {}),
+			};
+			connections.push(this.connection);
+			if (options.autoOpen !== false) queueMicrotask(this.connection.open);
+		}
+
+		addEventListener(type: string, listener: (event: unknown) => void): void {
+			let listeners = this.listeners.get(type);
+			if (!listeners) {
+				listeners = new Set();
+				this.listeners.set(type, listeners);
+			}
+			listeners.add(listener);
+		}
+
+		removeEventListener(type: string, listener: (event: unknown) => void): void {
+			this.listeners.get(type)?.delete(listener);
+		}
+
+		send(data: string): void {
+			const body = JSON.parse(data) as SyntheticWebSocketBody;
+			this.connection.bodies.push(body);
+			requests.push({ accountId: this.connection.accountId, body });
+			const behavior = behaviors.shift() ?? "complete";
+			const complete = () => {
+				responseSequence++;
+				this.dispatch("message", {
+					data: JSON.stringify({
+						type: "response.completed",
+						response: {
+							id: `response-${this.connection.accountId}-${responseSequence}`,
+							status: "completed",
+							usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+						},
+					}),
+				});
+			};
+
+			if (behavior === "hold") {
+				heldCompletions.push(complete);
+				return;
+			}
+			queueMicrotask(() => {
+				if (behavior === "fail-after-output") {
+					this.dispatch("message", {
+						data: JSON.stringify({
+							type: "response.output_item.added",
+							output_index: 0,
+							item: { type: "message", id: "synthetic-message", role: "assistant", content: [] },
+						}),
+					});
+				}
+				if (behavior === "fail-before-output" || behavior === "fail-after-output") {
+					this.dispatch("message", {
+						data: JSON.stringify({ type: "error", error: { code: "synthetic_failure" } }),
+					});
+					return;
+				}
+				complete();
+			});
+		}
+
+		close(code?: number, reason?: string): void {
+			this.readyState = SyntheticWebSocket.CLOSED;
+			this.connection.closes.push({ code, reason });
+		}
+
+		private dispatch(type: string, event: unknown): void {
+			for (const listener of this.listeners.get(type) ?? []) listener(event);
+		}
+	}
+
+	return {
+		WebSocket: SyntheticWebSocket,
+		connections,
+		requests,
+		enqueue(...next: SyntheticWebSocketBehavior[]) {
+			behaviors.push(...next);
+		},
+		releaseHeld() {
+			const complete = heldCompletions.shift();
+			if (!complete) throw new Error("No held synthetic response");
+			queueMicrotask(complete);
+		},
+	};
+}
+
+function syntheticCodexModel(baseUrl = "https://synthetic.invalid/backend-api"): Model<"openai-codex-responses"> {
+	return {
+		id: "synthetic-model",
+		name: "Synthetic model",
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		baseUrl,
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	};
+}
+
+function syntheticContext(turn: number, prior: Context["messages"] = []): Context {
+	return {
+		systemPrompt: "synthetic-system",
+		messages: [...prior, { role: "user", content: `synthetic-turn-${turn}`, timestamp: turn }],
+	};
 }
 
 describe("openai-codex streaming", () => {
@@ -1696,6 +1841,429 @@ describe("openai-codex streaming", () => {
 			lastDeltaInputItems: 1,
 			lastPreviousResponseId: "resp_1",
 		});
+	});
+
+	it("reconnects cached websockets when the account changes", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "account-affinity-session";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		await streamOpenAICodexResponses(model, syntheticContext(2, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections.map((connection) => connection.accountId)).toEqual(["account-a", "account-b"]);
+		expect(harness.connections[0].closes).toContainEqual({ code: 1000, reason: "owner_changed" });
+		expect(harness.connections[1].bodies[0].previous_response_id).toBeUndefined();
+	});
+
+	it("reuses the new account connection after an account change", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "account-a-b-b";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		const secondContext = syntheticContext(2, [...firstContext.messages, first]);
+		const second = await streamOpenAICodexResponses(model, secondContext, {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		const thirdContext = syntheticContext(3, [...secondContext.messages, second]);
+		await streamOpenAICodexResponses(model, thirdContext, {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections.map((connection) => connection.accountId)).toEqual(["account-a", "account-b"]);
+		expect(harness.requests.map((request) => request.accountId)).toEqual(["account-a", "account-b", "account-b"]);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+		expect(harness.requests[2].body.previous_response_id).toBe("response-account-b-2");
+	});
+
+	it("reconnects cached websockets when the endpoint changes", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const sessionId = "endpoint-affinity";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(
+			syntheticCodexModel("https://first.synthetic.invalid/backend-api"),
+			firstContext,
+			{ apiKey: mockToken("account-a"), sessionId, transport: "websocket-cached" },
+		).result();
+		await streamOpenAICodexResponses(
+			syntheticCodexModel("https://second.synthetic.invalid/backend-api"),
+			syntheticContext(2, [...firstContext.messages, first]),
+			{ apiKey: mockToken("account-a"), sessionId, transport: "websocket-cached" },
+		).result();
+
+		expect(harness.connections.map((connection) => connection.url)).toEqual([
+			"wss://first.synthetic.invalid/backend-api/codex/responses",
+			"wss://second.synthetic.invalid/backend-api/codex/responses",
+		]);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+	});
+
+	it("reconnects without stale continuation after an account-change error", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "account-error-cleanup";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		harness.enqueue("fail-before-output");
+		const failed = await streamOpenAICodexResponses(model, syntheticContext(2, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		expect(failed.stopReason).toBe("error");
+
+		await streamOpenAICodexResponses(model, syntheticContext(3, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections.map((connection) => connection.accountId)).toEqual([
+			"account-a",
+			"account-b",
+			"account-b",
+		]);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+		expect(harness.requests[2].body.previous_response_id).toBeUndefined();
+	});
+
+	it("reconnects without stale continuation after cancelling an account-change request", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "account-cancellation-cleanup";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		const secondContext = syntheticContext(2, [...firstContext.messages, first]);
+		harness.enqueue("hold");
+		const controller = new AbortController();
+		const cancelledPromise = streamOpenAICodexResponses(model, secondContext, {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+			signal: controller.signal,
+		}).result();
+		await vi.waitFor(() => expect(harness.requests).toHaveLength(2));
+		controller.abort();
+		const cancelled = await cancelledPromise;
+		expect(cancelled.stopReason).toBe("aborted");
+
+		await streamOpenAICodexResponses(model, syntheticContext(3, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections.map((connection) => connection.accountId)).toEqual([
+			"account-a",
+			"account-b",
+			"account-b",
+		]);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+		expect(harness.requests[2].body.previous_response_id).toBeUndefined();
+	});
+
+	it("does not let a busy old owner or its release evict the new owner", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		harness.enqueue("hold");
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "busy-owner-change";
+		const firstContext = syntheticContext(1);
+		const firstPromise = streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		await vi.waitFor(() => expect(harness.requests).toHaveLength(1));
+
+		const secondContext = syntheticContext(2);
+		const second = await streamOpenAICodexResponses(model, secondContext, {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		harness.releaseHeld();
+		await firstPromise;
+		await streamOpenAICodexResponses(model, syntheticContext(3, [...secondContext.messages, second]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections.map((connection) => connection.accountId)).toEqual(["account-a", "account-b"]);
+		expect(harness.requests.map((request) => request.accountId)).toEqual(["account-a", "account-b", "account-b"]);
+		expect(harness.requests[2].body.previous_response_id).toBe("response-account-b-1");
+	});
+
+	it("keeps the controlled last fresh acquisition installed after concurrent opens", async () => {
+		const harness = createSyntheticWebSocketHarness({ autoOpen: false });
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "fresh-concurrent-acquisition";
+		const firstA = streamOpenAICodexResponses(model, syntheticContext(1), {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		const firstB = streamOpenAICodexResponses(model, syntheticContext(2), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		await vi.waitFor(() => expect(harness.connections).toHaveLength(2));
+
+		harness.connections[1].open();
+		await firstB;
+		harness.connections[0].open();
+		const responseA = await firstA;
+		await streamOpenAICodexResponses(model, syntheticContext(3, [responseA]), {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections).toHaveLength(2);
+		expect(harness.requests.map((request) => request.accountId)).toEqual(["account-b", "account-a", "account-a"]);
+	});
+
+	it("reuses a cached websocket after a same-account token refresh", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "same-account-refresh";
+		const firstContext = syntheticContext(1);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a", "first-synthetic-signature"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		await streamOpenAICodexResponses(model, syntheticContext(2, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-a", "refreshed-synthetic-signature"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.connections).toHaveLength(1);
+		expect(harness.requests[1].body.previous_response_id).toBe("response-account-a-1");
+	});
+
+	it("preserves session cleanup for owner-aware cached websockets", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "owner-cleanup";
+		await streamOpenAICodexResponses(model, syntheticContext(1), {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		cleanupSessionResources(sessionId);
+		expect(harness.connections[0].closes).toEqual([{ code: 1000, reason: "debug_close" }]);
+		await streamOpenAICodexResponses(model, syntheticContext(2), {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		expect(harness.connections).toHaveLength(2);
+	});
+
+	it("preserves encrypted reasoning in full context after an account change", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "encrypted-reasoning-owner-change";
+		const reasoningItem = {
+			type: "reasoning",
+			id: "synthetic-reasoning-item",
+			summary: [],
+			encrypted_content: "synthetic-encrypted-reasoning",
+		};
+		const historicalReasoning: AssistantMessage = {
+			role: "assistant",
+			content: [
+				{ type: "thinking", thinking: "synthetic-summary", thinkingSignature: JSON.stringify(reasoningItem) },
+			],
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 1,
+		};
+		const firstContext = syntheticContext(1, [historicalReasoning]);
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: mockToken("account-a"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		await streamOpenAICodexResponses(model, syntheticContext(2, [...firstContext.messages, first]), {
+			apiKey: mockToken("account-b"),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+		expect(harness.requests[1].body.input).toContainEqual(reasoningItem);
+	});
+
+	it("does not expose bearer tokens or owner metadata through diagnostics", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const logs: unknown[] = [];
+		vi.spyOn(console, "log").mockImplementation((...values) => logs.push(...values));
+		vi.spyOn(console, "warn").mockImplementation((...values) => logs.push(...values));
+		vi.spyOn(console, "error").mockImplementation((...values) => logs.push(...values));
+		const token = mockToken("account-private", "unique-synthetic-bearer-sentinel");
+		const sessionId = "credential-leakage";
+		await streamOpenAICodexResponses(syntheticCodexModel(), syntheticContext(1), {
+			apiKey: token,
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		const observable = JSON.stringify({
+			logs,
+			stats: getOpenAICodexWebSocketDebugStats(sessionId),
+			closes: harness.connections.flatMap((connection) => connection.closes),
+		});
+		expect(observable).not.toContain(token);
+		expect(observable).not.toContain("unique-synthetic-bearer-sentinel");
+		expect(Object.keys(getOpenAICodexWebSocketDebugStats(sessionId) ?? {})).not.toContain("owner");
+	});
+
+	it("keeps router-shaped A to B to B selection aligned with handshake ownership", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const selectedAccounts = ["account-a", "account-b", "account-b"];
+		const observedSelections: string[] = [];
+		const model = syntheticCodexModel();
+		const sessionId = "router-shaped-selection";
+		let messages: Context["messages"] = [];
+
+		for (const [index, selectedAccount] of selectedAccounts.entries()) {
+			observedSelections.push(selectedAccount);
+			const context = syntheticContext(index + 1, messages);
+			const response = await streamOpenAICodexResponses(model, context, {
+				apiKey: mockToken(selectedAccount),
+				sessionId,
+				transport: "websocket-cached",
+			}).result();
+			messages = [...context.messages, response];
+		}
+
+		expect(harness.requests.map((request) => request.accountId)).toEqual(observedSelections);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
+		expect(harness.requests[2].body.previous_response_id).toBe("response-account-b-2");
+	});
+
+	it("replays router-shaped failures only before visible output", async () => {
+		const runScenario = async (failure: "fail-before-output" | "fail-after-output") => {
+			const harness = createSyntheticWebSocketHarness();
+			harness.enqueue(failure);
+			vi.stubGlobal("WebSocket", harness.WebSocket);
+			const selectedAccounts = ["account-a", "account-b"];
+			let attempts = 0;
+			let final: AssistantMessage | undefined;
+			for (const selectedAccount of selectedAccounts) {
+				attempts++;
+				let visible = false;
+				const responseStream = streamOpenAICodexResponses(syntheticCodexModel(), syntheticContext(1), {
+					apiKey: mockToken(selectedAccount),
+					sessionId: `router-replay-${failure}`,
+					transport: "websocket-cached",
+				});
+				for await (const event of responseStream) {
+					if (event.type === "start") visible = true;
+				}
+				final = await responseStream.result();
+				if (final.stopReason !== "error" || visible) break;
+			}
+			return { attempts, final, harness };
+		};
+
+		const before = await runScenario("fail-before-output");
+		expect(before.attempts).toBe(2);
+		expect(before.final?.stopReason).toBe("stop");
+		expect(before.harness.requests.map((request) => request.accountId)).toEqual(["account-a", "account-b"]);
+		expect(before.harness.requests[1].body.previous_response_id).toBeUndefined();
+
+		const after = await runScenario("fail-after-output");
+		expect(after.attempts).toBe(1);
+		expect(after.final?.stopReason).toBe("error");
+		expect(after.harness.requests.map((request) => request.accountId)).toEqual(["account-a"]);
+	});
+
+	it("keeps concurrent router-shaped reservations on their selected handshake owners", async () => {
+		const harness = createSyntheticWebSocketHarness();
+		harness.enqueue("hold");
+		vi.stubGlobal("WebSocket", harness.WebSocket);
+		const model = syntheticCodexModel();
+		const sessionId = "router-concurrent-reservations";
+		const selectedAccounts = ["account-a", "account-b"];
+		const first = streamOpenAICodexResponses(model, syntheticContext(1), {
+			apiKey: mockToken(selectedAccounts[0]),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		await vi.waitFor(() => expect(harness.requests).toHaveLength(1));
+		const second = await streamOpenAICodexResponses(model, syntheticContext(2), {
+			apiKey: mockToken(selectedAccounts[1]),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+		harness.releaseHeld();
+		await first;
+		await streamOpenAICodexResponses(model, syntheticContext(3, [second]), {
+			apiKey: mockToken(selectedAccounts[1]),
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(harness.requests.map((request) => request.accountId)).toEqual([
+			selectedAccounts[0],
+			selectedAccounts[1],
+			selectedAccounts[1],
+		]);
+		expect(harness.requests[1].body.previous_response_id).toBeUndefined();
 	});
 
 	it.each([
