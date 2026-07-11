@@ -1,8 +1,8 @@
 /**
  * Reload Runtime Extension
  *
- * Demonstrates ctx.reload() from ExtensionCommandContext and an LLM-callable
- * tool that queues a follow-up command to trigger reload.
+ * Demonstrates immediate ctx.reload() from ExtensionCommandContext and
+ * deferred ctx.requestReload() from a tool's ExtensionContext.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -19,17 +19,16 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// LLM-callable tool. Tools get ExtensionContext, so they cannot call ctx.reload() directly.
-	// Instead, queue a follow-up user command that executes the command above.
+	// LLM-callable tool. The host defers the canonical reload until the runtime is idle.
 	pi.registerTool({
 		name: "reload_runtime",
 		label: "Reload Runtime",
 		description: "Reload extensions, skills, prompts, themes, and context files",
 		parameters: Type.Object({}),
-		async execute() {
-			pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			ctx.requestReload();
 			return {
-				content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
+				content: [{ type: "text", text: "Reload requested for the next idle state." }],
 				details: {},
 			};
 		},

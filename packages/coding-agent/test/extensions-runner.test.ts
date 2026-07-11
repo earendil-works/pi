@@ -95,6 +95,7 @@ describe("ExtensionRunner", () => {
 		abort: () => {},
 		hasPendingMessages: () => false,
 		shutdown: () => {},
+		requestReload: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
@@ -509,6 +510,22 @@ describe("ExtensionRunner", () => {
 			const ctx = runner.createContext();
 			expect(ctx.mode).toBe("print");
 			expect(ctx.hasUI).toBe(false);
+		});
+
+		it("routes reload requests from ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			let requested = false;
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				requestReload: () => {
+					requested = true;
+				},
+			});
+
+			const ctx = runner.createContext();
+			ctx.requestReload();
+			expect(requested).toBe(true);
 		});
 
 		it("exposes project trust state on ExtensionContext", async () => {

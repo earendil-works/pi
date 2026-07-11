@@ -172,6 +172,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,13 +182,42 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, runtimeHost, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
 	afterEach(() => {
 		rpcIo.outputLines = [];
 		rpcIo.lineHandler = undefined;
+	});
+
+	it("reloads from an idle ExtensionContext request", async () => {
+		const { runtimeHost, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
+		const reload = vi.spyOn(runtimeHost.session, "reload");
+
+		try {
+			runtimeHost.session.extensionRunner.createContext().requestReload();
+			await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("defers ExtensionContext reload requests until the agent settles", async () => {
+		const { lineHandler, runtimeHost, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 100 });
+		const reload = vi.spyOn(runtimeHost.session, "reload");
+
+		try {
+			lineHandler(JSON.stringify({ id: "reload-busy", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "reload-busy")).toHaveLength(1);
+			});
+			runtimeHost.session.extensionRunner.createContext().requestReload();
+			expect(reload).not.toHaveBeenCalled();
+			await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+		} finally {
+			await cleanup();
+		}
 	});
 
 	it("emits one failure response when prompt preflight rejects", async () => {

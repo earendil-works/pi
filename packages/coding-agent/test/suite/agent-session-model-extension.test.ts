@@ -2,7 +2,7 @@ import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
 describe("AgentSession model and extension characterization", () => {
@@ -347,6 +347,30 @@ describe("AgentSession model and extension characterization", () => {
 		expect(
 			harness.session.messages.some((message) => message.role === "custom" && message.customType === "before-start"),
 		).toBe(true);
+	});
+
+	it("routes ExtensionContext reload requests through AgentSession bindings", async () => {
+		let context: ExtensionContext | undefined;
+		let reloadRequests = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", async (_event, ctx) => {
+						context = ctx;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.bindExtensions({
+			reloadRequestHandler: () => {
+				reloadRequests += 1;
+			},
+		});
+		context?.requestReload();
+
+		expect(reloadRequests).toBe(1);
 	});
 
 	it("bindExtensions emits session_start and reload emits session_shutdown then session_start", async () => {
