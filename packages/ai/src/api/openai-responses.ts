@@ -21,13 +21,21 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	clampOpenAIPromptCacheKey,
+	getOpenAIGPT56PromptCacheOptions,
+	type OpenAIPromptCacheOptions,
+} from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
+
+type OpenAIResponsesCreateParamsStreaming = ResponseCreateParamsStreaming & {
+	prompt_cache_options?: OpenAIPromptCacheOptions;
+};
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -229,12 +237,14 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const params: ResponseCreateParamsStreaming = {
+	const promptCacheOptions = getOpenAIGPT56PromptCacheOptions(model.id, cacheRetention !== "none");
+	const params: OpenAIResponsesCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
-		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
+		prompt_cache_options: promptCacheOptions,
+		prompt_cache_retention: promptCacheOptions ? undefined : getPromptCacheRetention(compat, cacheRetention),
 		store: false,
 	};
 

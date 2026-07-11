@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { isOpenAIGPT56Family } from "../src/api/openai-prompt-cache.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
@@ -16,6 +17,12 @@ class PayloadCaptured extends Error {
 interface OpenAICompletionsCachePayload {
 	prompt_cache_key?: string;
 	prompt_cache_retention?: string;
+}
+
+interface OpenAIResponsesCachePayload {
+	prompt_cache_key?: string;
+	prompt_cache_retention?: string;
+	prompt_cache_options?: { mode?: "implicit" | "explicit"; ttl?: "30m" };
 }
 
 function stopAfterPayload<TPayload>(capture: (payload: TPayload) => void): (payload: unknown) => never {
@@ -391,6 +398,68 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload).not.toBeNull();
 			expect(capturedPayload.prompt_cache_key).toBe("session-2");
 			expect(capturedPayload.prompt_cache_retention).toBe("24h");
+		});
+
+		it.each(["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-fast"])(
+			"should detect %s as a GPT-5.6 cache-options model",
+			(modelId) => {
+				expect(isOpenAIGPT56Family(modelId)).toBe(true);
+				expect(isOpenAIGPT56Family(`openai/${modelId}`)).toBe(true);
+			},
+		);
+
+		it("should keep GPT-5.5 on legacy prompt cache retention", async () => {
+			const model = getModel("openai", "gpt-5.5");
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
+
+			try {
+				const s = streamOpenAIResponses(model, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					sessionId: "session-gpt-55",
+					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail
+			}
+
+			expect(capturedPayload).toBeDefined();
+			expect(capturedPayload?.prompt_cache_key).toBe("session-gpt-55");
+			expect(capturedPayload?.prompt_cache_options).toBeUndefined();
+			expect(capturedPayload?.prompt_cache_retention).toBe("24h");
+		});
+
+		it("should use prompt_cache_options for GPT-5.6 prompt caching", async () => {
+			const model = getModel("openai", "gpt-5.6-luna");
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
+
+			try {
+				const s = streamOpenAIResponses(model, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					sessionId: "session-gpt-56",
+					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail
+			}
+
+			expect(capturedPayload).toBeDefined();
+			expect(capturedPayload?.prompt_cache_key).toBe("session-gpt-56");
+			expect(capturedPayload?.prompt_cache_options).toEqual({ mode: "implicit", ttl: "30m" });
+			expect(capturedPayload?.prompt_cache_retention).toBeUndefined();
 		});
 	});
 
