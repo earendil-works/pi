@@ -83,7 +83,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `segment counter increments on each execute` test PASS: after 3 calls (1 created, 1 skipped, 1 error), `getSegmentMemorySaveCount() === 3`.
   - **依赖**: 2.5
 
-- [ ] 2.7 **Embedding down → zero vector fallback**
+- [x] 2.7 **Embedding down → zero vector fallback**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: When `embedText` returns `null`, use `new Array(1024).fill(0)` as vector (matches `extraction.ts:243, 258` pattern). `reindexOne` still called. Return `embedding: "skipped"` flag in result.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save embedding down` test PASS: DB 1 row, vector = zero vector, embedding: "skipped".
@@ -163,7 +163,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui response includes embeddingServiceStatus from pipeline` test PASS.
   - **依赖**: 6.1
 
-- [ ] 6.3 **Webui topK default 20 (was 10)**
+- [x] 6.3 **Webui topK default 20 (was 10)**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: Change `const topK = Number.isFinite(rawTopK) ? Math.min(100, Math.max(1, rawTopK)) : 10;` to `... : 20;`. Clamp behavior unchanged.
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui topK default 20` test PASS: request without topK → recallPipeline receives topK: 20.
