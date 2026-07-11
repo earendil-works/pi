@@ -181,6 +181,8 @@ export type SwitchSessionHandler = (
 
 export type ReloadHandler = () => Promise<void>;
 
+export type ReloadRequestHandler = () => void;
+
 export type ShutdownHandler = () => void;
 
 /**
@@ -288,6 +290,7 @@ export class ExtensionRunner {
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
+	private reloadRequestHandler: ReloadRequestHandler = () => {};
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -340,6 +343,7 @@ export class ExtensionRunner {
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
 		this.shutdownHandler = contextActions.shutdown;
+		this.reloadRequestHandler = contextActions.requestReload;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
@@ -624,6 +628,11 @@ export class ExtensionRunner {
 		this.shutdownHandler();
 	}
 
+	/** Request a canonical resource reload after the current runtime becomes idle. */
+	requestReload(): void {
+		this.reloadRequestHandler();
+	}
+
 	getActiveTools(): string[] {
 		this.assertActive();
 		return this.runtime.getActiveTools();
@@ -688,6 +697,10 @@ export class ExtensionRunner {
 			shutdown: () => {
 				runner.assertActive();
 				runner.shutdownHandler();
+			},
+			requestReload: () => {
+				runner.assertActive();
+				runner.reloadRequestHandler();
 			},
 			getContextUsage: () => {
 				runner.assertActive();

@@ -81,8 +81,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
 
-	// Shutdown request flag
+	// Deferred runtime action flags
 	let shutdownRequested = false;
+	let reloadRequested = false;
+	let reloadInProgress = false;
 	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
@@ -344,6 +346,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			shutdownHandler: () => {
 				shutdownRequested = true;
 			},
+			reloadRequestHandler: () => {
+				requestReload();
+			},
 			onError: (err) => {
 				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
 			},
@@ -353,8 +358,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
 			output(event);
-			if (event.type === "agent_settled") {
+			if (event.type === "agent_settled" || event.type === "compaction_end") {
 				void checkShutdownRequested();
+				void checkReloadRequested();
 			}
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
@@ -723,6 +729,32 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		await shutdown();
 	}
 
+	function requestReload(): void {
+		if (reloadInProgress) return;
+		reloadRequested = true;
+		if (session.isIdle && !session.isCompacting) {
+			setTimeout(() => void checkReloadRequested(), 0).unref();
+		}
+	}
+
+	async function checkReloadRequested(): Promise<void> {
+		if (shutdownRequested || reloadInProgress || !reloadRequested || !session.isIdle || session.isCompacting) return;
+		reloadRequested = false;
+		reloadInProgress = true;
+		try {
+			await session.reload();
+		} catch (reloadError: unknown) {
+			output({
+				type: "extension_error",
+				extensionPath: "<runtime>",
+				event: "request_reload",
+				error: reloadError instanceof Error ? reloadError.message : String(reloadError),
+			});
+		} finally {
+			reloadInProgress = false;
+		}
+	}
+
 	const handleInputLine = async (line: string) => {
 		let parsed: unknown;
 		try {
@@ -763,6 +795,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				await waitForRawStdoutBackpressure();
 			}
 			await checkShutdownRequested();
+			await checkReloadRequested();
 		} catch (commandError: unknown) {
 			output(
 				error(

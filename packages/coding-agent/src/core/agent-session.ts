@@ -66,6 +66,7 @@ import {
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
+	type ReloadRequestHandler,
 	type ReplacedSessionContext,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
@@ -197,6 +198,7 @@ export interface ExtensionBindings {
 	commandContextActions?: ExtensionCommandContextActions;
 	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
+	reloadRequestHandler?: ReloadRequestHandler;
 	onError?: ExtensionErrorListener;
 }
 
@@ -322,6 +324,7 @@ export class AgentSession {
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
+	private _extensionReloadRequestHandler?: ReloadRequestHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 
@@ -2189,6 +2192,9 @@ export class AgentSession {
 		if (bindings.shutdownHandler !== undefined) {
 			this._extensionShutdownHandler = bindings.shutdownHandler;
 		}
+		if (bindings.reloadRequestHandler !== undefined) {
+			this._extensionReloadRequestHandler = bindings.reloadRequestHandler;
+		}
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
@@ -2365,6 +2371,9 @@ export class AgentSession {
 				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {
 					this._extensionShutdownHandler?.();
+				},
+				requestReload: () => {
+					this._extensionReloadRequestHandler?.();
 				},
 				getContextUsage: () => this.getContextUsage(),
 				compact: (options) => {
@@ -2558,6 +2567,7 @@ export class AgentSession {
 			this._extensionUIContext ||
 			this._extensionCommandContextActions ||
 			this._extensionShutdownHandler ||
+			this._extensionReloadRequestHandler ||
 			this._extensionErrorListener;
 		if (hasBindings) {
 			await options?.beforeSessionStart?.();

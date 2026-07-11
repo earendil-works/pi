@@ -417,8 +417,10 @@ export class InteractiveMode {
 	// Messages queued while compaction is running
 	private compactionQueuedMessages: CompactionQueuedMessage[] = [];
 
-	// Shutdown state
+	// Deferred runtime actions
 	private shutdownRequested = false;
+	private reloadRequested = false;
+	private reloadInProgress = false;
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
@@ -1683,6 +1685,9 @@ export class InteractiveMode {
 					void this.shutdown();
 				}
 			},
+			reloadRequestHandler: () => {
+				this.requestReload();
+			},
 			onError: (error) => {
 				this.showExtensionError(error.extensionPath, error.error, error.stack);
 			},
@@ -1788,6 +1793,9 @@ export class InteractiveMode {
 			hasPendingMessages: () => this.session.pendingMessageCount > 0,
 			shutdown: () => {
 				this.shutdownRequested = true;
+			},
+			requestReload: () => {
+				this.requestReload();
 			},
 			getContextUsage: () => this.session.getContextUsage(),
 			compact: (options) => {
@@ -3040,6 +3048,7 @@ export class InteractiveMode {
 
 			case "agent_settled":
 				await this.checkShutdownRequested();
+				await this.checkReloadRequested();
 				break;
 
 			case "compaction_start": {
@@ -3090,7 +3099,10 @@ export class InteractiveMode {
 						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
 					}
 				}
-				void this.flushCompactionQueue({ willRetry: event.willRetry });
+				void this.flushCompactionQueue({ willRetry: event.willRetry }).finally(async () => {
+					await this.checkShutdownRequested();
+					await this.checkReloadRequested();
+				});
 				this.ui.requestRender();
 				break;
 			}
@@ -3583,6 +3595,27 @@ export class InteractiveMode {
 	private async checkShutdownRequested(): Promise<void> {
 		if (!this.shutdownRequested) return;
 		await this.shutdown();
+	}
+
+	private requestReload(): void {
+		if (this.reloadInProgress) return;
+		this.reloadRequested = true;
+		if (this.session.isIdle && !this.session.isCompacting) {
+			queueMicrotask(() => void this.checkReloadRequested());
+		}
+	}
+
+	private async checkReloadRequested(): Promise<void> {
+		if (
+			this.shutdownRequested ||
+			this.reloadInProgress ||
+			!this.reloadRequested ||
+			!this.session.isIdle ||
+			this.session.isCompacting
+		)
+			return;
+		this.reloadRequested = false;
+		await this.handleReloadCommand();
 	}
 
 	private registerSignalHandlers(): void {
@@ -5277,6 +5310,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private async handleReloadCommand(): Promise<void> {
+		if (this.reloadInProgress) return;
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
@@ -5286,6 +5320,8 @@ export class InteractiveMode {
 			return;
 		}
 
+		this.reloadRequested = false;
+		this.reloadInProgress = true;
 		this.resetExtensionUI();
 
 		const reloadBox = new Container();
@@ -5377,6 +5413,8 @@ export class InteractiveMode {
 				dismissReloadBox(previousEditor as Component);
 			}
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			this.reloadInProgress = false;
 		}
 	}
 
