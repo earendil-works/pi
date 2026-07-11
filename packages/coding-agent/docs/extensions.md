@@ -143,6 +143,7 @@ To share extensions via npm or git as pi packages, see [packages.md](packages.md
 | `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
 | `typebox` | Schema definitions for tool parameters |
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
+| `@earendil-works/pi-ai/api/openai-codex-responses` | Codex WebSocket session cleanup (`closeOpenAICodexWebSocketSessions`) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
