@@ -77,7 +77,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save overwrite id not found` test PASS: returns id_not_found, DB unchanged.
   - **依赖**: 2.4
 
-- [ ] 2.6 **Counter increments on every execute (success or skip)**
+- [x] 2.6 **Counter increments on every execute (success or skip)**
   - **文件**: `extensions/personal-assistant/memory-save.ts` (Modify)
   - **内容**: At the end of `execute`, call `incrementSegmentMemorySaveCount()` (regardless of outcome — created / updated / skipped / error all count, per principle "计入调用而不计入成功").
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `segment counter increments on each execute` test PASS: after 3 calls (1 created, 1 skipped, 1 error), `getSegmentMemorySaveCount() === 3`.
@@ -143,7 +143,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `TUI context hook calls recallPipeline with recent + single query string` test PASS (mock pi captures hook registration; mock recallPipeline called with `query: <single string>`, `recent: ["msg1","msg2","msg3"]`, `topK: 20`).
   - **依赖**: 1.4
 
-- [ ] 5.2 **TUI keeps formatMemoryContext + inject into user message**
+- [x] 5.2 **TUI keeps formatMemoryContext + inject into user message**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: After `recallPipeline` returns `results`, the existing `formatMemoryContext(finalResults, 4000)` call + `memoryPrefix = \`[Relevant memory context — atoms at \${atomsDir}]\n\${formatted.text}\n\n[User message]\n\`` + `newMessages[lastUserIdx] = {...}` injection stays. Only the pipeline computation (steps 5-7 in old code) is replaced.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — `TUI context hook injects formatted context into last user message` test PASS (mock event.messages assertion).
@@ -157,7 +157,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui /api/memory/search calls recallPipeline` test PASS (mock recallPipeline invoked with expected opts).
   - **依赖**: 1.4
 
-- [ ] 6.2 **Webui response shape preserved + embeddingServiceStatus from pipeline**
+- [x] 6.2 **Webui response shape preserved + embeddingServiceStatus from pipeline**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: Keep response shape `{results: results.map(...), recallTimeMs, embeddingServiceStatus, ...(filtered ? {rewriteTimeMs, rerankTimeMs} : {})}`. Map `status.embeddingServiceStatus` (when probed) and `status.recallMs` / `status.rewriteMs` / `status.rerankMs` into response fields. `embeddingServiceStatus` probe removed from inline code (now in recallPipeline).
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui response includes embeddingServiceStatus from pipeline` test PASS.
