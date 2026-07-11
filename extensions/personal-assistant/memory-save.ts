@@ -5,11 +5,10 @@
 //     tool input at dispatch time (per spec R2: "memory_save validates
 //     input via TypeBox schema").
 //   - Owns the module-level segmentMemorySaveCount + its 3 helpers
-//     (get / increment / reset). The increment is wired into the create
-//     path (2.2) and the skip path (2.3) inline at the end of each
-//     branch — task 2.6 will hoist it to a single shared location so it
-//     fires on every outcome (created / updated / skipped / error) per
-//     the principle "计入调用而不计入成功".
+//     (get / increment / reset). The increment is hoisted to the very
+//     top of `execute` (task 2.6) so it fires exactly once on every
+//     invocation regardless of outcome (created / updated / skipped /
+//     error) — per the principle "计入调用而不计入成功".
 //   - Implements two of the four outcomes:
 //       2.2  create   (no id, fingerprint miss) → insertAtom +
 //             writeAtomToFile + reindexOne → {action: "created", id, embedding}.
@@ -190,10 +189,10 @@ export function resetSegmentMemorySaveCount(): void {
  *           {action: "updated", id, embedding}
  *   - 2.5 — id present, atom missing → {action: "error", error: "id_not_found"}
  *
- * Task 2.6 hoists `incrementSegmentMemorySaveCount()` to a single shared
- * location at the end of this execute body so it fires on every call
- * (currently it is inlined in the create and skip branches; the
- * scaffold tests don't exercise update / error paths yet).
+ * Task 2.6 hoists `incrementSegmentMemorySaveCount()` to the very
+ * top of this execute body so it fires exactly once per call
+ * regardless of which branch (created / updated / skipped / error)
+ * wins — per the principle "counter 计入调用而不计入成功".
  */
 export function registerMemorySave(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -213,6 +212,13 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 			_onUpdate,
 			ctx,
 		) {
+			// Increment counter at the top of every execute — counts the
+			// call, not the outcome (created / updated / skipped / error
+			// all count). Per design.md § Decisions § 5 "counter 在
+			// `memory_save` execute 入口 `++`". Task 2.6 hoisted this
+			// here from scattered inline calls at the end of each branch.
+			incrementSegmentMemorySaveCount();
+
 			// Tasks 2.2 + 2.3 cover the create and skip branches. Task 2.4
 			// lands the overwrite branch (id present, atom exists); task 2.5
 			// will land the id_not_found envelope (id present, atom missing).
@@ -245,13 +251,10 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 						// Task 2.5 — id_not_found envelope (scenarios.md S7 line 37-40,
 						// spec.md L39-44). No insertAtom / updateAtom /
 						// writeAtomToFile / reindexOne (per spec L44). The
-						// counter still increments below — the spec says it
-						// counts every memory_save invocation, including
-						// error outcomes (principle "counter 计入调用而不
-						// 计入成功"). 2.6 will hoist the increment alongside
-						// create / skip / update so a single shared location
-						// covers all outcomes.
-						incrementSegmentMemorySaveCount();
+						// counter increments at the top of execute — the
+						// spec says it counts every memory_save invocation,
+						// including error outcomes (principle "counter 计入
+						// 调用而不计入成功").
 						const errorResult: MemorySaveResult = {
 							action: "error",
 							error: "id_not_found",
@@ -321,12 +324,6 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 					await writeAtomToFile(mergedAtom, atomsDir);
 					await reindexOne(mergedAtom.id);
 
-					// Counter increment for the overwrite path. The spec says
-					// the counter increments on every call regardless of
-					// outcome; 2.6 will hoist this alongside create/skip to a
-					// single shared location.
-					incrementSegmentMemorySaveCount();
-
 					const result: MemorySaveResult = {
 						action: "updated",
 						id: mergedAtom.id,
@@ -350,12 +347,10 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 					// No storage / file / reindex I/O per design.md § "数据流
 					// (memory_save, create 路径)" branch 1. The matched atom's
 					// version / updated_at / access_count stay unchanged.
-					// The counter still increments: the agent called the tool
-					// and we deliberately deduped, which is a real save
-					// attempt (per principle "counter 计入调用而不计入成功").
-					// 2.6 will hoist this increment alongside the create-path
-					// one so a single shared location covers all outcomes.
-					incrementSegmentMemorySaveCount();
+					// The counter still increments (at the top of execute):
+					// the agent called the tool and we deliberately deduped,
+					// which is a real save attempt (per principle "counter
+					// 计入调用而不计入成功").
 					const skipResult: MemorySaveResult = {
 						action: "skipped",
 						reason: "duplicate_content",
@@ -435,11 +430,6 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 				await index.insertAtom(newAtom, vector);
 				await writeAtomToFile(newAtom, atomsDir);
 				await reindexOne(newAtom.id);
-
-				// Counter increment for the create path (task 2.6 will hoist
-				// this to the top of execute so skip / update / error also
-				// count — see "Counter semantics" header).
-				incrementSegmentMemorySaveCount();
 
 				const result: MemorySaveResult = {
 					action: "created",
