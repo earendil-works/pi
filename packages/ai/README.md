@@ -1031,7 +1031,7 @@ const ollamaReasoningModel: Model<'openai-completions'> = {
 
 ### Calling API Implementations Directly
 
-The API implementations are importable on their own. Each module exports exactly `stream` and `streamSimple` with that API's full option typing. Direct calls bypass provider auth — pass `apiKey` explicitly:
+The API implementations are importable on their own. Each module exports `stream` and `streamSimple` with that API's full option typing; some also expose API-specific helpers. Direct calls bypass provider auth — pass `apiKey` explicitly:
 
 ```typescript
 import { stream } from '@earendil-works/pi-ai/api/anthropic-messages';
@@ -1486,7 +1486,7 @@ Adding a new LLM provider requires changes across multiple files. The layered la
 
 #### 2. API Implementation (`src/api/<api-id>.ts`, only for a new API)
 
-Create a new API implementation file (for example `bedrock-converse-stream.ts`) that exports exactly `stream` and `streamSimple`, plus:
+Create a new API implementation file (for example `bedrock-converse-stream.ts`) that exports `stream` and `streamSimple`, plus:
 
 - An options interface extending `StreamOptions` (for example `BedrockOptions`)
 - Message conversion functions to transform `Context` to provider format

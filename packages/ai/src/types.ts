@@ -212,10 +212,11 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
 	: StreamOptions & Record<string, unknown>;
 
 /**
- * The uniform stream contract of an API implementation module: every module
- * under `src/api/` exports exactly `stream` and `streamSimple`, so the module
- * itself satisfies this interface. Lazy wrappers (`lazyApi()`) and provider
- * factories pass these around as values. This is the untyped dispatch shape;
+ * The uniform stream contract of an API implementation module: every streaming
+ * API module under `src/api/` exports `stream` and `streamSimple`, so the module
+ * itself satisfies this interface even when it exposes additional helpers.
+ * Lazy wrappers (`lazyApi()`) and provider factories pass these around as values.
+ * This is the untyped dispatch shape;
  * per-API option typing lives on the implementation modules themselves and on
  * `Provider.stream()` via `ApiStreamOptions`.
  */

@@ -324,7 +324,7 @@ No request hot-path model canonicalization: `stream()` uses the supplied model o
 
 An API implementation is reusable stream behavior. It is not a provider.
 
-Uniform export contract — every real implementation module exports exactly:
+Uniform required exports — every real implementation module exports at least:
 
 ```ts
 // src/api/anthropic-messages.ts — imports SDKs
@@ -809,7 +809,7 @@ Check items off as they land. Keep this list current; it is the working state fo
 ### Phase 2 — `src/api/`
 
 - [x] Move stream implementations from `src/providers/` to `src/api/`, renamed by API id (`anthropic.ts` -> `api/anthropic-messages.ts`, etc.).
-- [x] Normalize each implementation module to export exactly `stream` and `streamSimple`.
+- [x] Normalize each implementation module to export `stream` and `streamSimple`.
 - [x] Move shared helpers (`openai-responses-shared`, `google-shared`, `transform-messages`, `openai-prompt-cache`, `github-copilot-headers`, `cloudflare`, `simple-options`) to `src/api/`.
 - [x] Extract `lazyStream()`/`lazyApi()` into `src/api/lazy.ts`.
 - [x] Add `*.lazy.ts` wrappers per API; bedrock keeps node-only import trick and `setBedrockProviderModule()`.
