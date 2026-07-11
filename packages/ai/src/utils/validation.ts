@@ -16,18 +16,6 @@ interface JsonSchemaObject {
 	oneOf?: JsonSchemaObject[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
-	return isRecord(value);
-}
-
-function hasTypeBoxMetadata(schema: unknown): boolean {
-	return isRecord(schema) && Object.getOwnPropertySymbols(schema).includes(TYPEBOX_KIND);
-}
-
 function getSchemaTypes(schema: JsonSchemaObject): string[] {
 	if (typeof schema.type === "string") {
 		return [schema.type];
@@ -53,22 +41,15 @@ function matchesJsonType(value: unknown, type: string): boolean {
 		case "array":
 			return Array.isArray(value);
 		case "object":
-			return isRecord(value) && !Array.isArray(value);
+			return typeof value === "object" && value !== null && !Array.isArray(value);
 		default:
 			return false;
 	}
 }
 
-function isValidatorSchema(value: unknown): value is Tool["parameters"] {
-	return isRecord(value);
-}
-
 function getSubSchemaValidator(schema: JsonSchemaObject): ReturnType<typeof Compile> | undefined {
-	if (!isValidatorSchema(schema)) {
-		return undefined;
-	}
 	try {
-		return getValidator(schema);
+		return getValidator(schema as Tool["parameters"]);
 	} catch {
 		return undefined;
 	}
@@ -161,7 +142,7 @@ function applySchemaObjectCoercion(value: Record<string, unknown>, schema: JsonS
 		}
 	}
 
-	if (schema.additionalProperties && isJsonSchemaObject(schema.additionalProperties)) {
+	if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
 		for (const [key, propertyValue] of Object.entries(value)) {
 			if (definedKeys.has(key)) {
 				continue;
@@ -183,7 +164,7 @@ function applySchemaArrayCoercion(value: unknown[], schema: JsonSchemaObject): v
 		return;
 	}
 
-	if (isJsonSchemaObject(schema.items)) {
+	if (schema.items && typeof schema.items === "object") {
 		for (let index = 0; index < value.length; index++) {
 			value[index] = coerceWithJsonSchema(value[index], schema.items);
 		}
@@ -232,8 +213,13 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 		}
 	}
 
-	if (schemaTypes.includes("object") && isRecord(nextValue) && !Array.isArray(nextValue)) {
-		applySchemaObjectCoercion(nextValue, schema);
+	if (
+		schemaTypes.includes("object") &&
+		typeof nextValue === "object" &&
+		nextValue !== null &&
+		!Array.isArray(nextValue)
+	) {
+		applySchemaObjectCoercion(nextValue as Record<string, unknown>, schema);
 	}
 
 	if (schemaTypes.includes("array") && Array.isArray(nextValue)) {
@@ -294,10 +280,10 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	Value.Convert(tool.parameters, args);
 
 	const validator = getValidator(tool.parameters);
-	if (!hasTypeBoxMetadata(tool.parameters) && isJsonSchemaObject(tool.parameters)) {
-		const coerced = coerceWithJsonSchema(args, tool.parameters);
+	if (!Object.getOwnPropertySymbols(tool.parameters).includes(TYPEBOX_KIND)) {
+		const coerced = coerceWithJsonSchema(args, tool.parameters as JsonSchemaObject);
 		if (coerced !== args) {
-			if (isRecord(args) && isRecord(coerced)) {
+			if (typeof args === "object" && args !== null && typeof coerced === "object" && coerced !== null) {
 				for (const key of Object.keys(args)) {
 					delete args[key];
 				}

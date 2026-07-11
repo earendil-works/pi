@@ -65,4 +65,28 @@ describe("JsonlSessionRepo", () => {
 		expect(existsSync(sourceMetadata.path)).toBe(false);
 		await expect(repo.open(sourceMetadata)).rejects.toThrow("Session not found");
 	});
+
+	it("persists header metadata through create, list, and fork", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
+		const source = await repo.create({
+			cwd: "/tmp/source",
+			id: "source-session",
+			metadata: { profile: "reviewer" },
+		});
+		const sourceMetadata = await source.getMetadata();
+		expect(sourceMetadata.metadata).toEqual({ profile: "reviewer" });
+		expect((await repo.list({ cwd: "/tmp/source" })).map((listed) => listed.metadata)).toEqual([
+			{ profile: "reviewer" },
+		]);
+		const fork = await repo.fork(sourceMetadata, { cwd: "/tmp/target", id: "fork-session" });
+		expect((await fork.getMetadata()).metadata).toEqual({ profile: "reviewer" });
+		const overridden = await repo.fork(sourceMetadata, {
+			cwd: "/tmp/target",
+			id: "overridden-session",
+			metadata: { profile: "writer" },
+		});
+		expect((await overridden.getMetadata()).metadata).toEqual({ profile: "writer" });
+	});
 });

@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -66,11 +67,13 @@ export type TransportSetting = Transport;
  * Package source for npm/git packages.
  * - String form: load all resources from the package
  * - Object form: filter which resources to load
+ * - autoload=false: start empty and only apply explicit resource patterns
  */
 export type PackageSource =
 	| string
 	| {
 			source: string;
+			autoload?: boolean;
 			extensions?: string[];
 			skills?: string[];
 			prompts?: string[];
@@ -81,7 +84,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
-	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	defaultThinkingLevel?: ThinkingLevel;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -90,7 +93,9 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
+	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
+	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
@@ -112,6 +117,7 @@ export interface Settings {
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
+	outputPad?: 0 | 1; // Horizontal padding for chat message output (default: 1)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
@@ -334,11 +340,11 @@ export class SettingsManager {
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
-	static inMemory(settings: Partial<Settings> = {}): SettingsManager {
+	static inMemory(settings: Partial<Settings> = {}, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const storage = new InMemorySettingsStorage();
 		const initialSettings = SettingsManager.migrateSettings(structuredClone(settings) as Record<string, unknown>);
 		storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
-		return SettingsManager.fromStorage(storage);
+		return SettingsManager.fromStorage(storage, options);
 	}
 
 	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope, projectTrusted = true): Settings {
@@ -731,11 +737,11 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+	getDefaultThinkingLevel(): ThinkingLevel | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
 
-	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): void {
+	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();
@@ -841,14 +847,37 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getShowCacheMissNotices(): boolean {
+		return this.settings.showCacheMissNotices ?? false;
+	}
+
+	getExternalEditorCommand(): string | undefined {
+		const configuredEditor = this.settings.externalEditor;
+		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
+			return configuredEditor;
+		}
+		const environmentEditor = process.env.VISUAL || process.env.EDITOR;
+		if (environmentEditor) {
+			return environmentEditor;
+		}
+		return process.platform === "win32" ? "notepad" : "nano";
+	}
+
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
 		this.save();
 	}
 
+	setShowCacheMissNotices(show: boolean): void {
+		this.globalSettings.showCacheMissNotices = show;
+		this.markModified("showCacheMissNotices");
+		this.save();
+	}
+
 	getShellPath(): string | undefined {
-		return this.settings.shellPath;
+		const shellPath = this.settings.shellPath;
+		return shellPath ? normalizePath(shellPath) : shellPath;
 	}
 
 	setShellPath(path: string | undefined): void {
@@ -1166,6 +1195,16 @@ export class SettingsManager {
 	setEditorPaddingX(padding: number): void {
 		this.globalSettings.editorPaddingX = Math.max(0, Math.min(3, Math.floor(padding)));
 		this.markModified("editorPaddingX");
+		this.save();
+	}
+
+	getOutputPad(): 0 | 1 {
+		return this.settings.outputPad === 0 ? 0 : 1;
+	}
+
+	setOutputPad(padding: 0 | 1): void {
+		this.globalSettings.outputPad = padding;
+		this.markModified("outputPad");
 		this.save();
 	}
 

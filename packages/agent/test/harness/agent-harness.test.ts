@@ -1,5 +1,13 @@
-import { fauxAssistantMessage, fauxToolCall, getModel, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+	createModels,
+	type FauxProviderHandle,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type RegisterFauxProviderOptions,
+} from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
+import { describe, expect, it } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
@@ -17,7 +25,15 @@ interface AppPromptTemplate extends PromptTemplate {
 	source: "project" | "user";
 }
 
-const registrations: Array<{ unregister(): void }> = [];
+/** Shared collection; each faux provider gets a unique id so coexisting fakes route correctly. */
+const models = createModels();
+let fauxCount = 0;
+
+function newFaux(options: RegisterFauxProviderOptions = {}): FauxProviderHandle {
+	const faux = fauxProvider({ provider: `faux-${++fauxCount}`, ...options });
+	models.setProvider(faux.provider);
+	return faux;
+}
 
 function textFromUserMessages(messages: Array<{ role: string; content: unknown }>): string[] {
 	return messages.flatMap((message) => {
@@ -44,18 +60,13 @@ function getReasoning(options: unknown): unknown {
 	return options.reasoning;
 }
 
-afterEach(() => {
-	for (const registration of registrations.splice(0)) {
-		registration.unregister();
-	}
-});
-
 describe("AgentHarness", () => {
 	it("constructs directly and exposes queue modes", () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const initialModel = getModel("anthropic", "claude-sonnet-4-5");
 		const harness = new AgentHarness({
+			models,
 			env,
 			session,
 			model: initialModel,
@@ -76,8 +87,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("drains one queued steering message at a time and emits queue updates", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		const userCounts: number[] = [];
 		registration.setResponses([
 			(context) => {
@@ -94,6 +104,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -119,8 +130,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("appends before_agent_start messages and persists them", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		let requestText: string[] = [];
 		registration.setResponses([
 			(context) => {
@@ -130,6 +140,7 @@ describe("AgentHarness", () => {
 		]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -151,8 +162,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		let releaseFirstResponse: (() => void) | undefined;
 		let abortedSignal: AbortSignal | undefined;
 		const firstResponseReleased = new Promise<void>((resolve) => {
@@ -171,6 +181,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -206,8 +217,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("drains follow-up messages one at a time after the agent would otherwise stop", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		const userCounts: number[] = [];
 		registration.setResponses([
 			(context) => {
@@ -224,6 +234,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -249,11 +260,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("settles thrown hook failures with persisted assistant error messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("should not be used")]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -280,13 +291,12 @@ describe("AgentHarness", () => {
 	});
 
 	it("refreshes model, thinking level, resources, system prompt, and active tools at save points", async () => {
-		const registration = registerFauxProvider({
+		const registration = newFaux({
 			models: [
 				{ id: "first", reasoning: true },
 				{ id: "second", reasoning: true },
 			],
 		});
-		registrations.push(registration);
 		const secondModel = registration.getModel("second");
 		if (!secondModel) throw new Error("missing second faux model");
 		const captured: Array<{ modelId: string; reasoning: unknown; systemPrompt: string; tools: string[] }> = [];
@@ -313,6 +323,7 @@ describe("AgentHarness", () => {
 			},
 		]);
 		const harness = new AgentHarness<Skill, PromptTemplate, AgentTool>({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -345,11 +356,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("orders pending listener session writes after agent-emitted messages", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("ok")]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -376,11 +387,11 @@ describe("AgentHarness", () => {
 	});
 
 	it("waitForIdle waits for external run settlement and awaited listeners", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("ok")]);
 		const barrier = deferred();
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session: new Session(new InMemorySessionStorage()),
 			model: registration.getModel(),
@@ -408,8 +419,7 @@ describe("AgentHarness", () => {
 	});
 
 	it("runs tool_call and tool_result hooks through the direct loop", async () => {
-		const registration = registerFauxProvider();
-		registrations.push(registration);
+		const registration = newFaux();
 		registration.setResponses([
 			() =>
 				fauxAssistantMessage(fauxToolCall("calculate", { expression: "2 + 2" }, { id: "call-1" }), {
@@ -418,6 +428,7 @@ describe("AgentHarness", () => {
 		]);
 		const session = new Session(new InMemorySessionStorage());
 		const harness = new AgentHarness({
+			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
@@ -462,6 +473,7 @@ describe("AgentHarness", () => {
 		const inspectTool: AppTool = { ...calculateTool, name: "inspect", source: "builtin" };
 		const searchTool: AppTool = { ...calculateTool, name: "search", source: "extension" };
 		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AppTool>({
+			models,
 			env,
 			session,
 			model,
@@ -530,11 +542,12 @@ describe("AgentHarness", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(
-			() => new AgentHarness({ env, session, model, tools: [calculateTool], activeToolNames: ["missing"] }),
+			() => new AgentHarness({ env, session, models, model, tools: [calculateTool], activeToolNames: ["missing"] }),
 		).toThrow(/Unknown tool/);
 		expect(
 			() =>
 				new AgentHarness({
+					models,
 					env,
 					session,
 					model,
@@ -545,6 +558,7 @@ describe("AgentHarness", () => {
 		expect(
 			() =>
 				new AgentHarness({
+					models,
 					env,
 					session,
 					model,
@@ -558,7 +572,7 @@ describe("AgentHarness", () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AgentTool>({ env, session, model });
+		const harness = new AgentHarness<AppSkill, AppPromptTemplate, AgentTool>({ env, session, models, model });
 		const skill: AppSkill = {
 			name: "inspect",
 			description: "Inspect things",

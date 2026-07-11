@@ -255,7 +255,7 @@ Extension state persistence. Does NOT participate in LLM context.
 {"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
 ```
 
-Use `customType` to identify your extension's entries on reload.
+Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 ### CustomMessageEntry
 
@@ -306,15 +306,24 @@ Entries form a tree:
 
 ## Context Building
 
-`buildSessionContext()` walks from the current leaf to the root, producing the message list for the LLM:
+`buildContextEntries()` walks from the current leaf to the root, producing the active entry list while honoring compaction:
 
 1. Collects all entries on the path
-2. Extracts current model and thinking level settings
-3. If a `CompactionEntry` is on the path:
-   - Emits the summary first
-   - Then messages from `firstKeptEntryId` to compaction
-   - Then messages after compaction
-4. Converts `BranchSummaryEntry` and `CustomMessageEntry` to appropriate message formats
+2. If a `CompactionEntry` is on the path:
+   - Includes the compaction entry first
+   - Then entries from `firstKeptEntryId` to compaction
+   - Then entries after compaction
+3. Preserves non-message entries in the selected range so interactive mode can render them
+
+`buildSessionContext()` builds on that entry list to produce the message list for the LLM:
+
+1. Extracts current model and thinking level settings from the full path
+2. Converts selected entries to messages:
+   - `message` -> stored `AgentMessage`
+   - `compaction` -> `compactionSummary`
+   - `branch_summary` -> `branchSummary`
+   - `custom_message` -> `CustomMessage`
+   - `custom` -> no context message
 
 ## Parsing Example
 
@@ -401,6 +410,7 @@ Key methods for working with sessions programmatically.
 - `branchWithSummary(entryId, summary, details?, fromHook?)` - Branch with context summary
 
 ### Instance Methods - Context & Info
+- `buildContextEntries()` - Get active branch entries with compaction applied
 - `buildSessionContext()` - Get messages, thinkingLevel, and model for LLM
 - `getEntries()` - All entries (excluding header)
 - `getHeader()` - Session header metadata

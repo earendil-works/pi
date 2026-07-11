@@ -63,7 +63,7 @@ pi
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
-| ZAI | `ZAI_API_KEY` | `zai` |
+| ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
@@ -156,8 +156,9 @@ OAuth credentials are also stored here after `/login` and managed automatically.
 
 ```bash
 export AZURE_OPENAI_API_KEY=...
-export AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com
+export AZURE_OPENAI_BASE_URL=https://your-resource.ai.azure.com
 # also supported: https://your-resource.cognitiveservices.azure.com
+# also supported: https://your-resource.openai.azure.com
 # root endpoints are auto-normalized to /openai/v1
 # or use resource name instead of base URL
 export AZURE_OPENAI_RESOURCE_NAME=your-resource

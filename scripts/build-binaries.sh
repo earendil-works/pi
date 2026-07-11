@@ -159,26 +159,34 @@ for platform in "${PLATFORMS[@]}"; do
     case "$platform" in
         darwin-arm64)
             clipboard_native_package="clipboard-darwin-arm64"
+            clipboard_native_file="clipboard.darwin-arm64.node"
             ;;
         darwin-x64)
             clipboard_native_package="clipboard-darwin-x64"
+            clipboard_native_file="clipboard.darwin-x64.node"
             ;;
         linux-x64)
             clipboard_native_package="clipboard-linux-x64-gnu"
+            clipboard_native_file="clipboard.linux-x64-gnu.node"
             ;;
         linux-arm64)
             clipboard_native_package="clipboard-linux-arm64-gnu"
+            clipboard_native_file="clipboard.linux-arm64-gnu.node"
             ;;
         windows-x64)
             clipboard_native_package="clipboard-win32-x64-msvc"
+            clipboard_native_file="clipboard.win32-x64-msvc.node"
             ;;
         windows-arm64)
             clipboard_native_package="clipboard-win32-arm64-msvc"
+            clipboard_native_file="clipboard.win32-arm64-msvc.node"
             ;;
     esac
     mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
     cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
     cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
+    cp "../../node_modules/@mariozechner/$clipboard_native_package/$clipboard_native_file" \
+        "$OUTPUT_DIR/$platform/node_modules/@mariozechner/clipboard/"
 
     # Copy terminal input native helpers next to compiled binaries.
     if [[ "$platform" == darwin-* ]]; then

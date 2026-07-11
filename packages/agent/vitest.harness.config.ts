@@ -1,12 +1,10 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const aiSrcIndex = fileURLToPath(new URL("../ai/src/index.ts", import.meta.url));
+const aiSrcCompat = fileURLToPath(new URL("../ai/src/compat.ts", import.meta.url));
+
 export default defineConfig({
-	resolve: {
-		alias: {
-			"@earendil-works/pi-ai/base": new URL("../ai/src/base.ts", import.meta.url).pathname,
-			"@earendil-works/pi-ai": new URL("../ai/src/index.ts", import.meta.url).pathname,
-		},
-	},
 	test: {
 		globals: true,
 		environment: "node",
@@ -20,5 +18,11 @@ export default defineConfig({
 			reporter: ["text", "html", "lcov"],
 			reportsDirectory: "coverage/harness",
 		},
+	},
+	resolve: {
+		alias: [
+			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
+		],
 	},
 });

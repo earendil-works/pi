@@ -51,7 +51,3 @@ export function registerImagesApiProvider<TApi extends ImagesApi, TOptions exten
 export function getImagesApiProvider(api: ImagesApi): ImagesApiProviderInternal | undefined {
 	return imagesApiProviderRegistry.get(api)?.provider;
 }
-
-export function clearImagesApiProviders(): void {
-	imagesApiProviderRegistry.clear();
-}

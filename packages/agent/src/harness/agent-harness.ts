@@ -1,10 +1,4 @@
-import {
-	type AssistantMessage,
-	type ImageContent,
-	type Model,
-	streamSimple,
-	type UserMessage,
-} from "@earendil-works/pi-ai/base";
+import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import { runAgentLoop } from "../agent-loop.ts";
 import type {
 	AgentContext,
@@ -73,17 +67,6 @@ function cloneStreamOptions(streamOptions?: AgentHarnessStreamOptions): AgentHar
 		headers: streamOptions?.headers ? { ...streamOptions.headers } : undefined,
 		metadata: streamOptions?.metadata ? { ...streamOptions.metadata } : undefined,
 	};
-}
-
-function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Record<string, string> | undefined {
-	const merged: Record<string, string> = {};
-	let hasHeaders = false;
-	for (const entry of headers) {
-		if (!entry) continue;
-		Object.assign(merged, entry);
-		hasHeaders = true;
-	}
-	return hasHeaders ? merged : undefined;
 }
 
 function findDuplicateNames(names: string[]): string[] {
@@ -178,6 +161,7 @@ export class AgentHarness<
 > {
 	readonly env: ExecutionEnv;
 	private session: Session;
+	readonly models: Models;
 	private phase: AgentHarnessPhase = "idle";
 	private runAbortController?: AbortController;
 	private runPromise?: Promise<void>;
@@ -186,7 +170,6 @@ export class AgentHarness<
 	private thinkingLevel: ThinkingLevel;
 	private systemPrompt: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>["systemPrompt"];
 	private streamOptions: AgentHarnessStreamOptions;
-	private getApiKeyAndHeaders?: AgentHarnessOptions["getApiKeyAndHeaders"];
 	private resources: AgentHarnessResources<TSkill, TPromptTemplate>;
 	private tools = new Map<string, TTool>();
 	private activeToolNames: string[];
@@ -200,10 +183,10 @@ export class AgentHarness<
 	constructor(options: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>) {
 		this.env = options.env;
 		this.session = options.session;
+		this.models = options.models;
 		this.resources = options.resources ?? {};
 		this.streamOptions = cloneStreamOptions(options.streamOptions);
 		this.systemPrompt = options.systemPrompt;
-		this.getApiKeyAndHeaders = options.getApiKeyAndHeaders;
 		this.validateUniqueNames(
 			(options.tools ?? []).map((tool) => tool.name),
 			"Duplicate tool name(s)",
@@ -376,13 +359,9 @@ export class AgentHarness<
 	private createStreamFn(getTurnState: () => AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>): StreamFn {
 		return async (model, context, streamOptions) => {
 			const turnState = getTurnState();
-			const auth = await this.getApiKeyAndHeaders?.(model);
-			const snapshotOptions: AgentHarnessStreamOptions = {
-				...turnState.streamOptions,
-				headers: mergeHeaders(turnState.streamOptions.headers, auth?.headers),
-			};
+			const snapshotOptions: AgentHarnessStreamOptions = { ...turnState.streamOptions };
 			const requestOptions = await this.emitBeforeProviderRequest(model, turnState.sessionId, snapshotOptions);
-			return streamSimple(model, context, {
+			return this.models.streamSimple(model, context, {
 				cacheRetention: requestOptions.cacheRetention,
 				headers: requestOptions.headers,
 				maxRetries: requestOptions.maxRetries,
@@ -401,7 +380,6 @@ export class AgentHarness<
 				sessionId: turnState.sessionId,
 				timeoutMs: requestOptions.timeoutMs,
 				transport: requestOptions.transport,
-				apiKey: auth?.apiKey,
 			});
 		};
 	}
@@ -713,8 +691,6 @@ export class AgentHarness<
 		try {
 			const model = this.model;
 			if (!model) throw new AgentHarnessError("invalid_state", "No model set for compaction");
-			const auth = await this.getApiKeyAndHeaders?.(model);
-			if (!auth) throw new AgentHarnessError("auth", "No auth available for compaction");
 			const branchEntries = await this.session.getBranch();
 			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS);
 			if (!preparationResult.ok) throw preparationResult.error;
@@ -731,15 +707,7 @@ export class AgentHarness<
 			const provided = hookResult?.compaction;
 			const compactResult = provided
 				? { ok: true as const, value: provided }
-				: await compact(
-						preparation,
-						model,
-						auth.apiKey,
-						auth.headers,
-						customInstructions,
-						undefined,
-						this.thinkingLevel,
-					);
+				: await compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;
 			const entryId = await this.session.appendCompaction(
@@ -792,12 +760,9 @@ export class AgentHarness<
 			if (!summaryText && options?.summarize && entries.length > 0) {
 				const model = this.model;
 				if (!model) throw new AgentHarnessError("invalid_state", "No model set for branch summary");
-				const auth = await this.getApiKeyAndHeaders?.(model);
-				if (!auth) throw new AgentHarnessError("auth", "No auth available for branch summary");
 				const branchSummary = await generateBranchSummary(entries, {
+					models: this.models,
 					model,
-					apiKey: auth.apiKey,
-					headers: auth.headers,
 					signal: new AbortController().signal,
 					customInstructions: hookResult?.customInstructions ?? options?.customInstructions,
 					replaceInstructions: hookResult?.replaceInstructions ?? options?.replaceInstructions,

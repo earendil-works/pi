@@ -3,7 +3,7 @@ import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works
 import { Container, Text, type TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
-import type { SessionContext } from "../../../src/core/session-manager.ts";
+import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -27,6 +27,12 @@ const EMPTY_USAGE: Usage = {
 	},
 };
 
+type RenderSessionItems = (
+	this: RenderSessionContextThis,
+	items: AgentMessage[],
+	options?: { updateFooter?: boolean; populateHistory?: boolean },
+) => void;
+
 type RenderSessionContextThis = {
 	pendingTools: Map<string, ToolExecutionComponent>;
 	chatContainer: Container;
@@ -35,19 +41,21 @@ type RenderSessionContextThis = {
 	settingsManager: {
 		getShowImages(): boolean;
 		getImageWidthCells(): number;
+		getShowCacheMissNotices(): boolean;
 	};
-	sessionManager: { getCwd(): string };
-	session: { retryAttempt: number };
+	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
+	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
+	renderSessionItems: RenderSessionItems;
 };
 
-type RenderSessionContext = (
+type RenderSessionEntries = (
 	this: RenderSessionContextThis,
-	sessionContext: SessionContext,
+	entries: SessionEntry[],
 	options?: { updateFooter?: boolean; populateHistory?: boolean },
 ) => void;
 
@@ -63,13 +71,16 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		settingsManager: {
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
+			getShowCacheMissNotices: () => false,
 		},
-		sessionManager: { getCwd: () => process.cwd() },
-		session: { retryAttempt: 0 },
+		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
+		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })
+			.renderSessionItems,
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},
@@ -107,31 +118,38 @@ function createToolResultMessage(text: string): ToolResultMessage {
 	};
 }
 
-function createSessionContext(messages: AgentMessage[]): SessionContext {
-	return {
-		messages,
-		thinkingLevel: "off",
-		model: null,
-	};
+function createSessionEntries(messages: AgentMessage[]): SessionEntry[] {
+	let parentId: string | null = null;
+	return messages.map((message, index) => {
+		const entry: SessionEntry = {
+			type: "message",
+			id: `entry-${index}`,
+			parentId,
+			timestamp: new Date().toISOString(),
+			message,
+		};
+		parentId = entry.id;
+		return entry;
+	});
 }
 
 function renderChat(container: Container): string {
 	return stripAnsi(container.render(120).join("\n"));
 }
 
-describe("InteractiveMode.renderSessionContext", () => {
+describe("InteractiveMode.renderSessionEntries", () => {
 	beforeAll(() => {
 		initTheme("dark");
 	});
 
 	test("keeps unresolved rendered tool calls registered for live completion events", async () => {
 		const fakeThis = createFakeInteractiveModeThis();
-		const renderSessionContext = (
-			InteractiveMode.prototype as unknown as { renderSessionContext: RenderSessionContext }
-		).renderSessionContext;
+		const renderSessionEntries = (
+			InteractiveMode.prototype as unknown as { renderSessionEntries: RenderSessionEntries }
+		).renderSessionEntries;
 		const handleEvent = (InteractiveMode.prototype as unknown as { handleEvent: HandleEvent }).handleEvent;
 
-		renderSessionContext.call(fakeThis, createSessionContext([createAssistantToolCallMessage()]));
+		renderSessionEntries.call(fakeThis, createSessionEntries([createAssistantToolCallMessage()]));
 
 		expect(fakeThis.pendingTools.has(TOOL_CALL_ID)).toBe(true);
 
@@ -149,13 +167,13 @@ describe("InteractiveMode.renderSessionContext", () => {
 
 	test("does not keep completed historical tool calls registered as pending", () => {
 		const fakeThis = createFakeInteractiveModeThis();
-		const renderSessionContext = (
-			InteractiveMode.prototype as unknown as { renderSessionContext: RenderSessionContext }
-		).renderSessionContext;
+		const renderSessionEntries = (
+			InteractiveMode.prototype as unknown as { renderSessionEntries: RenderSessionEntries }
+		).renderSessionEntries;
 
-		renderSessionContext.call(
+		renderSessionEntries.call(
 			fakeThis,
-			createSessionContext([createAssistantToolCallMessage(), createToolResultMessage("HISTORICAL_RESULT")]),
+			createSessionEntries([createAssistantToolCallMessage(), createToolResultMessage("HISTORICAL_RESULT")]),
 		);
 
 		expect(fakeThis.pendingTools.size).toBe(0);

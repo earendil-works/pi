@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -88,7 +89,7 @@ describe("createAgentSession provider attribution headers", () => {
 			requestHeaders?: Record<string, string>;
 			sessionId?: string;
 		} = {},
-	): Promise<Record<string, string> | undefined> {
+	): Promise<ProviderHeaders | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		if (options.telemetryEnabled === false) {
 			settingsManager.setEnableInstallTelemetry(false);
@@ -194,13 +195,6 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["HTTP-Referer"]).toBe("https://provider.example");
 		expect(headers?.["X-OpenRouter-Title"]).toBe("request-title");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("provider-category");
-	});
-
-	it("adds default attribution headers for Vercel AI Gateway models", async () => {
-		const headers = await captureHeaders(createModel("vercel-ai-gateway", "https://ai-gateway.vercel.sh/v1"));
-
-		expect(headers?.["http-referer"]).toBe("https://pi.dev");
-		expect(headers?.["x-title"]).toBe("pi");
 	});
 
 	it("adds default attribution headers for direct NVIDIA NIM endpoints", async () => {

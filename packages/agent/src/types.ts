@@ -1,19 +1,22 @@
 import type {
+	Api,
 	AssistantMessage,
 	AssistantMessageEvent,
+	AssistantMessageEventStream,
+	Context,
 	ImageContent,
 	Message,
 	Model,
 	SimpleStreamOptions,
-	streamSimple,
 	TextContent,
 	Tool,
 	ToolResultMessage,
-} from "@earendil-works/pi-ai/base";
+} from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 
 /**
- * Stream function used by the agent loop.
+ * Stream function used by the agent loop. `Models.streamSimple` satisfies
+ * this shape.
  *
  * Contract:
  * - Must not throw or return a rejected promise for request/model/runtime failures.
@@ -22,8 +25,10 @@ import type { Static, TSchema } from "typebox";
  *   final AssistantMessage with stopReason "error" or "aborted" and errorMessage.
  */
 export type StreamFn = (
-	...args: Parameters<typeof streamSimple>
-) => ReturnType<typeof streamSimple> | Promise<ReturnType<typeof streamSimple>>;
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
 /**
  * Configuration for how tool calls from a single assistant message are executed.
@@ -278,10 +283,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 /**
  * Thinking/reasoning level for models that support it.
- * Note: "xhigh" is only supported by selected model families. Use model thinking-level metadata
- * from @earendil-works/pi-ai to detect support for a concrete model.
+ * Note: "xhigh" and "max" are only supported by selected model families. Use model
+ * thinking-level metadata from @earendil-works/pi-ai to detect support for a concrete model.
  */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * Extensible interface for custom app messages.

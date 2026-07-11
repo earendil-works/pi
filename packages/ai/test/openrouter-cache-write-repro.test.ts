@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeSimple } from "../src/index.ts";
-import { getModel } from "../src/models.ts";
+import { completeSimple, getModel } from "../src/compat.ts";
 
 function createLongSystemPrompt(): string {
 	const nonce = `${Date.now()}-${Math.random()}`;

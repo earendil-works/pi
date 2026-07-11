@@ -12,7 +12,7 @@ import {
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
 	type OAuthProviderId,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -40,6 +40,10 @@ export type AuthStatus = {
 	source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
 	label?: string;
 };
+
+export interface GetApiKeyOptions {
+	includeFallback?: boolean;
+}
 
 type LockResult<T> = {
 	result: T;
@@ -199,7 +203,6 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 export class AuthStorage {
 	private data: AuthStorageData = {};
 	private runtimeOverrides: Map<string, string> = new Map();
-	private fallbackResolver?: (provider: string) => string | undefined;
 	private loadError: Error | null = null;
 	private errors: Error[] = [];
 	private storage: AuthStorageBackend;
@@ -238,14 +241,6 @@ export class AuthStorage {
 		this.runtimeOverrides.delete(provider);
 	}
 
-	/**
-	 * Set a fallback resolver for API keys not found in auth.json or env vars.
-	 * Used for custom provider keys from models.json.
-	 */
-	setFallbackResolver(resolver: (provider: string) => string | undefined): void {
-		this.fallbackResolver = resolver;
-	}
-
 	private recordError(error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
 		this.errors.push(normalizedError);
@@ -276,12 +271,21 @@ export class AuthStorage {
 		}
 	}
 
-	private persistProviderChange(provider: string, credential: AuthCredential | undefined): void {
+	private persistProviderChange(provider: string, credential: AuthCredential | undefined): AuthStorageData {
 		if (this.loadError) {
-			return;
+			this.reload();
+		}
+
+		if (this.loadError) {
+			const error = new Error(
+				`Cannot update auth storage because it could not be loaded: ${this.loadError.message}`,
+			);
+			this.recordError(error);
+			throw error;
 		}
 
 		try {
+			let persistedData: AuthStorageData = {};
 			this.storage.withLock((current) => {
 				const currentData = this.parseStorageData(current);
 				const merged: AuthStorageData = { ...currentData };
@@ -290,10 +294,14 @@ export class AuthStorage {
 				} else {
 					delete merged[provider];
 				}
+				persistedData = merged;
 				return { result: undefined, next: JSON.stringify(merged, null, 2) };
 			});
+			this.loadError = null;
+			return persistedData;
 		} catch (error) {
 			this.recordError(error);
+			throw error;
 		}
 	}
 
@@ -316,16 +324,14 @@ export class AuthStorage {
 	 * Set credential for a provider.
 	 */
 	set(provider: string, credential: AuthCredential): void {
-		this.data[provider] = credential;
-		this.persistProviderChange(provider, credential);
+		this.data = this.persistProviderChange(provider, credential);
 	}
 
 	/**
 	 * Remove credential for a provider.
 	 */
 	remove(provider: string): void {
-		delete this.data[provider];
-		this.persistProviderChange(provider, undefined);
+		this.data = this.persistProviderChange(provider, undefined);
 	}
 
 	/**
@@ -350,7 +356,6 @@ export class AuthStorage {
 		if (this.runtimeOverrides.has(provider)) return true;
 		if (this.data[provider]) return true;
 		if (getEnvApiKey(provider)) return true;
-		if (this.fallbackResolver?.(provider)) return true;
 		return false;
 	}
 
@@ -369,10 +374,6 @@ export class AuthStorage {
 		const envKeys = findEnvKeys(provider);
 		if (envKeys?.[0]) {
 			return { configured: false, source: "environment", label: envKeys[0] };
-		}
-
-		if (this.fallbackResolver?.(provider)) {
-			return { configured: false, source: "fallback", label: "custom provider config" };
 		}
 
 		return { configured: false };
@@ -468,9 +469,8 @@ export class AuthStorage {
 	 * 2. API key from auth.json
 	 * 3. OAuth token from auth.json (auto-refreshed with locking)
 	 * 4. Environment variable
-	 * 5. Fallback resolver (models.json custom providers)
 	 */
-	async getApiKey(providerId: string, options?: { includeFallback?: boolean }): Promise<string | undefined> {
+	async getApiKey(providerId: string, options: GetApiKeyOptions = {}): Promise<string | undefined> {
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {
@@ -521,14 +521,11 @@ export class AuthStorage {
 			}
 		}
 
+		if (options.includeFallback === false) return undefined;
+
 		// Fall back to environment variable
 		const envKey = getEnvApiKey(providerId);
 		if (envKey) return envKey;
-
-		// Fall back to custom resolver (e.g., models.json custom providers)
-		if (options?.includeFallback !== false) {
-			return this.fallbackResolver?.(providerId) ?? undefined;
-		}
 
 		return undefined;
 	}

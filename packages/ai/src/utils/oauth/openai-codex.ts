@@ -17,6 +17,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import type { OAuthAuth } from "../../auth/types.ts";
 import { getProviderEnvValue } from "../provider-env.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
@@ -560,6 +561,62 @@ export async function loginOpenAICodex(options: {
 export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredentials> {
 	return credentialsFromToken(await refreshAccessToken(refreshToken));
 }
+
+export const openaiCodexOAuth: OAuthAuth = {
+	name: "OpenAI (ChatGPT Plus/Pro)",
+
+	async login(callbacks) {
+		const method = await callbacks.prompt({
+			type: "select",
+			message: "Select OpenAI Codex login method:",
+			options: [
+				{ id: OPENAI_CODEX_BROWSER_LOGIN_METHOD, label: "Browser login (default)" },
+				{ id: OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, label: "Device code login (headless)" },
+			],
+		});
+
+		if (method === OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD) {
+			const credentials = await loginOpenAICodexDeviceCode({
+				onDeviceCode: (info) => callbacks.notify({ type: "device_code", ...info }),
+				signal: callbacks.signal,
+			});
+			return { ...credentials, type: "oauth" };
+		}
+		if (method !== OPENAI_CODEX_BROWSER_LOGIN_METHOD) {
+			throw new Error(`Unknown OpenAI Codex login method: ${method}`);
+		}
+
+		// The manual_code prompt races the local callback server; abort it once
+		// the flow settles so the UI can dismiss the pending input.
+		const manualAbort = new AbortController();
+		try {
+			const credentials = await loginOpenAICodex({
+				onAuth: (info) => callbacks.notify({ type: "auth_url", url: info.url, instructions: info.instructions }),
+				onProgress: (message) => callbacks.notify({ type: "progress", message }),
+				onPrompt: (prompt) =>
+					callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
+				onManualCodeInput: () =>
+					callbacks.prompt({
+						type: "manual_code",
+						message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
+						placeholder: REDIRECT_URI,
+						signal: manualAbort.signal,
+					}),
+			});
+			return { ...credentials, type: "oauth" };
+		} finally {
+			manualAbort.abort();
+		}
+	},
+
+	async refresh(credential) {
+		return { ...(await refreshOpenAICodexToken(credential.refresh)), type: "oauth" };
+	},
+
+	async toAuth(credential) {
+		return { apiKey: credential.access };
+	},
+};
 
 export const openaiCodexOAuthProvider: OAuthProviderInterface = {
 	id: "openai-codex",

@@ -22,6 +22,31 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 	}
 }
 
+function trimPartialClosingFences(tokens: readonly Token[]): void {
+	const token = tokens[tokens.length - 1];
+	if (token?.type === "list") {
+		trimPartialClosingFences(token.items[token.items.length - 1]?.tokens ?? []);
+		return;
+	}
+	if (token?.type === "blockquote") {
+		trimPartialClosingFences(token.tokens ?? []);
+		return;
+	}
+	if (token?.type !== "code") {
+		return;
+	}
+
+	// Trim streamed partial closing fences so code blocks do not shrink/flicker
+	// when the final fence character arrives. See https://github.com/earendil-works/pi/issues/5825.
+	const marker = /^(`{3,}|~{3,})/.exec(token.raw)?.[1];
+	const lastLine = token.raw.split("\n").pop();
+	if (!marker || !lastLine || lastLine.length >= marker.length || lastLine !== marker[0]?.repeat(lastLine.length)) {
+		return;
+	}
+
+	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
+}
+
 const markdownParser = new Marked();
 markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
@@ -73,6 +98,8 @@ export interface MarkdownTheme {
 export interface MarkdownOptions {
 	/** Preserve source list markers instead of normalizing them. */
 	preserveOrderedListMarkers?: boolean;
+	/** Preserve source backslash escapes instead of normalizing escaped punctuation. */
+	preserveBackslashEscapes?: boolean;
 }
 
 interface InlineStyleContext {
@@ -145,6 +172,7 @@ export class Markdown implements Component {
 
 		// Parse markdown to HTML-like tokens
 		const tokens = markdownParser.lexer(normalizedText);
+		trimPartialClosingFences(tokens);
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
@@ -472,6 +500,10 @@ export class Markdown implements Component {
 
 		for (const token of tokens) {
 			switch (token.type) {
+				case "escape":
+					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
+					break;
+
 				case "text":
 					// Text tokens in list items can have nested tokens for inline formatting
 					if (token.tokens && token.tokens.length > 0) {

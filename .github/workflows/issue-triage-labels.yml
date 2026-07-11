@@ -17,6 +17,8 @@ jobs:
             const UNTRIAGED_LABEL = 'untriaged';
             const NO_ACTION_LABEL = 'no-action';
             const LAST_READ_LABEL = 'last-read';
+            const TO_DISCUSS_LABEL = 'to-discuss';
+            const INPROGRESS_LABEL = 'inprogress';
 
             function issueHasLabel(issue, labelName) {
               return (issue.labels ?? []).some((label) => label.name === labelName);
@@ -48,6 +50,11 @@ jobs:
             if (context.payload.action === 'reopened') {
               await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
               await removeLabelIfPresent(context.issue.number, context.payload.issue, NO_ACTION_LABEL);
+              return;
+            }
+
+            if (context.payload.action === 'labeled' && context.payload.label?.name === NO_ACTION_LABEL) {
+              await removeLabelIfPresent(context.issue.number, context.payload.issue, UNTRIAGED_LABEL);
               return;
             }
 
@@ -102,13 +109,17 @@ jobs:
             }
 
             for (const issue of issuesToMark) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                labels: [NO_ACTION_LABEL],
-              });
-              console.log(`Added ${NO_ACTION_LABEL} to #${issue.number}`);
+              if (issueHasLabel(issue, TO_DISCUSS_LABEL)) {
+                console.log(`Skipped ${NO_ACTION_LABEL} for #${issue.number} because it has ${TO_DISCUSS_LABEL}`);
+              } else {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: [NO_ACTION_LABEL],
+                });
+                console.log(`Added ${NO_ACTION_LABEL} to #${issue.number}`);
+              }
 
               await github.rest.issues.update({
                 owner: context.repo.owner,
@@ -118,6 +129,8 @@ jobs:
                 state_reason: 'not_planned',
               });
               console.log(`Closed #${issue.number} as not planned`);
+
+              await removeLabelIfPresent(issue.number, issue, INPROGRESS_LABEL);
 
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,

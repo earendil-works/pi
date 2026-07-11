@@ -17,6 +17,10 @@ export type AuthSelectorProvider = {
 	authType: "oauth" | "api_key";
 };
 
+export function formatAuthSelectorProviderType(authType: AuthSelectorProvider["authType"]): string {
+	return authType === "oauth" ? "subscription" : "API key";
+}
+
 /**
  * Component that renders an auth provider selector
  */
@@ -40,16 +44,18 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private mode: "login" | "logout";
 	private authStorage: AuthStorage;
 	private getAuthStatus: (providerId: string) => AuthStatus;
-	private onSelectCallback: (providerId: string) => void;
+	private onSelectCallback: (providerId: string, authType: AuthSelectorProvider["authType"]) => void;
 	private onCancelCallback: () => void;
+	private showAuthTypeLabels: boolean;
 
 	constructor(
 		mode: "login" | "logout",
 		authStorage: AuthStorage,
 		providers: AuthSelectorProvider[],
-		onSelect: (providerId: string) => void,
+		onSelect: (providerId: string, authType: AuthSelectorProvider["authType"]) => void,
 		onCancel: () => void,
 		getAuthStatus?: (providerId: string) => AuthStatus,
+		initialSearchInput?: string,
 	) {
 		super();
 
@@ -58,6 +64,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.getAuthStatus = getAuthStatus ?? ((providerId) => this.authStorage.getAuthStatus(providerId));
 		this.allProviders = providers;
 		this.filteredProviders = providers;
+		this.showAuthTypeLabels = new Set(providers.map((provider) => provider.authType)).size > 1;
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 
@@ -71,10 +78,13 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		this.searchInput = new Input();
+		if (initialSearchInput) {
+			this.searchInput.setValue(initialSearchInput);
+		}
 		this.searchInput.onSubmit = () => {
 			const selectedProvider = this.filteredProviders[this.selectedIndex];
 			if (selectedProvider) {
-				this.onSelectCallback(selectedProvider.id);
+				this.onSelectCallback(selectedProvider.id, selectedProvider.authType);
 			}
 		};
 		this.addChild(this.searchInput);
@@ -90,7 +100,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.addChild(new DynamicBorder());
 
 		// Initial render
-		this.filterProviders("");
+		this.filterProviders(initialSearchInput ?? "");
 	}
 
 	private filterProviders(query: string): void {
@@ -118,14 +128,17 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			const isSelected = i === this.selectedIndex;
 
 			const statusIndicator = this.formatStatusIndicator(provider);
+			const authTypeLabel = this.showAuthTypeLabels
+				? theme.fg("muted", ` [${formatAuthSelectorProviderType(provider.authType)}]`)
+				: "";
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
 				const text = theme.fg("accent", provider.name);
-				line = prefix + text + statusIndicator;
+				line = prefix + text + authTypeLabel + statusIndicator;
 			} else {
 				const text = `  ${theme.fg("text", provider.name)}`;
-				line = text + statusIndicator;
+				line = text + authTypeLabel + statusIndicator;
 			}
 
 			this.listContainer.addChild(new TruncatedText(line, 1, 0));
@@ -192,7 +205,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedProvider = this.filteredProviders[this.selectedIndex];
 			if (selectedProvider) {
-				this.onSelectCallback(selectedProvider.id);
+				this.onSelectCallback(selectedProvider.id, selectedProvider.authType);
 			}
 		}
 		// Escape or Ctrl+C

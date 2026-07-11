@@ -32,6 +32,7 @@ export { areExperimentalFeaturesEnabled } from "./experimental.ts";
 // Extensions system
 export {
 	type AgentEndEvent,
+	type AgentSettledEvent,
 	type AgentStartEvent,
 	type AgentToolResult,
 	type AgentToolUpdateCallback,
@@ -55,6 +56,7 @@ export {
 	ExtensionRunner,
 	type ExtensionShortcut,
 	type ExtensionUIContext,
+	type InlineExtension,
 	type LoadExtensionsResult,
 	type MessageRenderer,
 	type RegisteredCommand,

@@ -17,11 +17,13 @@ jobs:
           script: |
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
             const issueAuthor = context.payload.issue.user.login;
             const defaultBranch = context.payload.repository.default_branch;
+            const isBotAuthor = issueAuthor.endsWith('[bot]');
 
-            if (issueAuthor.endsWith('[bot]') || issueAuthor === 'dependabot[bot]') {
-              console.log(`Skipping bot: ${issueAuthor}`);
+            if (TRUSTED_BOT_AUTHORS.has(issueAuthor)) {
+              console.log(`Skipping trusted bot: ${issueAuthor}`);
               return;
             }
 
@@ -80,7 +82,7 @@ jobs:
             }
 
             const permission = await getPermission(issueAuthor);
-            if (['admin', 'maintain', 'write'].includes(permission)) {
+            if (!isBotAuthor && ['admin', 'maintain', 'write'].includes(permission)) {
               console.log(`${issueAuthor} is a collaborator with ${permission} access`);
               return;
             }
@@ -89,7 +91,7 @@ jobs:
             const approvedUsers = parseApprovedUsers(approvedContent);
             const capability = approvedUsers.get(issueAuthor.toLowerCase());
 
-            if (capability === 'issue' || capability === 'pr') {
+            if (!isBotAuthor && (capability === 'issue' || capability === 'pr')) {
               console.log(`${issueAuthor} is approved for ${capability}`);
               return;
             }
