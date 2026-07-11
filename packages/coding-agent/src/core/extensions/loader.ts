@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
+import * as _bundledPiAiOpenAICodexResponses from "@earendil-works/pi-ai/api/openai-codex-responses";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import type { KeyId } from "@earendil-works/pi-tui";
@@ -56,12 +57,14 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
 	"@earendil-works/pi-ai": _bundledPiAiCompat,
+	"@earendil-works/pi-ai/api/openai-codex-responses": _bundledPiAiOpenAICodexResponses,
 	"@earendil-works/pi-ai/compat": _bundledPiAiCompat,
 	"@earendil-works/pi-ai/oauth": _bundledPiAiOauth,
 	"@earendil-works/pi-coding-agent": _bundledPiCodingAgent,
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
 	"@mariozechner/pi-ai": _bundledPiAiCompat,
+	"@mariozechner/pi-ai/api/openai-codex-responses": _bundledPiAiOpenAICodexResponses,
 	"@mariozechner/pi-ai/compat": _bundledPiAiCompat,
 	"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
@@ -101,6 +104,10 @@ function getAliases(): Record<string, string> {
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
 	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@earendil-works/pi-ai/compat");
+	const piAiOpenAICodexResponsesEntry = resolveWorkspaceOrImport(
+		"ai/dist/api/openai-codex-responses.js",
+		"@earendil-works/pi-ai/api/openai-codex-responses",
+	);
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
 
 	_aliases = {
@@ -108,12 +115,14 @@ function getAliases(): Record<string, string> {
 		"@earendil-works/pi-agent-core": piAgentCoreEntry,
 		"@earendil-works/pi-tui": piTuiEntry,
 		"@earendil-works/pi-ai": piAiCompatEntry,
+		"@earendil-works/pi-ai/api/openai-codex-responses": piAiOpenAICodexResponsesEntry,
 		"@earendil-works/pi-ai/compat": piAiCompatEntry,
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
 		"@mariozechner/pi-ai": piAiCompatEntry,
+		"@mariozechner/pi-ai/api/openai-codex-responses": piAiOpenAICodexResponsesEntry,
 		"@mariozechner/pi-ai/compat": piAiCompatEntry,
 		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
 		typebox: typeboxEntry,
