@@ -1,4 +1,4 @@
-import hljs from "highlight.js/lib/index.js";
+import { createRequire } from "node:module";
 import { decodeHtmlEntityAt } from "./html.ts";
 
 export type HighlightFormatter = (text: string) => string;
@@ -9,6 +9,19 @@ export interface HighlightOptions {
 	ignoreIllegals?: boolean;
 	languageSubset?: string[];
 	theme?: HighlightTheme;
+}
+
+// Lazy-load highlight.js (~35ms) — only needed when rendering code, not at CLI startup.
+type HighlightJs = typeof import("highlight.js/lib/index.js")["default"];
+const require = createRequire(import.meta.url);
+let hljsModule: HighlightJs | undefined;
+
+function getHljs(): HighlightJs {
+	if (!hljsModule) {
+		// CJS interop: require() returns the default export object directly.
+		hljsModule = require("highlight.js/lib/index.js") as HighlightJs;
+	}
+	return hljsModule;
 }
 
 const SPAN_CLOSE = "</span>";
@@ -132,6 +145,7 @@ export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}):
 }
 
 export function highlight(code: string, options: HighlightOptions = {}): string {
+	const hljs = getHljs();
 	const html = options.language
 		? hljs.highlight(code, {
 				language: options.language,
@@ -142,5 +156,5 @@ export function highlight(code: string, options: HighlightOptions = {}): string 
 }
 
 export function supportsLanguage(name: string): boolean {
-	return hljs.getLanguage(name) !== undefined;
+	return getHljs().getLanguage(name) !== undefined;
 }
