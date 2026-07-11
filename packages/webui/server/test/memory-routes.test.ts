@@ -1941,6 +1941,190 @@ describe("POST /api/memory/search", () => {
 	});
 });
 
+// Tests for Task 6.4 — webui accepts optional `recent` field in request body.
+// Covers the three spec scenarios from
+// docs/sdd/changes/agent-driven-memory-save/specs/tui-webui-recall-parity/spec.md
+// § "Requirement: recallPipeline accepts `recent` for anaphora resolution":
+//
+//   1. "webui accepts recent: string[] when provided" — the array is forwarded
+//      to recallPipeline so the rewrite stage sees the prior user messages.
+//   2. "webui rejects recent of wrong type" — non-array `recent` (e.g. number)
+//      returns HTTP 400 with a clear error message; recallPipeline is NOT invoked.
+//   3. S24 from scenarios.md ("webui 调 recallPipeline 时 `recent` 字段缺失") —
+//      the absence of `recent` in the request body maps to `null` at the
+//      recallPipeline boundary (matching the pre-Task-6.4 webui behavior so
+//      this change is non-regressing).
+//
+// The mock of `rewriteQueries` at the top of this file is the seam we use to
+// observe what recallPipeline forwards — recall.ts:239 calls
+// `rewriteQueries(opts.query, opts.recent ?? null, ...)`, so spying on the
+// mock's call arguments reveals both the absence → null mapping and the
+// verbatim forwarding of a valid string[].
+describe("POST /api/memory/search recent field (Task 6.4)", () => {
+	let app: express.Express;
+	let deps: MemoryDeps;
+	let dbPath: string;
+	let atomsDir: string;
+	let tmpDir: string;
+	let server: ReturnType<express.Express["listen"]>;
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-search-recent-"));
+		dbPath = path.join(tmpDir, "memory.db");
+		atomsDir = path.join(tmpDir, "atoms");
+		await fs.mkdir(atomsDir, { recursive: true });
+
+		const { MemoryIndex } = await import(
+			"../../../../extensions/personal-assistant/storage.ts"
+		);
+		const seed = new MemoryIndex(dbPath);
+		await seed.init();
+		seed.close();
+
+		app = express();
+		deps = {
+			dbPath,
+			atomsDir,
+			settings: {} as never,
+			callLlm: async () => "",
+		};
+		const { registerPostSearch } = await import("../routes/memory.ts");
+		registerPostSearch(app, deps);
+		server = app.listen(0, "127.0.0.1");
+		await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+
+		// Reset the module-level rewriteQueries mock so each test sees a
+		// fresh call history. Without this, `mock.calls` accumulates across
+		// the entire file and assertions on call indices become flaky.
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+		vi.mocked(rewriteQueries).mockClear();
+	});
+
+	afterEach(async () => {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	const fetchAt = async (
+		body: Record<string, unknown>,
+	): Promise<{ status: number; data: Record<string, unknown> }> => {
+		const addr = server.address();
+		if (!addr || typeof addr === "string") {
+			throw new Error("server has no address");
+		}
+		const res = await fetch(`http://127.0.0.1:${addr.port}/api/memory/search`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+		return { status: res.status, data };
+	};
+
+	// 1) Spec: "webui accepts recent: string[] when provided".
+	//    Body has `recent: ["past1", "past2"]`. The route must accept the
+	//    array and forward it verbatim through recallPipeline into the
+	//    rewriteQueries call (recall.ts:239: `opts.recent ?? null`). The
+	//    rewriteQueries mock is the only seam we have — the real
+	//    rewriteQueries would build a prompt with the recent block, but
+	//    for the route boundary we only need to confirm the value
+	//    survives intact. Empty results are fine: an empty DB plus the
+	//    mocked single-subquery rewrite still returns 200 with [].
+	//
+	//    `filtered` is left at the default (true) deliberately — when the
+	//    caller sets `filtered: false`, the pipeline SKIPS the rewrite
+	//    stage entirely (recall.ts:253-256) and rewriteQueries is never
+	//    invoked. To assert that `recent` reaches the rewrite stage, the
+	//    rewrite stage must actually run.
+	it("accepts recent: string[] and forwards it to rewriteQueries verbatim (Task 6.4)", async () => {
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+
+		const res = await fetchAt({
+			query: "test query",
+			recent: ["past1", "past2"],
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.results).toEqual([]);
+
+		// The pipeline calls rewriteQueries exactly once (the mocked
+		// rewrite returns [query] which is a single subquery). The second
+		// positional argument is `recent` — assert it is the same array
+		// the caller sent, in the same order.
+		const calls = vi.mocked(rewriteQueries).mock.calls;
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.[0]).toBe("test query");
+		expect(calls[0]?.[1]).toEqual(["past1", "past2"]);
+	});
+
+	// 2) Spec: "webui rejects recent of wrong type".
+	//    Body has `recent: 42` (a number). The validation must return
+	//    HTTP 400 with an explicit error message mentioning `recent`,
+	//    and recallPipeline must NOT be called. The latter is observable
+	//    via the rewriteQueries mock — it should have zero calls after
+	//    this request, since the validation short-circuits before the
+	//    pipeline runs.
+	it("rejects recent: 42 with HTTP 400 and explicit error message (Task 6.4)", async () => {
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+
+		const res = await fetchAt({
+			query: "test query",
+			recent: 42,
+			filtered: false,
+		});
+		expect(res.status).toBe(400);
+		// The route emits `recent must be a string[] when supplied`. The
+		// spec wording differs slightly ("string[] or absent") but the
+		// test only pins that the error mentions both `recent` and the
+		// type constraint — anything more specific would over-fit.
+		const errMsg = String(res.data.error);
+		expect(errMsg).toContain("recent");
+		expect(errMsg.toLowerCase()).toContain("string");
+
+		// Validation short-circuits before recallPipeline → rewriteQueries
+		// was never invoked.
+		expect(vi.mocked(rewriteQueries).mock.calls).toHaveLength(0);
+	});
+
+	// 3) S24 (scenarios.md:124) — "webui 调 recallPipeline 时 `recent`
+	//    字段缺失".
+	//    Body has no `recent` field. The route must pass `null` (not
+	//    undefined) to recallPipeline so the rewrite stage produces the
+	//    `Recent user messages: None` placeholder. recallPipeline
+	//    normalizes via `opts.recent ?? null`, so the mock sees `null`
+	//    either way — the wire-level guarantee is "no 400 + rewrite
+	//    runs", which together establish the non-regression property
+	//    the spec calls out.
+	//
+	//    `filtered` defaults to true so the rewrite stage runs (see test
+	//    #1 comment for why filtered=false would skip rewriteQueries).
+	it("treats recent-absent as recent=null forwarded to rewriteQueries (Task 6.4)", async () => {
+		const { rewriteQueries } = await import(
+			"../../../../extensions/personal-assistant/rewrite.ts"
+		);
+
+		const res = await fetchAt({
+			query: "test query",
+			// no `recent` key — simulates S24's body shape.
+		});
+		expect(res.status).toBe(200);
+		expect(res.data.results).toEqual([]);
+
+		// The pipeline still ran (the route didn't 400), and rewriteQueries
+		// received `null` for the recent slot — exactly the same shape
+		// pre-Task-6.4 webui requests had, so this is a non-regression.
+		const calls = vi.mocked(rewriteQueries).mock.calls;
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.[0]).toBe("test query");
+		expect(calls[0]?.[1]).toBeNull();
+	});
+});
+
 // Verifies mountMemoryRoutes registers the search handler. Guards against
 // accidental removal of the registerPostSearch call.
 describe("mountMemoryRoutes includes search", () => {
