@@ -190,4 +190,13 @@ describe("bedrock endpoint resolution", () => {
 		expect(config.token).toEqual({ token: "bedrock-api-key" });
 		expect(config.authSchemePreference).toEqual(["httpBearerAuth"]);
 	});
+
+	it("does not use the ambient AWS auth marker as a bearer token", async () => {
+		const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+
+		const config = await captureClientConfig(model, { apiKey: "<authenticated>" });
+
+		expect(config.token).toBeUndefined();
+		expect(config.authSchemePreference).toBeUndefined();
+	});
 });

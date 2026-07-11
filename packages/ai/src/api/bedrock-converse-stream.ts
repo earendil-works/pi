@@ -101,6 +101,7 @@ export interface BedrockOptions extends StreamOptions {
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+const AMBIENT_AUTH_MARKER = "<authenticated>";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -153,7 +154,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
 		const bearerToken =
 			options.bearerToken ||
-			options.apiKey ||
+			(options.apiKey !== AMBIENT_AUTH_MARKER ? options.apiKey : undefined) ||
 			getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) ||
 			undefined;
 		const useBearerToken = bearerToken !== undefined && !skipAuth;
