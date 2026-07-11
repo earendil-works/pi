@@ -1809,6 +1809,136 @@ describe("POST /api/memory/search", () => {
 			restore();
 		}
 	});
+
+	// Task 6.3 — webui topK default 20 (was 10).
+	//
+	// Verifies that when the request body omits `topK`, the route's
+	// parseInt+clamp logic defaults to 20 (matching the TUI default
+	// per design.md § Decisions § 9) and that value propagates
+	// through `recallPipeline` → `hybridSearch` into the outgoing
+	// POST /api/search body as `top_k: 20`. The existing
+	// `registerPostSearch input validation` block only asserts
+	// `status === 200`, which would silently hide a default-10
+	// regression — this test pins the actual propagated value.
+	//
+	// The shared `mockRecallEndpoints` helper above discards the
+	// outgoing body, so we roll a focused fetch spy that captures
+	// each /api/search body and short-circuits the embedding
+	// service. `/api/health` and `/api/rerank` are stubbed too
+	// because the route passes `embeddingServiceUrlProbe: true` and
+	// the rerank stage runs by default (filtered=true).
+	it("defaults topK=20 in the /api/search body when topK is omitted (Task 6.3)", async () => {
+		const searchBodies: Array<Record<string, unknown>> = [];
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.href
+							: String(url);
+				if (urlStr.includes("/api/search")) {
+					const body =
+						typeof init?.body === "string"
+							? init.body
+							: "{}";
+					searchBodies.push(JSON.parse(body) as Record<string, unknown>);
+					return new Response(
+						JSON.stringify({
+							query: "test",
+							atoms_count: 0,
+							results: [],
+						}),
+					);
+				}
+				if (urlStr.includes("/api/health")) {
+					return new Response("", { status: 200 });
+				}
+				if (urlStr.includes("/api/rerank")) {
+					return new Response(JSON.stringify({ scores: [] }));
+				}
+				return origFetch(url, init);
+			},
+		);
+
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "test",
+			});
+			expect(res.status).toBe(200);
+			// The mock rewriteQueries (top of file) returns exactly one
+			// subquery ([query]), so the pipeline should have issued
+			// exactly one /api/search request. The body's top_k must
+			// equal the design.md § Decisions § 9 default (20 — matches
+			// the TUI's recall pipeline default).
+			expect(searchBodies).toHaveLength(1);
+			const body = searchBodies[0] as Record<string, unknown>;
+			expect(body.top_k).toBe(20);
+			// Sanity: the query string survived through the pipeline.
+			expect(body.query).toBe("test");
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
+
+	// Companion to the test above. The route's topK parser must fall
+	// back to 20 when the value can't be coerced (parseInt returns
+	// NaN → Number.isFinite false → default 20), not propagate NaN
+	// or 400. The existing validation suite checks `status === 200`
+	// for this input; this pins the propagated value.
+	it("defaults topK=20 in the /api/search body when topK is non-numeric (Task 6.3)", async () => {
+		const searchBodies: Array<Record<string, unknown>> = [];
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.href
+							: String(url);
+				if (urlStr.includes("/api/search")) {
+					const body =
+						typeof init?.body === "string"
+							? init.body
+							: "{}";
+					searchBodies.push(JSON.parse(body) as Record<string, unknown>);
+					return new Response(
+						JSON.stringify({
+							query: "test",
+							atoms_count: 0,
+							results: [],
+						}),
+					);
+				}
+				if (urlStr.includes("/api/health")) {
+					return new Response("", { status: 200 });
+				}
+				if (urlStr.includes("/api/rerank")) {
+					return new Response(JSON.stringify({ scores: [] }));
+				}
+				return origFetch(url, init);
+			},
+		);
+
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "test",
+				topK: "not-a-number",
+				filtered: false,
+			});
+			expect(res.status).toBe(200);
+			// With filtered=false the pipeline runs one raw recall per
+			// subquery. Capture-then-assert on top_k to pin the
+			// non-numeric fallback.
+			expect(searchBodies.length).toBeGreaterThan(0);
+			const body = searchBodies[0] as Record<string, unknown>;
+			expect(body.top_k).toBe(20);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
 });
 
 // Verifies mountMemoryRoutes registers the search handler. Guards against
