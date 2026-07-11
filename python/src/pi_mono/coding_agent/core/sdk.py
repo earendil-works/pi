@@ -39,6 +39,7 @@ from pi_mono.coding_agent.core.resource_loader import (
     DefaultResourceLoaderOptions,
     ResourceLoader,
 )
+from pi_mono.coding_agent.core.provider_attribution import merge_provider_attribution_headers
 from pi_mono.coding_agent.core.extensions.runner import ExtensionRunner
 from pi_mono.coding_agent.core.tools import ToolName
 from pi_mono.utils.paths import resolve_path
@@ -260,9 +261,18 @@ async def create_agent_session(
         }
         if merged_env:
             merged_options["env"] = merged_env
-        headers = auth.get("headers")
+        headers = merge_provider_attribution_headers(
+            selected_model,
+            settings_manager,
+            session_manager.get_session_id(),
+            auth.get("headers"),
+            (stream_options or {}).get("headers"),
+        )
+        runner = extension_runner_ref[0]
+        if runner is not None and runner.has_handlers("before_provider_headers"):
+            headers = await runner.emit_before_provider_headers(headers or {})
         if headers:
-            merged_options["headers"] = {**(merged_options.get("headers") or {}), **headers}
+            merged_options["headers"] = headers
 
         async def on_payload(payload: Any, _model: Model[Any]) -> Any:
             runner = extension_runner_ref[0]

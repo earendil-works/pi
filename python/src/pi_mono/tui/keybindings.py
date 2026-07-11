@@ -45,7 +45,9 @@ TUI_KEYBINDINGS: Dict[str, KeybindingDefinition] = {
     "tui.editor.yank": KeybindingDefinition("ctrl+y", "Yank"),
     "tui.editor.yankPop": KeybindingDefinition("alt+y", "Yank pop"),
     "tui.editor.undo": KeybindingDefinition("ctrl+-", "Undo"),
-    "tui.input.newLine": KeybindingDefinition("shift+enter", "Insert newline"),
+    "tui.input.newLine": KeybindingDefinition(
+        ["shift+enter", "ctrl+j"], "Insert newline"
+    ),
     "tui.input.submit": KeybindingDefinition("enter", "Submit input"),
     "tui.input.tab": KeybindingDefinition("tab", "Tab / autocomplete"),
     "tui.input.copy": KeybindingDefinition("ctrl+c", "Copy selection"),

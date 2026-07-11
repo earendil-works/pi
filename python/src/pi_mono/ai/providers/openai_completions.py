@@ -1070,7 +1070,9 @@ def convert_messages(
                 tool_result_msg: Dict[str, Any] = {
                     "role": "tool",
                     "content": sanitize_surrogates(
-                        text_result if has_text else "(see attached image)"
+                        text_result
+                        if has_text
+                        else ("(see attached image)" if has_images else "(no tool output)")
                     ),
                     "tool_call_id": tool_msg.get("toolCallId"),
                 }

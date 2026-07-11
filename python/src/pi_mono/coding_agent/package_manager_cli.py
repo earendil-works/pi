@@ -21,6 +21,7 @@ from pi_mono.config import (
     get_self_update_command,
     get_self_update_unavailable_instruction,
 )
+from pi_mono.coding_agent.cli.project_trust import bootstrap_project_trusted
 from pi_mono.coding_agent.core.package_manager import DefaultPackageManager
 from pi_mono.core.settings_manager import SettingsManager
 from pi_mono.utils.version_check import get_latest_pi_release, is_newer_package_version
@@ -28,6 +29,8 @@ from pi_mono.utils.windows_self_update import (
     cleanup_windows_self_update_quarantine,
     quarantine_windows_native_dependencies,
 )
+
+CONFIG_COMMAND_USAGE = f"{APP_NAME} config [-l] [--approve|--no-approve]"
 
 PackageCommand = Literal["install", "remove", "update", "list"]
 UpdateTargetType = Literal["all", "self", "extensions"]
@@ -326,6 +329,91 @@ def _report_settings_errors(settings_manager: SettingsManager, context: str) -> 
             import traceback
 
             print(traceback.format_exc(), file=sys.stderr)
+
+
+def _print_config_command_help() -> None:
+    print(
+        f"""{CONFIG_COMMAND_USAGE}
+
+Open the interactive resource config UI.
+
+Without -l, starts in global settings.
+Press Tab in the TUI to switch between global and project-local modes.
+
+Options:
+  -l, --local       Edit project overrides
+  -a, --approve     Trust project-local files for this command with -l
+  -na, --no-approve Ignore project-local files for this command with -l
+"""
+    )
+
+
+async def handle_config_command(args: list[str]) -> bool:
+    if not args or args[0] != "config":
+        return False
+
+    rest = args[1:]
+    if "-h" in rest or "--help" in rest:
+        _print_config_command_help()
+        return True
+
+    local = False
+    project_trust_override: bool | None = None
+    for arg in rest:
+        if arg in ("-l", "--local"):
+            local = True
+        elif arg in ("-a", "--approve"):
+            project_trust_override = True
+        elif arg in ("-na", "--no-approve"):
+            project_trust_override = False
+        elif arg.startswith("-"):
+            print(f'Unknown option {arg} for "config".', file=sys.stderr)
+            print(f'Use "{APP_NAME} --help" or "{CONFIG_COMMAND_USAGE}".', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"Unexpected argument {arg}.", file=sys.stderr)
+            print(f"Usage: {CONFIG_COMMAND_USAGE}", file=sys.stderr)
+            sys.exit(1)
+
+    cwd = os.getcwd()
+    agent_dir = str(get_agent_dir())
+    project_trusted = bootstrap_project_trusted(
+        cwd=cwd,
+        agent_dir=agent_dir,
+        trust_override=project_trust_override,
+    )
+    if local and not project_trusted:
+        print(
+            "Project is not trusted. Use --approve to modify local resource config.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=project_trusted)
+    _report_settings_errors(settings_manager, "config command")
+    global_settings = SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    global_resolved = await DefaultPackageManager(
+        cwd=cwd, agent_dir=agent_dir, settings_manager=global_settings
+    ).resolve()
+    project_resolved = (
+        await DefaultPackageManager(
+            cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager
+        ).resolve()
+        if settings_manager.is_project_trusted()
+        else global_resolved
+    )
+
+    from pi_mono.coding_agent.cli.config_selector import select_config
+
+    await select_config(
+        cwd=cwd,
+        agent_dir=agent_dir,
+        settings_manager=settings_manager,
+        resolved_paths={"global": global_resolved, "project": project_resolved},
+        write_scope="project" if local else "global",
+        project_mode_available=settings_manager.is_project_trusted(),
+    )
+    raise SystemExit(0)
 
 
 async def handle_package_command(args: list[str]) -> bool:

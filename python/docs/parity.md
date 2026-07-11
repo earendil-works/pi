@@ -28,7 +28,8 @@ This document tracks behavioral parity between the TypeScript packages (`package
 | Print mode (`-p`, `--print`) | **Match** | Text and JSON output |
 | JSON event mode (`--mode json`) | **Match** | |
 | RPC mode (`--mode rpc`) | **Match** | Preflight prompt semantics, `get_commands`, `parentSession` aligned with TS |
-| Interactive TUI | **Partial** | `/model`, `/settings`, `/sessions`, `/tree`, `/scoped-models`, and extension UI use editor-area selectors; model search ranking aligned with TS; extension dialogs support timeout countdown |
+| Interactive TUI | **Partial** | `/model`, `/settings`, `/sessions`, `/tree`, `/scoped-models`, and extension UI use editor-area selectors; model search ranking aligned with TS; extension dialogs support timeout countdown; paste markers + Ctrl+J newline |
+| `pi config` | **Match** | `-l` project-local scope, Tab switch, `--approve`/`--no-approve` |
 | Session fork / resume / import | **Match** | |
 | `pi update` self-update | **Partial** | CLI flags present; install path depends on distribution method; version-check failures skip update instead of forcing it |
 | Export HTML / share | **Partial** | Export exists; share flow lighter than TS |
@@ -49,8 +50,9 @@ This document tracks behavioral parity between the TypeScript packages (`package
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Python extension loader | **Match** | `.py` extensions via `default(pi)` factory |
-| Event hooks (`session_start`, `input`, etc.) | **Match** | Includes `api.exec()` for extensions |
+| Event hooks (`session_start`, `input`, etc.) | **Match** | Includes `agent_settled`, `before_provider_headers`, `api.exec()` |
 | Tool registration | **Match** | |
+| Entry / message renderers | **Match** | Display-only custom entries via `register_entry_renderer` |
 | Shortcut registration + conflict detection | **Match** | |
 | Extension UI (select/confirm/input/notify) | **Match** | Interactive + RPC bridge |
 | TypeScript extension runtime | **Diverge** | Python port runs `.py` extensions only; TS extensions are not executed |

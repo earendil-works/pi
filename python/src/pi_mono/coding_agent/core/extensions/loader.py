@@ -133,6 +133,10 @@ class _ExtensionAPI:
         self._runtime.assert_active()
         self._extension.message_renderers[custom_type] = renderer
 
+    def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
+        self._runtime.assert_active()
+        self._extension.entry_renderers[custom_type] = renderer
+
     def get_flag(self, name: str) -> bool | str | None:
         self._runtime.assert_active()
         if name not in self._extension.flags:

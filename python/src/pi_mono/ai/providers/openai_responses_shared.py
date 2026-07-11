@@ -247,7 +247,11 @@ def convert_responses_messages(
                         )
                 output = content_parts
             else:
-                output = sanitize_surrogates(text_result if has_text else "(see attached image)")
+                output = sanitize_surrogates(
+                    text_result
+                    if has_text
+                    else ("(see attached image)" if has_images else "(no tool output)")
+                )
 
             messages.append(
                 {

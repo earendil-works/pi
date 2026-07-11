@@ -354,6 +354,13 @@ class ExtensionRunner:
                 return renderer
         return None
 
+    def get_entry_renderer(self, custom_type: str) -> Any | None:
+        for extension in self._extensions:
+            renderer = extension.entry_renderers.get(custom_type)
+            if renderer is not None:
+                return renderer
+        return None
+
     def _resolve_registered_commands(self) -> list[ResolvedCommand]:
         commands: list[RegisteredCommand] = []
         counts: dict[str, int] = {}
@@ -716,6 +723,25 @@ class ExtensionRunner:
                         )
                     )
         return current_payload
+
+    async def emit_before_provider_headers(self, headers: dict[str, str]) -> dict[str, str]:
+        """Let extensions mutate per-request headers in place before the provider HTTP call."""
+        ctx = self.create_context()
+        for extension in self._extensions:
+            for handler in extension.handlers.get("before_provider_headers", []):
+                try:
+                    event = {"type": "before_provider_headers", "headers": headers}
+                    # Handlers mutate `headers` in place; the return value is ignored.
+                    await _maybe_await(handler(event, ctx))
+                except Exception as err:
+                    self.emit_error(
+                        ExtensionError(
+                            extension_path=extension.path,
+                            event="before_provider_headers",
+                            error=str(err),
+                        )
+                    )
+        return headers
 
     async def emit_before_agent_start(
         self,

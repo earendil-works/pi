@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import os
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -16,7 +15,7 @@ from pi_mono.coding_agent.core.tools.truncate import (
     formatSize,
     truncateHead,
 )
-from pi_mono.utils.image_resize import format_dimension_note, resize_image
+from pi_mono.utils.image_process import ProcessImageOptions, process_image
 from pi_mono.utils.mime import detect_supported_image_mime_type_from_file
 
 NON_VISION_IMAGE_NOTE = (
@@ -149,37 +148,28 @@ async def _read_image_content(
     model: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     non_vision_image_note = get_non_vision_image_note(model)
-    if auto_resize_images:
-        resized = resize_image(buffer, mime_type)
-        if resized is None:
-            text_note = (
-                f"Read image file [{mime_type}]\n"
-                "[Image omitted: could not be resized below the inline image size limit.]"
-            )
-            if non_vision_image_note:
-                text_note += f"\n{non_vision_image_note}"
-            return [{"type": "text", "text": text_note}]
-
-        dimension_note = format_dimension_note(resized)
-        text_note = f"Read image file [{resized.mime_type}]"
-        if dimension_note:
-            text_note += f"\n{dimension_note}"
+    processed = process_image(
+        buffer,
+        mime_type,
+        ProcessImageOptions(auto_resize_images=auto_resize_images),
+    )
+    if not processed.ok:
+        text_note = f"Read image file [{mime_type}]\n{processed.message}"
         if non_vision_image_note:
             text_note += f"\n{non_vision_image_note}"
-        return [
-            {"type": "text", "text": text_note},
-            {"type": "image", "data": resized.data, "mimeType": resized.mime_type},
-        ]
+        return [{"type": "text", "text": text_note}]
 
-    text_note = f"Read image file [{mime_type}]"
+    text_note = f"Read image file [{processed.mime_type}]"
+    for hint in processed.hints or []:
+        text_note += f"\n{hint}"
     if non_vision_image_note:
         text_note += f"\n{non_vision_image_note}"
     return [
         {"type": "text", "text": text_note},
         {
             "type": "image",
-            "data": base64.b64encode(buffer).decode("ascii"),
-            "mimeType": mime_type,
+            "data": processed.data,
+            "mimeType": processed.mime_type,
         },
     ]
 
@@ -227,7 +217,7 @@ def create_read_tool(cwd: str, options: ReadToolOptions | None = None) -> AgentT
         label = "read"
         description = (
             f"Read the contents of a file. Supports text files and images "
-            f"(jpg, png, gif, webp). Images are sent as attachments. For text files, "
+            f"(jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, "
             f"output is truncated to {DEFAULT_MAX_LINES} lines or "
             f"{DEFAULT_MAX_BYTES // 1024}KB (whichever is hit first). Use offset/limit "
             f"for large files."

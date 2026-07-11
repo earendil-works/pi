@@ -217,10 +217,7 @@ class AuthStorage:
     def parse_storage_data(self, content: Optional[str]) -> Dict[str, Any]:
         if not content:
             return {}
-        try:
-            return json.loads(content)
-        except Exception:
-            return {}
+        return json.loads(content)
 
     def reload(self) -> None:
         try:
@@ -231,9 +228,17 @@ class AuthStorage:
             self.load_error = e
             self.record_error(e)
 
-    def _persist_provider_change(self, provider: str, credential: Optional[Dict[str, Any]]) -> None:
+    def _persist_provider_change(self, provider: str, credential: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if self.load_error:
-            return
+            self.reload()
+
+        if self.load_error:
+            error = RuntimeError(
+                f"Cannot update auth storage because it could not be loaded: {self.load_error}"
+            )
+            self.record_error(error)
+            raise error
+
         try:
 
             def update_fn(current: Optional[str]) -> Dict[str, Any]:
@@ -243,11 +248,14 @@ class AuthStorage:
                     merged[provider] = credential
                 else:
                     merged.pop(provider, None)
-                return {"result": None, "next": json.dumps(merged, indent=2)}
+                return {"result": merged, "next": json.dumps(merged, indent=2)}
 
-            self.storage.with_lock(update_fn)
+            persisted = self.storage.with_lock(update_fn)
+            self.load_error = None
+            return cast(Dict[str, Any], persisted) if isinstance(persisted, dict) else {}
         except Exception as e:
             self.record_error(e)
+            raise
 
     def get(self, provider: str) -> Optional[Dict[str, Any]]:
         return self.data.get(provider)
@@ -261,12 +269,10 @@ class AuthStorage:
         return None
 
     def set(self, provider: str, credential: Dict[str, Any]) -> None:
-        self.data[provider] = credential
-        self._persist_provider_change(provider, credential)
+        self.data = self._persist_provider_change(provider, credential)
 
     def remove(self, provider: str) -> None:
-        self.data.pop(provider, None)
-        self._persist_provider_change(provider, None)
+        self.data = self._persist_provider_change(provider, None)
 
     def list(self) -> List[str]:
         return list(self.data.keys())

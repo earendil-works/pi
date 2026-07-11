@@ -29,6 +29,7 @@ from pi_mono.agent.types import AgentEvent, AgentMessage, AgentTool, ThinkingLev
 from pi_mono.ai.models import clamp_thinking_level, get_supported_thinking_levels, models_are_equal
 from pi_mono.ai.types import AssistantMessage, ImageContent, Model
 from pi_mono.ai.utils.overflow import is_context_overflow
+from pi_mono.ai.utils.retry import is_retryable_assistant_error
 from pi_mono.core.session_cwd import assert_session_cwd_exists
 from pi_mono.core.defaults import DEFAULT_THINKING_LEVEL
 from pi_mono.coding_agent.core.bash_executor import (
@@ -162,6 +163,15 @@ class AgentSessionEventAutoRetryEnd(TypedDict):
     finalError: str | None
 
 
+class AgentSessionEventAgentSettled(TypedDict):
+    type: Literal["agent_settled"]
+
+
+class AgentSessionEventEntryAppended(TypedDict):
+    type: Literal["entry_appended"]
+    entry: dict[str, Any]
+
+
 AgentSessionEvent = (
     AgentEvent
     | AgentSessionEventQueueUpdate
@@ -171,6 +181,8 @@ AgentSessionEvent = (
     | AgentSessionEventCompactionEnd
     | AgentSessionEventAutoRetryStart
     | AgentSessionEventAutoRetryEnd
+    | AgentSessionEventAgentSettled
+    | AgentSessionEventEntryAppended
 )
 
 AgentSessionEventListener = Callable[[AgentSessionEvent], None]
@@ -297,6 +309,8 @@ class AgentSession:
         self._excluded_tool_names = set(config.excluded_tool_names or [])
         self._tool_registry: dict[str, AgentTool] = {}
         self._tool_prompt_snippets: dict[str, str] = {}
+        self._is_agent_run_active = False
+        self._idle_wait_future: asyncio.Future[None] | None = None
 
         tools = _resolve_tools(
             config.cwd,
@@ -327,7 +341,11 @@ class AgentSession:
 
     @property
     def is_streaming(self) -> bool:
-        return self.agent.state.isStreaming
+        return self._is_agent_run_active
+
+    @property
+    def is_idle(self) -> bool:
+        return not self._is_agent_run_active
 
     @property
     def system_prompt(self) -> str:
@@ -418,6 +436,29 @@ class AgentSession:
                 "followUp": list(self._follow_up_messages),
             }
         )
+
+    def _get_idle_wait_future(self) -> asyncio.Future[None]:
+        loop = asyncio.get_running_loop()
+        if self._idle_wait_future is None or self._idle_wait_future.done():
+            self._idle_wait_future = loop.create_future()
+        return self._idle_wait_future
+
+    def _resolve_idle_wait_if_idle(self) -> None:
+        if self._is_agent_run_active or self._idle_wait_future is None:
+            return
+        if not self._idle_wait_future.done():
+            self._idle_wait_future.set_result(None)
+        self._idle_wait_future = None
+
+    async def _emit_agent_settled(self) -> None:
+        self._is_agent_run_active = False
+        try:
+            runner = self._extension_runner
+            if runner is not None:
+                await runner.emit({"type": "agent_settled"})
+            self._emit({"type": "agent_settled"})
+        finally:
+            self._resolve_idle_wait_if_idle()
 
     async def _handle_agent_event_with_signal(self, event: AgentEvent, _signal: AbortSignal) -> None:
         await self._handle_agent_event_async(event)
@@ -858,7 +899,9 @@ class AgentSession:
             self._bash_abort_controller.abort()
 
     async def wait_for_idle(self) -> None:
-        await self.agent.waitForIdle()
+        if self.is_idle:
+            return
+        await self._get_idle_wait_future()
 
     async def abort(self) -> None:
         self.agent.abort()
@@ -1651,31 +1694,13 @@ class AgentSession:
         if self._retry_abort_controller is not None:
             self._retry_abort_controller.abort()
 
-    def _is_non_retryable_provider_limit_error(self, error_message: str) -> bool:
-        return bool(
-            re.search(
-                r"GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient.?credits|insufficient_quota|out of budget|quota exceeded|billing|error code: 402|'code': 402",
-                error_message,
-                re.IGNORECASE,
-            )
-        )
-
     def _is_retryable_error(self, message: AssistantMessage) -> bool:
         if message.get("stopReason") != "error" or not message.get("errorMessage"):
             return False
         context_window = (self.model or {}).get("contextWindow", 0)
         if is_context_overflow(message, context_window):
             return False
-        error_message = str(message.get("errorMessage", ""))
-        if self._is_non_retryable_provider_limit_error(error_message):
-            return False
-        return bool(
-            re.search(
-                r"overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|http2 request did not get a response|timed? out|timeout|terminated|retry delay",
-                error_message,
-                re.IGNORECASE,
-            )
-        )
+        return is_retryable_assistant_error(message)
 
     def _will_retry_after_agent_end(self, event: AgentEvent) -> bool:
         settings = self.settings_manager.get_retry_settings()
@@ -1942,9 +1967,13 @@ class AgentSession:
             messages.extend(self._pending_next_turn_messages)
             self._pending_next_turn_messages = []
 
-        await self.agent.prompt(messages if len(messages) > 1 else messages[0])
-        while await self._handle_post_agent_run():
-            await self.agent.continue_run()
+        self._is_agent_run_active = True
+        try:
+            await self.agent.prompt(messages if len(messages) > 1 else messages[0])
+            while await self._handle_post_agent_run():
+                await self.agent.continue_run()
+        finally:
+            await self._emit_agent_settled()
 
     async def prompt(self, text: str, options: PromptOptions | None = None) -> None:
         opts = options or PromptOptions()
@@ -2014,12 +2043,9 @@ class AgentSession:
             if last_assistant and await self._check_compaction(
                 last_assistant, skip_aborted_check=False
             ):
-                try:
-                    await self.agent.continue_run()
-                    while await self._handle_post_agent_run():
-                        await self.agent.continue_run()
-                finally:
-                    pass
+                # Compaction already ran; the user's new prompt is sent below.
+                # Do not continue the agent here (matches TS).
+                pass
 
             user_content: list[Any] = [{"type": "text", "text": expanded_text}]
             if current_images:
@@ -2163,9 +2189,7 @@ class AgentSession:
             send_user_message=lambda content, options=None: asyncio.create_task(
                 self._send_user_message_safe(content, options)
             ),
-            append_entry=lambda custom_type, data=None: self.session_manager.append_custom_entry(
-                custom_type, data
-            ),
+            append_entry=self._append_entry_from_extension,
             set_session_name=self.set_session_name,
             get_session_name=lambda: self.session_manager.get_session_name(),
             set_label=lambda entry_id, label: self.session_manager.append_label_change(
@@ -2188,6 +2212,12 @@ class AgentSession:
             await self.send_custom_message(message, options)
         except Exception as error:
             self._extension_runtime_error("send_message", error)
+
+    def _append_entry_from_extension(self, custom_type: str, data: Any = None) -> None:
+        entry_id = self.session_manager.append_custom_entry(custom_type, data)
+        entry = self.session_manager.get_entry(entry_id)
+        if entry is not None:
+            self._emit({"type": "entry_appended", "entry": entry})
 
     async def _send_user_message_safe(
         self, content: str | list[dict[str, Any]], options: dict[str, Any] | None
@@ -2226,7 +2256,7 @@ class AgentSession:
 
         return ExtensionContextActions(
             get_model=lambda: self.model,
-            is_idle=lambda: not self.is_streaming,
+            is_idle=lambda: self.is_idle,
             get_signal=lambda: self.agent.signal,
             abort=abort,
             has_pending_messages=lambda: self.pending_message_count > 0,

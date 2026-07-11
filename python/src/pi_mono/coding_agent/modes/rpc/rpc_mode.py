@@ -469,8 +469,7 @@ class RpcMode:
         self._unsubscribe_backpressure = self._session.agent.subscribe(backpressure_listener)
 
     async def _wait_for_idle(self) -> None:
-        while self._session.is_streaming:
-            await asyncio.sleep(0.05)
+        await self._session.wait_for_idle()
 
     async def handle_command(self, command: RpcCommand) -> RpcResponse | None:
         command_id = command.get("id")  # type: ignore[union-attr]

@@ -200,11 +200,14 @@ class _PollOptions:
         expires_in_seconds: int,
         poll: Callable[[], Any],
         signal: Any | None = None,
+        *,
+        wait_before_first_poll: bool = False,
     ) -> None:
         self.intervalSeconds = interval_seconds
         self.expiresInSeconds = expires_in_seconds
         self.poll = poll
         self.signal = signal
+        self.waitBeforeFirstPoll = wait_before_first_poll
 
 
 async def _poll_for_github_access_token(
@@ -243,14 +246,24 @@ async def _poll_for_github_access_token(
             if error == "authorization_pending":
                 return {"status": "pending"}
             if error == "slow_down":
-                return {"status": "slow_down"}
+                interval = raw.get("interval")
+                result: dict[str, Any] = {"status": "slow_down"}
+                if isinstance(interval, (int, float)) and interval > 0:
+                    result["intervalSeconds"] = int(interval)
+                return result
             suffix = f": {description}" if description else ""
             return {"status": "failed", "message": f"Device flow failed: {error}{suffix}"}
 
         return {"status": "failed", "message": "Invalid device token response"}
 
     return await poll_oauth_device_code_flow(
-        _PollOptions(device.interval, device.expires_in, poll, signal)
+        _PollOptions(
+            device.interval,
+            device.expires_in,
+            poll,
+            signal,
+            wait_before_first_poll=True,
+        )
     )
 
 

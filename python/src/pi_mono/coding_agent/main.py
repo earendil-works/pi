@@ -30,7 +30,7 @@ from pi_mono.coding_agent.modes.interactive.interactive_mode import (
 )
 from pi_mono.coding_agent.modes.print_mode import PrintModeOptions, run_print_mode
 from pi_mono.coding_agent.modes.rpc.rpc_mode import run_rpc_mode
-from pi_mono.coding_agent.package_manager_cli import handle_package_command
+from pi_mono.coding_agent.package_manager_cli import handle_config_command, handle_package_command
 from pi_mono.core.auth_storage import AuthStorage
 from pi_mono.core.model_registry import ModelRegistry
 from pi_mono.core.session_manager import (
@@ -428,13 +428,9 @@ async def main(args: list[str] | None = None, options: MainOptions | None = None
             return
 
     if argv and argv[0] == "config":
-        from pi_mono.coding_agent.cli.config_selector import select_config
-
-        cwd = os.getcwd()
-        agent_dir = str(get_agent_dir())
-        settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=False)
-        await select_config(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager)
-        return
+        handled = await handle_config_command(argv)
+        if handled:
+            return
 
     offline_mode = "--offline" in argv or _is_truthy_env_flag(os.environ.get("PI_OFFLINE"))
     if offline_mode:

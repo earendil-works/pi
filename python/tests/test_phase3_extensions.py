@@ -261,6 +261,60 @@ def test_emit_before_provider_request(tmp_path):
     asyncio.run(run())
 
 
+def test_emit_before_provider_headers(tmp_path):
+    ext_dir = _write_extension(
+        tmp_path,
+        "headers",
+        """
+        def on_before_headers(event, ctx):
+            event["headers"]["x-trace"] = "1"
+        pi.on("before_provider_headers", on_before_headers)
+        """,
+    )
+
+    async def run() -> None:
+        load_result = await discover_and_load_extensions([ext_dir], cwd=str(tmp_path))
+        runner = ExtensionRunner(
+            load_result.extensions,
+            load_result.runtime,
+            str(tmp_path),
+            SessionManager.in_memory(str(tmp_path)),
+            ModelRegistry.in_memory(AuthStorage.create()),
+        )
+        assert runner.has_handlers("before_provider_headers")
+        headers = await runner.emit_before_provider_headers({"Authorization": "Bearer x"})
+        assert headers == {"Authorization": "Bearer x", "x-trace": "1"}
+
+    asyncio.run(run())
+
+
+def test_register_entry_renderer(tmp_path):
+    ext_dir = _write_extension(
+        tmp_path,
+        "entry",
+        """
+        def render_note(entry, options, theme):
+            return f"note:{entry.get('data')}"
+        pi.register_entry_renderer("note", render_note)
+        """,
+    )
+
+    async def run() -> None:
+        load_result = await discover_and_load_extensions([ext_dir], cwd=str(tmp_path))
+        runner = ExtensionRunner(
+            load_result.extensions,
+            load_result.runtime,
+            str(tmp_path),
+            SessionManager.in_memory(str(tmp_path)),
+            ModelRegistry.in_memory(AuthStorage.create()),
+        )
+        renderer = runner.get_entry_renderer("note")
+        assert renderer is not None
+        assert renderer({"customType": "note", "data": "hi"}, {"expanded": False}, None) == "note:hi"
+
+    asyncio.run(run())
+
+
 def test_get_shortcuts_skips_builtin_conflicts(tmp_path):
     ext_dir = _write_extension(
         tmp_path,

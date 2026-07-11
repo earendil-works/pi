@@ -289,7 +289,7 @@ class RpcClient:
         future: asyncio.Future[None] = loop.create_future()
 
         def on_event(event: AgentEvent) -> None:
-            if event.get("type") == "agent_end" and not future.done():
+            if event.get("type") == "agent_settled" and not future.done():
                 future.set_result(None)
 
         unsubscribe = self.on_event(on_event)
@@ -309,7 +309,7 @@ class RpcClient:
 
         def on_event(event: AgentEvent) -> None:
             events.append(event)
-            if event.get("type") == "agent_end" and not future.done():
+            if event.get("type") == "agent_settled" and not future.done():
                 future.set_result(list(events))
 
         unsubscribe = self.on_event(on_event)

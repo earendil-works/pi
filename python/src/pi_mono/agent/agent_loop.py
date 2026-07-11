@@ -205,9 +205,17 @@ async def run_loop(
             tool_results: List[ToolResultMessage] = []
             has_more_tool_calls = False
             if len(tool_calls) > 0:
-                executed_batch = await execute_tool_calls(
-                    current_context, message, tool_calls, config, signal, emit
-                )
+                # A "length" stop means the output was cut off by the token limit, so
+                # every tool call in the message may carry truncated arguments. Fail
+                # them all instead of executing potentially borked calls.
+                if message.get("stopReason") == "length":
+                    executed_batch = await fail_tool_calls_from_truncated_message(
+                        tool_calls, emit
+                    )
+                else:
+                    executed_batch = await execute_tool_calls(
+                        current_context, message, tool_calls, config, signal, emit
+                    )
                 tool_results.extend(executed_batch["messages"])
                 has_more_tool_calls = not executed_batch["terminate"]
 
@@ -411,6 +419,44 @@ async def stream_assistant_response(
 class ExecutedToolCallBatch(TypedDict):
     messages: List[ToolResultMessage]
     terminate: bool
+
+
+async def fail_tool_calls_from_truncated_message(
+    tool_calls: List[AgentToolCall],
+    emit: AgentEventSink,
+) -> ExecutedToolCallBatch:
+    """Fail all tool calls from an assistant message truncated by the output token limit.
+
+    Streamed tool-call arguments are finalized with a best-effort JSON salvage parser,
+    so a truncated message can yield tool calls whose arguments parse and validate but
+    are silently incomplete. None of them are safe to execute.
+    """
+    messages: List[ToolResultMessage] = []
+    for tool_call in tool_calls:
+        await maybe_await(
+            emit(
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": tool_call["id"],
+                    "toolName": tool_call["name"],
+                    "args": tool_call.get("arguments"),
+                }
+            )
+        )
+        finalized = {
+            "toolCall": tool_call,
+            "result": create_error_tool_result(
+                f'Tool call "{tool_call["name"]}" was not executed: the response hit '
+                "the output token limit, so its arguments may be truncated. "
+                "Re-issue the tool call with complete arguments."
+            ),
+            "isError": True,
+        }
+        await emit_tool_execution_end(finalized, emit)
+        tool_result_message = create_tool_result_message(finalized)
+        await emit_tool_result_message(tool_result_message, emit)
+        messages.append(tool_result_message)
+    return {"messages": messages, "terminate": False}
 
 
 async def execute_tool_calls(

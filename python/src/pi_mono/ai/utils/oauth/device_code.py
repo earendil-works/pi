@@ -1,6 +1,9 @@
 """OAuth device code flow polling utilities."""
 
+from __future__ import annotations
+
 import asyncio
+import time
 from typing import Any, Awaitable, Callable, Generic, Protocol, TypeVar
 
 T = TypeVar("T")
@@ -13,7 +16,9 @@ SLOW_DOWN_TIMEOUT_MESSAGE = (
     "Please sync or restart the VM clock and try again."
 )
 MINIMUM_INTERVAL_MS = 1000
+# RFC 8628 section 3.2: if the authorization server omits `interval`, use 5 seconds.
 DEFAULT_POLL_INTERVAL_SECONDS = 5
+# RFC 8628 section 3.5: `slow_down` means the polling interval must increase by 5 seconds.
 SLOW_DOWN_INTERVAL_INCREMENT_MS = 5000
 
 
@@ -30,50 +35,39 @@ class OAuthDeviceCodePollResult(OAuthDeviceCodeIncompletePollResult, Generic[T],
 class OAuthDeviceCodePollOptions(Protocol):
     intervalSeconds: int | None
     expiresInSeconds: int | None
+    waitBeforeFirstPoll: bool | None
     poll: Callable[[], Awaitable[OAuthDeviceCodePollResult[Any]]]
     signal: Any  # AbortSignal
 
 
 async def abortable_sleep(ms: int, signal: Any | None, cancel_message: str) -> None:
     """Sleep with abort signal support."""
-    if signal and signal.get("aborted", False):
+    if signal is not None and getattr(signal, "aborted", False):
         raise RuntimeError(cancel_message)
 
-    future = {
-        "done": False,
-        "resolve": None,
-        "reject": None,
-    }  # type: dict[str, Any]
+    done = asyncio.Event()
 
     def on_abort() -> None:
-        if future["reject"] and not future["done"]:
-            future["done"] = True
-            future["reject"](RuntimeError(cancel_message))
+        done.set()
 
-    if signal:
+    if signal is not None and hasattr(signal, "add_event_listener"):
         signal.add_event_listener("abort", on_abort)
-
-    async def sleep_task() -> None:
+    try:
         try:
-            await asyncio.sleep(ms / 1000)
-            if not future["done"]:
-                future["done"] = True
-                future["resolve"](None)
-        except asyncio.CancelledError:
-            if not future["done"]:
-                future["done"] = True
-                future["reject"](RuntimeError(cancel_message))
-
-    await sleep_task()
+            await asyncio.wait_for(done.wait(), timeout=max(0, ms) / 1000)
+        except TimeoutError:
+            return
+        raise RuntimeError(cancel_message)
+    finally:
+        if signal is not None and hasattr(signal, "remove_event_listener"):
+            signal.remove_event_listener("abort", on_abort)
 
 
 async def poll_oauth_device_code_flow(options: OAuthDeviceCodePollOptions) -> Any:
-    """
-    Poll OAuth device code flow with exponential backoff and slow_down handling.
-    """
+    """Poll OAuth device code flow with backoff and slow_down handling."""
     expires_in = getattr(options, "expiresInSeconds", None)
     deadline = (
-        int(__import__("time").time() * 1000) + expires_in * 1000
+        int(time.time() * 1000) + int(expires_in) * 1000
         if expires_in is not None
         else float("inf")
     )
@@ -85,15 +79,17 @@ async def poll_oauth_device_code_flow(options: OAuthDeviceCodePollOptions) -> An
 
     signal = getattr(options, "signal", None)
     poll_fn = getattr(options, "poll", None)
+    wait_before_first = bool(getattr(options, "waitBeforeFirstPoll", False))
 
     slow_down_responses = 0
 
-    while True:
-        now = int(__import__("time").time() * 1000)
-        if now >= deadline:
-            break
+    if wait_before_first:
+        remaining_ms = deadline - int(time.time() * 1000)
+        if remaining_ms > 0:
+            await abortable_sleep(min(interval_ms, int(remaining_ms)), signal, CANCEL_MESSAGE)
 
-        if signal and signal.get("aborted", False):
+    while int(time.time() * 1000) < deadline:
+        if signal is not None and getattr(signal, "aborted", False):
             raise RuntimeError(CANCEL_MESSAGE)
 
         if poll_fn is None:
@@ -109,9 +105,21 @@ async def poll_oauth_device_code_flow(options: OAuthDeviceCodePollOptions) -> An
 
         if result.get("status") == "slow_down":
             slow_down_responses += 1
-            interval_ms = max(MINIMUM_INTERVAL_MS, interval_ms + SLOW_DOWN_INTERVAL_INCREMENT_MS)
+            # Prefer server-provided interval when given (GitHub reports the new
+            # required minimum in `interval`); otherwise apply RFC 8628 +5s.
+            server_interval = result.get("intervalSeconds")
+            if (
+                isinstance(server_interval, (int, float))
+                and server_interval == server_interval  # not NaN
+                and server_interval > 0
+            ):
+                interval_ms = max(MINIMUM_INTERVAL_MS, int(server_interval * 1000))
+            else:
+                interval_ms = max(
+                    MINIMUM_INTERVAL_MS, interval_ms + SLOW_DOWN_INTERVAL_INCREMENT_MS
+                )
 
-        remaining_ms = deadline - int(__import__("time").time() * 1000)
+        remaining_ms = deadline - int(time.time() * 1000)
         if remaining_ms <= 0:
             break
 

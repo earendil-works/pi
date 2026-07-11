@@ -16,6 +16,8 @@ def detect_supported_image_mime_type(buffer: bytes | bytearray) -> str | None:
         return "image/gif"
     if _starts_with_ascii(data, 0, "RIFF") and _starts_with_ascii(data, 8, "WEBP"):
         return "image/webp"
+    if _starts_with_ascii(data, 0, "BM") and _is_bmp(data):
+        return "image/bmp"
     return None
 
 
@@ -47,6 +49,47 @@ def _is_animated_png(buffer: bytes) -> bool:
             return False
         offset = next_offset
     return False
+
+
+def _is_bmp(buffer: bytes) -> bool:
+    if len(buffer) < 26:
+        return False
+
+    declared_file_size = _read_uint32_le(buffer, 2)
+    pixel_data_offset = _read_uint32_le(buffer, 10)
+    dib_header_size = _read_uint32_le(buffer, 14)
+    if declared_file_size != 0 and declared_file_size < 26:
+        return False
+    if pixel_data_offset < 14 + dib_header_size:
+        return False
+    if declared_file_size != 0 and pixel_data_offset >= declared_file_size:
+        return False
+
+    if dib_header_size == 12:
+        color_planes = _read_uint16_le(buffer, 22)
+        bits_per_pixel = _read_uint16_le(buffer, 24)
+    elif 40 <= dib_header_size <= 124:
+        if len(buffer) < 30:
+            return False
+        color_planes = _read_uint16_le(buffer, 26)
+        bits_per_pixel = _read_uint16_le(buffer, 28)
+    else:
+        return False
+
+    return color_planes == 1 and bits_per_pixel in (1, 4, 8, 16, 24, 32)
+
+
+def _read_uint16_le(buffer: bytes, offset: int) -> int:
+    return buffer[offset] + (buffer[offset + 1] << 8)
+
+
+def _read_uint32_le(buffer: bytes, offset: int) -> int:
+    return (
+        buffer[offset]
+        + (buffer[offset + 1] << 8)
+        + (buffer[offset + 2] << 16)
+        + (buffer[offset + 3] << 24)
+    )
 
 
 def _read_uint32_be(buffer: bytes, offset: int) -> int:

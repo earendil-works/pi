@@ -454,7 +454,9 @@ def find_initial_model(
 
     if default_provider and default_model_id:
         found = model_registry.find(default_provider, default_model_id)
-        if found:
+        # Skip unauthenticated saved defaults so startup falls through to an
+        # available authenticated model (#6231).
+        if found and model_registry.has_configured_auth(found):
             thinking_level: ThinkingLevel = (
                 default_thinking_level or DEFAULT_THINKING_LEVEL  # type: ignore[assignment]
             )

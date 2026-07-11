@@ -21,6 +21,15 @@ ExtensionFactory = Callable[["ExtensionAPI"], Awaitable[None] | None]
 ExtensionHandler = Callable[[Any, "ExtensionContext"], Awaitable[Any] | Any]
 
 
+class BeforeProviderHeadersEvent(TypedDict):
+    type: Literal["before_provider_headers"]
+    headers: dict[str, str]
+
+
+class AgentSettledEvent(TypedDict):
+    type: Literal["agent_settled"]
+
+
 class ContextUsage(TypedDict):
     tokens: int | None
     contextWindow: int
@@ -173,6 +182,7 @@ class Extension:
     handlers: dict[str, list[HandlerFn]] = field(default_factory=dict)
     tools: dict[str, RegisteredTool] = field(default_factory=dict)
     message_renderers: dict[str, Callable[..., Any]] = field(default_factory=dict)
+    entry_renderers: dict[str, Callable[..., Any]] = field(default_factory=dict)
     commands: dict[str, RegisteredCommand] = field(default_factory=dict)
     flags: dict[str, ExtensionFlag] = field(default_factory=dict)
     shortcuts: dict[str, ExtensionShortcut] = field(default_factory=dict)
@@ -250,6 +260,7 @@ class ExtensionAPI(Protocol):
     def register_shortcut(self, shortcut: str, options: dict[str, Any]) -> None: ...
     def register_flag(self, name: str, options: dict[str, Any]) -> None: ...
     def register_message_renderer(self, custom_type: str, renderer: Any) -> None: ...
+    def register_entry_renderer(self, custom_type: str, renderer: Any) -> None: ...
     def get_flag(self, name: str) -> bool | str | None: ...
     def send_message(
         self, message: dict[str, Any], options: dict[str, Any] | None = None

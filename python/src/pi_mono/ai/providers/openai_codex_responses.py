@@ -170,6 +170,23 @@ def _build_base_codex_headers(
     return headers
 
 
+def _compress_request_body_zstd(body_json: str) -> bytes | None:
+    """Compress SSE request bodies with zstd when the runtime supports it."""
+    data = body_json.encode("utf-8")
+    try:
+        from compression.zstd import compress as zstd_compress
+
+        return zstd_compress(data)
+    except Exception:
+        pass
+    try:
+        import zstandard
+
+        return zstandard.ZstdCompressor(level=3).compress(data)
+    except Exception:
+        return None
+
+
 def _build_sse_headers(
     init_headers: dict[str, str] | None,
     additional_headers: dict[str, str] | None,
@@ -428,6 +445,11 @@ def stream_openai_codex_responses(
                 options.get("sessionId") if options else None,
             )
             body_json = json.dumps(body)
+            request_content: str | bytes = body_json
+            compressed = _compress_request_body_zstd(body_json)
+            if compressed is not None:
+                sse_headers["content-encoding"] = "zstd"
+                request_content = compressed
             max_retries = (
                 options.get("maxRetries", DEFAULT_MAX_RETRIES) if options else DEFAULT_MAX_RETRIES
             )
@@ -447,7 +469,7 @@ def stream_openai_codex_responses(
                         response = await client.post(
                             _resolve_codex_url(model.get("baseUrl")),
                             headers=sse_headers,
-                            content=body_json,
+                            content=request_content,
                         )
 
                     if options and options.get("onResponse"):

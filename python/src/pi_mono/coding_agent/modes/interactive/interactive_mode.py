@@ -70,7 +70,14 @@ from pi_mono.coding_agent.modes.interactive.components.compaction_summary_messag
     CompactionSummaryMessageComponent,
 )
 from pi_mono.coding_agent.modes.interactive.components.custom_editor import CustomEditor
+from pi_mono.coding_agent.modes.interactive.components.custom_entry import CustomEntryComponent
 from pi_mono.coding_agent.modes.interactive.components.custom_message import CustomMessageComponent
+from pi_mono.coding_agent.core.cache_stats import (
+    CACHE_TTL_MS,
+    CacheMiss,
+    collect_cache_misses,
+    detect_cache_miss,
+)
 from pi_mono.coding_agent.modes.interactive.interactive_extension_ui import (
     InteractiveExtensionUIContext,
 )
@@ -90,6 +97,7 @@ from pi_mono.coding_agent.core.keybindings import CodingAgentKeybindingsManager
 from pi_mono.coding_agent.modes.interactive.components.footer import (
     FooterComponent,
     FooterRenderComponent,
+    format_tokens,
 )
 from pi_mono.coding_agent.modes.interactive.components.model_selector import ModelSelectorComponent
 from pi_mono.coding_agent.modes.interactive.components.scoped_models_selector import (
@@ -683,6 +691,58 @@ class InteractiveMode:
             return None
         return runner.get_message_renderer(custom_type)
 
+    def _get_entry_renderer(self, custom_type: str) -> Any | None:
+        runner = self._session.extension_runner
+        if runner is None:
+            return None
+        return runner.get_entry_renderer(custom_type)
+
+    def _add_custom_entry_to_chat(self, entry: dict[str, Any]) -> None:
+        if self._chat_container is None:
+            return
+        renderer = self._get_entry_renderer(str(entry.get("customType", "")))
+        if renderer is None:
+            return
+        component = CustomEntryComponent(entry, renderer)
+        self._track_expandable(component)
+        if not component.has_content():
+            return
+        if self._streaming_component is not None:
+            try:
+                streaming_index = self._chat_container.children.index(self._streaming_component)
+                self._chat_container.children.insert(streaming_index, component)
+                return
+            except ValueError:
+                pass
+        self._chat_container.add_child(component)
+
+    def _maybe_show_cache_miss_notice(self, message: dict[str, Any]) -> None:
+        if not self._session.settings_manager.get_show_cache_miss_notices():
+            return
+        miss = detect_cache_miss(
+            self._session.session_manager.get_entries(),
+            message,  # type: ignore[arg-type]
+            self._session.model_registry,
+        )
+        if miss:
+            self._add_cache_miss_notice(miss)
+
+    def _add_cache_miss_notice(self, miss: CacheMiss) -> None:
+        if self._chat_container is None:
+            return
+        if miss["missedTokens"] < 20_000 and miss["missedCost"] < 0.1:
+            return
+        cost = f" (~${miss['missedCost']:.2f})" if miss["missedCost"] >= 0.01 else ""
+        re_billed = f"{format_tokens(miss['missedTokens'])} tokens re-billed{cost}"
+        label = "Cache miss"
+        if miss["modelChanged"]:
+            label = "Cache miss after model switch"
+        elif miss["idleMs"] >= CACHE_TTL_MS:
+            label = f"Cache miss after {round(miss['idleMs'] / 60_000)}m idle"
+        text = theme.fg("warning", f"{label}: {re_billed}")
+        self._chat_container.add_child(Spacer(1))
+        self._chat_container.add_child(Text(text, padding_x=1, padding_y=0))
+
     def _handle_session_event(self, event: AgentSessionEvent) -> None:
         event_type = event.get("type")
         if event_type == "message_start":
@@ -735,6 +795,11 @@ class InteractiveMode:
                 else:
                     for component in self._pending_tools.values():
                         component.set_args_complete()
+                    self._maybe_show_cache_miss_notice(message)
+        elif event_type == "entry_appended":
+            entry = event.get("entry")
+            if isinstance(entry, dict):
+                self._add_custom_entry_to_chat(entry)
         elif event_type == "tool_execution_start":
             self._handle_tool_execution_start(event)
         elif event_type == "tool_execution_update":
@@ -894,6 +959,12 @@ class InteractiveMode:
             return
         self._pending_tools.clear()
         rendered_pending_tools: dict[str, ToolExecutionComponent] = {}
+        cache_misses: dict[int, CacheMiss] = {}
+        if self._session.settings_manager.get_show_cache_miss_notices():
+            cache_misses = collect_cache_misses(
+                self._session.session_manager.get_entries(),
+                self._session.model_registry,
+            )
         for message in session_context.get("messages", []):
             if message.get("role") == "assistant":
                 self._add_message_to_chat(message, populate_history=populate_history)
@@ -926,6 +997,10 @@ class InteractiveMode:
                         )
                     else:
                         rendered_pending_tools[tool_call_id] = component
+                if message.get("stopReason") not in ("aborted", "error"):
+                    miss = cache_misses.get(id(message))
+                    if miss:
+                        self._add_cache_miss_notice(miss)
             elif message.get("role") == "toolResult":
                 component = rendered_pending_tools.get(str(message.get("toolCallId", "")))
                 if component is not None:
@@ -935,6 +1010,23 @@ class InteractiveMode:
                 self._add_message_to_chat(message, populate_history=populate_history)
         self._pending_tools.update(rendered_pending_tools)
 
+    def _render_custom_entries_from_session(self) -> None:
+        """Render display-only custom entries along the current leaf path."""
+        if self._chat_container is None:
+            return
+        session_manager = self._session.session_manager
+        by_id = getattr(session_manager, "by_id", {}) or {}
+        leaf_id = getattr(session_manager, "leafId", None)
+        path: list[dict[str, Any]] = []
+        current = by_id.get(leaf_id) if leaf_id else None
+        while current:
+            path.insert(0, current)
+            parent_id = current.get("parentId")
+            current = by_id.get(parent_id) if parent_id else None
+        for entry in path:
+            if entry.get("type") == "custom":
+                self._add_custom_entry_to_chat(entry)
+
     def _render_initial_messages(self) -> None:
         if self._chat_container is None:
             return
@@ -942,6 +1034,7 @@ class InteractiveMode:
         self._expandable_components.clear()
         context = self._session.session_manager.build_session_context()
         self._render_session_context(context, populate_history=True)
+        self._render_custom_entries_from_session()
         self._show_startup_notices_if_needed()
         if self._footer is not None:
             self._footer.invalidate()
@@ -1235,6 +1328,10 @@ class InteractiveMode:
             return
         if command == "model":
             await self._handle_model_command(argument or None)
+            return
+        if command == "provider":
+            # Always open the provider-first picker (optional filter: /provider cursor).
+            self._show_model_selector(argument or None)
             return
         if command in ("sessions", "resume"):
             self._show_session_selector()
@@ -1579,11 +1676,14 @@ class InteractiveMode:
 
         def create(done: Callable[[], None]) -> tuple[Container, Container]:
             def on_select(entry_id: str) -> None:
+                # Close the menu before fork teardown so duplicate Enter cannot
+                # start a second fork while the first is still winding down (#6430).
+                done()
+
                 async def run_fork() -> None:
                     try:
                         result = await self._runtime_host.fork(entry_id)
                         if result.get("cancelled"):
-                            done()
                             if self._ui is not None:
                                 self._ui.request_render()
                             return
@@ -1593,10 +1693,8 @@ class InteractiveMode:
                         selected_text = result.get("selectedText")
                         if isinstance(selected_text, str) and self._editor is not None:
                             self._editor.set_text(selected_text)
-                        done()
                         self._show_status(theme.fg("success", "Forked to new session"))
                     except Exception as error:
-                        done()
                         self._show_status(theme.fg("error", str(error)))
 
                 asyncio.create_task(run_fork())
