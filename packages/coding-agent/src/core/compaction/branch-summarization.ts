@@ -5,6 +5,7 @@
  * a summary of the branch being left so context isn't lost.
  */
 
+import { randomUUID } from "node:crypto";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { Model, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -344,7 +345,7 @@ export async function generateBranchSummary(
 		env,
 		signal,
 		maxTokens: 2048,
-		sessionId: globalThis.crypto?.randomUUID?.() ?? `__anon_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+		sessionId: randomUUID(),
 	};
 	const response = streamFn
 		? await (await streamFn(model, context, requestOptions)).result()
