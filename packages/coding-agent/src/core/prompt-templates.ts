@@ -3,7 +3,16 @@ import { basename, dirname, join, resolve, sep } from "path";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
+import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+
+/**
+ * Result of loading prompt templates, including any diagnostics emitted during loading.
+ */
+export interface LoadPromptTemplatesResult {
+	prompts: PromptTemplate[];
+	diagnostics: ResourceDiagnostic[];
+}
 
 /**
  * Represents a prompt template loaded from a markdown file
@@ -100,7 +109,11 @@ export function substituteArgs(content: string, args: string[]): string {
 	);
 }
 
-function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptTemplate | null {
+function loadTemplateFromFile(
+	filePath: string,
+	sourceInfo: SourceInfo,
+	diagnostics?: ResourceDiagnostic[],
+): PromptTemplate | null {
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
 		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent);
@@ -126,7 +139,12 @@ function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptT
 			sourceInfo,
 			filePath,
 		};
-	} catch {
+	} catch (err) {
+		diagnostics?.push({
+			type: "warning",
+			message: `Failed to load prompt template file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+			path: filePath,
+		});
 		return null;
 	}
 }
@@ -134,7 +152,11 @@ function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptT
 /**
  * Scan a directory for .md files (non-recursive) and load them as prompt templates.
  */
-function loadTemplatesFromDir(dir: string, getSourceInfo: (filePath: string) => SourceInfo): PromptTemplate[] {
+function loadTemplatesFromDir(
+	dir: string,
+	getSourceInfo: (filePath: string) => SourceInfo,
+	diagnostics?: ResourceDiagnostic[],
+): PromptTemplate[] {
 	const templates: PromptTemplate[] = [];
 
 	if (!existsSync(dir)) {
@@ -160,14 +182,18 @@ function loadTemplatesFromDir(dir: string, getSourceInfo: (filePath: string) => 
 			}
 
 			if (isFile && entry.name.endsWith(".md")) {
-				const template = loadTemplateFromFile(fullPath, getSourceInfo(fullPath));
+				const template = loadTemplateFromFile(fullPath, getSourceInfo(fullPath), diagnostics);
 				if (template) {
 					templates.push(template);
 				}
 			}
 		}
-	} catch {
-		return templates;
+	} catch (err) {
+		diagnostics?.push({
+			type: "warning",
+			message: `Failed to load prompt templates from directory ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+			path: dir,
+		});
 	}
 
 	return templates;
@@ -190,13 +216,14 @@ export interface LoadPromptTemplatesOptions {
  * 2. Project: cwd/{CONFIG_DIR_NAME}/prompts/
  * 3. Explicit prompt paths
  */
-export function loadPromptTemplates(options: LoadPromptTemplatesOptions): PromptTemplate[] {
+export function loadPromptTemplates(options: LoadPromptTemplatesOptions): LoadPromptTemplatesResult {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
 	const promptPaths = options.promptPaths;
 	const includeDefaults = options.includeDefaults;
 
 	const templates: PromptTemplate[] = [];
+	const diagnostics: ResourceDiagnostic[] = [];
 
 	const globalPromptsDir = join(resolvedAgentDir, "prompts");
 	const projectPromptsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "prompts");
@@ -232,8 +259,8 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions): Prompt
 	};
 
 	if (includeDefaults) {
-		templates.push(...loadTemplatesFromDir(globalPromptsDir, getSourceInfo));
-		templates.push(...loadTemplatesFromDir(projectPromptsDir, getSourceInfo));
+		templates.push(...loadTemplatesFromDir(globalPromptsDir, getSourceInfo, diagnostics));
+		templates.push(...loadTemplatesFromDir(projectPromptsDir, getSourceInfo, diagnostics));
 	}
 
 	// 3. Load explicit prompt paths
@@ -246,19 +273,23 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions): Prompt
 		try {
 			const stats = statSync(resolvedPath);
 			if (stats.isDirectory()) {
-				templates.push(...loadTemplatesFromDir(resolvedPath, getSourceInfo));
+				templates.push(...loadTemplatesFromDir(resolvedPath, getSourceInfo, diagnostics));
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const template = loadTemplateFromFile(resolvedPath, getSourceInfo(resolvedPath));
+				const template = loadTemplateFromFile(resolvedPath, getSourceInfo(resolvedPath), diagnostics);
 				if (template) {
 					templates.push(template);
 				}
 			}
-		} catch {
-			// Ignore read failures
+		} catch (err) {
+			diagnostics.push({
+				type: "warning",
+				message: `Failed to read prompt path ${resolvedPath}: ${err instanceof Error ? err.message : String(err)}`,
+				path: resolvedPath,
+			});
 		}
 	}
 
-	return templates;
+	return { prompts: templates, diagnostics };
 }
 
 /**

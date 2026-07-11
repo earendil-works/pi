@@ -16,6 +16,22 @@ export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this p
 export const COMPACTION_SUMMARY_SUFFIX = `
 </summary>`;
 
+/**
+ * customType values for the user-role advisories the session injects to make
+ * provider errors, compaction failures, and retry exhaustion visible to the LLM.
+ * sdk.ts's buildAdvisedErrorSkipSet derives its skip-set from this same object,
+ * so the two never drift — a new type added here is automatically recognized.
+ */
+export const ADVISORY_CUSTOM_TYPES = {
+	AUTO_RETRY_EXHAUSTED: "auto_retry_exhausted",
+	OVERFLOW_RECOVERY_EXHAUSTED: "overflow_recovery_exhausted",
+	COMPACTION_SKIPPED: "compaction_skipped",
+	COMPACTION_FAILED: "compaction_failed",
+	CONTEXT_OVERFLOW: "context_overflow",
+} as const;
+
+export type AdvisoryCustomType = (typeof ADVISORY_CUSTOM_TYPES)[keyof typeof ADVISORY_CUSTOM_TYPES];
+
 export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch that this conversation came back from:
 
 <summary>
@@ -141,55 +157,104 @@ export function createCustomMessage(
  * Transform AgentMessages (including custom types) to LLM-compatible Messages.
  *
  * This is used by:
- * - Agent's transormToLlm option (for prompt calls and queued messages)
+ * - Agent's transformToLlm option (for prompt calls and queued messages)
  * - Compaction's generateSummary (for summarization)
  * - Custom extensions and tools
  */
+
+/**
+ * Read a message's role defensively — returns "unknown" if the accessor throws.
+ */
+function safeRole(m: AgentMessage): string {
+	try {
+		return m?.role ?? "unknown";
+	} catch {
+		return "unknown";
+	}
+}
+
+/**
+ * Read a message's timestamp defensively — returns current time if the accessor throws.
+ */
+function safeTimestamp(m: AgentMessage): number {
+	try {
+		return m?.timestamp ?? Date.now();
+	} catch {
+		return Date.now();
+	}
+}
+
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	return messages
 		.map((m): Message | undefined => {
-			switch (m.role) {
-				case "bashExecution":
-					// Skip messages excluded from context (!! prefix)
-					if (m.excludeFromContext) {
-						return undefined;
-					}
-					return {
-						role: "user",
-						content: [{ type: "text", text: bashExecutionToText(m) }],
-						timestamp: m.timestamp,
-					};
-				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					};
-				}
-				case "branchSummary":
-					return {
-						role: "user",
-						content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
-						timestamp: m.timestamp,
-					};
-				case "compactionSummary":
-					return {
-						role: "user",
-						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
-						],
-						timestamp: m.timestamp,
-					};
-				case "user":
-				case "assistant":
-				case "toolResult":
-					return m;
-				default:
-					// biome-ignore lint/correctness/noSwitchDeclarations: fine
-					const _exhaustiveCheck: never = m;
-					return undefined;
+			try {
+				return convertSingleMessageToLlm(m);
+			} catch (err) {
+				// Replace unconvertible messages with a placeholder so a single
+				// bad message doesn't kill the entire turn (finding 🔴-4 / H3).
+				// The poison message is dropped here, so the next turn won't
+				// re-throw on the same entry. Read role/timestamp defensively:
+				// the accessor itself may be what threw.
+				const role = safeRole(m);
+				const timestamp = safeTimestamp(m);
+				const errText = err instanceof Error ? err.message : String(err);
+				return {
+					role: "user",
+					content: [
+						{
+							type: "text" as const,
+							text: `[Conversation history note: a ${role} message could not be included due to a conversion error: ${errText}]`,
+						},
+					],
+					timestamp,
+				};
 			}
 		})
-		.filter((m) => m !== undefined);
+		.filter((m): m is Message => m !== undefined);
+}
+
+function convertSingleMessageToLlm(m: AgentMessage): Message | undefined {
+	switch (m.role) {
+		case "bashExecution":
+			// Skip messages excluded from context (!! prefix)
+			if (m.excludeFromContext) {
+				return undefined;
+			}
+			return {
+				role: "user",
+				content: [{ type: "text", text: bashExecutionToText(m) }],
+				timestamp: m.timestamp,
+			};
+		case "custom": {
+			const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+			return {
+				role: "user",
+				content,
+				timestamp: m.timestamp,
+			};
+		}
+		case "branchSummary":
+			return {
+				role: "user",
+				content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
+				timestamp: m.timestamp,
+			};
+		case "compactionSummary":
+			return {
+				role: "user",
+				content: [
+					{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+				],
+				timestamp: m.timestamp,
+			};
+		case "user":
+		case "assistant":
+		case "toolResult":
+			return m;
+		default: {
+			// Exhaustiveness check — compile error if a role is added without a case.
+			const _exhaustive: never = m;
+			throw new Error(`Unexpected message role: ${JSON.stringify(_exhaustive)?.slice(0, 200)}`);
+		}
+	}
 }

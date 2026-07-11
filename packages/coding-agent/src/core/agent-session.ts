@@ -82,7 +82,7 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import { ADVISORY_CUSTOM_TYPES, type BashExecutionMessage, type CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -1020,6 +1020,26 @@ export class AgentSession {
 	// Prompting
 	// =========================================================================
 
+	/**
+	 * Inject an error advisory as a persisted custom message that the LLM will see as a
+	 * user-role message on the next turn. Used to make provider errors, compaction
+	 * failures, and retry exhaustion visible to the model (they would otherwise be
+	 * serializer-dropped or removed from context).
+	 */
+	private _injectErrorAdvisory(customType: string, text: string): void {
+		const advisoryMessage = {
+			role: "custom" as const,
+			customType,
+			content: [{ type: "text" as const, text }],
+			display: true,
+			timestamp: Date.now(),
+		};
+		this.agent.state.messages.push(advisoryMessage);
+		this.sessionManager.appendCustomMessageEntry(customType, advisoryMessage.content, true, undefined);
+		this._emit({ type: "message_start", message: advisoryMessage });
+		this._emit({ type: "message_end", message: advisoryMessage });
+	}
+
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
 		try {
@@ -1052,6 +1072,20 @@ export class AgentSession {
 				attempt: this._retryAttempt,
 				finalError: msg.errorMessage,
 			});
+			// Inject error advisory so the LLM learns the request failed after max
+			// retries. Without this, the error message stays in context but is dropped
+			// by pi-ai's serializer (empty content blocks). We do NOT auto-continue
+			// here to avoid an infinite retry loop — see finding H2.
+			const errorText = msg.errorMessage || "Unknown error";
+			this._injectErrorAdvisory(
+				ADVISORY_CUSTOM_TYPES.AUTO_RETRY_EXHAUSTED,
+				`The previous request failed after ${this._retryAttempt} retry attempts. ${errorText}. Please try a different approach.`,
+			);
+			// The advisory carries the error text to the LLM; the SDK's
+			// populateContentFromErrorMessage step skips messages already
+			// followed by an advisory (adjacency check), so the text reaches the
+			// model once — without mutating errorMessage (which would diverge
+			// live vs. resumed sessions, H5).
 			this._retryAttempt = 0;
 		}
 
@@ -1944,16 +1978,30 @@ export class AgentSession {
 					errorMessage:
 						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 				});
+				// Inform the LLM so the run doesn't end invisibly (🔴-1 second-attempt row).
+				// Without this, the model sees no signal that its overflowing response was
+				// rejected a second time. Dedupe: the pre-prompt _checkCompaction runs
+				// before message_start resets _overflowRecoveryAttempted, so while stuck
+				// in overflow this would otherwise fire once per prompt. Skip if the last
+				// message is already this advisory.
+				const lastMsg = this.agent.state.messages.at(-1);
+				const alreadyAdvised =
+					lastMsg?.role === "custom" &&
+					(lastMsg as { customType?: string }).customType === ADVISORY_CUSTOM_TYPES.OVERFLOW_RECOVERY_EXHAUSTED;
+				if (!alreadyAdvised) {
+					this._injectErrorAdvisory(
+						ADVISORY_CUSTOM_TYPES.OVERFLOW_RECOVERY_EXHAUSTED,
+						"Context overflow recovery failed after one compact-and-retry attempt. Please reduce the length of your response or switch to a model with a larger context window.",
+					);
+				}
 				return false;
 			}
 
 			this._overflowRecoveryAttempted = true;
-			// Remove the error message from agent state (it IS saved to session for history,
-			// but we don't want it in context for the retry)
-			const messages = this.agent.state.messages;
-			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-				this.agent.state.messages = messages.slice(0, -1);
-			}
+			// The error message removal here is redundant: _runAutoCompaction rebuilds
+			// messages from the session and handles message cleanup on its own.
+			// Keeping this removal would leave agent state diverged from the session
+			// (and from what resume would rebuild) on early-return paths.
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
 
@@ -1996,7 +2044,19 @@ export class AgentSession {
 		let started = false;
 
 		try {
+			// Early-return advisories are gated to the overflow path: the threshold
+			// path re-checks compaction every turn and every prompt, so a persistent
+			// condition (broken auth, nothing to compact) would otherwise inject one
+			// persisted advisory per turn, forever (advisory spam, H7). The overflow
+			// path is a one-shot, so its advisories stay bounded.
+			const isOverflow = reason === "overflow";
 			if (!this.model) {
+				if (isOverflow) {
+					this._injectErrorAdvisory(
+						ADVISORY_CUSTOM_TYPES.COMPACTION_SKIPPED,
+						"Context compaction could not run: no model available.",
+					);
+				}
 				return false;
 			}
 
@@ -2006,6 +2066,12 @@ export class AgentSession {
 			if (this.agent.streamFn === streamSimple) {
 				const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
 				if (!authResult.ok || !authResult.apiKey) {
+					if (isOverflow) {
+						this._injectErrorAdvisory(
+							ADVISORY_CUSTOM_TYPES.COMPACTION_SKIPPED,
+							"Context compaction could not run: authentication failure.",
+						);
+					}
 					return false;
 				}
 				apiKey = authResult.apiKey;
@@ -2019,6 +2085,12 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
+				if (isOverflow) {
+					this._injectErrorAdvisory(
+						ADVISORY_CUSTOM_TYPES.COMPACTION_SKIPPED,
+						"Context compaction could not run: nothing to compact.",
+					);
+				}
 				return false;
 			}
 
@@ -2134,6 +2206,12 @@ export class AgentSession {
 				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
+				if (reason === "overflow") {
+					this._injectErrorAdvisory(
+						ADVISORY_CUSTOM_TYPES.CONTEXT_OVERFLOW,
+						"Your previous response caused context overflow. Please produce a shorter response.",
+					);
+				}
 				return true;
 			}
 
@@ -2141,19 +2219,44 @@ export class AgentSession {
 			// Continue once so queued messages are delivered.
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			// User-initiated abort (Ctrl+C during compaction): emit the
+			// aborted event but don't pollute LLM context with a failure
+			// advisory — this is infrastructure, not an LLM-actionable error
+			// (🟦-9). The signal may already be AbortError-named or marked
+			// aborted depending on where the cancellation originated.
+			const abortController = this._autoCompactionAbortController;
+			const isAbort = (error as Error)?.name === "AbortError" || abortController?.signal.aborted === true;
+			const rawMessage = error instanceof Error ? error.message : "compaction failed";
+			const errorMessage = rawMessage.endsWith(".") ? rawMessage : `${rawMessage}.`;
+			// Precompute the UI-facing message to avoid a nested ternary (L2232).
+			let compactionEndMessage: string;
+			if (isAbort) {
+				compactionEndMessage = "Auto-compaction cancelled.";
+			} else if (reason === "overflow") {
+				compactionEndMessage = `Context overflow recovery failed: ${errorMessage}`;
+			} else {
+				compactionEndMessage = `Auto-compaction failed: ${errorMessage}`;
+			}
 			if (started) {
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
-					aborted: false,
+					aborted: isAbort,
 					willRetry: false,
-					errorMessage:
-						reason === "overflow"
-							? `Context overflow recovery failed: ${errorMessage}`
-							: `Auto-compaction failed: ${errorMessage}`,
+					errorMessage: compactionEndMessage,
 				});
+			}
+			if (!isAbort) {
+				// Advisory lives outside the `started` guard: a throw from
+				// _getCompactionRequestAuth (non-streamSimple branch, before compaction_start)
+				// would otherwise reach the LLM fully silent.
+				this._injectErrorAdvisory(
+					ADVISORY_CUSTOM_TYPES.COMPACTION_FAILED,
+					reason === "overflow"
+						? `Context overflow recovery failed: ${errorMessage} Please produce a much shorter response.`
+						: `Auto-compaction failed: ${errorMessage} Please try again.`,
+				);
 			}
 			return false;
 		} finally {

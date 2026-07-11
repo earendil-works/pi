@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import {
+	type AssistantMessage,
+	clampThinkingLevel,
+	type Message,
+	type Model,
+	streamSimple,
+} from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -8,7 +14,7 @@ import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
-import { convertToLlm } from "./messages.ts";
+import { ADVISORY_CUSTOM_TYPES, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
@@ -127,6 +133,73 @@ export {
 
 function getDefaultAgentDir(): string {
 	return getAgentDir();
+}
+
+/**
+ * Populate content from errorMessage for assistant error messages so they survive
+ * pi-ai's serializer (which drops assistant messages whose content blocks are all
+ * empty). Without this, every provider error reaches the LLM as nothing — the
+ * errorMessage field is never serialized into content.
+ *
+ * Extracted from the createAgentSession wrapper closure so it can be unit-tested
+ * directly (the closure itself is not reachable from tests).
+ */
+export function populateContentFromErrorMessage(msg: Message): Message {
+	if (
+		msg.role === "assistant" &&
+		msg.stopReason === "error" &&
+		msg.errorMessage &&
+		(!msg.content ||
+			msg.content.length === 0 ||
+			msg.content.every((c) => c.type === "text" && (!c.text || c.text.trim().length === 0)))
+	) {
+		return { ...msg, content: [{ type: "text" as const, text: msg.errorMessage }] };
+	}
+	return msg;
+}
+
+/**
+ * customTypes of messages that count as error advisories. Derived from the
+ * single source of truth in messages.ts so the two never drift.
+ */
+const advisoryCustomTypes = new Set<string>(Object.values(ADVISORY_CUSTOM_TYPES));
+
+/**
+ * Returns true if a message is one of the advisories the session injects to
+ * make an error visible to the LLM.
+ */
+export function isAdvisoryCustomMessage(msg: { role: string; customType?: string }): boolean {
+	const { role, customType } = msg;
+	if (role !== "custom" || !customType) {
+		return false;
+	}
+	return advisoryCustomTypes.has(customType);
+}
+
+/**
+ * Build the set of assistant error messages whose error text is already carried
+ * to the LLM by the advisory injected immediately after them. The convertToLlm
+ * wrapper skips populating these, so their errorMessage text reaches the model
+ * only once (via the advisory) — and identically on live and resumed sessions,
+ * avoiding the live-vs-resume divergence that mutating errorMessage would
+ * create (H5). Keyed by message identity, so the converted (post-filter) list
+ * can be checked against it.
+ */
+export function buildAdvisedErrorSkipSet(messages: AgentMessage[]): Set<Message> {
+	const skip = new Set<Message>();
+	for (let i = 0; i < messages.length - 1; i++) {
+		const current = messages[i];
+		const next = messages[i + 1];
+		if (
+			current.role === "assistant" &&
+			(current as AssistantMessage).stopReason === "error" &&
+			next.role === "custom" &&
+			isAdvisoryCustomMessage(next)
+		) {
+			skip.add(current as Message);
+		}
+	}
+	return skip;
 }
 
 /**
@@ -255,12 +328,23 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
 		const converted = convertToLlm(messages);
+		// Populate content from errorMessage for error messages so they survive
+		// pi-ai's serializer (which drops assistant messages whose content blocks
+		// are all empty). Without this, every provider error reaches the LLM as
+		// nothing — the errorMessage field is never serialized into content.
+		//
+		// Skip error messages that are immediately followed by an injected
+		// advisory: the advisory already carries the error text to the LLM, so
+		// population would duplicate it. Checking adjacency (instead of mutating
+		// errorMessage) keeps live and resumed sessions identical (H5).
+		const advisedErrors = buildAdvisedErrorSkipSet(messages);
+		const populated = converted.map((msg) => (advisedErrors.has(msg) ? msg : populateContentFromErrorMessage(msg)));
 		// Check setting dynamically so mid-session changes take effect
 		if (!settingsManager.getBlockImages()) {
-			return converted;
+			return populated;
 		}
 		// Filter out ImageContent from all messages, replacing with text placeholder
-		return converted.map((msg) => {
+		return populated.map((msg) => {
 			if (msg.role === "user" || msg.role === "toolResult") {
 				const content = msg.content;
 				if (Array.isArray(content)) {

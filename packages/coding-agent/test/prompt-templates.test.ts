@@ -513,7 +513,7 @@ You are given one or more GitHub PR URLs: $@`,
 			includeDefaults: false,
 		});
 
-		const pr = templates.find((t) => t.name === "pr");
+		const pr = templates.prompts.find((t) => t.name === "pr");
 		expect(pr).toBeDefined();
 		expect(pr!.argumentHint).toBe("<PR-URL>");
 		expect(pr!.description).toBe("Review PRs from URLs with structured issue and code analysis");
@@ -536,7 +536,7 @@ Wrap it. Additional instructions: $ARGUMENTS`,
 			includeDefaults: false,
 		});
 
-		const wr = templates.find((t) => t.name === "wr");
+		const wr = templates.prompts.find((t) => t.name === "wr");
 		expect(wr).toBeDefined();
 		expect(wr!.argumentHint).toBe("[instructions]");
 		expect(wr!.description).toBe("Finish the current task end-to-end with changelog, commit, and push");
@@ -558,7 +558,7 @@ Audit changelog entries for all commits since the last release.`,
 			includeDefaults: false,
 		});
 
-		const cl = templates.find((t) => t.name === "cl");
+		const cl = templates.prompts.find((t) => t.name === "cl");
 		expect(cl).toBeDefined();
 		expect(cl!.argumentHint).toBeUndefined();
 	});
@@ -580,7 +580,7 @@ Do something`,
 			includeDefaults: false,
 		});
 
-		const tmpl = templates.find((t) => t.name === "empty-hint");
+		const tmpl = templates.prompts.find((t) => t.name === "empty-hint");
 		expect(tmpl).toBeDefined();
 		expect(tmpl!.argumentHint).toBeUndefined();
 	});
@@ -602,14 +602,13 @@ Analyze GitHub issue(s): $ARGUMENTS`,
 			includeDefaults: false,
 		});
 
-		const is = templates.find((t) => t.name === "is");
+		const is = templates.prompts.find((t) => t.name === "is");
 		expect(is).toBeDefined();
 		expect(is!.argumentHint).toBe("<issue>");
 	});
 
 	afterAll(() => {
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {}
+		// Best-effort cleanup: the temp dir may already be gone on repeat runs.
+		rmSync(testDir, { recursive: true, force: true });
 	});
 });

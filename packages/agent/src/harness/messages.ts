@@ -120,45 +120,67 @@ export function createCustomMessage(
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	return messages
 		.map((m): Message | undefined => {
-			switch (m.role) {
-				case "bashExecution":
-					if (m.excludeFromContext) {
-						return undefined;
-					}
-					return {
-						role: "user",
-						content: [{ type: "text", text: bashExecutionToText(m) }],
-						timestamp: m.timestamp,
-					};
-				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					};
-				}
-				case "branchSummary":
-					return {
-						role: "user",
-						content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
-						timestamp: m.timestamp,
-					};
-				case "compactionSummary":
-					return {
-						role: "user",
-						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
-						],
-						timestamp: m.timestamp,
-					};
-				case "user":
-				case "assistant":
-				case "toolResult":
-					return m;
-				default:
-					return undefined;
+			try {
+				return convertSingleMessageToLlm(m);
+			} catch (err) {
+				// Replace unconvertible messages with a placeholder so a single
+				// bad message doesn't kill the entire turn (finding 🔴-4 / H3).
+				// Guard with m?.role/m?.timestamp: a nullish entry throws on m.role.
+				const role = m?.role ?? "unknown";
+				const errText = err instanceof Error ? err.message : String(err);
+				return {
+					role: "user",
+					content: [
+						{
+							type: "text" as const,
+							text: `[Conversation history note: a ${role} message could not be included due to a conversion error: ${errText}]`,
+						},
+					],
+					timestamp: m?.timestamp,
+				};
 			}
 		})
 		.filter((m): m is Message => m !== undefined);
+}
+
+function convertSingleMessageToLlm(m: AgentMessage): Message | undefined {
+	switch (m.role) {
+		case "bashExecution":
+			if (m.excludeFromContext) {
+				return undefined;
+			}
+			return {
+				role: "user",
+				content: [{ type: "text", text: bashExecutionToText(m) }],
+				timestamp: m.timestamp,
+			};
+		case "custom": {
+			const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+			return {
+				role: "user",
+				content,
+				timestamp: m.timestamp,
+			};
+		}
+		case "branchSummary":
+			return {
+				role: "user",
+				content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
+				timestamp: m.timestamp,
+			};
+		case "compactionSummary":
+			return {
+				role: "user",
+				content: [
+					{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+				],
+				timestamp: m.timestamp,
+			};
+		case "user":
+		case "assistant":
+		case "toolResult":
+			return m;
+		default:
+			return undefined;
+	}
 }

@@ -646,7 +646,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				promptPaths,
 				includeDefaults: false,
 			});
-			promptsResult = this.dedupePrompts(allPrompts);
+			promptsResult = this.dedupePrompts(allPrompts.prompts, allPrompts.diagnostics);
 		}
 		const resolvedPrompts = this.promptsOverride ? this.promptsOverride(promptsResult) : promptsResult;
 		this.prompts = resolvedPrompts.prompts.map((prompt) => ({
@@ -909,9 +909,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { extensions, errors };
 	}
 
-	private dedupePrompts(prompts: PromptTemplate[]): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
+	private dedupePrompts(
+		prompts: PromptTemplate[],
+		loadDiagnostics?: ResourceDiagnostic[],
+	): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
 		const seen = new Map<string, PromptTemplate>();
-		const diagnostics: ResourceDiagnostic[] = [];
+		const diagnostics: ResourceDiagnostic[] = loadDiagnostics ? [...loadDiagnostics] : [];
 
 		for (const prompt of prompts) {
 			const existing = seen.get(prompt.name);
