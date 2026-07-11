@@ -296,6 +296,41 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(/Could not find the exact text/);
 		});
 
+		it("should include file content context when text is not found", async () => {
+			const testFile = join(testDir, "edit-context.txt");
+			writeFileSync(testFile, "alpha\nbeta\ngamma\ndelta\n");
+
+			try {
+				await editTool.execute("test-context-1", {
+					path: testFile,
+					edits: [{ oldText: "nonexistent", newText: "testing" }],
+				});
+				expect.fail("Should have thrown");
+			} catch (err) {
+				const message = (err as Error).message;
+				expect(message).toContain("Could not find");
+				expect(message).toContain("  1: alpha");
+				expect(message).toContain("  2: beta");
+			}
+		});
+
+		it("should include closest match context when oldText partially matches", async () => {
+			const testFile = join(testDir, "edit-partial.txt");
+			writeFileSync(testFile, "//  Talks\nconst x = 1;\n//  More\n");
+
+			try {
+				await editTool.execute("test-partial-1", {
+					path: testFile,
+					edits: [{ oldText: "// Talks\nconst x = 1;", newText: "// Updated\nconst x = 2;" }],
+				});
+				expect.fail("Should have thrown");
+			} catch (err) {
+				const message = (err as Error).message;
+				expect(message).toContain("Could not find");
+				expect(message).toContain("  1: //  Talks");
+			}
+		});
+
 		it("should include ENOENT when the edit target does not exist", async () => {
 			const missingFile = join(testDir, "missing.txt");
 
@@ -468,6 +503,23 @@ describe("Coding Agent Tools", () => {
 			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
 
 			expect(result).toEqual({ error: `Could not edit file: ${unreadableFile}. Error code: EACCES.` });
+		});
+
+		it("should include file context in diff preview when text is not found", async () => {
+			const testFile = join(testDir, "preview-context.txt");
+			writeFileSync(testFile, "line one\nline two\nline three\n");
+
+			const result = await computeEditsDiff(
+				testFile,
+				[{ oldText: "does not exist", newText: "replacement" }],
+				testDir,
+			);
+
+			expect(result).toHaveProperty("error");
+			const error = (result as { error: string }).error;
+			expect(error).toContain("Could not find");
+			expect(error).toContain("  1: line one");
+			expect(error).toContain("  2: line two");
 		});
 	});
 

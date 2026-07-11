@@ -254,15 +254,50 @@ function countOccurrences(content: string, oldText: string): number {
 	return fuzzyContent.split(fuzzyOldText).length - 1;
 }
 
-function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
-		);
+/**
+ * Find the closest matching region in the file for a given oldText. Uses
+ * progressively shorter substrings of the first line of oldText to locate
+ * where the edit was probably intended, then returns a window of surrounding
+ * lines for the error message.
+ */
+function findClosestMatchContext(content: string, oldText: string): string | undefined {
+	const lines = content.split("\n");
+	const oldLines = oldText.split("\n");
+	const firstLine = oldLines[0]?.trim();
+	if (!firstLine) return undefined;
+
+	// Try progressively shorter substrings of the first line
+	for (let len = Math.min(firstLine.length, 60); len >= 10; len -= 10) {
+		const needle = firstLine.slice(0, len).trim();
+		if (!needle) continue;
+		const idx = lines.findIndex((line) => line.includes(needle));
+		if (idx !== -1) {
+			const start = Math.max(0, idx - 2);
+			const end = Math.min(lines.length, idx + oldLines.length + 3);
+			const snippet = lines
+				.slice(start, end)
+				.map((line, i) => `  ${start + i + 1}: ${line}`)
+				.join("\n");
+			return `Closest match is around line ${idx + 1}:\n${snippet}`;
+		}
 	}
-	return new Error(
-		`Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`,
-	);
+
+	// Fallback: show the first few lines of the file
+	const preview = lines.slice(0, Math.min(5, lines.length));
+	return `File starts with:\n${preview.map((line, i) => `  ${i + 1}: ${line}`).join("\n")}`;
+}
+
+function getNotFoundError(
+	path: string,
+	editIndex: number,
+	totalEdits: number,
+	content?: string,
+	oldText?: string,
+): Error {
+	const header =
+		totalEdits === 1 ? `Could not find the exact text in ${path}.` : `Could not find edits[${editIndex}] in ${path}.`;
+	const context = content && oldText ? `\n${findClosestMatchContext(content, oldText) ?? "File is empty."}` : "";
+	return new Error(`${header} The old text must match exactly including all whitespace and newlines.${context}`);
 }
 
 function getDuplicateError(path: string, editIndex: number, totalEdits: number, occurrences: number): Error {
@@ -326,7 +361,7 @@ export function applyEditsToNormalizedContent(
 		const edit = normalizedEdits[i];
 		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
 		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length);
+			throw getNotFoundError(path, i, normalizedEdits.length, normalizedContent, edit.oldText);
 		}
 
 		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
