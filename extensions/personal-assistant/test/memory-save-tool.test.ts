@@ -714,4 +714,237 @@ describe("memory_save execute (RED — scaffold throws 'not implemented')", () =
 		// principle "counter 计入调用").
 		expect(mod.getSegmentMemorySaveCount()).toBe(1);
 	});
+
+	// Task 2.7 — embedding-down graceful fallback (scenarios.md S8,
+	// spec.md "memory_save gracefully falls back to zero vector when
+	// embed service is unavailable"). Verifies BOTH the create and the
+	// overwrite path fall back to a 1024-dim zero vector when
+	// `embedText` returns `null` (ollama / bge-m3 unreachable), and
+	// that `reindexOne` is STILL called so the bge-m3 service can
+	// refresh its internal index from the freshly-written `.md` body.
+	//
+	// Implementation already exists in memory-save.ts: both branches
+	// use the `embedding ?? new Array(1024).fill(0)` pattern
+	// (matches `extraction.ts:243, 258`) and set the
+	// `embedding: vectorWasNull ? "skipped" : "ok"` flag. This test
+	// locks that contract — any future regression that drops the
+	// fallback (e.g. propagating the null up and throwing) would break
+	// S8 and force a fix.
+	it("graceful fallback: returns embedding: 'skipped' and uses a 1024-dim zero vector in both branches when embedText returns null", async () => {
+		// 1. Re-import the storage + bge-reindex modules so we operate on
+		//    the SAME module instances memory-save.ts is using (the inner
+		//    beforeEach called `vi.resetModules()` → storage.ts and
+		//    bge-reindex.ts were re-evaluated; re-importing here hits the
+		//    cache and returns the same instances). Spies on stale
+		//    instances from the top-level beforeEach would not intercept
+		//    calls made by the freshly-registered tool.
+		const storageMod = await import("../storage.ts");
+		const bgeMod = await import("../bge-reindex.ts");
+
+		// 2. Override the module-level `embedText` mock (set up at the
+		//    top of this file) so it resolves to `null` — simulating
+		//    "embedding service is down". The factory's default
+		//    char-bag vector is overridden per-test via the same vi.fn
+		//    instance the rest of the suite uses; the next test's
+		//    `vi.resetModules()` re-creates the factory and resets the
+		//    default behavior, so this override does not leak.
+		const embedMod = await import("../embed.ts");
+		vi.mocked(embedMod.embedText).mockReset();
+		vi.mocked(embedMod.embedText).mockResolvedValue(null);
+
+		// 3. Spy on the bge-m3 reindex entry point so the test does not
+		//    hit a real network endpoint. `reindexOne` is the function
+		//    memory-save.ts imports from `./bge-reindex.ts` — same
+		//    module instance as `bgeMod.reindexOne` after `resetModules`
+		//    + re-import above, so the spy intercepts the tool's call.
+		const reindexSpy = vi
+			.spyOn(bgeMod, "reindexOne")
+			.mockResolvedValue({ ok: true });
+
+		// 4. Spy on `MemoryIndex.prototype.insertAtom` and `updateAtom`
+		//    with `vi.spyOn` (NO `mockResolvedValue` override) so the
+		//    original implementations still run and write to the real
+		//    on-disk DB. We capture call args via `spy.mock.calls`
+		//    (asserting the 1024-dim zero vector was passed) AND we
+		//    can verify the DB side effect afterwards via
+		//    `MemoryIndex.getEmbedding`.
+		const insertSpy = vi.spyOn(storageMod.MemoryIndex.prototype, "insertAtom");
+		const updateSpy = vi.spyOn(storageMod.MemoryIndex.prototype, "updateAtom");
+
+		// 5. Pre-insert an existing atom for the overwrite path. This
+		//    uses the FRESH `storageMod.MemoryIndex` (same class as the
+		//    tool's internal `new MemoryIndex(dbPath)`), so the row is
+		//    visible to the tool's `index.getAtom(id)` call below.
+		const preIdx = new storageMod.MemoryIndex(dbPath);
+		await preIdx.init();
+		const existingId = "a-7890";
+		const { computeFingerprint } = await import("../extraction.ts");
+		const oldContent = "Original content for embedding-down overwrite path test scenario";
+		await preIdx.insertAtom(
+			{
+				id: existingId,
+				type: "fact" as const,
+				title: "Pre-existing fact for embed-down test",
+				summary: "Pre-existing summary for embed-down test",
+				content: oldContent,
+				tags: ["embed-down"],
+				importance: 0.4,
+				strength: 1.0,
+				access_count: 0,
+				version: 1,
+				is_latest: 1 as const,
+				parent_id: null,
+				superseded_at: null,
+				archived: 0 as const,
+				created_at: Date.now(),
+				updated_at: Date.now(),
+				last_access: null,
+				content_fingerprint: computeFingerprint(oldContent),
+				source_session: null,
+			},
+			// Pre-existing vector doesn't matter for this test; use a
+			// non-zero filler so we can tell the post-call zero vector
+			// (from the tool's fallback) apart from any pre-existing
+			// row's vector when scanning memory_vectors.
+			new Array(1024).fill(0.5),
+		);
+		preIdx.close();
+
+		// 5b. Clear the spies' recorded calls accumulated during the
+		//     pre-insert setup, so the assertions below measure ONLY
+		//     the calls made by the tool's execute body (not the
+		//     `preIdx.insertAtom` above, which would otherwise count
+		//     toward `toHaveBeenCalledTimes(1)`).
+		insertSpy.mockClear();
+		updateSpy.mockClear();
+		reindexSpy.mockClear();
+
+		// 6. CREATE PATH — call memory_save with no id, unique content.
+		//    Expected: details.action === "created", embedding === "skipped",
+		//    insertAtom called with a 1024-dim zero vector, reindexOne
+		//    called with the new atom id, and the DB has a row whose
+		//    stored vector is all zeros.
+		const createResult = await tool.execute(
+			"call-create-down",
+			{
+				type: "fact" as const,
+				title: "Embedding-down create fact",
+				content:
+					"Unique content for embedding-down fallback test create path scenario",
+				summary: "Summary for embed-down create path",
+				tags: ["embed-down"],
+				importance: 0.5,
+			},
+			undefined,
+			undefined,
+			{ ui: { notify: () => {} } },
+		);
+
+		// 6a. Result shape.
+		expect(createResult.details.action).toBe("created");
+		expect(createResult.details.embedding).toBe("skipped");
+		expect(typeof createResult.details.id).toBe("string");
+
+		// 6b. insertAtom was called exactly once with a 1024-dim zero
+		//     vector as its 2nd arg (atom, vector).
+		expect(insertSpy).toHaveBeenCalledTimes(1);
+		const createVector = insertSpy.mock.calls[0]?.[1];
+		expect(Array.isArray(createVector)).toBe(true);
+		expect(createVector).toHaveLength(1024);
+		for (let i = 0; i < createVector.length; i++) {
+			expect(createVector[i]).toBe(0);
+		}
+
+		// 6c. reindexOne was called with the new atom id (so the
+		//     bge-m3 service can refresh its index from the .md body
+		//     even though our embed call failed — S8 line 45).
+		expect(reindexSpy).toHaveBeenCalled();
+		const reindexArgsAfterCreate = reindexSpy.mock.calls.map((c) => c[0]);
+		expect(reindexArgsAfterCreate).toContain(createResult.details.id);
+
+		// 6d. DB state side-effect — memory_vectors row for the new
+		//     atom holds a 1024-dim zero vector (Float32 packed by
+		//     sqlite-vec → reconstructed by `getEmbedding`).
+		const verifyCreateIdx = new storageMod.MemoryIndex(dbPath);
+		await verifyCreateIdx.init();
+		try {
+			const storedVector = verifyCreateIdx.getEmbedding(createResult.details.id);
+			expect(storedVector).not.toBeNull();
+			expect(storedVector).toHaveLength(1024);
+			for (let i = 0; i < storedVector!.length; i++) {
+				expect(storedVector![i]).toBe(0);
+			}
+		} finally {
+			verifyCreateIdx.close();
+		}
+
+		// 7. OVERWRITE PATH — call memory_save with the existing id and
+		//    new content. Expected: details.action === "updated",
+		//    embedding === "skipped", updateAtom called with a
+		//    1024-dim zero vector, reindexOne called with the existing
+		//    id, and the stored vector is now all zeros (the
+		//    pre-existing 0.5 vector was overwritten).
+		const updateResult = await tool.execute(
+			"call-overwrite-down",
+			{
+				id: existingId,
+				type: "fact" as const,
+				title: "Updated title for embed-down overwrite test",
+				content:
+					"Updated content for embedding-down overwrite test path scenario",
+				summary: "Updated summary line for embed-down overwrite test",
+				tags: ["embed-down", "updated"],
+				importance: 0.7,
+			},
+			undefined,
+			undefined,
+			{ ui: { notify: () => {} } },
+		);
+
+		// 7a. Result shape.
+		expect(updateResult.details.action).toBe("updated");
+		expect(updateResult.details.id).toBe(existingId);
+		expect(updateResult.details.embedding).toBe("skipped");
+
+		// 7b. updateAtom was called exactly once with a 1024-dim zero
+		//     vector as its 2nd arg (atom, vector).
+		expect(updateSpy).toHaveBeenCalledTimes(1);
+		const updateVector = updateSpy.mock.calls[0]?.[1];
+		expect(Array.isArray(updateVector)).toBe(true);
+		expect(updateVector).toHaveLength(1024);
+		for (let i = 0; i < updateVector!.length; i++) {
+			expect(updateVector![i]).toBe(0);
+		}
+
+		// 7c. reindexOne was called again, this time with the existing
+		//     id (the overwrite path uses the atom's own id, not a new
+		//     uuid). Total reindexOne call count across both calls is 2.
+		expect(reindexSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+		const reindexArgsAfterUpdate = reindexSpy.mock.calls.map((c) => c[0]);
+		expect(reindexArgsAfterUpdate).toContain(existingId);
+
+		// 7d. DB state side-effect — the existing atom's stored
+		//     vector is now all zeros (was 0.5 pre-overwrite; the
+		//     tool's fallback overwrote it).
+		const verifyUpdateIdx = new storageMod.MemoryIndex(dbPath);
+		await verifyUpdateIdx.init();
+		try {
+			const updatedStoredVector = verifyUpdateIdx.getEmbedding(existingId);
+			expect(updatedStoredVector).not.toBeNull();
+			expect(updatedStoredVector).toHaveLength(1024);
+			for (let i = 0; i < updatedStoredVector!.length; i++) {
+				expect(updatedStoredVector![i]).toBe(0);
+			}
+		} finally {
+			verifyUpdateIdx.close();
+		}
+
+		// 8. Cleanup: restore the spies so the next test's
+		//    `vi.resetModules()` doesn't see leaked instrumentation
+		//    on the prototype / module namespace (defensive — most
+		//    other tests in this describe don't use these spies).
+		insertSpy.mockRestore();
+		updateSpy.mockRestore();
+		reindexSpy.mockRestore();
+	});
 });
