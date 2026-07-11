@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
@@ -88,6 +89,53 @@ describe("openai-responses provider defaults", () => {
 		expect(capturedPayload).not.toBeNull();
 		expect(capturedPayload).not.toMatchObject({
 			reasoning: expect.anything(),
+		});
+	});
+
+	it("forwards required tool choice", async () => {
+		let capturedPayload: unknown;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("openai", "gpt-5.4"),
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Do not call ping. Respond with text instead.",
+						timestamp: Date.now(),
+					},
+				],
+				tools: [
+					{
+						name: "ping",
+						description: "Ping",
+						parameters: Type.Object({ value: Type.String() }),
+					},
+				],
+			},
+			{
+				apiKey: "test-key",
+				toolChoice: "required",
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload).toMatchObject({
+			tool_choice: "required",
+			tools: [expect.objectContaining({ name: "ping" })],
 		});
 	});
 

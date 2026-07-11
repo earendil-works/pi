@@ -83,6 +83,7 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
 /**
@@ -252,6 +253,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (toolPlacement.immediate.length > 0) {
 		params.tools = convertResponsesTools(toolPlacement.immediate);
+	}
+
+	if (options?.toolChoice !== undefined) {
+		params.tool_choice = options.toolChoice;
 	}
 
 	if (model.reasoning) {

@@ -7,6 +7,7 @@
 - Added cache-friendly dynamic tool loading. `ToolResultMessage.addedToolNames` marks where tools from `Context.tools` became available; Anthropic and OpenAI Responses use native deferred loading so late tools stay out of the cached prefix, while other providers continue using `Context.tools` normally ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
 - Added native `xhigh` and `max` thinking levels for Claude Fable 5 across all generated provider catalogs ([#6490](https://github.com/earendil-works/pi-mono/pull/6490) by [@davidbrai](https://github.com/davidbrai)).
 - Added `toolChoice` support to OpenAI Codex Responses, including `"required"` to force a tool call.
+- Added `toolChoice` support to OpenAI Responses, including required and named tool selection.
 
 ### Fixed
 
