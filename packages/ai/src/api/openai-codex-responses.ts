@@ -511,6 +511,8 @@ function buildRequestBody(
 
 	if (toolPlacement.immediate.length > 0) {
 		body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null });
+	} else {
+		body.tools = [];
 	}
 
 	if (options?.reasoningEffort !== undefined) {

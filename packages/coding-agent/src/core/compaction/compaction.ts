@@ -519,7 +519,14 @@ function createSummarizationOptions(
 	signal: AbortSignal | undefined,
 	thinkingLevel: ThinkingLevel | undefined,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, env };
+	const options: SimpleStreamOptions = {
+		maxTokens,
+		signal,
+		apiKey,
+		headers,
+		env,
+		sessionId: globalThis.crypto?.randomUUID?.() ?? `__anon_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+	};
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
