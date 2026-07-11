@@ -91,7 +91,7 @@
 
 ## 3. tools.ts integration: register tool + path guard + system prompt
 
-- [ ] 3.1 **Register memory_save tool in registerTools**
+- [x] 3.1 **Register memory_save tool in registerTools**
   - **文件**: `extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: In `registerTools` function (line 823), after the `todowrite` tool (line 1016), call `pi.registerTool({name: "memory_save", label: "Memory Save", description: "Save a fact/rule/process to durable memory.", promptSnippet: "Save to memory.", parameters: MemorySaveParams, async execute(_id, params) { return await executeMemorySave(params, ctx); }})`. `executeMemorySave` lives in memory-save.ts and is called via passing through the loaded `MemoryIndex` constructed from `loadConfig()` defaults. Tool call returns `{content: [{type:"text", text: resultStr}], details: result}`.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save tool registered with name memory_save` test PASS (mock pi captures the registration).
@@ -169,7 +169,7 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui topK default 20` test PASS: request without topK → recallPipeline receives topK: 20.
   - **依赖**: 6.2
 
-- [ ] 6.4 **Webui accepts optional `recent` field in request body**
+- [x] 6.4 **Webui accepts optional `recent` field in request body**
   - **文件**: `packages/webui/server/routes/memory.ts` (Modify)
   - **内容**: Add validation: if `req.body.recent` is present, must be `string[]` (otherwise 400). Pass to recallPipeline as `recent`.
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `webui accepts recent: string[]`, `webui rejects recent: number[]`, `webui recent absent → null` tests PASS.
