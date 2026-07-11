@@ -248,6 +248,19 @@ class RpcClient:
         messages = data.get("messages", []) if isinstance(data, dict) else []
         return messages  # type: ignore[return-value]
 
+    async def get_entries(
+        self, since: str | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"type": "get_entries"}
+        if since is not None:
+            payload["since"] = since
+        response = await self._send(payload)
+        return self._get_data(response)
+
+    async def get_tree(self) -> dict[str, Any]:
+        response = await self._send({"type": "get_tree"})
+        return self._get_data(response)
+
     async def get_last_assistant_text(self) -> str | None:
         response = await self._send({"type": "get_last_assistant_text"})
         data = self._get_data(response)

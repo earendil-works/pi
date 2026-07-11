@@ -412,30 +412,34 @@ def convert_messages(
                             }
                         )
                         continue
-                    if not isinstance(thinking, str) or not thinking.strip():
+                    has_signature = isinstance(thinking_sig, str) and bool(thinking_sig.strip())
+                    has_thinking_text = isinstance(thinking, str) and bool(thinking.strip())
+                    # Preserve empty thinking text when a valid signature exists (Claude replay).
+                    if not has_thinking_text and not has_signature:
                         continue
-                    if not isinstance(thinking_sig, str) or not thinking_sig.strip():
-                        if allow_empty_signature:
-                            blocks.append(
-                                {
-                                    "type": "thinking",
-                                    "thinking": sanitize_surrogates(thinking),
-                                    "signature": "",
-                                }
-                            )
-                        else:
-                            blocks.append(
-                                {
-                                    "type": "text",
-                                    "text": sanitize_surrogates(thinking),
-                                }
-                            )
-                    else:
+                    if has_signature:
+                        blocks.append(
+                            {
+                                "type": "thinking",
+                                "thinking": sanitize_surrogates(
+                                    thinking if isinstance(thinking, str) else ""
+                                ),
+                                "signature": thinking_sig,
+                            }
+                        )
+                    elif allow_empty_signature:
                         blocks.append(
                             {
                                 "type": "thinking",
                                 "thinking": sanitize_surrogates(thinking),
-                                "signature": thinking_sig,
+                                "signature": "",
+                            }
+                        )
+                    else:
+                        blocks.append(
+                            {
+                                "type": "text",
+                                "text": sanitize_surrogates(thinking),
                             }
                         )
                 elif b_type == "toolCall":
@@ -964,6 +968,20 @@ def stream_anthropic(
                             output["usage"]["cacheRead"] = usage.cache_read_input_tokens
                         if getattr(usage, "cache_creation_input_tokens", None) is not None:
                             output["usage"]["cacheWrite"] = usage.cache_creation_input_tokens
+                        # Anthropic reports reasoning tokens in output_tokens_details.thinking_tokens
+                        # (a subset of output_tokens). SDK types may omit the field.
+                        output_tokens_details = getattr(usage, "output_tokens_details", None)
+                        if output_tokens_details is None and isinstance(usage, dict):
+                            output_tokens_details = usage.get("output_tokens_details")
+                        thinking_tokens = None
+                        if output_tokens_details is not None:
+                            thinking_tokens = (
+                                output_tokens_details.get("thinking_tokens")
+                                if isinstance(output_tokens_details, dict)
+                                else getattr(output_tokens_details, "thinking_tokens", None)
+                            )
+                        if thinking_tokens is not None:
+                            output["usage"]["reasoning"] = thinking_tokens
                         output["usage"]["totalTokens"] = (
                             output["usage"]["input"]
                             + output["usage"]["output"]
@@ -1037,7 +1055,7 @@ def stream_simple_anthropic(
     if not api_key:
         raise ValueError(f"No API key for provider: {model.get('provider')}")
 
-    base = build_base_options(model, options, api_key)
+    base = build_base_options(model, context, options, api_key)
     reasoning = options_dict.get("reasoning")
     if not reasoning:
         return stream_anthropic(

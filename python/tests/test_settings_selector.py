@@ -28,6 +28,8 @@ def test_build_settings_items_includes_core_subset():
         "thinking",
         "theme",
         "hide-thinking",
+        "cache-miss-notices",
+        "output-padding",
         "collapse-changelog",
         "quiet-startup",
         "tree-filter-mode",

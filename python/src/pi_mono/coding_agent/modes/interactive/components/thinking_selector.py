@@ -19,7 +19,8 @@ THINKING_DESCRIPTIONS: dict[ThinkingLevel, str] = {
     "low": "Light reasoning (~2k tokens)",
     "medium": "Moderate reasoning (~8k tokens)",
     "high": "Deep reasoning (~16k tokens)",
-    "xhigh": "Maximum reasoning (~32k tokens)",
+    "xhigh": "Extra-high reasoning (~32k tokens)",
+    "max": "Maximum reasoning",
 }
 
 

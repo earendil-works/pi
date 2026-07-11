@@ -680,7 +680,7 @@ class AgentSession:
 
     def get_available_thinking_levels(self) -> list[ThinkingLevel]:
         if not self.model:
-            return ["off", "minimal", "low", "medium", "high", "xhigh"]  # type: ignore[list-item]
+            return ["off", "minimal", "low", "medium", "high", "xhigh", "max"]  # type: ignore[list-item]
         return get_supported_thinking_levels(self.model)  # type: ignore[return-value]
 
     def _get_thinking_level_for_model_switch(
@@ -909,12 +909,14 @@ class AgentSession:
 
     def set_session_name(self, name: str) -> None:
         self.session_manager.append_session_info(name)
-        self._emit(
-            {
-                "type": "session_info_changed",
-                "name": self.session_manager.get_session_name(),
-            }
-        )
+        event = {
+            "type": "session_info_changed",
+            "name": self.session_manager.get_session_name(),
+        }
+        self._emit(event)
+        runner = self._extension_runner
+        if runner is not None and runner.has_handlers("session_info_changed"):
+            asyncio.create_task(runner.emit(event))
 
     async def navigate_tree(
         self,
@@ -1298,6 +1300,14 @@ class AgentSession:
                     {"type": "message_end", "message": message}
                 )
                 if replacement:
+                    # Untyped extension handlers can return messages with null/missing content;
+                    # normalize so it never enters agent state or session history.
+                    role = replacement.get("role")
+                    if (
+                        role in ("user", "assistant", "toolResult", "custom")
+                        and replacement.get("content") is None
+                    ):
+                        replacement = {**replacement, "content": []}
                     self._set_message_in_place(message, replacement)
         elif event_type == "tool_execution_start":
             await runner.emit(
@@ -1431,7 +1441,7 @@ class AgentSession:
                 usage = message.get("usage")
                 if usage and calculate_context_tokens(usage) > 0:
                     has_post_compaction_usage = True
-                break
+                    break
             if not has_post_compaction_usage:
                 return {"tokens": None, "contextWindow": context_window, "percent": None}
 
@@ -1452,7 +1462,8 @@ class AgentSession:
         app_message: AgentMessage = {
             "role": "custom",
             "customType": message["customType"],
-            "content": message["content"],
+            # Untyped extensions can pass null/missing content; normalize at ingestion.
+            "content": message.get("content") if message.get("content") is not None else [],
             "display": message.get("display", True),
             "details": message.get("details"),
             "timestamp": int(time.time() * 1000),
@@ -1816,7 +1827,9 @@ class AgentSession:
                 self.agent.state.messages = messages[:-1]
             return await self._run_auto_compaction("overflow", will_retry)
 
-        if assistant_message.get("stopReason") == "error":
+        usage = assistant_message.get("usage")
+        direct_context_tokens = calculate_context_tokens(usage) if usage else 0
+        if assistant_message.get("stopReason") == "error" or direct_context_tokens == 0:
             estimate = estimate_context_tokens(self.agent.state.messages)
             if estimate.last_usage_index is None:
                 return False
@@ -1834,8 +1847,7 @@ class AgentSession:
                 return False
             context_tokens = estimate.tokens
         else:
-            usage = assistant_message.get("usage")
-            context_tokens = calculate_context_tokens(usage) if usage else 0
+            context_tokens = direct_context_tokens
 
         if should_compact(context_tokens, context_window, settings):
             return await self._run_auto_compaction("threshold", False)
@@ -2035,7 +2047,10 @@ class AgentSession:
                             {
                                 "role": "custom",
                                 "customType": msg["customType"],
-                                "content": msg["content"],
+                                # Untyped extensions can pass null/missing content; normalize at ingestion.
+                                "content": msg.get("content")
+                                if msg.get("content") is not None
+                                else [],
                                 "display": msg.get("display", True),
                                 "details": msg.get("details"),
                                 "timestamp": int(time.time() * 1000),

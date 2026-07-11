@@ -51,6 +51,11 @@ class SessionStartEvent(TypedDict, total=False):
     previousSessionFile: str
 
 
+class SessionInfoChangedEvent(TypedDict, total=False):
+    type: Literal["session_info_changed"]
+    name: str | None
+
+
 class SessionShutdownEvent(TypedDict, total=False):
     type: Literal["session_shutdown"]
     reason: Literal["quit", "reload", "new", "resume", "fork"]

@@ -86,7 +86,12 @@ def transform_messages(
         normalize_tool_call_id = _normalize_tool_call_id
 
     tool_call_id_map: dict[str, str] = {}
-    image_aware_messages = _downgrade_unsupported_images(messages, model)
+    # Normalize null/undefined content from untyped callers (custom tools, hand-built
+    # histories, old session files) so downstream code can rely on the type contract.
+    normalized_messages: list[Message] = [
+        {**msg, "content": []} if msg.get("content") is None else msg for msg in messages
+    ]
+    image_aware_messages = _downgrade_unsupported_images(normalized_messages, model)
 
     # First pass: transform messages
     transformed: list[Message] = []

@@ -6,7 +6,8 @@ from pi_mono.ai.providers.simple_options import (
 
 
 def test_build_base_options():
-    model = {"id": "test-model"}
+    model = {"id": "test-model", "contextWindow": 128000, "maxTokens": 4096}
+    context = {"messages": []}
     options = {
         "temperature": 0.7,
         "maxTokens": 100,
@@ -15,7 +16,7 @@ def test_build_base_options():
         "apiKey": "key-1",
     }
     # Test builder
-    base = build_base_options(model, options)
+    base = build_base_options(model, context, options)
     assert base["temperature"] == 0.7
     assert base["maxTokens"] == 100
     assert base["sessionId"] == "session-123"
@@ -23,16 +24,18 @@ def test_build_base_options():
     assert base["apiKey"] == "key-1"
 
     # Test override with explicit apiKey
-    base2 = build_base_options(model, options, api_key="key-override")
+    base2 = build_base_options(model, context, options, api_key="key-override")
     assert base2["apiKey"] == "key-override"
 
-    # Test empty options
-    base3 = build_base_options(model)
-    assert all(value is None for value in base3.values())
+    # Test empty options uses model maxTokens
+    base3 = build_base_options(model, context)
+    assert base3["temperature"] is None
+    assert base3["maxTokens"] == 4096
 
 
 def test_clamp_reasoning():
     assert clamp_reasoning("xhigh") == "high"
+    assert clamp_reasoning("max") == "high"
     assert clamp_reasoning("high") == "high"
     assert clamp_reasoning("medium") == "medium"
     assert clamp_reasoning("low") == "low"
@@ -69,3 +72,8 @@ def test_adjust_max_tokens_for_thinking():
     # 1500 > 500, budget stays 500.
     assert res4["maxTokens"] == 1500
     assert res4["thinkingBudget"] == 500
+
+    # Case 5: max clamps to high budget
+    res5 = adjust_max_tokens_for_thinking(2000, 16384, "max")
+    assert res5["maxTokens"] == 16384
+    assert res5["thinkingBudget"] == 15360

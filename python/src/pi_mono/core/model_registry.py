@@ -105,6 +105,40 @@ ThinkingLevelMapSchema = {
         "medium": ThinkingLevelMapValueSchema,
         "high": ThinkingLevelMapValueSchema,
         "xhigh": ThinkingLevelMapValueSchema,
+        "max": ThinkingLevelMapValueSchema,
+    },
+}
+
+_ModelCostRatesProperties = {
+    "input": {"type": "number"},
+    "output": {"type": "number"},
+    "cacheRead": {"type": "number"},
+    "cacheWrite": {"type": "number"},
+}
+
+ModelCostTierSchema = {
+    "type": "object",
+    "required": ["inputTokensAbove", "input", "output", "cacheRead", "cacheWrite"],
+    "properties": {
+        "inputTokensAbove": {"type": "number"},
+        **_ModelCostRatesProperties,
+    },
+}
+
+ModelCostSchema = {
+    "type": "object",
+    "required": ["input", "output", "cacheRead", "cacheWrite"],
+    "properties": {
+        **_ModelCostRatesProperties,
+        "tiers": {"type": "array", "items": ModelCostTierSchema},
+    },
+}
+
+ModelCostOverrideSchema = {
+    "type": "object",
+    "properties": {
+        **_ModelCostRatesProperties,
+        "tiers": {"type": "array", "items": ModelCostTierSchema},
     },
 }
 
@@ -178,16 +212,7 @@ ModelDefinitionSchema = {
         "reasoning": {"type": "boolean"},
         "thinkingLevelMap": ThinkingLevelMapSchema,
         "input": {"type": "array", "items": {"type": "string", "enum": ["text", "image"]}},
-        "cost": {
-            "type": "object",
-            "required": ["input", "output", "cacheRead", "cacheWrite"],
-            "properties": {
-                "input": {"type": "number"},
-                "output": {"type": "number"},
-                "cacheRead": {"type": "number"},
-                "cacheWrite": {"type": "number"},
-            },
-        },
+        "cost": ModelCostSchema,
         "contextWindow": {"type": "number"},
         "maxTokens": {"type": "number"},
         "headers": {"type": "object", "additionalProperties": {"type": "string"}},
@@ -202,15 +227,7 @@ ModelOverrideSchema = {
         "reasoning": {"type": "boolean"},
         "thinkingLevelMap": ThinkingLevelMapSchema,
         "input": {"type": "array", "items": {"type": "string", "enum": ["text", "image"]}},
-        "cost": {
-            "type": "object",
-            "properties": {
-                "input": {"type": "number"},
-                "output": {"type": "number"},
-                "cacheRead": {"type": "number"},
-                "cacheWrite": {"type": "number"},
-            },
-        },
+        "cost": ModelCostOverrideSchema,
         "contextWindow": {"type": "number"},
         "maxTokens": {"type": "number"},
         "headers": {"type": "object", "additionalProperties": {"type": "string"}},
@@ -384,12 +401,16 @@ def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
         model_cost = result.get(
             "cost", {"input": 0.0, "output": 0.0, "cacheRead": 0.0, "cacheWrite": 0.0}
         )
-        result["cost"] = {
+        merged_cost: dict[str, Any] = {
             "input": cost_override.get("input", model_cost.get("input", 0.0)),
             "output": cost_override.get("output", model_cost.get("output", 0.0)),
             "cacheRead": cost_override.get("cacheRead", model_cost.get("cacheRead", 0.0)),
             "cacheWrite": cost_override.get("cacheWrite", model_cost.get("cacheWrite", 0.0)),
         }
+        tiers = cost_override.get("tiers", model_cost.get("tiers"))
+        if tiers is not None:
+            merged_cost["tiers"] = tiers
+        result["cost"] = cast(ModelCost, merged_cost)
 
     if override.get("compat") is not None:
         result["compat"] = cast(

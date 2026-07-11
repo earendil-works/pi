@@ -237,6 +237,7 @@ class InteractiveMode:
         self._expandable_components: list[Any] = []
         self._tool_output_expanded = False
         self._hide_thinking_block = False
+        self._output_pad = 1
         self._bash_component: BashExecutionComponent | None = None
         self._changelog_markdown: str | None = None
         self._startup_notices_shown = False
@@ -282,6 +283,7 @@ class InteractiveMode:
             EditorOptions(padding_x=1),
         )
         self._hide_thinking_block = self._session.settings_manager.get_hide_thinking_block()
+        self._output_pad = self._session.settings_manager.get_output_pad()
         self._theme_controller = InteractiveThemeController(
             self._ui,
             self._session.settings_manager,
@@ -852,9 +854,13 @@ class InteractiveMode:
                 user_message = skill_block.get("userMessage")
                 if user_message:
                     self._chat_container.add_child(Spacer(1))
-                    self._chat_container.add_child(UserMessageComponent(user_message))
+                    self._chat_container.add_child(
+                        UserMessageComponent(user_message, output_pad=self._output_pad)
+                    )
             else:
-                self._chat_container.add_child(UserMessageComponent(text_content))
+                self._chat_container.add_child(
+                    UserMessageComponent(text_content, output_pad=self._output_pad)
+                )
             if (
                 populate_history
                 and self._editor is not None
@@ -866,6 +872,7 @@ class InteractiveMode:
             component = AssistantMessageComponent(
                 message,
                 hide_thinking_block=self._hide_thinking_block,
+                output_pad=self._output_pad,
             )
             self._chat_container.add_child(component)
             return
@@ -1019,7 +1026,11 @@ class InteractiveMode:
         if self._chat_container is None:
             return
         self._finish_streaming_assistant(message, finalize=False)
-        self._streaming_component = AssistantMessageComponent(message)
+        self._streaming_component = AssistantMessageComponent(
+            message,
+            hide_thinking_block=self._hide_thinking_block,
+            output_pad=self._output_pad,
+        )
         self._chat_container.add_child(self._streaming_component)
 
     def _update_streaming_assistant(self, message: AgentMessage | dict[str, Any]) -> None:
@@ -1038,7 +1049,13 @@ class InteractiveMode:
             if finalize and self._chat_container is not None:
                 text = _message_text(message)
                 if text:
-                    self._chat_container.add_child(AssistantMessageComponent(message))
+                    self._chat_container.add_child(
+                        AssistantMessageComponent(
+                            message,
+                            hide_thinking_block=self._hide_thinking_block,
+                            output_pad=self._output_pad,
+                        )
+                    )
             return
 
         self._streaming_component.update_content(message)
@@ -1444,6 +1461,19 @@ class InteractiveMode:
                 def on_hide_thinking_block_change(self, hidden: bool) -> None:
                     self_outer._hide_thinking_block = hidden
                     self_outer._session.settings_manager.set_hide_thinking_block(hidden)
+
+                def on_show_cache_miss_notices_change(self, show: bool) -> None:
+                    self_outer._session.settings_manager.set_show_cache_miss_notices(show)
+
+                def on_output_pad_change(self, padding: int) -> None:
+                    self_outer._output_pad = padding
+                    self_outer._session.settings_manager.set_output_pad(padding)  # type: ignore[arg-type]
+                    if self_outer._chat_container is not None:
+                        for child in self_outer._chat_container.children:
+                            if hasattr(child, "set_output_pad"):
+                                child.set_output_pad(padding)
+                    if self_outer._streaming_component is not None:
+                        self_outer._streaming_component.set_output_pad(padding)
 
                 def on_collapse_changelog_change(self, collapsed: bool) -> None:
                     self_outer._session.settings_manager.set_collapse_changelog(collapsed)
@@ -2561,11 +2591,12 @@ class InteractiveMode:
     async def _open_external_editor(self) -> None:
         if self._editor is None or self._ui is None:
             return
-        editor_cmd = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        editor_cmd = self._session.settings_manager.get_external_editor_command()
         if not editor_cmd:
             self._show_status(
                 theme.fg(
-                    "warning", "No editor configured. Set $VISUAL or $EDITOR environment variable."
+                    "warning",
+                    "No editor configured. Set externalEditor in settings.json or $VISUAL/$EDITOR.",
                 )
             )
             return

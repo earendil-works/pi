@@ -809,7 +809,7 @@ def stream_simple_mistral(
     if not api_key:
         raise ValueError(f"No API key for provider: {model.get('provider')}")
 
-    base = build_base_options(model, options_dict, api_key)
+    base = build_base_options(model, context, options_dict, api_key)
 
     reasoning_opt = options_dict.get("reasoning")
     clamped_reasoning = (

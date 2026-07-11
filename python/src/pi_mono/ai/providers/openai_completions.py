@@ -97,7 +97,7 @@ def prepare_openai_chat_completion_params(params: Dict[str, Any]) -> Dict[str, A
 
 class OpenAICompletionsOptions(StreamOptions, total=False):
     toolChoice: Union[Literal["auto", "none", "required"], Dict[str, Any]]
-    reasoningEffort: Literal["minimal", "low", "medium", "high", "xhigh"]
+    reasoningEffort: Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class OpenAICompatCacheControl(TypedDict, total=False):
@@ -564,7 +564,7 @@ def stream_simple_openai_completions(
     if not api_key:
         raise ValueError(f"No API key for provider: {model.get('provider')}")
 
-    base = build_base_options(model, options, api_key)
+    base = build_base_options(model, context, options, api_key)
     clamped_reasoning = (
         clamp_thinking_level(model, cast(ModelThinkingLevel, options_dict["reasoning"]))
         if options_dict.get("reasoning")
@@ -1175,6 +1175,7 @@ def parse_chunk_usage(
         "output": output_tokens,
         "cacheRead": cache_read_tokens,
         "cacheWrite": cache_write_tokens,
+        "reasoning": 0,
         "totalTokens": input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
         "cost": {
             "input": 0.0,
@@ -1184,6 +1185,11 @@ def parse_chunk_usage(
             "total": 0.0,
         },
     }
+    completion_tokens_details = get_val(raw_usage, "completion_tokens_details")
+    if completion_tokens_details:
+        reasoning_tokens = get_val(completion_tokens_details, "reasoning_tokens")
+        if reasoning_tokens is not None:
+            usage["reasoning"] = reasoning_tokens or 0
     calculate_cost(model, usage)
     return usage
 

@@ -189,6 +189,17 @@ class RpcGetForkMessagesCommand(TypedDict, total=False):
     type: Literal["get_fork_messages"]
 
 
+class RpcGetEntriesCommand(TypedDict, total=False):
+    id: str | None
+    type: Literal["get_entries"]
+    since: str
+
+
+class RpcGetTreeCommand(TypedDict, total=False):
+    id: str | None
+    type: Literal["get_tree"]
+
+
 RpcCommand = Union[
     RpcPromptCommand,
     RpcSteerCommand,
@@ -211,6 +222,8 @@ RpcCommand = Union[
     RpcForkCommand,
     RpcSwitchSessionCommand,
     RpcGetForkMessagesCommand,
+    RpcGetEntriesCommand,
+    RpcGetTreeCommand,
     RpcGetMessagesCommand,
     RpcGetCommandsCommand,
     dict[str, Any],

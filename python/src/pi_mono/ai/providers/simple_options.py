@@ -3,24 +3,44 @@
 from typing import Any
 
 from pi_mono.ai.types import (
+    Context,
     Model,
     SimpleStreamOptions,
     StreamOptions,
     ThinkingBudgets,
     ThinkingLevel,
 )
+from pi_mono.ai.utils.estimate import estimate_context_tokens
+
+CONTEXT_SAFETY_TOKENS = 4096
+MIN_MAX_TOKENS = 1
+
+
+def clamp_max_tokens_to_context(model: Model[Any], context: Context, max_tokens: int) -> int:
+    if int(model.get("contextWindow") or 0) <= 0:
+        return max(MIN_MAX_TOKENS, max_tokens)
+    available = (
+        int(model["contextWindow"])
+        - estimate_context_tokens(context).tokens
+        - CONTEXT_SAFETY_TOKENS
+    )
+    return min(max_tokens, max(MIN_MAX_TOKENS, available))
 
 
 def build_base_options(
     model: Model[Any],
+    context: Context,
     options: SimpleStreamOptions | None = None,
     api_key: str | None = None,
 ) -> StreamOptions:
     """Build base stream options from simple options."""
     opts = options or {}
+    requested_max_tokens = opts.get("maxTokens")
+    if requested_max_tokens is None:
+        requested_max_tokens = int(model.get("maxTokens") or 0)
     return {
         "temperature": opts.get("temperature"),
-        "maxTokens": opts.get("maxTokens"),
+        "maxTokens": clamp_max_tokens_to_context(model, context, int(requested_max_tokens)),
         "signal": opts.get("signal"),
         "apiKey": api_key or opts.get("apiKey"),
         "transport": opts.get("transport"),
@@ -38,8 +58,8 @@ def build_base_options(
 
 
 def clamp_reasoning(effort: ThinkingLevel | None) -> ThinkingLevel | None:
-    """Clamp xhigh to high since it's not universally supported."""
-    return "high" if effort == "xhigh" else effort
+    """Clamp xhigh/max to high since they're not universally supported."""
+    return "high" if effort in ("xhigh", "max") else effort
 
 
 def adjust_max_tokens_for_thinking(
@@ -47,11 +67,11 @@ def adjust_max_tokens_for_thinking(
     model_max_tokens: int,
     reasoning_level: ThinkingLevel,
     custom_budgets: ThinkingBudgets | None = None,
-) -> tuple[int, int]:
+) -> dict[str, int]:
     """
     Adjust max tokens to account for thinking budget.
 
-    Returns (max_tokens, thinking_budget)
+    Returns {"maxTokens": int, "thinkingBudget": int}
     """
     default_budgets: ThinkingBudgets = {
         "minimal": 1024,

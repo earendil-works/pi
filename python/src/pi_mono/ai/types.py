@@ -1,4 +1,4 @@
-from typing import Any, Callable, Literal, TypedDict, Union
+from typing import Any, Callable, Literal, NotRequired, TypedDict, Union
 
 from pi_mono.utils.diagnostics import AssistantMessageDiagnostic
 
@@ -67,8 +67,8 @@ KnownImagesProvider = Literal["openrouter"]
 
 ImagesProvider = Union[KnownImagesProvider, str]
 
-ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
-ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
+ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 ThinkingLevelMap = dict[ModelThinkingLevel, Union[str, None]]
 
@@ -80,11 +80,23 @@ class ThinkingBudgets(TypedDict, total=False):
     high: int
 
 
-class ModelCost(TypedDict):
+class ModelCostRates(TypedDict):
     input: float
     output: float
     cacheRead: float
     cacheWrite: float
+
+
+class ModelCostTier(ModelCostRates):
+    """Request-wide pricing tier keyed by total input token threshold."""
+
+    inputTokensAbove: int
+
+
+class ModelCost(ModelCostRates, total=False):
+    """Per-million-token rates with optional request-wide input pricing tiers."""
+
+    tiers: list[ModelCostTier]
 
 
 Transport = Literal["sse", "websocket", "websocket-cached", "auto"]
@@ -140,6 +152,10 @@ class Usage(TypedDict):
     cacheWrite: int
     totalTokens: int
     cost: CostBreakdown
+    # Subset of cacheWrite written with 1h retention. Only Anthropic reports this split.
+    cacheWrite1h: NotRequired[int]
+    # Reasoning/thinking tokens when reported. Subset of output (output already includes them).
+    reasoning: NotRequired[int]
 
 
 class TextContent(TypedDict, total=False):

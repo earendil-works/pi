@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import os
+import sys
 import time
 from typing import Any, Callable, Literal, TypedDict, Union, cast
 
@@ -81,7 +82,9 @@ class Settings(TypedDict, total=False):
     lastChangelogVersion: str | None
     defaultProvider: str | None
     defaultModel: str | None
-    defaultThinkingLevel: Literal["off", "minimal", "low", "medium", "high", "xhigh"] | None
+    defaultThinkingLevel: (
+        Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] | None
+    )
     transport: Literal["auto", "websocket", "sse"] | None
     steeringMode: Literal["all", "one-at-a-time"] | None
     followUpMode: Literal["all", "one-at-a-time"] | None
@@ -90,6 +93,8 @@ class Settings(TypedDict, total=False):
     branchSummary: BranchSummarySettings | None
     retry: RetrySettings | None
     hideThinkingBlock: bool | None
+    showCacheMissNotices: bool | None
+    externalEditor: str | None
     shellPath: str | None
     quietStartup: bool | None
     shellCommandPrefix: str | None
@@ -109,6 +114,7 @@ class Settings(TypedDict, total=False):
     treeFilterMode: Literal["default", "no-tools", "user-only", "labeled-only", "all"] | None
     thinkingBudgets: ThinkingBudgetsSettings | None
     editorPaddingX: int | None
+    outputPad: Literal[0, 1] | None
     autocompleteMaxVisible: int | None
     showHardwareCursor: bool | None
     markdown: MarkdownSettings | None
@@ -729,11 +735,11 @@ class SettingsManager:
 
     def get_default_thinking_level(
         self,
-    ) -> Literal["off", "minimal", "low", "medium", "high", "xhigh"] | None:
+    ) -> Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"] | None:
         return self.settings.get("defaultThinkingLevel")
 
     def set_default_thinking_level(
-        self, level: Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+        self, level: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
     ) -> None:
         self.global_settings["defaultThinkingLevel"] = level
         self._mark_modified("defaultThinkingLevel")
@@ -870,8 +876,26 @@ class SettingsManager:
         self._mark_modified("hideThinkingBlock")
         self.save()
 
+    def get_show_cache_miss_notices(self) -> bool:
+        return bool(self.settings.get("showCacheMissNotices", False))
+
+    def set_show_cache_miss_notices(self, show: bool) -> None:
+        self.global_settings["showCacheMissNotices"] = show
+        self._mark_modified("showCacheMissNotices")
+        self.save()
+
+    def get_external_editor_command(self) -> str | None:
+        configured = self.settings.get("externalEditor")
+        if isinstance(configured, str) and configured.strip() != "":
+            return configured
+        environment_editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        if environment_editor:
+            return environment_editor
+        return "notepad" if sys.platform == "win32" else "nano"
+
     def get_shell_path(self) -> str | None:
-        return self.settings.get("shellPath")
+        shell_path = self.settings.get("shellPath")
+        return normalize_path(shell_path) if shell_path else shell_path
 
     def set_shell_path(self, path: str | None) -> None:
         self.global_settings["shellPath"] = path
@@ -1129,6 +1153,14 @@ class SettingsManager:
     def set_editor_padding_x(self, padding: int) -> None:
         self.global_settings["editorPaddingX"] = max(0, min(3, int(padding)))
         self._mark_modified("editorPaddingX")
+        self.save()
+
+    def get_output_pad(self) -> Literal[0, 1]:
+        return 0 if self.settings.get("outputPad") == 0 else 1
+
+    def set_output_pad(self, padding: Literal[0, 1]) -> None:
+        self.global_settings["outputPad"] = padding
+        self._mark_modified("outputPad")
         self.save()
 
     def get_autocomplete_max_visible(self) -> int:

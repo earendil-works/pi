@@ -23,6 +23,8 @@ def test_build_settings_items_includes_phase2_settings() -> None:
     items = build_settings_items(config)
     item_ids = {item.id for item in items}
     assert "hide-thinking" in item_ids
+    assert "cache-miss-notices" in item_ids
+    assert "output-padding" in item_ids
     assert "collapse-changelog" in item_ids
     assert "quiet-startup" in item_ids
     assert "tree-filter-mode" in item_ids
@@ -56,6 +58,12 @@ def test_handle_settings_change_phase2_callbacks() -> None:
         def on_hide_thinking_block_change(self, hidden: bool) -> None:
             calls["hide_thinking"] = hidden
 
+        def on_show_cache_miss_notices_change(self, show: bool) -> None:
+            calls["cache_miss"] = show
+
+        def on_output_pad_change(self, padding: int) -> None:
+            calls["output_pad"] = padding
+
         def on_collapse_changelog_change(self, collapsed: bool) -> None:
             calls["collapse_changelog"] = collapsed
 
@@ -70,6 +78,10 @@ def test_handle_settings_change_phase2_callbacks() -> None:
 
     callbacks = Callbacks()
     handle_settings_change("hide-thinking", "true", callbacks)
+    handle_settings_change("cache-miss-notices", "true", callbacks)
+    handle_settings_change("output-padding", "0", callbacks)
     handle_settings_change("tree-filter-mode", "user-only", callbacks)
     assert calls["hide_thinking"] is True
+    assert calls["cache_miss"] is True
+    assert calls["output_pad"] == 0
     assert calls["tree_filter_mode"] == "user-only"

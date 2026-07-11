@@ -658,6 +658,37 @@ class RpcMode:
             messages = self._session.get_user_messages_for_forking()
             return build_success_response(command_id, "get_fork_messages", {"messages": messages})
 
+        if command_type == "get_entries":
+            session_manager = self._session.session_manager
+            entries = session_manager.get_entries()
+            since = command.get("since")  # type: ignore[union-attr]
+            if since is not None:
+                since_index = next(
+                    (i for i, entry in enumerate(entries) if entry.get("id") == since),
+                    -1,
+                )
+                if since_index == -1:
+                    return build_error_response(
+                        command_id, "get_entries", f"Entry not found: {since}"
+                    )
+                entries = entries[since_index + 1 :]
+            return build_success_response(
+                command_id,
+                "get_entries",
+                {"entries": entries, "leafId": session_manager.get_leaf_id()},
+            )
+
+        if command_type == "get_tree":
+            session_manager = self._session.session_manager
+            return build_success_response(
+                command_id,
+                "get_tree",
+                {
+                    "tree": session_manager.get_tree(),
+                    "leafId": session_manager.get_leaf_id(),
+                },
+            )
+
         if command_type == "get_messages":
             return build_success_response(
                 command_id, "get_messages", {"messages": self._session.messages}

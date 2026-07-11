@@ -306,6 +306,7 @@ def stream_google(
                         "output": cand_tokens + thought_tokens,
                         "cacheRead": cached_tokens,
                         "cacheWrite": 0,
+                        "reasoning": thought_tokens,
                         "totalTokens": chunk.usage_metadata.total_token_count or 0,
                         "cost": {
                             "input": 0.0,
@@ -390,14 +391,14 @@ def stream_simple_google(
     if not api_key:
         raise ValueError(f"No API key for provider: {model.get('provider')}")
 
-    base = build_base_options(model, options, api_key)
+    base = build_base_options(model, context, options, api_key)
     if not options_dict.get("reasoning"):
         return stream_google(model, context, GoogleOptions(**base, thinking={"enabled": False}))
 
     clamped_reasoning = clamp_thinking_level(
         model,
         cast(
-            Literal["off", "minimal", "low", "medium", "high", "xhigh"],
+            Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"],
             options_dict["reasoning"],
         ),
     )

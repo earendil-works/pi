@@ -183,14 +183,23 @@ def build_session_context(
     def append_message(e: Dict[str, Any]) -> None:
         e_type = e.get("type")
         if e_type == "message":
-            messages.append(e["message"])
+            message = e["message"]
+            # Session files are parsed without validation; old versions, forks, or
+            # hand-edited files can contain messages with null/missing content.
+            if (
+                message.get("role") in ("user", "assistant", "toolResult")
+                and message.get("content") is None
+            ):
+                messages.append({**message, "content": []})
+            else:
+                messages.append(message)
         elif e_type == "custom_message":
             from pi_mono.core.messages import create_custom_message
 
             messages.append(
                 create_custom_message(
                     e["customType"],
-                    e["content"],
+                    e.get("content") or [],
                     e["display"],
                     e.get("details"),
                     e["timestamp"],

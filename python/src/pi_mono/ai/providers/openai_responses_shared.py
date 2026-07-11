@@ -565,14 +565,21 @@ async def process_responses_stream(
             if response.get("id"):
                 output["responseId"] = response["id"]
             if response.get("usage"):
-                cached_tokens = (
-                    response["usage"].get("input_tokens_details", {}).get("cached_tokens", 0)
-                )
+                input_details = response["usage"].get("input_tokens_details") or {}
+                cached_tokens = input_details.get("cached_tokens", 0) or 0
+                cache_write_tokens = input_details.get("cache_write_tokens", 0) or 0
+                output_details = response["usage"].get("output_tokens_details") or {}
                 output["usage"] = {
-                    "input": (response["usage"].get("input_tokens", 0) or 0) - cached_tokens,
+                    "input": max(
+                        0,
+                        (response["usage"].get("input_tokens", 0) or 0)
+                        - cached_tokens
+                        - cache_write_tokens,
+                    ),
                     "output": response["usage"].get("output_tokens", 0) or 0,
                     "cacheRead": cached_tokens,
-                    "cacheWrite": 0,
+                    "cacheWrite": cache_write_tokens,
+                    "reasoning": output_details.get("reasoning_tokens") or 0,
                     "totalTokens": response["usage"].get("total_tokens", 0) or 0,
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
                 }

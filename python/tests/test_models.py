@@ -53,6 +53,7 @@ def test_calculate_cost():
         "output": 2_000_000,
         "cacheRead": 500_000,
         "cacheWrite": 200_000,
+        "totalTokens": 3_700_000,
         "cost": {
             "input": 0.0,
             "output": 0.0,
@@ -69,12 +70,62 @@ def test_calculate_cost():
     assert cost["total"] == 72.0
 
 
+def test_calculate_cost_applies_input_pricing_tiers():
+    model: Model = {
+        "id": "gpt-5.6-sol",
+        "cost": {
+            "input": 5.0,
+            "output": 30.0,
+            "cacheRead": 0.5,
+            "cacheWrite": 6.25,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 10.0,
+                    "output": 45.0,
+                    "cacheRead": 1.0,
+                    "cacheWrite": 12.5,
+                }
+            ],
+        },
+    }
+
+    def create_usage(cache_write: int) -> Usage:
+        return {
+            "input": 200000,
+            "output": 100000,
+            "cacheRead": 72000,
+            "cacheWrite": cache_write,
+            "totalTokens": 372000 + cache_write,
+            "cost": {"input": 0.0, "output": 0.0, "cacheRead": 0.0, "cacheWrite": 0.0, "total": 0.0},
+        }
+
+    short = calculate_cost(model, create_usage(0))
+    assert short["input"] == 1.0
+    assert short["output"] == 3.0
+    assert short["cacheRead"] == 0.036
+    assert short["cacheWrite"] == 0.0
+
+    long = calculate_cost(model, create_usage(1))
+    assert long["input"] == 2.0
+    assert long["output"] == 4.5
+    assert long["cacheRead"] == 0.072
+    assert long["cacheWrite"] == 0.0000125
+
+
 def test_get_supported_thinking_levels():
-    # Anthropic Opus 4.6 should support xhigh
+    # Anthropic Opus 4.6 should support max (adaptive thinking)
     model_opus = get_model("anthropic", "claude-opus-4-6")
     assert model_opus is not None
     levels = get_supported_thinking_levels(model_opus)
-    assert "xhigh" in levels
+    assert "max" in levels
+
+    # GPT-5.6 should support max and xhigh
+    model_gpt = get_model("openai", "gpt-5.6-sol")
+    assert model_gpt is not None
+    gpt_levels = get_supported_thinking_levels(model_gpt)
+    assert "xhigh" in gpt_levels
+    assert "max" in gpt_levels
 
     # Non-reasoning model
     model_non_reasoning: Model = {"id": "non-reasoning", "reasoning": False}
@@ -86,7 +137,7 @@ def test_clamp_thinking_level():
     assert model_opus is not None
 
     # Supported thinking level
-    assert clamp_thinking_level(model_opus, "xhigh") == "xhigh"
+    assert clamp_thinking_level(model_opus, "max") == "max"
     assert clamp_thinking_level(model_opus, "medium") == "medium"
 
     # Clamp logic for unsupported or invalid level
@@ -102,6 +153,7 @@ def test_clamp_thinking_level():
     # Available levels: "off", "minimal", "low", "medium"
     assert clamp_thinking_level(model_limited, "high") == "medium"
     assert clamp_thinking_level(model_limited, "xhigh") == "medium"
+    assert clamp_thinking_level(model_limited, "max") == "medium"
 
 
 def test_models_are_equal():
@@ -151,11 +203,24 @@ def test_get_cursor_models_merges_generated_catalog_with_discovered() -> None:
             "cost": {"input": 0.0, "output": 0.0, "cacheRead": 0.0, "cacheWrite": 0.0},
             "contextWindow": 200000,
             "maxTokens": 32768,
-        }
+        },
+        {
+            "id": "composer-2.5",
+            "name": "Composer 2.5 (CLI)",
+            "api": "openai-completions",
+            "provider": "cursor",
+            "baseUrl": "cursor://agent",
+            "reasoning": False,
+            "input": ["text"],
+            "cost": {"input": 0.0, "output": 0.0, "cacheRead": 0.0, "cacheWrite": 0.0},
+            "contextWindow": 200000,
+            "maxTokens": 32768,
+        },
     ]
     with patch("pi_mono.ai.models.discover_cursor_models", return_value=discovered):
         models = get_models("cursor")
     ids = [model["id"] for model in models]
+    # v0.80+: Cursor models come from CLI discovery (no static catalog entry).
     assert ids[0] == "auto"
     assert models[0]["name"] == "Auto (CLI)"
-    assert "composer-1" in ids
+    assert "composer-2.5" in ids

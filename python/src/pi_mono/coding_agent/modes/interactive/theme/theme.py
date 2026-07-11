@@ -117,12 +117,30 @@ class Theme:
     def inverse(self, text: str) -> str:
         return f"\x1b[7m{text}\x1b[27m"
 
+    def get_thinking_border_color(self, level: str) -> ThemeColorFn:
+        color_map = {
+            "off": "thinkingOff",
+            "minimal": "thinkingMinimal",
+            "low": "thinkingLow",
+            "medium": "thinkingMedium",
+            "high": "thinkingHigh",
+            "xhigh": "thinkingXhigh",
+            "max": "thinkingMax",
+        }
+        color = color_map.get(level, "thinkingOff")
+        if color not in self._fg_ansi:
+            color = "thinkingXhigh" if level == "max" else "thinkingOff"
+        return self.fg_fn(color)
+
 
 def _load_theme_json(path: Path) -> Theme:
     with path.open(encoding="utf-8") as handle:
         data: dict[str, Any] = json.load(handle)
     vars_map = data.get("vars", {})
     colors = _resolve_theme_colors(data["colors"], vars_map)
+    # thinkingMax is optional for legacy themes; fall back to thinkingXhigh.
+    if "thinkingMax" not in colors and "thinkingXhigh" in colors:
+        colors["thinkingMax"] = colors["thinkingXhigh"]
     fg_colors = {key: value for key, value in colors.items() if not key.endswith("Bg")}
     bg_keys = (
         "selectedBg",

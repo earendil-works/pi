@@ -40,9 +40,11 @@ class SettingsConfig:
     current_theme: str
     available_themes: list[str]
     hide_thinking_block: bool = False
+    show_cache_miss_notices: bool = False
     collapse_changelog: bool = False
     quiet_startup: bool = False
     tree_filter_mode: TreeFilterMode = "default"
+    output_pad: int = 1
 
 
 class SettingsCallbacks(Protocol):
@@ -62,11 +64,15 @@ class SettingsCallbacks(Protocol):
 
     def on_hide_thinking_block_change(self, hidden: bool) -> None: ...
 
+    def on_show_cache_miss_notices_change(self, show: bool) -> None: ...
+
     def on_collapse_changelog_change(self, collapsed: bool) -> None: ...
 
     def on_quiet_startup_change(self, enabled: bool) -> None: ...
 
     def on_tree_filter_mode_change(self, mode: TreeFilterMode) -> None: ...
+
+    def on_output_pad_change(self, padding: int) -> None: ...
 
     def on_cancel(self) -> None: ...
 
@@ -166,6 +172,20 @@ def build_settings_items(config: SettingsConfig) -> list[SettingItem]:
             values=["true", "false"],
         ),
         SettingItem(
+            id="cache-miss-notices",
+            label="Cache miss notices",
+            description="Show transcript notices for significant prompt-cache misses",
+            current_value="true" if config.show_cache_miss_notices else "false",
+            values=["true", "false"],
+        ),
+        SettingItem(
+            id="output-padding",
+            label="Output padding",
+            description="Horizontal padding for user messages, assistant messages, and thinking",
+            current_value=str(config.output_pad),
+            values=["0", "1"],
+        ),
+        SettingItem(
             id="collapse-changelog",
             label="Collapse changelog",
             description="Show condensed changelog banner on startup",
@@ -258,6 +278,10 @@ def handle_settings_change(item_id: str, new_value: str, callbacks: SettingsCall
         callbacks.on_follow_up_mode_change(new_value)  # type: ignore[arg-type]
     elif item_id == "hide-thinking":
         callbacks.on_hide_thinking_block_change(new_value == "true")
+    elif item_id == "cache-miss-notices":
+        callbacks.on_show_cache_miss_notices_change(new_value == "true")
+    elif item_id == "output-padding":
+        callbacks.on_output_pad_change(0 if new_value == "0" else 1)
     elif item_id == "collapse-changelog":
         callbacks.on_collapse_changelog_change(new_value == "true")
     elif item_id == "quiet-startup":
@@ -306,7 +330,9 @@ def build_settings_config_from_session(session: Any) -> SettingsConfig:
         current_theme=settings_manager.get_theme() or "dark",
         available_themes=get_available_themes(),
         hide_thinking_block=settings_manager.get_hide_thinking_block(),
+        show_cache_miss_notices=settings_manager.get_show_cache_miss_notices(),
         collapse_changelog=settings_manager.get_collapse_changelog(),
         quiet_startup=settings_manager.get_quiet_startup(),
         tree_filter_mode=settings_manager.get_tree_filter_mode(),  # type: ignore[arg-type]
+        output_pad=settings_manager.get_output_pad(),
     )

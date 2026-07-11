@@ -17,6 +17,7 @@ VALID_THINKING_LEVELS: tuple[ThinkingLevel, ...] = (
     "medium",
     "high",
     "xhigh",
+    "max",
 )
 
 
@@ -280,7 +281,7 @@ Options:
   --no-builtin-tools, -nbt       Disable built-in tools only
   --tools, -t <tools>            Comma-separated tool allowlist
   --exclude-tools, -xt <tools>   Comma-separated tool denylist
-  --thinking <level>             Thinking level: off, minimal, low, medium, high, xhigh
+  --thinking <level>             Thinking level: off, minimal, low, medium, high, xhigh, max
   --list-models [search]         List available models
   --verbose                      Force verbose startup
   --offline                      Disable startup network operations

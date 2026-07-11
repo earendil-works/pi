@@ -351,7 +351,7 @@ def stream_simple_bedrock(
     options: Optional[SimpleStreamOptions] = None,
 ) -> AssistantMessageEventStream:
     options_dict = options or {}
-    base = build_base_options(model, options, None)
+    base = build_base_options(model, context, options, None)
     if not options_dict.get("reasoning"):
         return stream_bedrock(model, context, BedrockOptions(**base, reasoning=None))
 
@@ -616,7 +616,9 @@ def supports_adaptive_thinking(model_id: str, model_name: Optional[str]) -> bool
 
 def supports_native_xhigh_effort(model: Model) -> bool:
     candidates = get_model_match_candidates(model["id"], model.get("name"))
-    return any("opus-4-7" in s or "opus-4-8" in s for s in candidates)
+    return any(
+        "opus-4-7" in s or "opus-4-8" in s or "sonnet-5" in s or "fable-5" in s for s in candidates
+    )
 
 
 def map_thinking_level_to_effort(
@@ -980,9 +982,10 @@ def build_additional_model_request_fields(
                 "medium": 8192,
                 "high": 16384,
                 "xhigh": 16384,
+                "max": 16384,
             }
             level = options_dict["reasoning"]
-            if level == "xhigh":
+            if level in ("xhigh", "max"):
                 level = "high"
             custom_budgets = options_dict.get("thinkingBudgets") or {}
             budget = custom_budgets.get(level) or default_budgets.get(

@@ -45,7 +45,7 @@ StreamFn = Callable[..., Union[Coroutine[Any, Any, Any], Any]]
 ToolExecutionMode = Literal["sequential", "parallel"]
 QueueMode = Literal["all", "one-at-a-time"]
 
-ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 AgentThinkingLevel = ThinkingLevel
 
 Transport = Literal["sse", "websocket", "websocket-cached", "auto"]

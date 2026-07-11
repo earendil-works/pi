@@ -63,6 +63,32 @@ def test_convert_messages():
     assert converted[1]["content"][1] == {"type": "text", "text": "Hi there!"}
 
 
+def test_convert_messages_keeps_empty_thinking_with_signature():
+    model = {"id": "claude-opus-4", "provider": "anthropic", "api": "anthropic-messages"}
+    messages = [
+        {
+            "role": "assistant",
+            "provider": "anthropic",
+            "model": "claude-opus-4",
+            "api": "anthropic-messages",
+            "content": [
+                {"type": "thinking", "thinking": "", "thinkingSignature": "sig-empty"},
+                {"type": "text", "text": "done"},
+            ],
+        },
+    ]
+
+    converted = convert_messages(
+        messages, model, is_oauth=False, cache_control=None, allow_empty_signature=False
+    )
+    assert converted[0]["content"][0] == {
+        "type": "thinking",
+        "thinking": "",
+        "signature": "sig-empty",
+    }
+    assert converted[0]["content"][1] == {"type": "text", "text": "done"}
+
+
 def test_convert_messages_with_tool_results():
     model = {"id": "claude-3-5-sonnet", "provider": "anthropic"}
     messages = [

@@ -13,12 +13,22 @@ OSC133_ZONE_FINAL = "\x1b]133;C\x07"
 
 
 class UserMessageComponent(Container):
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, output_pad: int = 1) -> None:
         super().__init__()
-        content_box = Box(1, 1, theme.bg_fn("userMessageBg"))
+        self._output_pad = output_pad
+        self._text = text
+        self._rebuild()
+
+    def set_output_pad(self, padding: int) -> None:
+        self._output_pad = padding
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        self.clear()
+        content_box = Box(self._output_pad, 1, theme.bg_fn("userMessageBg"))
         content_box.add_child(
             Markdown(
-                text,
+                self._text,
                 0,
                 0,
                 get_markdown_theme(),

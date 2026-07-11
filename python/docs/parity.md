@@ -15,10 +15,10 @@ This document tracks behavioral parity between the TypeScript packages (`package
 
 | Area | TS source | Python target | Status |
 |------|-----------|---------------|--------|
-| AI providers & models | `packages/ai` | `pi_mono.ai` | **Match** (lazy registration, Copilot filter, Mistral caching) |
+| AI providers & models | `packages/ai` | `pi_mono.ai` | **Match** (v0.80: `max` thinking, input pricing tiers, `Usage.reasoning`) |
 | Agent runtime | `packages/agent` | `pi_mono.agent` | **Match** |
 | Terminal UI | `packages/tui` | `pi_mono.tui` | **Match** |
-| Coding agent CLI | `packages/coding-agent` | `pi_mono.coding_agent` | **Partial** |
+| Coding agent CLI | `packages/coding-agent` | `pi_mono.coding_agent` | **Partial** (v0.80 ports: RPC get_entries/get_tree, outputPad, externalEditor, shellPath ~) |
 
 ## CLI & modes
 

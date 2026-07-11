@@ -46,6 +46,7 @@ def _build_mode() -> InteractiveMode:
     mode._expandable_components = []
     mode._tool_output_expanded = False
     mode._hide_thinking_block = False
+    mode._output_pad = 1
     mode._session = MagicMock()
     mode._session.retry_attempt = 0
     mode._session.settings_manager.get_show_images.return_value = False

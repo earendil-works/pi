@@ -1,5 +1,5 @@
 import re
-from typing import Any, Pattern, TypedDict
+from typing import Any, NotRequired, Pattern, TypedDict
 
 
 class CostInfo(TypedDict):
@@ -17,6 +17,8 @@ class Usage(TypedDict):
     cacheWrite: int
     totalTokens: int
     cost: CostInfo
+    reasoning: NotRequired[int]
+    cacheWrite1h: NotRequired[int]
 
 
 class AssistantMessage(TypedDict, total=False):

@@ -26,6 +26,7 @@ class AssistantMessageComponent(Container):
         *,
         hide_thinking_block: bool = False,
         hidden_thinking_label: str = "Thinking...",
+        output_pad: int = 1,
     ) -> None:
         super().__init__()
         self._content_container = Container()
@@ -33,6 +34,7 @@ class AssistantMessageComponent(Container):
         self._hide_thinking_block = hide_thinking_block
         self._markdown_theme = get_markdown_theme()
         self._hidden_thinking_label = hidden_thinking_label
+        self._output_pad = output_pad
         self._last_message: AgentMessage | dict[str, Any] | None = None
         self._has_tool_calls = False
         if message is not None:
@@ -48,11 +50,16 @@ class AssistantMessageComponent(Container):
         if self._last_message is not None:
             self.update_content(self._last_message)
 
+    def set_output_pad(self, padding: int) -> None:
+        self._output_pad = padding
+        if self._last_message is not None:
+            self.update_content(self._last_message)
+
     def update_content(self, message: AgentMessage | dict[str, Any]) -> None:
         self._last_message = message
         self._content_container.clear()
 
-        content = message.get("content", [])
+        content = message.get("content") or []
         has_visible_content = any(
             (block.get("type") == "text" and str(block.get("text", "")).strip())
             or (block.get("type") == "thinking" and str(block.get("thinking", "")).strip())
@@ -67,7 +74,9 @@ class AssistantMessageComponent(Container):
             if block_type == "text":
                 text = str(block.get("text", "")).strip()
                 if text:
-                    self._content_container.add_child(Markdown(text, 1, 0, self._markdown_theme))
+                    self._content_container.add_child(
+                        Markdown(text, self._output_pad, 0, self._markdown_theme)
+                    )
             elif block_type == "thinking":
                 thinking = str(block.get("thinking", "")).strip()
                 if not thinking:
@@ -81,7 +90,7 @@ class AssistantMessageComponent(Container):
                     self._content_container.add_child(
                         Text(
                             theme.italic(theme.fg("thinkingText", self._hidden_thinking_label)),
-                            padding_x=1,
+                            padding_x=self._output_pad,
                             padding_y=0,
                         )
                     )
@@ -89,7 +98,7 @@ class AssistantMessageComponent(Container):
                     self._content_container.add_child(
                         Markdown(
                             thinking,
-                            1,
+                            self._output_pad,
                             0,
                             self._markdown_theme,
                             default_text_style=DefaultTextStyle(
@@ -112,7 +121,11 @@ class AssistantMessageComponent(Container):
                     abort_message = "Operation aborted"
                 self._content_container.add_child(Spacer(1))
                 self._content_container.add_child(
-                    Text(theme.fg("error", abort_message), padding_x=1, padding_y=0)
+                    Text(
+                        theme.fg("error", abort_message),
+                        padding_x=self._output_pad,
+                        padding_y=0,
+                    )
                 )
             elif stop_reason == "error":
                 error_msg = format_api_error_message(
@@ -122,7 +135,11 @@ class AssistantMessageComponent(Container):
                 )
                 self._content_container.add_child(Spacer(1))
                 self._content_container.add_child(
-                    Text(theme.fg("error", error_msg), padding_x=1, padding_y=0)
+                    Text(
+                        theme.fg("error", error_msg),
+                        padding_x=self._output_pad,
+                        padding_y=0,
+                    )
                 )
 
     def render(self, width: int) -> list[str]:

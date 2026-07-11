@@ -327,6 +327,7 @@ def stream_google_vertex(
                         "output": cand_tokens + thought_tokens,
                         "cacheRead": cached_tokens,
                         "cacheWrite": 0,
+                        "reasoning": thought_tokens,
                         "totalTokens": chunk.usage_metadata.total_token_count or 0,
                         "cost": {
                             "input": 0.0,
@@ -407,7 +408,7 @@ def stream_simple_google_vertex(
     options: Optional[SimpleStreamOptions] = None,
 ) -> AssistantMessageEventStream:
     options_dict = options or {}
-    base = build_base_options(model, options, None)
+    base = build_base_options(model, context, options, None)
     if not options_dict.get("reasoning"):
         return stream_google_vertex(
             model,
@@ -418,7 +419,7 @@ def stream_simple_google_vertex(
     clamped_reasoning = clamp_thinking_level(
         model,
         cast(
-            Literal["off", "minimal", "low", "medium", "high", "xhigh"],
+            Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"],
             options_dict["reasoning"],
         ),
     )

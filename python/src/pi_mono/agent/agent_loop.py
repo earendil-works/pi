@@ -773,11 +773,14 @@ async def emit_tool_execution_end(finalized: dict, emit: AgentEventSink) -> None
 
 
 def create_tool_result_message(finalized: dict) -> ToolResultMessage:
+    content = finalized["result"].get("content")
     return {
         "role": "toolResult",
         "toolCallId": finalized["toolCall"]["id"],
         "toolName": finalized["toolCall"]["name"],
-        "content": finalized["result"].get("content", []),
+        # Untyped tools can return results without content; normalize so the null
+        # never enters session history or provider payloads.
+        "content": [] if content is None else content,
         "details": finalized["result"].get("details", {}),
         "isError": finalized["isError"],
         "timestamp": int(time.time() * 1000),

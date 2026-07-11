@@ -55,12 +55,22 @@ def build_session_context(path_entries: list[SessionTreeEntry]) -> SessionContex
 
     def append_message(entry: SessionTreeEntry) -> None:
         if entry.type == "message":
-            messages.append(entry.message)  # type: ignore
+            message = entry.message
+            # Session files are parsed without validation; old versions, forks, or
+            # hand-edited files can contain messages with null/missing content.
+            if (
+                isinstance(message, dict)
+                and message.get("role") in ("user", "assistant", "toolResult")
+                and message.get("content") is None
+            ):
+                messages.append({**message, "content": []})  # type: ignore[arg-type]
+            else:
+                messages.append(message)  # type: ignore
         elif entry.type == "custom_message":
             messages.append(
                 create_custom_message(
                     entry.custom_type,
-                    entry.content,  # type: ignore
+                    entry.content if entry.content is not None else [],  # type: ignore
                     entry.display,  # type: ignore
                     entry.details,  # type: ignore
                     entry.timestamp,  # type: ignore
