@@ -224,3 +224,15 @@ async def test_get_self_update_plan_skips_when_current():
     ):
         plan = await cli._get_self_update_plan(False)
     assert plan["shouldRun"] is False
+
+
+@pytest.mark.anyio
+async def test_get_self_update_plan_skips_on_check_failure():
+    from pi_mono.coding_agent import package_manager_cli as cli
+
+    with patch(
+        "pi_mono.coding_agent.package_manager_cli.get_latest_pi_release",
+        new=AsyncMock(side_effect=RuntimeError("network down")),
+    ):
+        plan = await cli._get_self_update_plan(False)
+    assert plan["shouldRun"] is False

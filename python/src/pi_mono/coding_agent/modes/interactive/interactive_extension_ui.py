@@ -12,7 +12,7 @@ from pi_mono.coding_agent.modes.interactive.components.extension_selector import
     ExtensionSelectorComponent,
 )
 from pi_mono.coding_agent.modes.interactive.theme.theme import theme
-from pi_mono.tui.tui import Container
+from pi_mono.tui.tui import Container, TUI
 
 
 class InteractiveExtensionUIContext:
@@ -26,17 +26,24 @@ class InteractiveExtensionUIContext:
         set_editor_text: Callable[[str], None],
         show_component: Callable[[Container, Container], None],
         restore_editor: Callable[[], None],
+        tui: TUI | None = None,
     ) -> None:
         self._show_status = show_status
         self._get_editor_text = get_editor_text
         self._set_editor_text = set_editor_text
         self._show_component = show_component
         self._restore_editor = restore_editor
+        self._tui = tui
+
+    def _dialog_opts(self, opts: dict[str, Any] | None) -> dict[str, Any]:
+        merged = dict(opts or {})
+        if self._tui is not None and "tui" not in merged:
+            merged["tui"] = self._tui
+        return merged
 
     async def select(
         self, title: str, options: list[str], opts: dict[str, Any] | None = None
     ) -> str | None:
-        del opts
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str | None] = loop.create_future()
 
@@ -50,13 +57,14 @@ class InteractiveExtensionUIContext:
             if not future.done():
                 future.set_result(None)
 
-        selector = ExtensionSelectorComponent(title, options, on_select, on_cancel)
+        selector = ExtensionSelectorComponent(
+            title, options, on_select, on_cancel, opts=self._dialog_opts(opts)
+        )
         self._show_component(selector, selector)
         return await future
 
     async def confirm(self, title: str, message: str, opts: dict[str, Any] | None = None) -> bool:
-        del opts
-        selected = await self.select(f"{title}\n{message}", ["Yes", "No"])
+        selected = await self.select(f"{title}\n{message}", ["Yes", "No"], opts)
         return selected == "Yes"
 
     async def input(
@@ -65,7 +73,6 @@ class InteractiveExtensionUIContext:
         placeholder: str | None = None,
         opts: dict[str, Any] | None = None,
     ) -> str | None:
-        del opts
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str | None] = loop.create_future()
 
@@ -84,6 +91,7 @@ class InteractiveExtensionUIContext:
             on_submit,
             on_cancel,
             placeholder=placeholder,
+            opts=self._dialog_opts(opts),
         )
         self._show_component(component, component)
         return await future

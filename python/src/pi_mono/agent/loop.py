@@ -1,36 +1,9 @@
-"""Agent loop implementation."""
+"""Agent loop implementation.
 
-from typing import Any, Callable
+Re-exports the real loop from ``agent_loop``. Prefer importing from
+``pi_mono.agent`` or ``pi_mono.agent.agent_loop`` directly.
+"""
 
-from pi_mono.agent import (
-    AgentContext,
-    AgentMessage,
-    AgentEvent,
-    StreamFn,
-)
-from pi_mono.agent.harness.types import AgentLoopConfig
+from pi_mono.agent.agent_loop import run_agent_loop, run_agent_loop_continue
 
-
-async def run_agent_loop(
-    prompts: list[AgentMessage],
-    context: AgentContext,
-    config: AgentLoopConfig,
-    emit: Callable[[AgentEvent], Any],
-    signal: any = None,
-    stream_fn: StreamFn | None = None,
-) -> list[AgentMessage]:
-    """Run the agent loop (stub implementation)."""
-    # This is a placeholder - full implementation would be complex
-    # For now, just return the prompts
-    return list(prompts)
-
-
-async def run_agent_loop_continue(
-    context: AgentContext,
-    config: AgentLoopConfig,
-    emit: Callable[[AgentEvent], Any],
-    signal: any = None,
-    stream_fn: StreamFn | None = None,
-) -> list[AgentMessage]:
-    """Continue the agent loop (stub implementation)."""
-    return []
+__all__ = ["run_agent_loop", "run_agent_loop_continue"]

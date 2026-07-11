@@ -1299,7 +1299,9 @@ class DefaultPackageManager:
                 if latest:
                     return latest
             if versions:
-                return sorted(versions, key=lambda version: version)[-1]
+                # Prefer semver-max over lexicographic sort ("10.0.0" > "9.0.0")
+                latest = max_satisfying(versions, "*")
+                return latest or versions[-1]
         raise RuntimeError("Unexpected response from npm view")
 
     async def _npm_has_available_update(self, source: NpmSource, installed_path: str) -> bool:

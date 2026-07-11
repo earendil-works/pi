@@ -59,6 +59,8 @@ def test_semver_range_resolution() -> None:
     assert get_npm_version_range("1.2.3") is None
     assert get_npm_version_range("^1.2.3") == "^1.2.3"
     assert is_exact_npm_version("1.2.3")
+    # Lexicographic sort would pick 9.0.0; semver must pick 10.0.0
+    assert max_satisfying(["9.0.0", "10.0.0", "2.0.0"], "*") == "10.0.0"
 
 
 def test_parse_source_npm_records_range() -> None:

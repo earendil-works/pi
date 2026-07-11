@@ -68,8 +68,15 @@ class CustomMessageComponent(Container):
                 if isinstance(rendered, str) and rendered.strip():
                     self._content_box.add_child(Text(rendered, padding_x=0, padding_y=0))
                     return
-            except Exception:
-                pass
+            except Exception as error:
+                self._content_box.add_child(
+                    Text(
+                        theme.fg("warning", f"[renderer error: {error}]"),
+                        padding_x=0,
+                        padding_y=0,
+                    )
+                )
+                self._content_box.add_child(Spacer(1))
 
         custom_type = str(self._message.get("customType", "custom"))
         label = theme.fg("customMessageLabel", theme.bold(f"[{custom_type}]"))

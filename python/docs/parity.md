@@ -28,9 +28,9 @@ This document tracks behavioral parity between the TypeScript packages (`package
 | Print mode (`-p`, `--print`) | **Match** | Text and JSON output |
 | JSON event mode (`--mode json`) | **Match** | |
 | RPC mode (`--mode rpc`) | **Match** | Preflight prompt semantics, `get_commands`, `parentSession` aligned with TS |
-| Interactive TUI | **Partial** | `/model`, `/settings`, `/sessions`, `/tree`, `/scoped-models`, and extension UI use editor-area selectors; model search ranking aligned with TS |
+| Interactive TUI | **Partial** | `/model`, `/settings`, `/sessions`, `/tree`, `/scoped-models`, and extension UI use editor-area selectors; model search ranking aligned with TS; extension dialogs support timeout countdown |
 | Session fork / resume / import | **Match** | |
-| `pi update` self-update | **Partial** | CLI flags present; install path depends on distribution method |
+| `pi update` self-update | **Partial** | CLI flags present; install path depends on distribution method; version-check failures skip update instead of forcing it |
 | Export HTML / share | **Partial** | Export exists; share flow lighter than TS |
 
 ## Trust & security
@@ -84,7 +84,7 @@ This document tracks behavioral parity between the TypeScript packages (`package
 | Footer (cwd, tokens, context, cache hit rate) | **Match** | |
 | Settings selector | **Match** | Phase 2 settings + show-images selector submenu |
 | Theme picker | **Match** | Custom theme file watcher via `set_theme(..., enable_watcher=True)`; polling `FSWatcher` with error handler (#2791) |
-| Session / model / OAuth selectors | **Match** | Scrollable model list with error/empty states; scoped-model reorder |
+| Session / model / OAuth selectors | **Match** | Scrollable model list with provider-first then model step; error/empty states; scoped-model reorder |
 | User-message fork selector | **Match** | |
 | Changelog / version check on startup | **Match** | |
 | Clipboard images | **Partial** | Wayland/X11/macOS subprocess paths; platform-dependent |
@@ -94,7 +94,7 @@ This document tracks behavioral parity between the TypeScript packages (`package
 | Terminal OSC background colors | **Match** | `terminal_colors.py` |
 | Tool definition factories for extensions | **Match** | `create_read_tool_definition()` + wrapper helpers |
 | Windows npm self-update quarantine | **Match** | `windows_self_update.py` |
-| Package manager semver ranges | **Partial** | `max_satisfying()` for npm update checks |
+| Package manager semver ranges | **Partial** | `max_satisfying()` for npm update checks; latest-version fallback uses semver max (not lexicographic) |
 
 ## AI / providers
 
@@ -168,11 +168,11 @@ These are intentional port boundaries, not open regression items. They stay **Pa
 | Cursor protobuf proxy | **Diverge** | Python uses CLI bridge (`python/docs/cursor.md`) |
 | Clipboard images (interactive) | **Partial** | Wayland/X11/macOS subprocess paths; platform-dependent |
 | Export HTML / share | **Partial** | Export exists; share flow lighter than TS |
-| `pi update` self-update | **Partial** | CLI flags present; install path depends on distribution method |
+| `pi update` self-update | **Partial** | CLI flags present; install path depends on distribution method; version-check failures skip update instead of forcing it |
 | Session migration edge cases | **Partial** | Core paths covered; not every TS migration scenario |
 | `extensions-runner.test.ts` breadth | **Partial** | Core runner covered; not every TS runner scenario |
 | `session-manager/*.test.ts` breadth | **Partial** | Core session tests ported; not full TS matrix |
-| Package manager semver ranges | **Partial** | `max_satisfying()` for npm update checks |
+| Package manager semver ranges | **Partial** | `max_satisfying()` for npm update checks; latest-version fallback uses semver max (not lexicographic) |
 | Real-provider e2e | **Partial** | Gated pytest marker; optional in CI |
 
 ## Intentional divergences

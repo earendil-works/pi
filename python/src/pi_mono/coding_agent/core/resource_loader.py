@@ -13,6 +13,7 @@ from pi_mono.agent.harness.skills import load_skills
 from pi_mono.agent.harness.types import PromptTemplate, Skill
 from pi_mono.coding_agent.core.extensions.loader import (
     collect_configured_extension_paths,
+    create_extension_runtime,
     discover_and_load_extensions,
 )
 from pi_mono.coding_agent.core.extensions.types import LoadExtensionsResult
@@ -34,10 +35,7 @@ def _empty_extensions_result() -> LoadExtensionsResult:
     return LoadExtensionsResult(
         extensions=[],
         errors=[],
-        runtime={
-            "flagValues": {},
-            "pendingProviderRegistrations": [],
-        },
+        runtime=create_extension_runtime(),
     )
 
 

@@ -582,6 +582,7 @@ class InteractiveMode:
                 set_editor_text=self._editor.set_text,
                 show_component=self._show_extension_ui_component,
                 restore_editor=self._restore_editor,
+                tui=self._ui,
             )
         await self._session.bind_extensions(
             mode="interactive",
@@ -2552,8 +2553,10 @@ class InteractiveMode:
                 self._editor.insert_text_at_cursor(file_path)
             if self._ui is not None:
                 self._ui.request_render()
-        except Exception:
-            return
+        except Exception as error:
+            self._show_status(
+                theme.fg("warning", f"Could not paste clipboard image: {error}")
+            )
 
     async def _open_external_editor(self) -> None:
         if self._editor is None or self._ui is None:

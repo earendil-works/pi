@@ -293,8 +293,12 @@ async def _get_self_update_plan(force: bool) -> dict[str, Any]:
             if latest_release and latest_release.get("note"):
                 plan["note"] = latest_release["note"]
             return plan
-    except Exception:
-        return {"packageName": PACKAGE_NAME, "shouldRun": True}
+    except Exception as error:
+        print(
+            f"Warning: could not check for updates ({error}). Skipping self-update.",
+            file=sys.stderr,
+        )
+        return {"packageName": PACKAGE_NAME, "shouldRun": False}
     print(f"{APP_NAME} is already up to date (v{VERSION})")
     return {"packageName": PACKAGE_NAME, "shouldRun": False}
 

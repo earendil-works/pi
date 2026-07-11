@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
+from pi_mono.coding_agent.modes.interactive.components.countdown_timer import CountdownTimer
 from pi_mono.coding_agent.modes.interactive.components.dynamic_border import DynamicBorder
 from pi_mono.coding_agent.modes.interactive.components.keybinding_hints import (
     key_hint,
@@ -15,6 +17,9 @@ from pi_mono.tui.components.text import Text
 from pi_mono.tui.keybindings import get_keybindings
 from pi_mono.tui.tui import Container
 
+if TYPE_CHECKING:
+    from pi_mono.tui.tui import TUI
+
 
 class ExtensionInputComponent(Container):
     def __init__(
@@ -24,20 +29,35 @@ class ExtensionInputComponent(Container):
         on_cancel: Callable[[], None],
         *,
         placeholder: str | None = None,
+        opts: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        del placeholder  # Match TS: placeholder is accepted but not prefilled
         self._on_submit = on_submit
         self._on_cancel = on_cancel
         self._focused = False
+        self._base_title = title
+        self._countdown: CountdownTimer | None = None
 
         self.add_child(DynamicBorder())
         self.add_child(Spacer(1))
-        self.add_child(Text(theme.fg("accent", title), padding_x=1, padding_y=0))
+        self._title_text = Text(theme.fg("accent", title), padding_x=1, padding_y=0)
+        self.add_child(self._title_text)
         self.add_child(Spacer(1))
 
+        timeout_ms = (opts or {}).get("timeout")
+        tui: TUI | None = (opts or {}).get("tui")
+        if isinstance(timeout_ms, (int, float)) and timeout_ms > 0 and tui is not None:
+            self._countdown = CountdownTimer(
+                int(timeout_ms),
+                tui,
+                lambda seconds: self._title_text.set_text(
+                    theme.fg("accent", f"{self._base_title} ({seconds}s)")
+                ),
+                self._on_cancel,
+            )
+
         self._input = Input()
-        if placeholder:
-            self._input.set_value(placeholder)
         self.add_child(self._input)
         self.add_child(Spacer(1))
         self.add_child(
@@ -59,12 +79,19 @@ class ExtensionInputComponent(Container):
         self._focused = value
         self._input.focused = value
 
+    def dispose(self) -> None:
+        if self._countdown is not None:
+            self._countdown.dispose()
+            self._countdown = None
+
     def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
+            self.dispose()
             self._on_submit(self._input.get_value())
             return
         if kb.matches(key_data, "tui.select.cancel"):
+            self.dispose()
             self._on_cancel()
             return
         self._input.handle_input(key_data)

@@ -52,27 +52,23 @@ def _apply_extension_flag_values(
 
     diagnostics: list[AgentSessionRuntimeDiagnostic] = []
     extensions_result = resource_loader.get_extensions()
-    registered_flags: dict[str, dict[str, str]] = {}
+    registered_flags: dict[str, str] = {}
     for extension in extensions_result.extensions:
-        for name, flag in getattr(extension, "flags", {}).items():
-            registered_flags[name] = {"type": flag.get("type", "boolean")}
-        if isinstance(extension, dict):
-            for name, flag in extension.get("flags", {}).items():
-                registered_flags[name] = {"type": flag.get("type", "boolean")}
+        for name, flag in extension.flags.items():
+            registered_flags[name] = getattr(flag, "type", None) or "boolean"
 
     unknown_flags: list[str] = []
     runtime = extensions_result.runtime
-    flag_values = runtime.setdefault("flagValues", {})
     for name, value in extension_flag_values.items():
-        flag = registered_flags.get(name)
-        if not flag:
+        flag_type = registered_flags.get(name)
+        if not flag_type:
             unknown_flags.append(name)
             continue
-        if flag["type"] == "boolean":
-            flag_values[name] = True
+        if flag_type == "boolean":
+            runtime.flag_values[name] = True
             continue
         if isinstance(value, str):
-            flag_values[name] = value
+            runtime.flag_values[name] = value
             continue
         diagnostics.append(
             {"type": "error", "message": f'Extension flag "--{name}" requires a value'}
@@ -111,7 +107,7 @@ async def create_agent_session_services(
     diagnostics: list[AgentSessionRuntimeDiagnostic] = []
     extensions_result = resource_loader.get_extensions()
     runtime = extensions_result.runtime
-    pending = list(runtime.get("pendingProviderRegistrations", []))
+    pending = list(getattr(runtime, "pending_provider_registrations", None) or [])
     for registration in pending:
         try:
             model_registry.register_provider(registration["name"], registration["config"])
@@ -124,7 +120,7 @@ async def create_agent_session_services(
                     ),
                 }
             )
-    runtime["pendingProviderRegistrations"] = []
+    runtime.pending_provider_registrations = []
     diagnostics.extend(_apply_extension_flag_values(resource_loader, options.extension_flag_values))
 
     return AgentSessionServices(

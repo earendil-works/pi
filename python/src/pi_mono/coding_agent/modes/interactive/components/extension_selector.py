@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
+from pi_mono.coding_agent.modes.interactive.components.countdown_timer import CountdownTimer
 from pi_mono.coding_agent.modes.interactive.components.dynamic_border import DynamicBorder
 from pi_mono.coding_agent.modes.interactive.components.keybinding_hints import (
     key_hint,
@@ -15,6 +17,9 @@ from pi_mono.tui.components.text import Text
 from pi_mono.tui.keybindings import get_keybindings
 from pi_mono.tui.tui import Container
 
+if TYPE_CHECKING:
+    from pi_mono.tui.tui import TUI
+
 
 class ExtensionSelectorComponent(Container):
     """SelectList-style overlay for extension-provided string options."""
@@ -25,17 +30,34 @@ class ExtensionSelectorComponent(Container):
         options: list[str],
         on_select: Callable[[str], None],
         on_cancel: Callable[[], None],
+        *,
+        opts: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self._options = options
         self._selected_index = 0
         self._on_select = on_select
         self._on_cancel = on_cancel
+        self._base_title = title
+        self._countdown: CountdownTimer | None = None
 
         self.add_child(DynamicBorder())
         self.add_child(Spacer(1))
-        self.add_child(Text(theme.fg("accent", theme.bold(title)), padding_x=1, padding_y=0))
+        self._title_text = Text(theme.fg("accent", theme.bold(title)), padding_x=1, padding_y=0)
+        self.add_child(self._title_text)
         self.add_child(Spacer(1))
+
+        timeout_ms = (opts or {}).get("timeout")
+        tui: TUI | None = (opts or {}).get("tui")
+        if isinstance(timeout_ms, (int, float)) and timeout_ms > 0 and tui is not None:
+            self._countdown = CountdownTimer(
+                int(timeout_ms),
+                tui,
+                lambda seconds: self._title_text.set_text(
+                    theme.fg("accent", theme.bold(f"{self._base_title} ({seconds}s)"))
+                ),
+                self._on_cancel,
+            )
 
         self._list_container = Container()
         self.add_child(self._list_container)
@@ -54,6 +76,11 @@ class ExtensionSelectorComponent(Container):
         self.add_child(Spacer(1))
         self.add_child(DynamicBorder())
         self._update_list()
+
+    def dispose(self) -> None:
+        if self._countdown is not None:
+            self._countdown.dispose()
+            self._countdown = None
 
     def _update_list(self) -> None:
         self._list_container.clear()
@@ -74,6 +101,8 @@ class ExtensionSelectorComponent(Container):
             self._update_list()
         elif kb.matches(data, "tui.select.confirm") or data == "\n":
             if self._options:
+                self.dispose()
                 self._on_select(self._options[self._selected_index])
         elif kb.matches(data, "tui.select.cancel"):
+            self.dispose()
             self._on_cancel()

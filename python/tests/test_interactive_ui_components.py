@@ -108,3 +108,16 @@ def test_extension_input_submits_on_enter() -> None:
     component.handle_input("i")
     component.handle_input("\n")
     assert submitted == ["hi"]
+
+
+def test_extension_input_does_not_prefill_placeholder() -> None:
+    init_theme()
+    submitted: list[str] = []
+    component = ExtensionInputComponent(
+        "Title",
+        on_submit=submitted.append,
+        on_cancel=lambda: None,
+        placeholder="example value",
+    )
+    component.handle_input("\n")
+    assert submitted == [""]

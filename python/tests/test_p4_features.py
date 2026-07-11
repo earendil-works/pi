@@ -89,6 +89,7 @@ def test_model_selector_defaults_to_scoped_tab() -> None:
     registry.refresh.return_value = None
     registry.get_error.return_value = None
     registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: provider
     registry.get_available.return_value = [
         {"provider": "openai", "id": "gpt-5"},
         {"provider": "anthropic", "id": "claude-opus-4-8"},
@@ -109,6 +110,9 @@ def test_model_selector_defaults_to_scoped_tab() -> None:
         scoped_models=[{"model": {"provider": "openai", "id": "gpt-5"}}],
     )
     assert selector._scope == "scoped"
+    # Single scoped provider auto-opens its model list
+    assert selector._step == "models"
+    assert selector._selected_provider == "openai"
     assert len(selector._filtered_models) == 1
 
 
@@ -118,6 +122,7 @@ def test_model_selector_falls_back_to_all_when_scoped_is_empty() -> None:
     registry.refresh.return_value = None
     registry.get_error.return_value = None
     registry.has_configured_auth.return_value = False
+    registry.get_provider_display_name.side_effect = lambda provider: provider
     registry.get_available.return_value = [
         {"provider": "cursor", "id": "auto"},
         {"provider": "cursor", "id": "composer-2.5"},
@@ -134,6 +139,9 @@ def test_model_selector_falls_back_to_all_when_scoped_is_empty() -> None:
         scoped_models=[{"model": {"provider": "openrouter", "id": "gpt-4o"}}],
     )
     assert selector._scope == "all"
+    # Single available provider auto-opens models
+    assert selector._step == "models"
+    assert selector._selected_provider == "cursor"
     assert len(selector._filtered_models) == 2
 
 
@@ -143,6 +151,7 @@ def test_model_selector_selects_from_loaded_models() -> None:
     registry.refresh.return_value = None
     registry.get_error.return_value = None
     registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: provider
     cursor_model = {"provider": "cursor", "id": "auto"}
     registry.get_available.return_value = [cursor_model]
     registry.find.return_value = None
@@ -171,6 +180,7 @@ def test_model_selector_arrow_down_advances_selection(tmp_path) -> None:
     registry.refresh.return_value = None
     registry.get_error.return_value = None
     registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: provider
     registry.get_available.return_value = [
         {"provider": "faux", "id": "one"},
         {"provider": "faux", "id": "two"},
@@ -184,6 +194,7 @@ def test_model_selector_arrow_down_advances_selection(tmp_path) -> None:
         lambda _model: None,
         lambda: None,
     )
+    assert selector._step == "models"
     assert selector._selected_index == 0
     selector.handle_input("\x1b[B")
     assert selector._selected_index == 1
@@ -203,6 +214,7 @@ async def test_model_selector_loads_models_in_background() -> None:
     registry.refresh.side_effect = blocking_refresh
     registry.get_error.return_value = None
     registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: provider
     registry.get_available.return_value = [{"provider": "cursor", "id": "auto"}]
     registry.find.return_value = None
 
@@ -223,4 +235,92 @@ async def test_model_selector_loads_models_in_background() -> None:
         await asyncio.sleep(0.02)
 
     assert not selector._loading
+    assert selector._step == "models"
     assert selector._filtered_models == [{"provider": "cursor", "id": "auto"}]
+
+
+def test_model_selector_provider_then_models(tmp_path) -> None:
+    from pi_mono.coding_agent.core.keybindings import CodingAgentKeybindingsManager
+    from pi_mono.tui.keybindings import set_keybindings
+
+    set_keybindings(CodingAgentKeybindingsManager.create(str(tmp_path / "agent")))
+    ui = MagicMock()
+    registry = MagicMock()
+    registry.refresh.return_value = None
+    registry.get_error.return_value = None
+    registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: {
+        "cursor": "Cursor",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI",
+    }.get(provider, provider)
+    registry.get_available.return_value = [
+        {"provider": "cursor", "id": "auto"},
+        {"provider": "cursor", "id": "composer-2.5"},
+        {"provider": "anthropic", "id": "claude-opus-4"},
+        {"provider": "openai", "id": "gpt-5"},
+    ]
+    registry.find.return_value = None
+
+    selected: list[dict[str, str]] = []
+    selector = ModelSelectorComponent(
+        ui,
+        {"provider": "anthropic", "id": "claude-opus-4"},
+        MagicMock(),
+        registry,
+        lambda model: selected.append(model),
+        lambda: None,
+    )
+
+    assert selector._step == "provider"
+    assert [p.id for p in selector._filtered_providers] == ["anthropic", "cursor", "openai"]
+
+    # Move to Cursor and open its models
+    selector.handle_input("\x1b[B")  # down to cursor
+    selector.handle_input("\n")
+    assert selector._step == "models"
+    assert selector._selected_provider == "cursor"
+    assert [m["id"] for m in selector._filtered_models] == ["auto", "composer-2.5"]
+
+    selector.handle_input("\x1b[B")
+    selector.handle_input("\n")
+    assert selected == [{"provider": "cursor", "id": "composer-2.5"}]
+
+
+def test_model_selector_escape_returns_to_providers(tmp_path) -> None:
+    from pi_mono.coding_agent.core.keybindings import CodingAgentKeybindingsManager
+    from pi_mono.tui.keybindings import set_keybindings
+
+    set_keybindings(CodingAgentKeybindingsManager.create(str(tmp_path / "agent")))
+    ui = MagicMock()
+    registry = MagicMock()
+    registry.refresh.return_value = None
+    registry.get_error.return_value = None
+    registry.has_configured_auth.return_value = True
+    registry.get_provider_display_name.side_effect = lambda provider: provider
+    registry.get_available.return_value = [
+        {"provider": "cursor", "id": "auto"},
+        {"provider": "openai", "id": "gpt-5"},
+    ]
+    registry.find.return_value = None
+
+    cancelled: list[bool] = []
+    selector = ModelSelectorComponent(
+        ui,
+        None,
+        MagicMock(),
+        registry,
+        lambda _model: None,
+        lambda: cancelled.append(True),
+    )
+    selector._show_models_step("cursor", clear_search=True)
+    assert selector._step == "models"
+
+    # Escape / cancel returns to provider list when multiple providers exist
+    selector.handle_input("\x1b")
+    assert selector._step == "provider"
+    assert cancelled == []
+
+    # Cancel again closes the selector
+    selector.handle_input("\x1b")
+    assert cancelled == [True]
