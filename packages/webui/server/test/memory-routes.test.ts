@@ -1499,6 +1499,316 @@ describe("POST /api/memory/search", () => {
 			fetchSpy.mockRestore();
 		}
 	});
+
+	// -------------------------------------------------------------------
+	// Task 6.2 — response shape preserved with pipeline metadata.
+	//
+	// Verifies the two scenarios from
+	// docs/sdd/changes/agent-driven-memory-save/specs/tui-webui-recall-parity/spec.md
+	// § "Requirement: webui response shape preserved with pipeline metadata":
+	//
+	//   1. "webui response includes pipeline-derived timings":
+	//      - filtered !== false → recallTimeMs + rewriteTimeMs + rerankTimeMs
+	//      - filtered === false → recallTimeMs only (rewrite/rerank omitted)
+	//   2. "webui response includes embeddingServiceStatus":
+	//      - always present regardless of filtered value
+	//
+	// Also asserts the per-result shape: 8 fields (id, type, title, summary,
+	// tags, cosine, sparseScore, rrf) + optional rerankScore. The task
+	// description summarizes this as "7 (+ optional rerankScore)"; the
+	// implementation actually ships 8 fixed fields plus the optional
+	// rerankScore. The tests pin all 8 + the conditional 9th so any future
+	// drift in the result-mapper is caught here.
+	// -------------------------------------------------------------------
+
+	// Mock helper: returns a fetch spy that handles /api/health, /api/search,
+	// and /api/rerank with the supplied health status code and the atoms we
+	// want recalled. Anything else falls through to origFetch so other code
+	// paths (e.g. file-store reads) still work.
+	const mockRecallEndpoints = (opts: {
+		healthStatus: number;
+		searchResults: Array<{
+			id: string;
+			title: string;
+			type: string;
+			rrf: number;
+			dense_cos: number;
+			sparse_score: number;
+		}>;
+		rerankScore?: number;
+	}): { spy: ReturnType<typeof vi.spyOn>; restore: () => void } => {
+		const origFetch = globalThis.fetch.bind(globalThis);
+		const spy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (url, init) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.href
+							: String(url);
+				if (urlStr.includes("/api/health")) {
+					return new Response("", { status: opts.healthStatus });
+				}
+				if (urlStr.includes("/api/search")) {
+					return new Response(
+						JSON.stringify({
+							query: "test",
+							atoms_count: opts.searchResults.length,
+							results: opts.searchResults.map((r, i) => ({
+								id: r.id,
+								title: r.title,
+								type: r.type,
+								rank: i + 1,
+								rrf: r.rrf,
+								dense_cos: r.dense_cos,
+								sparse_score: r.sparse_score,
+							})),
+						}),
+					);
+				}
+				if (urlStr.includes("/api/rerank")) {
+					const body =
+						typeof init?.body === "string" ? init.body : "{}";
+					const parsed = JSON.parse(body) as {
+						hits?: Array<{ id: string }>;
+					};
+					const score = opts.rerankScore ?? 0.9;
+					return new Response(
+						JSON.stringify({
+							scores: (parsed.hits ?? []).map((h) => ({
+								id: h.id,
+								score,
+							})),
+						}),
+					);
+				}
+				return origFetch(url, init);
+			},
+		);
+		return { spy, restore: () => spy.mockRestore() };
+	};
+
+	it("includes embeddingServiceStatus=up when filtered=true and /api/health returns 2xx (Task 6.2)", async () => {
+		const atom = await insertAtom({ id: "shape-task-6-2-up" });
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 200,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+			rerankScore: 0.95,
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape task six two up",
+				filtered: true,
+			});
+			expect(res.status).toBe(200);
+			expect(res.data.embeddingServiceStatus).toBe("up");
+		} finally {
+			restore();
+		}
+	});
+
+	it("includes embeddingServiceStatus=down when filtered=false and /api/health returns 500 (Task 6.2)", async () => {
+		const atom = await insertAtom({ id: "shape-task-6-2-down" });
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 500,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape task six two down",
+				filtered: false,
+			});
+			expect(res.status).toBe(200);
+			expect(res.data.embeddingServiceStatus).toBe("down");
+		} finally {
+			restore();
+		}
+	});
+
+	it("emits all three pipeline timings (recallTimeMs + rewriteTimeMs + rerankTimeMs) when filtered=true (Task 6.2)", async () => {
+		const atom = await insertAtom({ id: "shape-task-6-2-timings" });
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 200,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+			rerankScore: 0.95,
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape task timings",
+				filtered: true,
+			});
+			expect(res.status).toBe(200);
+			expect(typeof res.data.recallTimeMs).toBe("number");
+			expect(res.data.recallTimeMs as number).toBeGreaterThanOrEqual(0);
+			expect(typeof res.data.rewriteTimeMs).toBe("number");
+			expect(res.data.rewriteTimeMs as number).toBeGreaterThanOrEqual(0);
+			expect(typeof res.data.rerankTimeMs).toBe("number");
+			expect(res.data.rerankTimeMs as number).toBeGreaterThanOrEqual(0);
+			// Pipeline metadata also present in the same response.
+			expect(res.data.embeddingServiceStatus).toBe("up");
+		} finally {
+			restore();
+		}
+	});
+
+	it("emits only recallTimeMs (no rewriteTimeMs / rerankTimeMs) when filtered=false (Task 6.2)", async () => {
+		const atom = await insertAtom({ id: "shape-task-6-2-noTimings" });
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 200,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape task no timings",
+				filtered: false,
+			});
+			expect(res.status).toBe(200);
+			expect(typeof res.data.recallTimeMs).toBe("number");
+			expect(res.data.recallTimeMs as number).toBeGreaterThanOrEqual(0);
+			expect(res.data.rewriteTimeMs).toBeUndefined();
+			expect(res.data.rerankTimeMs).toBeUndefined();
+			// Pipeline metadata still always present.
+			expect(res.data.embeddingServiceStatus).toBeDefined();
+		} finally {
+			restore();
+		}
+	});
+
+	it("preserves the full per-result shape (8 fields + rerankScore) when filtered=true (Task 6.2)", async () => {
+		const atom = await insertAtom({
+			id: "shape-task-6-2-full",
+			title: "Shape task title",
+			summary: "Shape task summary",
+			tags: ["alpha", "beta"],
+			content: "shape task content",
+		});
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 200,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+			rerankScore: 0.95,
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape full shape",
+				filtered: true,
+			});
+			expect(res.status).toBe(200);
+			const results = res.data.results as Array<Record<string, unknown>>;
+			expect(results.length).toBeGreaterThan(0);
+			const first = results[0] as Record<string, unknown>;
+			// 8 fixed fields — exact names + types per design.md § Architecture
+			// "webui `/api/memory/search` 改造".
+			expect(typeof first.id).toBe("string");
+			expect(typeof first.type).toBe("string");
+			expect(typeof first.title).toBe("string");
+			expect(typeof first.summary).toBe("string");
+			expect(Array.isArray(first.tags)).toBe(true);
+			expect(typeof first.cosine).toBe("number");
+			expect(typeof first.sparseScore).toBe("number");
+			expect(typeof first.rrf).toBe("number");
+			// 9th field — only present when the rerank stage produced a score.
+			expect(typeof first.rerankScore).toBe("number");
+			// Regression guard: the pre-pipeline "discovery-only" fields
+			// (distance, score, file_path, tier) must NOT reappear.
+			expect(first.distance).toBeUndefined();
+			expect(first.score).toBeUndefined();
+			expect(first.file_path).toBeUndefined();
+			expect(first.tier).toBeUndefined();
+		} finally {
+			restore();
+		}
+	});
+
+	it("preserves the 8-field per-result shape without rerankScore when filtered=false (Task 6.2)", async () => {
+		const atom = await insertAtom({
+			id: "shape-task-6-2-noRerank",
+			title: "No rerank title",
+			summary: "No rerank summary",
+			tags: ["gamma"],
+			content: "no rerank content",
+		});
+		const { restore } = mockRecallEndpoints({
+			healthStatus: 200,
+			searchResults: [
+				{
+					id: atom.id as string,
+					title: atom.title as string,
+					type: atom.type as string,
+					rrf: 0.05,
+					dense_cos: 0.9,
+					sparse_score: 0.8,
+				},
+			],
+		});
+		try {
+			const res = await fetchAt("/api/memory/search", {
+				query: "shape no rerank",
+				filtered: false,
+			});
+			expect(res.status).toBe(200);
+			const results = res.data.results as Array<Record<string, unknown>>;
+			expect(results.length).toBeGreaterThan(0);
+			for (const r of results) {
+				expect(typeof r.id).toBe("string");
+				expect(typeof r.type).toBe("string");
+				expect(typeof r.title).toBe("string");
+				expect(typeof r.summary).toBe("string");
+				expect(Array.isArray(r.tags)).toBe(true);
+				expect(typeof r.cosine).toBe("number");
+				expect(typeof r.sparseScore).toBe("number");
+				expect(typeof r.rrf).toBe("number");
+				// rerank stage skipped — no score on the wire.
+				expect(r.rerankScore).toBeUndefined();
+			}
+		} finally {
+			restore();
+		}
+	});
 });
 
 // Verifies mountMemoryRoutes registers the search handler. Guards against
