@@ -30,7 +30,7 @@ Each coalesced frame follows the design order exactly:
 6. perform one Presenter write containing sync begin, ledger commits, band updates/full repaint, exactly one caret CUP, sync end;
 7. swap buffers and record metrics.
 
-No frame path traverses committed blocks. A full band repaint is still O(viewport), never O(history).
+No frame path traverses committed blocks. A full band repaint is still O(viewport), never O(history). Frontier scheduling guarantees at least one dirty-block step per frame before discretionary work, even when the nominal budget is exhausted, so sustained streaming cannot starve commits and grow the band without bound.
 
 ## 3. Presenter protocol
 
@@ -41,7 +41,7 @@ Presenter input is structured, not v1 strings:
 - one focused-strip caret in band-local coordinates;
 - terminal dimensions/capabilities and re-commit state.
 
-Presenter owns physical band origin, previous band height, hardware cursor, synchronized-update wrapping, shrink-row clearing, and terminal cleanup. Normal commits CUP to band top and emit each line once so the band is pushed downward atomically. Height changes repaint the full bounded band and clear vacated rows. Ghostty/Kitty history images degrade to `[image: name (WxH)]`; no image commit is attempted where the protocol matrix marked it unsafe.
+Presenter owns physical band origin, previous band height, hardware cursor, synchronized-update wrapping, shrink-row clearing, and terminal cleanup. Normal commits CUP to band top and emit each line once so the band is pushed downward atomically. Height changes repaint the full bounded band and clear vacated rows, while preserving v1's Termux height-change behavior as an explicit terminal-capability policy rather than an implicit special case. A focused visible caret produces the frame's sole caret CUP; a no-focus or hidden-cursor frame parks the cursor at the configured safe location and applies the matching DECTCEM policy. Ghostty/Kitty history images degrade to `[image: name (WxH)]`; no image commit is attempted where the protocol matrix marked it unsafe.
 
 Protocol tests must cover grow/shrink, byte-chunked writes, resize + `3J` replay, cleanup cursor placement, tmux, and the xterm scrollback oracle before dogfood.
 
@@ -63,7 +63,7 @@ Use the snapshot only as a location checklist; do not reuse its `LedgerContainer
 
 - `message_start` / streaming updates / `message_end`: create, update, finalize assistant block; finalize aborted pending tools in source order.
 - tool execution start/update/result/abort: create open tool block, update model, advance appropriate frontier, finalize on result/abort.
-- async bash immediate/deferred: create open line-stable block; deferred blocks enter the ledger only at their established transcript order; finalize on completion.
+- async bash immediate/deferred: create open line-stable block; deferred blocks enter the ledger only at their established transcript order and assert at flush time that they append at or ahead of the current frontier, never behind it; finalize on completion.
 - session restore and ordinary `addMessageToChat`: append final logical blocks directly.
 - clear/rebuild paths around session switch, compaction, branch navigation: replace logical block list and start explicit re-commit.
 - expand/collapse, thinking visibility, image settings, theme change: mutate logical display state; if affected blocks are committed, trigger one explicit re-commit; if only live, repaint the relevant strip.
@@ -103,5 +103,5 @@ Re-commit clears via `2J/H/3J`, replays logical blocks from the tail up to `maxR
 3. Band host composition, dirty repaint, caret uniqueness, overlay clipping golden tests.
 4. transcript adapters and call-site hooks with faux-provider streaming/tool/bash tests.
 5. re-commit job, replay cap, cancellation, and scrollback-integrity oracle.
-6. legacy adapters against existing component/editor tests.
+6. legacy adapters against existing component/editor tests, plus an explicit extension tranche exercising the `ctx.ui.*` facade end-to-end (children, focus, overlays, render invalidation, terminal access, custom header/footer/editor, and widget lifecycles).
 7. full `npm run check`, focused tests, `./test.sh`, tmux/xterm protocol runs, then guarded `PI_TUI=v2` interactive smoke; v1 remains default throughout.
