@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
+import { registerMemorySave } from "./memory-save.ts";
 
 // ============================================================================
 // Config Loading
@@ -773,7 +774,11 @@ export function validateItems(
 		const prevItem = prev.find((t) => t.id === item.id);
 		if (prevItem && prevItem.status === item.status) continue;
 		if (prevItem && !VALID_TRANSITIONS[prevItem.status].includes(item.status as TodoStatus)) {
-			return `Error: Item #${item.id}: Cannot transition from "${prevItem.status}" to "${item.status}". Allowed transitions: ${VALID_TRANSITIONS[prevItem.status].join(" → ")}.`;
+			return `Error: Item #${item.id}: Cannot transition from "${prevItem.status}" to "${item.status}". ` +
+				`This id was already used for a finished task. ` +
+				`To start a new task, use a NEW id (e.g. "${item.id}_v2"). ` +
+				`To reuse this id, first set status to "pending" in a separate call. ` +
+				`Allowed transitions from "${prevItem.status}": ${VALID_TRANSITIONS[prevItem.status].join(" → ")}.`;
 		}
 	}
 
@@ -856,6 +861,7 @@ export function registerTools(pi: ExtensionAPI): void {
 			"  4. Up to 3 items can be in_progress at a time (for parallel workflows)",
 			"  5. Simple single-step tasks do not need a plan — use Todowrite only when it helps",
 			"  6. ALWAYS send the COMPLETE list including completed (done) items — never drop finished items from the array",
+			"  7. If todowrite returns a transition error, do NOT retry the same call. Either use a NEW id for the new task, or first set the item back to \"pending\" in a separate call before flipping it to in_progress.",
 			"",
 			"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
 		].join("\n");
@@ -1014,6 +1020,12 @@ export function registerTools(pi: ExtensionAPI): void {
 			};
 		},
 	});
+
+	// ============================================================================
+	// memory_save
+	// ============================================================================
+
+	registerMemorySave(pi);
 
 	// ============================================================================
 	// web_search

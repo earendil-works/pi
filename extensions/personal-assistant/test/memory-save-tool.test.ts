@@ -18,6 +18,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Value } from "typebox/value";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // char-bag mock for embed.ts so tests don't need a live embedder.
 // Mirrors the pattern used in search.test.ts and extraction.test.ts.
@@ -321,6 +322,97 @@ describe("registerMemorySave", () => {
 			importance: 0.5,
 		})).toBe(true);
 		expect(typeof tool.execute).toBe("function");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// registerTools — wires memory_save into the TUI extension entry point
+//
+// Task 3.1 contract: `registerTools(pi)` (in extensions/personal-assistant/tools.ts)
+// must call `pi.registerTool(...)` with a tool named `memory_save`. This is the
+// wire-level manifestation of the spec requirement "memory_save tool exposes
+// three write outcomes" — without this registration the agent has no way to
+// invoke memory_save at runtime.
+//
+// The `registerMemorySave` describe block above tests the helper in isolation;
+// this block tests the integration through the same entry point the agent uses
+// (so it would catch a regression where someone removed the `registerMemorySave`
+// call from `registerTools`).
+// ---------------------------------------------------------------------------
+
+describe("registerTools wires memory_save", () => {
+	// Mock pi object that captures every registerTool call. Also stubs the
+	// `on(...)` and `sendUserMessage(...)` calls registerTools makes so the
+	// test does not crash on the satellite / todo / context hooks.
+	function makeRegisterToolsSpyPi() {
+		const tools: any[] = [];
+		const handlers: Record<string, unknown> = {};
+		const pi = {
+			on: (event: string, handler: unknown) => {
+				handlers[event] = handler;
+			},
+			registerTool: (tool: any) => {
+				tools.push(tool);
+			},
+			sendUserMessage: () => Promise.resolve(),
+		};
+		return { pi: pi as unknown as ExtensionAPI, tools, handlers };
+	}
+
+	it("calls pi.registerTool with a tool named 'memory_save' when registerTools runs", async () => {
+		const { registerTools } = await import("../tools.ts");
+		const { pi, tools } = makeRegisterToolsSpyPi();
+
+		registerTools(pi);
+
+		const memorySave = tools.find((t) => t.name === "memory_save");
+		expect(memorySave).toBeDefined();
+		expect(memorySave.name).toBe("memory_save");
+	});
+
+	it("memory_save tool registered via registerTools uses the TypeBox MemorySaveParams schema (accepts happy-path, rejects invalid input)", async () => {
+		const { registerTools } = await import("../tools.ts");
+		const { pi, tools } = makeRegisterToolsSpyPi();
+
+		registerTools(pi);
+
+		const memorySave = tools.find((t) => t.name === "memory_save");
+		expect(memorySave).toBeDefined();
+		expect(memorySave).toHaveProperty("parameters");
+
+		// Happy-path input must validate against the schema the tool
+		// actually exposes (the same MemorySaveParams used by the
+		// registerMemorySave helper, but verified end-to-end through the
+		// registerTools entry point).
+		const happyPath = {
+			type: "fact" as const,
+			title: "Registertools integration fact",
+			content: "Happy-path content body for the registerTools integration test",
+			summary: "Summary for the registerTools integration test",
+			importance: 0.5,
+		};
+		expect(Value.Check(memorySave.parameters, happyPath)).toBe(true);
+
+		// Invalid input must NOT validate — importance above 1 is
+		// rejected by the schema, proving the registered schema enforces
+		// the same constraints the helper-level tests verify in isolation.
+		const invalidImportance = {
+			...happyPath,
+			importance: 1.5,
+		};
+		expect(Value.Check(memorySave.parameters, invalidImportance)).toBe(false);
+	});
+
+	it("memory_save tool registered via registerTools exposes a non-empty promptSnippet", async () => {
+		const { registerTools } = await import("../tools.ts");
+		const { pi, tools } = makeRegisterToolsSpyPi();
+
+		registerTools(pi);
+
+		const memorySave = tools.find((t) => t.name === "memory_save");
+		expect(memorySave).toBeDefined();
+		expect(typeof memorySave.promptSnippet).toBe("string");
+		expect(memorySave.promptSnippet.length).toBeGreaterThan(0);
 	});
 });
 
