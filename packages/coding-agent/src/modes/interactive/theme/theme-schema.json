@@ -34,7 +34,7 @@
 		},
 		"colors": {
 			"type": "object",
-			"description": "Theme color definitions (all required)",
+			"description": "Theme color definitions (thinkingMax is optional and falls back to thinkingXhigh)",
 			"required": [
 				"accent",
 				"border",
@@ -287,7 +287,11 @@
 				},
 				"thinkingXhigh": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Thinking level border: xhigh (OpenAI codex-max only)"
+					"description": "Thinking level border: xhigh"
+				},
+				"thinkingMax": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Thinking level border: max (falls back to thinkingXhigh when omitted)"
 				},
 				"bashMode": {
 					"$ref": "#/$defs/colorValue",

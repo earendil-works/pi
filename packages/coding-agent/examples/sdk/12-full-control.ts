@@ -26,7 +26,7 @@ if (process.env.MY_ANTHROPIC_KEY) {
 // Model registry with no custom models.json
 const modelRegistry = ModelRegistry.inMemory(authStorage);
 
-const model = getModel("anthropic", "claude-sonnet-4-20250514");
+const model = getModel("anthropic", "claude-sonnet-4-5");
 if (!model) throw new Error("Model not found");
 
 // In-memory settings with overrides

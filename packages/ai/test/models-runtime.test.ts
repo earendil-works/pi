@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import type { ApiKeyAuth, CredentialStore, OAuthAuth, ProviderAuth } from "../src/auth/types.ts";
-import { createModels, hasApi, type Provider } from "../src/models.ts";
-import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions, StreamOptions } from "../src/types.ts";
+import { calculateCost, createModels, hasApi, type Provider } from "../src/models.ts";
+import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions, StreamOptions, Usage } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
 function testModel(provider: string, id: string): Model<Api> {
@@ -106,6 +106,42 @@ function testOAuth(overrides?: Partial<OAuthAuth>): OAuthAuth {
 }
 
 describe("Models runtime", () => {
+	it("applies request-wide pricing tiers above the configured input threshold", () => {
+		const model = testModel("openai", "gpt-5.6-sol");
+		model.cost = {
+			input: 5,
+			output: 30,
+			cacheRead: 0.5,
+			cacheWrite: 6.25,
+			tiers: [
+				{
+					inputTokensAbove: 272000,
+					input: 10,
+					output: 45,
+					cacheRead: 1,
+					cacheWrite: 12.5,
+				},
+			],
+		};
+		const createUsage = (cacheWrite: number): Usage => ({
+			input: 200000,
+			output: 100000,
+			cacheRead: 72000,
+			cacheWrite,
+			totalTokens: 372000 + cacheWrite,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		});
+
+		const short = calculateCost(model, createUsage(0));
+		expect(short).toMatchObject({ input: 1, output: 3, cacheRead: 0.036, cacheWrite: 0 });
+
+		const long = calculateCost(model, createUsage(1));
+		expect(long.input).toBe(2);
+		expect(long.output).toBe(4.5);
+		expect(long.cacheRead).toBe(0.072);
+		expect(long.cacheWrite).toBe(0.0000125);
+	});
+
 	it("registers, replaces, and deletes providers", () => {
 		const models = createModels();
 		models.setProvider(testProvider({ id: "p1" }));

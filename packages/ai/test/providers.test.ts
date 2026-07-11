@@ -54,6 +54,19 @@ describe("builtin providers", () => {
 		expect(result?.source).toBe("ANTHROPIC_OAUTH_TOKEN");
 	});
 
+	it("prompts for and stores a Bedrock API key", async () => {
+		const provider = amazonBedrockProvider();
+		const credential = await provider.auth.apiKey?.login?.({
+			prompt: async (prompt) => {
+				expect(prompt).toEqual({ type: "secret", message: "Enter Bedrock API key" });
+				return "bedrock-api-key";
+			},
+			notify: () => {},
+		});
+
+		expect(credential).toEqual({ type: "api_key", key: "bedrock-api-key" });
+	});
+
 	it("reports bedrock as configured from ambient AWS credentials without an api key", async () => {
 		const models = createModels({ authContext: fakeAuthContext({ AWS_PROFILE: "dev" }) });
 		models.setProvider(amazonBedrockProvider());

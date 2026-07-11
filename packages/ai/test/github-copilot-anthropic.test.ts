@@ -57,12 +57,14 @@ describe("Copilot Claude via Anthropic Messages", () => {
 
 	it("applies Copilot-specific adaptive thinking effort overrides", () => {
 		const opus47 = getModel("github-copilot", "claude-opus-4.7");
-		expect(opus47.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh" });
+		expect(opus47.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh", max: "max" });
 		expect(getSupportedThinkingLevels(opus47)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(opus47)).toContain("max");
 
 		const sonnet46 = getModel("github-copilot", "claude-sonnet-4.6");
-		expect(sonnet46.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "max" });
-		expect(getSupportedThinkingLevels(sonnet46)).toContain("xhigh");
+		expect(sonnet46.thinkingLevelMap).toMatchObject({ minimal: "low", max: "max" });
+		expect(getSupportedThinkingLevels(sonnet46)).toContain("max");
+		expect(getSupportedThinkingLevels(sonnet46)).not.toContain("xhigh");
 	});
 
 	it("uses Bearer auth, Copilot headers, and valid Anthropic Messages payload", async () => {

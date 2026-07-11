@@ -79,6 +79,8 @@ Stream options are shallow-copied when a snapshot is created. `headers` and `met
 
 The session contains persisted entries only. Session reads return persisted state and do not include queued writes.
 
+`Session.buildContextEntries()` returns the compaction-aware entry sequence used for model context construction. `Session.buildContext()` derives runtime state from the full active branch, then projects those context entries to `AgentMessage[]`. Custom entries are omitted from model context by default; applications can pass `entryProjectors` to the `Session` constructor or `buildContext()` to project selected custom entries into messages. Applications can also pass stacked `entryTransforms`, which run after the default compaction transform, to filter or reorder context entries before projection.
+
 Session storage implementations must persist leaf changes as `leaf` entries. `setLeafId()` is not an in-memory-only cursor update; it appends a durable entry whose `targetId` is the active tree leaf or `null` for root. Reopening storage must reconstruct the current leaf from the latest persisted leaf-affecting entry.
 
 ### Pending session writes

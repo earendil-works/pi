@@ -84,7 +84,7 @@ export const ZAI_CODING_CN_MODELS = {
 		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":true,"thinkingFormat":"zai","zaiToolStream":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":"high","medium":"high","high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":"high","medium":"high","high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 0,

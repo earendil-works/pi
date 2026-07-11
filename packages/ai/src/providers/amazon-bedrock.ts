@@ -9,7 +9,11 @@ import { AMAZON_BEDROCK_MODELS } from "./amazon-bedrock.models.ts";
  * configured. A stored credential key is surfaced as the bearer token.
  */
 const bedrockAuth: ApiKeyAuth = {
-	name: "AWS credentials",
+	name: "Bedrock API key or AWS credentials",
+	login: async (callbacks) => ({
+		type: "api_key",
+		key: await callbacks.prompt({ type: "secret", message: "Enter Bedrock API key" }),
+	}),
 	resolve: async ({ ctx, credential }) => {
 		if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
 		if (await ctx.env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };

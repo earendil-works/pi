@@ -41,9 +41,10 @@ type RenderSessionContextThis = {
 	settingsManager: {
 		getShowImages(): boolean;
 		getImageWidthCells(): number;
+		getShowCacheMissNotices(): boolean;
 	};
-	sessionManager: { getCwd(): string };
-	session: { retryAttempt: number };
+	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
+	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
@@ -70,9 +71,10 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		settingsManager: {
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
+			getShowCacheMissNotices: () => false,
 		},
-		sessionManager: { getCwd: () => process.cwd() },
-		session: { retryAttempt: 0 },
+		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
+		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),

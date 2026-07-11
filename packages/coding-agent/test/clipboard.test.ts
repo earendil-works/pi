@@ -1,11 +1,12 @@
 import { execSync, spawn } from "child_process";
 import { platform } from "os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { copyToClipboard } from "../src/utils/clipboard.ts";
+import { copyToClipboard, readClipboardText } from "../src/utils/clipboard.ts";
 
 const mocks = vi.hoisted(() => {
 	return {
 		clipboard: {
+			getText: vi.fn<() => Promise<string>>(),
 			setText: vi.fn<(text: string) => Promise<void>>(),
 		},
 		execSync: vi.fn(),
@@ -59,6 +60,7 @@ beforeEach(() => {
 	vi.stubEnv("MOSH_CONNECTION", "");
 	stdoutWrites = [];
 	nativeResolved = false;
+	mocks.clipboard.getText.mockReset();
 	mocks.clipboard.setText.mockReset();
 	mocks.execSync.mockReset();
 	mocks.spawn.mockReset();
@@ -66,6 +68,7 @@ beforeEach(() => {
 	mocks.isWaylandSession.mockReset();
 	mockedPlatform.mockReturnValue("darwin");
 	mocks.isWaylandSession.mockReturnValue(false);
+	mocks.clipboard.getText.mockResolvedValue("");
 	mocks.clipboard.setText.mockImplementation(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 1));
 		nativeResolved = true;
@@ -84,6 +87,21 @@ beforeEach(() => {
 afterEach(() => {
 	process.stdout.write = originalWrite;
 	vi.unstubAllEnvs();
+});
+
+describe("readClipboardText", () => {
+	test("returns native clipboard text", async () => {
+		mocks.clipboard.getText.mockResolvedValue("clipboard text");
+
+		await expect(readClipboardText()).resolves.toBe("clipboard text");
+	});
+
+	test("returns null for empty or unavailable clipboard text", async () => {
+		await expect(readClipboardText()).resolves.toBeNull();
+
+		mocks.clipboard.getText.mockRejectedValue(new Error("clipboard unavailable"));
+		await expect(readClipboardText()).resolves.toBeNull();
+	});
 });
 
 describe("copyToClipboard", () => {

@@ -107,7 +107,7 @@ describe("parseModelPattern", () => {
 		});
 
 		test("all valid thinking levels work", () => {
-			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
+			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
 				const result = parseModelPattern(`sonnet:${level}`, allModels);
 				expect(result.model?.id).toBe("claude-sonnet-4-5");
 				expect(result.thinkingLevel).toBe(level);
@@ -520,7 +520,7 @@ describe("resolveCliModel", () => {
 				getAll: () => modelsWithNeuralwatt,
 			} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
 
-			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
+			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
 				const result = resolveCliModel({
 					cliModel: `neuralwatt/zai-org/GLM-5.1-FP8:${level}`,
 					modelRegistry: registry,

@@ -365,9 +365,9 @@ export const NVIDIA_MODELS = {
 		contextWindow: 256000,
 		maxTokens: 16384,
 	} satisfies Model<"openai-completions">,
-	"z-ai/glm-5.1": {
-		id: "z-ai/glm-5.1",
-		name: "GLM-5.1",
+	"z-ai/glm-5.2": {
+		id: "z-ai/glm-5.2",
+		name: "GLM-5.2",
 		api: "openai-completions",
 		provider: "nvidia",
 		baseUrl: "https://integrate.api.nvidia.com/v1",
@@ -381,7 +381,7 @@ export const NVIDIA_MODELS = {
 			cacheRead: 0,
 			cacheWrite: 0,
 		},
-		contextWindow: 131072,
+		contextWindow: 1000000,
 		maxTokens: 131072,
 	} satisfies Model<"openai-completions">,
 } as const;

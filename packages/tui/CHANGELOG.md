@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.80.6] - 2026-07-09
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Fixed
+
+- Fixed editor paste marker accounting when paste markers are deleted or terminal state is cleared, preventing stale paste state after marker removal ([#6397](https://github.com/earendil-works/pi/pull/6397) by [@affanali2k3](https://github.com/affanali2k3)).
+
 ## [0.80.3] - 2026-06-30
 
 ### Added
