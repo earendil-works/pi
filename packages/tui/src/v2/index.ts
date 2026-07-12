@@ -26,6 +26,7 @@ export { ansiTextRenderer, functionRenderer, plainTextRenderer } from "./blocks.
 export type { Cell, DamageRun } from "./cell-buffer.ts";
 export { CellBuffer, CellRegion, LinkTable } from "./cell-buffer.ts";
 export { LedgerCommitQueue } from "./commit-queue.ts";
+export { type CaretStrip, EditorStrip } from "./editor-strip.ts";
 export type { FrameCallback, FrameClock, FrameRequest } from "./frame-scheduler.ts";
 export { FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
 export { type TuiRenderMode, V2TUIHost } from "./host.ts";
@@ -47,7 +48,7 @@ export {
 	conservativeMarkdownStableOffset,
 	LedgerStore,
 } from "./ledger.ts";
-export { LegacyBlockRendererAdapter, LegacyStripAdapter } from "./legacy.ts";
+export { LegacyBlockRendererAdapter, LegacyEditorStripAdapter, LegacyStripAdapter } from "./legacy.ts";
 export type {
 	PresentBand,
 	PresentCaret,
