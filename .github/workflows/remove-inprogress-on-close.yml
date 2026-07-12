@@ -1,0 +1,31 @@
+name: Remove In Progress Label On Close
+
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  remove-label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Remove inprogress label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labelName = 'inprogress';
+            const labels = context.payload.issue.labels ?? [];
+            const hasLabel = labels.some((label) => label.name === labelName);
+
+            if (!hasLabel) {
+              console.log(`Issue does not have ${labelName} label`);
+              return;
+            }
+
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              name: labelName,
+            });

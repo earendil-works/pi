@@ -4,6 +4,8 @@ export interface RgbColor {
 	b: number;
 }
 
+export type TerminalColorScheme = "dark" | "light";
+
 function hexToRgb(hex: string): RgbColor {
 	const normalized = hex.startsWith("#") ? hex.slice(1) : hex;
 	const r = parseInt(normalized.slice(0, 2), 16);
@@ -24,6 +26,7 @@ function parseOscHexChannel(channel: string): number | undefined {
 }
 
 const OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN = /^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
+const COLOR_SCHEME_REPORT_PATTERN = /^\x1b\[\?997;(1|2)n$/;
 
 export function isOsc11BackgroundColorResponse(data: string): boolean {
 	return OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN.test(data);
@@ -59,4 +62,12 @@ export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
 	const g = parseOscHexChannel(green);
 	const b = parseOscHexChannel(blue);
 	return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
+}
+
+export function parseTerminalColorSchemeReport(data: string): TerminalColorScheme | undefined {
+	const match = data.match(COLOR_SCHEME_REPORT_PATTERN);
+	if (!match) {
+		return undefined;
+	}
+	return match[1] === "2" ? "light" : "dark";
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertTools } from "../src/providers/google-shared.ts";
+import { convertTools } from "../src/api/google-shared.ts";
 import type { Tool } from "../src/types.ts";
 
 function makeTool(parameters: Record<string, unknown>): Tool {

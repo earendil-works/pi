@@ -62,7 +62,12 @@ export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "
 // Terminal interface and implementations
 export { ProcessTerminal, type Terminal } from "./terminal.ts";
 // Terminal colors
-export { parseOsc11BackgroundColor, type RgbColor } from "./terminal-colors.ts";
+export {
+	parseOsc11BackgroundColor,
+	parseTerminalColorSchemeReport,
+	type RgbColor,
+	type TerminalColorScheme,
+} from "./terminal-colors.ts";
 // Terminal image support
 export {
 	allocateImageId,
@@ -106,6 +111,6 @@ export {
 	TUI,
 } from "./tui.ts";
 // Utilities
-export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
 // v2 renderer selection (parallel entry point; v1 remains default)
 export { type TuiRenderMode, V2TUIHost } from "./v2/host.ts";

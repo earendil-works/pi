@@ -20,11 +20,11 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	Type,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
 	getOpenAICodexWebSocketDebugStats,
-	streamSimpleOpenAICodexResponses,
-} from "../../ai/src/providers/openai-codex-responses.ts";
+	streamSimple as streamSimpleOpenAICodexResponses,
+} from "../../ai/src/api/openai-codex-responses.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";

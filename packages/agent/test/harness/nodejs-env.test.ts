@@ -1,5 +1,5 @@
 import { access, chmod, realpath, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { FileError, getOrThrow } from "../../src/harness/types.ts";
@@ -199,6 +199,39 @@ describe("NodeExecutionEnv", () => {
 			}),
 		);
 		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
+	});
+
+	it("uses stdin command transport for legacy WSL bash paths", async () => {
+		if (process.platform === "win32") return;
+		const root = createTempDir();
+		const shellPath = "C:\\Windows\\System32\\bash.exe";
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile(shellPath, '#!/bin/sh\nprintf \'args:%s\\n\' "$*" >&2\nexec /bin/bash "$@"\n'));
+		await chmod(join(root, shellPath), 0o755);
+
+		const originalCwd = process.cwd();
+		const originalPath = process.env.PATH;
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		try {
+			process.chdir(root);
+			process.env.PATH = `${root}${delimiter}${originalPath ?? ""}`;
+			Object.defineProperty(process, "platform", {
+				configurable: true,
+				value: "win32",
+			});
+
+			const wslEnv = new NodeExecutionEnv({ cwd: root, shellPath });
+			const nameExpansion = "$" + "{name}";
+			const result = getOrThrow(await wslEnv.exec(`name='World'; echo "Hello, ${nameExpansion}!"`));
+
+			expect(result).toEqual({ stdout: "Hello, World!\n", stderr: "args:-s\n", exitCode: 0 });
+		} finally {
+			process.chdir(originalCwd);
+			process.env.PATH = originalPath;
+			if (platformDescriptor) {
+				Object.defineProperty(process, "platform", platformDescriptor);
+			}
+		}
 	});
 
 	it("streams stdout and stderr chunks", async () => {

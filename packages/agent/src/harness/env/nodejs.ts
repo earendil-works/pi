@@ -28,6 +28,22 @@ import {
 	toError,
 } from "../types.ts";
 
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+
+function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
+	if (timeout === undefined) return ok(undefined);
+	if (!Number.isFinite(timeout) || timeout <= 0) {
+		return err(new ExecutionError("timeout", "Invalid timeout: must be a finite number of seconds"));
+	}
+
+	const timeoutMs = timeout * 1000;
+	if (timeoutMs > MAX_TIMEOUT_MS) {
+		return err(new ExecutionError("timeout", `Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`));
+	}
+	return ok(timeoutMs);
+}
+
 function resolvePath(cwd: string, path: string): string {
 	return isAbsolute(path) ? path : resolve(cwd, path);
 }
@@ -144,12 +160,25 @@ async function findBashOnPath(): Promise<string | null> {
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
 }
 
-async function getShellConfig(
-	customShellPath?: string,
-): Promise<Result<{ shell: string; args: string[] }, ExecutionError>> {
+interface ShellConfig {
+	shell: string;
+	args: string[];
+	commandTransport?: "argv" | "stdin";
+}
+
+function isLegacyWslBashPath(path: string): boolean {
+	const normalized = path.replace(/\//g, "\\").toLowerCase();
+	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
+}
+
+function getBashShellConfig(shell: string): ShellConfig {
+	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+}
+
+async function getShellConfig(customShellPath?: string): Promise<Result<ShellConfig, ExecutionError>> {
 	if (customShellPath) {
 		if (await pathExists(customShellPath)) {
-			return ok({ shell: customShellPath, args: ["-c"] });
+			return ok(getBashShellConfig(customShellPath));
 		}
 		return err(new ExecutionError("shell_unavailable", `Custom shell path not found: ${customShellPath}`));
 	}
@@ -161,22 +190,22 @@ async function getShellConfig(
 		if (programFilesX86) candidates.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
 		for (const candidate of candidates) {
 			if (await pathExists(candidate)) {
-				return ok({ shell: candidate, args: ["-c"] });
+				return ok(getBashShellConfig(candidate));
 			}
 		}
 		const bashOnPath = await findBashOnPath();
 		if (bashOnPath) {
-			return ok({ shell: bashOnPath, args: ["-c"] });
+			return ok(getBashShellConfig(bashOnPath));
 		}
 		return err(new ExecutionError("shell_unavailable", "No bash shell found"));
 	}
 
 	if (await pathExists("/bin/bash")) {
-		return ok({ shell: "/bin/bash", args: ["-c"] });
+		return ok(getBashShellConfig("/bin/bash"));
 	}
 	const bashOnPath = await findBashOnPath();
 	if (bashOnPath) {
-		return ok({ shell: bashOnPath, args: ["-c"] });
+		return ok(getBashShellConfig(bashOnPath));
 	}
 	return ok({ shell: "sh", args: ["-c"] });
 }
@@ -245,6 +274,9 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		},
 	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
 		if (options?.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
+		if (!timeoutMsResult.ok) return err(timeoutMsResult.error);
+		const timeoutMs = timeoutMsResult.value;
 
 		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
 		const shellConfig = await getShellConfig(this.shellPath);
@@ -274,13 +306,22 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			};
 
 			try {
-				child = spawn(shellConfig.value.shell, [...shellConfig.value.args, command], {
-					cwd,
-					detached: process.platform !== "win32",
-					env: getShellEnv(this.shellEnv, options?.env),
-					stdio: ["ignore", "pipe", "pipe"],
-					windowsHide: true,
-				});
+				const commandFromStdin = shellConfig.value.commandTransport === "stdin";
+				child = spawn(
+					shellConfig.value.shell,
+					commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command],
+					{
+						cwd,
+						detached: process.platform !== "win32",
+						env: getShellEnv(this.shellEnv, options?.env),
+						stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+						windowsHide: true,
+					},
+				);
+				if (commandFromStdin) {
+					child.stdin?.on("error", () => {});
+					child.stdin?.end(command);
+				}
 			} catch (error) {
 				const cause = toError(error);
 				settle(err(new ExecutionError("spawn_error", cause.message, cause)));
@@ -288,13 +329,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			}
 
 			timeoutId =
-				typeof options?.timeout === "number"
+				timeoutMs !== undefined
 					? setTimeout(() => {
 							timedOut = true;
 							if (child?.pid) {
 								killProcessTree(child.pid);
 							}
-						}, options.timeout * 1000)
+						}, timeoutMs)
 					: undefined;
 
 			if (options?.abortSignal) {

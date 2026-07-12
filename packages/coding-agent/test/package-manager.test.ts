@@ -1674,6 +1674,49 @@ Content`,
 			expect(result.extensions.some((r) => isEnabled(r, "one.ts"))).toBe(true);
 			expect(result.extensions.some((r) => isDisabled(r, "two.ts"))).toBe(true);
 		});
+
+		it("should resolve autoload-disabled project package entries as deltas over global packages", async () => {
+			const pkgDir = join(agentDir, "npm", "node_modules", "pi-tools");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "pi-tools", version: "1.0.0" }));
+			writeFileSync(join(pkgDir, "extensions", "foo.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "extensions", "bar.ts"), "export default function() {}");
+			settingsManager.setPackages(["npm:pi-tools"]);
+			settingsManager.setProjectPackages([
+				{ source: "npm:pi-tools", autoload: false, extensions: ["-extensions/foo.ts"] },
+			]);
+			const runCommandSpy = vi
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
+				.mockRejectedValue(new Error("unexpected install"));
+
+			const result = await packageManager.resolve();
+			const states = Object.fromEntries(
+				result.extensions.map((resource) => [
+					resource.path,
+					{ enabled: resource.enabled, scope: resource.metadata.scope },
+				]),
+			);
+			expect(runCommandSpy).not.toHaveBeenCalled();
+			expect(states[join(pkgDir, "extensions", "foo.ts")]).toEqual({ enabled: false, scope: "project" });
+			expect(states[join(pkgDir, "extensions", "bar.ts")]).toEqual({ enabled: true, scope: "user" });
+		});
+
+		it("should resolve autoload-disabled package entries as positive-only without a global package", async () => {
+			const pkgDir = join(tempDir, "positive-only-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });
+			writeFileSync(join(pkgDir, "extensions", "foo.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "extensions", "bar.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "skills", "foo", "SKILL.md"), "# Foo\n");
+			settingsManager.setProjectPackages([
+				{ source: relative(join(tempDir, ".pi"), pkgDir), autoload: false, extensions: ["+extensions/foo.ts"] },
+			]);
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
+			expect(result.skills).toEqual([]);
+		});
 	});
 
 	describe("force-include patterns", () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
-import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { getModel } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 interface FakeOpenAIClientOptions {

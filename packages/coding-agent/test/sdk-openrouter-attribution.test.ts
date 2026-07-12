@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -88,7 +89,7 @@ describe("createAgentSession provider attribution headers", () => {
 			requestHeaders?: Record<string, string>;
 			sessionId?: string;
 		} = {},
-	): Promise<Record<string, string> | undefined> {
+	): Promise<ProviderHeaders | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		if (options.telemetryEnabled === false) {
 			settingsManager.setEnableInstallTelemetry(false);

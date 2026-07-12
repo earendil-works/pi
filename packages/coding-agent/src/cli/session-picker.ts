@@ -2,10 +2,12 @@
  * TUI session selector for --resume flag
  */
 
-import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
+import { setKeybindings } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../core/session-manager.ts";
+import type { SettingsManager } from "../core/settings-manager.ts";
 import { SessionSelectorComponent } from "../modes/interactive/components/session-selector.ts";
+import { createStartupTui, startStartupTui } from "./startup-ui.ts";
 
 type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[]>;
 
@@ -13,9 +15,10 @@ type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[
 export async function selectSession(
 	currentSessionsLoader: SessionsLoader,
 	allSessionsLoader: SessionsLoader,
+	settingsManager: SettingsManager,
 ): Promise<string | null> {
+	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
-		const ui = new TUI(new ProcessTerminal());
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
 		let resolved = false;
@@ -47,6 +50,6 @@ export async function selectSession(
 
 		ui.addChild(selector);
 		ui.setFocus(selector.getSessionList());
-		ui.start();
+		startStartupTui(ui, settingsManager);
 	});
 }

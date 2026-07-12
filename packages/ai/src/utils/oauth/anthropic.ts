@@ -6,6 +6,8 @@
  */
 
 import type { Server } from "node:http";
+import type { OAuthAuth } from "../../auth/types.ts";
+import { getProviderEnvValue } from "../provider-env.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.ts";
@@ -28,7 +30,7 @@ const decode = (s: string) => atob(s);
 const CLIENT_ID = decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
+const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
 const CALLBACK_PORT = 53692;
 const CALLBACK_PATH = "/callback";
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
@@ -377,6 +379,42 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<OAuth
 		expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
 	};
 }
+
+export const anthropicOAuth: OAuthAuth = {
+	name: "Anthropic (Claude Pro/Max)",
+
+	async login(callbacks) {
+		// The manual_code prompt races the local callback server; abort it once
+		// the flow settles so the UI can dismiss the pending input.
+		const manualAbort = new AbortController();
+		try {
+			const credentials = await loginAnthropic({
+				onAuth: (info) => callbacks.notify({ type: "auth_url", url: info.url, instructions: info.instructions }),
+				onProgress: (message) => callbacks.notify({ type: "progress", message }),
+				onPrompt: (prompt) =>
+					callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
+				onManualCodeInput: () =>
+					callbacks.prompt({
+						type: "manual_code",
+						message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
+						placeholder: REDIRECT_URI,
+						signal: manualAbort.signal,
+					}),
+			});
+			return { ...credentials, type: "oauth" };
+		} finally {
+			manualAbort.abort();
+		}
+	},
+
+	async refresh(credential) {
+		return { ...(await refreshAnthropicToken(credential.refresh)), type: "oauth" };
+	},
+
+	async toAuth(credential) {
+		return { apiKey: credential.access };
+	},
+};
 
 export const anthropicOAuthProvider: OAuthProviderInterface = {
 	id: "anthropic",

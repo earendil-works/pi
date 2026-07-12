@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import { getModel, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
-import { getModel } from "../src/models.ts";
-import { streamAnthropic } from "../src/providers/anthropic.ts";
-import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
-import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
-import { stream } from "../src/stream.ts";
 import type { Context, Model } from "../src/types.ts";
 
 class PayloadCaptured extends Error {

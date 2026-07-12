@@ -44,8 +44,8 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 	};
 });
 
-import { getModel } from "../src/models.ts";
-import { streamBedrock } from "../src/providers/amazon-bedrock.ts";
+import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { getModel } from "../src/compat.ts";
 import type { Context, Message } from "../src/types.ts";
 
 const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");

@@ -34,6 +34,22 @@ function getTextOutput(result: any): string {
 	);
 }
 
+function createTinyBmp1x1Red24bpp(): Buffer {
+	const buffer = Buffer.alloc(58);
+	buffer.write("BM", 0, "ascii");
+	buffer.writeUInt32LE(buffer.length, 2);
+	buffer.writeUInt32LE(54, 10);
+	buffer.writeUInt32LE(40, 14);
+	buffer.writeInt32LE(1, 18);
+	buffer.writeInt32LE(1, 22);
+	buffer.writeUInt16LE(1, 26);
+	buffer.writeUInt16LE(24, 28);
+	buffer.writeUInt32LE(0, 30);
+	buffer.writeUInt32LE(4, 34);
+	buffer[56] = 0xff;
+	return buffer;
+}
+
 describe("Coding Agent Tools", () => {
 	let testDir: string;
 
@@ -44,6 +60,7 @@ describe("Coding Agent Tools", () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		// Clean up test directory
 		rmSync(testDir, { recursive: true, force: true });
 	});
@@ -188,6 +205,24 @@ describe("Coding Agent Tools", () => {
 			expect(imageBlock?.mimeType).toBe("image/png");
 			expect(typeof imageBlock?.data).toBe("string");
 			expect((imageBlock?.data ?? "").length).toBeGreaterThan(0);
+		});
+
+		it("should read BMP files from disk as PNG image attachments", async () => {
+			const testFile = join(testDir, "image.bmp");
+			writeFileSync(testFile, createTinyBmp1x1Red24bpp());
+
+			const result = await readTool.execute("test-call-img-bmp", { path: testFile });
+
+			expect(result.content[0]?.type).toBe("text");
+			expect(getTextOutput(result)).toContain("Read image file [image/png]");
+			expect(getTextOutput(result)).toContain("[Image converted from image/bmp to image/png.]");
+
+			const imageBlock = result.content.find(
+				(c): c is { type: "image"; mimeType: string; data: string } => c.type === "image",
+			);
+			expect(imageBlock).toBeDefined();
+			expect(imageBlock?.mimeType).toBe("image/png");
+			expect(Buffer.from(imageBlock?.data ?? "", "base64")[0]).toBe(0x89);
 		});
 
 		it("should treat files with image extension but non-image content as text", async () => {
@@ -533,6 +568,56 @@ describe("Coding Agent Tools", () => {
 				}),
 			).rejects.toThrow("Custom shell path not found: /custom/bash");
 			expect(getShellConfigSpy).toHaveBeenCalledWith("/custom/bash");
+		});
+
+		it("should send commands over stdin when shell resolution requires it", async () => {
+			vi.spyOn(shellModule, "getShellConfig").mockReturnValue({
+				shell: process.execPath,
+				args: [
+					"-e",
+					'let input = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", (chunk) => { input += chunk; }); process.stdin.on("end", () => { process.stdout.write(input); });',
+				],
+				commandTransport: "stdin",
+			});
+			const chunks: Buffer[] = [];
+			const ops = createLocalBashOperations({ shellPath: "C:\\Windows\\System32\\bash.exe" });
+			const nameExpansion = "$" + "{name}";
+			const countExpansion = "$" + "{count}";
+			const iExpansion = "$" + "{i}";
+			const command = `name='World'; echo "Hello, ${nameExpansion}!"; count=3; for i in $(seq 1 ${countExpansion}); do echo "Iteration ${iExpansion} of ${countExpansion}"; done`;
+
+			const result = await ops.exec(command, testDir, {
+				onData: (data) => chunks.push(data),
+			});
+
+			expect(result.exitCode).toBe(0);
+			expect(Buffer.concat(chunks).toString("utf-8")).toBe(command);
+		});
+
+		it("should resolve legacy WSL bash.exe to stdin command transport", () => {
+			if (process.platform === "win32") return;
+			const originalCwd = process.cwd();
+			const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+			const shellPath = "C:\\Windows\\System32\\bash.exe";
+			writeFileSync(join(testDir, shellPath), "");
+			try {
+				process.chdir(testDir);
+				Object.defineProperty(process, "platform", {
+					configurable: true,
+					value: "win32",
+				});
+
+				expect(shellModule.getShellConfig(shellPath)).toEqual({
+					shell: shellPath,
+					args: ["-s"],
+					commandTransport: "stdin",
+				});
+			} finally {
+				process.chdir(originalCwd);
+				if (platformDescriptor) {
+					Object.defineProperty(process, "platform", platformDescriptor);
+				}
+			}
 		});
 
 		it("should prepend command prefix when configured", async () => {
@@ -979,6 +1064,57 @@ describe("edit tool fuzzy matching", () => {
 		});
 
 		expect(readFileSync(testFile, "utf-8")).toBe("console.log('world');\nhello universe\n");
+	});
+
+	it("should preserve the correct occurrence when fuzzy replacement equals a nearby line", async () => {
+		const testFile = join(testDir, "fuzzy-preserve-duplicate-line.txt");
+		const originalContent = ["replace me\u0020\u0020\u0020", "after\u0020\u0020\u0020", ""].join("\n");
+		writeFileSync(testFile, originalContent);
+
+		const result = await editTool.execute("test-fuzzy-preserve-duplicate-line", {
+			path: testFile,
+			edits: [{ oldText: "replace me\n", newText: "after\n" }],
+		});
+
+		const expectedContent = ["after", "after\u0020\u0020\u0020", ""].join("\n");
+		expect(readFileSync(testFile, "utf-8")).toBe(expectedContent);
+		expect(applyPatch(originalContent, result.details?.patch ?? "")).toBe(expectedContent);
+	});
+
+	it("should preserve untouched lines and produce an applicable patch for fuzzy multi-edits", async () => {
+		const testFile = join(testDir, "fuzzy-preserve-multi.txt");
+		const originalContent = [
+			"keep before\u0020\u0020",
+			"first target\u0020\u0020",
+			"first after",
+			"keep middle\u0020\u0020\u0020",
+			"second target\u0020\u0020",
+			"second after",
+			"keep after\u0020\u0020",
+			"",
+		].join("\n");
+		writeFileSync(testFile, originalContent);
+
+		const result = await editTool.execute("test-fuzzy-preserve-multi", {
+			path: testFile,
+			edits: [
+				{ oldText: "first target\nfirst after", newText: "FIRST\nFIRST2" },
+				{ oldText: "second target\nsecond after", newText: "SECOND\nSECOND2" },
+			],
+		});
+
+		const expectedContent = [
+			"keep before\u0020\u0020",
+			"FIRST",
+			"FIRST2",
+			"keep middle\u0020\u0020\u0020",
+			"SECOND",
+			"SECOND2",
+			"keep after\u0020\u0020",
+			"",
+		].join("\n");
+		expect(readFileSync(testFile, "utf-8")).toBe(expectedContent);
+		expect(applyPatch(originalContent, result.details?.patch ?? "")).toBe(expectedContent);
 	});
 });
 

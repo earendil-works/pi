@@ -1,46 +1,31 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "0.79.4",
+	"version": "0.80.6",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"sideEffects": [
+		"./dist/compat.js",
+		"./dist/images.js",
+		"./dist/providers/images/register-builtins.js"
+	],
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./anthropic": {
-			"types": "./dist/providers/anthropic.d.ts",
-			"import": "./dist/providers/anthropic.js"
+		"./compat": {
+			"types": "./dist/compat.d.ts",
+			"import": "./dist/compat.js"
 		},
-		"./azure-openai-responses": {
-			"types": "./dist/providers/azure-openai-responses.d.ts",
-			"import": "./dist/providers/azure-openai-responses.js"
+		"./providers/*": {
+			"types": "./dist/providers/*.d.ts",
+			"import": "./dist/providers/*.js"
 		},
-		"./google": {
-			"types": "./dist/providers/google.d.ts",
-			"import": "./dist/providers/google.js"
-		},
-		"./google-vertex": {
-			"types": "./dist/providers/google-vertex.d.ts",
-			"import": "./dist/providers/google-vertex.js"
-		},
-		"./mistral": {
-			"types": "./dist/providers/mistral.d.ts",
-			"import": "./dist/providers/mistral.js"
-		},
-		"./openai-codex-responses": {
-			"types": "./dist/providers/openai-codex-responses.d.ts",
-			"import": "./dist/providers/openai-codex-responses.js"
-		},
-		"./openai-completions": {
-			"types": "./dist/providers/openai-completions.d.ts",
-			"import": "./dist/providers/openai-completions.js"
-		},
-		"./openai-responses": {
-			"types": "./dist/providers/openai-responses.d.ts",
-			"import": "./dist/providers/openai-responses.js"
+		"./api/*": {
+			"types": "./dist/api/*.d.ts",
+			"import": "./dist/api/*.js"
 		},
 		"./oauth": {
 			"types": "./dist/oauth.d.ts",
@@ -69,9 +54,10 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
-		"@smithy/node-http-handler": "4.7.3",
 		"@google/genai": "1.52.0",
-		"@mistralai/mistralai": "2.2.1",
+		"@mistralai/mistralai": "2.2.6",
+		"@opentelemetry/api": "1.9.0",
+		"@smithy/node-http-handler": "4.7.3",
 		"http-proxy-agent": "7.0.2",
 		"https-proxy-agent": "7.0.6",
 		"openai": "6.26.0",
@@ -101,6 +87,6 @@
 	"devDependencies": {
 		"@types/node": "24.12.4",
 		"canvas": "3.2.3",
-		"vitest": "3.2.4"
+		"vitest": "4.1.9"
 	}
 }

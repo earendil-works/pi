@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { complete } from "../src/stream.ts";
+import { complete } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 // Router/virtual ids (e.g. OpenRouter `auto`) keep `model` pinned to the

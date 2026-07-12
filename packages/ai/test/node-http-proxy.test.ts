@@ -54,6 +54,17 @@ describe("node HTTP proxy resolution", () => {
 		);
 	});
 
+	it("prefers scoped proxy env aliases before process env aliases", () => {
+		resetProxyEnv();
+		process.env.https_proxy = "http://process-proxy.example:8080";
+
+		expect(
+			resolveHttpProxyUrlForTarget("https://bedrock-runtime.us-east-1.amazonaws.com", {
+				HTTPS_PROXY: "http://scoped-proxy.example:8080",
+			})?.toString(),
+		).toBe("http://scoped-proxy.example:8080/");
+	});
+
 	it("rejects SOCKS and PAC proxy URLs explicitly", () => {
 		resetProxyEnv();
 		process.env.HTTPS_PROXY = "socks5://proxy.example:1080";

@@ -7,6 +7,62 @@
 - Added the v2 in-Pi full-history viewer (`HistoryViewer`): an alt-screen pager over the Ledger's complete logical history, reflowed at the current width, so users can browse session history older than the re-commit replay tail and the emulator's native scrollback. Reachable via a discoverable, configurable keybinding (`tui.history.*`, advertised through the earlier-history marker) and wired into `LedgerBandRenderer` (`handleKey`/`openHistory`); it lives entirely on the alternate screen, leaves the primary-screen scrollback untouched, and returns cleanly to the live band. v2-gated only; v1 and the default path are unchanged (plan §6).
 - Wired the full-history pager into `V2TUIHost` so an actual `pi --tui v2` session can open, navigate, resize, and close it. The host captures the `tui.history.open` key ahead of the editor, is modal while open (every key drives the pager), forwards genuine terminal resizes so the view reflows, and closes the pager on `stop()`/signal shutdown before terminal handback so the primary screen, scrollback, autowrap, and cursor are all restored. The pager snapshots the complete retained transcript, so history scrolled past the emulator's native tail is reachable. A default-off render-suspend hook on the base `TUI` keeps v1 from painting onto the alternate screen while the pager owns it and forces a return-to-live repaint on exit; the default/v1 path never suspends and is unchanged (plan §6).
 
+## [0.80.6] - 2026-07-09
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Fixed
+
+- Fixed editor paste marker accounting when paste markers are deleted or terminal state is cleared, preventing stale paste state after marker removal ([#6397](https://github.com/earendil-works/pi/pull/6397) by [@affanali2k3](https://github.com/affanali2k3)).
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added an opt-in Markdown renderer option to preserve source backslash escapes for transcript rendering ([#6105](https://github.com/earendil-works/pi/issues/6105)).
+
+## [0.80.2] - 2026-06-23
+
+## [0.80.1] - 2026-06-23
+
+## [0.80.0] - 2026-06-23
+
+### Changed
+
+- Added `Ctrl+J` as a default newline keybinding alongside `Shift+Enter`.
+
+## [0.79.10] - 2026-06-22
+
+## [0.79.9] - 2026-06-20
+
+### Fixed
+
+- Fixed Markdown streaming code fence rendering so partial closing fences no longer make code blocks shrink or flicker while content streams ([#5846](https://github.com/earendil-works/pi/pull/5846) by [@xl0](https://github.com/xl0)).
+
+## [0.79.8] - 2026-06-19
+
+## [0.79.7] - 2026-06-18
+
+### Added
+
+- Added terminal color-scheme query and notification support for light/dark appearance detection (`TUI.queryTerminalColorScheme()`, `TUI.onTerminalColorSchemeChange()`, and `TUI.setTerminalColorSchemeNotifications()`) ([#5874](https://github.com/earendil-works/pi/pull/5874)).
+- Added Warp terminal detection for Kitty graphics inline image support ([#5841](https://github.com/earendil-works/pi/pull/5841) by [@dodiego](https://github.com/dodiego)).
+- Exported `sliceByColumn` for ANSI-aware horizontal column slicing.
+
+## [0.79.6] - 2026-06-16
+
+## [0.79.5] - 2026-06-16
+
+### Changed
+
+- Updated Markdown parsing to `marked` 18.0.5.
+
+### Fixed
+
+- Fixed editor Cursor Up handling so non-empty drafts jump to the start of the line before browsing input history ([#5789](https://github.com/earendil-works/pi/pull/5789) by [@4h9fbZ](https://github.com/4h9fbZ)).
+
 ## [0.79.4] - 2026-06-15
 
 ### Added

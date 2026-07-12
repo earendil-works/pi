@@ -1,15 +1,7 @@
-import {
-	type ExecutionEnv,
-	type ExecutionEnvExecOptions,
-	ExecutionError,
-	err,
-	ok,
-	type Result,
-	toError,
-} from "../types.ts";
+import { type ExecutionEnv, ExecutionError, err, ok, type Result, type ShellExecOptions, toError } from "../types.ts";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./truncate.ts";
 
-export interface ShellCaptureOptions extends Omit<ExecutionEnvExecOptions, "onStdout" | "onStderr"> {
+export interface ShellCaptureOptions extends Omit<ShellExecOptions, "onStdout" | "onStderr"> {
 	onChunk?: (chunk: string) => void;
 }
 

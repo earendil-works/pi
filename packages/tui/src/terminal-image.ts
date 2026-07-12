@@ -92,6 +92,11 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
+	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.
+	if (termProgram === "warpterminal" || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID) {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
 	if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
 		return { images: "iterm2", trueColor: true, hyperlinks: true };
 	}

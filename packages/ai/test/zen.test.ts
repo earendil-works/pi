@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { complete } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
-import { complete } from "../src/stream.ts";
 import type { Model } from "../src/types.ts";
 
 describe.skipIf(!process.env.OPENCODE_API_KEY)("OpenCode Models Smoke Test", () => {

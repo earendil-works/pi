@@ -1,4 +1,5 @@
-import { complete, createAssistantMessageEventStream, getModel, getProviders, Type } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
+import { complete, getModel, getProviders } from "@earendil-works/pi-ai/compat";
 import {
 	Agent,
 	bashExecutionToText,

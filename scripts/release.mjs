@@ -11,7 +11,7 @@
  * 2. Bump version via npm run version:xxx or set an explicit version
  * 3. Update CHANGELOG.md files: [Unreleased] -> [version] - date
  * 4. Regenerate release artifacts
- * 5. Run checks
+ * 5. Run checks and tests
  * 6. Commit and tag the release
  * 7. Add new [Unreleased] section to changelogs
  * 8. Commit next-cycle changelog updates
@@ -169,11 +169,16 @@ console.log("Regenerating release artifacts...");
 run("npm --prefix packages/ai run generate-models");
 run("npm --prefix packages/ai run generate-image-models");
 run("npm run shrinkwrap:coding-agent");
+run("npm run install-lock:coding-agent");
 console.log();
 
-// 5. Run checks
+// 5. Run checks and tests
 console.log("Running checks...");
 run("npm run check");
+console.log();
+
+console.log("Running tests...");
+run("./test.sh");
 console.log();
 
 // 6. Commit and tag
