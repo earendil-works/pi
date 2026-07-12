@@ -16,7 +16,7 @@
 
 ### Fixed
 
-- Fixed session-tree navigation from racing active agent/tool runs and attaching asynchronous messages to the wrong branch.
+- Fixed session-tree navigation from racing active agent/tool runs and attaching asynchronous messages to the wrong branch. Interactive navigation now offers to abort the active run before switching branches.
 - Fixed inherited OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed `Ctrl+V` to paste clipboard text when the pasteboard does not contain an image.
 - Fixed `/login amazon-bedrock` to prompt for and save a Bedrock API key instead of only displaying ambient AWS credential setup instructions.

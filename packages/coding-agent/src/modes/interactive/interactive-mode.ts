@@ -4594,6 +4594,21 @@ export class InteractiveMode {
 		}
 	}
 
+	private async confirmAbortForTreeNavigation(): Promise<boolean> {
+		if (this.session.isIdle) {
+			return true;
+		}
+
+		const choice = await this.showExtensionSelector("Agent is running", ["Abort and navigate", "Cancel"]);
+		if (choice !== "Abort and navigate") {
+			return false;
+		}
+
+		this.restoreQueuedMessagesToEditor();
+		await this.session.abort();
+		return true;
+	}
+
 	private showTreeSelector(initialSelectedId?: string): void {
 		const tree = this.sessionManager.getTree();
 		const realLeafId = this.sessionManager.getLeafId();
@@ -4617,8 +4632,13 @@ export class InteractiveMode {
 						return;
 					}
 
-					// Ask about summarization
-					done(); // Close selector first
+					// Close the tree selector before showing any follow-up choices.
+					done();
+
+					if (!(await this.confirmAbortForTreeNavigation())) {
+						this.showStatus("Navigation cancelled");
+						return;
+					}
 
 					// Loop until user makes a complete choice or cancels to tree
 					let wantsSummary = false;

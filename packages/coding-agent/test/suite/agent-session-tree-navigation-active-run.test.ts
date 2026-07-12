@@ -85,6 +85,7 @@ describe("AgentSession active-run tree navigation", () => {
 		const originatingLeafId = sessionManager.getLeafId();
 
 		try {
+			await expect(harness.session.navigateTree(originatingLeafId!)).resolves.toEqual({ cancelled: false });
 			await expect(harness.session.navigateTree(seedUserEntry!.id)).rejects.toThrow(
 				"Cannot navigate the session tree while an agent run is active",
 			);
