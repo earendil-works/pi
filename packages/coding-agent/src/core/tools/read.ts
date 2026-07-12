@@ -62,12 +62,22 @@ export interface ReadToolOptions {
 	operations?: ReadOperations;
 }
 
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
+type ReadRenderArgs = {
+	path?: string;
+	file_path?: string;
+	offset?: number | string;
+	limit?: number | string;
+};
 
 function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
 	if (args?.offset === undefined && args?.limit === undefined) return "";
 	const startLine = args.offset ?? 1;
-	const endLine = args.limit !== undefined ? startLine + args.limit - 1 : "";
+	const numericStartLine = Number(startLine);
+	const numericLimit = Number(args.limit);
+	const endLine =
+		args.limit !== undefined && Number.isFinite(numericStartLine) && Number.isFinite(numericLimit)
+			? numericStartLine + numericLimit - 1
+			: "";
 	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 }
 

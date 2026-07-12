@@ -568,18 +568,22 @@
         return p;
       }
 
+      function formatReadLineRange(offset, limit) {
+        if (offset === undefined && limit === undefined) return '';
+        const start = offset ?? 1;
+        const numericStart = Number(start);
+        const numericLimit = Number(limit);
+        const end = limit !== undefined && Number.isFinite(numericStart) && Number.isFinite(numericLimit)
+          ? numericStart + numericLimit - 1
+          : '';
+        return `:${start}${end ? `-${end}` : ''}`;
+      }
+
       function formatToolCall(name, args) {
         switch (name) {
           case 'read': {
             const path = shortenPath(String(args.path || args.file_path || ''));
-            const offset = args.offset;
-            const limit = args.limit;
-            let display = path;
-            if (offset !== undefined || limit !== undefined) {
-              const start = offset ?? 1;
-              const end = limit !== undefined ? start + limit - 1 : '';
-              display += `:${start}${end ? `-${end}` : ''}`;
-            }
+            const display = path + formatReadLineRange(args.offset, args.limit);
             return `[read: ${display}]`;
           }
           case 'write':
@@ -945,14 +949,11 @@
           }
           case 'read': {
             const filePath = str(args.file_path ?? args.path);
-            const offset = args.offset;
-            const limit = args.limit;
 
             let pathHtml = filePath === null ? invalidArg : escapeHtml(shortenPath(filePath || ''));
-            if (filePath !== null && (offset !== undefined || limit !== undefined)) {
-              const startLine = offset ?? 1;
-              const endLine = limit !== undefined ? startLine + limit - 1 : '';
-              pathHtml += `<span class="line-numbers">:${startLine}${endLine ? '-' + endLine : ''}</span>`;
+            const lineRange = formatReadLineRange(args.offset, args.limit);
+            if (filePath !== null && lineRange) {
+              pathHtml += `<span class="line-numbers">${escapeHtml(lineRange)}</span>`;
             }
 
             html += `<div class="tool-header"><span class="tool-name">read</span> <span class="tool-path">${pathHtml}</span></div>`;

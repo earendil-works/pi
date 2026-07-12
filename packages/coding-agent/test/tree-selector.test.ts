@@ -59,7 +59,11 @@ function assistantMessage(id: string, parentId: string | null, text: string): Se
 }
 
 // Helper to create a tool-call-only assistant message (filtered out in default mode)
-function toolCallOnlyAssistant(id: string, parentId: string | null): SessionMessageEntry {
+function toolCallOnlyAssistant(
+	id: string,
+	parentId: string | null,
+	args: Record<string, unknown> = { path: "test.ts" },
+): SessionMessageEntry {
 	return {
 		type: "message",
 		id,
@@ -67,7 +71,7 @@ function toolCallOnlyAssistant(id: string, parentId: string | null): SessionMess
 		timestamp: new Date().toISOString(),
 		message: {
 			role: "assistant",
-			content: [{ type: "toolCall", id: `tc-${id}`, name: "read", arguments: { path: "test.ts" } }],
+			content: [{ type: "toolCall", id: `tc-${id}`, name: "read", arguments: args }],
 			api: "anthropic-messages",
 			provider: "anthropic",
 			model: "claude-sonnet-4",
@@ -126,6 +130,44 @@ function buildTree(entries: Array<SessionEntry>): SessionTreeNode[] {
 }
 
 describe("TreeSelectorComponent", () => {
+	test("renders numeric string read ranges without concatenating them", () => {
+		const entries = [
+			userMessage("user-1", null, "inspect"),
+			toolCallOnlyAssistant("tool-asst-1", "user-1", {
+				path: "test.ts",
+				offset: "380",
+				limit: "50",
+			}),
+			{
+				type: "message" as const,
+				id: "tool-result-1",
+				parentId: "tool-asst-1",
+				timestamp: new Date().toISOString(),
+				message: {
+					role: "toolResult" as const,
+					toolCallId: "tc-tool-asst-1",
+					toolName: "read",
+					content: [{ type: "text" as const, text: "contents" }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			},
+		];
+		const selector = new TreeSelectorComponent(
+			buildTree(entries),
+			"tool-result-1",
+			24,
+			() => {},
+			() => {},
+			undefined,
+			undefined,
+			"all",
+		);
+		const rendered = selector.render(120).map(stripVTControlCharacters).join("\n");
+		expect(rendered).toContain("[read: test.ts:380-429]");
+		expect(rendered).not.toContain("38049");
+	});
+
 	describe("initial selection with metadata entries", () => {
 		test("focuses nearest visible ancestor when currentLeafId is a model_change with sibling branch", () => {
 			// Tree structure:

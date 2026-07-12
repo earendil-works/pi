@@ -134,6 +134,21 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("README.md");
 	});
 
+	test("renders numeric string read ranges without concatenating them", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-string-range",
+			{ path: "README.md", offset: "380", limit: "50" },
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("README.md:380-429");
+		expect(rendered).not.toContain("38049");
+	});
+
 	test("bash execute emits an initial empty partial update before output arrives", async () => {
 		const updates: Array<{ content: Array<{ type: string; text?: string }>; details?: unknown }> = [];
 		const operations: BashOperations = {

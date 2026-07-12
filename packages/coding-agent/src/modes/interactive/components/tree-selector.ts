@@ -945,12 +945,17 @@ class TreeList implements Component {
 		switch (name) {
 			case "read": {
 				const path = shortenPath(String(args.path || args.file_path || ""));
-				const offset = args.offset as number | undefined;
-				const limit = args.limit as number | undefined;
+				const offset = args.offset as number | string | undefined;
+				const limit = args.limit as number | string | undefined;
 				let display = path;
 				if (offset !== undefined || limit !== undefined) {
 					const start = offset ?? 1;
-					const end = limit !== undefined ? start + limit - 1 : "";
+					const numericStart = Number(start);
+					const numericLimit = Number(limit);
+					const end =
+						limit !== undefined && Number.isFinite(numericStart) && Number.isFinite(numericLimit)
+							? numericStart + numericLimit - 1
+							: "";
 					display += `:${start}${end ? `-${end}` : ""}`;
 				}
 				return `[read: ${display}]`;
