@@ -53,6 +53,8 @@ export type {
 	SerializedDamageRun,
 } from "./presenter.ts";
 export { Presenter } from "./presenter.ts";
+export type { FocusedCaret, LedgerBandRendererOptions, RendererMetrics } from "./renderer.ts";
+export { LedgerBandRenderer } from "./renderer.ts";
 export { Signal, type SignalListener } from "./signal.ts";
 export type { Span, StyledLine, TerminalColor, TextStyle } from "./styles.ts";
 export { DEFAULT_TEXT_STYLE, plainLine, StyleTable } from "./styles.ts";

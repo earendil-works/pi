@@ -26,9 +26,14 @@ export class LedgerCommitQueue {
 		return this.lines.length;
 	}
 
-	/** Return all pending serialized lines in commit order and clear the queue. */
-	flush(): string[] {
+	/**
+	 * Remove and return pending serialized lines in commit order. With a positive `limit`, drains at
+	 * most that many lines so a single frame's commit write stays bounded (plan §2 frontier budget);
+	 * remaining lines are left for the next frame. Without a limit, drains everything.
+	 */
+	flush(limit?: number): string[] {
 		if (this.lines.length === 0) return [];
-		return this.lines.splice(0, this.lines.length);
+		const count = limit === undefined || limit <= 0 ? this.lines.length : Math.min(limit, this.lines.length);
+		return this.lines.splice(0, count);
 	}
 }
