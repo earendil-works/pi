@@ -48,7 +48,12 @@ export class V2TUIHost extends TUI {
 	private routeHistoryInput(data: string): { consume: boolean } | undefined {
 		if (this.historyViewer) {
 			// Modal while open: every sequence drives the pager so keystrokes never reach the editor beneath.
-			this.historyViewer.handleInput(data);
+			try {
+				this.historyViewer.handleInput(data);
+			} catch (error) {
+				this.abortHistoryToLive();
+				throw error;
+			}
 			return { consume: true };
 		}
 		if (getKeybindings().matches(data, "tui.history.open")) {
@@ -78,7 +83,13 @@ export class V2TUIHost extends TUI {
 			onExit: () => this.onHistoryExit(),
 		});
 		this.suspendRendering();
-		this.historyViewer.openViewer();
+		try {
+			this.historyViewer.openViewer();
+		} catch (error) {
+			// A throw here is after suspendRendering(): roll back to a coherent live view, don't swallow it.
+			this.abortHistoryToLive();
+			throw error;
+		}
 	}
 
 	/**
@@ -99,6 +110,28 @@ export class V2TUIHost extends TUI {
 		this.resumeRendering();
 	}
 
+	/**
+	 * Fail-safe rollback when the pager throws after {@link suspendRendering} — the realistic path is a
+	 * resize whose reflow re-invokes a history source that throws, but open/input are guarded too. Tear
+	 * down the partial viewer, restore the primary screen, and resume coherent live rendering with a
+	 * single repaint. The originating error is never swallowed: callers rethrow it after this returns.
+	 */
+	private abortHistoryToLive(): void {
+		const viewer = this.historyViewer;
+		this.historyViewer = undefined;
+		if (viewer) {
+			try {
+				// Emit SHOW_CURSOR + AUTOWRAP_ON + ALT_EXIT off the alternate screen; its onExit runs
+				// onHistoryExit, which resumes rendering with one coherent repaint.
+				viewer.close();
+			} catch {
+				// Best-effort primary-screen restore; the resume below still returns to live.
+			}
+		}
+		// Idempotent: a no-op if viewer.close() already resumed via onHistoryExit; otherwise resumes here.
+		this.resumeRendering();
+	}
+
 	override requestRender(force = false): void {
 		if (this.historyViewer) {
 			// The pager owns the terminal and v1 stays suspended; forward genuine resizes so it reflows.
@@ -106,7 +139,13 @@ export class V2TUIHost extends TUI {
 			const rows = this.terminal.rows;
 			if (columns !== this.viewerSize.columns || rows !== this.viewerSize.rows) {
 				this.viewerSize = { columns, rows };
-				this.historyViewer.resize(columns, rows);
+				try {
+					this.historyViewer.resize(columns, rows);
+				} catch (error) {
+					// Reflow re-invokes the source; a throw here is after suspendRendering() — fail safe to live.
+					this.abortHistoryToLive();
+					throw error;
+				}
 			}
 			return;
 		}
