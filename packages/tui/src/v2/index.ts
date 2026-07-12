@@ -10,6 +10,7 @@ export {
 	styleParams,
 	styleToSgr,
 } from "./ansi.ts";
+export { ansiToStyledLine, ansiToStyledLines } from "./ansi-parse.ts";
 export type {
 	BandGeometry,
 	BandHost,
@@ -21,6 +22,7 @@ export type {
 	StripSlot,
 } from "./band.ts";
 export { BandLayout } from "./band.ts";
+export { ansiTextRenderer, functionRenderer, plainTextRenderer } from "./blocks.ts";
 export type { Cell, DamageRun } from "./cell-buffer.ts";
 export { CellBuffer, CellRegion, LinkTable } from "./cell-buffer.ts";
 export { LedgerCommitQueue } from "./commit-queue.ts";
