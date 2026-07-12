@@ -33,7 +33,17 @@ export interface PresentCaret {
 	readonly column: number;
 }
 
+export interface PresentReset {
+	/** Also clear the terminal's own scrollback (CSI 3J). Accepted on re-commit per plan decision 0.1. */
+	readonly scrollback: boolean;
+}
+
 export interface PresentFrame {
+	/**
+	 * Clear the screen (and optionally scrollback) before this frame, re-anchoring the band to the home
+	 * row. Used only by re-commit; forces a full band repaint.
+	 */
+	readonly reset?: PresentReset;
 	/** Serialized scrollback lines to push above the band, in commit order. */
 	readonly commitLines?: readonly string[];
 	readonly band: PresentBand;
@@ -84,6 +94,7 @@ export class Presenter {
 	}
 
 	present(frame: PresentFrame): PresentResult {
+		if (frame.reset) this.markReset();
 		const commitLines = frame.commitLines ?? [];
 		const height = Math.max(0, Math.trunc(frame.band.height));
 		const heightChanged = this.initialized && height !== this.bandHeight;
@@ -92,8 +103,10 @@ export class Presenter {
 
 		// Open the synchronized frame with autowrap disabled for its full extent (plan §3 final-column
 		// policy); autowrap is restored before SYNC_END below so the terminal is left in its default
-		// state between frames.
+		// state between frames. The reset frame's clear/home writes therefore also run with DECAWM off,
+		// so a full-width row in the re-commit repaint cannot trigger a deferred autowrap line-shift.
 		let buffer = SYNC_BEGIN + AUTOWRAP_OFF;
+		if (frame.reset) buffer += `\x1b[2J${frame.reset.scrollback ? "\x1b[3J" : ""}\x1b[H`;
 		// 1. Move up to band top from the previous resting row.
 		if (this.initialized && this.restRow > 0) buffer += `\x1b[${this.restRow}A`;
 		buffer += "\r";

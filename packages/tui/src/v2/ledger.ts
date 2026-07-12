@@ -124,6 +124,18 @@ export class LedgerStore<Theme> {
 		return commits;
 	}
 
+	/**
+	 * Discard physical commit bookkeeping while retaining all logical blocks and their models, so a
+	 * re-commit (width/theme epoch, history rebuild) can replay the committed content at a new width by
+	 * simply re-running {@link advance}. Never discards block models or state (plan §6).
+	 */
+	resetCommitState(): void {
+		for (const block of this.blocks) block.committedLineCount = 0;
+		this.segments.length = 0;
+		this.frontierBlockIndex = 0;
+		this.frontierStableLine = 0;
+	}
+
 	get frontier(): LedgerFrontier {
 		return { blockIndex: this.frontierBlockIndex, stableLine: this.frontierStableLine };
 	}

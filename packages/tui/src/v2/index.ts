@@ -51,6 +51,7 @@ export type {
 	PresentBand,
 	PresentCaret,
 	PresentFrame,
+	PresentReset,
 	PresentResult,
 	SerializedDamageRun,
 } from "./presenter.ts";
