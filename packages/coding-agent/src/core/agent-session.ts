@@ -2800,6 +2800,12 @@ export class AgentSession {
 		targetId: string,
 		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
+		if (this._isAgentRunActive) {
+			throw new Error(
+				"Cannot navigate the session tree while an agent run is active. Wait for the agent to become idle.",
+			);
+		}
+
 		const oldLeafId = this.sessionManager.getLeafId();
 
 		// No-op if already at target
