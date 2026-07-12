@@ -39,6 +39,15 @@ export interface Keybindings {
 	"tui.select.pageDown": true;
 	"tui.select.confirm": true;
 	"tui.select.cancel": true;
+	// v2 full-history viewer (plan §6). Unused by v1; the v2 host routes these when the pager is open.
+	"tui.history.open": true;
+	"tui.history.scrollUp": true;
+	"tui.history.scrollDown": true;
+	"tui.history.pageUp": true;
+	"tui.history.pageDown": true;
+	"tui.history.top": true;
+	"tui.history.bottom": true;
+	"tui.history.close": true;
 }
 
 export type Keybinding = keyof Keybindings;
@@ -131,6 +140,14 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
 	},
+	"tui.history.open": { defaultKeys: "ctrl+r", description: "Open the full-history viewer" },
+	"tui.history.scrollUp": { defaultKeys: ["up", "ctrl+p"], description: "History: scroll up one line" },
+	"tui.history.scrollDown": { defaultKeys: ["down", "ctrl+n"], description: "History: scroll down one line" },
+	"tui.history.pageUp": { defaultKeys: ["pageUp", "ctrl+b"], description: "History: page up" },
+	"tui.history.pageDown": { defaultKeys: ["pageDown", "ctrl+f", "space"], description: "History: page down" },
+	"tui.history.top": { defaultKeys: ["home", "g"], description: "History: jump to oldest" },
+	"tui.history.bottom": { defaultKeys: ["end", "shift+g"], description: "History: jump to newest" },
+	"tui.history.close": { defaultKeys: ["escape", "q", "ctrl+c"], description: "History: return to live view" },
 } as const satisfies KeybindingDefinitions;
 
 export interface KeybindingConflict {

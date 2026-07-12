@@ -47,6 +47,8 @@ interface StoredBlock<Theme> {
 	committedLineCount: number;
 	readonly atomic: boolean;
 	renderStable(width: number, theme: Theme): StyledLine[] | undefined;
+	/** Render the block's current model in full (final or open), independent of frontier stability. Used by the full-history snapshot (plan §6). */
+	renderFull(width: number, theme: Theme): StyledLine[];
 }
 
 export interface AddLedgerBlockOptions<Model, Theme> {
@@ -81,6 +83,7 @@ export class LedgerStore<Theme> {
 				if (!options.frontier && block.state !== "final") return undefined;
 				return options.renderer.render(stable?.model ?? model, width, theme);
 			},
+			renderFull: (width, theme) => options.renderer.render(model, width, theme),
 		};
 		this.blocks.push(block);
 		this.blockIds.add(options.id);
@@ -141,6 +144,21 @@ export class LedgerStore<Theme> {
 		this.segments.length = 0;
 		this.frontierBlockIndex = 0;
 		this.frontierStableLine = 0;
+	}
+
+	/**
+	 * Full logical history reflowed at `width` under `theme`, oldest→newest, as one flat list of styled
+	 * lines. Unlike {@link advance}, this renders every block's current model in full (final and open,
+	 * including a streaming tail's unstable suffix) and never mutates commit bookkeeping, so the in-Pi
+	 * full-history viewer can browse the complete session end-to-end — including rows already collapsed
+	 * behind the re-commit replay cap or evicted from the emulator's native scrollback (plan §6).
+	 */
+	snapshot(width: number, theme: Theme): StyledLine[] {
+		const lines: StyledLine[] = [];
+		for (const block of this.blocks) {
+			for (const line of block.renderFull(width, theme)) lines.push(line);
+		}
+		return lines;
 	}
 
 	get frontier(): LedgerFrontier {

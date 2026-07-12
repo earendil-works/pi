@@ -1,9 +1,11 @@
+import { getKeybindings, type KeybindingsManager } from "../keybindings.ts";
 import type { Terminal } from "../terminal.ts";
 import { cellsToAnsi, hardWrapStyledLine, styledLineToAnsi } from "./ansi.ts";
 import { type BandGeometry, type BandHost, BandLayout, type StripSlot } from "./band.ts";
 import { type Cell, CellBuffer, LinkTable } from "./cell-buffer.ts";
 import { LedgerCommitQueue } from "./commit-queue.ts";
 import { type FrameClock, FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
+import { type HistorySource, HistoryViewer } from "./history-viewer.ts";
 import type { LedgerCommit } from "./ledger.ts";
 import { LedgerStore } from "./ledger.ts";
 import { Presenter, type PresentReset, type PresentResult, type SerializedDamageRun } from "./presenter.ts";
@@ -31,6 +33,8 @@ export interface LedgerBandRendererOptions<Theme> {
 	readonly maxReplayLinesPerFrame?: number;
 	/** Affordance hint appended to the earlier-history marker (e.g. a keybinding to open the full-history viewer). */
 	readonly historyHint?: string;
+	/** Keybinding registry used to open/drive the full-history viewer; defaults to the global registry. */
+	readonly keybindings?: KeybindingsManager;
 }
 
 export interface RendererMetrics {
@@ -73,6 +77,11 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 	private readonly maxReplayLines: number;
 	private readonly maxReplayLinesPerFrame: number;
 	private readonly historyHint: string;
+	private readonly keybindings: KeybindingsManager;
+	/** Active full-history viewer (plan §6). While set, band frames are suspended and the alt screen owns the terminal. */
+	private historyViewer: HistoryViewer | undefined;
+	/** True while the alt-screen history viewer owns the terminal; the band produces no frames until it closes. */
+	private suspended = false;
 	private recommitNeeded = false;
 	/** Monotonic re-commit epoch. Bumped when a re-commit begins so a superseded chunked replay is discarded (plan §6). */
 	private epoch = 0;
@@ -97,6 +106,7 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		this.maxReplayLines = options.maxReplayLines ?? Number.POSITIVE_INFINITY;
 		this.maxReplayLinesPerFrame = options.maxReplayLinesPerFrame ?? Number.POSITIVE_INFINITY;
 		this.historyHint = options.historyHint ?? "";
+		this.keybindings = options.keybindings ?? getKeybindings();
 		this.presenter = new Presenter(options.terminal);
 		this.scheduler = new FrameScheduler((request) => this.render(request.now), this.clock, options.minimumIntervalMs);
 	}
@@ -110,9 +120,65 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		return this.replay !== undefined;
 	}
 
+	/** True while the alt-screen full-history viewer is open and owns the terminal (plan §6). */
+	get historyOpen(): boolean {
+		return this.historyViewer !== undefined;
+	}
+
+	/**
+	 * Route one input sequence for the full-history affordance (plan §6). While the viewer is open, all
+	 * input drives it; otherwise the configured open key (`tui.history.open`) opens it. Returns true when
+	 * the key was consumed so the host can fall through to its own bindings when it was not.
+	 */
+	handleKey(data: string): boolean {
+		if (this.stopped) return false;
+		if (this.historyViewer) {
+			this.historyViewer.handleInput(data);
+			return true;
+		}
+		if (this.keybindings.matches(data, "tui.history.open")) {
+			this.openHistory();
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Open the alt-screen full-history viewer over the Ledger's complete logical history (plan §6). Band
+	 * frames are suspended while it owns the terminal; the primary screen and its scrollback are saved by
+	 * `CSI ?1049h` and restored untouched on close.
+	 */
+	openHistory(): void {
+		if (this.stopped || this.historyViewer) return;
+		this.suspended = true;
+		this.scheduler.cancel();
+		const source: HistorySource = { historyLines: (width) => this.ledger.snapshot(width, this.theme) };
+		const viewer = new HistoryViewer({
+			terminal: this.terminal,
+			source,
+			width: this.width,
+			rows: this.viewportRows,
+			keybindings: this.keybindings,
+			onExit: () => this.onHistoryExit(),
+		});
+		this.historyViewer = viewer;
+		viewer.openViewer();
+	}
+
+	/** Return-to-live after the viewer exits: resume band frames and force a full repaint of the restored primary screen. */
+	private onHistoryExit(): void {
+		this.historyViewer = undefined;
+		this.suspended = false;
+		if (this.stopped) return;
+		// The alt screen restored the saved primary screen; force a full band repaint so the live band and
+		// its sole caret are re-established (a pending width/theme re-commit, if any, replays here instead).
+		this.front = undefined;
+		this.requestFrame(true);
+	}
+
 	/** BandHost: coalesce a frame. */
 	requestFrame(force = false): void {
-		if (this.stopped) return;
+		if (this.stopped || this.suspended) return;
 		this.scheduler.requestFrame(force);
 	}
 
@@ -179,6 +245,7 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		// just relayouts the band. Reset the front buffer so the band fully repaints either way.
 		this.front = undefined;
 		if (widthChanged) this.recommitNeeded = true;
+		this.historyViewer?.resize(this.width, this.viewportRows);
 		this.requestFrame(true);
 	}
 
@@ -194,7 +261,7 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 	 * {@link replayInProgress} (the frame scheduler does this automatically in production).
 	 */
 	flush(): PresentResult | undefined {
-		if (this.stopped) return undefined;
+		if (this.stopped || this.suspended) return undefined;
 		this.scheduler.cancel();
 		return this.render(this.clock.now());
 	}
@@ -412,6 +479,10 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		if (this.stopped) return;
 		this.stopped = true;
 		this.scheduler.cancel();
+		// Restore the primary screen if the alt-screen viewer is still open, before terminal handback.
+		this.historyViewer?.close();
+		this.historyViewer = undefined;
+		this.suspended = false;
 		for (const cleanup of this.stripCleanups.values()) cleanup();
 		this.stripCleanups.clear();
 		this.slots.length = 0;

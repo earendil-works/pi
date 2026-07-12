@@ -29,6 +29,8 @@ export { LedgerCommitQueue } from "./commit-queue.ts";
 export { type CaretStrip, EditorStrip } from "./editor-strip.ts";
 export type { FrameCallback, FrameClock, FrameRequest } from "./frame-scheduler.ts";
 export { FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
+export type { HistorySource, HistoryViewerOptions } from "./history-viewer.ts";
+export { HistoryViewer } from "./history-viewer.ts";
 export { type TuiRenderMode, V2TUIHost } from "./host.ts";
 export type {
 	AddLedgerBlockOptions,
