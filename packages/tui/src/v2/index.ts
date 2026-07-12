@@ -1,6 +1,15 @@
 // Parallel v2 renderer entry point. v1 remains the default; nothing here is loaded unless the
 // PI_TUI=v2 / --tui v2 selection picks the v2 host (plan §1).
 
+export {
+	cellsToAnsi,
+	closeLink,
+	hardWrapStyledLine,
+	openLink,
+	styledLineToAnsi,
+	styleParams,
+	styleToSgr,
+} from "./ansi.ts";
 export type {
 	BandGeometry,
 	BandHost,
@@ -14,6 +23,7 @@ export type {
 export { BandLayout } from "./band.ts";
 export type { Cell, DamageRun } from "./cell-buffer.ts";
 export { CellBuffer, CellRegion, LinkTable } from "./cell-buffer.ts";
+export { LedgerCommitQueue } from "./commit-queue.ts";
 export type { FrameCallback, FrameClock, FrameRequest } from "./frame-scheduler.ts";
 export { FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
 export { type TuiRenderMode, V2TUIHost } from "./host.ts";
@@ -35,6 +45,14 @@ export {
 	conservativeMarkdownStableOffset,
 	LedgerStore,
 } from "./ledger.ts";
+export type {
+	PresentBand,
+	PresentCaret,
+	PresentFrame,
+	PresentResult,
+	SerializedDamageRun,
+} from "./presenter.ts";
+export { Presenter } from "./presenter.ts";
 export { Signal, type SignalListener } from "./signal.ts";
 export type { Span, StyledLine, TerminalColor, TextStyle } from "./styles.ts";
 export { DEFAULT_TEXT_STYLE, plainLine, StyleTable } from "./styles.ts";
