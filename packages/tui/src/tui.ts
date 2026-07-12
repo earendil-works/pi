@@ -309,6 +309,10 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	// When true, all differential rendering is paused and nothing is written to the primary screen. The
+	// v2 host sets this while an alt-screen full-history pager owns the terminal; the default/v1 path
+	// never suspends, so its behavior is unchanged.
+	private renderingSuspended = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 
@@ -679,6 +683,7 @@ export class TUI extends Container {
 	}
 
 	requestRender(force = false): void {
+		if (this.renderingSuspended) return;
 		if (force) {
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -708,7 +713,7 @@ export class TUI extends Container {
 	}
 
 	private scheduleRender(): void {
-		if (this.stopped || this.renderTimer || !this.renderRequested) {
+		if (this.stopped || this.renderingSuspended || this.renderTimer || !this.renderRequested) {
 			return;
 		}
 		const elapsed = performance.now() - this.lastRenderAt;
@@ -725,6 +730,28 @@ export class TUI extends Container {
 				this.scheduleRender();
 			}
 		}, delay);
+	}
+
+	/**
+	 * Pause all differential rendering. While suspended, {@link requestRender} is a no-op and any pending
+	 * frame is cancelled, so nothing is written to the primary screen. Used by the v2 host while an
+	 * alt-screen full-history pager owns the terminal; the default/v1 path never suspends.
+	 */
+	protected suspendRendering(): void {
+		if (this.renderingSuspended) return;
+		this.renderingSuspended = true;
+		this.renderRequested = false;
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
+	}
+
+	/** Resume rendering after {@link suspendRendering} and force a full repaint to return-to-live. */
+	protected resumeRendering(): void {
+		if (!this.renderingSuspended) return;
+		this.renderingSuspended = false;
+		this.requestRender(true);
 	}
 
 	private handleInput(data: string): void {
@@ -1206,7 +1233,7 @@ export class TUI extends Container {
 	}
 
 	private doRender(): void {
-		if (this.stopped) return;
+		if (this.stopped || this.renderingSuspended) return;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;

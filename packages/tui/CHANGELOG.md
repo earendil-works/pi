@@ -5,6 +5,7 @@
 ### Added
 
 - Added the v2 in-Pi full-history viewer (`HistoryViewer`): an alt-screen pager over the Ledger's complete logical history, reflowed at the current width, so users can browse session history older than the re-commit replay tail and the emulator's native scrollback. Reachable via a discoverable, configurable keybinding (`tui.history.*`, advertised through the earlier-history marker) and wired into `LedgerBandRenderer` (`handleKey`/`openHistory`); it lives entirely on the alternate screen, leaves the primary-screen scrollback untouched, and returns cleanly to the live band. v2-gated only; v1 and the default path are unchanged (plan §6).
+- Wired the full-history pager into `V2TUIHost` so an actual `pi --tui v2` session can open, navigate, resize, and close it. The host captures the `tui.history.open` key ahead of the editor, is modal while open (every key drives the pager), forwards genuine terminal resizes so the view reflows, and closes the pager on `stop()`/signal shutdown before terminal handback so the primary screen, scrollback, autowrap, and cursor are all restored. The pager snapshots the complete retained transcript, so history scrolled past the emulator's native tail is reachable. A default-off render-suspend hook on the base `TUI` keeps v1 from painting onto the alternate screen while the pager owns it and forces a return-to-live repaint on exit; the default/v1 path never suspends and is unchanged (plan §6).
 
 ## [0.79.4] - 2026-06-15
 
