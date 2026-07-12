@@ -125,6 +125,34 @@ describe("parseArgs", () => {
 			expect(result.mode).toBe("rpc");
 		});
 
+		test("parses --tui v2", () => {
+			const result = parseArgs(["--tui", "v2"]);
+			expect(result.tui).toBe("v2");
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("parses --tui v1", () => {
+			const result = parseArgs(["--tui", "v1"]);
+			expect(result.tui).toBe("v1");
+		});
+
+		test("parses --tui=v2 equals syntax", () => {
+			const result = parseArgs(["--tui=v2"]);
+			expect(result.tui).toBe("v2");
+			expect(result.unknownFlags.size).toBe(0);
+		});
+
+		test("rejects invalid --tui value with an error diagnostic", () => {
+			const result = parseArgs(["--tui", "v3"]);
+			expect(result.tui).toBeUndefined();
+			expect(result.diagnostics).toEqual([{ type: "error", message: '--tui must be either "v1" or "v2"' }]);
+		});
+
+		test("defaults --tui to undefined so env/default can decide", () => {
+			const result = parseArgs(["hello"]);
+			expect(result.tui).toBeUndefined();
+		});
+
 		test("parses --session", () => {
 			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
 			expect(result.session).toBe("/path/to/session.jsonl");

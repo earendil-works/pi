@@ -1,0 +1,51 @@
+// Parallel v2 renderer entry point. v1 remains the default; nothing here is loaded unless the
+// PI_TUI=v2 / --tui v2 selection picks the v2 host (plan §1).
+
+export type {
+	BandGeometry,
+	BandHost,
+	FrameContext,
+	PaintRegion,
+	Strip,
+	StripGeometry,
+	StripPolicy,
+	StripSlot,
+} from "./band.ts";
+export { BandLayout } from "./band.ts";
+export type { Cell, DamageRun } from "./cell-buffer.ts";
+export { CellBuffer, CellRegion, LinkTable } from "./cell-buffer.ts";
+export type { FrameCallback, FrameClock, FrameRequest } from "./frame-scheduler.ts";
+export { FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
+export { type TuiRenderMode, V2TUIHost } from "./host.ts";
+export type {
+	AddLedgerBlockOptions,
+	BlockId,
+	BlockRenderer,
+	BlockState,
+	CommitFrontier,
+	CommittedSegment,
+	LedgerBlockHandle,
+	LedgerCommit,
+	LedgerFrontier,
+	StableModel,
+} from "./ledger.ts";
+export {
+	CompletedLineFrontier,
+	ConservativeMarkdownFrontier,
+	conservativeMarkdownStableOffset,
+	LedgerStore,
+} from "./ledger.ts";
+export { Signal, type SignalListener } from "./signal.ts";
+export type { Span, StyledLine, TerminalColor, TextStyle } from "./styles.ts";
+export { DEFAULT_TEXT_STYLE, plainLine, StyleTable } from "./styles.ts";
+export type { CaretCell, TextLayout, VisualLine } from "./text-layout.ts";
+export { DefaultTextLayout } from "./text-layout.ts";
+export type {
+	EditOp,
+	KillDirection,
+	MoveDirection,
+	TextChangeSet,
+	TextPosition,
+	TextRange,
+} from "./text-model.ts";
+export { TextModel } from "./text-model.ts";

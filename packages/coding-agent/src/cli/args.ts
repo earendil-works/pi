@@ -8,6 +8,7 @@ import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../co
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 export type Mode = "text" | "json" | "rpc";
+export type TuiMode = "v1" | "v2";
 
 export interface Args {
 	provider?: string;
@@ -21,6 +22,7 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	tui?: TuiMode;
 	name?: string;
 	noSession?: boolean;
 	session?: string;
@@ -79,6 +81,13 @@ export function parseArgs(args: string[]): Args {
 			const mode = args[++i];
 			if (mode === "text" || mode === "json" || mode === "rpc") {
 				result.mode = mode;
+			}
+		} else if (arg === "--tui" || arg.startsWith("--tui=")) {
+			const value = arg.startsWith("--tui=") ? arg.slice("--tui=".length) : args[++i];
+			if (value === "v1" || value === "v2") {
+				result.tui = value;
+			} else {
+				result.diagnostics.push({ type: "error", message: '--tui must be either "v1" or "v2"' });
 			}
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
@@ -241,6 +250,7 @@ ${chalk.bold("Options:")}
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
+  --tui <v1|v2>                  Interactive renderer (default: v1; PI_TUI also supported)
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume

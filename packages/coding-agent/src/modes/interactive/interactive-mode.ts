@@ -45,6 +45,8 @@ import {
 	Text,
 	TruncatedText,
 	TUI,
+	type TuiRenderMode,
+	V2TUIHost,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -261,6 +263,8 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Select the parallel terminal renderer (default: v1). */
+	tui?: TuiRenderMode;
 }
 
 export class InteractiveMode {
@@ -398,7 +402,10 @@ export class InteractiveMode {
 			await this.rebindCurrentSession();
 		});
 		this.version = VERSION;
-		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
+		this.ui =
+			options.tui === "v2"
+				? new V2TUIHost(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor())
+				: new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.chatContainer = new Container();

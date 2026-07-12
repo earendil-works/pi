@@ -485,6 +485,13 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const envTui = process.env.PI_TUI;
+	if (envTui !== undefined && envTui !== "v1" && envTui !== "v2") {
+		console.error(chalk.red('Error: PI_TUI must be either "v1" or "v2"'));
+		process.exit(1);
+	}
+	// CLI --tui wins over PI_TUI; default remains v1.
+	const tuiMode = parsed.tui ?? (envTui === "v1" || envTui === "v2" ? envTui : "v1");
 	time("parseArgs");
 
 	if (parsed.version) {
@@ -788,6 +795,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialImages,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
+			tui: tuiMode,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

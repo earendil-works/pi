@@ -107,3 +107,5 @@ export {
 } from "./tui.ts";
 // Utilities
 export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+// v2 renderer selection (parallel entry point; v1 remains default)
+export { type TuiRenderMode, V2TUIHost } from "./v2/host.ts";
