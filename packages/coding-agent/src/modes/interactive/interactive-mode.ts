@@ -4594,13 +4594,14 @@ export class InteractiveMode {
 		}
 	}
 
-	private async confirmAbortForTreeNavigation(): Promise<boolean> {
+	private async promptForTreeNavigationAbort(): Promise<boolean> {
 		if (this.session.isIdle) {
 			return true;
 		}
 
-		const choice = await this.showExtensionSelector("Agent is running", ["Abort and navigate", "Cancel"]);
-		if (choice !== "Abort and navigate") {
+		const confirmationMessage = "Abort and navigate";
+		const choice = await this.showExtensionSelector("Agent is running", [confirmationMessage, "Cancel"]);
+		if (choice !== confirmationMessage) {
 			return false;
 		}
 
@@ -4632,10 +4633,10 @@ export class InteractiveMode {
 						return;
 					}
 
-					// Close the tree selector before showing any follow-up choices.
-					done();
+					// Ask about summarization
+					done(); // Close selector first
 
-					if (!(await this.confirmAbortForTreeNavigation())) {
+					if (!(await this.promptForTreeNavigationAbort())) {
 						this.showStatus("Navigation cancelled");
 						return;
 					}

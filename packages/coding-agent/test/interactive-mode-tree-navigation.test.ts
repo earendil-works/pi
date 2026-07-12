@@ -10,13 +10,11 @@ type TreeNavigationPromptFixture = {
 	restoreQueuedMessagesToEditor: () => number;
 };
 
-const confirmAbortForTreeNavigation = (
-	InteractiveMode as unknown as {
-		prototype: {
-			confirmAbortForTreeNavigation(this: TreeNavigationPromptFixture): Promise<boolean>;
-		};
-	}
-).prototype.confirmAbortForTreeNavigation;
+type InteractiveModePrototype = {
+	promptForTreeNavigationAbort(this: TreeNavigationPromptFixture): Promise<boolean>;
+};
+
+const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
 
 describe("InteractiveMode active-run tree navigation", () => {
 	it("continues immediately when the session is idle", async () => {
@@ -26,7 +24,7 @@ describe("InteractiveMode active-run tree navigation", () => {
 			restoreQueuedMessagesToEditor: vi.fn(() => 0),
 		};
 
-		await expect(confirmAbortForTreeNavigation.call(fixture)).resolves.toBe(true);
+		await expect(interactiveModePrototype.promptForTreeNavigationAbort.call(fixture)).resolves.toBe(true);
 		expect(fixture.showExtensionSelector).not.toHaveBeenCalled();
 		expect(fixture.session.abort).not.toHaveBeenCalled();
 	});
@@ -38,7 +36,7 @@ describe("InteractiveMode active-run tree navigation", () => {
 			restoreQueuedMessagesToEditor: vi.fn(() => 0),
 		};
 
-		await expect(confirmAbortForTreeNavigation.call(fixture)).resolves.toBe(false);
+		await expect(interactiveModePrototype.promptForTreeNavigationAbort.call(fixture)).resolves.toBe(false);
 		expect(fixture.showExtensionSelector).toHaveBeenCalledWith("Agent is running", ["Abort and navigate", "Cancel"]);
 		expect(fixture.restoreQueuedMessagesToEditor).not.toHaveBeenCalled();
 		expect(fixture.session.abort).not.toHaveBeenCalled();
@@ -60,7 +58,7 @@ describe("InteractiveMode active-run tree navigation", () => {
 			}),
 		};
 
-		await expect(confirmAbortForTreeNavigation.call(fixture)).resolves.toBe(true);
+		await expect(interactiveModePrototype.promptForTreeNavigationAbort.call(fixture)).resolves.toBe(true);
 		expect(calls).toEqual(["restore", "abort"]);
 	});
 });
