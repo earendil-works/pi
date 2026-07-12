@@ -535,6 +535,16 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 }
 
+/** Compatibility settings for Bedrock Converse models. */
+export interface BedrockConverseCompat {
+	/**
+	 * Overrides adaptive-thinking detection. `true` uses `thinking.type:
+	 * "adaptive"` plus `output_config.effort`; `false` uses budget-based
+	 * thinking. When omitted, Bedrock falls back to model ID/name detection.
+	 */
+	forceAdaptiveThinking?: boolean;
+}
+
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
 	/**
@@ -711,14 +721,16 @@ export interface Model<TApi extends Api> {
 	contextWindow: number;
 	maxTokens: number;
 	headers?: Record<string, string>;
-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
+	/** API-specific compatibility overrides. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses" | "openai-codex-responses"
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "bedrock-converse-stream"
+					? BedrockConverseCompat
+					: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

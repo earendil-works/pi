@@ -219,7 +219,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				addCustomHeadersMiddleware(client, customHeaders);
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
-			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const inferenceMaxTokens =
+				options.maxTokens ?? (usesAnthropicClaudeProtocol(model) ? model.maxTokens : undefined);
 			let commandInput = {
 				modelId: model.id,
 				messages: convertMessages(context, model, cacheRetention, options.env),
@@ -395,8 +396,8 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
 
-	if (isAnthropicClaudeModel(model)) {
-		if (supportsAdaptiveThinking(model.id, model.name)) {
+	if (usesAnthropicClaudeProtocol(model)) {
+		if (supportsAdaptiveThinking(model)) {
 			return stream(model, context, {
 				...base,
 				reasoning: options.reasoning,
@@ -570,8 +571,11 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 	});
 }
 
-function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
-	const candidates = getModelMatchCandidates(modelId, modelName);
+function supportsAdaptiveThinking(model: Model<"bedrock-converse-stream">): boolean {
+	const configured = model.compat?.forceAdaptiveThinking;
+	if (typeof configured === "boolean") return configured;
+
+	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some(
 		(s) =>
 			s.includes("opus-4-6") ||
@@ -643,6 +647,10 @@ function isAnthropicClaudeModel(model: Model<"bedrock-converse-stream">): boolea
 	);
 }
 
+function usesAnthropicClaudeProtocol(model: Model<"bedrock-converse-stream">): boolean {
+	return typeof model.compat?.forceAdaptiveThinking === "boolean" || isAnthropicClaudeModel(model);
+}
+
 /**
  * Check if the model supports prompt caching.
  * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models, Claude 5 models
@@ -685,7 +693,7 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
  * Checks both model ID and model name to support application inference profiles.
  */
 function supportsThinkingSignature(model: Model<"bedrock-converse-stream">): boolean {
-	return isAnthropicClaudeModel(model);
+	return usesAnthropicClaudeProtocol(model);
 }
 
 function buildSystemPrompt(
@@ -1015,11 +1023,12 @@ function buildAdditionalModelRequestFields(
 		return undefined;
 	}
 
-	if (isAnthropicClaudeModel(model)) {
+	if (usesAnthropicClaudeProtocol(model)) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
+		const adaptiveThinking = supportsAdaptiveThinking(model);
+		const result: Record<string, any> = adaptiveThinking
 			? {
 					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
@@ -1047,7 +1056,7 @@ function buildAdditionalModelRequestFields(
 					};
 				})();
 
-		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
+		if (!adaptiveThinking && (options.interleavedThinking ?? true)) {
 			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
 		}
 

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { type BedrockOptions, stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import {
+	type BedrockOptions,
+	stream as streamBedrock,
+	streamSimple as streamSimpleBedrock,
+} from "../src/api/bedrock-converse-stream.ts";
 import { getModel } from "../src/compat.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
 interface BedrockThinkingPayload {
+	inferenceConfig?: { maxTokens?: number };
 	additionalModelRequestFields?: {
 		thinking?: { type: string; budget_tokens?: number; display?: string };
 		output_config?: { effort?: string };
@@ -52,7 +57,62 @@ async function capturePayload(
 	return capturedPayload;
 }
 
+async function captureSimplePayload(
+	model: Model<"bedrock-converse-stream">,
+	options: SimpleStreamOptions,
+): Promise<BedrockThinkingPayload> {
+	let capturedPayload: BedrockThinkingPayload | undefined;
+	const s = streamSimpleBedrock(model, makeContext(), {
+		...options,
+		onPayload: (payload) => {
+			capturedPayload = payload as BedrockThinkingPayload;
+			throw new PayloadCaptured();
+		},
+	});
+
+	for await (const event of s) {
+		if (event.type === "error") break;
+	}
+
+	if (!capturedPayload) throw new Error("Expected Bedrock payload to be captured before request abort");
+	return capturedPayload;
+}
+
 describe("Bedrock thinking payload", () => {
+	it("honors compat.forceAdaptiveThinking for opaque Claude profiles", async () => {
+		const model: Model<"bedrock-converse-stream"> = {
+			...getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+			id: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/custom-profile",
+			name: "Opus 5 profile",
+			compat: { forceAdaptiveThinking: true },
+		};
+
+		const payload = await captureSimplePayload(model, { reasoning: "medium", maxTokens: 4096 });
+
+		expect(payload.inferenceConfig?.maxTokens).toBe(4096);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "medium" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
+	it("allows compat.forceAdaptiveThinking=false to opt out", async () => {
+		const model: Model<"bedrock-converse-stream"> = {
+			...getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1"),
+			compat: { forceAdaptiveThinking: false },
+		};
+
+		const payload = await captureSimplePayload(model, { reasoning: "medium", maxTokens: 4096 });
+
+		expect(payload.inferenceConfig?.maxTokens).toBe(12288);
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({
+			type: "enabled",
+			budget_tokens: 8192,
+			display: "summarized",
+		});
+		expect(payload.additionalModelRequestFields?.output_config).toBeUndefined();
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["interleaved-thinking-2025-05-14"]);
+	});
+
 	it("uses adaptive thinking for Claude Opus 4.8 when reasoning is enabled", async () => {
 		const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
 		const model: Model<"bedrock-converse-stream"> = {

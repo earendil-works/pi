@@ -12,6 +12,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 - [Overriding Built-in Providers](#overriding-built-in-providers)
 - [Per-model Overrides](#per-model-overrides)
 - [Anthropic Messages Compatibility](#anthropic-messages-compatibility)
+- [Amazon Bedrock Compatibility](#amazon-bedrock-compatibility)
 - [OpenAI Compatibility](#openai-compatibility)
 
 ## Minimal Example
@@ -407,6 +408,10 @@ Some Anthropic-compatible providers emit thinking blocks with empty signatures a
 | `supportsCacheControlOnTools` | Whether the provider accepts Anthropic-style `cache_control` markers on tool definitions. Default: `true`. |
 | `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
 | `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
+
+## Amazon Bedrock Compatibility
+
+For custom Claude models using `api: "bedrock-converse-stream"`, set model-level `compat.forceAdaptiveThinking` in the model definition or `modelOverrides`. `true` forces `thinking.type: "adaptive"` plus `output_config.effort`, `false` forces budget-based thinking, and an omitted value keeps the existing model ID/name fallback. Setting either boolean also opts opaque profile IDs and generic model names into Claude-specific thinking, max-token, and signature handling.
 
 ## OpenAI Compatibility
 
