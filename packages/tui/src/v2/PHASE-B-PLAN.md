@@ -1,7 +1,12 @@
 # Pi TUI v2 Phase B integration plan
 
-Status: gated design note; no Phase B source changes yet.
-Inputs: design commit `16d4948`, Phase A `e3452638`, Ember protocol verdict pending, quarantined call-site map reviewed under PM authorization.
+Status: reconciled to maintainer decisions of 2026-07-12; Phase B implementation authorized behind `PI_TUI=v2`.
+Inputs: design commit `16d4948`, Phase A `9507965a`, Phase-0 protocol evidence `bcdacb27` (spike corrected verdict), quarantined call-site map reviewed under PM authorization (preserved verbatim at tag `handoff/tui-v2-ledger-band-dirty-20260712`).
+
+## 0. Maintainer decisions (Thomas, 2026-07-12, via broker)
+
+1. **Resize scrollback semantics resolved:** v2 re-commit MAY clear terminal scrollback (`CSI 3J`) on resize, accepting deletion of pre-session terminal history, **provided history within the Pi session remains scrollable afterwards** (tail replay up to `maxReplayLines` plus the earlier-history marker). The spike's `3J`-vs-duplicates HOLD is resolved in favor of `3J`.
+2. **Image policy resolved (corrected verdict, spike finding 8):** preserve Pi's native image path on **positively identified direct terminals** (stable ID, `C=1`, graphics-only first row, rows reserved before placement, delete-before-redraw lifecycle). Under tmux/screen, keep Pi v1's current behavior (`images: null` → textual placeholder fallback). **No Unicode-placeholder (Amp-style) spike or runtime path in Phase B.**
 
 ## 1. Parallel entry point and selection
 
@@ -41,7 +46,9 @@ Presenter input is structured, not v1 strings:
 - one focused-strip caret in band-local coordinates;
 - terminal dimensions/capabilities and re-commit state.
 
-Presenter owns physical band origin, previous band height, hardware cursor, synchronized-update wrapping, shrink-row clearing, and terminal cleanup. Normal commits CUP to band top and emit each line once so the band is pushed downward atomically. Height changes repaint the full bounded band and clear vacated rows, while preserving v1's Termux height-change behavior as an explicit terminal-capability policy rather than an implicit special case. A focused visible caret produces the frame's sole caret CUP; a no-focus or hidden-cursor frame parks the cursor at the configured safe location and applies the matching DECTCEM policy. Ghostty/Kitty history images degrade to `[image: name (WxH)]`; no image commit is attempted where the protocol matrix marked it unsafe.
+Presenter owns physical band origin, previous band height, hardware cursor, synchronized-update wrapping, shrink-row clearing, and terminal cleanup. Normal commits CUP to band top and emit each line once so the band is pushed downward atomically. Height changes repaint the full bounded band and clear vacated rows, while preserving v1's Termux height-change behavior as an explicit terminal-capability policy rather than an implicit special case. A focused visible caret produces the frame's sole caret CUP; a no-focus or hidden-cursor frame parks the cursor at the configured safe location and applies the matching DECTCEM policy.
+
+Image commits follow decision 0.2: on positively identified direct terminals (Kitty protocol for Kitty/Ghostty/WezTerm, iTerm2 protocol for iTerm), committed history images use Pi v1's native lifecycle — stable per-component ID, `C=1`, graphics-only first row, reserved rows accounted before any subsequent write, and delete-before-redraw on re-commit. Under tmux/screen the capability record reports `images: null` and blocks degrade to the existing textual placeholder (`[image: name (WxH)]`), matching current Pi. Additionally, **no image commit may enter the Ledger before the cell-size response (`CSI 16 t` → `CSI 6;h;w t`) has been consumed or an explicit timeout policy has fired**: an image committed at the 9×18 default would be permanently mis-sized in scrollback (v1 tolerates the race only because it repaints everything). Image-bearing blocks stay in the Band until cell dimensions are settled.
 
 Protocol tests must cover grow/shrink, byte-chunked writes, resize + `3J` replay, cleanup cursor placement, tmux, and the xterm scrollback oracle before dogfood.
 
@@ -77,7 +84,10 @@ Allowed triggers only:
 - theme epoch change;
 - committed message edit or renderer display mutation (expand/collapse, thinking visibility, image settings);
 - compaction/session/branch history rebuild;
+- terminal handback after Ctrl+Z suspend/resume (SIGCONT), where interleaved shell output has corrupted the primary screen below committed content;
 - explicit frontier invariant violation requiring an edit replay.
+
+Alt-screen returns (external `$EDITOR`, extension editor) are NOT re-commit triggers: primary-screen scrollback survives the alt screen, so a Band repaint suffices.
 
 Not triggers:
 
@@ -87,7 +97,7 @@ Not triggers:
 - editor, footer, widget, overlay, or height-only band updates;
 - ordinary block finalization.
 
-Re-commit clears via `2J/H/3J`, replays logical blocks from the tail up to `maxReplayLines`, emits the earlier-history marker when capped, chunks work across frames, keeps the band coherent, and cancels/restarts on a newer width/theme epoch.
+Re-commit clears via `2J/H/3J`, replays logical blocks from the tail up to `maxReplayLines`, emits the earlier-history marker when capped, chunks work across frames, keeps the band coherent, and cancels/restarts on a newer width/theme epoch. Per decision 0.1 this is the accepted semantics: pre-session terminal history may be destroyed by `3J`, and the binding invariant is that **Pi-session history remains scrollable after every re-commit** — the scrollback-integrity oracle must assert the replayed tail (with marker when capped) is present and duplicate-free in scrollback after resize.
 
 ## 7. Compatibility layers
 
@@ -95,6 +105,7 @@ Re-commit clears via `2J/H/3J`, replays logical blocks from the tail up to `maxR
 - `LegacyBlockRendererAdapter`: pure render call plus ANSI-to-span parse for message/tool renderers.
 - `EditorStrip`: new `TextModel`/`TextLayout` path; legacy editor adapter derives its caret from `CURSOR_MARKER` only at the boundary.
 - Preserve input listener ordering, focus restore, overlays, custom footer/header/editor, widgets, `ctx.ui.*`, and existing keybinding indirection.
+- **Type-level constraint:** extension factory callbacks (`setWidget`, `setFooter`, `setHeader`, `custom`, `setEditorComponent`) receive the concrete `TUI` class from `@earendil-works/pi-tui`, not an interface. The v2 compatibility object must type-check and behave as `TUI` (a subclass, or the live TUI object backed by v2 internals) — a narrow structural facade is insufficient for wild extensions.
 
 ## 8. Verification and commit sequence
 
@@ -105,3 +116,4 @@ Re-commit clears via `2J/H/3J`, replays logical blocks from the tail up to `maxR
 5. re-commit job, replay cap, cancellation, and scrollback-integrity oracle.
 6. legacy adapters against existing component/editor tests, plus an explicit extension tranche exercising the `ctx.ui.*` facade end-to-end (children, focus, overlays, render invalidation, terminal access, custom header/footer/editor, and widget lifecycles).
 7. full `npm run check`, focused tests, `./test.sh`, tmux/xterm protocol runs, then guarded `PI_TUI=v2` interactive smoke; v1 remains default throughout.
+8. A/B proof against v1 (QA oracle/tape harness from `test/tui-v2-qa-evidence`), guarded dogfood, and independent exact-head review before any merge request. The v1 default and the public/default switch remain frozen; no merge/push/publish without broker-held exact-head evidence and explicit gate acknowledgment.
