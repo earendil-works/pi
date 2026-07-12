@@ -41,6 +41,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `minimal-mode.ts` | Override built-in tool rendering for minimal display (only tool calls, no output in collapsed mode) |
 | `truncated-tool.ts` | Wraps ripgrep with proper output truncation (50KB/2000 lines) |
 | `ssh.ts` | Delegate all tools to a remote machine via SSH using pluggable operations |
+| `scout.ts` | Run focused read-only scouts with fresh context, extension telemetry, and parallel sibling calls |
 | `subagent/` | Delegate tasks to specialized subagents with isolated context windows |
 
 ### Commands & UI
