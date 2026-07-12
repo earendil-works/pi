@@ -83,7 +83,7 @@ describe("Bedrock thinking payload", () => {
 		const model: Model<"bedrock-converse-stream"> = {
 			...getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
 			id: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/custom-profile",
-			name: "Opus 5 profile",
+			name: "Custom profile",
 			compat: { forceAdaptiveThinking: true },
 		};
 
