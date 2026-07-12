@@ -4,6 +4,24 @@ import { DEFAULT_TEXT_STYLE, type StyledLine, type StyleTable, type TerminalColo
 
 const RESET = "\x1b[0m";
 
+/**
+ * Terminal-safety policy (Phase B plan §3). Ordinary Ledger/Band content is untrusted, structured
+ * text: a committed span or a painted cell must never be able to inject terminal control sequences
+ * (CR/LF, cursor motion, screen clears, OSC hijacks). {@link styledLineToAnsi} (committed scrollback
+ * via the commit queue), {@link cellsToAnsi} (band rows via the renderer serialize paths), and
+ * {@link openLink} (OSC-8 targets) are the choke points where such content becomes raw terminal
+ * bytes, so content is stripped of control characters here: C0 (0x00-0x1F), DEL (0x7F), and C1
+ * (0x80-0x9F) — the same range the input component rejects. A hostile span/cell/URL carrying
+ * `\x1b[2J`, CR, LF, BEL, or DEL is reduced to inert printable bytes. Sanitization lives at these
+ * choke points only, never at the Presenter, which legitimately emits privileged SGR/OSC/cursor
+ * escapes on the frame's behalf.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function stripControlCharacters(content: string): string {
+	return content.replace(CONTROL_CHARACTERS, "");
+}
+
 function colorParams(color: TerminalColor, foreground: boolean): string[] {
 	switch (color.kind) {
 		case "default":
@@ -42,7 +60,7 @@ export function styleToSgr(style: TextStyle): string {
 }
 
 export function openLink(url: string): string {
-	return `\x1b]8;;${url}\x07`;
+	return `\x1b]8;;${stripControlCharacters(url)}\x07`;
 }
 
 export function closeLink(): string {
@@ -54,13 +72,14 @@ export function styledLineToAnsi(line: StyledLine): string {
 	let out = "";
 	let openedLink = false;
 	for (const span of line) {
-		if (span.text.length === 0) continue;
+		const text = stripControlCharacters(span.text);
+		if (text.length === 0) continue;
 		out += styleToSgr(span.style);
 		if (span.link) {
 			out += openLink(span.link);
 			openedLink = true;
 		}
-		out += span.text;
+		out += text;
 		if (span.link) {
 			out += closeLink();
 			openedLink = false;
@@ -78,6 +97,8 @@ export function cellsToAnsi(cells: readonly Cell[], styles: StyleTable, links: L
 	let emittedStyle = false;
 	for (const cell of cells) {
 		if (cell.cluster === "") continue; // wide-glyph continuation column
+		const cluster = stripControlCharacters(cell.cluster);
+		if (cluster === "") continue; // content was entirely control characters
 		if (!emittedStyle || cell.styleId !== currentStyleId) {
 			out += styleToSgr(styles.get(cell.styleId));
 			currentStyleId = cell.styleId;
@@ -89,7 +110,7 @@ export function cellsToAnsi(cells: readonly Cell[], styles: StyleTable, links: L
 			if (url) out += openLink(url);
 			currentLinkId = cell.linkId;
 		}
-		out += cell.cluster;
+		out += cluster;
 	}
 	if (currentLinkId !== 0) out += closeLink();
 	return out + RESET;

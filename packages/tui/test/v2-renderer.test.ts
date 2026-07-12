@@ -201,6 +201,42 @@ describe("LedgerBandRenderer commit budget", () => {
 	});
 });
 
+describe("LedgerBandRenderer final-column autowrap (plan §3)", () => {
+	it("renders a full-width band row and a full-width commit without a spurious line shift", async () => {
+		const terminal = new VirtualTerminal(8, 5);
+		const clock = new ManualClock();
+		const renderer = makeRenderer(terminal, clock);
+		renderer.addStrip(slot("body", new TextStrip(["12345678", "footer"]))); // row 0 is exactly full width
+		const result = renderer.flush();
+		await terminal.flush();
+		assert.ok(result?.bytes.includes("\x1b[?7l"), "frame disables autowrap for full-width content");
+		assert.ok(result?.bytes.includes("\x1b[?7h"), "frame restores autowrap");
+		assert.deepStrictEqual(terminal.getViewport(), ["12345678", "footer", "", "", ""]);
+
+		// A full-width committed line must land as exactly one scrollback row above the band.
+		renderer.ledger.addBlock({ id: "h", model: "ABCDEFGH", renderer: textRenderer, state: "final" });
+		renderer.flush();
+		await terminal.flush();
+		const nonEmpty = terminal
+			.getScrollBuffer()
+			.map((line) => line.trimEnd())
+			.filter((line) => line.length > 0);
+		assert.deepStrictEqual(nonEmpty, ["ABCDEFGH", "12345678", "footer"]);
+		renderer.stop();
+	});
+
+	it("renders a wide grapheme at the right edge without wrapping", async () => {
+		const terminal = new VirtualTerminal(8, 4);
+		const clock = new ManualClock();
+		const renderer = makeRenderer(terminal, clock);
+		renderer.addStrip(slot("body", new TextStrip(["abcdef\u4e16"]))); // 6 + 2 = 8 columns exactly
+		renderer.flush();
+		await terminal.flush();
+		assert.deepStrictEqual(terminal.getViewport(), ["abcdef\u4e16", "", "", ""]);
+		renderer.stop();
+	});
+});
+
 describe("LedgerBandRenderer animations", () => {
 	it("drives recurring strip animations off the frame clock and cancels cleanly", () => {
 		const terminal = new VirtualTerminal(20, 4);

@@ -1,6 +1,8 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { styledLineToAnsi } from "../src/v2/ansi.ts";
 import { Presenter } from "../src/v2/presenter.ts";
+import { DEFAULT_TEXT_STYLE, type StyledLine } from "../src/v2/styles.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -94,6 +96,72 @@ describe("Presenter band height changes", () => {
 		});
 		assert.strictEqual(result.fullRepaint, true);
 		assert.deepStrictEqual(terminal.getViewport(), ["b0", "b1", "b2", "", "", ""]);
+	});
+});
+
+describe("Presenter terminal-safety: control injection (plan §3)", () => {
+	it("a hostile committed line cannot inject control sequences and matches a sanitized render", async () => {
+		// ESC + CSI clear-screen, CR, LF, and DEL smuggled into a committed span.
+		const hostile: StyledLine = [{ text: "A\x1b[2JB\rC\nD\x7fE", style: DEFAULT_TEXT_STYLE }];
+		const sanitized: StyledLine = [{ text: "A[2JBCDE", style: DEFAULT_TEXT_STYLE }];
+
+		const serialized = styledLineToAnsi(hostile);
+		assert.ok(!serialized.includes("\x1b[2J"), "clear-screen escape must not survive serialization");
+		assert.ok(!serialized.includes("\r"), "CR must not survive serialization");
+		assert.ok(!serialized.includes("\n"), "LF must not survive serialization");
+
+		const render = async (line: StyledLine) => {
+			const terminal = new VirtualTerminal(20, 4);
+			const presenter = new Presenter(terminal);
+			await present(terminal, presenter, { band: { width: 20, height: 1, repaint: ["band"] } });
+			await present(terminal, presenter, {
+				commitLines: [styledLineToAnsi(line)],
+				band: { width: 20, height: 1, repaint: ["band"] },
+			});
+			return { viewport: terminal.getViewport(), scroll: terminal.getScrollBuffer() };
+		};
+
+		const hostileState = await render(hostile);
+		const sanitizedState = await render(sanitized);
+		assert.deepStrictEqual(hostileState.viewport, sanitizedState.viewport);
+		assert.deepStrictEqual(hostileState.scroll, sanitizedState.scroll);
+
+		// The clear-screen never fired: the committed content is present verbatim as inert text.
+		const content = hostileState.scroll.map((line) => line.trimEnd()).filter((line) => line.length > 0);
+		assert.deepStrictEqual(content, ["A[2JBCDE", "band"]);
+	});
+});
+
+describe("Presenter final-column autowrap policy (plan §3 DECAWM)", () => {
+	it("disables autowrap before content and restores it before closing the frame", async () => {
+		const terminal = new VirtualTerminal(8, 4);
+		const presenter = new Presenter(terminal);
+		const result = await present(terminal, presenter, {
+			band: { width: 8, height: 2, repaint: ["12345678", "next"] }, // row 0 is exactly full width
+		});
+		const off = result.bytes.indexOf("\x1b[?7l");
+		const on = result.bytes.indexOf("\x1b[?7h");
+		const content = result.bytes.indexOf("12345678");
+		const syncEnd = result.bytes.indexOf("\x1b[?2026l");
+		assert.ok(off !== -1 && on !== -1, "frame toggles autowrap off then on");
+		assert.ok(off < content, "autowrap is disabled before any content is written");
+		assert.ok(content < on && on < syncEnd, "autowrap is restored after content and before SYNC_END");
+		// Full-width row occupies exactly one line; the next band row is not shifted down.
+		assert.deepStrictEqual(terminal.getViewport(), ["12345678", "next", "", ""]);
+	});
+
+	it("restores autowrap on cleanup for terminal handback", async () => {
+		const terminal = new VirtualTerminal(8, 4);
+		const presenter = new Presenter(terminal);
+		await present(terminal, presenter, { band: { width: 8, height: 1, repaint: ["hi"] } });
+		let cleanupBytes = "";
+		const write = terminal.write.bind(terminal);
+		terminal.write = (data: string) => {
+			cleanupBytes += data;
+			write(data);
+		};
+		presenter.cleanup();
+		assert.ok(cleanupBytes.includes("\x1b[?7h"), "cleanup restores autowrap for handback");
 	});
 });
 

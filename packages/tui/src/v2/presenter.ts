@@ -2,6 +2,12 @@ import type { Terminal } from "../terminal.ts";
 
 const SYNC_BEGIN = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
+// DECAWM (autowrap) toggles. Final-column policy (plan §3): autowrap is held off for the full extent
+// of every self-contained frame so a full-width band row or committed scrollback line cannot trigger
+// a deferred autowrap that shifts the next line, then restored before the frame closes. terminal.ts
+// has no central DECAWM restore, so cleanup() also restores it on normal/error/signal handback.
+const AUTOWRAP_OFF = "\x1b[?7l";
+const AUTOWRAP_ON = "\x1b[?7h";
 const CLEAR_LINE = "\x1b[2K";
 const SHOW_CURSOR = "\x1b[?25h";
 const HIDE_CURSOR = "\x1b[?25l";
@@ -84,7 +90,10 @@ export class Presenter {
 		const mustRepaint =
 			!this.initialized || commitLines.length > 0 || heightChanged || frame.band.damage === undefined;
 
-		let buffer = SYNC_BEGIN;
+		// Open the synchronized frame with autowrap disabled for its full extent (plan §3 final-column
+		// policy); autowrap is restored before SYNC_END below so the terminal is left in its default
+		// state between frames.
+		let buffer = SYNC_BEGIN + AUTOWRAP_OFF;
 		// 1. Move up to band top from the previous resting row.
 		if (this.initialized && this.restRow > 0) buffer += `\x1b[${this.restRow}A`;
 		buffer += "\r";
@@ -103,7 +112,8 @@ export class Presenter {
 		// 3. Sole caret placement + DECTCEM policy.
 		buffer += this.placeCursor(frame.caret, frame.showCursor ?? false, height);
 
-		buffer += SYNC_END;
+		// Restore autowrap before closing the synchronized frame (plan §3 final-column policy).
+		buffer += AUTOWRAP_ON + SYNC_END;
 		this.bandHeight = height;
 		this.initialized = true;
 		this.terminal.write(buffer);
@@ -171,9 +181,11 @@ export class Presenter {
 		this.restRow = 0;
 	}
 
-	/** Move the cursor below the band and restore visibility for terminal handback. */
+	/** Move the cursor below the band and restore autowrap + visibility for terminal handback. */
 	cleanup(): void {
-		let buffer = "";
+		// Restore DECAWM (autowrap) on every normal/error/signal exit — terminal.ts has no central
+		// DECAWM restore, so the frame's `?7l` must be undone here for a clean handback (plan §3).
+		let buffer = AUTOWRAP_ON;
 		const below = Math.max(0, this.bandHeight - 1 - this.restRow);
 		buffer += moveVertical(below);
 		buffer += "\r\n";

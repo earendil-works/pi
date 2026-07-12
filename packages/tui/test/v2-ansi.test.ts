@@ -1,8 +1,8 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { cellsToAnsi, hardWrapStyledLine, styledLineToAnsi, styleParams, styleToSgr } from "../src/v2/ansi.ts";
-import { CellBuffer } from "../src/v2/cell-buffer.ts";
-import { DEFAULT_TEXT_STYLE, type StyledLine, type TextStyle } from "../src/v2/styles.ts";
+import { type Cell, CellBuffer, LinkTable } from "../src/v2/cell-buffer.ts";
+import { DEFAULT_TEXT_STYLE, type StyledLine, StyleTable, type TextStyle } from "../src/v2/styles.ts";
 
 function style(overrides: Partial<TextStyle>): TextStyle {
 	return { ...DEFAULT_TEXT_STYLE, ...overrides };
@@ -58,6 +58,48 @@ describe("cellsToAnsi", () => {
 		buffer.putText(0, 0, [{ text: "世", style: DEFAULT_TEXT_STYLE }]);
 		const runs = buffer.diff(undefined);
 		assert.strictEqual(cellsToAnsi(runs[0]!.cells, buffer.styles, buffer.links), "\x1b[0m世\x1b[0m");
+	});
+});
+
+describe("control-injection sanitization (plan §3)", () => {
+	it("strips C0 / DEL / C1 control characters from styled-line span content", () => {
+		// ESC + CSI clear-screen, CR, LF, BEL, DEL, and a raw C1 CSI (0x9b) inside otherwise plain text.
+		const hostile: StyledLine = [{ text: "A\x1b[2JB\rC\nD\x07E\x7fF\x9bG", style: DEFAULT_TEXT_STYLE }];
+		// The escape bytes are removed; their trailing printable payload ("[2J") survives as inert text.
+		assert.strictEqual(styledLineToAnsi(hostile), "\x1b[0mA[2JBCDEFG\x1b[0m");
+	});
+
+	it("serializes a hostile span identically to its stripped-content equivalent", () => {
+		const hostile: StyledLine = [{ text: "safe\x1b[31m\r\n\x07text\x7f\x9b", style: style({ bold: true }) }];
+		const stripped: StyledLine = [{ text: "safe[31mtext", style: style({ bold: true }) }];
+		assert.strictEqual(styledLineToAnsi(hostile), styledLineToAnsi(stripped));
+	});
+
+	it("drops a span whose content is entirely control characters", () => {
+		const line: StyledLine = [
+			{ text: "\x1b\x00\x7f", style: style({ underline: true }) },
+			{ text: "ok", style: DEFAULT_TEXT_STYLE },
+		];
+		// No SGR/link is emitted for the all-control span; only the surviving span renders.
+		assert.strictEqual(styledLineToAnsi(line), "\x1b[0mok\x1b[0m");
+	});
+
+	it("strips control characters from OSC-8 link targets so they cannot break out of the sequence", () => {
+		// A URL smuggling BEL (would close the OSC-8) then an OSC-0 set-title injection.
+		const line: StyledLine = [{ text: "x", style: DEFAULT_TEXT_STYLE, link: "https://a\x07\x1b]0;pwn\x07" }];
+		assert.strictEqual(styledLineToAnsi(line), "\x1b[0m\x1b]8;;https://a]0;pwn\x07x\x1b]8;;\x07\x1b[0m");
+	});
+
+	it("strips control characters smuggled into cell clusters", () => {
+		const styles = new StyleTable();
+		const links = new LinkTable();
+		const cells: Cell[] = [
+			{ cluster: "a", width: 1, styleId: 0, linkId: 0 },
+			{ cluster: "b\x1b", width: 1, styleId: 0, linkId: 0 }, // ESC coalesced onto a grapheme
+			{ cluster: "\x9b", width: 1, styleId: 0, linkId: 0 }, // all-control cell is skipped
+			{ cluster: "c\x07", width: 1, styleId: 0, linkId: 0 },
+		];
+		assert.strictEqual(cellsToAnsi(cells, styles, links), "\x1b[0mabc\x1b[0m");
 	});
 });
 
