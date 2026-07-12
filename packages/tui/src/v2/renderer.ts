@@ -1,11 +1,12 @@
 import type { Terminal } from "../terminal.ts";
-import { cellsToAnsi, styledLineToAnsi } from "./ansi.ts";
+import { cellsToAnsi, hardWrapStyledLine, styledLineToAnsi } from "./ansi.ts";
 import { type BandGeometry, type BandHost, BandLayout, type StripSlot } from "./band.ts";
 import { type Cell, CellBuffer, LinkTable } from "./cell-buffer.ts";
 import { LedgerCommitQueue } from "./commit-queue.ts";
 import { type FrameClock, FrameScheduler, systemFrameClock } from "./frame-scheduler.ts";
+import type { LedgerCommit } from "./ledger.ts";
 import { LedgerStore } from "./ledger.ts";
-import { Presenter, type PresentResult, type SerializedDamageRun } from "./presenter.ts";
+import { Presenter, type PresentReset, type PresentResult, type SerializedDamageRun } from "./presenter.ts";
 import { DEFAULT_TEXT_STYLE, type StyledLine, StyleTable } from "./styles.ts";
 
 export interface FocusedCaret {
@@ -26,6 +27,8 @@ export interface LedgerBandRendererOptions<Theme> {
 	readonly maxCommitLinesPerFrame?: number;
 	/** Maximum committed lines physically replayed into scrollback on re-commit; older rows collapse into an earlier-history marker. */
 	readonly maxReplayLines?: number;
+	/** Maximum replay rows written per physical frame; the rest are carried to the next frame so re-commit replay is chunked (plan §6). Defaults to unbounded (single-frame replay). */
+	readonly maxReplayLinesPerFrame?: number;
 	/** Affordance hint appended to the earlier-history marker (e.g. a keybinding to open the full-history viewer). */
 	readonly historyHint?: string;
 }
@@ -68,8 +71,13 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 	private focusedCaret: FocusedCaret | undefined;
 	private readonly maxCommitLinesPerFrame: number;
 	private readonly maxReplayLines: number;
+	private readonly maxReplayLinesPerFrame: number;
 	private readonly historyHint: string;
 	private recommitNeeded = false;
+	/** Monotonic re-commit epoch. Bumped when a re-commit begins so a superseded chunked replay is discarded (plan §6). */
+	private epoch = 0;
+	/** In-flight chunked replay: the epoch that owns it and the retained rows not yet physically written. */
+	private replay: { readonly epoch: number; remaining: string[] } | undefined;
 	private stopped = false;
 	private metricsState: RendererMetrics = {
 		frames: 0,
@@ -87,6 +95,7 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		this.viewportRows = Math.max(1, Math.trunc(options.viewportRows ?? options.terminal.rows));
 		this.maxCommitLinesPerFrame = options.maxCommitLinesPerFrame ?? Number.POSITIVE_INFINITY;
 		this.maxReplayLines = options.maxReplayLines ?? Number.POSITIVE_INFINITY;
+		this.maxReplayLinesPerFrame = options.maxReplayLinesPerFrame ?? Number.POSITIVE_INFINITY;
 		this.historyHint = options.historyHint ?? "";
 		this.presenter = new Presenter(options.terminal);
 		this.scheduler = new FrameScheduler((request) => this.render(request.now), this.clock, options.minimumIntervalMs);
@@ -94,6 +103,11 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 
 	get metrics(): RendererMetrics {
 		return { ...this.metricsState };
+	}
+
+	/** True while a chunked re-commit replay still has rows to write on subsequent frames (plan §6). */
+	get replayInProgress(): boolean {
+		return this.replay !== undefined;
 	}
 
 	/** BandHost: coalesce a frame. */
@@ -174,7 +188,11 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 		this.requestFrame(true);
 	}
 
-	/** Force any pending work to render synchronously and return the frame result, if one ran. */
+	/**
+	 * Force the next pending frame to render synchronously and return its result, if one ran. A chunked
+	 * re-commit replay advances exactly one chunk per call; drive it to completion by looping while
+	 * {@link replayInProgress} (the frame scheduler does this automatically in production).
+	 */
 	flush(): PresentResult | undefined {
 		if (this.stopped) return undefined;
 		this.scheduler.cancel();
@@ -182,10 +200,13 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 	}
 
 	private render(now: number): PresentResult {
+		// Epoch guard #1 (pre-compute): a pending re-commit supersedes any in-flight replay before a chunk
+		// is computed, so a stale-epoch chunk is never even built.
 		if (this.recommitNeeded) {
 			this.recommitNeeded = false;
-			return this.renderRecommit(now);
+			return this.beginRecommit(now);
 		}
+		if (this.replay) return this.continueReplay(now);
 
 		const commits = this.ledger.advance(this.width, this.theme);
 		this.commitQueue.enqueue(commits, this.width);
@@ -214,44 +235,122 @@ export class LedgerBandRenderer<Theme> implements BandHost {
 	}
 
 	/**
-	 * Re-commit (plan §6): clear the screen and terminal scrollback, then replay the committed logical
-	 * history reflowed at the current width/theme. The replay is capped to `maxReplayLines`; older rows
-	 * collapse into a single earlier-history marker. Ledger state is re-anchored via resetCommitState so
-	 * subsequent normal advancement continues from the replayed watermark. Cancellation drops only
-	 * not-yet-emitted physical work: a newer resize just re-snapshots at the latest width on the next frame.
+	 * Begin a re-commit (plan §6): open a new epoch, snapshot the replay watermark, and emit the first
+	 * chunk. Clears the screen and terminal scrollback, then replays the committed logical history
+	 * reflowed at the current width/theme. The replay is capped to `maxReplayLines` (older rows collapse
+	 * into a single earlier-history marker, never splitting an atomic multi-row block) and chunked to
+	 * `maxReplayLinesPerFrame` rows per physical frame. `resetCommitState` re-anchors the Ledger frontier
+	 * to the watermark so post-watermark commits stay logically pending until replay drains; it never
+	 * discards block models or state. Cancellation drops only not-yet-written physical rows: a newer
+	 * width/theme epoch re-snapshots from the latest logical state on the next frame.
 	 */
-	private renderRecommit(now: number): PresentResult {
+	private beginRecommit(now: number): PresentResult {
+		const epoch = ++this.epoch;
+		// Discard only physical work from any superseded replay; the Ledger snapshot below is authoritative.
+		this.replay = undefined;
 		this.commitQueue.flush(); // discard any stale-width serialized lines
 		this.ledger.resetCommitState();
-		this.commitQueue.enqueue(this.ledger.advance(this.width, this.theme), this.width);
-		let lines = this.commitQueue.flush();
-		let omitted = 0;
-		if (Number.isFinite(this.maxReplayLines) && lines.length > this.maxReplayLines) {
-			omitted = lines.length - this.maxReplayLines;
-			lines = lines.slice(omitted);
-			lines.unshift(styledLineToAnsi(this.earlierHistoryMarker(omitted)));
-		}
+		const units = this.buildReplayUnits(this.ledger.advance(this.width, this.theme));
+		const { rows, omitted } = this.capReplay(units);
+		if (omitted > 0) rows.unshift(styledLineToAnsi(this.earlierHistoryMarker(omitted)));
 
+		const chunk = this.nextChunk(rows);
+		const remaining = rows.slice(chunk.length);
+		this.replay = remaining.length > 0 ? { epoch, remaining } : undefined;
+
+		this.metricsState = {
+			...this.metricsState,
+			recommits: this.metricsState.recommits + 1,
+			lastReplay: { replayed: rows.length, omitted },
+		};
+		const result = this.presentReplayChunk(now, chunk, { scrollback: true });
+		if (this.replay) this.requestFrame();
+		return result;
+	}
+
+	/** Emit the next replay chunk for the current epoch. No reset: chunks push into scrollback above the band. */
+	private continueReplay(now: number): PresentResult {
+		const replay = this.replay!;
+		// Epoch guard #2 (dispatch): a superseded epoch must never write after the new clear. render() routes
+		// a pending re-commit before reaching here, so this is a belt-and-braces assertion of the invariant.
+		if (replay.epoch !== this.epoch) {
+			this.replay = undefined;
+			return this.render(now);
+		}
+		const chunk = this.nextChunk(replay.remaining);
+		replay.remaining = replay.remaining.slice(chunk.length);
+		if (replay.remaining.length === 0) this.replay = undefined;
+		else this.requestFrame();
+		return this.presentReplayChunk(now, chunk, undefined);
+	}
+
+	/** One self-contained replay frame: paint a coherent band, place the sole caret, and present a single synchronized write. */
+	private presentReplayChunk(now: number, commitLines: string[], reset: PresentReset | undefined): PresentResult {
 		const { geometry, back } = this.paintBand(now);
 		const caret = this.resolveCaret(geometry);
 		const result = this.presenter.present({
-			reset: { scrollback: true },
-			commitLines: lines,
+			reset,
+			commitLines,
 			band: { width: this.width, height: back.height, repaint: this.serializeRows(back) },
 			caret,
 			showCursor: caret !== undefined,
 		});
-
 		this.front = back;
 		this.metricsState = {
 			...this.metricsState,
 			frames: this.metricsState.frames + 1,
-			committedLines: this.metricsState.committedLines + lines.length,
-			fullRepaints: this.metricsState.fullRepaints + 1,
-			recommits: this.metricsState.recommits + 1,
-			lastReplay: { replayed: lines.length, omitted },
+			committedLines: this.metricsState.committedLines + commitLines.length,
+			fullRepaints: this.metricsState.fullRepaints + (result.fullRepaint ? 1 : 0),
 		};
 		return result;
+	}
+
+	/** Serialize each block's reflowed rows once (plan §3 choke point), preserving block boundaries for the cap. */
+	private buildReplayUnits(commits: readonly LedgerCommit[]): { readonly atomic: boolean; rows: string[] }[] {
+		return commits.map((commit) => {
+			const rows: string[] = [];
+			for (const line of commit.lines) {
+				for (const visual of hardWrapStyledLine(line, this.width)) rows.push(styledLineToAnsi(visual));
+			}
+			return { atomic: commit.atomic ?? false, rows };
+		});
+	}
+
+	/**
+	 * Select the capped replay tail. Rows are dropped oldest-first until the total fits `maxReplayLines`;
+	 * a non-atomic block sheds individual head rows, but an atomic block (e.g. an image + reserved rows)
+	 * is included or omitted whole so the cap never splits it (plan §6).
+	 */
+	private capReplay(units: { readonly atomic: boolean; rows: string[] }[]): { rows: string[]; omitted: number } {
+		let total = 0;
+		for (const unit of units) total += unit.rows.length;
+		if (!Number.isFinite(this.maxReplayLines) || total <= this.maxReplayLines) {
+			return { rows: units.flatMap((unit) => unit.rows), omitted: 0 };
+		}
+		const cap = Math.max(0, Math.trunc(this.maxReplayLines));
+		const kept = units.map((unit) => ({ atomic: unit.atomic, rows: unit.rows.slice() }));
+		let omitted = 0;
+		for (const unit of kept) {
+			if (total <= cap) break;
+			if (unit.rows.length === 0) continue;
+			if (unit.atomic) {
+				omitted += unit.rows.length;
+				total -= unit.rows.length;
+				unit.rows = [];
+			} else {
+				const drop = Math.min(total - cap, unit.rows.length);
+				unit.rows.splice(0, drop);
+				omitted += drop;
+				total -= drop;
+			}
+		}
+		return { rows: kept.flatMap((unit) => unit.rows), omitted };
+	}
+
+	/** First `maxReplayLinesPerFrame` rows for this frame (all of them when unbounded), at least one to guarantee progress. */
+	private nextChunk(rows: readonly string[]): string[] {
+		if (!Number.isFinite(this.maxReplayLinesPerFrame)) return rows.slice();
+		return rows.slice(0, Math.max(1, Math.trunc(this.maxReplayLinesPerFrame)));
 	}
 
 	private paintBand(now: number): { geometry: BandGeometry; back: CellBuffer } {

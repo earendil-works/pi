@@ -27,6 +27,8 @@ export interface LedgerCommit {
 	readonly startLine: number;
 	readonly lines: StyledLine[];
 	readonly final: boolean;
+	/** The block is a single indivisible semantic unit (e.g. an image + its reserved rows); the replay cap must include or omit all of its rows together (plan §6). Absent is treated as false. */
+	readonly atomic?: boolean;
 }
 
 export interface CommittedSegment {
@@ -43,6 +45,7 @@ interface StoredBlock<Theme> {
 	readonly id: BlockId;
 	state: BlockState;
 	committedLineCount: number;
+	readonly atomic: boolean;
 	renderStable(width: number, theme: Theme): StyledLine[] | undefined;
 }
 
@@ -52,6 +55,8 @@ export interface AddLedgerBlockOptions<Model, Theme> {
 	readonly renderer: BlockRenderer<Model, Theme>;
 	readonly frontier?: CommitFrontier<Model>;
 	readonly state?: BlockState;
+	/** Mark the block indivisible so the re-commit replay cap never splits it (plan §6). Defaults to false. */
+	readonly atomic?: boolean;
 }
 
 /** Append-only logical transcript store. Normal advancement only touches the current frontier block. */
@@ -69,6 +74,7 @@ export class LedgerStore<Theme> {
 			id: options.id,
 			state: options.state ?? "open",
 			committedLineCount: 0,
+			atomic: options.atomic ?? false,
 			renderStable: (width, theme) => {
 				const stable = options.frontier?.stableModel(model, block.state === "final");
 				if (options.frontier && !stable) return undefined;
@@ -112,6 +118,7 @@ export class LedgerStore<Theme> {
 					startLine: block.committedLineCount,
 					lines,
 					final: block.state === "final",
+					atomic: block.atomic,
 				});
 				this.segments.push({ blockId: block.id, lineCount: lines.length });
 				block.committedLineCount = stableLines.length;
