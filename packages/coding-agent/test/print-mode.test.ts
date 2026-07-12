@@ -6,6 +6,7 @@ import { runPrintMode } from "../src/modes/print-mode.js";
 type EmitEvent = SessionShutdownEvent;
 
 type FakeExtensionRunner = {
+	setMode: ReturnType<typeof vi.fn<(mode: "print" | "json") => void>>;
 	hasHandlers: (eventType: string) => boolean;
 	emit: ReturnType<typeof vi.fn<(event: EmitEvent) => Promise<void>>>;
 };
@@ -57,6 +58,7 @@ function createAssistantMessage(options?: {
 
 function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost {
 	const extensionRunner: FakeExtensionRunner = {
+		setMode: vi.fn(),
 		hasHandlers: (eventType: string) => eventType === "session_shutdown",
 		emit: vi.fn(async () => {}),
 	};
@@ -103,6 +105,7 @@ describe("runPrintMode", () => {
 		});
 
 		expect(exitCode).toBe(0);
+		expect(session.extensionRunner.setMode).toHaveBeenCalledWith("print");
 		expect(session.prompt).toHaveBeenCalledWith("Say done", { images });
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
@@ -118,6 +121,7 @@ describe("runPrintMode", () => {
 		});
 
 		expect(exitCode).toBe(0);
+		expect(session.extensionRunner.setMode).toHaveBeenCalledWith("json");
 		expect(session.prompt).toHaveBeenCalledWith("hello");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });

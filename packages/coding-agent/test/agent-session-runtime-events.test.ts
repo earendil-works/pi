@@ -11,12 +11,14 @@ import {
 } from "../src/core/agent-session-runtime.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { SessionManager } from "../src/core/session-manager.js";
-import type {
-	ExtensionFactory,
-	SessionBeforeForkEvent,
-	SessionBeforeSwitchEvent,
-	SessionShutdownEvent,
-	SessionStartEvent,
+import {
+	EXTENSION_HOST_CAPABILITIES,
+	type ExtensionFactory,
+	type ExtensionHostCapabilities,
+	type SessionBeforeForkEvent,
+	type SessionBeforeSwitchEvent,
+	type SessionShutdownEvent,
+	type SessionStartEvent,
 } from "../src/index.js";
 
 type RecordedSessionEvent =
@@ -76,7 +78,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
 		});
-		await runtimeHost.session.bindExtensions({});
+		await runtimeHost.session.bindExtensions({ onError: () => {} });
 
 		cleanups.push(async () => {
 			await runtimeHost.dispose();
@@ -131,6 +133,50 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
+	});
+
+	it("preserves non-print host modes through real reload reconstruction", async () => {
+		for (const mode of ["tui", "rpc", "json"] as const) {
+			const seen: Array<{ reason: string; mode: string }> = [];
+			const { runtimeHost } = await createRuntimeHost((pi) => {
+				pi.on("session_start", (event, ctx) => {
+					seen.push({ reason: event.reason, mode: ctx.mode });
+				});
+			});
+			runtimeHost.session.extensionRunner.setMode(mode);
+			await runtimeHost.session.reload();
+			expect(seen.at(-1)).toEqual({ reason: "reload", mode });
+		}
+	});
+
+	it("preserves immutable host identity through real reload new resume and fork replacements", async () => {
+		const seen: Array<{ reason: string; identity: ExtensionHostCapabilities; mode: string }> = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_start", (event, ctx) => {
+				seen.push({ reason: event.reason, identity: ctx.hostCapabilities, mode: ctx.mode });
+			});
+		});
+
+		expect(seen.map((item) => item.reason)).toEqual(["startup"]);
+		await runtimeHost.session.reload();
+		expect(seen.map((item) => item.reason)).toEqual(["startup", "reload"]);
+
+		await runtimeHost.session.prompt("hello");
+		const originalSessionFile = runtimeHost.session.sessionFile;
+		expect(originalSessionFile).toBeTruthy();
+		await runtimeHost.newSession();
+		await runtimeHost.session.bindExtensions({});
+		const newSessionFile = runtimeHost.session.sessionFile;
+		expect(newSessionFile).toBeTruthy();
+		await runtimeHost.switchSession(originalSessionFile!);
+		await runtimeHost.session.bindExtensions({});
+		const userMessage = runtimeHost.session.getUserMessagesForForking()[0];
+		await runtimeHost.fork(userMessage.entryId);
+		await runtimeHost.session.bindExtensions({});
+
+		expect(seen.map((item) => item.reason)).toEqual(["startup", "reload", "new", "resume", "fork"]);
+		expect(seen.every((item) => item.identity === EXTENSION_HOST_CAPABILITIES)).toBe(true);
+		expect(seen.every((item) => item.mode === "print")).toBe(true);
 	});
 
 	it("honors session_before_switch cancellation", async () => {

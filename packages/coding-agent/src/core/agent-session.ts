@@ -54,6 +54,7 @@ import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
+	type ExtensionHostMode,
 	ExtensionRunner,
 	type ExtensionUIContext,
 	type InputSource,
@@ -2330,6 +2331,7 @@ export class AgentSession {
 		activeToolNames?: string[];
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
+		hostMode?: ExtensionHostMode;
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
@@ -2364,6 +2366,9 @@ export class AgentSession {
 			this.sessionManager,
 			this._modelRegistry,
 		);
+		if (options.hostMode) {
+			this._extensionRunner.setMode(options.hostMode);
+		}
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
 		}
@@ -2382,6 +2387,7 @@ export class AgentSession {
 
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
+		const previousHostMode = this._extensionRunner.getMode();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		resetApiProviders();
@@ -2390,6 +2396,7 @@ export class AgentSession {
 			activeToolNames: this.getActiveToolNames(),
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
+			hostMode: previousHostMode,
 		});
 
 		const hasBindings =

@@ -309,6 +309,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
+		session.extensionRunner.setMode("rpc");
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(),
 			commandContextActions: {

@@ -853,6 +853,31 @@ Transforms chain across handlers. See [input-transform.ts](../examples/extension
 
 All handlers receive `ctx: ExtensionContext`.
 
+### ctx.hostCapabilities
+
+Immutable host-owned compatibility identity with exact fields:
+
+```typescript
+{
+  host_package: "@earendil-works/pi-coding-agent",
+  host_version: "<package version>",
+  extension_api_version: "1.0.0",
+  capabilities: [
+    "prompt.system.chain.v1",
+    "session.lifecycle.reason.v1",
+    "ui.mode.v1",
+    "ui.confirm.timeout.v1",
+    "session.shutdown.v1"
+  ]
+}
+```
+
+The object and capability array are frozen by the host. Repository files, settings, extension flags, and environment variables cannot override them. Gate integrations on `extension_api_version` plus required capability tokens; package name/version are provenance rather than API compatibility authority.
+
+### ctx.mode
+
+Exact host run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "tui"` for terminal-only confirmation flows. `ctx.hasUI` is not a substitute because it is true in both TUI and RPC modes.
+
 ### ctx.ui
 
 UI methods for user interaction. See [Custom UI](#custom-ui) for full details.

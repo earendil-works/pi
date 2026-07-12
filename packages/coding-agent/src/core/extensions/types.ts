@@ -75,6 +75,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.js";
+import type { ExtensionHostCapabilities, ExtensionHostMode } from "./host-capabilities.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
 export type { BuildSystemPromptOptions } from "../system-prompt.js";
@@ -296,6 +297,10 @@ export interface CompactOptions {
  * Context passed to extension event handlers.
  */
 export interface ExtensionContext {
+	/** Immutable host-owned extension API identity and capability tokens. */
+	readonly hostCapabilities: ExtensionHostCapabilities;
+	/** Exact host run mode; unlike hasUI, this distinguishes TUI from RPC. */
+	readonly mode: ExtensionHostMode;
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
 	/** Whether UI is available (false in print/RPC mode) */

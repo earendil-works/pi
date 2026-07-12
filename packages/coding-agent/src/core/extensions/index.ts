@@ -5,6 +5,12 @@
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.js";
 export type { SourceInfo } from "../source-info.js";
 export {
+	EXTENSION_HOST_CAPABILITIES,
+	type ExtensionHostCapabilities,
+	type ExtensionHostCapability,
+	type ExtensionHostMode,
+} from "./host-capabilities.js";
+export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
 	loadExtensionFromFactory,

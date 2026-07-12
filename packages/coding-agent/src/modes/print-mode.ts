@@ -70,6 +70,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
+		session.extensionRunner.setMode(mode === "json" ? "json" : "print");
 		await session.bindExtensions({
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),

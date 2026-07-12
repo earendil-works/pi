@@ -11,6 +11,7 @@ import type { KeybindingsConfig } from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { SessionManager } from "../session-manager.js";
 import type { BuildSystemPromptOptions } from "../system-prompt.js";
+import { EXTENSION_HOST_CAPABILITIES, type ExtensionHostMode } from "./host-capabilities.js";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -226,6 +227,7 @@ export class ExtensionRunner {
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
 	private cwd: string;
+	private mode: ExtensionHostMode = "print";
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
@@ -352,6 +354,16 @@ export class ExtensionRunner {
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
+	}
+
+	/** Set by the host mode before binding or rebinding extension handlers. */
+	setMode(mode: ExtensionHostMode): void {
+		this.mode = mode;
+	}
+
+	/** Preserve the host-owned mode when a session reload reconstructs this runner. */
+	getMode(): ExtensionHostMode {
+		return this.mode;
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext): void {
@@ -573,7 +585,7 @@ export class ExtensionRunner {
 	createContext(): ExtensionContext {
 		const runner = this;
 		const getModel = this.getModel;
-		return {
+		const context: Omit<ExtensionContext, "hostCapabilities" | "mode"> = {
 			get ui() {
 				runner.assertActive();
 				return runner.uiContext;
@@ -631,6 +643,24 @@ export class ExtensionRunner {
 				return runner.getSystemPromptFn();
 			},
 		};
+		return Object.defineProperties(context, {
+			hostCapabilities: {
+				configurable: false,
+				enumerable: true,
+				get: () => {
+					runner.assertActive();
+					return EXTENSION_HOST_CAPABILITIES;
+				},
+			},
+			mode: {
+				configurable: false,
+				enumerable: true,
+				get: () => {
+					runner.assertActive();
+					return runner.mode;
+				},
+			},
+		}) as unknown as ExtensionContext;
 	}
 
 	createCommandContext(): ExtensionCommandContext {
