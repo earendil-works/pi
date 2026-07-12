@@ -47,6 +47,7 @@ export {
 	conservativeMarkdownStableOffset,
 	LedgerStore,
 } from "./ledger.ts";
+export { LegacyBlockRendererAdapter, LegacyStripAdapter } from "./legacy.ts";
 export type {
 	PresentBand,
 	PresentCaret,
