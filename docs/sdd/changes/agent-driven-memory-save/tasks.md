@@ -109,7 +109,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `tool_call blocks write to atoms/process/foo.md`, `tool_call blocks edit to atoms/fact/a-123.md`, `tool_call does not block read of atoms/...` tests PASS.
   - **依赖**: 3.1
 
-- [ ] 3.4 **Implement tool_call path guard for `bash` redirect/heredoc**
+- [x] 3.4 **Implement tool_call path guard for `bash` redirect/heredoc**
   - **文件**: `extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: In `tool_call` hook, when `event.toolName === "bash"`, run `looksLikeWriteToAtomsDir(cmd, atomsDir)`: regex match `>(>?)\s*["']?~?/?[^{}<>]*atoms/` or `\btee\b\s+~?/?[^{}<>]*atoms/`. If matched, return block error. Add helper colocated.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `tool_call blocks bash redirect to atoms`, `tool_call blocks bash heredoc`, `tool_call does not block bash read of atom` tests PASS.
@@ -123,7 +123,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `segment counter resets on session_start` + `segment counter resets on session_compact` + `segment counter survives between turns within a segment` (S22: turn 1-3 save 3, turn 4-10 no save, turn 11 compact with counter=3) tests PASS.
   - **依赖**: 3.1
 
-- [ ] 4.2 **session_before_compact safety net: skip when count >= 1**
+- [x] 4.2 **session_before_compact safety net: skip when count >= 1**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: In `session_before_compact` hook (line 336), at the very start of the handler, if `getSegmentMemorySaveCount() >= 1`, return `undefined` directly (skip extraction). Existing `runCompactExtraction` runs only when count == 0.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `safety net skipped when count >= 1` test PASS: mock counter=2, hook returns undefined without calling runCompactExtraction.
