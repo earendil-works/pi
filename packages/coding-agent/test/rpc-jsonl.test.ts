@@ -11,6 +11,21 @@ describe("RPC JSONL framing", () => {
 		expect(JSON.parse(line.trim())).toEqual({ text: "a\u2028b\u2029c" });
 	});
 
+	test("replaces unpaired surrogates so strict parsers accept the record", () => {
+		// A high surrogate without its low half, as produced when an emoji is
+		// split across streaming chunks.
+		const line = serializeJsonLine({ text: "hi \ud83d", nested: ["\ude00 bye"] });
+
+		expect(line).not.toMatch(/\\ud[89ab]/i);
+		expect(JSON.parse(line.trim())).toEqual({ text: "hi \ufffd", nested: ["\ufffd bye"] });
+	});
+
+	test("preserves well-formed astral characters", () => {
+		const line = serializeJsonLine({ text: "hi \u{1f600}" });
+
+		expect(JSON.parse(line.trim())).toEqual({ text: "hi \u{1f600}" });
+	});
+
 	test("splits on LF only and preserves U+2028/U+2029 inside payloads", async () => {
 		const lines: string[] = [];
 		const stream = Readable.from([serializeJsonLine({ text: "a\u2028b\u2029c" })]);

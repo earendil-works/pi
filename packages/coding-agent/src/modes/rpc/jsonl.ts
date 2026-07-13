@@ -2,13 +2,25 @@ import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
 /**
+ * Replace unpaired UTF-16 surrogates in string values with U+FFFD.
+ *
+ * JavaScript strings tolerate lone surrogates (e.g. an emoji split across
+ * streaming chunks), and well-formed JSON.stringify serializes them as lone
+ * `\udXXX` escapes. Strict JSON parsers (e.g. Emacs' native json-parse)
+ * reject such records, so sanitize before serializing.
+ */
+function wellFormedReplacer(_key: string, value: unknown): unknown {
+	return typeof value === "string" ? value.toWellFormed() : value;
+}
+
+/**
  * Serialize a single strict JSONL record.
  *
  * Framing is LF-only. Payload strings may contain other Unicode separators such as
  * U+2028 and U+2029. Clients must split records on `\n` only.
  */
 export function serializeJsonLine(value: unknown): string {
-	return `${JSON.stringify(value)}\n`;
+	return `${JSON.stringify(value, wellFormedReplacer)}\n`;
 }
 
 /**
