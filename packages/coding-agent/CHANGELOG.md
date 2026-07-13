@@ -19,6 +19,7 @@
 - Fixed inherited OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed `Ctrl+V` to paste clipboard text when the pasteboard does not contain an image.
 - Fixed `/login amazon-bedrock` to prompt for and save a Bedrock API key instead of only displaying ambient AWS credential setup instructions.
+- Fixed compaction and branch-summary requests to inherit configured provider options without joining the main provider session.
 
 ## [0.80.6] - 2026-07-09
 

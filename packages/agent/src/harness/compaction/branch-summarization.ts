@@ -1,4 +1,4 @@
-import type { Model, Models } from "@earendil-works/pi-ai";
+import type { Model, Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
 import type { AgentMessage } from "../../types.ts";
 import {
@@ -61,6 +61,8 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt and model output. Defaults to 16384. */
 	reserveTokens?: number;
+	/** Session provider request options inherited by the summarization call. */
+	requestOptions?: SimpleStreamOptions;
 }
 
 /** Collect entries that should be summarized before navigating to a different session tree entry. */
@@ -200,7 +202,15 @@ export async function generateBranchSummary(
 	entries: SessionTreeEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
-	const { models, model, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const {
+		models,
+		model,
+		signal,
+		customInstructions,
+		replaceInstructions,
+		reserveTokens = 16384,
+		requestOptions,
+	} = options;
 	const contextWindow = model.contextWindow || 128000;
 	const tokenBudget = contextWindow - reserveTokens;
 
@@ -228,10 +238,12 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
+	const completionOptions: SimpleStreamOptions = { ...requestOptions, signal, maxTokens: 2048 };
+	if (!model.reasoning) delete completionOptions.reasoning;
 	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ signal, maxTokens: 2048 },
+		completionOptions,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));

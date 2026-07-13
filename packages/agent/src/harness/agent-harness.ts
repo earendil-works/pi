@@ -1,4 +1,11 @@
-import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Model,
+	Models,
+	SimpleStreamOptions,
+	UserMessage,
+} from "@earendil-works/pi-ai";
 import { runAgentLoop } from "../agent-loop.ts";
 import type {
 	AgentContext,
@@ -289,6 +296,20 @@ export class AgentHarness<
 			}
 		}
 		return current;
+	}
+
+	private createAuxiliaryRequestOptions(): SimpleStreamOptions {
+		const requestOptions = cloneStreamOptions(this.streamOptions);
+		return {
+			cacheRetention: requestOptions.cacheRetention,
+			headers: requestOptions.headers,
+			maxRetries: requestOptions.maxRetries,
+			maxRetryDelayMs: requestOptions.maxRetryDelayMs,
+			metadata: requestOptions.metadata,
+			...(this.thinkingLevel !== "off" ? { reasoning: this.thinkingLevel } : {}),
+			timeoutMs: requestOptions.timeoutMs,
+			transport: requestOptions.transport,
+		};
 	}
 
 	private async emitQueueUpdate(): Promise<void> {
@@ -707,7 +728,7 @@ export class AgentHarness<
 			const provided = hookResult?.compaction;
 			const compactResult = provided
 				? { ok: true as const, value: provided }
-				: await compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
+				: await compact(preparation, this.models, model, customInstructions, this.createAuxiliaryRequestOptions());
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;
 			const entryId = await this.session.appendCompaction(
@@ -766,6 +787,7 @@ export class AgentHarness<
 					signal: new AbortController().signal,
 					customInstructions: hookResult?.customInstructions ?? options?.customInstructions,
 					replaceInstructions: hookResult?.replaceInstructions ?? options?.replaceInstructions,
+					requestOptions: this.createAuxiliaryRequestOptions(),
 				});
 				if (!branchSummary.ok) {
 					if (branchSummary.error.code === "aborted") return { cancelled: true };

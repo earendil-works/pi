@@ -65,12 +65,8 @@ export interface CollectEntriesResult {
 export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
 	model: Model<any>;
-	/** API key for the model */
-	apiKey: string;
-	/** Request headers for the model */
-	headers?: Record<string, string>;
-	/** Provider-scoped environment values for the model */
-	env?: Record<string, string>;
+	/** Session request options inherited by the summarization call. */
+	requestOptions: SimpleStreamOptions;
 	/** Abort signal for cancellation */
 	signal: AbortSignal;
 	/** Optional custom instructions for summarization */
@@ -290,9 +286,7 @@ export async function generateBranchSummary(
 ): Promise<BranchSummaryResult> {
 	const {
 		model,
-		apiKey,
-		headers,
-		env,
+		requestOptions,
 		signal,
 		customInstructions,
 		replaceInstructions,
@@ -338,10 +332,11 @@ export async function generateBranchSummary(
 	// request behavior (timeouts, retries, attribution headers) stays consistent
 	// without running through agent state/events.
 	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const completionOptions: SimpleStreamOptions = { ...requestOptions, signal, maxTokens: 2048 };
+	if (!model.reasoning) delete completionOptions.reasoning;
 	const response = streamFn
-		? await (await streamFn(model, context, requestOptions)).result()
-		: await completeSimple(model, context, requestOptions);
+		? await (await streamFn(model, context, completionOptions)).result()
+		: await completeSimple(model, context, completionOptions);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {

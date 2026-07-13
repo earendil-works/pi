@@ -57,37 +57,22 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("uses the provided thinking level for reasoning-capable models", async () => {
-		await generateSummary(
-			messages,
-			createModel(true),
-			2000,
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			"medium",
-		);
+		await generateSummary(messages, createModel(true), 2000, undefined, undefined, {
+			apiKey: "test-key",
+			reasoning: "medium",
+			transport: "sse",
+		});
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			reasoning: "medium",
 			apiKey: "test-key",
+			transport: "sse",
 		});
 	});
 
 	it("does not set reasoning when thinking is off", async () => {
-		await generateSummary(
-			messages,
-			createModel(true),
-			2000,
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			"off",
-		);
+		await generateSummary(messages, createModel(true), 2000, undefined, undefined, { apiKey: "test-key" });
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
@@ -97,17 +82,10 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("does not set reasoning for non-reasoning models", async () => {
-		await generateSummary(
-			messages,
-			createModel(false),
-			2000,
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			"medium",
-		);
+		await generateSummary(messages, createModel(false), 2000, undefined, undefined, {
+			apiKey: "test-key",
+			reasoning: "medium",
+		});
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
@@ -127,7 +105,7 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
 		};
 
-		await compact(preparation, createModel(false, 128000), "test-key");
+		await compact(preparation, createModel(false, 128000), undefined, { apiKey: "test-key" });
 
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
 	});

@@ -5,7 +5,7 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -513,16 +513,10 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 function createSummarizationOptions(
 	model: Model<any>,
 	maxTokens: number,
-	apiKey: string | undefined,
-	headers: Record<string, string> | undefined,
-	env: Record<string, string> | undefined,
-	signal: AbortSignal | undefined,
-	thinkingLevel: ThinkingLevel | undefined,
+	requestOptions: SimpleStreamOptions | undefined,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers, env };
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
-	}
+	const options: SimpleStreamOptions = { ...requestOptions, maxTokens };
+	if (!model.reasoning) delete options.reasoning;
 	return options;
 }
 
@@ -547,14 +541,10 @@ export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string | undefined,
-	headers?: Record<string, string>,
-	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	thinkingLevel?: ThinkingLevel,
+	requestOptions?: SimpleStreamOptions,
 	streamFn?: StreamFn,
-	env?: Record<string, string>,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -587,7 +577,7 @@ export async function generateSummary(
 		},
 	];
 
-	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel);
+	const completionOptions = createSummarizationOptions(model, maxTokens, requestOptions);
 
 	const response = await completeSummarization(
 		model,
@@ -740,13 +730,9 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
 export async function compact(
 	preparation: CompactionPreparation,
 	model: Model<any>,
-	apiKey: string | undefined,
-	headers?: Record<string, string>,
 	customInstructions?: string,
-	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	requestOptions?: SimpleStreamOptions,
 	streamFn?: StreamFn,
-	env?: Record<string, string>,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -769,25 +755,17 @@ export async function compact(
 						messagesToSummarize,
 						model,
 						settings.reserveTokens,
-						apiKey,
-						headers,
-						signal,
 						customInstructions,
 						previousSummary,
-						thinkingLevel,
+						requestOptions,
 						streamFn,
-						env,
 					)
 				: "No prior history.";
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
 			settings.reserveTokens,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
+			requestOptions,
 			streamFn,
 		);
 		// Merge into single summary
@@ -798,14 +776,10 @@ export async function compact(
 			messagesToSummarize,
 			model,
 			settings.reserveTokens,
-			apiKey,
-			headers,
-			signal,
 			customInstructions,
 			previousSummary,
-			thinkingLevel,
+			requestOptions,
 			streamFn,
-			env,
 		);
 	}
 
@@ -832,11 +806,7 @@ async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string | undefined,
-	headers?: Record<string, string>,
-	env?: Record<string, string>,
-	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	requestOptions?: SimpleStreamOptions,
 	streamFn?: StreamFn,
 ): Promise<string> {
 	const maxTokens = Math.min(
@@ -857,7 +827,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel),
+		createSummarizationOptions(model, maxTokens, requestOptions),
 		streamFn,
 	);
 

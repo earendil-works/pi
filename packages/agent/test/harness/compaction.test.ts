@@ -9,6 +9,7 @@ import {
 	type Usage,
 } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it } from "vitest";
+import { generateBranchSummary } from "../../src/harness/compaction/branch-summarization.ts";
 import {
 	type CompactionPreparation,
 	calculateContextTokens,
@@ -457,7 +458,9 @@ describe("harness compaction", () => {
 			},
 		]);
 		getOrThrow(
-			await generateSummary(messages, models, reasoningModel, 2000, undefined, undefined, undefined, "medium"),
+			await generateSummary(messages, models, reasoningModel, 2000, undefined, undefined, {
+				reasoning: "medium",
+			}),
 		);
 		expect(seenOptions[0]).toMatchObject({ reasoning: "medium" });
 
@@ -468,7 +471,7 @@ describe("harness compaction", () => {
 				return fauxAssistantMessage("## Goal\nTest summary");
 			},
 		]);
-		getOrThrow(await generateSummary(messages, models, offModel, 2000, undefined, undefined, undefined, "off"));
+		getOrThrow(await generateSummary(messages, models, offModel, 2000));
 		expect(seenOptions[1]).not.toHaveProperty("reasoning");
 
 		const { faux: fauxNonReasoning, model: nonReasoningModel } = createFauxModel(false);
@@ -479,9 +482,57 @@ describe("harness compaction", () => {
 			},
 		]);
 		getOrThrow(
-			await generateSummary(messages, models, nonReasoningModel, 2000, undefined, undefined, undefined, "medium"),
+			await generateSummary(messages, models, nonReasoningModel, 2000, undefined, undefined, {
+				reasoning: "medium",
+			}),
 		);
 		expect(seenOptions[2]).not.toHaveProperty("reasoning");
+	});
+
+	it("forwards session request options through compaction summaries", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		let seenOptions: Record<string, unknown> | undefined;
+		const signal = new AbortController().signal;
+		const requestOptions = {
+			transport: "sse" as const,
+			timeoutMs: 1234,
+			headers: { "x-test": "yes" },
+			signal,
+		};
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			(_context, options) => {
+				seenOptions = options as Record<string, unknown> | undefined;
+				return fauxAssistantMessage("## Goal\nTest summary");
+			},
+		]);
+
+		getOrThrow(await generateSummary(messages, models, model, 2000, undefined, undefined, requestOptions));
+
+		expect(seenOptions).toMatchObject(requestOptions);
+	});
+
+	it("forwards session request options through branch summaries", async () => {
+		let seenOptions: Record<string, unknown> | undefined;
+		const requestOptions = { transport: "websocket" as const, timeoutMs: 1234 };
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			(_context, options) => {
+				seenOptions = options as Record<string, unknown> | undefined;
+				return fauxAssistantMessage("## Goal\nTest summary");
+			},
+		]);
+
+		getOrThrow(
+			await generateBranchSummary([createMessageEntry(createUserMessage("Summarize this."))], {
+				models,
+				model,
+				signal: new AbortController().signal,
+				requestOptions,
+			}),
+		);
+
+		expect(seenOptions).toMatchObject(requestOptions);
 	});
 
 	it("includes previous summaries and custom instructions in generateSummary prompts", async () => {
@@ -497,9 +548,7 @@ describe("harness compaction", () => {
 			},
 		]);
 
-		const summary = getOrThrow(
-			await generateSummary(messages, models, model, 2000, undefined, "focus", "old summary"),
-		);
+		const summary = getOrThrow(await generateSummary(messages, models, model, 2000, "focus", "old summary"));
 
 		expect(summary).toContain("Test summary");
 		expect(promptText).toContain("<previous-summary>\nold summary\n</previous-summary>");
@@ -598,7 +647,7 @@ describe("harness compaction", () => {
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		getOrThrow(await compact(preparation, models, model, undefined, undefined, "high"));
+		getOrThrow(await compact(preparation, models, model, undefined, { reasoning: "high" }));
 
 		expect(seenOptions[0]).toMatchObject({ reasoning: "high" });
 	});

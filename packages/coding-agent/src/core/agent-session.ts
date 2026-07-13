@@ -24,7 +24,14 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+} from "@earendil-works/pi-ai/compat";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -399,7 +406,7 @@ export class AgentSession {
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
 	}
 
-	private async _getCompactionRequestAuth(model: Model<any>): Promise<{
+	private async _getAuxiliaryRequestAuth(model: Model<any>): Promise<{
 		apiKey?: string;
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
@@ -410,6 +417,19 @@ export class AgentSession {
 
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		return result.ok ? { apiKey: result.apiKey, headers: result.headers, env: result.env } : {};
+	}
+
+	private _createAuxiliaryRequestOptions(
+		auth: { apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> },
+		signal: AbortSignal,
+	): SimpleStreamOptions {
+		return {
+			...auth,
+			signal,
+			...(this.thinkingLevel !== "off" ? { reasoning: this.thinkingLevel } : {}),
+			transport: this.agent.transport,
+			thinkingBudgets: this.agent.thinkingBudgets,
+		};
 	}
 
 	/**
@@ -1744,7 +1764,7 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const { apiKey, headers, env } = await this._getCompactionRequestAuth(this.model);
+			const auth = await this._getAuxiliaryRequestAuth(this.model);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
@@ -1799,13 +1819,9 @@ export class AgentSession {
 				const result = await compact(
 					preparation,
 					this.model,
-					apiKey,
-					headers,
 					customInstructions,
-					this._compactionAbortController.signal,
-					this.thinkingLevel,
+					this._createAuxiliaryRequestOptions(auth, this._compactionAbortController.signal),
 					this.agent.streamFn,
-					env,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2012,7 +2028,7 @@ export class AgentSession {
 				headers = authResult.headers;
 				env = authResult.env;
 			} else {
-				({ apiKey, headers, env } = await this._getCompactionRequestAuth(this.model));
+				({ apiKey, headers, env } = await this._getAuxiliaryRequestAuth(this.model));
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
@@ -2073,13 +2089,12 @@ export class AgentSession {
 				const compactResult = await compact(
 					preparation,
 					this.model,
-					apiKey,
-					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
-					this.thinkingLevel,
+					this._createAuxiliaryRequestOptions(
+						{ apiKey, headers, env },
+						this._autoCompactionAbortController.signal,
+					),
 					this.agent.streamFn,
-					env,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2881,13 +2896,13 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
-				const { apiKey, headers, env } = await this._getRequiredRequestAuth(model);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model,
-					apiKey,
-					headers,
-					env,
+					requestOptions: this._createAuxiliaryRequestOptions(
+						await this._getAuxiliaryRequestAuth(model),
+						this._branchSummaryAbortController.signal,
+					),
 					signal: this._branchSummaryAbortController.signal,
 					customInstructions,
 					replaceInstructions,

@@ -6,6 +6,10 @@
 
 - Added `AgentToolResult.addedToolNames` propagation to `ToolResultMessage` so tools introduced by a result can be loaded from that transcript point onward ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
 
+### Fixed
+
+- Fixed harness compaction and branch-summary requests to inherit configured provider options without joining the main provider session.
+
 ## [0.80.6] - 2026-07-09
 
 ### Added
