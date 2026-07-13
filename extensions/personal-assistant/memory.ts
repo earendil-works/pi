@@ -134,14 +134,24 @@ export const DEFAULT_ATOMS_DIR = join(homedir(), ".pi", "agent", "memory", "atom
  * have no `notify` at all, or it can throw if the user has dismissed the
  * TUI. Treat every notify as best-effort — never let a UI hiccup affect
  * the compact pipeline.
+ *
+ * `type` accepts the spec-friendly alias "warn" in addition to the
+ * underlying ctx.ui.notify literals ("info" | "warning" | "error") so
+ * call sites can match the spec language verbatim
+ * (`notifySafely(ctx, "...", "warn")`). "warn" is translated to
+ * "warning" before being passed through to ctx.ui.notify, since that is
+ * the literal the runtime API exposes (see
+ * packages/coding-agent/src/modes/rpc/rpc-mode.ts:151 and
+ * packages/coding-agent/src/core/extensions/types.ts:135).
  */
 function notifySafely(
 	ctx: { ui?: { notify?: (msg: string, type?: "info" | "warning" | "error") => void } },
 	message: string,
-	type: "info" | "warning" | "error" = "info",
+	type: "info" | "warning" | "warn" | "error" = "info",
 ): void {
 	try {
-		ctx.ui?.notify?.(message, type);
+		const apiType: "info" | "warning" | "error" = type === "warn" ? "warning" : type;
+		ctx.ui?.notify?.(message, apiType);
 	} catch {
 		// best-effort, see comment above
 	}
@@ -322,18 +332,19 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// extraction while keeping a strong Anthropic/GPT model for the agent
 	// loop.
 	//
-	// Extraction is a **hard gate** for compact: if extraction throws (no
-	// config, model not in registry, no auth, LLM call failed), the hook
-	// returns `{cancel: true}` so compact does NOT proceed. The rationale
-	// is that compact discards messages — discarding without preserving
-	// the learnings in memory would silently degrade the memory subsystem
-	// over the session's lifetime. Better to fail loudly: ctx.ui.notify
-	// surfaces the specific error, the user fixes the config (or retries
-	// /compact after a transient network blip clears), and the next
-	// compact succeeds. Early-return paths inside runCompactExtraction
-	// (empty messagesToSummarize, all messages filter out as no-text) do
-	// NOT throw — they return normally, and the hook returns undefined,
-	// so compact proceeds when there is genuinely nothing to extract.
+	// Extraction is a **graceful safety net** (Task 4.3): if extraction
+	// throws (no config, model not in registry, no auth, LLM call
+	// failed), the hook returns `undefined` so compact ALWAYS proceeds.
+	// The prior hard-gate (`{cancel: true}` on throw) blocked compact on
+	// transient extraction outages — strictly worse than skipping the
+	// safety net, since compact discards messages and a stuck extraction
+	// pipeline would prevent the session from ever compacting. Per
+	// design.md § Decisions § 6: "safety net 失败 graceful:
+	// ctx.ui.notify type='warn', return undefined". Early-return paths
+	// inside runCompactExtraction (empty messagesToSummarize, all
+	// messages filter out as no-text) do NOT throw — they return
+	// normally, and the hook returns undefined, so compact proceeds
+	// when there is genuinely nothing to extract.
 	pi.on("session_before_compact", async (event, ctx) => {
 		// Safety net gate (Task 4.2): if the agent already drove a
 		// `memory_save` call within this segment, skip the LLM-driven
@@ -355,15 +366,15 @@ export function registerMemory(pi: ExtensionAPI): void {
 			const msg = err instanceof Error ? err.message : String(err);
 			// eslint-disable-next-line no-console
 			console.warn(
-				"[memory-v2] session_before_compact: extraction failed, cancelling compact:",
+				"[memory-v2] session_before_compact: safety net failed, skipping:",
 				msg,
 			);
 			notifySafely(
 				ctx,
-				`memory: extraction failed, compact cancelled — ${msg}`,
-				"error",
+				`memory: safety net skipped — ${msg}`,
+				"warn",
 			);
-			return { cancel: true };
+			return undefined;
 		}
 	});
 

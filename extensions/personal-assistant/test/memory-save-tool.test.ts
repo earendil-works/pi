@@ -708,6 +708,227 @@ describe("session_before_compact safety net (Task 4.2)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// session_before_compact graceful on extraction failure (Task 4.3)
+//
+// Delta spec scenario "safety net graceful on extraction failure" (spec.md
+// L195-202): when the agent has never saved (counter === 0) AND the LLM
+// extraction pipeline throws (no extraction config, auth missing, LLM
+// 4xx/5xx, etc.), the hook MUST treat the failure as non-fatal:
+//   - return `undefined` so compact proceeds (NOT `{cancel: true}`)
+//   - surface a warn-level notify carrying "safety net skipped" so the
+//     user sees that memory was not extracted for this compaction cycle
+//
+// This replaces the pre-4.3 hard-gate behaviour (cancel: true on throw),
+// which made a transient extraction outage block compact entirely — a
+// worse outcome than skipping the safety net, since compact discards
+// messages.
+//
+// Like the Task 4.2 describe above, these tests drive the hook through
+// the public registerMemory(pi) entry point, fire a synthesised
+// session_before_compact event, and assert the returned value + the
+// captured notify calls.
+// ---------------------------------------------------------------------------
+
+describe("session_before_compact safety net graceful on extraction failure (Task 4.3)", () => {
+	let memoryMod: typeof import("../memory.ts");
+	let handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>;
+	let tmpHome: string;
+
+	function makeMockPi() {
+		const map = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>();
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown> | unknown) => {
+				map.set(event, handler);
+			},
+			registerTool: () => {
+				// no-op — tool registration lives in other test files
+			},
+		};
+		return { pi, map };
+	}
+
+	function makeNonEmptyCompactEvent() {
+		return {
+			type: "session_before_compact" as const,
+			preparation: {
+				firstKeptEntryId: "abc",
+				messagesToSummarize: [
+					{
+						role: "user",
+						content: "a user message that should drive extraction",
+						timestamp: Date.now(),
+					},
+				],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: 100,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: {
+					reserveTokens: 0,
+					enabled: true,
+					keepRecentTokens: 0,
+				},
+			},
+			branchEntries: [],
+			reason: "manual" as const,
+			willRetry: false,
+			signal: new AbortController().signal,
+		};
+	}
+
+	function makeMockCtx() {
+		const notifyCalls: Array<{ msg: string; type: string }> = [];
+		const find = vi.fn((provider: string, modelId: string) => ({
+			id: modelId,
+			name: modelId,
+			api: "anthropic-messages",
+			provider,
+			baseUrl: "https://api.test",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 8192,
+			maxTokens: 2048,
+		}));
+		const getApiKeyAndHeaders = vi.fn(async () => ({
+			ok: true as const,
+			apiKey: "sk-test-key",
+			headers: {},
+		}));
+		return {
+			ui: {
+				setStatus: () => {
+					// no-op
+				},
+				notify: (msg: string, type: string) => {
+					notifyCalls.push({ msg, type });
+				},
+			},
+			modelRegistry: { find, getApiKeyAndHeaders },
+			notifyCalls,
+		};
+	}
+
+	function writeExtractionSettings(home: string) {
+		const agentDir = path.join(home, ".pi", "agent");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			path.join(agentDir, "settings.json"),
+			JSON.stringify({
+				personalAssistant: {
+					memory: {
+						enabled: true,
+						extraction: {
+							provider: "anthropic",
+							model: "claude-haiku-4-5",
+						},
+					},
+				},
+			}, null, 2),
+		);
+	}
+
+	beforeEach(async () => {
+		tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "safety-net-graceful-"));
+		process.env.HOME = tmpHome;
+		writeExtractionSettings(tmpHome);
+
+		vi.resetModules();
+		mod = await import("../memory-save.ts");
+		memoryMod = await import("../memory.ts");
+
+		// Re-install a fresh default implementation so other tests'
+		// overrides do not leak into this block. The default succeeds;
+		// individual tests override with `.mockImplementationOnce` to
+		// inject a throw.
+		extractMemoriesWithCallLlmMock.mockClear();
+		extractMemoriesWithCallLlmMock.mockImplementation(
+			async (
+				_callLlm: (prompt: string) => Promise<string>,
+				_messages: Array<{ role: string; content: string }>,
+			) => ({
+				plan: { items: [], modelUsed: "mock", generatedAt: Date.now() },
+				created: [],
+				updated: [],
+				skipped: [],
+			}),
+		);
+
+		const { pi, map } = makeMockPi();
+		memoryMod.registerMemory(pi as unknown as ExtensionAPI);
+		handlers = map;
+	});
+
+	afterEach(async () => {
+		process.env.HOME = ORIGINAL_HOME;
+		await fs.rm(tmpHome, { recursive: true, force: true });
+		vi.clearAllMocks();
+	});
+
+	function getHandler(name: string) {
+		const h = handlers.get(name);
+		if (!h) throw new Error(`${name} hook not registered by registerMemory`);
+		return h;
+	}
+
+	// Spec scenario S13 (scenarios.md:L67, spec.md:L195): GIVEN
+	// `segmentMemorySaveCount === 0` AND `runCompactExtraction` throws
+	// (e.g. extraction model not configured, auth failed, LLM 报错),
+	// WHEN `session_before_compact` event fires, THEN hook catches the
+	// error AND `ctx.ui.notify("memory: safety net skipped — <reason>",
+	// "warn")` is invoked AND hook returns `undefined` (compact
+	// proceeds; NOT `{cancel: true}`).
+	//
+	// We force the throw by overriding the extracted-by-mock
+	// `extractMemoriesWithCallLlm` so it rejects once. The non-empty
+	// compact event is required so the safety net does NOT short-circuit
+	// at the counter guard (counter === 0 → safety net runs → reaches
+	// the throwing call). Asserts:
+	//   1. result === undefined (compact proceeds)
+	//   2. result !== { cancel: true } (explicit non-cancel assertion)
+	//   3. ctx.ui.notify was called with a warn-level message whose body
+	//      contains "safety net skipped" — this proves the catch block
+	//      took the graceful path (not the silent-swallow path)
+	it("session_before_compact returns undefined and emits warn-level 'safety net skipped' notify when runCompactExtraction throws (S13)", async () => {
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+
+		// Force the extraction pipeline to throw. We pick a distinctive
+		// error message so the test can assert the message is plumbed
+		// through to ctx.ui.notify unmodified.
+		const boomMessage = "synthetic extraction failure for S13 test";
+		extractMemoriesWithCallLlmMock.mockImplementationOnce(async () => {
+			throw new Error(boomMessage);
+		});
+
+		const handler = getHandler("session_before_compact");
+		const ctx = makeMockCtx();
+		const event = makeNonEmptyCompactEvent();
+
+		const result = await handler(event, ctx);
+
+		// (1) Compact proceeds — hook returned undefined.
+		expect(result).toBeUndefined();
+		// (2) Hard gate is GONE — explicit regression guard against the
+		// pre-4.3 `{cancel: true}` shape.
+		expect(result).not.toEqual({ cancel: true });
+
+		// (3) ctx.ui.notify was invoked with the warn-level graceful
+		// message. notifySafely widens its accepted type union to allow
+		// "warn" as a synonym for the underlying "warning" literal the
+		// ctx.ui.notify API expects, so the captured type is the API
+		// value the UI actually sees.
+		expect(ctx.notifyCalls.length).toBeGreaterThan(0);
+		const safetyNetSkipCall = ctx.notifyCalls.find(
+			(c) => c.msg.includes("safety net skipped") && c.type === "warning",
+		);
+		expect(safetyNetSkipCall).toBeDefined();
+		// The thrown error's message is plumbed through unchanged so the
+		// user can see the original cause (auth vs. config vs. LLM).
+		expect(safetyNetSkipCall!.msg).toContain(boomMessage);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // registerMemorySave — tool registration shape
 // ---------------------------------------------------------------------------
 

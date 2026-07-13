@@ -444,10 +444,16 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
-		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		// Task 4.3 — graceful safety net: extraction failures are
+		// surfaced at warn level (not error), and the hook returns
+		// undefined so compact proceeds. The notifySafely wrapper
+		// translates "warn" → "warning" before reaching the runtime
+		// ctx.ui.notify API, so the captured type is "warning".
+		expect(mockCtx.notifyCalls[0].type).toBe("warning");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/no extraction model configured/i);
-		// Hard gate: extraction failure cancels compact.
-		expect(result).toEqual({ cancel: true });
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/safety net skipped/i);
+		// Graceful: extraction failure does NOT cancel compact.
+		expect(result).toBeUndefined();
 	});
 
 	it("surfaces a registry error when the configured model is not registered", async () => {
@@ -464,9 +470,10 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
-		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		expect(mockCtx.notifyCalls[0].type).toBe("warning");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/not in registry/i);
-		expect(result).toEqual({ cancel: true });
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/safety net skipped/i);
+		expect(result).toBeUndefined();
 	});
 
 	it("surfaces an auth error when the extraction provider has no API key", async () => {
@@ -481,9 +488,10 @@ describe("session_before_compact hook (config-driven extraction)", () => {
 
 		expect(vi.mocked(completeSimple)).not.toHaveBeenCalled();
 		expect(mockCtx.notifyCalls).toHaveLength(1);
-		expect(mockCtx.notifyCalls[0].type).toBe("error");
+		expect(mockCtx.notifyCalls[0].type).toBe("warning");
 		expect(mockCtx.notifyCalls[0].msg).toMatch(/no api key for anthropic/i);
-		expect(result).toEqual({ cancel: true });
+		expect(mockCtx.notifyCalls[0].msg).toMatch(/safety net skipped/i);
+		expect(result).toBeUndefined();
 	});
 
 	it("returns undefined (proceed) when extraction succeeds", async () => {
