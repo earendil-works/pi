@@ -189,11 +189,11 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — all 7 unit cases pass.
   - **依赖**: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3
 
-- [ ] 7.4 **recall-pipeline unit tests pass**
+- [x] 7.4 **recall-pipeline unit tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/recall-pipeline.test.ts` — all 5 unit cases pass.
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
-- [ ] 7.5 **webui memory-routes integration tests pass**
+- [x] 7.5 **webui memory-routes integration tests pass**
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — all tests pass including new recent / topK-20 cases.
   - **依赖**: 6.1, 6.2, 6.3, 6.4
 
