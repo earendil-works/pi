@@ -448,7 +448,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
-| Amazon Bedrock Mantle | AWS credentials via the standard chain (`AWS_PROFILE`, `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, ECS/IRSA roles) or a long-lived `AWS_BEARER_TOKEN_BEDROCK`. Requests are signed with AWS SigV4 from the credential chain automatically. The built-in GPT-5.4/GPT-5.5 models are pinned to `us-east-2`. |
+| Amazon Bedrock Mantle | AWS credentials via the standard chain (`AWS_PROFILE`, `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, ECS/IRSA roles) or a long-lived `AWS_BEARER_TOKEN_BEDROCK`. Requests are signed with AWS SigV4 from the credential chain automatically. The built-in GPT-5.4/GPT-5.5/GPT-5.6 models are pinned to `us-east-2`. |
 
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and
 `QWEN_TOKEN_PLAN_API_KEY`. The Individual provider exposes only the models documented for Individual

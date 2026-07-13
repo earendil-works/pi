@@ -537,7 +537,8 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
-			model.api === "openai-completions")
+			model.api === "openai-completions" ||
+			model.api === "amazon-bedrock-mantle-openai-responses")
 	);
 }
 
