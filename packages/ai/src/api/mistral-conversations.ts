@@ -117,7 +117,7 @@ export const streamSimple: StreamFunction<"mistral-conversations", SimpleStreamO
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, options, apiKey);
+	const base = buildBaseOptions(model, context, options, apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoning = clampedReasoning === "off" ? undefined : clampedReasoning;
 	const shouldUseReasoning = model.reasoning && reasoning !== undefined;

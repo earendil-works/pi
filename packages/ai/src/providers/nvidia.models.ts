@@ -365,4 +365,23 @@ export const NVIDIA_MODELS = {
 		contextWindow: 256000,
 		maxTokens: 16384,
 	} satisfies Model<"openai-completions">,
+	"z-ai/glm-5.2": {
+		id: "z-ai/glm-5.2",
+		name: "GLM-5.2",
+		api: "openai-completions",
+		provider: "nvidia",
+		baseUrl: "https://integrate.api.nvidia.com/v1",
+		headers: {"NVCF-POLL-SECONDS":"3600"},
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false,"maxTokensField":"max_tokens","supportsStrictMode":false,"supportsLongCacheRetention":false},
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 1000000,
+		maxTokens: 131072,
+	} satisfies Model<"openai-completions">,
 } as const;

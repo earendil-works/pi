@@ -654,6 +654,26 @@ describe("Markdown component", () => {
 		});
 	});
 
+	describe("Backslash escapes", () => {
+		it("should normalize escaped punctuation by default", () => {
+			const markdown = new Markdown(String.raw`"\"`, 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [`""`]);
+		});
+
+		it("should preserve source backslash escapes when configured", () => {
+			const markdown = new Markdown(String.raw`"\"`, 0, 0, defaultMarkdownTheme, undefined, {
+				preserveBackslashEscapes: true,
+			});
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, [String.raw`"\"`]);
+		});
+	});
+
 	describe("Pre-styled text (thinking traces)", () => {
 		it("should preserve gray italic styling after inline code", () => {
 			// This replicates how thinking content is rendered in assistant-message.ts

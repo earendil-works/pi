@@ -191,6 +191,7 @@ export default function (pi: ExtensionAPI) {
 				{
 					apiKey: auth.apiKey,
 					headers: auth.headers,
+					env: auth.env,
 					reasoningEffort: "high",
 				},
 			);

@@ -319,7 +319,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			uiContext: createExtensionUIContext(),
 			mode: "rpc",
 			commandContextActions: {
-				waitForIdle: () => session.agent.waitForIdle(),
+				waitForIdle: () => session.waitForIdle(),
 				newSession: async (options) => runtimeHost.newSession(options),
 				fork: async (entryId, forkOptions) => {
 					const result = await runtimeHost.fork(entryId, forkOptions);
@@ -353,6 +353,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
 			output(event);
+			if (event.type === "agent_settled") {
+				void checkShutdownRequested();
+			}
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
 			await waitForRawStdoutBackpressure();
@@ -604,6 +607,24 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "get_fork_messages": {
 				const messages = session.getUserMessagesForForking();
 				return success(id, "get_fork_messages", { messages });
+			}
+
+			case "get_entries": {
+				const sessionManager = session.sessionManager;
+				let entries = sessionManager.getEntries();
+				if (command.since !== undefined) {
+					const sinceIndex = entries.findIndex((e) => e.id === command.since);
+					if (sinceIndex === -1) {
+						return error(id, "get_entries", `Entry not found: ${command.since}`);
+					}
+					entries = entries.slice(sinceIndex + 1);
+				}
+				return success(id, "get_entries", { entries, leafId: sessionManager.getLeafId() });
+			}
+
+			case "get_tree": {
+				const sessionManager = session.sessionManager;
+				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_last_assistant_text": {

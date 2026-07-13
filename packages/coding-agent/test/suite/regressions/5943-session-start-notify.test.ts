@@ -1,4 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
@@ -43,6 +44,35 @@ function createUiContext(
 	};
 }
 
+type LoadedResourcesResult<T> = { [K in keyof T]: T[K] } & { diagnostics: [] };
+
+type LoadedResourcesContext = {
+	loadedResourcesContainer: Container;
+	chatContainer: Container;
+	options: { verbose?: boolean };
+	settingsManager: { getQuietStartup: () => boolean };
+	sessionManager: { getCwd: () => string };
+	session: {
+		promptTemplates: [];
+		resourceLoader: {
+			getAgentsFiles: () => LoadedResourcesResult<{ agentsFiles: Array<{ path: string }> }>;
+			getSkills: () => LoadedResourcesResult<{ skills: [] }>;
+			getPrompts: () => LoadedResourcesResult<{ prompts: [] }>;
+			getThemes: () => LoadedResourcesResult<{ themes: [] }>;
+			getExtensions: () => { extensions: []; errors: [] };
+		};
+		extensionRunner: {
+			getCommandDiagnostics: () => [];
+			getShortcutDiagnostics: () => [];
+			getRegisteredCommands: () => [];
+		};
+	};
+	getStartupExpansionState: () => boolean;
+	formatDisplayPath: (resourcePath: string) => string;
+	formatContextPath: (resourcePath: string) => string;
+	getBuiltInCommandConflictDiagnostics: (extensionRunner: LoadedResourcesContext["session"]["extensionRunner"]) => [];
+};
+
 type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
@@ -67,6 +97,7 @@ type ReloadCommandContext = {
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
+		getOutputPad: () => 0 | 1;
 		getEditorPaddingX: () => number;
 		getAutocompleteMaxVisible: () => number;
 		getShowHardwareCursor: () => boolean;
@@ -97,6 +128,10 @@ type ReloadCommandContext = {
 };
 
 type InteractiveModePrototype = {
+	showLoadedResources(
+		this: LoadedResourcesContext,
+		options?: { extensions?: Array<{ path: string }>; force?: boolean; showDiagnosticsWhenQuiet?: boolean },
+	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
 	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
 };
@@ -134,6 +169,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
 			getHideThinkingBlock: () => false,
+			getOutputPad: () => 1,
 			getEditorPaddingX: () => 1,
 			getAutocompleteMaxVisible: () => 10,
 			getShowHardwareCursor: () => false,
@@ -183,7 +219,56 @@ function getMessageText(event: MessageEvent): string {
 		.join("");
 }
 
+function createLoadedResourcesContext(): LoadedResourcesContext {
+	return {
+		loadedResourcesContainer: new Container(),
+		chatContainer: new Container(),
+		options: { verbose: true },
+		settingsManager: { getQuietStartup: () => false },
+		sessionManager: { getCwd: () => "/repo" },
+		session: {
+			promptTemplates: [],
+			resourceLoader: {
+				getAgentsFiles: () => ({ agentsFiles: [{ path: "/repo/AGENTS.md" }], diagnostics: [] }),
+				getSkills: () => ({ skills: [], diagnostics: [] }),
+				getPrompts: () => ({ prompts: [], diagnostics: [] }),
+				getThemes: () => ({ themes: [], diagnostics: [] }),
+				getExtensions: () => ({ extensions: [], errors: [] }),
+			},
+			extensionRunner: {
+				getCommandDiagnostics: () => [],
+				getShortcutDiagnostics: () => [],
+				getRegisteredCommands: () => [],
+			},
+		},
+		getStartupExpansionState: () => false,
+		formatDisplayPath: (resourcePath) => resourcePath,
+		formatContextPath: (resourcePath) => resourcePath.replace("/repo/", ""),
+		getBuiltInCommandConflictDiagnostics: () => [],
+	};
+}
+
 describe("regression #5943: session_start transient UI", () => {
+	it("renders loaded resources before restored messages without stale entries", () => {
+		initTheme("dark", false);
+		const context = createLoadedResourcesContext();
+		const root = new Container();
+		root.addChild(context.loadedResourcesContainer);
+		root.addChild(context.chatContainer);
+		context.loadedResourcesContainer.addChild(new Text("stale resources", 0, 0));
+		context.chatContainer.addChild(new Text("restored message", 0, 0));
+
+		interactiveModePrototype.showLoadedResources.call(context);
+
+		const chatRendered = context.chatContainer.render(80).join("\n");
+		expect(chatRendered).toContain("restored message");
+		expect(chatRendered).not.toContain("[Context]");
+
+		const rendered = root.render(80).join("\n");
+		expect(rendered).not.toContain("stale resources");
+		expect(rendered.indexOf("[Context]")).toBeLessThan(rendered.indexOf("restored message"));
+	});
+
 	it("renders replacement session state before session_start handlers can notify", async () => {
 		const events: string[] = [];
 		const harness = await createHarness({

@@ -41,7 +41,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Setup Node.js
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
@@ -56,15 +56,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p .release-assets
+          mkdir -p release-assets
 
           VERSION="${RELEASE_TAG}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
-          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out .release-assets/RELEASE_NOTES.md
+          node scripts/release-notes.mjs extract --version "${VERSION}" --tag "${RELEASE_TAG}" --out release-assets/RELEASE_NOTES.md
+          node scripts/generate-coding-agent-install-lock.mjs --check
+          cp packages/coding-agent/install-lock/package.json release-assets/pi-coding-agent-install-package.json
+          cp packages/coding-agent/install-lock/package-lock.json release-assets/pi-coding-agent-install-package-lock.json
 
           cd packages/coding-agent/binaries
 
-          release_assets=(
+          binary_assets=(
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -73,18 +76,30 @@ jobs:
             pi-windows-arm64.zip
           )
 
-          for asset in "${release_assets[@]}"; do
+          for asset in "${binary_assets[@]}"; do
             test -f "${asset}"
           done
 
-          sha256sum "${release_assets[@]}" > "${GITHUB_WORKSPACE}/.release-assets/SHA256SUMS"
-          cp "${release_assets[@]}" "${GITHUB_WORKSPACE}/.release-assets/"
+          cp "${binary_assets[@]}" "${GITHUB_WORKSPACE}/release-assets/"
+
+          cd "${GITHUB_WORKSPACE}/release-assets"
+          release_assets=(
+            pi-darwin-arm64.tar.gz
+            pi-darwin-x64.tar.gz
+            pi-linux-x64.tar.gz
+            pi-linux-arm64.tar.gz
+            pi-windows-x64.zip
+            pi-windows-arm64.zip
+            pi-coding-agent-install-package.json
+            pi-coding-agent-install-package-lock.json
+          )
+          sha256sum "${release_assets[@]}" > SHA256SUMS
 
       - name: Upload GitHub release payload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets-${{ env.RELEASE_TAG }}
-          path: .release-assets/*
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 14
 
@@ -117,6 +132,8 @@ jobs:
             pi-linux-arm64.tar.gz
             pi-windows-x64.zip
             pi-windows-arm64.zip
+            pi-coding-agent-install-package.json
+            pi-coding-agent-install-package-lock.json
             SHA256SUMS
             RELEASE_NOTES.md
           )
@@ -142,6 +159,8 @@ jobs:
             pi-linux-arm64.tar.gz
             pi-windows-x64.zip
             pi-windows-arm64.zip
+            pi-coding-agent-install-package.json
+            pi-coding-agent-install-package-lock.json
             SHA256SUMS
           )
 
@@ -211,9 +230,6 @@ jobs:
 
       - name: Test
         run: npm test
-
-      - name: Verify release artifacts are committed
-        run: git diff --exit-code
 
       - name: Upgrade npm for trusted publishing
         run: |

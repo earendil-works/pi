@@ -96,6 +96,11 @@ describe("azure-openai-responses base URL normalization", () => {
 		expect(baseURL).toBe("https://marc-quicktests-resource.cognitiveservices.azure.com/openai/v1");
 	});
 
+	it("normalizes Microsoft Foundry root endpoints to /openai/v1", async () => {
+		const baseURL = await captureClientBaseUrl("https://marc-quicktests-resource.ai.azure.com");
+		expect(baseURL).toBe("https://marc-quicktests-resource.ai.azure.com/openai/v1");
+	});
+
 	it("normalizes Azure OpenAI root endpoints to /openai/v1", async () => {
 		const baseURL = await captureClientBaseUrl("https://my-resource.openai.azure.com");
 		expect(baseURL).toBe("https://my-resource.openai.azure.com/openai/v1");
@@ -109,6 +114,11 @@ describe("azure-openai-responses base URL normalization", () => {
 	it("preserves /openai/v1 endpoints", async () => {
 		const baseURL = await captureClientBaseUrl("https://my-resource.cognitiveservices.azure.com/openai/v1");
 		expect(baseURL).toBe("https://my-resource.cognitiveservices.azure.com/openai/v1");
+	});
+
+	it("normalizes /openai/v1/responses to /openai/v1", async () => {
+		const baseURL = await captureClientBaseUrl("https://my-resource.services.ai.azure.com/openai/v1/responses");
+		expect(baseURL).toBe("https://my-resource.services.ai.azure.com/openai/v1");
 	});
 
 	it("preserves explicit non-Azure proxy paths", async () => {

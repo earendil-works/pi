@@ -85,6 +85,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 			cwd: options.cwd,
 			sessionId: id,
 			parentSessionPath: options.parentSessionPath,
+			metadata: options.metadata,
 		});
 		return toSession(storage);
 	}
@@ -150,6 +151,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 				cwd: options.cwd,
 				sessionId: id,
 				parentSessionPath: options.parentSessionPath ?? sourceMetadata.path,
+				metadata: options.metadata ?? sourceMetadata.metadata,
 			},
 		);
 		for (const entry of forkedEntries) {

@@ -12,7 +12,7 @@ export const DEEPSEEK_MODELS = {
 		baseUrl: "https://api.deepseek.com",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 0.14,
@@ -31,7 +31,7 @@ export const DEEPSEEK_MODELS = {
 		baseUrl: "https://api.deepseek.com",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 0.435,

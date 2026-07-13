@@ -93,6 +93,7 @@ ${conversationText}
 				{
 					apiKey: auth.apiKey,
 					headers: auth.headers,
+					env: auth.env,
 					maxTokens: 8192,
 					signal,
 				},

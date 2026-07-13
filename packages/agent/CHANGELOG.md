@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added `AgentToolResult.addedToolNames` propagation to `ToolResultMessage` so tools introduced by a result can be loaded from that transcript point onward ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
+
+## [0.80.6] - 2026-07-09
+
+### Added
+
+- Added the `max` model thinking level after `xhigh`.
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Added
+
+- Added configurable harness session context entry transforms and custom-entry message projectors.
+- Added custom metadata support in JSONL session headers ([#6417](https://github.com/earendil-works/pi/pull/6417) by [@ArcadiaLin](https://github.com/ArcadiaLin)).
+- Exported `InMemorySessionStorage` and `JsonlSessionStorage` ([#6435](https://github.com/earendil-works/pi/issues/6435)).
+
+### Fixed
+
+- Fixed harness split-turn compaction to serialize summary requests so single-concurrency providers are not asked to run overlapping generations ([#5536](https://github.com/earendil-works/pi/issues/5536)).
+- Fixed harness tool calls from length-truncated assistant messages to fail instead of waiting for missing tool results ([#6285](https://github.com/earendil-works/pi/pull/6285)).
+- Fixed harness session ingestion to normalize `null` message content before context projection, avoiding crashes on lax imported transcripts ([#6343](https://github.com/earendil-works/pi/pull/6343)).
+- Fixed non-positive or oversized harness shell execution timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
+- Fixed harness session storage short entry ids to use the random tail of the generated uuidv7 instead of the timestamp prefix, which was nearly constant between calls ([#6242](https://github.com/earendil-works/pi/issues/6242)).
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added `prepareNextTurnWithContext` for `Agent` users that need the next-turn loop context.
+
+### Fixed
+
+- Fixed `Agent.prepareNextTurn` to keep receiving the run abort signal instead of the next-turn context.
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed

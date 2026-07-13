@@ -66,7 +66,7 @@ export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
 	model: Model<any>;
 	/** API key for the model */
-	apiKey: string;
+	apiKey?: string;
 	/** Request headers for the model */
 	headers?: Record<string, string>;
 	/** Provider-scoped environment values for the model */

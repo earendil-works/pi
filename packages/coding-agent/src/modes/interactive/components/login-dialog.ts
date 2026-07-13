@@ -177,14 +177,22 @@ export class LoginDialogComponent extends Container implements Focusable {
 	}
 
 	/**
-	 * Show informational text without prompting for input.
+	 * Show informational text before another login step.
 	 */
-	showInfo(lines: string[]): void {
+	showDetails(lines: string[]): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		for (const line of lines) {
 			this.contentContainer.addChild(new Text(line, 1, 0));
 		}
+		this.tui.requestRender();
+	}
+
+	/**
+	 * Show informational text without prompting for input.
+	 */
+	showInfo(lines: string[]): void {
+		this.showDetails(lines);
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to close")})`, 1, 0));
 		this.tui.requestRender();

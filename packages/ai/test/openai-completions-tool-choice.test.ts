@@ -305,7 +305,7 @@ describe("openai-completions tool_choice", () => {
 				low: "high",
 				medium: "high",
 				high: "high",
-				xhigh: "max",
+				max: "max",
 			});
 		}
 	});
@@ -316,7 +316,7 @@ describe("openai-completions tool_choice", () => {
 			{ reasoning: "low", effort: "high" },
 			{ reasoning: "medium", effort: "high" },
 			{ reasoning: "high", effort: "high" },
-			{ reasoning: "xhigh", effort: "max" },
+			{ reasoning: "max", effort: "max" },
 		] as const;
 
 		for (const testCase of cases) {
@@ -343,9 +343,69 @@ describe("openai-completions tool_choice", () => {
 			).result();
 
 			const params = (payload ?? mockState.lastParams) as { thinking?: unknown; reasoning_effort?: string };
-			expect(params.thinking).toEqual({ type: "enabled" });
+			expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 			expect(params.reasoning_effort).toBe(testCase.effort);
 		}
+	});
+
+	it("preserves z.ai thinking when replaying reasoning_content", async () => {
+		const model = getModel("zai", "glm-5.2")!;
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			api: "openai-completions",
+			provider: "zai",
+			model: "glm-5.2",
+			content: [
+				{ type: "thinking", thinking: "prior reasoning", thinkingSignature: "reasoning_content" },
+				{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+		const toolResult: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: "call_1",
+			toolName: "read",
+			content: [{ type: "text", text: "contents" }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "Read README.md", timestamp: Date.now() },
+					assistantMessage,
+					toolResult,
+					{ role: "user", content: "Continue", timestamp: Date.now() },
+				],
+			},
+			{
+				apiKey: "test",
+				reasoning: "high",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			messages?: Array<Record<string, unknown>>;
+			thinking?: unknown;
+		};
+		const replayedAssistant = params.messages?.find((message) => message.role === "assistant");
+		expect(replayedAssistant).toMatchObject({ reasoning_content: "prior reasoning" });
+		expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 	});
 
 	it("omits z.ai GLM-5.2 reasoning_effort when thinking is off", async () => {
@@ -1187,6 +1247,7 @@ describe("openai-completions tool_choice", () => {
 				zaiToolStream: false,
 				supportsStrictMode: true,
 				sendSessionAffinityHeaders: false,
+				sessionAffinityFormat: "openai",
 				supportsLongCacheRetention: true,
 			},
 		);

@@ -581,7 +581,7 @@ describe("AuthStorage", () => {
 			expect(updated.google.key).toBe("google-key");
 		});
 
-		test("does not overwrite malformed auth file after load error", () => {
+		test("throws and does not overwrite malformed auth file after load error", () => {
 			writeAuthJson({
 				anthropic: { type: "api_key", key: "anthropic-key" },
 			});
@@ -590,10 +590,40 @@ describe("AuthStorage", () => {
 			writeFileSync(authJsonPath, "{invalid-json", "utf-8");
 
 			authStorage.reload();
-			authStorage.set("openai", { type: "api_key", key: "openai-key" });
+			expect(() => authStorage.set("openai", { type: "api_key", key: "openai-key" })).toThrow(
+				"Cannot update auth storage because it could not be loaded",
+			);
 
 			const raw = readFileSync(authJsonPath, "utf-8");
 			expect(raw).toBe("{invalid-json");
+			expect(authStorage.has("openai")).toBe(false);
+		});
+
+		test("throws when a stale auth lock prevents persistence", () => {
+			writeAuthJson({});
+			writeFileSync(`${authJsonPath}.lock`, "", "utf-8");
+
+			authStorage = AuthStorage.create(authJsonPath);
+			expect(() => authStorage.set("github-copilot", { type: "api_key", key: "copilot-key" })).toThrow(
+				"Cannot update auth storage because it could not be loaded",
+			);
+
+			expect(readFileSync(authJsonPath, "utf-8")).toBe("{}");
+			expect(authStorage.has("github-copilot")).toBe(false);
+		});
+
+		test("recovers from an earlier load error before persisting", () => {
+			writeAuthJson({});
+			const lockPath = `${authJsonPath}.lock`;
+			writeFileSync(lockPath, "", "utf-8");
+
+			authStorage = AuthStorage.create(authJsonPath);
+			rmSync(lockPath);
+			authStorage.set("github-copilot", { type: "api_key", key: "copilot-key" });
+
+			const updated = JSON.parse(readFileSync(authJsonPath, "utf-8")) as Record<string, { key: string }>;
+			expect(updated["github-copilot"].key).toBe("copilot-key");
+			expect(authStorage.has("github-copilot")).toBe(true);
 		});
 
 		test("reload records parse errors and drainErrors clears buffer", () => {

@@ -194,6 +194,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "buildContextEntries"
 	| "getHeader"
 	| "getEntries"
 	| "getTree"
@@ -317,6 +318,137 @@ export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEnt
 	return null;
 }
 
+function buildEntryIndex(entries: SessionEntry[], byId?: Map<string, SessionEntry>): Map<string, SessionEntry> {
+	if (byId) return byId;
+	const index = new Map<string, SessionEntry>();
+	for (const entry of entries) {
+		index.set(entry.id, entry);
+	}
+	return index;
+}
+
+function buildSessionPath(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionEntry[] {
+	const index = buildEntryIndex(entries, byId);
+	let leaf: SessionEntry | undefined;
+	if (leafId === null) {
+		return [];
+	}
+	if (leafId) {
+		leaf = index.get(leafId);
+	}
+	leaf ??= entries[entries.length - 1];
+	if (!leaf) {
+		return [];
+	}
+
+	const path: SessionEntry[] = [];
+	let current: SessionEntry | undefined = leaf;
+	while (current) {
+		path.push(current);
+		current = current.parentId ? index.get(current.parentId) : undefined;
+	}
+	path.reverse();
+	return path;
+}
+
+function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "thinkingLevel" | "model"> {
+	let thinkingLevel = "off";
+	let model: { provider: string; modelId: string } | null = null;
+
+	for (const entry of path) {
+		if (entry.type === "thinking_level_change") {
+			thinkingLevel = entry.thinkingLevel;
+		} else if (entry.type === "model_change") {
+			model = { provider: entry.provider, modelId: entry.modelId };
+		} else if (entry.type === "message" && entry.message.role === "assistant") {
+			model = { provider: entry.message.provider, modelId: entry.message.model };
+		}
+	}
+
+	return { thinkingLevel, model };
+}
+
+/**
+ * Project one selected session entry into LLM/runtime messages.
+ * Plain custom entries are display/state entries and do not participate in context.
+ */
+export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
+	if (entry.type === "message") {
+		const message = entry.message;
+		// Session files are parsed without validation; old versions, forks, or
+		// hand-edited files can contain messages with null/missing content.
+		if (
+			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
+			message.content == null
+		) {
+			return [{ ...message, content: [] }];
+		}
+		return [message];
+	}
+	if (entry.type === "custom_message") {
+		return [
+			createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
+		];
+	}
+	if (entry.type === "branch_summary" && entry.summary) {
+		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
+	}
+	if (entry.type === "compaction") {
+		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+	}
+	return [];
+}
+
+/**
+ * Build the active, compaction-aware session entry list.
+ *
+ * This follows the current leaf path. If the path contains compaction entries,
+ * the latest compaction is represented by the compaction entry itself, followed
+ * by the kept entries starting at firstKeptEntryId and all entries after the
+ * compaction entry. Older summarized entries are omitted.
+ */
+export function buildContextEntries(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionEntry[] {
+	const path = buildSessionPath(entries, leafId, byId);
+	let compaction: CompactionEntry | null = null;
+
+	for (const entry of path) {
+		if (entry.type === "compaction") {
+			compaction = entry;
+		}
+	}
+
+	if (!compaction) {
+		return path;
+	}
+
+	const compactionIdx = path.findIndex((entry) => entry.id === compaction.id);
+	if (compactionIdx < 0) {
+		return path;
+	}
+
+	const contextEntries: SessionEntry[] = [compaction];
+	let foundFirstKept = false;
+	for (let i = 0; i < compactionIdx; i++) {
+		const entry = path[i];
+		if (entry.id === compaction.firstKeptEntryId) {
+			foundFirstKept = true;
+		}
+		if (foundFirstKept) {
+			contextEntries.push(entry);
+		}
+	}
+	contextEntries.push(...path.slice(compactionIdx + 1));
+	return contextEntries;
+}
+
 /**
  * Build the session context from entries using tree traversal.
  * If leafId is provided, walks from that entry to root.
@@ -327,108 +459,9 @@ export function buildSessionContext(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionContext {
-	// Build uuid index if not available
-	if (!byId) {
-		byId = new Map<string, SessionEntry>();
-		for (const entry of entries) {
-			byId.set(entry.id, entry);
-		}
-	}
-
-	// Find leaf
-	let leaf: SessionEntry | undefined;
-	if (leafId === null) {
-		// Explicitly null - return no messages (navigated to before first entry)
-		return { messages: [], thinkingLevel: "off", model: null };
-	}
-	if (leafId) {
-		leaf = byId.get(leafId);
-	}
-	if (!leaf) {
-		// Fallback to last entry (when leafId is undefined)
-		leaf = entries[entries.length - 1];
-	}
-
-	if (!leaf) {
-		return { messages: [], thinkingLevel: "off", model: null };
-	}
-
-	// Walk from leaf to root, collecting path
-	const path: SessionEntry[] = [];
-	let current: SessionEntry | undefined = leaf;
-	while (current) {
-		path.push(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
-	}
-	path.reverse();
-
-	// Extract settings and find compaction
-	let thinkingLevel = "off";
-	let model: { provider: string; modelId: string } | null = null;
-	let compaction: CompactionEntry | null = null;
-
-	for (const entry of path) {
-		if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "compaction") {
-			compaction = entry;
-		}
-	}
-
-	// Build messages and collect corresponding entries
-	// When there's a compaction, we need to:
-	// 1. Emit summary first (entry = compaction)
-	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
-	// 3. Emit messages after compaction
-	const messages: AgentMessage[] = [];
-
-	const appendMessage = (entry: SessionEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
-
-	if (compaction) {
-		// Emit summary first
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
-
-		// Find compaction index in path
-		const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-
-		// Emit kept messages (before compaction, starting from firstKeptEntryId)
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = path[i];
-			if (entry.id === compaction.firstKeptEntryId) {
-				foundFirstKept = true;
-			}
-			if (foundFirstKept) {
-				appendMessage(entry);
-			}
-		}
-
-		// Emit messages after compaction
-		for (let i = compactionIdx + 1; i < path.length; i++) {
-			const entry = path[i];
-			appendMessage(entry);
-		}
-	} else {
-		// No compaction - emit all messages, handle branch summaries and custom messages
-		for (const entry of path) {
-			appendMessage(entry);
-		}
-	}
-
+	const path = buildSessionPath(entries, leafId, byId);
+	const { thinkingLevel, model } = getSessionContextSettings(path);
+	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
 	return { messages, thinkingLevel, model };
 }
 
@@ -795,10 +828,13 @@ export class SessionManager {
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
+			// If file was empty, initialize it with a valid session header. If it was
+			// non-empty but did not parse as a pi session, fail without modifying it.
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
+				if (statSync(explicitPath).size > 0) {
+					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+				}
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
@@ -839,6 +875,7 @@ export class SessionManager {
 		this.fileEntries = [header];
 		this.byId.clear();
 		this.labelsById.clear();
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
 
@@ -1162,6 +1199,14 @@ export class SessionManager {
 	}
 
 	/**
+	 * Build the active, compaction-aware entry list for context/rendering.
+	 * Uses tree traversal from current leaf.
+	 */
+	buildContextEntries(): SessionEntry[] {
+		return buildContextEntries(this.getEntries(), this.leafId, this.byId);
+	}
+
+	/**
 	 * Build the session context (what gets sent to the LLM).
 	 * Uses tree traversal from current leaf.
 	 */
@@ -1431,8 +1476,8 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options);
 	}
 
 	/**

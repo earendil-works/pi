@@ -10,6 +10,7 @@ import type {
 	AssistantMessageEventStream,
 	Context,
 	Model,
+	ModelCostRates,
 	ModelThinkingLevel,
 	ProviderHeaders,
 	ProviderStreams,
@@ -383,18 +384,28 @@ export function hasApi<TApi extends Api>(model: Model<Api>, api: TApi): model is
 }
 
 export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {
+	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+	let rates: ModelCostRates = model.cost;
+	let matchedThreshold = -1;
+	for (const tier of model.cost.tiers ?? []) {
+		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
+			rates = tier;
+			matchedThreshold = tier.inputTokensAbove;
+		}
+	}
+
 	// Anthropic charges 2x base input for 1h cache writes.
 	const longWrite = usage.cacheWrite1h ?? 0;
 	const shortWrite = usage.cacheWrite - longWrite;
-	usage.cost.input = (model.cost.input / 1000000) * usage.input;
-	usage.cost.output = (model.cost.output / 1000000) * usage.output;
-	usage.cost.cacheRead = (model.cost.cacheRead / 1000000) * usage.cacheRead;
-	usage.cost.cacheWrite = (model.cost.cacheWrite * shortWrite + model.cost.input * 2 * longWrite) / 1000000;
+	usage.cost.input = (rates.input / 1000000) * usage.input;
+	usage.cost.output = (rates.output / 1000000) * usage.output;
+	usage.cost.cacheRead = (rates.cacheRead / 1000000) * usage.cacheRead;
+	usage.cost.cacheWrite = (rates.cacheWrite * shortWrite + rates.input * 2 * longWrite) / 1000000;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 	return usage.cost;
 }
 
-const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
@@ -402,7 +413,7 @@ export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>)
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
-		if (level === "xhigh") return mapped !== undefined;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
 		return true;
 	});
 }

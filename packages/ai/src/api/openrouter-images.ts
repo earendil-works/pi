@@ -16,6 +16,7 @@ import type {
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
@@ -99,7 +100,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 		return output;
 	} catch (error) {
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-		output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+		output.errorMessage = formatProviderError(normalizeProviderError(error));
 		return output;
 	}
 };

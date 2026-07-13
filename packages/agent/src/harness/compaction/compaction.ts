@@ -653,9 +653,9 @@ export async function compact(
 	let summary: string;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		const [historyResult, turnPrefixResult] = await Promise.all([
+		const historyResult =
 			messagesToSummarize.length > 0
-				? generateSummary(
+				? await generateSummary(
 						messagesToSummarize,
 						models,
 						model,
@@ -665,10 +665,16 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 					)
-				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
-			generateTurnPrefixSummary(turnPrefixMessages, models, model, settings.reserveTokens, signal, thinkingLevel),
-		]);
+				: ok<string, CompactionError>("No prior history.");
 		if (!historyResult.ok) return err(historyResult.error);
+		const turnPrefixResult = await generateTurnPrefixSummary(
+			turnPrefixMessages,
+			models,
+			model,
+			settings.reserveTokens,
+			signal,
+			thinkingLevel,
+		);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
 		summary = `${historyResult.value}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value}`;
 	} else {

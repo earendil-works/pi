@@ -136,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 					const response = await complete(
 						ctx.model!,
 						{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-						{ apiKey: auth.apiKey, headers: auth.headers, signal: loader.signal },
+						{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal: loader.signal },
 					);
 
 					if (response.stopReason === "aborted") {

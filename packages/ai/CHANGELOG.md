@@ -1,5 +1,91 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+
+- Removed the `OpenAIResponsesCompat.sendSessionIdHeader` flag. Session-affinity behavior is now controlled by `compat.sessionAffinityFormat` (`"openai"`, `"openai-nosession"`, or `"openrouter"`). Replace `sendSessionIdHeader: false` with `sessionAffinityFormat: "openai-nosession"` ([#6366](https://github.com/earendil-works/pi/issues/6366)).
+
+### Added
+
+- Added cache-friendly dynamic tool loading. `ToolResultMessage.addedToolNames` marks where tools from `Context.tools` became available; Anthropic and OpenAI Responses use native deferred loading so late tools stay out of the cached prefix, while other providers continue using `Context.tools` normally ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
+- Added native `xhigh` and `max` thinking levels for Claude Fable 5 across all generated provider catalogs ([#6490](https://github.com/earendil-works/pi-mono/pull/6490) by [@davidbrai](https://github.com/davidbrai)).
+- Added `toolChoice` support to OpenAI Codex Responses, including `"required"` to force a tool call.
+- Added `toolChoice` support to OpenAI Responses, including required and named tool selection.
+
+### Fixed
+
+- Fixed OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed the GitHub Copilot `mai-code-1-flash-picker` model to route through the `/responses` endpoint.
+- Fixed Amazon Bedrock requests to use the generic `apiKey` stream option as a Bedrock bearer token.
+- Fixed OpenRouter OpenAI-compatible session IDs to use the `x-session-id` header instead of OpenAI-specific session-affinity fields ([#6366](https://github.com/earendil-works/pi/issues/6366)).
+
+## [0.80.6] - 2026-07-09
+
+### Added
+- Added a separate opt-in `max` thinking level, including native `xhigh` and `max` support for GPT-5.6 and Anthropic adaptive-thinking effort metadata matching Anthropic's documentation: `max` on all adaptive Claude models, native `xhigh` on Opus 4.7/4.8, Sonnet 5, and Fable 5 only.
+- Added request-wide input-token pricing tiers to model cost metadata and usage cost calculation.
+
+### Fixed
+
+- Fixed post-compaction output-token budgeting to ignore stale assistant usage from before the compaction boundary ([#6464](https://github.com/earendil-works/pi/issues/6464)).
+- Fixed GPT-5.4 and GPT-5.5 long-context cost accounting while retaining the intentional 272K default context limit for models that require an explicit override.
+- Fixed GPT-5.6 metadata to keep direct OpenAI requests in the 272K short-context tier while exposing the Codex backend's 372K context window with long-context pricing, and removed the nonexistent bare `gpt-5.6` alias from the OpenAI and Azure OpenAI Responses catalogs.
+- Fixed Anthropic message conversion to preserve thinking blocks with empty thinking text but a valid signature instead of dropping them, avoiding thinking-block errors on newer Claude models ([#6457](https://github.com/earendil-works/pi/pull/6457) by [@davidbrai](https://github.com/davidbrai)).
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Fixed
+
+- Fixed retry classification for gRPC `ResourceExhausted` provider errors such as NVIDIA NIM transient exhaustion responses ([#6449](https://github.com/earendil-works/pi/pull/6449) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed low-level message transformation to normalize `null` message content before provider conversion, avoiding crashes on lax imported transcripts ([#6343](https://github.com/earendil-works/pi/pull/6343)).
+- Fixed Xiaomi Token Plan model metadata to follow the upstream models.dev token-plan catalogs, removing unsupported `mimo-v2-omni` variants ([#6204](https://github.com/earendil-works/pi/issues/6204)).
+- Fixed GitHub Copilot device-code login polling to wait before the first token poll, avoiding incorrect device-code failures for some users after browser authorization ([#6187](https://github.com/earendil-works/pi/issues/6187)).
+- Fixed OAuth device-code polling to honor the server-provided `slow_down` interval instead of only applying the RFC 8628 5-second increment, so GitHub Copilot login recovers instead of appearing to hang when polls arrive early (e.g. WSL/VM clock drift) ([#6187](https://github.com/earendil-works/pi/issues/6187)).
+- Fixed OpenAI Codex user-agent construction to synchronously load Node OS metadata, avoiding a startup race that could report `pi (browser)` in Node/Bun.
+- Fixed Fireworks GLM 5.2 Fast to use the OpenAI-compatible endpoint and `thinkingLevelMap`, aligning it with GLM 5.2 ([#6195](https://github.com/earendil-works/pi/issues/6195)).
+- Fixed Amazon Bedrock prompt-cache points for Claude Fable 5 and Claude Sonnet 5 ([#6235](https://github.com/earendil-works/pi/issues/6235)).
+- Fixed Amazon Bedrock Claude 5 prompt-cache pricing metadata by removing stale fallback overrides.
+- Fixed DS4 server context overflow detection for `Prompt has ... tokens, but the configured context size is ... tokens` errors ([#6262](https://github.com/earendil-works/pi/issues/6262)).
+- Fixed OpenAI Codex WebSocket sessions to rotate cached connections before the backend's 60-minute limit, avoiding connection-limit failures on long sessions ([#6268](https://github.com/earendil-works/pi/issues/6268)).
+- Fixed Cloudflare Workers AI / AI Gateway auth to fall back to the ambient `CLOUDFLARE_ACCOUNT_ID` (and `CLOUDFLARE_GATEWAY_ID`) when the stored credential carries only the API key, so `/login`-style key-only credentials no longer leave the `{CLOUDFLARE_ACCOUNT_ID}` placeholder unresolved and return 404 ([#6021](https://github.com/earendil-works/pi/issues/6021)).
+- Fixed OpenAI Completions and Responses providers to send `(no tool output)` instead of `(see attached image)` when a tool result has empty text and no image content, preventing the model from hallucinating image attachments.
+- Fixed OpenAI Responses and Azure OpenAI Responses requests to avoid sending `max_output_tokens` values below the provider minimum ([#6265](https://github.com/earendil-works/pi/issues/6265)).
+- Fixed retry classification for Cloudflare 524 timeout responses ([#6239](https://github.com/earendil-works/pi/issues/6239)).
+- Fixed retry classification for Bun fetch socket-drop errors such as `socket connection was closed`, so transient stream disconnects retry automatically ([#6431](https://github.com/earendil-works/pi/issues/6431)).
+- Fixed GitHub Copilot extended context window models (Claude Opus 4.7/4.8, Claude Opus 4.6, Claude Sonnet 4.6/5, Claude Fable 5, GPT-5.3 Codex, GPT-5.4, GPT-5.5) to use `contextWindow: 1000000`, preventing premature compaction and under-budgeting ([#6439](https://github.com/earendil-works/pi/issues/6439)).
+
+### Added
+
+- Added OpenAI GPT-5.6 model metadata for `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`, plus verified `openai-codex` support for `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
+- Refreshed generated model catalogs from models.dev, adding newly listed models including Kimi K2.7 Code for GitHub Copilot and Fable 5 to several providers ([#6256](https://github.com/earendil-works/pi/issues/6256)).
+- Added Claude Sonnet 5 to the GitHub Copilot model catalog ([#6200](https://github.com/earendil-works/pi/issues/6200)).
+- Added zstd request-body compression for the OpenAI Codex Responses SSE transport. Requests are sent with `Content-Encoding: zstd` when Node/Bun zstd support is available; the WebSocket transport is unchanged.
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added Anthropic Claude Sonnet 5 model metadata for Anthropic-compatible, Bedrock, OpenRouter, and Vercel AI Gateway providers.
+- Added Azure OpenAI Responses support for modern Microsoft Foundry endpoint URLs ([#6004](https://github.com/earendil-works/pi/pull/6004) by [@gukoff](https://github.com/gukoff)).
+- Added an optional `reasoning` field to `Usage` reporting reasoning/thinking token counts as a subset of `output`. Populated for Anthropic (`output_tokens_details.thinking_tokens`), OpenAI Responses/Codex/Azure (`output_tokens_details.reasoning_tokens`), OpenAI Completions (`completion_tokens_details.reasoning_tokens`), and Google Generative AI / Vertex (`thoughtsTokenCount`). Bedrock Converse and Mistral are not populated because those APIs do not return a reasoning token breakdown ([#6057](https://github.com/earendil-works/pi/issues/6057)).
+
+### Changed
+
+- Changed OpenAI Codex Responses SSE response-header waits to use the configured HTTP timeout instead of the previous fixed 20 second timeout, reducing false timeouts on slow connections ([#4945](https://github.com/earendil-works/pi/issues/4945)).
+
+### Fixed
+
+- Fixed Claude Sonnet 5 metadata to use adaptive thinking payloads for Anthropic-compatible and Bedrock requests.
+- Fixed generated Xiaomi MiMo model pricing to match current pay-as-you-go pricing from models.dev ([#6138](https://github.com/earendil-works/pi/issues/6138)).
+- Fixed provider HTTP errors to include response bodies instead of opaque SDK messages ([#5832](https://github.com/earendil-works/pi/pull/5832) by [@stephanmck](https://github.com/stephanmck)).
+- Fixed `streamSimple()` to send a context-aware max-token cap so providers that count input and output against one context window do not reject long requests ([#5595](https://github.com/earendil-works/pi/issues/5595)).
+- Fixed OpenAI Responses streams to preserve reasoning replay state when output items finish out of order ([#6009](https://github.com/earendil-works/pi/issues/6009)).
+- Fixed retry classification for provider errors that explicitly tell callers to retry the request ([#6019](https://github.com/earendil-works/pi/issues/6019)).
+- Fixed Z.AI preserved thinking requests to send `thinking.clear_thinking: false` when thinking is enabled, allowing replayed `reasoning_content` to participate in provider caching ([#6083](https://github.com/earendil-works/pi/issues/6083)).
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed

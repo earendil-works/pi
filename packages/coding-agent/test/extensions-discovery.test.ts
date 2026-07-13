@@ -335,11 +335,14 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].tools.has("parse_duration")).toBe(true);
 	});
 
-	it("registers message renderers", async () => {
+	it("registers message and entry renderers", async () => {
 		const extCode = `
 			export default function(pi) {
 				pi.registerMessageRenderer("my-custom-type", (message, options, theme) => {
 					return null; // Use default rendering
+				});
+				pi.registerEntryRenderer("my-entry-type", (entry, options, theme) => {
+					return null;
 				});
 			}
 		`;
@@ -350,6 +353,7 @@ describe("extensions discovery", () => {
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
 		expect(result.extensions[0].messageRenderers.has("my-custom-type")).toBe(true);
+		expect(result.extensions[0].entryRenderers?.has("my-entry-type")).toBe(true);
 	});
 
 	it("reports error when extension throws during initialization", async () => {

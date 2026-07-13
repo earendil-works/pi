@@ -30,7 +30,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -100,7 +100,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -119,7 +119,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -138,7 +138,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -191,6 +191,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -207,7 +208,9 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,
@@ -226,7 +229,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen/v1",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","supportsLongCacheRetention":false,"requiresReasoningContentOnAssistantMessages":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 0.14,
@@ -245,7 +248,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen/v1",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","requiresReasoningContentOnAssistantMessages":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 0,
@@ -264,7 +267,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen/v1",
 		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","supportsLongCacheRetention":false,"requiresReasoningContentOnAssistantMessages":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},
 		input: ["text"],
 		cost: {
 			input: 1.74,
@@ -671,6 +674,24 @@ export const OPENCODE_MODELS = {
 		contextWindow: 1050000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
+	"grok-4.5": {
+		id: "grok-4.5",
+		name: "Grok 4.5",
+		api: "openai-completions",
+		provider: "opencode",
+		baseUrl: "https://opencode.ai/zen/v1",
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens"},
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 2,
+			output: 6,
+			cacheRead: 0.5,
+			cacheWrite: 0,
+		},
+		contextWindow: 500000,
+		maxTokens: 500000,
+	} satisfies Model<"openai-completions">,
 	"grok-build-0.1": {
 		id: "grok-build-0.1",
 		name: "Grok Build 0.1",
@@ -689,6 +710,24 @@ export const OPENCODE_MODELS = {
 		},
 		contextWindow: 256000,
 		maxTokens: 256000,
+	} satisfies Model<"openai-completions">,
+	"hy3-free": {
+		id: "hy3-free",
+		name: "Hy3 Free",
+		api: "openai-completions",
+		provider: "opencode",
+		baseUrl: "https://opencode.ai/zen/v1",
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens"},
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 256000,
+		maxTokens: 64000,
 	} satisfies Model<"openai-completions">,
 	"kimi-k2.5": {
 		id: "kimi-k2.5",

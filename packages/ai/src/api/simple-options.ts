@@ -1,9 +1,32 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.ts";
+import type {
+	Api,
+	Context,
+	Model,
+	SimpleStreamOptions,
+	StreamOptions,
+	ThinkingBudgets,
+	ThinkingLevel,
+} from "../types.ts";
+import { estimateContextTokens } from "../utils/estimate.ts";
 
-export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
+const CONTEXT_SAFETY_TOKENS = 4096;
+const MIN_MAX_TOKENS = 1;
+
+export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
+	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
+	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
+	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+}
+
+export function buildBaseOptions(
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+	apiKey?: string,
+): StreamOptions {
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens,
+		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		transport: options?.transport,
@@ -21,8 +44,8 @@ export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptio
 	};
 }
 
-export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh"> | undefined {
-	return effort === "xhigh" ? "high" : effort;
+export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
+	return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
 export function adjustMaxTokensForThinking(

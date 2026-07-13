@@ -32,6 +32,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -108,7 +109,7 @@ function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedR
 
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 interface OpenAICompatCacheControl {
@@ -463,10 +464,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			// Some providers via OpenRouter give additional information in this field.
+			// normalizeProviderError already stringifies the parsed body (error.error)
+			// into errorMessage, so only append the raw metadata when it is not already
+			// present to avoid double-printing it.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
+			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
+				output.errorMessage += `\n${rawMetadata}`;
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -482,7 +488,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 ): AssistantMessageEventStream => {
 	getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, options, options?.apiKey);
+	const base = buildBaseOptions(model, context, options, options?.apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 	const toolChoice = (options as OpenAICompletionsOptions | undefined)?.toolChoice;
@@ -513,9 +519,15 @@ function createClient(
 	}
 
 	if (sessionId && compat.sendSessionAffinityHeaders) {
-		headers.session_id = sessionId;
-		headers["x-client-request-id"] = sessionId;
-		headers["x-session-affinity"] = sessionId;
+		if (compat.sessionAffinityFormat === "openrouter") {
+			headers["x-session-id"] = sessionId;
+		} else {
+			if (compat.sessionAffinityFormat === "openai") {
+				headers.session_id = sessionId;
+			}
+			headers["x-client-request-id"] = sessionId;
+			headers["x-session-affinity"] = sessionId;
+		}
 	}
 
 	// Merge options headers last so they can override defaults
@@ -593,10 +605,10 @@ function buildParams(
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
-			thinking?: { type: "enabled" | "disabled" };
+			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
-		zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+		zaiParams.thinking = options?.reasoningEffort ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
 			const effort = mappedEffort === undefined ? options.reasoningEffort : mappedEffort;
@@ -1027,10 +1039,11 @@ export function convertMessages(
 
 				// Always send tool result with text (or placeholder if only images)
 				const hasText = textResult.length > 0;
+				const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
+					content: sanitizeSurrogates(toolResultText),
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
@@ -1107,6 +1120,7 @@ function parseChunkUsage(
 		completion_tokens?: number;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1130,6 +1144,7 @@ function parseChunkUsage(
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
+		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
@@ -1241,6 +1256,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
+		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||
@@ -1280,6 +1296,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
+		sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};
 }

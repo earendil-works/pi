@@ -54,6 +54,19 @@ describe("builtin providers", () => {
 		expect(result?.source).toBe("ANTHROPIC_OAUTH_TOKEN");
 	});
 
+	it("prompts for and stores a Bedrock API key", async () => {
+		const provider = amazonBedrockProvider();
+		const credential = await provider.auth.apiKey?.login?.({
+			prompt: async (prompt) => {
+				expect(prompt).toEqual({ type: "secret", message: "Enter Bedrock API key" });
+				return "bedrock-api-key";
+			},
+			notify: () => {},
+		});
+
+		expect(credential).toEqual({ type: "api_key", key: "bedrock-api-key" });
+	});
+
 	it("reports bedrock as configured from ambient AWS credentials without an api key", async () => {
 		const models = createModels({ authContext: fakeAuthContext({ AWS_PROFILE: "dev" }) });
 		models.setProvider(amazonBedrockProvider());
@@ -79,6 +92,26 @@ describe("builtin providers", () => {
 		});
 		configured.setProvider(cloudflareWorkersAIProvider());
 		const result = await configured.getAuth(model);
+		expect(result?.auth).toEqual({
+			apiKey: "cf-key",
+			baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
+		});
+		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
+	});
+
+	// Regression for #6021: a credential carrying only the API key (as stored
+	// by `/login`) must still resolve CLOUDFLARE_ACCOUNT_ID from ambient env.
+	it("falls back to ambient CLOUDFLARE_ACCOUNT_ID when the credential carries only the API key", async () => {
+		const provider = cloudflareWorkersAIProvider();
+		const model = builtinModels().getModels("cloudflare-workers-ai")[0];
+		const auth = provider.auth.apiKey;
+		if (!auth) throw new Error("expected api-key auth");
+
+		const result = await auth.resolve({
+			model,
+			ctx: fakeAuthContext({ CLOUDFLARE_ACCOUNT_ID: "account-id" }),
+			credential: { type: "api_key", key: "cf-key" },
+		});
 		expect(result?.auth).toEqual({
 			apiKey: "cf-key",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
