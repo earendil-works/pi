@@ -220,11 +220,15 @@ function getShellEnv(baseEnv?: NodeJS.ProcessEnv, extraEnv?: Record<string, stri
 
 function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
+		const taskkillPath = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
 		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+			const child = spawn(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
 				detached: true,
 				windowsHide: true,
+			});
+			child.on("error", () => {
+				// taskkill not found or cannot spawn — best-effort
 			});
 		} catch {
 			// Ignore errors.
