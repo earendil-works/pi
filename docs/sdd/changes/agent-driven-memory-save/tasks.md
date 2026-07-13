@@ -185,7 +185,7 @@
   - **验证**: `npm test` exits 0; all pre-existing tests still pass (no regressions).
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
-- [ ] 7.3 **memory-save-tool unit tests pass**
+- [x] 7.3 **memory-save-tool unit tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — all 7 unit cases pass.
   - **依赖**: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3
 
@@ -197,11 +197,11 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — all tests pass including new recent / topK-20 cases.
   - **依赖**: 6.1, 6.2, 6.3, 6.4
 
-- [ ] 7.6 **Regression: extraction pipeline tests pass**
+- [x] 7.6 **Regression: extraction pipeline tests pass**
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/extraction.test.ts test/extraction-oldid.test.ts test/extraction-prompt.test.ts` — fingerprint + oldId behavior unchanged.
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
-- [ ] 7.7 **Regression: webui PATCH route tests pass (supersedeIfSimilar 0.65 unchanged)**
+- [x] 7.7 **Regression: webui PATCH route tests pass (supersedeIfSimilar 0.65 unchanged)**
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `PATCH /api/memory/:id` cases pass.
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
