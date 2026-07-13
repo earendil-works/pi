@@ -281,6 +281,147 @@ describe("segmentMemorySaveCount", () => {
 });
 
 // ---------------------------------------------------------------------------
+// registerMemory hook resets segment counter at session boundaries (Task 4.1)
+//
+// Delta spec: counter resets at session_start AND session_compact, NOT at
+// before_agent_start (per-segment, not per-turn). Scenarios S22: counter
+// survives between turns within a segment.
+//
+// These tests exercise the public registerMemory(pi) entry point, capture
+// the hooks it registers on a mock pi, then fire each hook and assert
+// whether the module-level segmentMemorySaveCount was reset or preserved.
+// All heavy I/O the session_start handler triggers (runDecay, embeddings,
+// drift sweep) no-ops against a fresh DB — no mocks needed.
+// ---------------------------------------------------------------------------
+
+describe("registerMemory hooks reset segment counter at session boundaries (Task 4.1)", () => {
+	let memoryMod: typeof import("../memory.ts");
+	let handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>;
+	let tmpHome: string;
+
+	function makeMockPi() {
+		const map = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>();
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown> | unknown) => {
+				map.set(event, handler);
+			},
+			registerTool: () => {
+				// no-op — tool registration lives in other test files
+			},
+		};
+		return { pi, hooks: map };
+	}
+
+	beforeEach(async () => {
+		// Use a tmp HOME so the session_start handler's loadConfig() /
+		// MemoryIndex work targets an isolated directory and never sees
+		// the user's real ~/.pi/agent/settings.json.
+		tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "segment-counter-boundary-"));
+		process.env.HOME = tmpHome;
+
+		vi.resetModules();
+		// Re-resolve memory-save.ts AND memory.ts so the two modules
+		// share the same segmentMemorySaveCount binding (memory.ts
+		// imports resetSegmentMemorySaveCount from memory-save.ts).
+		mod = await import("../memory-save.ts");
+		memoryMod = await import("../memory.ts");
+
+		const { pi, hooks: captured } = makeMockPi();
+		memoryMod.registerMemory(pi as unknown as ExtensionAPI);
+		handlers = captured;
+	});
+
+	afterEach(async () => {
+		process.env.HOME = ORIGINAL_HOME;
+		await fs.rm(tmpHome, { recursive: true, force: true });
+	});
+
+	function getHandler(name: string) {
+		const h = handlers.get(name);
+		if (!h) throw new Error(`${name} hook not registered by registerMemory`);
+		return h;
+	}
+
+	// Spec scenario: "counter resets on session_start". The reset must
+	// fire EVEN if the counter was bumped up before the session started,
+	// and EVEN if the throttle guard would otherwise skip the handler
+	// body (so the reset call has to be at the very top of the handler,
+	// before the decay throttle). Verified by bumping the counter to 3
+	// and asserting it lands on 0 after session_start.
+	it("session_start event resets segment counter to 0 (even when counter was >0)", async () => {
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		expect(mod.getSegmentMemorySaveCount()).toBe(3);
+
+		const sessionStart = getHandler("session_start");
+		await sessionStart(
+			{ type: "session_start", reason: "startup" },
+			{ ui: {} },
+		);
+
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+	});
+
+	// Spec scenario: "counter resets on session_compact". The compact
+	// boundary closes the current segment and opens a new one — same
+	// invariant as session_start. The test fires session_compact with a
+	// realistic SessionCompactEvent shape so any future shape-checking
+	// in the handler would be caught here.
+	it("session_compact event resets segment counter to 0 (even when counter was >0)", async () => {
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		expect(mod.getSegmentMemorySaveCount()).toBe(2);
+
+		const sessionCompact = getHandler("session_compact");
+		await sessionCompact(
+			{
+				type: "session_compact",
+				reason: "manual",
+				willRetry: false,
+				fromExtension: false,
+				compactionEntry: {},
+			},
+			{ ui: {} },
+		);
+
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+	});
+
+	// Spec scenario S22: "counter survives between turns within a
+	// segment". before_agent_start fires on EVERY turn inside a segment;
+	// it MUST NOT touch the counter, otherwise the safety-net threshold
+	// would never accumulate across turns. Verify the counter persists
+	// across two consecutive before_agent_start fires with non-empty
+	// prompts.
+	it("before_agent_start event does NOT reset segment counter (counter persists across turns)", async () => {
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		expect(mod.getSegmentMemorySaveCount()).toBe(2);
+
+		const beforeAgentStart = getHandler("before_agent_start");
+		await beforeAgentStart(
+			{ type: "before_agent_start", prompt: "what did we decide about X?" },
+			{ ui: {} },
+		);
+		// Counter MUST survive the first turn.
+		expect(mod.getSegmentMemorySaveCount()).toBe(2);
+
+		await beforeAgentStart(
+			{ type: "before_agent_start", prompt: "another turn within the same segment" },
+			{ ui: {} },
+		);
+		// Counter MUST also survive the second turn (regression guard
+		// against an accidental reset being added inside the hook).
+		expect(mod.getSegmentMemorySaveCount()).toBe(2);
+
+		// And the counter keeps accumulating with normal tool calls.
+		mod.incrementSegmentMemorySaveCount();
+		expect(mod.getSegmentMemorySaveCount()).toBe(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // registerMemorySave — tool registration shape
 // ---------------------------------------------------------------------------
 
@@ -413,6 +554,44 @@ describe("registerTools wires memory_save", () => {
 		expect(memorySave).toBeDefined();
 		expect(typeof memorySave.promptSnippet).toBe("string");
 		expect(memorySave.promptSnippet.length).toBeGreaterThan(0);
+	});
+
+	// Task 3.2 — system prompt informs the agent about memory_save (delta
+	// spec: "before_agent_start system prompt informs agent about
+	// memory_save"). The scenario from scenarios.md L62-style:
+	//   "system prompt contains the Memory section"
+	// Verifies the `before_agent_start` hook registered by `registerTools`
+	// appends a `## Memory` section describing the `memory_save` tool to
+	// the returned systemPrompt. Without this injection the model has no
+	// in-context hint that it can durably record preferences/rules/
+	// processes, and the agent-driven write path (Task 2.2+) becomes
+	// unreachable from real sessions.
+	it("before_agent_start system prompt contains the Memory section (Task 3.2)", async () => {
+		const { registerTools } = await import("../tools.ts");
+		const { pi, handlers } = makeRegisterToolsSpyPi();
+
+		registerTools(pi);
+
+		const beforeHandler = handlers["before_agent_start"];
+		expect(beforeHandler).toBeDefined();
+		expect(typeof beforeHandler).toBe("function");
+
+		const result = await (beforeHandler as (event: unknown) => Promise<unknown>)({
+			systemPrompt: "BASE_SYSTEM_PROMPT",
+		});
+
+		expect(result).toBeDefined();
+		expect(typeof result).toBe("object");
+		const systemPrompt = (result as { systemPrompt?: string }).systemPrompt;
+		expect(typeof systemPrompt).toBe("string");
+		// The Memory section header must appear in the returned prompt so
+		// the model can recognize this as a documented tool surface (not
+		// just a side-effect from tool registration).
+		expect(systemPrompt).toContain("## Memory");
+		// The tool name itself must be mentioned so the model knows which
+		// function to invoke. Memory section starts with "You have a
+		// `memory_save` tool to durably record..."
+		expect(systemPrompt).toContain("memory_save");
 	});
 });
 
@@ -1038,5 +1217,156 @@ describe("memory_save execute (RED — scaffold throws 'not implemented')", () =
 		insertSpy.mockRestore();
 		updateSpy.mockRestore();
 		reindexSpy.mockRestore();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// tool_call hook — blocks write/edit to memory atoms (Task 3.3)
+//
+// Delta spec (spec.md §"tool_call hook blocks direct file writes to memory
+// atoms") requires the personal-assistant `tool_call` hook to block
+// `write` / `edit` tool calls whose resolved path falls under
+// `~/.pi/agent/memory/atoms/**`. Read operations must NOT be blocked. Bash
+// heredoc / redirect coverage is Task 3.4 and is intentionally not tested
+// here.
+//
+// The hook lives in tools.ts (registered by `registerTools`). We invoke
+// the captured handler with a synthesized tool_call event and assert the
+// returned `{block, reason}` (or `undefined`) per scenario.
+// ---------------------------------------------------------------------------
+
+describe("tool_call hook blocks write/edit to memory atoms (Task 3.3)", () => {
+	let tmpDir: string;
+	let handlers: Record<string, unknown>;
+
+	// Build a spy pi that captures every hook and tool registration, then
+	// runs `registerTools(pi)` against a freshly-imported tools module.
+	// `process.env.HOME` must be set BEFORE the import so the hook body's
+	// atomsDir resolution (which calls `homedir()`) lands inside tmpDir.
+	async function setupPiWithHome(homeDir: string): Promise<void> {
+		process.env.HOME = homeDir;
+		vi.resetModules();
+		const { registerTools } = await import("../tools.ts");
+		const tools: unknown[] = [];
+		handlers = {};
+		const pi = {
+			on: (event: string, handler: unknown) => {
+				handlers[event] = handler;
+			},
+			registerTool: (tool: unknown) => {
+				tools.push(tool);
+			},
+			sendUserMessage: () => Promise.resolve(),
+		};
+		registerTools(pi as unknown as ExtensionAPI);
+	}
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "tool-call-atom-guard-"));
+		await setupPiWithHome(tmpDir);
+	});
+
+	afterEach(async () => {
+		process.env.HOME = ORIGINAL_HOME;
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	// Task 3.3 — S9: write tool to atoms/process/foo.md is blocked.
+	// Helper resolves `~` against the test-controlled HOME so the path
+	// under test lands inside the configured atomsDir.
+	it("blocks write({path: '~/.pi/agent/memory/atoms/process/foo.md'}) (S9)", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "write",
+			input: {
+				path: "~/.pi/agent/memory/atoms/process/foo.md",
+				content: "should not be written",
+			},
+		});
+
+		expect(result).toBeDefined();
+		expect(typeof result).toBe("object");
+		const block = result as { block: boolean; reason: string };
+		expect(block.block).toBe(true);
+		// Reason must steer the agent toward the canonical tool name so
+		// the rejection doubles as a teaching message — mirrors the
+		// pre-emptive teaching pattern in
+		// buildTransferFileCanonicalPrompt.
+		expect(block.reason).toMatch(/memory_save/);
+		expect(block.reason).toContain("write");
+	});
+
+	// Task 3.3 — S9 (edit variant): edit tool to atoms/fact/a-123.md is
+	// blocked. We use a fixed UUID-shaped id so this also implicitly
+	// covers the canonical atom file path; the hook should still reject
+	// without caring about the id's exact value.
+	it("blocks edit({path: '~/.pi/agent/memory/atoms/fact/a-123.md'}) (S9 edit)", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "edit",
+			input: {
+				path: "~/.pi/agent/memory/atoms/fact/a-123.md",
+				oldText: "old body",
+				newText: "new body",
+			},
+		});
+
+		expect(result).toBeDefined();
+		expect(typeof result).toBe("object");
+		const block = result as { block: boolean; reason: string };
+		expect(block.block).toBe(true);
+		expect(block.reason).toMatch(/memory_save/);
+	});
+
+	// Task 3.3 — negative: write to a non-atom path is NOT blocked. The
+	// hook must let through arbitrary file paths; only the atoms subtree
+	// is guarded. This test would fail if the implementation accidentally
+	// blocked all writes (a too-broad regex like /atoms/).
+	it("does not block write({path: '/tmp/random.txt'})", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "write",
+			input: { path: "/tmp/random.txt", content: "harmless content" },
+		});
+
+		expect(result).toBeUndefined();
+	});
+
+	// Task 3.3 — S11: read of an atom file is NOT blocked. The hook only
+	// inspects `write` / `edit` tool calls; `read` falls through. The
+	// scenario explicitly calls this out so the agent can still inspect
+	// existing atom contents before calling memory_save.
+	it("does not block read({path: '~/.pi/agent/memory/atoms/fact/a-123.md'}) (S11)", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "read",
+			input: { path: "~/.pi/agent/memory/atoms/fact/a-123.md" },
+		});
+
+		expect(result).toBeUndefined();
+	});
+
+	// Task 3.3 — bash is intentionally NOT covered here (Task 3.4 owns
+	// heredoc / redirect detection). This test pins that the write/edit
+	// branch does NOT block plain bash commands, even if a `bash` tool
+	// call somehow flows past the current implementation's scope.
+	it("does not block bash({command: 'cat file'}) — bash is Task 3.4's scope", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: { command: "cat file" },
+		});
+
+		expect(result).toBeUndefined();
 	});
 });

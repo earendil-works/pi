@@ -55,6 +55,7 @@ import {
 	extractMemoriesWithCallLlm,
 	writeExtractionReport,
 } from "./extraction.ts";
+import { resetSegmentMemorySaveCount } from "./memory-save.ts";
 import type { MemoryAtomType } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -569,7 +570,20 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// The first session in a process always runs maintenance; subsequent
 	// session_start events within the DECAY_INTERVAL_MS window skip.
 	// Errors are swallowed so a broken path does not block startup.
+	//
+	// The agent-driven memory_save counter (memory-save.ts) is
+	// per-segment, not per-turn — it accumulates across turns inside a
+	// session and is used by the safety-net in
+	// session_before_compact to decide whether to surface a
+	// "you saved N atoms, did you forget X?" prompt. The counter
+	// resets at SESSION boundaries only, NOT at turn boundaries, so it
+	// MUST be zeroed on every session_start (and every session_compact,
+	// below) regardless of the throttle. Placing the reset BEFORE the
+	// decay throttle keeps that invariant true even on the second
+	// session_start within DECAY_INTERVAL_MS (where decay is skipped).
 	pi.on("session_start", async (_event, _ctx) => {
+		resetSegmentMemorySaveCount();
+
 		const now = Date.now();
 		if (now - lastDecayAt < DECAY_INTERVAL_MS) return;
 		lastDecayAt = now;
@@ -674,6 +688,19 @@ export function registerMemory(pi: ExtensionAPI): void {
 		} finally {
 			index.close();
 		}
+	});
+
+	// session_compact — reset segment counter at compaction boundary.
+	//
+	// The agent-driven memory_save counter is per-segment, NOT per-turn
+	// (see session_start comment above for the rationale). Compaction
+	// closes the current segment and opens a new one — every /compact
+	// or threshold / overflow compaction starts a fresh counter so the
+	// safety-net prompt in session_before_compact doesn't keep firing
+	// on stale data from before the compaction. Companion reset lives
+	// in the session_start handler above.
+	pi.on("session_compact", async (_event, _ctx) => {
+		resetSegmentMemorySaveCount();
 	});
 
 	// before_agent_start — Task 5.1 cleanup-only.
