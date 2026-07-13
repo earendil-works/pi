@@ -822,6 +822,47 @@ const WebFetchParams = Type.Object({
 });
 
 // ============================================================================
+// Memory Atom Path Guard (Task 3.3)
+// ============================================================================
+//
+// Agent must use the `memory_save` tool for atoms — writing `.md` files
+// directly under `~/.pi/agent/memory/atoms/` produces "ghost atoms"
+// (filesystem entries with no `memory_index` row that recall can't find).
+// The `tool_call` hook blocks `write` / `edit` whose resolved path is
+// under `atomsDir`. `read` is intentionally NOT blocked so the agent
+// can inspect existing atoms before deciding to update. Bash heredoc /
+// redirect detection lives in Task 3.4.
+
+/**
+ * Return true when `rawPath` resolves to a location under `atomsDir`.
+ *
+ * `rawPath` may start with `~` (or `~/...`); we expand to `process.env.HOME`
+ * first, falling back to `os.homedir()`. The match uses a regex anchored
+ * to the atomsDir prefix (escaping any regex metachars in the path),
+ * followed by `/` or end-of-string — so `${atomsDir}foo` does NOT match
+ * `${atomsDir}` accidentally.
+ *
+ * Mirrors the regex-anchor style of `memory.ts:makeAtomPathRegex` (line
+ * 233), but is intentionally broader: it accepts any suffix under
+ * atomsDir, not just `${atomsDir}/${type}/${uuid}.md`. The strict
+ * uuid-style check is the read-hook's job; this guard only needs to
+ * know "is this anywhere inside atomsDir?" to decide whether to block.
+ */
+function isUnderAtomsDir(rawPath: string, atomsDir: string): boolean {
+	const home = process.env.HOME || homedir();
+	let resolved = rawPath;
+	if (resolved === "~") {
+		resolved = home;
+	} else if (resolved.startsWith("~/")) {
+		resolved = home + resolved.slice(1);
+	}
+	// Escape regex metachars — same character class as memory.ts:237 so
+	// the two helpers stay visually aligned for future maintainers.
+	const escaped = atomsDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`^${escaped}(?:/|$)`).test(resolved);
+}
+
+// ============================================================================
 // Tool Registration
 // ============================================================================
 
@@ -866,12 +907,28 @@ export function registerTools(pi: ExtensionAPI): void {
 			"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
 		].join("\n");
 
+		const memorySection = [
+			"",
+			"## Memory",
+			"",
+			"You have a `memory_save` tool to durably record important facts, rules, and processes.",
+			"Use it proactively when the user states a preference, defines a rule, or describes a workflow.",
+			"",
+			"Rules:",
+			"  1. Save DURABLE knowledge only — preferences, rules, conventions, recurring processes. Do NOT save transient chat, tool outputs, or speculative guesses.",
+			"  2. If `memory_save` returns `{action:\"skipped\", reason:\"duplicate_content\", existing_id}`, an atom with the same content already exists — do not retry.",
+			"  3. If you need to update an existing atom, pass `id` in the call. To create a new one, omit `id`.",
+			"  4. Set `importance` honestly (0-1): 0=trivial, 0.5=default, 1=critical. Don't inflate.",
+			"  5. Tags should be lowercase, hyphen-separated, 1-3 words each, ≤10 tags.",
+		].join("\n");
+
 		return {
 			systemPrompt:
 				event.systemPrompt +
 				planningSection +
 				(remotePathsPrompt ? "\n\n" + remotePathsPrompt : "") +
-				(transferFilePrompt ? "\n\n" + transferFilePrompt : ""),
+				(transferFilePrompt ? "\n\n" + transferFilePrompt : "") +
+				memorySection,
 		};
 	});
 
@@ -928,6 +985,7 @@ export function registerTools(pi: ExtensionAPI): void {
 
 	// ============================================================================
 	// Hook: tool_call — client-side guardrails for satellite_remote_exec
+	// + memory-atom path guard
 	//
 	// Runs in the agent's process, before the MCP round-trip. Blocks bad
 	// calls with a friendly reason (no token burn on the server, no
@@ -935,6 +993,8 @@ export function registerTools(pi: ExtensionAPI): void {
 	//   - nested "args" wrapper / missing "tool" field
 	//   - paths outside mcp.json's remotePathPattern
 	//   - bash(cat|sed -i|echo>) — substitute the dedicated sub-op (local guardrail removed)
+	//   - write/edit targeting ~/.pi/agent/memory/atoms/** — must go through
+	//     memory_save so the row lands in memory_index (Task 3.3).
 	// ============================================================================
 
 	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {
@@ -946,6 +1006,25 @@ export function registerTools(pi: ExtensionAPI): void {
 			const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
 			if (validation) return validation;
 			return interceptTransferCall(event);
+		}
+
+		// 2. Memory atom path guard (Task 3.3) — block write/edit to
+		//    ~/.pi/agent/memory/atoms/**. The agent must use the
+		//    memory_save tool so the .md write is paired with a
+		//    memory_index row + bge-m3 reindex. Read is intentionally
+		//    unblocked so the agent can inspect existing atoms. Bash
+		//    heredoc/redirect detection lives in Task 3.4.
+		if (event.toolName === "write" || event.toolName === "edit") {
+			const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
+			const rawPath = (event.input.path ?? event.input.file_path) as string | undefined;
+			if (typeof rawPath === "string" && isUnderAtomsDir(rawPath, atomsDir)) {
+				return {
+					block: true,
+					reason:
+						"memory atoms must be written via the memory_save tool, not direct file write/edit. " +
+						"Use memory_save({type, title, content, ...}) instead.",
+				};
+			}
 		}
 
 		return undefined;
