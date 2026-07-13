@@ -97,13 +97,13 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `memory_save tool registered with name memory_save` test PASS (mock pi captures the registration).
   - **依赖**: 2.7
 
-- [ ] 3.2 **Add memory section to before_agent_start system prompt**
+- [x] 3.2 **Add memory section to before_agent_start system prompt**
   - **文件**: `extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: In `before_agent_start` handler (line 828), append `memorySection` (5 rules about when to save, what to save, importance 0-1 honesty, tags format) to the existing `planningSection + remotePathsPrompt + transferFilePrompt`. See design.md §"system prompt 增量" for exact text.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `before_agent_start system prompt contains memory section` test PASS: assert returned systemPrompt contains "## Memory" and "memory_save".
   - **依赖**: 3.1
 
-- [ ] 3.3 **Implement tool_call path guard for `write`/`edit`**
+- [x] 3.3 **Implement tool_call path guard for `write`/`edit`**
   - **文件**: `extensions/personal-assistant/tools.ts` (Modify)
   - **内容**: In `tool_call` hook (line 934), after the satellite check (line 938-943), add: when `event.toolName === "write" || event.toolName === "edit"` and `event.input.path` (or `file_path`) resolves under `~/.pi/agent/memory/atoms/**` (after `~` → home expansion), return `{block: true, reason: "memory atoms must be written via the memory_save tool, not direct file write/edit. Use memory_save({type, title, content, ...}) instead."}`. Add helper `isUnderAtomsDir(path, atomsDir)` colocated in tools.ts (or import from memory.ts:233).
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `tool_call blocks write to atoms/process/foo.md`, `tool_call blocks edit to atoms/fact/a-123.md`, `tool_call does not block read of atoms/...` tests PASS.
@@ -117,7 +117,7 @@
 
 ## 4. memory.ts: safety net + counter reset
 
-- [ ] 4.1 **Add counter reset at segment boundaries (`session_start` + `session_compact`)**
+- [x] 4.1 **Add counter reset at segment boundaries (`session_start` + `session_compact`)**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: Register a new `pi.on("session_start", ...)` hook AND a new `pi.on("session_compact", ...)` hook — both call `resetSegmentMemorySaveCount()` (imported from `./memory-save.ts`). The reset happens at segment boundaries: initial session load (session_start) and after each compact completes (session_compact). **Not** in `before_agent_start` — that fires per turn and would break the per-segment accumulation semantic required by the safety net (S22).
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `segment counter resets on session_start` + `segment counter resets on session_compact` + `segment counter survives between turns within a segment` (S22: turn 1-3 save 3, turn 4-10 no save, turn 11 compact with counter=3) tests PASS.
