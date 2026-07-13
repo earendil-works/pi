@@ -5,8 +5,7 @@
  * and after compaction the session is reloaded.
  */
 
-import { randomUUID } from "node:crypto";
-import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { type AgentMessage, type StreamFn, type ThinkingLevel, uuidv7 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -526,7 +525,7 @@ function createSummarizationOptions(
 		apiKey,
 		headers,
 		env,
-		sessionId: randomUUID(),
+		sessionId: uuidv7(),
 	};
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
