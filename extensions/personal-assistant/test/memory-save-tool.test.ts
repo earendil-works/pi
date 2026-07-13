@@ -14,7 +14,7 @@
 // 2.2+ diff is purely a `throw` → real body swap, not a test rewrite.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { promises as fs } from "node:fs";
+import { promises as fs, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Value } from "typebox/value";
@@ -37,6 +37,32 @@ vi.mock("../embed.ts", async () => {
 			}
 			return arr;
 		}),
+	};
+});
+
+// Trackable extraction mock — Task 4.2 safety-net tests need to assert
+// whether `runCompactExtraction` actually invoked the LLM extraction
+// path or short-circuited at the counter guard. Replacing
+// `extractMemoriesWithCallLlm` with a vi.fn() lets the test count calls
+// without paying the real cost (the real path needs config, model
+// registry, auth, plus an LLM round-trip).
+const extractMemoriesWithCallLlmMock = vi.fn(
+	async (
+		_callLlm: (prompt: string) => Promise<string>,
+		_messages: Array<{ role: string; content: string }>,
+	) => ({
+		plan: { items: [], modelUsed: "mock", generatedAt: Date.now() },
+		created: [],
+		updated: [],
+		skipped: [],
+	}),
+);
+
+vi.mock("../extraction.ts", async () => {
+	const actual = await vi.importActual<typeof import("../extraction.ts")>("../extraction.ts");
+	return {
+		...actual,
+		extractMemoriesWithCallLlm: extractMemoriesWithCallLlmMock,
 	};
 });
 
@@ -418,6 +444,266 @@ describe("registerMemory hooks reset segment counter at session boundaries (Task
 		// And the counter keeps accumulating with normal tool calls.
 		mod.incrementSegmentMemorySaveCount();
 		expect(mod.getSegmentMemorySaveCount()).toBe(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// session_before_compact safety net (Task 4.2)
+//
+// Delta spec: "session_before_compact is a graceful safety net" with
+// two scenarios:
+//   - safety net skipped when agent saved at least once (count >= 1)
+//   - safety net runs when agent never saved (count == 0)
+//
+// These tests exercise the public registerMemory(pi) entry point. They
+// call the session_before_compact hook the agent actually fires, then
+// assert two things:
+//   1. The hook's return value matches the spec (undefined when
+//      extraction should proceed OR the safety net is skipped; the hook
+//      should NOT return {cancel: true} on these paths).
+//   2. extractMemoriesWithCallLlm (the proxy for "did runCompactExtraction
+//      run the LLM pipeline?") was called or not called according to the
+//      counter state.
+//
+// The mocks set up at the top of the file (embed.ts char-bag +
+// extraction.ts trackable stub) keep the tests free of real LLM / DB
+// cost while still letting the hook's real code path run.
+// ---------------------------------------------------------------------------
+
+describe("session_before_compact safety net (Task 4.2)", () => {
+	let memoryMod: typeof import("../memory.ts");
+	let handlers: Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>;
+	let tmpHome: string;
+
+	function makeMockPi() {
+		const map = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown> | unknown>();
+		const pi = {
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown> | unknown) => {
+				map.set(event, handler);
+			},
+			registerTool: () => {
+				// no-op — tool registration lives in other test files
+			},
+		};
+		return { pi, map };
+	}
+
+	function makeCompactEvent() {
+		// Use a realistic-shaped event. Empty messagesToSummarize +
+		// turnPrefixMessages is fine — runCompactExtraction takes the
+		// "no messages" early-return path, which is enough to prove the
+		// safety net DID invoke the extraction function (notifySafely
+		// gets called with the "skipping" message). For the
+		// counter-equals-zero test, we instead need a non-empty event
+		// (otherwise the runCompactExtraction early-return prevents
+		// extractMemoriesWithCallLlm from firing, and we can't
+		// distinguish "extraction ran and decided nothing to do" from
+		// "safety net skipped").
+		return {
+			type: "session_before_compact" as const,
+			preparation: {
+				firstKeptEntryId: "abc",
+				messagesToSummarize: [],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: 100,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: {
+					reserveTokens: 0,
+					enabled: true,
+					keepRecentTokens: 0,
+				},
+			},
+			branchEntries: [],
+			reason: "manual" as const,
+			willRetry: false,
+			signal: new AbortController().signal,
+		};
+	}
+
+	function makeNonEmptyCompactEvent() {
+		return {
+			type: "session_before_compact" as const,
+			preparation: {
+				firstKeptEntryId: "abc",
+				messagesToSummarize: [
+					{
+						role: "user",
+						content: "a user message that should drive extraction",
+						timestamp: Date.now(),
+					},
+				],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: 100,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: {
+					reserveTokens: 0,
+					enabled: true,
+					keepRecentTokens: 0,
+				},
+			},
+			branchEntries: [],
+			reason: "manual" as const,
+			willRetry: false,
+			signal: new AbortController().signal,
+		};
+	}
+
+	function makeMockCtx() {
+		const notifyCalls: Array<{ msg: string; type: string }> = [];
+		const find = vi.fn((provider: string, modelId: string) => ({
+			id: modelId,
+			name: modelId,
+			api: "anthropic-messages",
+			provider,
+			baseUrl: "https://api.test",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 8192,
+			maxTokens: 2048,
+		}));
+		const getApiKeyAndHeaders = vi.fn(async () => ({
+			ok: true as const,
+			apiKey: "sk-test-key",
+			headers: {},
+		}));
+		return {
+			ui: {
+				setStatus: () => {
+					// no-op
+				},
+				notify: (msg: string, type: string) => {
+					notifyCalls.push({ msg, type });
+				},
+			},
+			modelRegistry: { find, getApiKeyAndHeaders },
+			notifyCalls,
+		};
+	}
+
+	function writeExtractionSettings(home: string) {
+		const agentDir = path.join(home, ".pi", "agent");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			path.join(agentDir, "settings.json"),
+			JSON.stringify({
+				personalAssistant: {
+					memory: {
+						enabled: true,
+						extraction: {
+							provider: "anthropic",
+							model: "claude-haiku-4-5",
+						},
+					},
+				},
+			}, null, 2),
+		);
+	}
+
+	beforeEach(async () => {
+		// Use a tmp HOME so loadConfig() reads an isolated settings.json
+		// instead of the user's real ~/.pi/agent/settings.json.
+		tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "safety-net-"));
+		process.env.HOME = tmpHome;
+		writeExtractionSettings(tmpHome);
+
+		vi.resetModules();
+		// Re-resolve memory-save.ts AND memory.ts so the two modules
+		// share the same segmentMemorySaveCount binding.
+		mod = await import("../memory-save.ts");
+		memoryMod = await import("../memory.ts");
+
+		// Reset the extraction mock's call counter. The mock is
+		// hoisted so the same fn instance survives vi.resetModules();
+		// vi.clearAllMocks() (called in afterEach) wipes both call
+		// records AND the implementation, so we explicitly install a
+		// fresh implementation here too.
+		extractMemoriesWithCallLlmMock.mockClear();
+		extractMemoriesWithCallLlmMock.mockImplementation(
+			async (
+				_callLlm: (prompt: string) => Promise<string>,
+				_messages: Array<{ role: string; content: string }>,
+			) => ({
+				plan: { items: [], modelUsed: "mock", generatedAt: Date.now() },
+				created: [],
+				updated: [],
+				skipped: [],
+			}),
+		);
+
+		const { pi, map } = makeMockPi();
+		memoryMod.registerMemory(pi as unknown as ExtensionAPI);
+		handlers = map;
+	});
+
+	afterEach(async () => {
+		process.env.HOME = ORIGINAL_HOME;
+		await fs.rm(tmpHome, { recursive: true, force: true });
+		vi.clearAllMocks();
+	});
+
+	function getHandler(name: string) {
+		const h = handlers.get(name);
+		if (!h) throw new Error(`${name} hook not registered by registerMemory`);
+		return h;
+	}
+
+	// Spec scenario: "safety net skipped when agent saved at least once".
+	// GIVEN counter >= 1, the hook MUST return undefined BEFORE calling
+	// runCompactExtraction — the LLM extraction is a no-op when the
+	// agent already drove a memory_save during the segment.
+	//
+	// We verify both:
+	//   1. Result is undefined (compact proceeds).
+	//   2. extractMemoriesWithCallLlm was NOT called (the extraction
+	//      pipeline didn't even start, including the "no messages"
+	//      early-return path).
+	it("session_before_compact returns undefined without invoking runCompactExtraction when segment counter >= 1", async () => {
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		mod.incrementSegmentMemorySaveCount();
+		expect(mod.getSegmentMemorySaveCount()).toBe(3);
+
+		const handler = getHandler("session_before_compact");
+		const ctx = makeMockCtx();
+		const event = makeCompactEvent();
+
+		const result = await handler(event, ctx);
+
+		expect(result).toBeUndefined();
+		// Counter check is at the very top of the handler — extraction
+		// never even started, so no notify was emitted, no LLM call.
+		expect(extractMemoriesWithCallLlmMock).not.toHaveBeenCalled();
+		expect(ctx.notifyCalls).toHaveLength(0);
+		// The counter itself is preserved (not reset by the safety net).
+		expect(mod.getSegmentMemorySaveCount()).toBe(3);
+	});
+
+	// Spec scenario: "safety net runs when agent never saved". GIVEN
+	// counter == 0, the existing extraction pipeline runs — this is the
+	// pre-Task-4.2 baseline behaviour the safety net was meant to skip
+	// past. We assert runCompactExtraction DID invoke the LLM path by
+	// passing a non-empty event (so the early-return on empty messages
+	// doesn't shadow the call to extractMemoriesWithCallLlm) and
+	// checking the mock was called.
+	it("session_before_compact invokes runCompactExtraction (existing behaviour) when segment counter == 0", async () => {
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
+
+		const handler = getHandler("session_before_compact");
+		const ctx = makeMockCtx();
+		const event = makeNonEmptyCompactEvent();
+
+		const result = await handler(event, ctx);
+
+		expect(result).toBeUndefined();
+		// runCompactExtraction reached extractMemoriesWithCallLlm — the
+		// safety net did NOT short-circuit.
+		expect(extractMemoriesWithCallLlmMock).toHaveBeenCalledTimes(1);
+		// Counter check must NOT mutate the counter on the
+		// counter-equals-zero path either.
+		expect(mod.getSegmentMemorySaveCount()).toBe(0);
 	});
 });
 
@@ -1365,6 +1651,157 @@ describe("tool_call hook blocks write/edit to memory atoms (Task 3.3)", () => {
 		const result = await (handler as (event: unknown) => Promise<unknown>)({
 			toolName: "bash",
 			input: { command: "cat file" },
+		});
+
+		expect(result).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// tool_call hook — blocks bash redirect / heredoc / tee to memory atoms
+// (Task 3.4)
+//
+// Delta spec (spec.md §"tool_call hook blocks direct file writes to memory
+// atoms" + scenarios.md S10/S11) requires the personal-assistant `tool_call`
+// hook to ALSO block `bash` commands whose shell syntax (`>` / `>>` /
+// `tee`) targets a path under `~/.pi/agent/memory/atoms/**`. Read-only bash
+// commands (no write operator + atoms path) MUST NOT be blocked — that
+// mirrors the read-tool exception in Task 3.3.
+//
+// Like the Task 3.3 block, these tests drive the hook through a spy pi and
+// assert the returned `{block, reason}` (or `undefined`). The helper
+// `looksLikeWriteToAtomsDir` is internal to tools.ts (not exported), so
+// coverage comes through the public hook surface.
+// ---------------------------------------------------------------------------
+
+describe("tool_call hook blocks bash redirect/heredoc/tee to memory atoms (Task 3.4)", () => {
+	let tmpDir: string;
+	let handlers: Record<string, unknown>;
+
+	// Same spy pi setup as the Task 3.3 block — `registerTools(pi)` against
+	// a freshly-imported tools module so the hook body's atomsDir resolution
+	// (`homedir()`) lands inside the tmp HOME.
+	async function setupPiWithHome(homeDir: string): Promise<void> {
+		process.env.HOME = homeDir;
+		vi.resetModules();
+		const { registerTools } = await import("../tools.ts");
+		const tools: unknown[] = [];
+		handlers = {};
+		const pi = {
+			on: (event: string, handler: unknown) => {
+				handlers[event] = handler;
+			},
+			registerTool: (tool: unknown) => {
+				tools.push(tool);
+			},
+			sendUserMessage: () => Promise.resolve(),
+		};
+		registerTools(pi as unknown as ExtensionAPI);
+	}
+
+	beforeEach(async () => {
+		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "tool-call-bash-atom-guard-"));
+		await setupPiWithHome(tmpDir);
+	});
+
+	afterEach(async () => {
+		process.env.HOME = ORIGINAL_HOME;
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	});
+
+	// S10 — bash heredoc / `>` redirect to atoms/process/foo.md is
+	// blocked. The reason must steer the agent toward the canonical tool
+	// name (`memory_save`) so the rejection doubles as teaching.
+	it("blocks bash({command: 'cat > ~/.pi/agent/memory/atoms/process/foo.md <<EOF\\n...\\nEOF'}) (S10)", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: {
+				command: "cat > ~/.pi/agent/memory/atoms/process/foo.md <<EOF\n...\nEOF",
+			},
+		});
+
+		expect(result).toBeDefined();
+		expect(typeof result).toBe("object");
+		const block = result as { block: boolean; reason: string };
+		expect(block.block).toBe(true);
+		expect(block.reason).toMatch(/memory_save/);
+		// Reason text mentions redirect / heredoc so the model sees WHY
+		// the bash approach is rejected (vs. the write/edit reason text).
+		expect(block.reason).toMatch(/redirect|heredoc/);
+	});
+
+	// S10 sibling — `tee` to atoms/fact/bar.md is blocked. `tee` is the
+	// second write operator the helper recognises (`>`, `>>`, `tee`).
+	it("blocks bash({command: \"echo 'x' | tee ~/.pi/agent/memory/atoms/fact/bar.md\"})", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: {
+				command: "echo 'x' | tee ~/.pi/agent/memory/atoms/fact/bar.md",
+			},
+		});
+
+		expect(result).toBeDefined();
+		const block = result as { block: boolean; reason: string };
+		expect(block.block).toBe(true);
+		expect(block.reason).toMatch(/memory_save/);
+	});
+
+	// S10 sibling — append `>>` to atoms/process/append.md is blocked.
+	// `>>?` in the regex matches both `>` and `>>` as write operators.
+	it("blocks bash({command: \"echo 'x' >> ~/.pi/agent/memory/atoms/process/append.md\"})", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: {
+				command: "echo 'x' >> ~/.pi/agent/memory/atoms/process/append.md",
+			},
+		});
+
+		expect(result).toBeDefined();
+		const block = result as { block: boolean; reason: string };
+		expect(block.block).toBe(true);
+		expect(block.reason).toMatch(/memory_save/);
+	});
+
+	// S11 — bash read of atom file is NOT blocked. The command has NO
+	// write operator (`>`, `>>`, `tee`); the regex doesn't match even
+	// though the path is under atoms/. This mirrors the read-tool
+	// exception in Task 3.3 so the agent can still inspect existing
+	// atoms via bash (cat / less / grep / etc.) before deciding to
+	// update.
+	it("does not block bash({command: 'cat ~/.pi/agent/memory/atoms/process/a-123.md'}) (S11)", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: {
+				command: "cat ~/.pi/agent/memory/atoms/process/a-123.md",
+			},
+		});
+
+		expect(result).toBeUndefined();
+	});
+
+	// Negative — bash with no atoms path and no write operator passes
+	// through. This pins that the regex doesn't accidentally match
+	// arbitrary commands like `ls` or `echo hello`. (No `>`, no `tee`,
+	// no atoms substring.)
+	it("does not block bash({command: 'ls /tmp/random.txt'})", async () => {
+		const handler = handlers["tool_call"];
+		expect(typeof handler).toBe("function");
+
+		const result = await (handler as (event: unknown) => Promise<unknown>)({
+			toolName: "bash",
+			input: { command: "ls /tmp/random.txt" },
 		});
 
 		expect(result).toBeUndefined();

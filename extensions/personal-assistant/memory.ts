@@ -55,7 +55,7 @@ import {
 	extractMemoriesWithCallLlm,
 	writeExtractionReport,
 } from "./extraction.ts";
-import { resetSegmentMemorySaveCount } from "./memory-save.ts";
+import { getSegmentMemorySaveCount, resetSegmentMemorySaveCount } from "./memory-save.ts";
 import type { MemoryAtomType } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -335,6 +335,19 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// NOT throw — they return normally, and the hook returns undefined,
 	// so compact proceeds when there is genuinely nothing to extract.
 	pi.on("session_before_compact", async (event, ctx) => {
+		// Safety net gate (Task 4.2): if the agent already drove a
+		// `memory_save` call within this segment, skip the LLM-driven
+		// safety-net extraction entirely. The agent-driven write path
+		// (2.x) is the primary mechanism; the LLM extraction here only
+		// exists to back-stop the case where the agent never noticed a
+		// memorable moment. Per Decision 5, the counter counts CALLS,
+		// not successes — so even a fingerprint-skipped or error'd
+		// memory_save bumps it, and the safety net stays silent. The
+		// check is at the very top so we skip notify work and model
+		// resolution alike.
+		if (getSegmentMemorySaveCount() >= 1) {
+			return undefined;
+		}
 		try {
 			await runCompactExtraction(event, ctx);
 			return undefined;
