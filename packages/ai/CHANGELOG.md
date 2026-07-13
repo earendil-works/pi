@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed sessionless OpenAI Codex WebSocket requests to use UUIDv7 request IDs, enabling models such as GPT-5.6 Luna that reject UUIDv4 IDs.
 - Fixed OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed Amazon Bedrock requests to use the generic `apiKey` stream option as a Bedrock bearer token.
 
