@@ -182,6 +182,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "user":
+				case "developer":
 				case "assistant":
 				case "toolResult":
 					return m;

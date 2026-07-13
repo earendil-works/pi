@@ -60,7 +60,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
-		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? false,
 		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,

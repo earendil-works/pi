@@ -36,6 +36,7 @@ import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts"
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
+import { developerMessageToUserMessage, downgradeDeveloperMessages } from "./developer-messages.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -172,6 +173,7 @@ function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
 	return {
+		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? false,
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? false,
@@ -923,7 +925,17 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const anthropicMessages = compat.supportsDeveloperRole
+		? context.messages.map((message, index): Message => {
+				if (message.role !== "developer") return message;
+				const previousRole = context.messages[index - 1]?.role;
+				const nextRole = context.messages[index + 1]?.role;
+				const hasValidPreviousRole = previousRole === "user" || previousRole === "toolResult";
+				const hasValidNextRole = nextRole === undefined || nextRole === "assistant";
+				return hasValidPreviousRole && hasValidNextRole ? message : developerMessageToUserMessage(message);
+			})
+		: downgradeDeveloperMessages(context.messages);
+	const transformedMessages = transformMessages(anthropicMessages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
@@ -946,7 +958,7 @@ function buildParams(
 			compat.allowEmptySignature,
 			deferredToolNames,
 			normalizeToolName,
-		),
+		) as MessageParam[],
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
 	};
@@ -1136,6 +1148,11 @@ function convertMessages(
 					content: filteredBlocks,
 				});
 			}
+		} else if (msg.role === "developer") {
+			params.push({
+				role: "system",
+				content: sanitizeSurrogates(msg.content),
+			} as unknown as MessageParam);
 		} else if (msg.role === "assistant") {
 			const blocks: ContentBlockParam[] = [];
 

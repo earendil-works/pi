@@ -204,6 +204,11 @@
       color: var(--accent);
     }
 
+    .tree-role-developer {
+      color: var(--customMessageLabel);
+      font-weight: bold;
+    }
+
     .tree-role-skill {
       color: var(--customMessageLabel);
     }
@@ -365,6 +370,21 @@
       position: relative;
     }
 
+    .developer-message {
+      background: var(--customMessageBg);
+      color: var(--customMessageText);
+      padding: var(--line-height);
+      border-left: 3px solid var(--customMessageLabel);
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .developer-message-label {
+      color: var(--customMessageLabel);
+      font-weight: bold;
+      margin-bottom: var(--line-height);
+    }
+
     /* Copy link button - appears on hover */
     .copy-link-btn {
       position: absolute;
@@ -388,6 +408,7 @@
 
     .user-message:hover .copy-link-btn,
     .assistant-message:hover .copy-link-btn,
+    .developer-message:hover .copy-link-btn,
     .skill-user-entry:hover .copy-link-btn {
       opacity: 1;
     }
@@ -406,7 +427,8 @@
 
     /* Highlight effect for deep-linked messages */
     .user-message.highlight,
-    .assistant-message.highlight {
+    .assistant-message.highlight,
+    .developer-message.highlight {
       animation: highlight-pulse 2s ease-out;
     }
 

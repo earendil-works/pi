@@ -381,6 +381,9 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		const message = entry.message;
 		// Session files are parsed without validation; old versions, forks, or
 		// hand-edited files can contain messages with null/missing content.
+		if (message.role === "developer" && message.content == null) {
+			return [{ ...message, content: "" }];
+		}
 		if (
 			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
 			message.content == null

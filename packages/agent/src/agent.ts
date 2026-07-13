@@ -31,7 +31,11 @@ export type { QueueMode } from "./types.ts";
 
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 	return messages.filter(
-		(message) => message.role === "user" || message.role === "assistant" || message.role === "toolResult",
+		(message) =>
+			message.role === "user" ||
+			message.role === "developer" ||
+			message.role === "assistant" ||
+			message.role === "toolResult",
 	);
 }
 

@@ -656,6 +656,10 @@
               const content = truncate(normalize(rawContent));
               return labelHtml + `<span class="tree-role-user">user:</span> ${escapeHtml(content)}`;
             }
+            if (msg.role === 'developer') {
+              const content = truncate(normalize(msg.content || ''));
+              return labelHtml + `<span class="tree-role-developer">developer:</span> ${escapeHtml(content)}`;
+            }
             if (msg.role === 'assistant') {
               const textContent = truncate(normalize(extractContent(msg.content)));
               if (textContent) {
@@ -1238,6 +1242,10 @@
             }
             html += '</div>';
             return html;
+          }
+
+          if (msg.role === 'developer') {
+            return `<div class="developer-message" id="${entryDomId}">${copyBtnHtml}${tsHtml}<div class="developer-message-label">Developer instruction</div><div class="markdown-content">${safeMarkedParse(msg.content || '')}</div></div>`;
           }
 
           if (msg.role === 'assistant') {

@@ -380,6 +380,13 @@ export interface UserMessage {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
+/** Application-provided instructions that take effect at this point in the conversation. */
+export interface DeveloperMessage {
+	role: "developer";
+	content: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall)[];
@@ -411,7 +418,7 @@ export interface ToolResultMessage<TDetails = any> {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = UserMessage | DeveloperMessage | AssistantMessage | ToolResultMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -525,7 +532,7 @@ export interface OpenAICompletionsCompat {
 
 /** Compatibility settings for OpenAI Responses APIs. */
 export interface OpenAIResponsesCompat {
-	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
+	/** Whether the provider supports mid-conversation `developer` messages. Default: false. */
 	supportsDeveloperRole?: boolean;
 	/** Whether to send the OpenAI `session_id` cache-affinity header from `options.sessionId` when caching is enabled. Default: true. */
 	sendSessionIdHeader?: boolean;
@@ -535,8 +542,16 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 }
 
+/** Compatibility settings for Mistral Conversations APIs. */
+export interface MistralConversationsCompat {
+	/** Whether the model supports repeated mid-conversation `system` messages for developer instructions. Default: false. */
+	supportsDeveloperRole?: boolean;
+}
+
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
+	/** Whether the model supports mid-conversation developer instructions, serialized as the Anthropic `system` role. Default: false. */
+	supportsDeveloperRole?: boolean;
 	/**
 	 * Whether the provider accepts per-tool `eager_input_streaming`.
 	 * When false, the Anthropic provider omits `tools[].eager_input_streaming`
@@ -711,14 +726,16 @@ export interface Model<TApi extends Api> {
 	contextWindow: number;
 	maxTokens: number;
 	headers?: Record<string, string>;
-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
+	/** Provider/model compatibility overrides. OpenAI Chat defaults may be auto-detected from provider and baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
-		: TApi extends "openai-responses" | "openai-codex-responses"
+		: TApi extends "openai-responses" | "openai-codex-responses" | "azure-openai-responses"
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "mistral-conversations"
+					? MistralConversationsCompat
+					: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

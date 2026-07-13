@@ -137,6 +137,16 @@ describe("lax message content handling", () => {
 		}
 	});
 
+	it("normalizes null or missing developer message content to text", () => {
+		for (const badMessage of [
+			{ role: "developer", content: null, timestamp: Date.now() },
+			{ role: "developer", timestamp: Date.now() },
+		]) {
+			const [message] = sessionEntryToContextMessages(messageEntry(badMessage));
+			expect(message).toMatchObject({ role: "developer", content: "" });
+		}
+	});
+
 	it("normalizes null content when loading custom message entries", () => {
 		const entry = {
 			type: "custom_message",

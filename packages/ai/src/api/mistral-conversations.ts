@@ -25,6 +25,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { downgradeDeveloperMessages } from "./developer-messages.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -68,7 +69,11 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
+			const transformedMessages = transformMessages(
+				model.compat?.supportsDeveloperRole ? context.messages : downgradeDeveloperMessages(context.messages),
+				model,
+				(id) => normalizeMistralToolCallId(id),
+			);
 
 			let payload = buildChatPayload(model, context, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
@@ -514,6 +519,11 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 	const result: ChatCompletionStreamRequestMessage[] = [];
 
 	for (const msg of messages) {
+		if (msg.role === "developer") {
+			result.push({ role: "system", content: sanitizeSurrogates(msg.content) });
+			continue;
+		}
+
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

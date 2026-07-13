@@ -6,6 +6,7 @@ interface MistralPayload {
 	promptMode?: "reasoning";
 	reasoningEffort?: "none" | "high";
 	promptCacheKey?: string;
+	messages?: Array<{ role: string; content: unknown }>;
 }
 
 function makeContext(): Context {
@@ -17,6 +18,7 @@ function makeContext(): Context {
 async function capturePayload(
 	model: Model<"mistral-conversations">,
 	options?: SimpleStreamOptions,
+	context: Context = makeContext(),
 ): Promise<MistralPayload> {
 	let capturedPayload: MistralPayload | undefined;
 	const payloadCaptureModel: Model<"mistral-conversations"> = {
@@ -24,7 +26,7 @@ async function capturePayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const stream = streamSimple(payloadCaptureModel, makeContext(), {
+	const stream = streamSimple(payloadCaptureModel, context, {
 		...options,
 		apiKey: "fake-key",
 		onPayload: (payload) => {
@@ -43,6 +45,24 @@ async function capturePayload(
 }
 
 describe("Mistral reasoning mode selection", () => {
+	it("maps developer messages to system messages for verified models", async () => {
+		const payload = await capturePayload(getModel("mistral", "mistral-large-latest"), undefined, {
+			messages: [{ role: "developer", content: "Use concise answers.", timestamp: Date.now() }],
+		});
+
+		expect(payload.messages).toEqual([{ role: "system", content: "Use concise answers." }]);
+	});
+
+	it("degrades developer messages for unverified models", async () => {
+		const payload = await capturePayload(getModel("mistral", "mistral-large-2411"), undefined, {
+			messages: [{ role: "developer", content: "Use concise answers.", timestamp: Date.now() }],
+		});
+
+		expect(payload.messages).toHaveLength(1);
+		expect(payload.messages?.[0].role).toBe("user");
+		expect(payload.messages?.[0].content).toContain("<developer_message>");
+	});
+
 	it("uses reasoning_effort for Mistral Small 4", async () => {
 		const payload = await capturePayload(getModel("mistral", "mistral-small-2603"), { reasoning: "medium" });
 

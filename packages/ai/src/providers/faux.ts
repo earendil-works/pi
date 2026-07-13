@@ -181,6 +181,9 @@ function messageToText(message: Message): string {
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
+	if (message.role === "developer") {
+		return message.content;
+	}
 	if (message.role === "assistant") {
 		return assistantContentToText(message.content);
 	}

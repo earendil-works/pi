@@ -225,6 +225,8 @@ export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
 
 	switch (message.role) {
+		case "developer":
+			return Math.ceil(message.content.length / 4);
 		case "user": {
 			chars = estimateTextAndImageContentChars(
 				(message as { content: string | Array<{ type: string; text?: string }> }).content,
@@ -275,6 +277,7 @@ function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, end
 					case "branchSummary":
 					case "compactionSummary":
 					case "user":
+					case "developer":
 					case "assistant":
 						cutPoints.push(i);
 						break;
@@ -311,7 +314,7 @@ export function findTurnStartIndex(entries: SessionTreeEntry[], entryIndex: numb
 		}
 		if (entry.type === "message") {
 			const role = entry.message.role;
-			if (role === "user" || role === "bashExecution") {
+			if (role === "user" || role === "developer" || role === "bashExecution") {
 				return i;
 			}
 		}
@@ -370,13 +373,14 @@ export function findCutPoint(
 		cutIndex--;
 	}
 	const cutEntry = entries[cutIndex];
-	const isUserMessage = cutEntry.type === "message" && cutEntry.message.role === "user";
-	const turnStartIndex = isUserMessage ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
+	const isTurnStartMessage =
+		cutEntry.type === "message" && (cutEntry.message.role === "user" || cutEntry.message.role === "developer");
+	const turnStartIndex = isTurnStartMessage ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
 
 	return {
 		firstKeptEntryIndex: cutIndex,
 		turnStartIndex,
-		isSplitTurn: !isUserMessage && turnStartIndex !== -1,
+		isSplitTurn: !isTurnStartMessage && turnStartIndex !== -1,
 	};
 }
 

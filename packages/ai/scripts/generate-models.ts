@@ -13,6 +13,7 @@ import type {
 	AnthropicMessagesCompat,
 	Api,
 	KnownProvider,
+	MistralConversationsCompat,
 	Model,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
@@ -210,6 +211,53 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 ]);
+const VERIFIED_OPENROUTER_DEVELOPER_ROLE_MODELS = new Set([
+	"openai/gpt-oss-20b",
+	"openai/gpt-oss-120b",
+	"openai/gpt-5.4",
+	"anthropic/claude-haiku-4.5",
+	"anthropic/claude-sonnet-5",
+]);
+const VERIFIED_RESPONSES_DEVELOPER_ROLE_MODELS = new Set([
+	"openai-codex:gpt-5.3-codex-spark",
+	"openai-codex:gpt-5.4",
+	"openai-codex:gpt-5.4-mini",
+	"openai-codex:gpt-5.5",
+	"openai-codex:gpt-5.6-sol",
+	"openai-codex:gpt-5.6-terra",
+	"github-copilot:gpt-5-mini",
+	"github-copilot:gpt-5.3-codex",
+	"github-copilot:gpt-5.4",
+	"github-copilot:gpt-5.4-mini",
+	"github-copilot:gpt-5.5",
+	"opencode:gpt-5.4",
+	"opencode:gpt-5.4-mini",
+]);
+const VERIFIED_MISTRAL_DEVELOPER_ROLE_MODELS = new Set([
+	"codestral-latest",
+	"devstral-2512",
+	"devstral-latest",
+	"devstral-medium-latest",
+	"labs-devstral-small-2512",
+	"magistral-medium-latest",
+	"ministral-3b-latest",
+	"ministral-8b-latest",
+	"mistral-large-2512",
+	"mistral-large-latest",
+	"mistral-medium-2505",
+	"mistral-medium-2508",
+	"mistral-medium-2604",
+	"mistral-medium-3.5",
+	"mistral-medium-latest",
+	"mistral-small-2506",
+	"mistral-small-2603",
+	"mistral-small-latest",
+	"open-mistral-7b",
+	"open-mistral-nemo",
+	"open-mixtral-8x22b",
+	"open-mixtral-8x7b",
+	"pixtral-12b",
+]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -355,6 +403,17 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
 }
 
+function supportsAnthropicDeveloperRole(modelId: string): boolean {
+	const id = modelId.toLowerCase();
+	return (
+		id.includes("opus-4-8") ||
+		id.includes("opus-4.8") ||
+		id.includes("fable-5") ||
+		id.includes("sonnet-5") ||
+		id.includes("sonnet.5")
+	);
+}
+
 const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
@@ -398,6 +457,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
+	const isOfficialOpenAI = provider === "openai" || baseUrl.includes("api.openai.com");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -426,13 +486,12 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
-	const isOpenRouterDeveloperRoleModel =
-		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
+	const isOpenRouterDeveloperRoleModel = isOpenRouter && VERIFIED_OPENROUTER_DEVELOPER_ROLE_MODELS.has(model.id);
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || isOfficialOpenAI,
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
@@ -508,6 +567,33 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	};
 }
 
+function applyDeveloperRoleMetadata(model: Model<Api>): void {
+	if (
+		model.api === "openai-responses" ||
+		model.api === "openai-codex-responses" ||
+		model.api === "azure-openai-responses"
+	) {
+		const supported =
+			model.provider === "openai" ||
+			model.provider === "azure-openai-responses" ||
+			VERIFIED_RESPONSES_DEVELOPER_ROLE_MODELS.has(`${model.provider}:${model.id}`);
+		if (supported) {
+			model.compat = {
+				...(model.compat as OpenAIResponsesCompat | undefined),
+				supportsDeveloperRole: true,
+			};
+		}
+		return;
+	}
+
+	if (model.api === "mistral-conversations" && VERIFIED_MISTRAL_DEVELOPER_ROLE_MODELS.has(model.id)) {
+		model.compat = {
+			...(model.compat as MistralConversationsCompat | undefined),
+			supportsDeveloperRole: true,
+		};
+	}
+}
+
 function isGemini3ProModel(modelId: string): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(modelId.toLowerCase());
 }
@@ -576,6 +662,13 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
+	}
+	if (
+		model.api === "anthropic-messages" &&
+		model.provider === "anthropic" &&
+		supportsAnthropicDeveloperRole(model.id)
+	) {
+		mergeAnthropicMessagesCompat(model, { supportsDeveloperRole: true });
 	}
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
@@ -2205,6 +2298,7 @@ async function generateModels() {
 		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
+		applyDeveloperRoleMetadata(model);
 	}
 
 	// Group by provider and deduplicate by model ID

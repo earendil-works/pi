@@ -1018,10 +1018,10 @@ describe("openai-completions tool_choice", () => {
 		expect(params.messages?.[0]?.role).toBe("system");
 	});
 
-	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+	it("keeps developer messages for verified OpenAI and Anthropic OpenRouter models", async () => {
 		for (const model of [
-			getModel("openrouter", "openai/gpt-5.2-codex"),
-			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+			getModel("openrouter", "openai/gpt-oss-20b"),
+			getModel("openrouter", "anthropic/claude-sonnet-5"),
 		]) {
 			expect(model).toBeDefined();
 			let payload: unknown;
@@ -1084,7 +1084,7 @@ describe("openai-completions tool_choice", () => {
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 			expect(model.compat?.thinkingFormat).toBe("deepseek");
 			expect(model.compat?.maxTokensField).toBeUndefined();
-			expect(model.compat?.supportsDeveloperRole).toBeUndefined();
+			expect(model.compat?.supportsDeveloperRole).toBe(false);
 		}
 	});
 

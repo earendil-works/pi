@@ -54,6 +54,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { downgradeDeveloperMessages } from "./developer-messages.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -743,7 +744,11 @@ function convertMessages(
 	env?: ProviderEnv,
 ): Message[] {
 	const result: Message[] = [];
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessages(
+		downgradeDeveloperMessages(context.messages),
+		model,
+		normalizeToolCallId,
+	);
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];

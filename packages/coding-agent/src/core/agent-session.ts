@@ -587,6 +587,7 @@ export class AgentSession {
 				);
 			} else if (
 				event.message.role === "user" ||
+				event.message.role === "developer" ||
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"
 			) {
@@ -715,14 +716,18 @@ export class AgentSession {
 			if (replacement) {
 				// Untyped extension handlers can return messages with null/missing content;
 				// normalize so it never enters agent state or session history.
-				const normalized =
+				let normalized = replacement;
+				if (replacement.role === "developer" && replacement.content == null) {
+					normalized = { ...replacement, content: "" };
+				} else if (
 					(replacement.role === "user" ||
 						replacement.role === "assistant" ||
 						replacement.role === "toolResult" ||
 						replacement.role === "custom") &&
 					replacement.content == null
-						? ({ ...replacement, content: [] } as AgentMessage)
-						: replacement;
+				) {
+					normalized = { ...replacement, content: [] } as AgentMessage;
+				}
 				this._replaceMessageInPlace(event.message, normalized);
 			}
 		} else if (event.type === "tool_execution_start") {

@@ -24,6 +24,7 @@ import {
 	serializeConversation,
 	shouldCompact,
 } from "../../src/harness/compaction/compaction.ts";
+import { convertToLlm } from "../../src/harness/messages.ts";
 import { buildSessionContext } from "../../src/harness/session/session.ts";
 import type {
 	BranchSummaryEntry,
@@ -58,6 +59,14 @@ function createUserMessage(text: string): AgentMessage {
 	return {
 		role: "user",
 		content: [{ type: "text", text }],
+		timestamp: Date.now(),
+	};
+}
+
+function createDeveloperMessage(text: string): AgentMessage {
+	return {
+		role: "developer",
+		content: text,
 		timestamp: Date.now(),
 	};
 }
@@ -163,6 +172,11 @@ describe("harness compaction", () => {
 		expect(shouldCompact(95000, 100000, { ...settings, enabled: false })).toBe(false);
 	});
 
+	it("retains developer messages when converting harness context", () => {
+		const developer = createDeveloperMessage("Follow the project policy.");
+		expect(convertToLlm([developer])).toEqual([developer]);
+	});
+
 	it("finds a cut point based on token differences", () => {
 		const entries: SessionTreeEntry[] = [];
 		let parentId: string | null = null;
@@ -213,6 +227,17 @@ describe("harness compaction", () => {
 
 		const result = findCutPoint([thinking, branchSummary, customMessage], 0, 3, 1);
 		expect(result.firstKeptEntryIndex).toBe(0);
+
+		const developerUser = createMessageEntry(createUserMessage("user"));
+		const developerAssistant = createMessageEntry(createAssistantMessage("assistant"), developerUser.id);
+		const developer = createMessageEntry(createDeveloperMessage("developer instruction"), developerAssistant.id);
+		const developerEntries = [developerUser, developerAssistant, developer];
+		expect(findTurnStartIndex(developerEntries, 2, 0)).toBe(2);
+		expect(findCutPoint(developerEntries, 0, 3, 1)).toEqual({
+			firstKeptEntryIndex: 2,
+			turnStartIndex: -1,
+			isSplitTurn: false,
+		});
 
 		const toolResult = createMessageEntry({
 			role: "toolResult",
@@ -285,6 +310,7 @@ describe("harness compaction", () => {
 		};
 
 		expect(estimateTokens({ role: "user", content: "plain user", timestamp: Date.now() })).toBeGreaterThan(0);
+		expect(estimateTokens(createDeveloperMessage("substantial developer instruction"))).toBeGreaterThan(0);
 		expect(estimateTokens(assistantWithThinkingAndTool)).toBeGreaterThan(0);
 		expect(estimateTokens(customString)).toBeGreaterThan(0);
 		expect(estimateTokens(toolResultWithImage)).toBeGreaterThan(1000);

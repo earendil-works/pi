@@ -67,6 +67,17 @@ async function capturePayload(context: Context): Promise<unknown> {
 }
 
 describe("bedrock convertMessages skips unknown content types", () => {
+	it("degrades developer messages to marked user messages", async () => {
+		const payload = await capturePayload({
+			messages: [{ role: "developer", content: "Use concise answers.", timestamp: Date.now() }],
+		});
+		const p = payload as { messages: Array<{ role: string; content: Array<{ text: string }> }> };
+		expect(p.messages).toHaveLength(1);
+		expect(p.messages[0].role).toBe("user");
+		expect(p.messages[0].content[0].text).toContain("<developer_message>");
+		expect(p.messages[0].content[0].text).toContain("Use concise answers.");
+	});
+
 	it("skips unknown user content blocks instead of throwing", async () => {
 		const messages: Message[] = [
 			{
