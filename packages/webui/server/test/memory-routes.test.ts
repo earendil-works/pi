@@ -2250,7 +2250,7 @@ describe("registerPostSearch input validation", () => {
 		expect(res.status).toBe(200);
 	});
 
-	it("falls back to topK=10 when missing or non-numeric", async () => {
+	it("falls back to topK=20 when missing or non-numeric (R11 default)", async () => {
 		const res1 = await post({ query: "x", filtered: false });
 		expect(res1.status).toBe(200);
 		const res2 = await post({ query: "x", topK: "abc", filtered: false });

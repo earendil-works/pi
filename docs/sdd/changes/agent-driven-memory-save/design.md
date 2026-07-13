@@ -65,8 +65,8 @@ memory 子系统当前写入只有一条路径:`session_before_compact` → LLM 
 
 ### 5. safety net 仅在 0 save 时触发
 **Decision**: `session_before_compact` 进入前检查 `segmentMemorySaveCount >= 1` → 跳过抽取;`== 0` → 跑原抽取流程。
-**Rationale**: agent-driven 是主路径,auto-extract 是兜底。预期 agent save 率 ≥ 95%,safety net 触发 < 5%,既保留"agent 完全忘记存"的兜底又不重复做 agent 已经做过的抽取。counter 在 `memory_save` execute 入口 `++`,在 `before_agent_start` reset。
-**Alternatives considered**: 始终跑抽取 + 与 agent save 去重 — 烧 token;session 级去重 — 粒度粗。
+**Rationale**: agent-driven 是主路径,auto-extract 是兜底。预期 agent save 率 ≥ 95%,safety net 触发 < 5%,既保留"agent 完全忘记存"的兜底又不重复做 agent 已经做过的抽取。counter 在 `memory_save` execute 入口 `++`;reset 只发生在 `session_start` 和 `session_compact` 两个会话边界 — 不在 `before_agent_start` reset,因为那样会导致长 segment 内早期 save 被吞掉,safety net 反而误触发 (S22/R5 矛盾点:plan-review Level 1 期间发现)。
+**Alternatives considered**: 始终跑抽取 + 与 agent save 去重 — 烧 token;session 级去重 — 粒度粗;`before_agent_start` reset — 同一段内回滚会失效 (rejected)。
 
 ### 6. safety net 失败 graceful
 **Decision**: safety net 路径 catch 抽取失败 (无 model 配置 / auth 失败 / LLM 错误),`ctx.ui.notify` 提示,`return undefined`,compact 继续。
@@ -331,9 +331,13 @@ res.json({
 // 模块级 counter (与 tools.ts:828 已有 pattern 一致: todoItems / roundsSinceTodo)
 let segmentMemorySaveCount = 0;
 
-// reset 在 before_agent_start (memory.ts:694 已有, 加一行)
-pi.on("before_agent_start", async (_event, _ctx) => {
-  pendingMemorySearches = new Map();
+// reset 只在 session 边界 (session_start + session_compact),NOT before_agent_start
+//   原因: counter 跨 turn 累积,长 segment 内 turn 1-3 三个 save 后,turn 4-10
+//         即使无 save 也不应 reset,否则 safety net 误触发 (S22/R5)。
+pi.on("session_start", async (_event, _ctx) => {
+  segmentMemorySaveCount = 0;                 // [NEW]
+});
+pi.on("session_compact", async (_event, _ctx) => {
   segmentMemorySaveCount = 0;                 // [NEW]
 });
 
