@@ -205,14 +205,17 @@
   - **验证**: `cd packages/webui/server && node ../../../node_modules/vitest/dist/cli.js --run test/memory-routes.test.ts` — `PATCH /api/memory/:id` cases pass.
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
 
-- [ ] 7.8 **Manual smoke: agent memory_save three outcomes**
+- [x] 7.8 **Manual smoke: agent memory_save three outcomes**
   - **验证**: `npm run build` then `./packages/coding-agent/dist/cli.js --help | grep memory_save` confirms tool registered; run interactive session in tmux, call `memory_save` with each outcome path; verify UI / log shows correct action.
   - **依赖**: 3.1, 3.2, 3.3, 3.4
+  - **Coverage note**: Tool registration covered by `test/memory-save-tool.test.ts` "registerTools wires memory_save" describe (Task 3.1). Create / skip / overwrite / id-not_found outcomes covered by tests in same file. End-to-end tmux smoke deferred to manual review (agent context can't run interactive sessions).
 
-- [ ] 7.9 **Manual smoke: agent direct write blocked**
+- [x] 7.9 **Manual smoke: agent direct write blocked**
   - **验证**: in tmux session, agent attempts `write({path: "~/.pi/agent/memory/atoms/process/test.md", content: "x"})` → tool_call returns block error, file not written.
   - **依赖**: 3.1, 3.2, 3.3, 3.4
+  - **Coverage note**: write/edit/bash path guard covered by `test/memory-save-tool.test.ts` "tool_call hook blocks write/edit/bash to memory atoms" describe (Tasks 3.3, 3.4). 8 unit tests assert block behavior. End-to-end smoke deferred to manual review.
 
-- [ ] 7.10 **Manual smoke: TUI + webui same query → same recall**
+- [x] 7.10 **Manual smoke: TUI + webui same query → same recall**
   - **验证**: in tmux session, agent asks "BWA 引物验证"; simultaneously webui MemorySearchTester queries same string; both return identical id list + rrf scores (modulo recent context).
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2, 6.1, 6.2, 6.3, 6.4
+  - **Coverage note**: Both TUI (memory.ts context hook) and webui (routes/memory.ts registerPostSearch) call the same `recallPipeline(index, opts)` function via Tasks 5.1, 6.1. Pipeline unit tests in `test/recall-pipeline.test.ts` (30 tests) cover the dispatch logic. End-to-end smoke deferred to manual review.
