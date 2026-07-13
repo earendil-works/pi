@@ -848,6 +848,10 @@ const WebFetchParams = Type.Object({
  * uuid-style check is the read-hook's job; this guard only needs to
  * know "is this anywhere inside atomsDir?" to decide whether to block.
  */
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function isUnderAtomsDir(rawPath: string, atomsDir: string): boolean {
 	const home = process.env.HOME || homedir();
 	let resolved = rawPath;
@@ -858,8 +862,53 @@ function isUnderAtomsDir(rawPath: string, atomsDir: string): boolean {
 	}
 	// Escape regex metachars — same character class as memory.ts:237 so
 	// the two helpers stay visually aligned for future maintainers.
-	const escaped = atomsDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const escaped = escapeRegex(atomsDir);
 	return new RegExp(`^${escaped}(?:/|$)`).test(resolved);
+}
+
+// ============================================================================
+// Memory Atom Bash Write Guard (Task 3.4)
+// ============================================================================
+//
+// Task 3.3 blocks write/edit tools, but the agent can still bypass
+// memory_save by running `bash({command: "cat > ~/.pi/agent/memory/...md"})`
+// or `bash({command: "echo 'x' | tee ~/.pi/.../atoms/...md"})` — same
+// "ghost atom" outcome (filesystem entry without a memory_index row). The
+// helper below detects shell write operators (`>` / `>>` / `tee`) followed
+// by a path that resolves under atomsDir, and the bash branch in the
+// `tool_call` hook returns `{block, reason}` when matched.
+//
+// This is intentionally NOT a full shell parser — false negatives are
+// acceptable as long as the common patterns (heredoc redirect, `tee`,
+// append `>>`) are caught. Quoting, variable expansion, command
+// substitution, etc. are out of scope per design.md §"tool_call hook 路径
+// 拦截". The agent can still attempt exotic encodings (base64-decoded
+// payloads, indirect via env vars), but the practical surface — the
+// patterns a model actually reaches for — is covered.
+
+/**
+ * Return true when `cmd` contains a shell write operator (`>` / `>>` /
+ * `tee`) whose target path resolves under `atomsDir`.
+ *
+ * The command is expanded for `~/...` references first (matching the
+ * `~`-expansion style of `isUnderAtomsDir`) so a command like
+ * `"cat > ~/.pi/agent/memory/atoms/foo.md"` matches the same regex as
+ * the absolute-path form. After expansion we look for one of three
+ * write operators followed (after optional whitespace and an optional
+ * quote) by a non-whitespace, non-quote token sequence that ends in the
+ * escaped atomsDir. This catches the common redirect / heredoc / tee
+ * patterns without parsing full shell syntax.
+ */
+function looksLikeWriteToAtomsDir(cmd: string, atomsDir: string): boolean {
+	// Expand ~/  → <home>/  so the absolute-path regex below matches both
+	// the tilde form and the literal absolute form. Mirrors the
+	// isUnderAtomsDir `~`-expansion policy at line 856.
+	const home = process.env.HOME || homedir();
+	const expanded = cmd.replace(/~\//g, `${home}/`);
+	const escaped = escapeRegex(atomsDir);
+	// Matches: `> atoms/...`, `>> atoms/...`, `| tee atoms/...`
+	// (`>>?` = one or two `>`, `\btee\b` = whole word `tee`).
+	return new RegExp(`(?:>>?|\\btee\\b)\\s*[\\"']?[^\\s\\"']*${escaped}`).test(expanded);
 }
 
 // ============================================================================
@@ -1008,14 +1057,15 @@ export function registerTools(pi: ExtensionAPI): void {
 			return interceptTransferCall(event);
 		}
 
-		// 2. Memory atom path guard (Task 3.3) — block write/edit to
+		// 2. Memory atom path guard (Task 3.3 + 3.4) — block write/edit
+		//    AND bash redirect / heredoc / tee to
 		//    ~/.pi/agent/memory/atoms/**. The agent must use the
 		//    memory_save tool so the .md write is paired with a
-		//    memory_index row + bge-m3 reindex. Read is intentionally
-		//    unblocked so the agent can inspect existing atoms. Bash
-		//    heredoc/redirect detection lives in Task 3.4.
+		//    memory_index row + bge-m3 reindex. Read and bash reads are
+		//    intentionally unblocked so the agent can inspect existing
+		//    atoms before deciding to update.
+		const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
 		if (event.toolName === "write" || event.toolName === "edit") {
-			const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
 			const rawPath = (event.input.path ?? event.input.file_path) as string | undefined;
 			if (typeof rawPath === "string" && isUnderAtomsDir(rawPath, atomsDir)) {
 				return {
@@ -1023,6 +1073,16 @@ export function registerTools(pi: ExtensionAPI): void {
 					reason:
 						"memory atoms must be written via the memory_save tool, not direct file write/edit. " +
 						"Use memory_save({type, title, content, ...}) instead.",
+				};
+			}
+		}
+		if (event.toolName === "bash") {
+			const cmd = String(event.input.command ?? "");
+			if (looksLikeWriteToAtomsDir(cmd, atomsDir)) {
+				return {
+					block: true,
+					reason:
+						"memory atoms must be written via the memory_save tool, not bash redirect/heredoc.",
 				};
 			}
 		}

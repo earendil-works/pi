@@ -41,7 +41,11 @@
 //   - loadConfig returns {} on any failure — never throws. Real config wiring
 //     is external (see SettingsManager / webui routes).
 
-import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	ContextEvent,
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, completeSimple } from "@earendil-works/pi-ai/compat";
 import { homedir } from "node:os";
@@ -278,6 +282,184 @@ export function loadConfig(): PersonalAssistantConfig {
 		return settings.personalAssistant ?? {};
 	} catch {
 		return {};
+	}
+}
+
+type MemoryContextMessage = {
+	role: string;
+	content: string | unknown[];
+};
+
+type ContextRecallInput = {
+	event: ContextEvent;
+	messages: MemoryContextMessage[];
+	current: string;
+	recent: string[];
+};
+
+type GateOutcome = {
+	shouldRecall: boolean;
+	status: string;
+	elapsedMs: number;
+};
+
+type MemoryContextResult = { messages?: AgentMessage[] };
+
+const GATE_LOG_LABELS: Record<string, string> = {
+	parse: "parse-fail",
+	unreachable: "down",
+};
+
+function getContextRecallInput(event: ContextEvent): ContextRecallInput | null {
+	const messages = (event.messages ?? []) as MemoryContextMessage[];
+	const lastUserIndex = messages.length - 1;
+	if (lastUserIndex < 0 || messages[lastUserIndex]?.role !== "user") return null;
+
+	const userMessages: string[] = [];
+	for (let i = lastUserIndex; i >= 0; i--) {
+		const message = messages[i];
+		if (message?.role !== "user") continue;
+		userMessages.unshift(
+			typeof message.content === "string"
+				? message.content
+				: JSON.stringify(message.content),
+		);
+		if (userMessages.length >= 4) break;
+	}
+
+	return {
+		event,
+		messages,
+		current: userMessages[userMessages.length - 1]!,
+		recent: userMessages.slice(0, -1),
+	};
+}
+
+function getGateOutcome(
+	decision: { need_memory: boolean } | string | null,
+	elapsedMs: number,
+	ctx: ExtensionContext,
+): GateOutcome {
+	if (decision === null) {
+		ctx.ui?.setStatus?.("memory", "⚠ gate unknown, skipped");
+		return { shouldRecall: false, status: "unknown", elapsedMs };
+	}
+
+	if (typeof decision === "string") {
+		if (decision === "timeout") {
+			ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
+		} else if (decision === "parse") {
+			ctx.ui?.setStatus?.("memory", "🚫 gate skipped (parse failed)");
+		} else if (decision === "unreachable") {
+			ctx.ui?.setStatus?.("memory", "⚠ gate down, skipped");
+		}
+		return { shouldRecall: false, status: decision, elapsedMs };
+	}
+
+	if (!decision.need_memory) {
+		ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
+		return { shouldRecall: false, status: "skip-false", elapsedMs };
+	}
+
+	return { shouldRecall: true, status: "pass", elapsedMs };
+}
+
+function emitRecallDebug(ctx: ExtensionContext, line: string): void {
+	if (ctx.ui?.setStatus) {
+		ctx.ui.setStatus("memory-debug", line);
+	} else {
+		console.debug(line);
+	}
+}
+
+async function recallAndInjectContext(
+	input: ContextRecallInput,
+	config: PersonalAssistantConfig,
+	gate: GateOutcome,
+	ctx: ExtensionContext,
+): Promise<MemoryContextResult> {
+	const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
+	const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
+	const index = new MemoryIndex(dbPath);
+	await index.init();
+	try {
+		const rerankEnabled = config.memory?.rerank?.enabled ?? true;
+		const rewriteEnabled = config.memory?.rewrite?.enabled ?? true;
+		const { results, status } = await recallPipeline(index, {
+			query: input.current,
+			recent: input.recent,
+			topK: 20,
+			filter: undefined,
+			rerankEnabled,
+			atomsDir,
+			embeddingServiceUrlProbe: false,
+			...(rewriteEnabled ? {} : { rewriteEnabled: false }),
+		});
+
+		for (const result of results) {
+			result.relativePath = `${result.atom.type}/${result.atom.id}.md`;
+		}
+
+		if (status.rerank === "fallback") {
+			ctx.ui?.setStatus?.("memory", "⚠ rerank fallback");
+		} else if (results.length === 0) {
+			ctx.ui?.setStatus?.("memory", "🔍 no memory match");
+		} else {
+			const rules = results.filter((result) => result.atom.type === "rule").length;
+			const facts = results.filter((result) => result.atom.type === "fact").length;
+			const processes = results.filter((result) => result.atom.type === "process").length;
+			const maxRerankScore = Math.max(
+				...results.map((result) => result.rerankScore ?? 0),
+			);
+			ctx.ui?.setStatus?.(
+				"memory",
+				`📦 ${results.length} atoms · rule=${rules} fact=${facts} process=${processes} · top=${maxRerankScore}`,
+			);
+		}
+
+		const gateLabel = GATE_LOG_LABELS[gate.status] ?? gate.status;
+		const rewriteDisplay =
+			status.rewrite === "ok"
+				? `ok(${status.subqueryCount ?? 1})`
+				: status.rewrite;
+		const rerankReason =
+			status.rerank === "fallback" && status.rerankReason
+				? `(${status.rerankReason})`
+				: "";
+		const candidateCount = status.candidateCount ?? results.length;
+		emitRecallDebug(
+			ctx,
+			`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${status.rerank}${rerankReason} pre=${candidateCount} post=${results.length} latency {gate:${gate.elapsedMs.toFixed(0)}ms rewrite:${status.rewriteMs.toFixed(0)}ms recall:${status.recallMs.toFixed(0)}ms rerank:${status.rerankMs.toFixed(0)}ms}`,
+		);
+
+		if (results.length === 0) return input.event;
+
+		const { formatMemoryContext } = await import("./format.ts");
+		const formatted = formatMemoryContext(results, 4000);
+
+		let lastUserIndex = -1;
+		for (let i = input.messages.length - 1; i >= 0; i--) {
+			if (input.messages[i]?.role === "user") {
+				lastUserIndex = i;
+				break;
+			}
+		}
+		if (lastUserIndex === -1) return input.event;
+
+		const lastUser = input.messages[lastUserIndex]!;
+		const originalContent =
+			typeof lastUser.content === "string"
+				? lastUser.content
+				: JSON.stringify(lastUser.content);
+		const memoryPrefix = `[Relevant memory context — atoms at ${atomsDir}]\n${formatted.text}\n\n[User message]\n`;
+		const newMessages = [...input.messages];
+		newMessages[lastUserIndex] = {
+			...lastUser,
+			content: memoryPrefix + originalContent,
+		};
+		return { messages: newMessages as unknown as AgentMessage[] };
+	} finally {
+		index.close();
 	}
 }
 
@@ -772,189 +954,31 @@ export function registerMemory(pi: ExtensionAPI): void {
 	// path (design.md D6). Top-level imports for MemoryIndex /
 	// recallPipeline / loadConfig are unaffected.
 	pi.on("context", async (event: ContextEvent, ctx) => {
-		const messages = (event.messages ?? []) as Array<{ role: string; content: string | unknown[] }>;
-		if (messages.length === 0) return event as unknown as { messages?: AgentMessage[] };
+		const input = getContextRecallInput(event);
+		if (!input) return event;
 
-		// Skip non-user continuations (tool results, assistant mid-turn).
-		if (messages[messages.length - 1]?.role !== "user") {
-			return event as unknown as { messages?: AgentMessage[] };
-		}
-
-		// 1. Extract current (last) and recent (up to 3 prior) user messages
-		const userMessages: string[] = [];
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if (messages[i]?.role === "user") {
-				const content = messages[i]?.content;
-				userMessages.unshift(
-					typeof content === "string" ? content : JSON.stringify(content),
-				);
-				if (userMessages.length >= 4) break;
-			}
-		}
-
-		const current = userMessages[userMessages.length - 1]!;
-		const recent = userMessages.slice(0, -1);
-
-		// 2. Load config + gate check
 		const config = loadConfig();
-
-		// 3. Gate decision (dynamic import)
-		const gateEnabled = config.memory?.gate?.enabled ?? true;
-		let gateStatus = "disabled";
-		let gateMs = 0;
-		let gateT0 = 0;
-		let finalCount = 0;
-		let recallMs = 0;
-		let rerankStatus = "skip";
-		let rerankMs = 0;
-		let rewriteMs = 0;
-		const gateLogLabels: Record<string, string> = {
-			parse: "parse-fail",
-			unreachable: "down",
-		};
-		const emitRecallDebug = (line: string) => {
-			if (ctx.ui?.setStatus) {
-				ctx.ui.setStatus("memory-debug", line);
-			} else {
-				console.debug(line);
-			}
-		};
-		const emitGateSkipDebug = () => {
-			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
-			emitRecallDebug(
-				`[recall] gate=${gateLabel} rewrite=skip rerank=${rerankStatus} pre=0 post=0 latency {gate:${gateMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
-			);
-		};
-		if (gateEnabled) {
-			gateT0 = performance.now();
+		let gate: GateOutcome;
+		if (config.memory?.gate?.enabled ?? true) {
+			const gateStart = performance.now();
 			const { callGate } = await import("./gate.ts");
-			const gateDecision = await callGate(current, recent, { timeoutMs: 5000 });
-			gateMs = performance.now() - gateT0;
-
-			if (gateDecision === null) {
-				gateStatus = "unknown";
-				ctx.ui?.setStatus?.("memory", "⚠ gate unknown, skipped");
-				emitGateSkipDebug();
-				return event as unknown as { messages?: AgentMessage[] };
-			}
-			if (typeof gateDecision === "string") {
-				gateStatus = gateDecision;
-				if (gateDecision === "timeout") {
-					ctx.ui?.setStatus?.("memory", "⚠ gate timeout, skipped");
-				} else if (gateDecision === "parse") {
-					ctx.ui?.setStatus?.("memory", "🚫 gate skipped (parse failed)");
-				} else if (gateDecision === "unreachable") {
-					ctx.ui?.setStatus?.("memory", "⚠ gate down, skipped");
-				}
-				emitGateSkipDebug();
-				return event as unknown as { messages?: AgentMessage[] };
-			}
-			if (!gateDecision.need_memory) {
-				gateStatus = "skip-false";
-				ctx.ui?.setStatus?.("memory", "🚫 gate skipped");
-				emitGateSkipDebug();
-				return event as unknown as { messages?: AgentMessage[] };
-			}
-			gateStatus = "pass";
-		} else {
-			gateStatus = "disabled";
-		}
-
-		// 4. Open MemoryIndex and run the shared recall pipeline
-		const dbPath = config.memory?.dbPath ?? DEFAULT_DB_PATH;
-		const atomsDir = config.memory?.atomsDir ?? DEFAULT_ATOMS_DIR;
-		const index = new MemoryIndex(dbPath);
-		await index.init();
-		try {
-			const rerankEnabled = config.memory?.rerank?.enabled ?? true;
-			const rewriteEnabled = config.memory?.rewrite?.enabled ?? true;
-			const { results, status } = await recallPipeline(index, {
-				query: current,
-				recent,
-				topK: 20,
-				filter: undefined,
-				rerankEnabled,
-				atomsDir,
-				embeddingServiceUrlProbe: false,
-				...(rewriteEnabled ? {} : { rewriteEnabled: false }),
+			const decision = await callGate(input.current, input.recent, {
+				timeoutMs: 5000,
 			});
-			recallMs = status.recallMs;
-			rerankMs = status.rerankMs;
-			rewriteMs = status.rewriteMs;
-			rerankStatus = status.rerank;
-
-			// 5. Assign relativePath and prepare for inject
-			const finalResults = results;
-
-			// 6. Assign relativePath
-			for (const r of finalResults) {
-				r.relativePath = `${r.atom.type}/${r.atom.id}.md`;
-			}
-			finalCount = finalResults.length;
-
-			// 7. setStatus with pipeline outcome
-			if (status.rerank === "fallback") {
-				ctx.ui?.setStatus?.("memory", "⚠ rerank fallback");
-			} else if (finalResults.length === 0) {
-				ctx.ui?.setStatus?.("memory", "🔍 no memory match");
-			} else {
-				const rules = finalResults.filter((r) => r.atom.type === "rule").length;
-				const facts = finalResults.filter((r) => r.atom.type === "fact").length;
-				const processes = finalResults.filter((r) => r.atom.type === "process").length;
-				const maxRerankScore = Math.max(...finalResults.map((r) => r.rerankScore ?? 0));
-				ctx.ui?.setStatus?.(
-					"memory",
-					`📦 ${finalResults.length} atoms · rule=${rules} fact=${facts} process=${processes} · top=${maxRerankScore}`,
-				);
-			}
-
-			// 7b. Debug log — single per-call emission (task 5.4)
-			const gateLabel = gateLogLabels[gateStatus] ?? gateStatus;
-			const rewriteDisplay =
-				status.rewrite === "ok"
-					? `ok(${status.subqueryCount ?? 1})`
-					: status.rewrite;
-			const rerankReason =
-				status.rerank === "fallback" && status.rerankReason
-					? `(${status.rerankReason})`
-					: "";
-			const candidateCount = status.candidateCount ?? finalCount;
-			emitRecallDebug(
-				`[recall] gate=${gateLabel} rewrite=${rewriteDisplay} rerank=${rerankStatus}${rerankReason} pre=${candidateCount} post=${finalCount} latency {gate:${gateMs.toFixed(0)}ms rewrite:${rewriteMs.toFixed(0)}ms recall:${recallMs.toFixed(0)}ms rerank:${rerankMs.toFixed(0)}ms}`,
-			);
-
-			if (finalResults.length === 0) {
-				return event as unknown as { messages?: AgentMessage[] };
-			}
-
-			// 8. Format (dynamic import)
-			const { formatMemoryContext } = await import("./format.ts");
-			const formatted = formatMemoryContext(finalResults, 4000);
-
-			// 9. Inject into last user message
-			let lastUserIdx = -1;
-			for (let i = messages.length - 1; i >= 0; i--) {
-				if (messages[i]?.role === "user") {
-					lastUserIdx = i;
-					break;
-				}
-			}
-			if (lastUserIdx === -1) return event as unknown as { messages?: AgentMessage[] };
-
-			const lastUser = messages[lastUserIdx]!;
-			const originalContent =
-				typeof lastUser.content === "string"
-					? lastUser.content
-					: JSON.stringify(lastUser.content);
-			const memoryPrefix = `[Relevant memory context — atoms at ${atomsDir}]\n${formatted.text}\n\n[User message]\n`;
-			const newContent = memoryPrefix + originalContent;
-
-			const newMessages = [...messages];
-			newMessages[lastUserIdx] = { ...lastUser, content: newContent };
-			return { messages: newMessages as unknown as AgentMessage[] };
-		} finally {
-			index.close();
+			gate = getGateOutcome(decision, performance.now() - gateStart, ctx);
+		} else {
+			gate = { shouldRecall: true, status: "disabled", elapsedMs: 0 };
 		}
+		if (!gate.shouldRecall) {
+			const gateLabel = GATE_LOG_LABELS[gate.status] ?? gate.status;
+			emitRecallDebug(
+				ctx,
+				`[recall] gate=${gateLabel} rewrite=skip rerank=skip pre=0 post=0 latency {gate:${gate.elapsedMs.toFixed(0)}ms rewrite:0ms recall:0ms rerank:0ms}`,
+			);
+			return event;
+		}
+
+		return recallAndInjectContext(input, config, gate, ctx);
 	});
 
 	// tool_result hook — strength feedback + vector sync via tool interception.

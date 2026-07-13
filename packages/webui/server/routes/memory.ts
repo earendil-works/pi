@@ -33,7 +33,7 @@ import {
 } from "../../../../extensions/personal-assistant/file-store.ts";
 import { computeFingerprint } from "../../../../extensions/personal-assistant/extraction.ts";
 import { recallPipeline } from "../../../../extensions/personal-assistant/recall.ts";
-import type { MemoryAtomType, RecallResult } from "../../../../extensions/personal-assistant/types.ts";
+import type { MemoryAtomType } from "../../../../extensions/personal-assistant/types.ts";
 import {
 	buildEmbeddableText,
 	embedText,
@@ -899,7 +899,7 @@ export function registerPostSearch(
 				typeof rawType === "string" && ALLOWED_ATOM_TYPES.has(rawType as MemoryAtomType)
 					? (rawType as MemoryAtomType)
 					: undefined;
-			const filtered = req.body?.filtered === false ? false : true;
+			const filtered = req.body?.filtered !== false;
 			// recent: TUI sends up to 3 prior user messages; webui
 			// historically passed `null` from the MemorySearchTester UI.
 			// If the caller supplies it, it must be a string[]. Anything

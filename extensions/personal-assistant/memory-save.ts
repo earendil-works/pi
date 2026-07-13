@@ -15,9 +15,9 @@
 //       2.3  skipped  (no id, fingerprint hit) → return
 //             {action: "skipped", reason: "duplicate_content", existing_id}
 //             with no storage I/O.
-//   - Tasks 2.4 / 2.5 land the overwrite (id present, atom exists) and
-//     id_not_found (id present, atom missing) branches as additional
-//     return paths in this same execute body.
+//   - Tasks 2.4 / 2.5 add the overwrite (id present, atom exists) and
+//     id_not_found (id present, atom missing) branches through the
+//     updateMemoryAtom helper.
 //
 // Counter semantics (from the spec, "agent save counter increments on
 // every memory_save call"):
@@ -31,7 +31,7 @@
 //     attempted to save (and we deliberately deduped) — that is a
 //     real save attempt, not a no-op.
 //
-// The execute body reuses the same helpers from extraction.ts
+// The write path reuses the same helpers from extraction.ts
 // (computeFingerprint) and the storage layer (MemoryIndex.insertAtom /
 // getActiveAtomByFingerprint). The writeAtomToFile + reindexOne calls
 // match the extraction.ts persistCreate() pattern so the on-disk
@@ -169,6 +169,134 @@ export function resetSegmentMemorySaveCount(): void {
 	segmentMemorySaveCount = 0;
 }
 
+type MemorySaveInput = Static<typeof MemorySaveParams>;
+
+type MemorySaveToolResult = {
+	content: Array<{ type: "text"; text: string }>;
+	details: MemorySaveResult;
+};
+
+function createToolResult(text: string, details: MemorySaveResult): MemorySaveToolResult {
+	return {
+		content: [{ type: "text", text }],
+		details,
+	};
+}
+
+async function embedAtom(
+	atom: Pick<MemoryAtom, "title" | "summary" | "tags">,
+): Promise<{ vector: number[]; status: "ok" | "skipped" }> {
+	const embedding = await embedText(buildEmbeddableText(atom), { timeoutMs: 15000 });
+	return {
+		vector: embedding ?? new Array(1024).fill(0),
+		status: embedding === null ? "skipped" : "ok",
+	};
+}
+
+function buildUpdatedAtom(existing: MemoryAtom, params: MemorySaveInput): MemoryAtom {
+	const fingerprint = computeFingerprint(params.content);
+	const normalizedTags = normalizeTags(params.tags ?? []);
+	const now = Date.now();
+	return {
+		...existing,
+		type: params.type,
+		title: params.title,
+		summary: params.summary,
+		content: params.content,
+		tags: normalizedTags,
+		importance: params.importance,
+		content_fingerprint: fingerprint,
+		updated_at: now,
+		id: existing.id,
+		version: existing.version,
+		is_latest: existing.is_latest,
+		archived: existing.archived,
+		parent_id: existing.parent_id,
+		superseded_at: existing.superseded_at,
+		source_session: existing.source_session,
+		created_at: existing.created_at,
+		access_count: existing.access_count,
+		strength: existing.strength,
+		last_access: existing.last_access,
+	};
+}
+
+async function updateMemoryAtom(
+	index: MemoryIndex,
+	existing: MemoryAtom,
+	params: MemorySaveInput,
+	atomsDir: string,
+): Promise<MemorySaveToolResult> {
+	const atom = buildUpdatedAtom(existing, params);
+	const { vector, status } = await embedAtom(atom);
+	await index.updateAtom(atom, vector);
+	await writeAtomToFile(atom, atomsDir);
+	await reindexOne(atom.id);
+
+	return createToolResult(
+		`Updated atom ${atom.id} (${atom.type}: ${atom.title})`,
+		{ action: "updated", id: atom.id, embedding: status },
+	);
+}
+
+function buildNewAtom(
+	params: MemorySaveInput,
+	fingerprint: string,
+	normalizedTags: string[],
+	sourceSession: string | null,
+): MemoryAtom {
+	const now = Date.now();
+	return {
+		id: randomUUID(),
+		type: params.type,
+		title: params.title,
+		summary: params.summary,
+		content: params.content,
+		tags: normalizedTags,
+		importance: params.importance,
+		strength: 1.0,
+		access_count: 0,
+		version: 1,
+		is_latest: 1,
+		parent_id: null,
+		superseded_at: null,
+		archived: 0,
+		created_at: now,
+		updated_at: now,
+		last_access: null,
+		content_fingerprint: fingerprint,
+		source_session: sourceSession,
+	};
+}
+
+async function createMemoryAtom(
+	index: MemoryIndex,
+	params: MemorySaveInput,
+	fingerprint: string,
+	atomsDir: string,
+	ctx: unknown,
+): Promise<MemorySaveToolResult> {
+	const normalizedTags = normalizeTags(params.tags ?? []);
+	const currentSessionId =
+		(ctx as { sessionManager?: { getSessionId(): string | undefined } }).sessionManager?.getSessionId() ??
+		null;
+	const atom = buildNewAtom(
+		params,
+		fingerprint,
+		normalizedTags,
+		params.source_session ?? currentSessionId,
+	);
+	const { vector, status } = await embedAtom(atom);
+	await index.insertAtom(atom, vector);
+	await writeAtomToFile(atom, atomsDir);
+	await reindexOne(atom.id);
+
+	return createToolResult(
+		`Created atom ${atom.id} (${atom.type}: ${atom.title})`,
+		{ action: "created", id: atom.id, embedding: status },
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
@@ -184,7 +312,7 @@ export function resetSegmentMemorySaveCount(): void {
  *     fallback when the embedder is down), then insertAtom + writeAtomToFile +
  *     reindexOne, and return {action: "created", id, embedding}.
  *
- * Tasks 2.4 / 2.5 add the other branches in the same execute body:
+ * Tasks 2.4 / 2.5 add the overwrite branches through updateMemoryAtom:
  *   - 2.4 — id present, atom exists → in-place updateAtom + return
  *           {action: "updated", id, embedding}
  *   - 2.5 — id present, atom missing → {action: "error", error: "id_not_found"}
@@ -219,13 +347,6 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 			// here from scattered inline calls at the end of each branch.
 			incrementSegmentMemorySaveCount();
 
-			// Tasks 2.2 + 2.3 cover the create and skip branches. Task 2.4
-			// lands the overwrite branch (id present, atom exists); task 2.5
-			// will land the id_not_found envelope (id present, atom missing).
-			// For now, anything that isn't create/skip/overwrite surfaces as a
-			// thrown error so the test contract is unambiguous — task 2.6
-			// will revisit error handling for the `id_not_found` outcome (it
-			// should return a typed error envelope, not throw).
 			const dbPath = join(homedir(), ".pi", "agent", "memory", "memory.db");
 			const atomsDir = join(homedir(), ".pi", "agent", "memory", "atoms");
 
@@ -233,218 +354,30 @@ export function registerMemorySave(pi: ExtensionAPI): void {
 			await index.init();
 			try {
 				if (params.id !== undefined) {
-					// Task 2.4 — overwrite-by-id (in-place UPDATE).
-					// Mirrors `extraction.ts:executeItem` step 3 (line 227-252)
-					// but WITHOUT the `is_latest === 1 && archived === 0` guard:
-					// the agent explicitly supplies an id, so the agent can
-					// update any atom they have the id for (including archived
-					// or superseded ones — the agent intentionally chose it).
-					// The output preserves `id`, `is_latest`, `archived`,
-					// `parent_id`, `superseded_at`, `source_session`,
-					// `created_at`, `access_count`, `strength` from the
-					// existing row. `version` is auto-bumped by SQL
-					// `version = version + 1` (storage.ts:194) — we do NOT
-					// pass a manual version field; the typed `MemoryAtom`
-					// requires one but the SQL ignores the passed value.
 					const existing = index.getAtom(params.id);
 					if (!existing) {
-						// Task 2.5 — id_not_found envelope (scenarios.md S7 line 37-40,
-						// spec.md L39-44). No insertAtom / updateAtom /
-						// writeAtomToFile / reindexOne (per spec L44). The
-						// counter increments at the top of execute — the
-						// spec says it counts every memory_save invocation,
-						// including error outcomes (principle "counter 计入
-						// 调用而不计入成功").
-						const errorResult: MemorySaveResult = {
+						return createToolResult(`Error: no atom found with id ${params.id}`, {
 							action: "error",
 							error: "id_not_found",
 							id: params.id,
-						};
-						return {
-							content: [
-								{
-									type: "text",
-									text: `Error: no atom found with id ${params.id}`,
-								},
-							],
-							details: errorResult,
-						};
+						});
 					}
-
-					const fingerprint = computeFingerprint(params.content);
-					const normalizedTags = normalizeTags(params.tags ?? []);
-
-					const now = Date.now();
-					const mergedAtom: MemoryAtom = {
-						...existing,
-						type: params.type,
-						title: params.title,
-						summary: params.summary,
-						content: params.content,
-						tags: normalizedTags,
-						importance: params.importance,
-						content_fingerprint: fingerprint,
-						updated_at: now,
-						// Explicit defaults even though `...existing` covers them —
-						// makes the in-place semantics obvious to a future reader
-						// and protects against a future change to `existing`
-						// (e.g. adding an unset optional field).
-						id: existing.id,
-						version: existing.version, // SQL ignores this; bump is SQL-side.
-						is_latest: existing.is_latest,
-						archived: existing.archived,
-						parent_id: existing.parent_id,
-						superseded_at: existing.superseded_at,
-						source_session: existing.source_session,
-						created_at: existing.created_at,
-						access_count: existing.access_count,
-						strength: existing.strength,
-						last_access: existing.last_access,
-					};
-
-					// Embeddable text version 2 (embed.ts:135) — title + summary
-					// + tags only. Recall is discovery, content dilutes signal.
-					const embeddableText = buildEmbeddableText({
-						title: mergedAtom.title,
-						summary: mergedAtom.summary,
-						tags: mergedAtom.tags,
-					});
-					// Explicit 15s timeout per embed.ts DEFAULT_CONFIG and the
-					// spec's "Decision 6" — preserves a hard upper bound even
-					// if the embed default ever moves.
-					const embedding = await embedText(embeddableText, { timeoutMs: 15000 });
-					const vectorWasNull = embedding === null;
-					const vector = embedding ?? new Array(1024).fill(0);
-
-					// Three-step finalisation, mirrors create-path (line ~313):
-					//   1. in-place UPDATE row + vector (SQL bumps `version`),
-					//   2. write .md sidecar for L1 hydration in recall,
-					//   3. ask bge-m3 to refresh its dense+sparse index.
-					await index.updateAtom(mergedAtom, vector);
-					await writeAtomToFile(mergedAtom, atomsDir);
-					await reindexOne(mergedAtom.id);
-
-					const result: MemorySaveResult = {
-						action: "updated",
-						id: mergedAtom.id,
-						embedding: vectorWasNull ? "skipped" : "ok",
-					};
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Updated atom ${mergedAtom.id} (${mergedAtom.type}: ${mergedAtom.title})`,
-							},
-						],
-						details: result,
-					};
+					return await updateMemoryAtom(index, existing, params, atomsDir);
 				}
 
 				const fingerprint = computeFingerprint(params.content);
 				const existing = index.getActiveAtomByFingerprint(fingerprint);
 				if (existing) {
-					// Task 2.3 — fingerprint hit (no id, duplicate content).
-					// No storage / file / reindex I/O per design.md § "数据流
-					// (memory_save, create 路径)" branch 1. The matched atom's
-					// version / updated_at / access_count stay unchanged.
-					// The counter still increments (at the top of execute):
-					// the agent called the tool and we deliberately deduped,
-					// which is a real save attempt (per principle "counter
-					// 计入调用而不计入成功").
-					const skipResult: MemorySaveResult = {
-						action: "skipped",
-						reason: "duplicate_content",
-						existing_id: existing.id,
-					};
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Skipped: content already exists as atom ${existing.id}`,
-							},
-						],
-						details: skipResult,
-					};
-				}
-
-				const normalizedTags = normalizeTags(params.tags ?? []);
-
-				// Resolve source_session: explicit param wins, else fall back to
-				// the active session id from ctx.sessionManager (read-only at
-				// tool-execution time). Tests pass a stub ctx without
-				// sessionManager, so this collapses to null — that's fine,
-				// source_session is provenance-only and never gates writes.
-				const currentSessionId =
-					(ctx as { sessionManager?: { getSessionId(): string | undefined } }).sessionManager?.getSessionId() ??
-					null;
-				const sourceSession = params.source_session ?? currentSessionId;
-
-				const now = Date.now();
-				const newAtom: MemoryAtom = {
-					id: randomUUID(),
-					type: params.type,
-					title: params.title,
-					summary: params.summary,
-					content: params.content,
-					tags: normalizedTags,
-					importance: params.importance,
-					// Fresh-atom defaults: strength starts at 1.0 (mirrors
-					// extraction.ts:278 buildAtomFromItem; the decay loop will
-					// modulate from there on the next session_start).
-					strength: 1.0,
-					access_count: 0,
-					version: 1,
-					is_latest: 1,
-					parent_id: null,
-					superseded_at: null,
-					archived: 0,
-					created_at: now,
-					updated_at: now,
-					last_access: null,
-					content_fingerprint: fingerprint,
-					source_session: sourceSession,
-				};
-
-				// Embeddable text version 2 (embed.ts:135) drops `content` —
-				// title + summary + tags only. Recall is discovery-only, so
-				// embedding the verbose content dilutes the curated signal.
-				const embeddableText = buildEmbeddableText({
-					title: newAtom.title,
-					summary: newAtom.summary,
-					tags: newAtom.tags,
-				});
-				// Explicit 15s timeout (matches embed.ts DEFAULT_CONFIG and
-				// the spec's "Decision 6" — preserves a hard upper bound even
-				// if the embed.ts default ever moves).
-				const embedding = await embedText(embeddableText, { timeoutMs: 15000 });
-				const vectorWasNull = embedding === null;
-				const vector = embedding ?? new Array(1024).fill(0);
-
-				// Three-step finalisation (mirrors extraction.ts:168 persistCreate):
-				//   1. atomic DB insert (row + vector in one transaction),
-				//   2. write .md sidecar for L1 hydration in recall,
-				//   3. ask bge-m3 to refresh its dense+sparse index.
-				// reindexOne is non-blocking (never throws — collapses to
-				// {ok:false,error}); the worst case on bge-m3 outage is one
-				// stale vector until the next reindex trigger.
-				await index.insertAtom(newAtom, vector);
-				await writeAtomToFile(newAtom, atomsDir);
-				await reindexOne(newAtom.id);
-
-				const result: MemorySaveResult = {
-					action: "created",
-					id: newAtom.id,
-					embedding: vectorWasNull ? "skipped" : "ok",
-				};
-				return {
-					content: [
+					return createToolResult(
+						`Skipped: content already exists as atom ${existing.id}`,
 						{
-							type: "text",
-							text: `Created atom ${newAtom.id} (${newAtom.type}: ${newAtom.title})`,
+							action: "skipped",
+							reason: "duplicate_content",
+							existing_id: existing.id,
 						},
-					],
-					details: result,
-				};
+					);
+				}
+				return await createMemoryAtom(index, params, fingerprint, atomsDir, ctx);
 			} finally {
 				index.close();
 			}
