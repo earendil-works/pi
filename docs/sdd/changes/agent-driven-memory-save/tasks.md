@@ -129,7 +129,7 @@
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `safety net skipped when count >= 1` test PASS: mock counter=2, hook returns undefined without calling runCompactExtraction.
   - **依赖**: 4.1
 
-- [ ] 4.3 **session_before_compact graceful failure (no cancel)**
+- [x] 4.3 **session_before_compact graceful failure (no cancel)**
   - **文件**: `extensions/personal-assistant/memory.ts` (Modify)
   - **内容**: In `session_before_compact` hook, change the catch block (line 340-353) to: log warning, `notifySafely(ctx, \`memory: safety net skipped — \${msg}\`, "warn")`, return `undefined` (was: `{cancel: true}`). Compact now always proceeds.
   - **验证**: `cd extensions/personal-assistant && node ../../node_modules/vitest/dist/cli.js --run test/memory-save-tool.test.ts` — `safety net graceful on extraction failure` test PASS: mock runCompactExtraction throws, hook returns undefined, notify called with "warn".
