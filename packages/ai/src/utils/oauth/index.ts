@@ -5,6 +5,7 @@
  * for OAuth-based providers:
  * - Anthropic (Claude Pro/Max)
  * - GitHub Copilot
+ * - xAI (Grok/X subscription)
  */
 
 // Anthropic
@@ -38,6 +39,8 @@ export {
 	type RadiusOAuthProviderOptions,
 } from "./radius.ts";
 export * from "./types.ts";
+// xAI (Grok/X subscription)
+export { loginXaiOAuth, refreshXaiOAuthToken, xaiOAuthProvider } from "./xai.ts";
 
 // ============================================================================
 // Provider Registry
@@ -49,6 +52,7 @@ import { githubCopilotOAuthProvider } from "./github-copilot.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import { createRadiusOAuthProvider, DEFAULT_RADIUS_GATEWAY } from "./radius.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
+import { xaiOAuthProvider } from "./xai.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
@@ -59,6 +63,7 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 		name: "Radius",
 		gateway: getProviderEnvValue("PI_GATEWAY") || DEFAULT_RADIUS_GATEWAY,
 	}),
+	xaiOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(

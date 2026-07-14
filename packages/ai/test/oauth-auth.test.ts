@@ -6,6 +6,7 @@ import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 import { anthropicOAuth } from "../src/utils/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/utils/oauth/github-copilot.ts";
 import { openaiCodexOAuth } from "../src/utils/oauth/openai-codex.ts";
+import { xaiOAuth } from "../src/utils/oauth/xai.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -23,6 +24,11 @@ describe.sequential("OAuthAuth adapters", () => {
 
 	it("openai-codex toAuth derives the api key from the access token", async () => {
 		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
+		expect(auth).toEqual({ apiKey: "token" });
+	});
+
+	it("xAI toAuth derives the api key from the access token", async () => {
+		const auth = await xaiOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 
