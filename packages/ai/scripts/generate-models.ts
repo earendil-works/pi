@@ -1370,11 +1370,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const npm = m.provider?.npm;
 				let api: Api;
 				let baseUrl: string;
-				let compat: OpenAICompletionsCompat | undefined;
+				let compat: OpenAICompletionsCompat | OpenAIResponsesCompat | undefined;
 
 				if (npm === "@ai-sdk/openai") {
 					api = "openai-responses";
 					baseUrl = `${variant.basePath}/v1`;
+					compat = { sessionAffinityFormat: "openai-nosession" };
 				} else if (npm === "@ai-sdk/anthropic") {
 					api = "anthropic-messages";
 					// Anthropic SDK appends /v1/messages to baseURL

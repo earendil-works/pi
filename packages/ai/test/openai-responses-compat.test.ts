@@ -360,6 +360,26 @@ describe("openai-responses provider defaults", () => {
 		expect(capturedPayload?.prompt_cache_key).toBe("session-proxy");
 	});
 
+	it("uses OpenAI no-session format for OpenCode Responses models", async () => {
+		const model = getModel("opencode", "gpt-5.4");
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders(
+			{
+				sessionId: "session-opencode",
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			model,
+		);
+
+		expect(model.compat?.sessionAffinityFormat).toBe("openai-nosession");
+		expect(captured.sessionId).toBeNull();
+		expect(captured.clientRequestId).toBe("session-opencode");
+		expect(captured.xSessionId).toBeNull();
+		expect(capturedPayload?.prompt_cache_key).toBe("session-opencode");
+	});
+
 	it("can omit OpenAI session_id header while preserving other affinity data", async () => {
 		const proxyModel: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),
