@@ -1,7 +1,23 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 interface StdoutTakeoverState {
 	rawStdoutWrite: (chunk: string, callback?: (error?: Error | null) => void) => boolean;
 	rawStderrWrite: (chunk: string, callback?: (error?: Error | null) => void) => boolean;
 	originalStdoutWrite: typeof process.stdout.write;
+}
+
+type RedirectedStdoutHandler = (text: string) => boolean;
+
+const redirectedStdoutContext = new AsyncLocalStorage<RedirectedStdoutHandler>();
+
+/**
+ * Handle stdout writes inside a bounded synchronous/async operation before the
+ * non-interactive stdout guard falls back to stderr. The handler must return
+ * true only when it has durably routed the text elsewhere. Async-local context
+ * keeps concurrent RPC commands independently correlated.
+ */
+export function withStdoutRedirectHandler<T>(handler: RedirectedStdoutHandler, operation: () => T): T {
+	return redirectedStdoutContext.run(handler, operation);
 }
 
 let stdoutTakeoverState: StdoutTakeoverState | undefined;
@@ -56,10 +72,16 @@ export function takeOverStdout(): void {
 		encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
 		callback?: (error?: Error | null) => void,
 	): boolean => {
-		if (typeof encodingOrCallback === "function") {
-			return rawStderrWrite(String(chunk), encodingOrCallback);
+		const writeCallback = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+		const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+		const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
+
+		if (redirectedStdoutContext.getStore()?.(text)) {
+			if (writeCallback) queueMicrotask(() => writeCallback(null));
+			return true;
 		}
-		return rawStderrWrite(String(chunk), callback);
+
+		return rawStderrWrite(text, writeCallback);
 	}) as typeof process.stdout.write;
 
 	stdoutTakeoverState = {

@@ -11,6 +11,7 @@
  * - Extension UI: Extension UI requests are emitted, client responds with extension_ui_response
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as crypto from "node:crypto";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
@@ -23,6 +24,7 @@ import {
 	flushRawStdout,
 	takeOverStdout,
 	waitForRawStdoutBackpressure,
+	withStdoutRedirectHandler,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -30,6 +32,8 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcCommand,
+	RpcExtensionError,
+	RpcExtensionOutput,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcResponse,
@@ -40,6 +44,8 @@ import type {
 // Re-export types for consumers
 export type {
 	RpcCommand,
+	RpcExtensionError,
+	RpcExtensionOutput,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcResponse,
@@ -56,7 +62,15 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 
-	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
+	interface ActivePromptContext {
+		requestId?: string;
+		captureStdout: boolean;
+		commandError?: string;
+	}
+
+	const activePromptContext = new AsyncLocalStorage<ActivePromptContext>();
+
+	const output = (obj: RpcResponse | RpcExtensionError | RpcExtensionOutput | RpcExtensionUIRequest | object) => {
 		writeRawStdout(serializeJsonLine(obj));
 	};
 
@@ -345,7 +359,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				shutdownRequested = true;
 			},
 			onError: (err) => {
-				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
+				const promptContext = activePromptContext.getStore();
+				if (promptContext && err.event === "command") {
+					promptContext.commandError ??= err.error;
+				}
+				output({
+					type: "extension_error",
+					requestId: promptContext?.requestId,
+					extensionPath: err.extensionPath,
+					event: err.event,
+					error: err.error,
+				});
 			},
 		});
 
@@ -391,24 +415,41 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 
 			case "prompt": {
-				// Start prompt handling immediately, but emit the authoritative response only after
-				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
-				let preflightSucceeded = false;
-				void session
-					.prompt(command.message, {
-						images: command.images,
-						streamingBehavior: command.streamingBehavior,
-						source: "rpc",
-						preflightResult: (didSucceed) => {
-							if (didSucceed) {
-								preflightSucceeded = true;
-								output(success(id, "prompt"));
-							}
-						},
-					})
-					.catch((e) => {
-						if (!preflightSucceeded) {
-							output(error(id, "prompt", e.message));
+				// Keep extension command stdout and failures on the correlated JSONL protocol.
+				// Capture ends at preflight so ordinary agent/provider logs still fall back to stderr.
+				const promptContext: ActivePromptContext = { requestId: id, captureStdout: true };
+				let responseEmitted = false;
+				void activePromptContext
+					.run(promptContext, () =>
+						withStdoutRedirectHandler(
+							(text) => {
+								if (!promptContext.captureStdout) return false;
+								output({ type: "extension_output", requestId: id, stream: "stdout", text });
+								return true;
+							},
+							() =>
+								session.prompt(command.message, {
+									images: command.images,
+									streamingBehavior: command.streamingBehavior,
+									source: "rpc",
+									preflightResult: (didSucceed) => {
+										promptContext.captureStdout = false;
+										if (!didSucceed) return;
+										responseEmitted = true;
+										if (promptContext.commandError !== undefined) {
+											output(error(id, "prompt", promptContext.commandError));
+										} else {
+											output(success(id, "prompt"));
+										}
+									},
+								}),
+						),
+					)
+					.catch((caught) => {
+						promptContext.captureStdout = false;
+						if (!responseEmitted) {
+							const message = caught instanceof Error ? caught.message : String(caught);
+							output(error(id, "prompt", message));
 						}
 					});
 				return undefined;

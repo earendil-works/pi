@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { ExtensionFactory } from "../src/core/extensions/index.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -28,6 +29,19 @@ vi.mock("../src/core/output-guard.js", () => ({
 	flushRawStdout: vi.fn(async () => {}),
 	takeOverStdout: vi.fn(),
 	waitForRawStdoutBackpressure: vi.fn(async () => {}),
+	withStdoutRedirectHandler: async <T>(handler: (text: string) => boolean, operation: () => Promise<T>) => {
+		const originalWrite = process.stdout.write;
+		process.stdout.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+			if (handler(text)) return true;
+			return (originalWrite as (...writeArgs: unknown[]) => boolean)(chunk, ...args);
+		}) as typeof process.stdout.write;
+		try {
+			return await operation();
+		} finally {
+			process.stdout.write = originalWrite;
+		}
+	},
 	writeRawStdout: (line: string) => {
 		rpcIo.outputLines.push(line);
 	},
@@ -95,10 +109,17 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): {
+interface RuntimeOptions {
+	withAuth: boolean;
+	responseDelayMs: number;
+	model?: Model<any>;
+	extensionFactory?: ExtensionFactory;
+}
+
+async function createRuntimeHost(options: RuntimeOptions): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
-} {
+}> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -134,13 +155,16 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 	}
 
+	const extensionsResult = options.extensionFactory
+		? await createTestExtensionsResult([options.extensionFactory], tempDir)
+		: undefined;
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
 		modelRegistry,
-		resourceLoader: createTestResourceLoader(),
+		resourceLoader: createTestResourceLoader({ extensionsResult }),
 	});
 
 	const runtimeHost = {
@@ -170,14 +194,14 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	};
 }
 
-async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
+async function startRpcMode(options: RuntimeOptions): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, cleanup } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
@@ -281,6 +305,104 @@ describe("RPC prompt response semantics", () => {
 			});
 
 			await sleep(150);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("emits extension command stdout as a correlated protocol event", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			extensionFactory: (pi) => {
+				pi.registerCommand("structured", {
+					handler: async () => {
+						await Promise.resolve();
+						process.stdout.write(`${JSON.stringify({ ok: true, source: "extension" })}\n`);
+					},
+				});
+			},
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "ext-out", type: "prompt", message: "/structured" }));
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records).toContainEqual(
+					expect.objectContaining({
+						type: "extension_output",
+						requestId: "ext-out",
+						stream: "stdout",
+						text: expect.stringContaining('{"ok":true,"source":"extension"}'),
+					}),
+				);
+				expect(getPromptResponses(rpcIo.outputLines, "ext-out")).toEqual([
+					expect.objectContaining({ success: true }),
+				]);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("correlates extension command failures and returns prompt failure", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			extensionFactory: (pi) => {
+				pi.registerCommand("explode", {
+					handler: async () => {
+						await Promise.resolve();
+						throw new Error("command exploded");
+					},
+				});
+			},
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "ext-fail", type: "prompt", message: "/explode" }));
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records).toContainEqual(
+					expect.objectContaining({
+						type: "extension_error",
+						requestId: "ext-fail",
+						event: "command",
+						error: "command exploded",
+					}),
+				);
+				expect(getPromptResponses(rpcIo.outputLines, "ext-fail")).toEqual([
+					expect.objectContaining({ success: false, error: "command exploded" }),
+				]);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("treats an empty extension error message as failure", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			extensionFactory: (pi) => {
+				pi.registerCommand("empty-error", {
+					handler: () => {
+						throw new Error();
+					},
+				});
+			},
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "empty-fail", type: "prompt", message: "/empty-error" }));
+
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "empty-fail")).toEqual([
+					expect.objectContaining({ success: false, error: "" }),
+				]);
+			});
 		} finally {
 			await cleanup();
 		}

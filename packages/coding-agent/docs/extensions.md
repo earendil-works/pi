@@ -2789,6 +2789,7 @@ const highlighted = highlightCode(code, lang, theme);
 ## Error Handling
 
 - Extension errors are logged, agent continues
+- In RPC mode, extension command stdout is emitted as a correlated `extension_output` event rather than raw stderr; thrown command errors emit `extension_error` and make the invoking prompt response fail
 - `tool_call` errors block the tool (fail-safe)
 - Tool `execute` errors must be signaled by throwing; the thrown error is caught, reported to the LLM with `isError: true`, and execution continues
 

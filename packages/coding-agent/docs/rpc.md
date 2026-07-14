@@ -21,7 +21,7 @@ Common options:
 
 - **Commands**: JSON objects sent to stdin, one per line
 - **Responses**: JSON objects with `type: "response"` indicating command success/failure
-- **Events**: Agent events streamed to stdout as JSON lines
+- **Events**: Agent and extension events streamed to stdout as JSON lines
 
 All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`.
 
@@ -74,6 +74,8 @@ Response:
 ```
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
+
+When the prompt invokes an extension command, stdout written by that command is emitted as correlated `extension_output` events. If the command throws, Pi emits a correlated `extension_error` event and the prompt response is `success: false`; it never reports transport success for a failed extension command.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 
@@ -801,7 +803,9 @@ Each command has:
 
 ## Events
 
-Events are streamed to stdout as JSON lines during agent operation. Events do NOT include an `id` field (only responses do).
+Events are streamed to stdout as JSON lines during agent operation. Agent lifecycle events do not include an `id` field. Correlated extension events use `requestId` so they cannot be confused with command responses.
+
+The typed `RpcClient.onEvent()` API remains agent-event-only for compatibility. Use `RpcClient.onRpcEvent()` to receive the complete union, including `extension_output`, `extension_error`, and `extension_ui_request`.
 
 ### Event Types
 
@@ -823,6 +827,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `extension_output` | Extension command wrote to stdout |
 | `extension_error` | Extension threw an error |
 
 ### agent_start
@@ -1041,13 +1046,29 @@ On final failure (max retries exceeded):
 }
 ```
 
+### extension_output
+
+Emitted when an extension command invoked through `prompt` writes to stdout. Pi keeps raw stdout protocol-clean and wraps the exact text instead of redirecting it to stderr.
+
+```json
+{
+  "type": "extension_output",
+  "requestId": "req-1",
+  "stream": "stdout",
+  "text": "{\"ok\":true}\n"
+}
+```
+
+`requestId` matches the invoking prompt command's optional `id`. Diagnostic stderr remains process stderr and is not promoted into the protocol.
+
 ### extension_error
 
-Emitted when an extension throws an error.
+Emitted when an extension throws an error. When the error occurs while handling an RPC prompt, `requestId` contains that prompt command's `id`. An extension command error is followed by a single `success: false` prompt response with the same id.
 
 ```json
 {
   "type": "extension_error",
+  "requestId": "req-1",
   "extensionPath": "/path/to/extension.ts",
   "event": "tool_call",
   "error": "Error message..."

@@ -226,6 +226,23 @@ export type RpcResponse =
 // Extension UI Events (stdout)
 // ============================================================================
 
+/** Structured stdout emitted while an RPC prompt invokes an extension command. */
+export interface RpcExtensionOutput {
+	type: "extension_output";
+	requestId?: string;
+	stream: "stdout";
+	text: string;
+}
+
+/** Extension failure event, correlated when it occurred during an RPC prompt. */
+export interface RpcExtensionError {
+	type: "extension_error";
+	requestId?: string;
+	extensionPath: string;
+	event: string;
+	error: string;
+}
+
 /** Emitted when an extension needs user input */
 export type RpcExtensionUIRequest =
 	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }

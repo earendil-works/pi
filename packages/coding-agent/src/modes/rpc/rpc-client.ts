@@ -12,7 +12,15 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcExtensionError,
+	RpcExtensionOutput,
+	RpcExtensionUIRequest,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -46,7 +54,13 @@ export interface ModelInfo {
 	reasoning: boolean;
 }
 
+export type RpcEvent = AgentSessionEvent | RpcExtensionError | RpcExtensionOutput | RpcExtensionUIRequest;
+
+/** Backward-compatible listener for agent lifecycle events only. */
 export type RpcEventListener = (event: AgentSessionEvent) => void;
+
+/** Listener for every RPC protocol event, including extension output/errors/UI. */
+export type RpcProtocolEventListener = (event: RpcEvent) => void;
 
 // ============================================================================
 // RPC Client
@@ -56,6 +70,7 @@ export class RpcClient {
 	private process: ChildProcess | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	private protocolEventListeners: RpcProtocolEventListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
 		new Map();
 	private requestId = 0;
@@ -179,6 +194,19 @@ export class RpcClient {
 	}
 
 	/**
+	 * Subscribe to every protocol event, including extension output, errors, and UI requests.
+	 */
+	onRpcEvent(listener: RpcProtocolEventListener): () => void {
+		this.protocolEventListeners.push(listener);
+		return () => {
+			const index = this.protocolEventListeners.indexOf(listener);
+			if (index !== -1) {
+				this.protocolEventListeners.splice(index, 1);
+			}
+		};
+	}
+
+	/**
 	 * Get collected stderr output (useful for debugging).
 	 */
 	getStderr(): string {
@@ -195,28 +223,28 @@ export class RpcClient {
 	 * Use waitForIdle() to wait for completion.
 	 */
 	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+		this.assertSuccess(await this.send({ type: "prompt", message, images }));
 	}
 
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
 	async steer(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "steer", message, images });
+		this.assertSuccess(await this.send({ type: "steer", message, images }));
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
 	async followUp(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "follow_up", message, images });
+		this.assertSuccess(await this.send({ type: "follow_up", message, images }));
 	}
 
 	/**
 	 * Abort current operation.
 	 */
 	async abort(): Promise<void> {
-		await this.send({ type: "abort" });
+		this.assertSuccess(await this.send({ type: "abort" }));
 	}
 
 	/**
@@ -269,7 +297,7 @@ export class RpcClient {
 	 * Set thinking level.
 	 */
 	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-		await this.send({ type: "set_thinking_level", level });
+		this.assertSuccess(await this.send({ type: "set_thinking_level", level }));
 	}
 
 	/**
@@ -284,14 +312,14 @@ export class RpcClient {
 	 * Set steering mode.
 	 */
 	async setSteeringMode(mode: "all" | "one-at-a-time"): Promise<void> {
-		await this.send({ type: "set_steering_mode", mode });
+		this.assertSuccess(await this.send({ type: "set_steering_mode", mode }));
 	}
 
 	/**
 	 * Set follow-up mode.
 	 */
 	async setFollowUpMode(mode: "all" | "one-at-a-time"): Promise<void> {
-		await this.send({ type: "set_follow_up_mode", mode });
+		this.assertSuccess(await this.send({ type: "set_follow_up_mode", mode }));
 	}
 
 	/**
@@ -306,21 +334,21 @@ export class RpcClient {
 	 * Set auto-compaction enabled/disabled.
 	 */
 	async setAutoCompaction(enabled: boolean): Promise<void> {
-		await this.send({ type: "set_auto_compaction", enabled });
+		this.assertSuccess(await this.send({ type: "set_auto_compaction", enabled }));
 	}
 
 	/**
 	 * Set auto-retry enabled/disabled.
 	 */
 	async setAutoRetry(enabled: boolean): Promise<void> {
-		await this.send({ type: "set_auto_retry", enabled });
+		this.assertSuccess(await this.send({ type: "set_auto_retry", enabled }));
 	}
 
 	/**
 	 * Abort in-progress retry.
 	 */
 	async abortRetry(): Promise<void> {
-		await this.send({ type: "abort_retry" });
+		this.assertSuccess(await this.send({ type: "abort_retry" }));
 	}
 
 	/**
@@ -335,7 +363,7 @@ export class RpcClient {
 	 * Abort running bash command.
 	 */
 	async abortBash(): Promise<void> {
-		await this.send({ type: "abort_bash" });
+		this.assertSuccess(await this.send({ type: "abort_bash" }));
 	}
 
 	/**
@@ -417,7 +445,7 @@ export class RpcClient {
 	 * Set the session display name.
 	 */
 	async setSessionName(name: string): Promise<void> {
-		await this.send({ type: "set_session_name", name });
+		this.assertSuccess(await this.send({ type: "set_session_name", name }));
 	}
 
 	/**
@@ -486,10 +514,36 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<AgentSessionEvent[]> {
-		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images);
-		return eventsPromise;
+	promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<AgentSessionEvent[]> {
+		return new Promise((resolve, reject) => {
+			const events: AgentSessionEvent[] = [];
+			let finished = false;
+			const cleanup = () => {
+				clearTimeout(timer);
+				unsubscribe();
+			};
+			const timer = setTimeout(() => {
+				if (finished) return;
+				finished = true;
+				cleanup();
+				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
+			}, timeout);
+			const unsubscribe = this.onEvent((event) => {
+				events.push(event);
+				if (event.type === "agent_settled" && !finished) {
+					finished = true;
+					cleanup();
+					resolve(events);
+				}
+			});
+
+			void this.prompt(message, images).catch((caught) => {
+				if (finished) return;
+				finished = true;
+				cleanup();
+				reject(caught);
+			});
+		});
 	}
 
 	// =========================================================================
@@ -508,7 +562,19 @@ export class RpcClient {
 				return;
 			}
 
-			// Otherwise it's an event
+			const event = data as RpcEvent;
+			for (const listener of this.protocolEventListeners) {
+				listener(event);
+			}
+
+			if (
+				data.type === "extension_output" ||
+				data.type === "extension_error" ||
+				data.type === "extension_ui_request"
+			) {
+				return;
+			}
+
 			for (const listener of this.eventListeners) {
 				listener(data as AgentSessionEvent);
 			}
@@ -579,11 +645,14 @@ export class RpcClient {
 		});
 	}
 
-	private getData<T>(response: RpcResponse): T {
+	private assertSuccess(response: RpcResponse): asserts response is Extract<RpcResponse, { success: true }> {
 		if (!response.success) {
-			const errorResponse = response as Extract<RpcResponse, { success: false }>;
-			throw new Error(errorResponse.error);
+			throw new Error(response.error);
 		}
+	}
+
+	private getData<T>(response: RpcResponse): T {
+		this.assertSuccess(response);
 		// Type assertion: we trust response.data matches T based on the command sent.
 		// This is safe because each public method specifies the correct T for its command.
 		const successResponse = response as Extract<RpcResponse, { success: true; data: unknown }>;
