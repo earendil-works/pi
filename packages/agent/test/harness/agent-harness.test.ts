@@ -465,6 +465,101 @@ describe("AgentHarness", () => {
 		});
 	});
 
+	it("runs message_end hooks as an ordered pipeline before persistence", async () => {
+		const registration = newFaux();
+		registration.setResponses([() => fauxAssistantMessage("secret")]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+		const hookRoles: string[] = [];
+		harness.on("message_end", (event) => {
+			hookRoles.push(event.message.role);
+			if (event.message.role !== "assistant") return undefined;
+			return { message: { ...event.message, content: [{ type: "text", text: "one" }] } };
+		});
+		harness.on("message_end", (event) => {
+			if (event.message.role !== "assistant") return undefined;
+			const first = event.message.content[0];
+			const text = first?.type === "text" ? first.text : "";
+			return { message: { ...event.message, content: [{ type: "text", text: `${text}-two` }] } };
+		});
+		const observedTexts: string[] = [];
+		harness.subscribe((event) => {
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				const first = event.message.content[0];
+				observedTexts.push(first?.type === "text" ? first.text : "");
+			}
+		});
+
+		const response = await harness.prompt("hello");
+
+		expect(hookRoles).toEqual(["user", "assistant"]);
+		expect(response.content).toEqual([{ type: "text", text: "one-two" }]);
+		expect(observedTexts).toEqual(["one-two"]);
+		const persisted = (await session.getEntries()).flatMap((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" ? [entry.message] : [],
+		);
+		expect(persisted).toHaveLength(1);
+		expect(persisted[0]).toMatchObject({ content: [{ type: "text", text: "one-two" }] });
+	});
+
+	it("rejects message_end replacements that change the message role", async () => {
+		const registration = newFaux();
+		registration.setResponses([() => fauxAssistantMessage("secret")]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+		let replaced = false;
+		harness.on("message_end", (event) => {
+			if (replaced || event.message.role !== "assistant") return undefined;
+			replaced = true;
+			return { message: { ...event.message, role: "user" } as AgentMessage };
+		});
+
+		const response = await harness.prompt("hello");
+
+		expect(response.stopReason).toBe("error");
+		expect(response.errorMessage).toMatch(/message_end hook must keep the message role "assistant"/);
+		const persistedTexts = (await session.getEntries()).flatMap((entry) => {
+			if (entry.type !== "message" || entry.message.role !== "assistant") return [];
+			const first = entry.message.content[0];
+			return first?.type === "text" ? [first.text] : [];
+		});
+		expect(persistedTexts).not.toContain("secret");
+	});
+
+	it("normalizes null content on message_end replacements", async () => {
+		const registration = newFaux();
+		registration.setResponses([() => fauxAssistantMessage("secret")]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+		harness.on("message_end", (event) => {
+			if (event.message.role !== "assistant") return undefined;
+			return { message: { ...event.message, content: null } as unknown as AgentMessage };
+		});
+
+		const response = await harness.prompt("hello");
+
+		expect(response.content).toEqual([]);
+		const persisted = (await session.getEntries()).flatMap((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" ? [entry.message] : [],
+		);
+		expect(persisted[0]).toMatchObject({ content: [] });
+	});
+
 	it("preserves app tool types for getters and update events", async () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });

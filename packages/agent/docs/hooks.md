@@ -45,7 +45,7 @@ interface ToolCallEvent extends HookEvent<"tool_call", { block?: boolean; reason
 	input: Record<string, unknown>;
 }
 
-interface MessageEndEvent extends HookEvent<"message_end"> {
+interface MessageEndEvent extends HookEvent<"message_end", { message?: AgentMessage }> {
 	type: "message_end";
 	message: AgentMessage;
 }
@@ -139,6 +139,8 @@ class DefaultAgentHarnessHooks<E extends HookEvent<string, unknown>, Ctx>
 				return this.emitToolCall(event, signal);
 			case "tool_result":
 				return this.emitToolResult(event, signal);
+			case "message_end":
+				return this.emitMessageEnd(event, signal);
 			case "session_before_compact":
 			case "session_before_tree":
 				return this.emitFirstCancelOrLast(event, signal);
@@ -157,10 +159,10 @@ Internal casts are acceptable inside the implementation because `Map<string, ...
 ### Observation
 
 ```ts
-await hooks.emit({ type: "message_end", message }, signal);
+await hooks.emit({ type: "after_provider_response", status, headers }, signal);
 ```
 
-Observers run. `message_end` handlers run. Return ignored unless that event later gets a result type.
+Observers run. `after_provider_response` handlers run. Return ignored because the event defines no result type.
 
 ### Context transform
 
@@ -251,6 +253,23 @@ for (const handler of handlers("tool_result")) {
 return modified
 	? { content: current.content, details: current.details, isError: current.isError }
 	: undefined;
+```
+
+### Message end
+
+Sequential transform before persistence. Each handler sees the previous replacement. Replacements must keep the original message role and get missing/`null` content normalized; invalid replacements throw and nothing is persisted. Implemented in the current harness as `emitMessageEnd()`.
+
+```ts
+let current = event;
+
+for (const handler of handlers("message_end")) {
+	const result = await handler(current, ctx, signal);
+	if (result?.message !== undefined) {
+		current = { ...current, message: normalizeReplacement(current.message, result.message) };
+	}
+}
+
+return current.message === event.message ? undefined : { message: current.message };
 ```
 
 ### Session-before events

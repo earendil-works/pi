@@ -69,6 +69,36 @@ function cloneStreamOptions(streamOptions?: AgentHarnessStreamOptions): AgentHar
 	};
 }
 
+function normalizeMessageEndReplacement(original: AgentMessage, replacement: AgentMessage): AgentMessage {
+	if (typeof replacement !== "object" || replacement === null) {
+		throw new AgentHarnessError("hook", "message_end hook returned a non-object message replacement");
+	}
+	const originalRole = (original as { role?: unknown }).role;
+	const replacementRole = (replacement as { role?: unknown }).role;
+	if (replacementRole !== originalRole) {
+		throw new AgentHarnessError(
+			"hook",
+			`message_end hook must keep the message role "${String(originalRole)}", got "${String(replacementRole)}"`,
+		);
+	}
+	if (
+		(replacementRole === "user" || replacementRole === "assistant" || replacementRole === "toolResult") &&
+		(replacement as { content?: unknown }).content == null
+	) {
+		return { ...replacement, content: [] } as AgentMessage;
+	}
+	return replacement;
+}
+
+function replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
+	if (target === replacement) return;
+	const targetRecord = target as unknown as Record<string, unknown>;
+	for (const key of Object.keys(targetRecord)) {
+		delete targetRecord[key];
+	}
+	Object.assign(targetRecord, replacement);
+}
+
 function findDuplicateNames(names: string[]): string[] {
 	const seen = new Set<string>();
 	const duplicates = new Set<string>();
@@ -291,6 +321,23 @@ export class AgentHarness<
 		return current;
 	}
 
+	private async emitMessageEnd(message: AgentMessage): Promise<AgentMessage> {
+		const handlers = this.getHandlers("message_end");
+		let current = message;
+		if (!handlers || handlers.size === 0) return current;
+		for (const handler of handlers) {
+			try {
+				const result = await handler({ type: "message_end", message: current });
+				if (result?.message !== undefined) {
+					current = normalizeMessageEndReplacement(current, result.message);
+				}
+			} catch (error) {
+				throw normalizeHookError(error);
+			}
+		}
+		return current;
+	}
+
 	private async emitQueueUpdate(): Promise<void> {
 		await this.emitOwn({
 			type: "queue_update",
@@ -487,6 +534,8 @@ export class AgentHarness<
 
 	private async handleAgentEvent(event: AgentEvent, signal?: AbortSignal): Promise<void> {
 		if (event.type === "message_end") {
+			const finalMessage = await this.emitMessageEnd(event.message);
+			replaceMessageInPlace(event.message, finalMessage);
 			await this.session.appendMessage(event.message);
 			await this.emitAny(event, signal);
 			return;

@@ -538,6 +538,11 @@ export interface ContextEvent {
 	messages: AgentMessage[];
 }
 
+export interface MessageEndEvent {
+	type: "message_end";
+	message: AgentMessage;
+}
+
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	model: Model<any>;
@@ -643,6 +648,7 @@ export type AgentHarnessOwnEvent<
 	| SettledEvent
 	| BeforeAgentStartEvent<TSkill, TPromptTemplate>
 	| ContextEvent
+	| MessageEndEvent
 	| BeforeProviderRequestEvent
 	| BeforeProviderPayloadEvent
 	| AfterProviderResponseEvent
@@ -668,6 +674,10 @@ export interface BeforeAgentStartResult {
 
 export interface ContextResult {
 	messages: AgentMessage[];
+}
+
+export interface MessageEndResult {
+	message?: AgentMessage;
 }
 
 export interface BeforeProviderRequestResult {
@@ -706,6 +716,7 @@ export interface SessionBeforeTreeResult {
 export type AgentHarnessEventResultMap = {
 	before_agent_start: BeforeAgentStartResult | undefined;
 	context: ContextResult | undefined;
+	message_end: MessageEndResult | undefined;
 	before_provider_request: BeforeProviderRequestResult | undefined;
 	before_provider_payload: BeforeProviderPayloadResult | undefined;
 	after_provider_response: undefined;
