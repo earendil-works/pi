@@ -42,6 +42,10 @@ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copi
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
+import {
+	applyRecoveredToolCallsToAssistantMessage,
+	assistantMessageHasToolCalls,
+} from "../utils/recover-tool-calls-from-content.ts";
 
 /**
  * Check if conversation messages contain tool calls or tool results.
@@ -232,7 +236,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "toolCall") {
-					block.arguments = parseStreamingJson(block.partialArgs);
+					if (typeof block.partialArgs === "string") {
+						block.arguments = parseStreamingJson(block.partialArgs);
+					}
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.
 					delete block.partialArgs;
@@ -437,9 +443,14 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 			}
 
+			if (!assistantMessageHasToolCalls(output) && context.tools && context.tools.length > 0) {
+				applyRecoveredToolCallsToAssistantMessage(output, context.tools);
+			}
+
 			for (const block of blocks) {
 				finishBlock(block);
 			}
+
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
