@@ -19,3 +19,6 @@ export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> =>
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./github-copilot.ts")) as { githubCopilotOAuth: OAuthAuth }).githubCopilotOAuth;
+
+export const loadXaiOAuth = async (): Promise<OAuthAuth> =>
+	((await importOAuthModule("./xai.ts")) as { xaiOAuth: OAuthAuth }).xaiOAuth;

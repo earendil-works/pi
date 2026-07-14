@@ -17,6 +17,7 @@ Use `/login` in interactive mode, then select a provider:
 
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
+- xAI SuperGrok/X Premium
 - GitHub Copilot
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
@@ -29,6 +30,12 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 ### Claude Pro/Max
 
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
+
+### xAI SuperGrok/X Premium
+
+- Uses xAI subscription OAuth for eligible SuperGrok and X Premium accounts
+- Supports browser login and device-code login for headless environments
+- Subscription access remains subject to xAI eligibility and plan limits; accounts without OAuth API entitlement may receive HTTP 403
 
 ### GitHub Copilot
 

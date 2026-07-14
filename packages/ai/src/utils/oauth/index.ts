@@ -27,7 +27,6 @@ export {
 	openaiCodexOAuthProvider,
 	refreshOpenAICodexToken,
 } from "./openai-codex.ts";
-
 // Radius (pi-messages gateway)
 export {
 	createRadiusOAuthProvider,
@@ -38,6 +37,15 @@ export {
 	type RadiusOAuthProviderOptions,
 } from "./radius.ts";
 export * from "./types.ts";
+// xAI (SuperGrok/X Premium)
+export {
+	loginXai,
+	loginXaiDeviceCode,
+	refreshXaiToken,
+	XAI_BROWSER_LOGIN_METHOD,
+	XAI_DEVICE_CODE_LOGIN_METHOD,
+	xaiOAuthProvider,
+} from "./xai.ts";
 
 // ============================================================================
 // Provider Registry
@@ -49,11 +57,13 @@ import { githubCopilotOAuthProvider } from "./github-copilot.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import { createRadiusOAuthProvider, DEFAULT_RADIUS_GATEWAY } from "./radius.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
+import { xaiOAuthProvider } from "./xai.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	xaiOAuthProvider,
 	createRadiusOAuthProvider({
 		id: "radius",
 		name: "Radius",
