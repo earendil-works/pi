@@ -52,7 +52,7 @@ export const CEREBRAS_MODELS = {
 		cost: {
 			input: 2.25,
 			output: 2.75,
-			cacheRead: 0,
+			cacheRead: 2.25,
 			cacheWrite: 0,
 		},
 		contextWindow: 131072,

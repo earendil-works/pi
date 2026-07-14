@@ -660,6 +660,23 @@ export const AZURE_OPENAI_RESPONSES_MODELS = {
 		contextWindow: 1050000,
 		maxTokens: 128000,
 	} satisfies Model<"azure-openai-responses">,
+	"gpt-realtime-2.1": {
+		id: "gpt-realtime-2.1",
+		name: "GPT-Realtime-2.1",
+		api: "azure-openai-responses",
+		provider: "azure-openai-responses",
+		baseUrl: "",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 4,
+			output: 24,
+			cacheRead: 0.4,
+			cacheWrite: 0,
+		},
+		contextWindow: 128000,
+		maxTokens: 32000,
+	} satisfies Model<"azure-openai-responses">,
 	"o1": {
 		id: "o1",
 		name: "o1",
