@@ -12,7 +12,7 @@ describe("SQLite migrations", () => {
 			await applyMigrations(db);
 
 			const rows = db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_session_discovery.sql"]);
 			const tables = db
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string }>();
@@ -34,6 +34,9 @@ describe("SQLite migrations", () => {
 			);
 			const sessionColumns = db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
 			expect(sessionColumns.map((column) => column.name)).not.toContain("leaf_id");
+			expect(sessionColumns.map((column) => column.name)).toEqual(
+				expect.arrayContaining(["updated_at", "first_message", "all_messages_text"]),
+			);
 			const sessionIndexes = db.prepare("PRAGMA index_list(sessions)").all<{ name: string }>();
 			expect(sessionIndexes.map((index) => index.name)).toContain("idx_sessions_cwd_created_at");
 			expect(sessionIndexes.map((index) => index.name)).not.toContain("idx_sessions_parent");

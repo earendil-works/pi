@@ -59,6 +59,14 @@ describe("CodingAgentSqliteSessionRepository", () => {
 		await session.close();
 
 		expect((await repo.list(cwd)).map((item) => item.id)).toEqual(["session-1"]);
+		const [info] = await repo.listSessionInfo(cwd);
+		expect(info).toMatchObject({
+			id: "session-1",
+			messageCount: 2,
+			firstMessage: "one",
+			allMessagesText: "one two",
+		});
+		expect(info?.modified.getTime()).toBeGreaterThanOrEqual(info?.created.getTime() ?? 0);
 		expect(await repo.list(join(root, "other"))).toEqual([]);
 		const reopened = await repo.openById("session-1");
 		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);

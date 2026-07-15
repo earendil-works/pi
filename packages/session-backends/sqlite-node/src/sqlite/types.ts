@@ -37,6 +37,10 @@ export interface SqliteSessionMetadata extends SessionMetadata {
 	name?: string;
 	/** Opaque application-owned metadata. */
 	metadata?: Record<string, unknown>;
+	updatedAt?: number;
+	messageCount?: number;
+	firstMessage?: string;
+	allMessagesText?: string;
 }
 
 export interface SqliteSessionCreateOptions extends SessionCreateOptions {

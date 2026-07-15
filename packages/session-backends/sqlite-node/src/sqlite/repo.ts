@@ -169,6 +169,39 @@ function getParentPath(path: string): string {
 	return normalized.slice(0, lastSlash);
 }
 
+function getDiscoveryText(entry: Entry): { firstMessage: string | null; messageText: string | null } {
+	if (entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "assistant")) {
+		return { firstMessage: null, messageText: null };
+	}
+	const content = entry.message.content;
+	const text =
+		typeof content === "string"
+			? content
+			: content
+					.filter((part): part is { type: "text"; text: string } => part.type === "text")
+					.map((part) => part.text)
+					.join("\n");
+	return {
+		firstMessage: entry.message.role === "user" && text ? text : null,
+		messageText: text || null,
+	};
+}
+
+function updateSessionDiscovery(db: SqliteDatabase, sessionId: string, entry: Entry): void {
+	const discovery = getDiscoveryText(entry);
+	sql`UPDATE sessions SET updated_at = ${entry.timestamp},
+		first_message = CASE
+			WHEN first_message IS NULL AND ${discovery.firstMessage} IS NOT NULL THEN ${discovery.firstMessage}
+			ELSE first_message
+		END,
+		all_messages_text = CASE
+			WHEN ${discovery.messageText} IS NULL THEN all_messages_text
+			WHEN all_messages_text IS NULL OR all_messages_text = '' THEN ${discovery.messageText}
+			ELSE all_messages_text || ' ' || ${discovery.messageText}
+		END
+		WHERE id = ${sessionId}`.run(db);
+}
+
 function configureSqliteDatabase(db: SqliteDatabase): void {
 	sql`PRAGMA journal_mode=WAL`.exec(db);
 	sql`PRAGMA synchronous=FULL`.exec(db);
@@ -478,6 +511,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 				committed.parentId,
 			);
 			if (committed.type === "message") incrementMessageCount(this.db, this.metadata.id);
+			updateSessionDiscovery(this.db, this.metadata.id, committed);
 			advanceSequence(this.db, this.metadata.id, seq);
 			return structuredClone(committed as TEntry);
 		});
