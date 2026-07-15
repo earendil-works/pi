@@ -252,7 +252,7 @@ npm run test --workspace packages/coding-agent -- --run test/sqlite-session-roun
 npx tsgo --noEmit
 ```
 
-## [ ] 8. Update Public APIs, Documentation, and Distribution Metadata
+## [x] 8. Update Public APIs, Documentation, and Distribution Metadata
 
 - Export the backend option and backend-neutral session reference from the
   coding-agent SDK without exposing implementation-only adapters.
