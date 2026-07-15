@@ -1,4 +1,5 @@
-import { homedir } from "os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
@@ -7,6 +8,16 @@ import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
+
+function writeSkill(root: string, dirName: string, name: string): string {
+	const skillDir = join(root, dirName);
+	mkdirSync(skillDir, { recursive: true });
+	writeFileSync(
+		join(skillDir, "SKILL.md"),
+		`---\nname: ${JSON.stringify(name)}\ndescription: Test skill.\n---\n\n# Test\n`,
+	);
+	return skillDir;
+}
 
 function createTestSkill(options: {
 	name: string;
@@ -62,6 +73,49 @@ describe("skills", () => {
 
 			expect(skills).toHaveLength(1);
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("invalid characters"))).toBe(true);
+		});
+
+		it("should allow colon-qualified names with one namespace segment", () => {
+			const root = mkdtempSync(join(tmpdir(), "pi-skill-name-"));
+			try {
+				const skillDir = writeSkill(root, "inc:ship-it", "inc:ship-it");
+				const { skills, diagnostics } = loadSkillsFromDir({
+					dir: skillDir,
+					source: "test",
+				});
+
+				expect(skills).toHaveLength(1);
+				expect(skills[0].name).toBe("inc:ship-it");
+				expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("invalid characters"))).toBe(false);
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it("should warn for malformed colon-qualified names", () => {
+			const cases = [
+				{ name: ":ship-it", message: "namespace must not be empty" },
+				{ name: "inc:", message: "name must not be empty" },
+				{ name: "inc::ship-it", message: "name must contain at most one colon" },
+				{ name: "inc:ship:it", message: "name must contain at most one colon" },
+				{ name: "inc:Ship-it", message: "invalid characters" },
+				{ name: "inc:-ship-it", message: "name must not start or end with a hyphen" },
+			];
+			const root = mkdtempSync(join(tmpdir(), "pi-skill-name-"));
+			try {
+				for (const [index, testCase] of cases.entries()) {
+					const skillDir = writeSkill(root, `skill-${index}`, testCase.name);
+					const { skills, diagnostics } = loadSkillsFromDir({
+						dir: skillDir,
+						source: "test",
+					});
+
+					expect(skills).toHaveLength(1);
+					expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes(testCase.message))).toBe(true);
+				}
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
 		});
 
 		it("should warn when name exceeds 64 characters", () => {

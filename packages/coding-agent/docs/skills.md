@@ -140,7 +140,7 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Max 64 chars. Lowercase a-z, 0-9, hyphens. Unlike the standard, Pi does not require this to match the parent directory because that standard requirement is suboptimal for shared skill directories. |
+| `name` | Yes | Max 64 chars. Lowercase a-z, 0-9, hyphens, with an optional namespace in `<namespace>:<name>` form. Unlike the standard, Pi does not require this to match the parent directory because that standard requirement is suboptimal for shared skill directories. |
 | `description` | Yes | Max 1024 chars. What the skill does and when to use it. |
 | `license` | No | License name or reference to bundled file. |
 | `compatibility` | No | Max 500 chars. Environment requirements. |
@@ -151,13 +151,14 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 ### Name Rules
 
 - 1-64 characters
-- Lowercase letters, numbers, hyphens only
-- No leading/trailing hyphens
-- No consecutive hyphens
+- Lowercase letters, numbers, hyphens, and at most one namespace colon
+- Namespaced skills use `<namespace>:<name>`, with non-empty segments on both sides of the colon
+- No leading/trailing hyphens in any segment
+- No consecutive hyphens in any segment
 Pi does not require the name to match the parent directory. The Agent Skills standard does, but that requirement is suboptimal for shared skill directories used by multiple tools.
 
-Valid: `pdf-processing`, `data-analysis`, `code-review`
-Invalid: `PDF-Processing`, `-pdf`, `pdf--processing`
+Valid: `pdf-processing`, `data-analysis`, `code-review`, `inc:ship-it`
+Invalid: `PDF-Processing`, `-pdf`, `pdf--processing`, `inc:`, `inc::ship-it`
 
 ### Description Best Practices
 
@@ -178,7 +179,8 @@ description: Helps with PDFs.
 Pi validates skills against the Agent Skills standard. Most issues produce warnings but still load the skill:
 
 - Name exceeds 64 characters or contains invalid characters
-- Name starts/ends with hyphen or has consecutive hyphens
+- Name contains more than one colon or has an empty namespace/name segment
+- Name starts/ends with hyphen or has consecutive hyphens in any segment
 - Description exceeds 1024 characters
 
 Unknown frontmatter fields are ignored.

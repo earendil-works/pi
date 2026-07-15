@@ -14,6 +14,8 @@ const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
 
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
+const SKILL_NAME_SEGMENT_REGEX = /^[a-z0-9-]+$/;
+const SKILL_NAME_RULES = "must be lowercase a-z, 0-9, hyphens, and at most one namespace colon";
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
@@ -96,16 +98,31 @@ function validateName(name: string): string[] {
 		errors.push(`name exceeds ${MAX_NAME_LENGTH} characters (${name.length})`);
 	}
 
-	if (!/^[a-z0-9-]+$/.test(name)) {
-		errors.push(`name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)`);
+	const segments = name.split(":");
+	if (segments.length > 2) {
+		errors.push("name must contain at most one colon");
 	}
 
-	if (name.startsWith("-") || name.endsWith("-")) {
-		errors.push(`name must not start or end with a hyphen`);
-	}
+	for (let i = 0; i < segments.length; i++) {
+		const segment = segments[i] ?? "";
+		const label = segments.length === 1 ? "name" : i === 0 ? "namespace" : i === 1 ? "name" : `name segment ${i + 1}`;
 
-	if (name.includes("--")) {
-		errors.push(`name must not contain consecutive hyphens`);
+		if (segment.length === 0) {
+			errors.push(`${label} must not be empty`);
+			continue;
+		}
+
+		if (!SKILL_NAME_SEGMENT_REGEX.test(segment)) {
+			errors.push(`name contains invalid characters (${SKILL_NAME_RULES})`);
+		}
+
+		if (segment.startsWith("-") || segment.endsWith("-")) {
+			errors.push(`${label} must not start or end with a hyphen`);
+		}
+
+		if (segment.includes("--")) {
+			errors.push(`${label} must not contain consecutive hyphens`);
+		}
 	}
 
 	return errors;

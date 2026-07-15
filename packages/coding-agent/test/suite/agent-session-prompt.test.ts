@@ -144,7 +144,7 @@ describe("AgentSession prompt characterization", () => {
 		expect(sawImage).toBe(true);
 	});
 
-	it("expands skill commands before sending the prompt", async () => {
+	it("expands colon-qualified skill commands before sending the prompt", async () => {
 		const tempDir = join(tmpdir(), `pi-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		tempDirs.push(tempDir);
@@ -156,7 +156,7 @@ describe("AgentSession prompt characterization", () => {
 			getSkills: () => ({
 				skills: [
 					{
-						name: "test",
+						name: "inc:ship-it",
 						description: "Test skill",
 						filePath: skillPath,
 						disableModelInvocation: false,
@@ -184,9 +184,9 @@ describe("AgentSession prompt characterization", () => {
 			},
 		]);
 
-		await harness.session.prompt("/skill:test explain this");
+		await harness.session.prompt("/skill:inc:ship-it explain this");
 
-		expect(expandedPrompt).toContain('<skill name="test" location="');
+		expect(expandedPrompt).toContain('<skill name="inc:ship-it" location="');
 		expect(expandedPrompt).toContain("Use the skill body.");
 		expect(expandedPrompt).toContain("explain this");
 	});
