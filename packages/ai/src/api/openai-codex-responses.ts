@@ -46,7 +46,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { clampOpenAIPromptCacheKey, clampSessionIdHeader } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -1546,8 +1546,14 @@ function buildSSEHeaders(
 	headers.set("content-type", "application/json");
 
 	if (sessionId) {
-		headers.set("session-id", sessionId);
-		headers.set("x-client-request-id", sessionId);
+		// Clamp to the 64-char limit the Codex backend enforces on these header
+		// values (same rule as the body's `prompt_cache_key`); an unclamped long
+		// sessionId makes every request fail with HTTP 400 (#6630).
+		const clamped = clampSessionIdHeader(sessionId);
+		if (clamped) {
+			headers.set("session-id", clamped);
+			headers.set("x-client-request-id", clamped);
+		}
 	}
 
 	return headers;
@@ -1566,7 +1572,11 @@ function buildWebSocketHeaders(
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	headers.set("x-client-request-id", requestId);
-	headers.set("session-id", requestId);
+	// Clamp to the 64-char limit the Codex backend enforces on these header
+	// values; `requestId` is `options?.sessionId || createCodexRequestId()` and
+	// an unclamped long sessionId makes every request fail with HTTP 400 (#6630).
+	const clampedRequestId = clampSessionIdHeader(requestId) ?? requestId;
+	headers.set("x-client-request-id", clampedRequestId);
+	headers.set("session-id", clampedRequestId);
 	return headers;
 }
