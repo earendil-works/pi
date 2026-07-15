@@ -51,6 +51,20 @@ describe("createAgentSession session manager defaults", () => {
 		session.dispose();
 	});
 
+	it("creates SQLite persistence when explicitly selected", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const { session } = await createAgentSession({ cwd, agentDir, model: model!, persistentStore: "sqlite" });
+		expect(session.sessionFile).toBeUndefined();
+		expect(session.sessionManager.getSessionReference()).toEqual({
+			backend: "sqlite",
+			id: session.sessionId,
+			storagePath: join(agentDir, "sessions.sqlite"),
+		});
+		expect(existsSync(join(agentDir, "sessions.sqlite"))).toBe(true);
+		expect(existsSync(join(agentDir, "sessions"))).toBe(false);
+		await session.dispose();
+	});
+
 	it("keeps an explicit sessionManager override", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeTruthy();

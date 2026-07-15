@@ -340,7 +340,7 @@ npm run test --workspace packages/coding-agent -- test/session-manager test/sqli
 npx tsgo --noEmit
 ```
 
-## [ ] 11. Wire PERSISTENT_STORE and SDK Selection into Real Session Creation
+## [x] 11. Wire PERSISTENT_STORE and SDK Selection into Real Session Creation
 
 - Resolve `PERSISTENT_STORE` once during CLI startup after parsing `--no-session`.
   `--no-session` must select memory without parsing or opening a persistent
