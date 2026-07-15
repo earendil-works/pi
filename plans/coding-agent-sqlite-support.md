@@ -78,7 +78,7 @@ npm run build --workspace packages/agent
 npx tsgo --noEmit
 ```
 
-## [ ] 2. Introduce a Backend-Neutral Coding-Agent Session Contract
+## [x] 2. Introduce a Backend-Neutral Coding-Agent Session Contract
 
 - Define a backend-neutral session reference containing backend kind, session
   ID, and storage path, and add it to coding-agent session metadata.

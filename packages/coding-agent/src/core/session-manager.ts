@@ -171,9 +171,21 @@ export interface SessionContext {
 	model: { provider: string; modelId: string } | null;
 }
 
+export type SessionBackendKind = "memory" | "jsonl" | "sqlite";
+
+/** Backend-neutral identity for a coding-agent session. */
+export interface SessionReference {
+	backend: SessionBackendKind;
+	id: string;
+	/** File or database path for persistent backends. */
+	storagePath?: string;
+}
+
 export interface SessionInfo {
 	path: string;
 	id: string;
+	/** Stable identity that does not assume one file per session. */
+	reference: SessionReference;
 	/** Working directory where the session was started. Empty string for old sessions. */
 	cwd: string;
 	/** User-defined display name from session_info entries. */
@@ -192,6 +204,7 @@ export type ReadonlySessionManager = Pick<
 	| "getCwd"
 	| "getSessionDir"
 	| "getSessionId"
+	| "getSessionReference"
 	| "getSessionFile"
 	| "getLeafId"
 	| "getLeafEntry"
@@ -750,6 +763,7 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 		return {
 			path: filePath,
 			id: header.id,
+			reference: { backend: "jsonl", id: header.id, storagePath: filePath },
 			cwd,
 			name,
 			parentSessionPath,
@@ -1006,6 +1020,12 @@ export class SessionManager {
 
 	getSessionId(): string {
 		return this.sessionId;
+	}
+
+	getSessionReference(): SessionReference {
+		return this.persist && this.sessionFile
+			? { backend: "jsonl", id: this.sessionId, storagePath: this.sessionFile }
+			: { backend: "memory", id: this.sessionId };
 	}
 
 	getSessionFile(): string | undefined {
