@@ -51,10 +51,10 @@ function testProvider(input: {
 		auth: {
 			apiKey: {
 				name: "Test key",
-				resolve: async ({ ctx }) => {
+				resolve: async ({ ctx, credential }) => {
 					if (!input.envVar) return { auth: {} };
-					const key = await ctx.env(input.envVar);
-					return key ? { auth: { apiKey: key }, source: input.envVar } : undefined;
+					const key = credential?.key ?? (await ctx.env(input.envVar));
+					return key ? { auth: { apiKey: key }, source: credential ? "stored" : input.envVar } : undefined;
 				},
 			},
 		},
@@ -93,6 +93,8 @@ describe("ImagesModels", () => {
 		const model = models.getModel("p1", "model-a")!;
 
 		expect((await models.getAuth(model))?.auth.apiKey).toBe("env-key");
+		expect((await models.getAuth(model.provider))?.auth.apiKey).toBe("env-key");
+		expect((await models.getAuth(model, { apiKey: "explicit-key" }))?.auth.apiKey).toBe("explicit-key");
 
 		const result = await models.generateImages(model, context);
 		expect(result.stopReason).toBe("stop");

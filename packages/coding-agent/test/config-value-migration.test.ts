@@ -4,8 +4,9 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { runMigrations } from "../src/migrations.ts";
+
+import { createModelRegistry } from "./model-runtime-test-utils.ts";
 
 describe("config value env var syntax migration", () => {
 	const tempDirs: string[] = [];
@@ -71,7 +72,7 @@ describe("config value env var syntax migration", () => {
 	it.each([
 		["malformed", '{\n  "providers": {\n'],
 		["blank", ""],
-	])("does not throw on %s models.json during migrations", (_name, content) => {
+	])("does not throw on %s models.json during migrations", async (_name, content) => {
 		const agentDir = createAgentDir();
 		const modelsPath = path.join(agentDir, "models.json");
 		fs.writeFileSync(modelsPath, content, "utf-8");
@@ -79,7 +80,7 @@ describe("config value env var syntax migration", () => {
 		withAgentDir(agentDir, () => expect(() => runMigrations(agentDir)).not.toThrow());
 
 		expect(fs.readFileSync(modelsPath, "utf-8")).toBe(content);
-		const registry = ModelRegistry.create(AuthStorage.create(path.join(agentDir, "auth.json")), modelsPath);
+		const registry = await createModelRegistry(AuthStorage.create(path.join(agentDir, "auth.json")), modelsPath);
 		const loadError = registry.getError();
 		expect(loadError).toContain("Failed to parse models.json");
 		expect(loadError).toContain(`File: ${modelsPath}`);
@@ -148,7 +149,7 @@ describe("config value env var syntax migration", () => {
 			expect(provider.modelOverrides?.["model-b"]?.headers?.["x-override-key"]).toBe("OVERRIDE_API_KEY");
 			expect(logSpy).not.toHaveBeenCalled();
 
-			const registry = ModelRegistry.create(
+			const registry = await createModelRegistry(
 				AuthStorage.create(path.join(agentDir, "auth.json")),
 				path.join(agentDir, "models.json"),
 			);

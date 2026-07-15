@@ -51,6 +51,42 @@ describe("extensions discovery", () => {
 		expect(result.extensions.map((e) => path.basename(e.path)).sort()).toEqual(["bar.ts", "foo.ts"]);
 	});
 
+	it("loads the coding-agent entrypoint without rewriting pi-ai provider subpaths", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "coding-agent-import.ts"),
+			`
+				import { getAgentDir } from "@earendil-works/pi-coding-agent";
+				void getAgentDir;
+				export default function(pi) {
+					pi.registerCommand("test", { handler: async () => {} });
+				}
+			`,
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions).toHaveLength(1);
+	});
+
+	it("keeps the type-only pi-ai OAuth compatibility barrel resolvable", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "oauth-import.ts"),
+			`
+				import * as oauth from "@earendil-works/pi-ai/oauth";
+				void oauth;
+				export default function(pi) {
+					pi.registerCommand("test", { handler: async () => {} });
+				}
+			`,
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+	});
+
 	it("discovers direct .js files in extensions/", async () => {
 		fs.writeFileSync(path.join(extensionsDir, "foo.js"), extensionCode);
 

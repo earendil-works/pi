@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
-import { ModelRegistry } from "../../../src/core/model-registry.ts";
 import { runMigrations } from "../../../src/migrations.ts";
+import { createModelRegistry } from "../../model-runtime-test-utils.ts";
 import { createHarness } from "../harness.ts";
 
 describe("regression #5661: uppercase models.json header values", () => {
@@ -79,7 +79,7 @@ describe("regression #5661: uppercase models.json header values", () => {
 		expect(migrated.providers["my-provider"]?.apiKey).toBe("CUSTOM_API_KEY");
 		expect(migrated.providers["my-provider"]?.headers?.Authorization).toBe("BEARER");
 
-		const registry = ModelRegistry.create(AuthStorage.create(join(harness.tempDir, "auth.json")), modelsPath);
+		const registry = await createModelRegistry(AuthStorage.create(join(harness.tempDir, "auth.json")), modelsPath);
 		const model = registry.find("my-provider", "my-model");
 		expect(model).toBeDefined();
 		expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({

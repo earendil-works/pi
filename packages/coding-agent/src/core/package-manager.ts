@@ -1805,11 +1805,16 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(installRoot)) {
 			return;
 		}
-		if (this.getPackageManagerName() === "bun") {
+		const packageManagerName = this.getPackageManagerName();
+		if (packageManagerName === "bun") {
 			await this.runNpmCommand(["uninstall", source.name, "--cwd", installRoot]);
 			return;
 		}
-		await this.runNpmCommand(["uninstall", source.name, "--prefix", installRoot]);
+		const args = ["uninstall", source.name, "--prefix", installRoot];
+		if (packageManagerName !== "pnpm") {
+			args.push("--legacy-peer-deps");
+		}
+		await this.runNpmCommand(args);
 	}
 
 	private async installGit(source: GitSource, scope: SourceScope): Promise<void> {

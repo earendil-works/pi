@@ -46,7 +46,7 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // =============================================================================
-// OAuth Implementation (copied from packages/ai/src/utils/oauth/anthropic.ts)
+// OAuth implementation adapted for the legacy extension compatibility interface.
 // =============================================================================
 
 const decode = (s: string) => atob(s);

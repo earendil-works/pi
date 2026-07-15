@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModels } from "../src/compat.ts";
-import {
-	githubCopilotOAuthProvider,
-	loginGitHubCopilot,
-	refreshGitHubCopilotToken,
-} from "../src/utils/oauth/github-copilot.ts";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { createModels } from "../src/models.ts";
+import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -26,6 +24,33 @@ function getUrl(input: unknown): string {
 		return input.url;
 	}
 	throw new Error(`Unsupported fetch input: ${String(input)}`);
+}
+
+function loginGitHubCopilotForTest(options: {
+	onDeviceCode(info: {
+		userCode: string;
+		verificationUri: string;
+		intervalSeconds?: number;
+		expiresInSeconds?: number;
+	}): void;
+	onPrompt(prompt: { message: string; placeholder?: string; allowEmpty?: boolean }): Promise<string>;
+	onProgress?(message: string): void;
+	signal?: AbortSignal;
+}) {
+	return githubCopilotOAuth.login({
+		signal: options.signal,
+		prompt: (prompt) => {
+			if (prompt.type !== "text") throw new Error(`Unexpected prompt: ${prompt.type}`);
+			return options.onPrompt({ message: prompt.message, placeholder: prompt.placeholder, allowEmpty: true });
+		},
+		notify: (event) => {
+			if (event.type === "device_code") {
+				const { type: _, ...info } = event;
+				options.onDeviceCode(info);
+			}
+			if (event.type === "progress") options.onProgress?.(event.message);
+		},
+	});
 }
 
 describe("GitHub Copilot OAuth device flow", () => {
@@ -76,13 +101,19 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await refreshGitHubCopilotToken("ghu_refresh_token");
+		const credentials = await githubCopilotOAuth.refresh({
+			type: "oauth",
+			access: "old-access-token",
+			refresh: "ghu_refresh_token",
+			expires: 0,
+		});
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 
-		const modifiedModels = githubCopilotOAuthProvider.modifyModels?.(getModels("github-copilot"), credentials) ?? [];
-		expect(modifiedModels.filter((model) => model.provider === "github-copilot").map((model) => model.id)).toEqual([
-			"gpt-4.1",
-		]);
+		const store = new InMemoryCredentialStore();
+		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
@@ -127,7 +158,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const onDeviceCode = vi.fn();
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode,
 			onPrompt: async () => "",
 		});
@@ -166,7 +197,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		const onDeviceCode = vi.fn();
 		await expect(
-			loginGitHubCopilot({
+			loginGitHubCopilotForTest({
 				onDeviceCode,
 				onPrompt: async () => "",
 			}),
@@ -220,7 +251,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const onDeviceCode = vi.fn();
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode,
 			onPrompt: async () => "",
 		});
@@ -308,7 +339,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode: () => {},
 			onPrompt: async () => "",
 			onProgress: () => {},
@@ -382,7 +413,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode: () => {},
 			onPrompt: async () => "",
 		});

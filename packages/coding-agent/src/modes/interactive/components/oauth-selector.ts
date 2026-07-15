@@ -1,3 +1,4 @@
+import type { ApiKeyAuth, AuthCheck, OAuthAuth } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -7,7 +8,6 @@ import {
 	Spacer,
 	TruncatedText,
 } from "@earendil-works/pi-tui";
-import type { AuthStatus, AuthStorage } from "../../../core/auth-storage.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
@@ -15,6 +15,8 @@ export type AuthSelectorProvider = {
 	id: string;
 	name: string;
 	authType: "oauth" | "api_key";
+	method?: ApiKeyAuth | OAuthAuth;
+	status?: AuthCheck;
 };
 
 export function formatAuthSelectorProviderType(authType: AuthSelectorProvider["authType"]): string {
@@ -42,26 +44,20 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private filteredProviders: AuthSelectorProvider[];
 	private selectedIndex: number = 0;
 	private mode: "login" | "logout";
-	private authStorage: AuthStorage;
-	private getAuthStatus: (providerId: string) => AuthStatus;
 	private onSelectCallback: (providerId: string, authType: AuthSelectorProvider["authType"]) => void;
 	private onCancelCallback: () => void;
 	private showAuthTypeLabels: boolean;
 
 	constructor(
 		mode: "login" | "logout",
-		authStorage: AuthStorage,
 		providers: AuthSelectorProvider[],
 		onSelect: (providerId: string, authType: AuthSelectorProvider["authType"]) => void,
 		onCancel: () => void,
-		getAuthStatus?: (providerId: string) => AuthStatus,
 		initialSearchInput?: string,
 	) {
 		super();
 
 		this.mode = mode;
-		this.authStorage = authStorage;
-		this.getAuthStatus = getAuthStatus ?? ((providerId) => this.authStorage.getAuthStatus(providerId));
 		this.allProviders = providers;
 		this.filteredProviders = providers;
 		this.showAuthTypeLabels = new Set(providers.map((provider) => provider.authType)).size > 1;
@@ -105,7 +101,11 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 
 	private filterProviders(query: string): void {
 		this.filteredProviders = query
-			? fuzzyFilter(this.allProviders, query, (provider) => `${provider.name} ${provider.id} ${provider.authType}`)
+			? fuzzyFilter(
+					this.allProviders,
+					query,
+					(provider) => `${provider.name} ${provider.id} ${provider.authType} ${provider.method?.name ?? ""}`,
+				)
 			: this.allProviders;
 		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1)));
 		this.updateList();
@@ -162,29 +162,22 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	}
 
 	private formatStatusIndicator(provider: AuthSelectorProvider): string {
-		const credential = this.authStorage.get(provider.id);
-		if (credential?.type === provider.authType) return theme.fg("success", " ✓ configured");
-		if (credential) {
-			const label = credential.type === "oauth" ? "subscription configured" : "API key configured";
+		if (!provider.status) return theme.fg("muted", " • unconfigured");
+		if (provider.status.type !== provider.authType) {
+			const label = provider.status.type === "oauth" ? "subscription configured" : "API key configured";
 			return theme.fg("muted", " • ") + theme.fg("warning", label);
 		}
-		if (provider.authType !== "api_key") return theme.fg("muted", " • unconfigured");
-
-		const status = this.getAuthStatus(provider.id);
-		switch (status.source) {
-			case "environment":
-				return theme.fg("success", ` ✓ env: ${status.label ?? "API key"}`);
-			case "runtime":
-				return theme.fg("success", " ✓ runtime API key");
-			case "fallback":
-				return theme.fg("success", " ✓ custom API key");
-			case "models_json_key":
-				return theme.fg("success", " ✓ key in models.json");
-			case "models_json_command":
-				return theme.fg("success", " ✓ command in models.json");
-			default:
-				return theme.fg("muted", " • unconfigured");
+		if (
+			!provider.status.source ||
+			provider.status.source === "OAuth" ||
+			provider.status.source === "stored credential"
+		) {
+			return theme.fg("success", " ✓ configured");
 		}
+		const source = /^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/.test(provider.status.source)
+			? `env: ${provider.status.source}`
+			: provider.status.source;
+		return theme.fg("success", ` ✓ ${source}`);
 	}
 
 	handleInput(keyData: string): void {

@@ -1,4 +1,4 @@
-import type { AssistantMessage, Context, ImageContent, Message, TextContent, Usage } from "../types.ts";
+import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -102,6 +102,11 @@ function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {
 	return { tokens, usageTokens: 0, trailingTokens: tokens, lastUsageIndex: null };
 }
 
+function estimateToolsTokens(tools: readonly Tool[] | undefined): number {
+	if (!tools || tools.length === 0) return 0;
+	return estimateTextTokens(safeJsonStringify(tools));
+}
+
 function isMessageArray(value: Context | readonly Message[]): value is readonly Message[] {
 	return Array.isArray(value);
 }
@@ -110,12 +115,24 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 	if (isMessageArray(context)) return estimateMessages(context);
 
 	const estimate = estimateMessages(context.messages);
-	if (estimate.lastUsageIndex !== null) return estimate;
-
-	let prefixTokens = context.systemPrompt ? estimateTextTokens(context.systemPrompt) : 0;
-	if (context.tools && context.tools.length > 0) {
-		prefixTokens += estimateTextTokens(safeJsonStringify(context.tools));
+	if (estimate.lastUsageIndex !== null) {
+		const addedNames = new Set(
+			context.messages
+				.slice(estimate.lastUsageIndex + 1)
+				.filter((message) => message.role === "toolResult")
+				.flatMap((message) => message.addedToolNames ?? []),
+		);
+		const addedToolTokens = estimateToolsTokens(context.tools?.filter((tool) => addedNames.has(tool.name)));
+		return {
+			tokens: estimate.tokens + addedToolTokens,
+			usageTokens: estimate.usageTokens,
+			trailingTokens: estimate.trailingTokens + addedToolTokens,
+			lastUsageIndex: estimate.lastUsageIndex,
+		};
 	}
+
+	const prefixTokens =
+		(context.systemPrompt ? estimateTextTokens(context.systemPrompt) : 0) + estimateToolsTokens(context.tools);
 
 	return {
 		tokens: estimate.tokens + prefixTokens,

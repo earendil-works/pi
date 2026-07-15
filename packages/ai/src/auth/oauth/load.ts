@@ -1,4 +1,4 @@
-import type { OAuthAuth } from "../../auth/types.ts";
+import type { OAuthAuth } from "../types.ts";
 
 /**
  * Loads an OAuth flow module through a variable specifier so bundlers cannot
@@ -19,3 +19,10 @@ export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> =>
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> =>
 	((await importOAuthModule("./github-copilot.ts")) as { githubCopilotOAuth: OAuthAuth }).githubCopilotOAuth;
+
+export const loadRadiusOAuth = async (options: { name: string; gateway: string }): Promise<OAuthAuth> =>
+	(
+		(await importOAuthModule("./radius.ts")) as {
+			createRadiusOAuth: (input: { name: string; gateway: string }) => OAuthAuth;
+		}
+	).createRadiusOAuth(options);

@@ -17,18 +17,11 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import type { OAuthAuth } from "../../auth/types.ts";
-import { getProviderEnvValue } from "../provider-env.ts";
+import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
-import type {
-	OAuthCredentials,
-	OAuthDeviceCodeInfo,
-	OAuthLoginCallbacks,
-	OAuthPrompt,
-	OAuthProviderInterface,
-} from "./types.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_BASE_URL = "https://auth.openai.com";
@@ -40,8 +33,8 @@ const DEVICE_TOKEN_URL = `${AUTH_BASE_URL}/api/accounts/deviceauth/token`;
 const DEVICE_VERIFICATION_URI = `${AUTH_BASE_URL}/codex/device`;
 const DEVICE_REDIRECT_URI = `${AUTH_BASE_URL}/deviceauth/callback`;
 const DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60;
-export const OPENAI_CODEX_BROWSER_LOGIN_METHOD = "browser";
-export const OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD = "device_code";
+const OPENAI_CODEX_BROWSER_LOGIN_METHOD = "browser";
+const OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD = "device_code";
 const SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
@@ -406,13 +399,14 @@ function getAccountId(accessToken: string): string | null {
 	return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
 }
 
-function credentialsFromToken(token: OAuthToken): OAuthCredentials {
+function credentialsFromToken(token: OAuthToken): OAuthCredential {
 	const accountId = getAccountId(token.access);
 	if (!accountId) {
 		throw new Error("Failed to extract accountId from token");
 	}
 
 	return {
+		type: "oauth",
 		access: token.access,
 		refresh: token.refresh,
 		expires: token.expires,
@@ -425,132 +419,83 @@ async function exchangeAuthorizationCodeForCredentials(
 	verifier: string,
 	redirectUri: string,
 	signal?: AbortSignal,
-): Promise<OAuthCredentials> {
+): Promise<OAuthCredential> {
 	return credentialsFromToken(await exchangeAuthorizationCode(code, verifier, redirectUri, signal));
 }
 
-/**
- * Login with OpenAI Codex OAuth using the Codex device-code flow.
- */
-export async function loginOpenAICodexDeviceCode(options: {
-	onDeviceCode: (info: OAuthDeviceCodeInfo) => void;
-	signal?: AbortSignal;
-}): Promise<OAuthCredentials> {
-	const device = await startOpenAICodexDeviceAuth(options.signal);
-	options.onDeviceCode({
+async function loginOpenAICodexDeviceCode(interaction: AuthInteraction): Promise<OAuthCredential> {
+	const device = await startOpenAICodexDeviceAuth(interaction.signal);
+	interaction.notify({
+		type: "device_code",
 		userCode: device.userCode,
 		verificationUri: DEVICE_VERIFICATION_URI,
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: DEVICE_CODE_TIMEOUT_SECONDS,
 	});
-	const code = await pollOpenAICodexDeviceAuth(device, options.signal);
+	const code = await pollOpenAICodexDeviceAuth(device, interaction.signal);
 	return exchangeAuthorizationCodeForCredentials(
 		code.authorizationCode,
 		code.codeVerifier,
 		DEVICE_REDIRECT_URI,
-		options.signal,
+		interaction.signal,
 	);
 }
 
-/**
- * Login with OpenAI Codex OAuth
- *
- * @param options.onAuth - Called with URL and instructions when auth starts
- * @param options.onPrompt - Called to prompt user for manual code paste (fallback if no onManualCodeInput)
- * @param options.onProgress - Optional progress messages
- * @param options.onManualCodeInput - Optional promise that resolves with user-pasted code.
- *                                    Races with browser callback - whichever completes first wins.
- *                                    Useful for showing paste input immediately alongside browser flow.
- * @param options.originator - OAuth originator parameter (defaults to "pi")
- */
-export async function loginOpenAICodex(options: {
-	onAuth: (info: { url: string; instructions?: string }) => void;
-	onPrompt: (prompt: OAuthPrompt) => Promise<string>;
-	onProgress?: (message: string) => void;
-	onManualCodeInput?: () => Promise<string>;
-	originator?: string;
-}): Promise<OAuthCredentials> {
-	const { verifier, state, url } = await createAuthorizationFlow(options.originator);
+async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCredential> {
+	const { verifier, state, url } = await createAuthorizationFlow();
 	const server = await startLocalOAuthServer(state);
-
-	options.onAuth({ url, instructions: "A browser window should open. Complete login to finish." });
-
+	const manualAbort = new AbortController();
 	let code: string | undefined;
+	let manualCode: string | undefined;
+	let manualError: Error | undefined;
+
+	interaction.notify({
+		type: "auth_url",
+		url,
+		instructions: "A browser window should open. Complete login to finish.",
+	});
+
 	try {
-		if (options.onManualCodeInput) {
-			// Race between browser callback and manual input
-			let manualCode: string | undefined;
-			let manualError: Error | undefined;
-			const manualPromise = options
-				.onManualCodeInput()
-				.then((input) => {
-					manualCode = input;
-					server.cancelWait();
-				})
-				.catch((err) => {
-					manualError = err instanceof Error ? err : new Error(String(err));
-					server.cancelWait();
-				});
-
-			const result = await server.waitForCode();
-
-			// If manual input was cancelled, throw that error
-			if (manualError) {
-				throw manualError;
-			}
-
-			if (result?.code) {
-				// Browser callback won
-				code = result.code;
-			} else if (manualCode) {
-				// Manual input won (or callback timed out and user had entered code)
-				const parsed = parseAuthorizationInput(manualCode);
-				if (parsed.state && parsed.state !== state) {
-					throw new Error("State mismatch");
-				}
-				code = parsed.code;
-			}
-
-			// If still no code, wait for manual promise to complete and try that
-			if (!code) {
-				await manualPromise;
-				if (manualError) {
-					throw manualError;
-				}
-				if (manualCode) {
-					const parsed = parseAuthorizationInput(manualCode);
-					if (parsed.state && parsed.state !== state) {
-						throw new Error("State mismatch");
-					}
-					code = parsed.code;
-				}
-			}
-		} else {
-			// Original flow: wait for callback, then prompt if needed
-			const result = await server.waitForCode();
-			if (result?.code) {
-				code = result.code;
-			}
-		}
-
-		// Fallback to onPrompt if still no code
-		if (!code) {
-			const input = await options.onPrompt({
-				message: "Paste the authorization code (or full redirect URL):",
+		const manualPromise = interaction
+			.prompt({
+				type: "manual_code",
+				message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
+				placeholder: REDIRECT_URI,
+				signal: manualAbort.signal,
+			})
+			.then((input) => {
+				manualCode = input;
+				server.cancelWait();
+			})
+			.catch((error) => {
+				manualError = error instanceof Error ? error : new Error(String(error));
+				server.cancelWait();
 			});
-			const parsed = parseAuthorizationInput(input);
-			if (parsed.state && parsed.state !== state) {
-				throw new Error("State mismatch");
-			}
+
+		const result = await server.waitForCode();
+		if (manualError) throw manualError;
+		if (result?.code) {
+			code = result.code;
+		} else if (manualCode) {
+			const parsed = parseAuthorizationInput(manualCode);
+			if (parsed.state && parsed.state !== state) throw new Error("State mismatch");
 			code = parsed.code;
 		}
 
 		if (!code) {
-			throw new Error("Missing authorization code");
+			await manualPromise;
+			if (manualError) throw manualError;
+			if (manualCode) {
+				const parsed = parseAuthorizationInput(manualCode);
+				if (parsed.state && parsed.state !== state) throw new Error("State mismatch");
+				code = parsed.code;
+			}
 		}
 
-		return exchangeAuthorizationCodeForCredentials(code, verifier, REDIRECT_URI);
+		if (!code) throw new Error("Missing authorization code");
+		return exchangeAuthorizationCodeForCredentials(code, verifier, REDIRECT_URI, interaction.signal);
 	} finally {
+		manualAbort.abort();
 		server.close();
 	}
 }
@@ -558,15 +503,15 @@ export async function loginOpenAICodex(options: {
 /**
  * Refresh OpenAI Codex OAuth token
  */
-export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredentials> {
+async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredential> {
 	return credentialsFromToken(await refreshAccessToken(refreshToken));
 }
 
 export const openaiCodexOAuth: OAuthAuth = {
 	name: "OpenAI (ChatGPT Plus/Pro)",
 
-	async login(callbacks) {
-		const method = await callbacks.prompt({
+	async login(interaction) {
+		const method = await interaction.prompt({
 			type: "select",
 			message: "Select OpenAI Codex login method:",
 			options: [
@@ -576,89 +521,18 @@ export const openaiCodexOAuth: OAuthAuth = {
 		});
 
 		if (method === OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD) {
-			const credentials = await loginOpenAICodexDeviceCode({
-				onDeviceCode: (info) => callbacks.notify({ type: "device_code", ...info }),
-				signal: callbacks.signal,
-			});
-			return { ...credentials, type: "oauth" };
+			return loginOpenAICodexDeviceCode(interaction);
 		}
 		if (method !== OPENAI_CODEX_BROWSER_LOGIN_METHOD) {
 			throw new Error(`Unknown OpenAI Codex login method: ${method}`);
 		}
 
-		// The manual_code prompt races the local callback server; abort it once
-		// the flow settles so the UI can dismiss the pending input.
-		const manualAbort = new AbortController();
-		try {
-			const credentials = await loginOpenAICodex({
-				onAuth: (info) => callbacks.notify({ type: "auth_url", url: info.url, instructions: info.instructions }),
-				onProgress: (message) => callbacks.notify({ type: "progress", message }),
-				onPrompt: (prompt) =>
-					callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
-				onManualCodeInput: () =>
-					callbacks.prompt({
-						type: "manual_code",
-						message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-						placeholder: REDIRECT_URI,
-						signal: manualAbort.signal,
-					}),
-			});
-			return { ...credentials, type: "oauth" };
-		} finally {
-			manualAbort.abort();
-		}
+		return loginOpenAICodex(interaction);
 	},
 
-	async refresh(credential) {
-		return { ...(await refreshOpenAICodexToken(credential.refresh)), type: "oauth" };
-	},
+	refresh: (credential) => refreshOpenAICodexToken(credential.refresh),
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };
-	},
-};
-
-export const openaiCodexOAuthProvider: OAuthProviderInterface = {
-	id: "openai-codex",
-	name: "ChatGPT Plus/Pro (Codex Subscription)",
-	usesCallbackServer: true,
-
-	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-		const loginMethod = await callbacks.onSelect({
-			message: "Select OpenAI Codex login method:",
-			options: [
-				{ id: OPENAI_CODEX_BROWSER_LOGIN_METHOD, label: "Browser login (default)" },
-				{ id: OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD, label: "Device code login (headless)" },
-			],
-		});
-		if (!loginMethod) {
-			throw new Error("Login cancelled");
-		}
-
-		if (loginMethod === OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD) {
-			return loginOpenAICodexDeviceCode({
-				onDeviceCode: callbacks.onDeviceCode,
-				signal: callbacks.signal,
-			});
-		}
-
-		if (loginMethod !== OPENAI_CODEX_BROWSER_LOGIN_METHOD) {
-			throw new Error(`Unknown OpenAI Codex login method: ${loginMethod}`);
-		}
-
-		return loginOpenAICodex({
-			onAuth: callbacks.onAuth,
-			onPrompt: callbacks.onPrompt,
-			onProgress: callbacks.onProgress,
-			onManualCodeInput: callbacks.onManualCodeInput,
-		});
-	},
-
-	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-		return refreshOpenAICodexToken(credentials.refresh);
-	},
-
-	getApiKey(credentials: OAuthCredentials): string {
-		return credentials.access;
 	},
 };
