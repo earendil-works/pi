@@ -310,7 +310,7 @@ configuration primitives, but did not connect `PERSISTENT_STORE` or the SDK
 `persistentStore` option to the live coding-agent `SessionManager`. The steps
 below are required before SQLite can be described as usable by the CLI or SDK.
 
-## [ ] 10. Replace the JSONL-Only Runtime SessionManager with a Backend-Neutral Facade
+## [x] 10. Replace the JSONL-Only Runtime SessionManager with a Backend-Neutral Facade
 
 - Define one coding-agent session-manager interface consumed by `AgentSession`,
   `AgentSessionRuntime`, interactive mode, RPC mode, export, and extensions.
