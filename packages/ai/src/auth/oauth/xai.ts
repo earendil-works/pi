@@ -2,11 +2,9 @@
  * xAI OAuth device-code flow.
  */
 
-import type { OAuthAuth } from "../../auth/types.ts";
+import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
-import type { OAuthCredentials, OAuthDeviceCodeInfo, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
 
-const XAI_OAUTH_NAME = "xAI (Grok/X subscription)";
 const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 const XAI_DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code";
@@ -117,7 +115,7 @@ function parseDeviceCode(body: JsonObject): XaiDeviceCode {
 	};
 }
 
-function credentialsFromTokenResponse(body: JsonObject, previousRefreshToken?: string): OAuthCredentials {
+function credentialsFromTokenResponse(body: JsonObject, previousRefreshToken?: string): OAuthCredential {
 	const access = requiredString(body, "access_token");
 	// xAI may omit refresh_token on refresh when the token is not rotated.
 	const refresh =
@@ -127,6 +125,7 @@ function credentialsFromTokenResponse(body: JsonObject, previousRefreshToken?: s
 	const expiresInSeconds =
 		body.expires_in === undefined ? DEFAULT_TOKEN_LIFETIME_SECONDS : positiveNumber(body, "expires_in");
 	return {
+		type: "oauth",
 		access,
 		refresh,
 		expires: Date.now() + expiresInSeconds * 1000 - REFRESH_SKEW_MS,
@@ -149,8 +148,8 @@ async function requestDeviceCode(signal?: AbortSignal): Promise<XaiDeviceCode> {
 	return parseDeviceCode(response.body);
 }
 
-async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promise<OAuthCredentials> {
-	return pollOAuthDeviceCodeFlow<OAuthCredentials>({
+async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promise<OAuthCredential> {
+	return pollOAuthDeviceCodeFlow<OAuthCredential>({
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 		waitBeforeFirstPoll: true,
@@ -189,21 +188,19 @@ async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promi
 	});
 }
 
-export async function loginXaiOAuth(options: {
-	onDeviceCode: (info: OAuthDeviceCodeInfo) => void;
-	signal?: AbortSignal;
-}): Promise<OAuthCredentials> {
-	const device = await requestDeviceCode(options.signal);
-	options.onDeviceCode({
+async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> {
+	const device = await requestDeviceCode(interaction.signal);
+	interaction.notify({
+		type: "device_code",
 		userCode: device.userCode,
 		verificationUri: device.verificationUri,
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 	});
-	return pollForTokens(device, options.signal);
+	return pollForTokens(device, interaction.signal);
 }
 
-export async function refreshXaiOAuthToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredentials> {
+async function refreshXaiToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredential> {
 	const response = await postForm(
 		XAI_TOKEN_URL,
 		{
@@ -220,41 +217,11 @@ export async function refreshXaiOAuthToken(refreshToken: string, signal?: AbortS
 }
 
 export const xaiOAuth: OAuthAuth = {
-	name: XAI_OAUTH_NAME,
-
-	async login(callbacks) {
-		const credentials = await loginXaiOAuth({
-			onDeviceCode: (info) => callbacks.notify({ type: "device_code", ...info }),
-			signal: callbacks.signal,
-		});
-		return { ...credentials, type: "oauth" };
-	},
-
-	async refresh(credential) {
-		return { ...(await refreshXaiOAuthToken(credential.refresh)), type: "oauth" };
-	},
+	name: "xAI (Grok/X subscription)",
+	login: loginXai,
+	refresh: (credential, signal) => refreshXaiToken(credential.refresh, signal),
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };
-	},
-};
-
-export const xaiOAuthProvider: OAuthProviderInterface = {
-	id: "xai",
-	name: XAI_OAUTH_NAME,
-
-	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-		return loginXaiOAuth({
-			onDeviceCode: callbacks.onDeviceCode,
-			signal: callbacks.signal,
-		});
-	},
-
-	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-		return refreshXaiOAuthToken(credentials.refresh);
-	},
-
-	getApiKey(credentials: OAuthCredentials): string {
-		return credentials.access;
 	},
 };

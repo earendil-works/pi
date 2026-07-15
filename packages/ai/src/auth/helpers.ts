@@ -9,8 +9,8 @@ import type { ApiKeyAuth, OAuthAuth } from "./types.ts";
 export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyAuth {
 	return {
 		name,
-		login: async (callbacks) => {
-			const key = await callbacks.prompt({ type: "secret", message: `Enter ${name}` });
+		login: async (interaction) => {
+			const key = await interaction.prompt({ type: "secret", message: `Enter ${name}` });
 			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
@@ -39,7 +39,7 @@ export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> 
 	};
 	return {
 		name: input.name,
-		login: async (callbacks) => (await loaded()).login(callbacks),
+		login: async (interaction) => (await loaded()).login(interaction),
 		refresh: async (credential) => (await loaded()).refresh(credential),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};

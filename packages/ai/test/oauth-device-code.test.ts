@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pollOAuthDeviceCodeFlow } from "../src/utils/oauth/device-code.ts";
+import { pollOAuthDeviceCodeFlow } from "../src/auth/oauth/device-code.ts";
 
 describe("OAuth device-code polling", () => {
 	afterEach(() => {

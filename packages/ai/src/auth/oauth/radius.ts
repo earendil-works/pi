@@ -1,10 +1,8 @@
 /**
- * Radius gateway OAuth flow and model catalog loading.
+ * Radius gateway OAuth flow.
  *
  * Radius is a pi-messages gateway. OAuth endpoints are discovered from the
- * gateway (`/v1/oauth`); the model catalog comes from `/v1/config` and is
- * cached on the stored credential (`gatewayConfig`) so models are available
- * at startup and refreshed whenever the token refreshes.
+ * gateway (`/v1/oauth`); model catalog loading is owned by the Radius provider.
  *
  * NOTE: This module uses node:http for the OAuth callback server.
  * It is only intended for CLI use, not browser environments.
@@ -18,13 +16,11 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import type { Api, Model, ThinkingLevelMap } from "../../types.ts";
+import { normalizeRadiusGatewayUrl } from "../../providers/radius-config.ts";
+import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
-
-export const DEFAULT_RADIUS_GATEWAY = "https://radius.pi.dev";
 
 const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PORT = 1456;
@@ -33,27 +29,6 @@ const REDIRECT_URI = `http://${CALLBACK_HOST}:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const LOGIN_METHOD_BROWSER = "browser";
 const LOGIN_METHOD_DEVICE_CODE = "device-code";
-
-/** Model metadata served by the gateway config endpoint. */
-export type RadiusGatewayModel = {
-	id: string;
-	name: string;
-	reasoning: boolean;
-	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image")[];
-	cost: Model<Api>["cost"];
-	contextWindow: number;
-	maxTokens: number;
-};
-
-export type RadiusGatewayConfig = {
-	baseUrl: string;
-	models: RadiusGatewayModel[];
-};
-
-export type RadiusOAuthCredentials = OAuthCredentials & {
-	gatewayConfig?: RadiusGatewayConfig;
-};
 
 type RadiusOAuthConfig = {
 	issuer: string;
@@ -75,80 +50,6 @@ type DeviceAuthorizationResponse = {
 	expires_in: number;
 	interval?: number;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeRadiusGatewayUrl(value: string): string {
-	const withScheme = /^https?:\/\//iu.test(value) ? value : `https://${value}`;
-	return withScheme.replace(/\/+$/u, "");
-}
-
-// The gateway is a trusted first-party service. The shape checks below only
-// guard against version skew and stale credential caches: malformed entries
-// are dropped rather than failing the whole catalog, and nested fields (e.g.
-// `input` members, `cost` rates) are intentionally not validated in depth.
-// Do not turn this into strict validation.
-function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
-	if (!isRecord(value)) {
-		return false;
-	}
-	return (
-		typeof value.id === "string" &&
-		typeof value.name === "string" &&
-		typeof value.reasoning === "boolean" &&
-		Array.isArray(value.input) &&
-		isRecord(value.cost) &&
-		typeof value.contextWindow === "number" &&
-		typeof value.maxTokens === "number"
-	);
-}
-
-function sanitizeRadiusGatewayConfig(config: unknown): RadiusGatewayConfig | undefined {
-	if (!isRecord(config)) {
-		return undefined;
-	}
-	const baseUrl = config.baseUrl;
-	const models = config.models;
-	if (typeof baseUrl !== "string" || !Array.isArray(models)) {
-		return undefined;
-	}
-
-	return {
-		baseUrl,
-		models: models.filter(isRadiusGatewayModel).map((model) => ({ ...model })),
-	};
-}
-
-function getRadiusCredentialConfig(credentials: OAuthCredentials | undefined): RadiusGatewayConfig | undefined {
-	return sanitizeRadiusGatewayConfig((credentials as RadiusOAuthCredentials | undefined)?.gatewayConfig);
-}
-
-function truncateHttpBody(body: string): string {
-	const trimmed = body.trim();
-	return trimmed.length > 512 ? `${trimmed.slice(0, 512)}…` : trimmed;
-}
-
-async function loadRadiusGatewayConfig(gateway: string, apiKey?: string): Promise<RadiusGatewayConfig> {
-	const headers: Record<string, string> = { accept: "application/json" };
-	if (apiKey) {
-		headers.authorization = `Bearer ${apiKey}`;
-	}
-
-	const response = await fetch(new URL("/v1/config", gateway), { headers });
-	if (!response.ok) {
-		throw new Error(
-			`Could not load Radius config from ${gateway}: ${response.status}: ${truncateHttpBody(await response.text())}`,
-		);
-	}
-
-	const config = sanitizeRadiusGatewayConfig(await response.json());
-	if (!config) {
-		throw new Error(`Invalid Radius config from ${gateway}`);
-	}
-	return config;
-}
 
 async function loadRadiusOAuthConfig(gateway: string): Promise<RadiusOAuthConfig> {
 	const response = await fetch(new URL("/v1/oauth", gateway), {
@@ -202,7 +103,7 @@ async function requestOAuthToken(
 	oauth: RadiusOAuthConfig,
 	body: URLSearchParams,
 	signal?: AbortSignal,
-): Promise<OAuthCredentials> {
+): Promise<OAuthCredential> {
 	let response: Response;
 	try {
 		response = await fetch(oauth.tokenEndpoint, {
@@ -230,6 +131,7 @@ async function requestOAuthToken(
 	};
 
 	return {
+		type: "oauth",
 		access: data.access_token,
 		refresh: data.refresh_token,
 		expires: Date.now() + data.expires_in * 1000 - TOKEN_EXPIRY_SKEW_MS,
@@ -318,7 +220,7 @@ function startOAuthCallbackServer(
 	});
 }
 
-async function loginWithBrowser(oauth: RadiusOAuthConfig, callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+async function loginWithBrowser(oauth: RadiusOAuthConfig, interaction: AuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = crypto.randomUUID();
 	const authorizeUrl = new URL(oauth.authorizationEndpoint);
@@ -333,9 +235,10 @@ async function loginWithBrowser(oauth: RadiusOAuthConfig, callbacks: OAuthLoginC
 		state,
 	}).toString();
 
-	const callbackServer = await startOAuthCallbackServer(state, callbacks.signal);
-	callbacks.onProgress?.(`Listening for OAuth callback on ${REDIRECT_URI}`);
-	callbacks.onAuth({
+	const callbackServer = await startOAuthCallbackServer(state, interaction.signal);
+	interaction.notify({ type: "progress", message: `Listening for OAuth callback on ${REDIRECT_URI}` });
+	interaction.notify({
+		type: "auth_url",
 		url: authorizeUrl.toString(),
 		instructions: "Continue in your browser.",
 	});
@@ -343,7 +246,7 @@ async function loginWithBrowser(oauth: RadiusOAuthConfig, callbacks: OAuthLoginC
 	try {
 		const code = await callbackServer.waitForCode();
 		if (!code) {
-			if (callbacks.signal?.aborted) {
+			if (interaction.signal?.aborted) {
 				throw new Error("Login cancelled");
 			}
 			throw new Error("OAuth callback did not complete.");
@@ -357,7 +260,7 @@ async function loginWithBrowser(oauth: RadiusOAuthConfig, callbacks: OAuthLoginC
 				code,
 				code_verifier: verifier,
 			}),
-			callbacks.signal,
+			interaction.signal,
 		);
 	} finally {
 		callbackServer.close();
@@ -402,22 +305,20 @@ async function requestDeviceAuthorization(
 	};
 }
 
-async function loginWithDeviceCode(
-	oauth: RadiusOAuthConfig,
-	callbacks: OAuthLoginCallbacks,
-): Promise<OAuthCredentials> {
-	const device = await requestDeviceAuthorization(oauth, callbacks.signal);
-	callbacks.onDeviceCode({
+async function loginWithDeviceCode(oauth: RadiusOAuthConfig, interaction: AuthInteraction): Promise<OAuthCredential> {
+	const device = await requestDeviceAuthorization(oauth, interaction.signal);
+	interaction.notify({
+		type: "device_code",
 		userCode: device.user_code,
 		verificationUri: device.verification_uri || oauth.verificationEndpoint,
 		intervalSeconds: device.interval,
 		expiresInSeconds: device.expires_in,
 	});
 
-	return pollOAuthDeviceCodeFlow<OAuthCredentials>({
+	return pollOAuthDeviceCodeFlow<OAuthCredential>({
 		intervalSeconds: device.interval,
 		expiresInSeconds: device.expires_in,
-		signal: callbacks.signal,
+		signal: interaction.signal,
 		poll: async () => {
 			try {
 				const credentials = await requestOAuthToken(
@@ -427,7 +328,7 @@ async function loginWithDeviceCode(
 						client_id: oauth.clientId,
 						device_code: device.device_code,
 					}),
-					callbacks.signal,
+					interaction.signal,
 				);
 				return { status: "complete", value: credentials };
 			} catch (error) {
@@ -451,43 +352,21 @@ async function loginWithDeviceCode(
 	});
 }
 
-async function attachGatewayConfig(
-	gateway: string,
-	credentials: OAuthCredentials,
-	previous?: OAuthCredentials,
-): Promise<RadiusOAuthCredentials> {
-	try {
-		const config = await loadRadiusGatewayConfig(gateway, credentials.access);
-		return { ...credentials, gatewayConfig: config };
-	} catch (error) {
-		// Keep the previous catalog so models do not vanish on transient
-		// config failures; the next token refresh retries.
-		const previousConfig = getRadiusCredentialConfig(previous);
-		if (previousConfig) {
-			return { ...credentials, gatewayConfig: previousConfig };
-		}
-		// No catalog to retain (e.g. initial login): fail loudly instead of
-		// completing a sign-in that would register no models.
-		throw error;
-	}
-}
-
-export interface RadiusOAuthProviderOptions {
-	id: string;
+export interface RadiusOAuthOptions {
 	name: string;
 	gateway: string;
 }
 
-export function createRadiusOAuthProvider(options: RadiusOAuthProviderOptions): OAuthProviderInterface {
+export function createRadiusOAuth(options: RadiusOAuthOptions): OAuthAuth {
 	const gateway = normalizeRadiusGatewayUrl(options.gateway);
 
 	return {
-		id: options.id,
 		name: options.name,
 
-		async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+		async login(interaction): Promise<OAuthCredential> {
 			const oauth = await loadRadiusOAuthConfig(gateway);
-			const loginMethod = await callbacks.onSelect({
+			const loginMethod = await interaction.prompt({
+				type: "select",
 				message: `Sign in to ${options.name}:`,
 				options: [
 					{ id: LOGIN_METHOD_BROWSER, label: "Sign in with browser (recommended)" },
@@ -497,61 +376,35 @@ export function createRadiusOAuthProvider(options: RadiusOAuthProviderOptions): 
 					},
 				],
 			});
-			if (!loginMethod) {
-				throw new Error("Login cancelled");
-			}
 
-			let credentials: OAuthCredentials;
+			let credential: OAuthCredential;
 			if (loginMethod === LOGIN_METHOD_DEVICE_CODE) {
-				credentials = await loginWithDeviceCode(oauth, callbacks);
+				credential = await loginWithDeviceCode(oauth, interaction);
 			} else if (loginMethod === LOGIN_METHOD_BROWSER) {
-				credentials = await loginWithBrowser(oauth, callbacks);
+				credential = await loginWithBrowser(oauth, interaction);
 			} else {
 				throw new Error(`Unknown ${options.name} sign-in method: ${loginMethod}`);
 			}
 
-			return attachGatewayConfig(gateway, credentials);
+			return credential;
 		},
 
-		async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+		async refresh(credential, signal): Promise<OAuthCredential> {
 			const oauth = await loadRadiusOAuthConfig(gateway);
 			const refreshed = await requestOAuthToken(
 				oauth,
 				new URLSearchParams({
 					grant_type: "refresh_token",
 					client_id: oauth.clientId,
-					refresh_token: credentials.refresh,
+					refresh_token: credential.refresh,
 				}),
+				signal,
 			);
-			return attachGatewayConfig(gateway, refreshed, credentials);
+			return refreshed;
 		},
 
-		getApiKey(credentials: OAuthCredentials): string {
-			return credentials.access;
-		},
-
-		modifyModels(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[] {
-			const config = getRadiusCredentialConfig(credentials);
-			if (!config) {
-				return models;
-			}
-
-			// Keep models already registered for this provider (e.g. models.json
-			// custom entries) and add catalog models that are not present.
-			const existingIds = new Set(models.filter((model) => model.provider === options.id).map((model) => model.id));
-			const added = config.models
-				.filter((model) => !existingIds.has(model.id))
-				.map(
-					(model) =>
-						({
-							...model,
-							api: "pi-messages",
-							provider: options.id,
-							baseUrl: config.baseUrl,
-						}) as Model<Api>,
-				);
-
-			return [...models, ...added];
+		async toAuth(credential) {
+			return { apiKey: credential.access };
 		},
 	};
 }

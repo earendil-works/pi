@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
-import type { AuthContext } from "../src/auth/types.ts";
+import type { AuthContext, AuthEvent } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
+import { InMemoryModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
 import { builtinModels, builtinProviders } from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
@@ -34,10 +35,11 @@ describe("builtin providers", () => {
 		const all = models.getModels();
 		expect(all.length).toBeGreaterThan(500);
 
-		// every provider lists at least one model and owns its models
+		// Static providers list models immediately; Radius is purely dynamic.
 		for (const provider of providers) {
 			const list = models.getModels(provider.id);
-			expect(list.length).toBeGreaterThan(0);
+			if (provider.id === "radius") expect(list).toEqual([]);
+			else expect(list.length).toBeGreaterThan(0);
 			expect(list.every((m) => m.provider === provider.id)).toBe(true);
 		}
 	});
@@ -49,22 +51,41 @@ describe("builtin providers", () => {
 		models.setProvider(anthropicProvider());
 		const model = models.getModel("anthropic", "claude-haiku-4-5")!;
 
-		const result = await models.getAuth(model);
+		const result = await models.getAuth(model.provider);
 		expect(result?.auth.apiKey).toBe("oauth-token");
 		expect(result?.source).toBe("ANTHROPIC_OAUTH_TOKEN");
 	});
 
-	it("prompts for and stores a Bedrock API key", async () => {
-		const provider = amazonBedrockProvider();
-		const credential = await provider.auth.apiKey?.login?.({
-			prompt: async (prompt) => {
-				expect(prompt).toEqual({ type: "secret", message: "Enter Bedrock API key" });
-				return "bedrock-api-key";
-			},
-			notify: () => {},
-		});
+	it("runs provider-owned Bedrock bearer token and AWS profile login flows", async () => {
+		const auth = amazonBedrockProvider().auth.apiKey!;
+		const bearerAnswers = ["bearer-token", "bedrock-token"];
+		expect(
+			await auth.login?.({
+				prompt: async () => bearerAnswers.shift()!,
+				notify: () => {},
+			}),
+		).toEqual({ type: "api_key", key: "bedrock-token" });
 
-		expect(credential).toEqual({ type: "api_key", key: "bedrock-api-key" });
+		const profileAnswers = ["aws-profile", "work"];
+		const events: AuthEvent[] = [];
+		expect(
+			await auth.login?.({
+				prompt: async () => profileAnswers.shift()!,
+				notify: (event) => events.push(event),
+			}),
+		).toEqual({ type: "api_key", env: { AWS_PROFILE: "work" } });
+		expect(events).toEqual([
+			expect.objectContaining({
+				type: "info",
+				links: [expect.objectContaining({ label: "AWS credential provider chain" })],
+			}),
+		]);
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({}),
+				credential: { type: "api_key", env: { AWS_PROFILE: "work" } },
+			}),
+		).toMatchObject({ auth: {}, env: { AWS_PROFILE: "work" } });
 	});
 
 	it("reports bedrock as configured from ambient AWS credentials without an api key", async () => {
@@ -72,50 +93,27 @@ describe("builtin providers", () => {
 		models.setProvider(amazonBedrockProvider());
 		const model = models.getModels("amazon-bedrock")[0];
 
-		const result = await models.getAuth(model);
+		const result = await models.getAuth(model.provider);
 		expect(result?.auth).toEqual({});
 		expect(result?.source).toBe("AWS_PROFILE");
 
 		const unconfigured = createModels({ authContext: fakeAuthContext({}) });
 		unconfigured.setProvider(amazonBedrockProvider());
-		expect(await unconfigured.getAuth(model)).toBeUndefined();
+		expect(await unconfigured.getAuth(model.provider)).toBeUndefined();
 	});
 
 	it("requires Cloudflare Workers AI account config and returns scoped env", async () => {
 		const missingAccount = createModels({ authContext: fakeAuthContext({ CLOUDFLARE_API_KEY: "cf-key" }) });
 		missingAccount.setProvider(cloudflareWorkersAIProvider());
 		const model = missingAccount.getModels("cloudflare-workers-ai")[0];
-		expect(await missingAccount.getAuth(model)).toBeUndefined();
+		expect(await missingAccount.getAuth(model.provider)).toBeUndefined();
 
 		const configured = createModels({
 			authContext: fakeAuthContext({ CLOUDFLARE_API_KEY: "cf-key", CLOUDFLARE_ACCOUNT_ID: "account-id" }),
 		});
 		configured.setProvider(cloudflareWorkersAIProvider());
-		const result = await configured.getAuth(model);
-		expect(result?.auth).toEqual({
-			apiKey: "cf-key",
-			baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
-		});
-		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
-	});
-
-	// Regression for #6021: a credential carrying only the API key (as stored
-	// by `/login`) must still resolve CLOUDFLARE_ACCOUNT_ID from ambient env.
-	it("falls back to ambient CLOUDFLARE_ACCOUNT_ID when the credential carries only the API key", async () => {
-		const provider = cloudflareWorkersAIProvider();
-		const model = builtinModels().getModels("cloudflare-workers-ai")[0];
-		const auth = provider.auth.apiKey;
-		if (!auth) throw new Error("expected api-key auth");
-
-		const result = await auth.resolve({
-			model,
-			ctx: fakeAuthContext({ CLOUDFLARE_ACCOUNT_ID: "account-id" }),
-			credential: { type: "api_key", key: "cf-key" },
-		});
-		expect(result?.auth).toEqual({
-			apiKey: "cf-key",
-			baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
-		});
+		const result = await configured.getAuth(model.provider);
+		expect(result?.auth).toEqual({ apiKey: "cf-key" });
 		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
 	});
 
@@ -125,7 +123,7 @@ describe("builtin providers", () => {
 		});
 		missingGateway.setProvider(cloudflareAIGatewayProvider());
 		const model = missingGateway.getModels("cloudflare-ai-gateway")[0];
-		expect(await missingGateway.getAuth(model)).toBeUndefined();
+		expect(await missingGateway.getAuth(model.provider)).toBeUndefined();
 
 		const configured = createModels({
 			authContext: fakeAuthContext({
@@ -135,18 +133,58 @@ describe("builtin providers", () => {
 			}),
 		});
 		configured.setProvider(cloudflareAIGatewayProvider());
-		const result = await configured.getAuth(model);
+		const result = await configured.getAuth(model.provider);
 		expect(result?.auth).toEqual({
 			headers: {
 				"cf-aig-authorization": "Bearer cf-key",
 				Authorization: null,
 				"x-api-key": null,
 			},
-			baseUrl: "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/anthropic",
 		});
 		expect(result?.env).toEqual({
 			CLOUDFLARE_ACCOUNT_ID: "account-id",
 			CLOUDFLARE_GATEWAY_ID: "gateway-id",
+		});
+	});
+
+	it("runs provider-owned Vertex API key and ADC login flows", async () => {
+		const auth = googleVertexProvider().auth.apiKey!;
+		const keyAnswers = ["api-key", "vertex-key"];
+		expect(
+			await auth.login?.({
+				prompt: async () => keyAnswers.shift()!,
+				notify: () => {},
+			}),
+		).toEqual({ type: "api_key", key: "vertex-key" });
+
+		const adcAnswers = ["adc", "project-id", "us-central1"];
+		const events: AuthEvent[] = [];
+		expect(
+			await auth.login?.({
+				prompt: async () => adcAnswers.shift()!,
+				notify: (event) => events.push(event),
+			}),
+		).toEqual({
+			type: "api_key",
+			env: { GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "us-central1" },
+		});
+		expect(events).toEqual([
+			expect.objectContaining({
+				type: "info",
+				links: [expect.objectContaining({ label: "Application Default Credentials" })],
+			}),
+		]);
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({}, ["~/.config/gcloud/application_default_credentials.json"]),
+				credential: {
+					type: "api_key",
+					env: { GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "us-central1" },
+				},
+			}),
+		).toMatchObject({
+			auth: {},
+			env: { GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "us-central1" },
 		});
 	});
 
@@ -158,40 +196,38 @@ describe("builtin providers", () => {
 		configured.setProvider(googleVertexProvider());
 		const model = configured.getModels("google-vertex")[0];
 
-		const result = await configured.getAuth(model);
+		const result = await configured.getAuth(model.provider);
 		expect(result?.auth).toEqual({});
 		expect(result?.source).toContain("application default");
 
 		// ADC without project/location is not configured
 		const partial = createModels({ authContext: fakeAuthContext({ GOOGLE_CLOUD_PROJECT: "proj" }, [adc]) });
 		partial.setProvider(googleVertexProvider());
-		expect(await partial.getAuth(model)).toBeUndefined();
+		expect(await partial.getAuth(model.provider)).toBeUndefined();
 
 		// explicit key wins over ADC
 		const keyed = createModels({ authContext: fakeAuthContext({ GOOGLE_CLOUD_API_KEY: "vertex-key" }) });
 		keyed.setProvider(googleVertexProvider());
-		expect((await keyed.getAuth(model))?.auth.apiKey).toBe("vertex-key");
+		expect((await keyed.getAuth(model.provider))?.auth.apiKey).toBe("vertex-key");
 	});
 });
 
 describe("envApiKeyAuth", () => {
 	it("prefers the stored credential key and falls back through env vars in order", async () => {
 		const auth = envApiKeyAuth("Test key", ["FIRST_KEY", "SECOND_KEY"]);
-		const model = { provider: "p1" } as Model<Api>;
 
 		const stored = await auth.resolve({
-			model,
 			ctx: fakeAuthContext({ FIRST_KEY: "env" }),
 			credential: { type: "api_key", key: "stored" },
 		});
 		expect(stored?.auth.apiKey).toBe("stored");
 		expect(stored?.source).toBe("stored credential");
 
-		const second = await auth.resolve({ model, ctx: fakeAuthContext({ SECOND_KEY: "second" }) });
+		const second = await auth.resolve({ ctx: fakeAuthContext({ SECOND_KEY: "second" }) });
 		expect(second?.auth.apiKey).toBe("second");
 		expect(second?.source).toBe("SECOND_KEY");
 
-		expect(await auth.resolve({ model, ctx: fakeAuthContext({}) })).toBeUndefined();
+		expect(await auth.resolve({ ctx: fakeAuthContext({}) })).toBeUndefined();
 	});
 
 	it("login prompts for a secret and returns an api-key credential", async () => {
@@ -311,7 +347,7 @@ describe("createProvider", () => {
 			id: "dynamic",
 			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
 			models: [],
-			refreshModels: async () => {
+			fetchModels: async () => {
 				fetches++;
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				return [testModel("api-a", "listed")];
@@ -319,13 +355,23 @@ describe("createProvider", () => {
 			api: recordingStreams("a", []),
 		});
 
+		const store = new InMemoryModelsStore();
+		const refreshContext = {
+			credential: { type: "api_key" as const },
+			store: {
+				read: () => store.read("dynamic"),
+				write: (entry: ModelsStoreEntry) => store.write("dynamic", entry),
+				delete: () => store.delete("dynamic"),
+			},
+			allowNetwork: true,
+		};
 		expect(provider.getModels()).toEqual([]);
-		await Promise.all([provider.refreshModels?.(), provider.refreshModels?.()]);
+		await Promise.all([provider.refreshModels?.(refreshContext), provider.refreshModels?.(refreshContext)]);
 		expect(fetches).toBe(1);
 		expect(provider.getModels().map((m) => m.id)).toEqual(["listed"]);
 
 		// a later refresh fetches again
-		await provider.refreshModels?.();
+		await provider.refreshModels?.(refreshContext);
 		expect(fetches).toBe(2);
 	});
 });

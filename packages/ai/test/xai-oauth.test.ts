@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loginXaiOAuth, refreshXaiOAuthToken, xaiOAuthProvider } from "../src/utils/oauth/xai.ts";
+import { xaiOAuth } from "../src/auth/oauth/xai.ts";
+import type { OAuthCredential } from "../src/auth/types.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -38,6 +39,35 @@ function tokenResponse(overrides: Record<string, unknown> = {}): Record<string, 
 		token_type: "Bearer",
 		...overrides,
 	};
+}
+
+type DeviceCodeInfo = {
+	userCode: string;
+	verificationUri: string;
+	intervalSeconds?: number;
+	expiresInSeconds?: number;
+};
+
+function loginXaiForTest(options: {
+	onDeviceCode: (info: DeviceCodeInfo) => void;
+	signal?: AbortSignal;
+}): Promise<OAuthCredential> {
+	return xaiOAuth.login({
+		signal: options.signal,
+		prompt: () => {
+			throw new Error("Unexpected prompt");
+		},
+		notify: (event) => {
+			if (event.type === "device_code") {
+				const { type: _, ...info } = event;
+				options.onDeviceCode(info);
+			}
+		},
+	});
+}
+
+function refreshXaiForTest(refreshToken: string): Promise<OAuthCredential> {
+	return xaiOAuth.refresh({ type: "oauth", access: "old-access", refresh: refreshToken, expires: 0 });
 }
 
 describe("xAI OAuth device flow", () => {
@@ -84,13 +114,8 @@ describe("xAI OAuth device flow", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const deviceCodes: Array<{
-			userCode: string;
-			verificationUri: string;
-			intervalSeconds?: number;
-			expiresInSeconds?: number;
-		}> = [];
-		const loginPromise = loginXaiOAuth({ onDeviceCode: (info) => deviceCodes.push(info) });
+		const deviceCodes: DeviceCodeInfo[] = [];
+		const loginPromise = loginXaiForTest({ onDeviceCode: (info) => deviceCodes.push(info) });
 
 		await vi.advanceTimersByTimeAsync(0);
 		expect(deviceCodes).toEqual([
@@ -118,6 +143,7 @@ describe("xAI OAuth device flow", () => {
 			startTime.getTime() + 20_000,
 		]);
 		expect(credentials).toEqual({
+			type: "oauth",
 			access: "access-token",
 			refresh: "refresh-token",
 			expires: startTime.getTime() + 20_000 + 21_600_000 - 300_000,
@@ -132,7 +158,7 @@ describe("xAI OAuth device flow", () => {
 				vi.fn(async () => jsonResponse(deviceCodeResponse({ verification_uri: verificationUri }))),
 			);
 
-			await expect(loginXaiOAuth({ onDeviceCode: () => {} })).rejects.toThrow("Untrusted verification URI");
+			await expect(loginXaiForTest({ onDeviceCode: () => {} })).rejects.toThrow("Untrusted verification URI");
 		},
 	);
 
@@ -151,7 +177,7 @@ describe("xAI OAuth device flow", () => {
 				}),
 			);
 
-			const loginPromise = loginXaiOAuth({ onDeviceCode: () => {} });
+			const loginPromise = loginXaiForTest({ onDeviceCode: () => {} });
 			const assertion = expect(loginPromise).rejects.toThrow("xAI device authorization was denied");
 			await vi.advanceTimersByTimeAsync(1000);
 			await assertion;
@@ -164,7 +190,7 @@ describe("xAI OAuth device flow", () => {
 		const fetchMock = vi.fn(async () => jsonResponse(deviceCodeResponse()));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginXaiOAuth({
+		const loginPromise = loginXaiForTest({
 			onDeviceCode: () => controller.abort(),
 			signal: controller.signal,
 		});
@@ -190,15 +216,15 @@ describe("xAI OAuth device flow", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const rotated = await refreshXaiOAuthToken("old-refresh");
-		const preserved = await refreshXaiOAuthToken("keep-refresh");
+		const rotated = await refreshXaiForTest("old-refresh");
+		const preserved = await refreshXaiForTest("keep-refresh");
+		expect(rotated.type).toBe("oauth");
 		expect(rotated.refresh).toBe("new-refresh");
 		expect(rotated.access).toBe("new-access");
 		expect(preserved.refresh).toBe("keep-refresh");
 		expect(preserved.access).toBe("newer-access");
-		expect(xaiOAuthProvider.id).toBe("xai");
-		expect(xaiOAuthProvider.name).toBe("xAI (Grok/X subscription)");
-		expect(xaiOAuthProvider.getApiKey(preserved)).toBe("newer-access");
+		expect(xaiOAuth.name).toBe("xAI (Grok/X subscription)");
+		await expect(xaiOAuth.toAuth(preserved)).resolves.toEqual({ apiKey: "newer-access" });
 	});
 
 	it("assumes a one-hour lifetime when expires_in is missing", async () => {
@@ -210,7 +236,7 @@ describe("xAI OAuth device flow", () => {
 			vi.fn(async () => jsonResponse(tokenResponse({ expires_in: undefined }))),
 		);
 
-		const credentials = await refreshXaiOAuthToken("old-refresh");
+		const credentials = await refreshXaiForTest("old-refresh");
 		expect(credentials.expires).toBe(startTime.getTime() + 3_600_000 - 300_000);
 	});
 
@@ -220,9 +246,7 @@ describe("xAI OAuth device flow", () => {
 			vi.fn(async () => jsonResponse(tokenResponse({ access_token: undefined }))),
 		);
 
-		await expect(refreshXaiOAuthToken("old-refresh")).rejects.toThrow(
-			"Invalid xAI OAuth response field: access_token",
-		);
+		await expect(refreshXaiForTest("old-refresh")).rejects.toThrow("Invalid xAI OAuth response field: access_token");
 	});
 
 	it("surfaces the upstream error code and description on refresh failure", async () => {
@@ -231,7 +255,7 @@ describe("xAI OAuth device flow", () => {
 			vi.fn(async () => jsonResponse({ error: "invalid_grant", error_description: "refresh token revoked" }, 400)),
 		);
 
-		await expect(refreshXaiOAuthToken("old-refresh")).rejects.toThrow(
+		await expect(refreshXaiForTest("old-refresh")).rejects.toThrow(
 			"xAI OAuth token refresh failed (HTTP 400): invalid_grant: refresh token revoked",
 		);
 	});

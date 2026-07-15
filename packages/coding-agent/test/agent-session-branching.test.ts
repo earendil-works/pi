@@ -48,7 +48,7 @@ describe.skipIf(!API_KEY)("AgentSession forking", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		sessionManager = noSession ? SessionManager.inMemory(tempDir) : SessionManager.create(tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		authStorage.setRuntimeApiKey("anthropic", API_KEY!);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: API_KEY! }));
 
 		const servicesOptions = {
 			agentDir: tempDir,

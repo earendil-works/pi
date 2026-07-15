@@ -253,6 +253,8 @@ pi.registerProvider("custom-api", {
 });
 ```
 
+The key is resolved for each request. An explicit request `Authorization` header takes precedence over the generated value.
+
 ## OAuth Support
 
 Add OAuth/SSO authentication that integrates with `/login`:
@@ -312,15 +314,6 @@ pi.registerProvider("corporate-ai", {
 
     getApiKey(credentials: OAuthCredentials): string {
       return credentials.access;
-    },
-
-    // Optional: modify models based on user's subscription
-    modifyModels(models, credentials) {
-      const region = decodeRegionFromToken(credentials.access);
-      return models.map(m => ({
-        ...m,
-        baseUrl: `https://${region}.ai.corp.com/v1`
-      }));
     }
   }
 });
@@ -330,7 +323,7 @@ After registration, users can authenticate via `/login corporate-ai`.
 
 ### OAuthLoginCallbacks
 
-The `callbacks` object provides three ways to authenticate:
+The `callbacks` object provides UI-neutral interactions for the provider-owned flow:
 
 ```typescript
 interface OAuthLoginCallbacks {
@@ -344,6 +337,9 @@ interface OAuthLoginCallbacks {
     intervalSeconds?: number;
     expiresInSeconds?: number;
   }): void;
+
+  // Show transient progress
+  onProgress?(message: string): void;
 
   // Prompt user for input (for manual token entry)
   onPrompt(params: { message: string }): Promise<string>;
@@ -660,7 +656,6 @@ interface ProviderConfig {
     login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
     refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
     getApiKey(credentials: OAuthCredentials): string;
-    modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];
   };
 }
 ```
