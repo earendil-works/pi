@@ -234,11 +234,11 @@ Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUp
 
 ## Sessions
 
-Sessions are stored as JSONL files with a tree structure. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session-format.md](docs/session-format.md) for file format.
+Sessions use JSONL storage by default. Each entry has an `id` and `parentId`, enabling in-place branching without creating new files. See [docs/session-format.md](docs/session-format.md) for the interchange format.
 
 ### Management
 
-Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory.
+Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory. Experimental SQLite storage can be selected with `PERSISTENT_STORE=sqlite`; use `PERSISTENT_STORE=jsonl` to select JSONL explicitly. See [docs/sqlite-sessions.md](docs/sqlite-sessions.md) for storage, backup, and rollback guidance.
 
 ```bash
 pi -c                  # Continue most recent session
