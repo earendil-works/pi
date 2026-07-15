@@ -31,3 +31,16 @@ processes first and copy `sessions.sqlite` together with any
 `sessions.sqlite-wal` and `sessions.sqlite-shm` files. Prefer SQLite's online
 backup API when backing up a live database. Do not copy only the main database
 while writers are active.
+
+## Validation and rollout
+
+The experimental rollout is covered by storage conformance, migration-upgrade,
+repository lifecycle, JSONL round-trip, selector metadata, deterministic RPC
+persistence, and teardown-ordering tests. The validation matrix exercises
+create, append, close, reopen, continue, list, fork, delete, import, and export.
+
+Intentional differences from JSONL are limited to storage identity and layout:
+SQLite sessions use a database path plus session ID, while JSONL sessions use a
+unique file path. User-visible context, names, labels, branches, search text,
+and exported JSONL remain equivalent. Switching `PERSISTENT_STORE` never
+deletes or rewrites the other store.
