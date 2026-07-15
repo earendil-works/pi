@@ -108,7 +108,7 @@ npm run test --workspace packages/coding-agent -- --run test/session-tree.test.t
 npx tsgo --noEmit
 ```
 
-## [ ] 3. Add the SQLite Coding-Agent Repository Adapter
+## [x] 3. Add the SQLite Coding-Agent Repository Adapter
 
 - Add a coding-agent SQLite adapter backed by `SqliteSessionRepo` and
   `SqliteNodeExecutionEnv` from the public agent-core SQLite subpaths.
