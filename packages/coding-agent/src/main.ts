@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -38,6 +39,7 @@ import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dis
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { resolveSessionStore } from "./core/persistent-store.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -317,6 +319,34 @@ async function createSessionManager(
 ): Promise<SessionManager> {
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined) {
 		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+	}
+
+	if (resolveSessionStore({ noSession: false }) === "sqlite") {
+		const [{ BackendSessionManager }, { CodingAgentSqliteSessionRepository, SQLITE_SESSIONS_DATABASE }] =
+			await Promise.all([
+				import("./core/backend-session-manager.ts"),
+				import("./core/sqlite-session-repository.ts"),
+			]);
+		const databasePath = join(sessionDir ?? getAgentDir(), SQLITE_SESSIONS_DATABASE);
+		const repository = new CodingAgentSqliteSessionRepository(databasePath);
+		let sqliteSession: Awaited<ReturnType<typeof repository.create>>;
+		if (parsed.fork) {
+			sqliteSession = await repository.fork(parsed.fork, { cwd, id: parsed.sessionId });
+		} else if (parsed.session) {
+			sqliteSession = await repository.openById(parsed.session);
+		} else if (parsed.continue || parsed.resume) {
+			sqliteSession = await repository.continueRecent(cwd);
+		} else if (parsed.sessionId) {
+			try {
+				sqliteSession = await repository.openById(parsed.sessionId);
+			} catch (error) {
+				if (!(error instanceof Error) || !("code" in error) || error.code !== "not_found") throw error;
+				sqliteSession = await repository.create({ cwd, id: parsed.sessionId });
+			}
+		} else {
+			sqliteSession = await repository.create({ cwd });
+		}
+		return (await BackendSessionManager.hydrate(sqliteSession, "sqlite")) as unknown as SessionManager;
 	}
 
 	if (parsed.fork) {

@@ -18,7 +18,6 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
-import { CodingAgentSqliteSessionRepository, SQLITE_SESSIONS_DATABASE } from "./sqlite-session-repository.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -186,6 +185,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (!sessionManager) {
 		const persistentStore = resolvePersistentStore(options.persistentStore);
 		if (persistentStore === "sqlite") {
+			const [{ BackendSessionManager }, { CodingAgentSqliteSessionRepository, SQLITE_SESSIONS_DATABASE }] =
+				await Promise.all([import("./backend-session-manager.ts"), import("./sqlite-session-repository.ts")]);
 			const repository = new CodingAgentSqliteSessionRepository(join(agentDir, SQLITE_SESSIONS_DATABASE));
 			sessionManager = (await BackendSessionManager.hydrate(
 				await repository.create({ cwd }),
