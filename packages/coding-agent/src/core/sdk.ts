@@ -5,17 +5,20 @@ import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
+import { BackendSessionManager } from "./backend-session-manager.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import type { PersistentStore } from "./persistent-store.ts";
+import { resolvePersistentStore } from "./persistent-store.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import { CodingAgentSqliteSessionRepository, SQLITE_SESSIONS_DATABASE } from "./sqlite-session-repository.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -179,7 +182,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+	let sessionManager = options.sessionManager;
+	if (!sessionManager) {
+		const persistentStore = resolvePersistentStore(options.persistentStore);
+		if (persistentStore === "sqlite") {
+			const repository = new CodingAgentSqliteSessionRepository(join(agentDir, SQLITE_SESSIONS_DATABASE));
+			sessionManager = (await BackendSessionManager.hydrate(
+				await repository.create({ cwd }),
+				"sqlite",
+			)) as unknown as SessionManager;
+		} else {
+			sessionManager = SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+		}
+	}
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -366,14 +381,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel);
+			await sessionManager.appendThinkingLevelChange(thinkingLevel);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume
 		if (model) {
-			sessionManager.appendModelChange(model.provider, model.id);
+			await sessionManager.appendModelChange(model.provider, model.id);
 		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel);
+		await sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
 	const session = new AgentSession({

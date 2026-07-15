@@ -92,6 +92,18 @@ export class BackendSessionManager {
 		return this.backend === "jsonl" ? this.metadata.path : undefined;
 	}
 
+	getSessionDir(): string {
+		return this.metadata.path ? this.metadata.path.replace(/[\\/][^\\/]+$/, "") : "";
+	}
+
+	isPersisted(): boolean {
+		return this.backend !== "memory";
+	}
+
+	usesDefaultSessionDir(): boolean {
+		return false;
+	}
+
 	getLeafId(): string | null {
 		return this.leafId;
 	}
@@ -159,6 +171,10 @@ export class BackendSessionManager {
 
 	appendModelChange(provider: string, modelId: string): Promise<string> {
 		return this.mutate(() => this.session.appendModelChange(provider, modelId));
+	}
+
+	appendActiveToolsChange(activeToolNames: string[]): Promise<string> {
+		return this.mutate(() => this.session.appendActiveToolsChange(activeToolNames));
 	}
 
 	appendCompaction(
