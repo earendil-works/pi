@@ -226,7 +226,7 @@ npm run test --workspace packages/coding-agent -- --run test/sqlite-session-list
 npx tsgo --noEmit
 ```
 
-## [ ] 7. Preserve JSONL Import and Export Interoperability
+## [x] 7. Preserve JSONL Import and Export Interoperability
 
 - Export the active branch of either backend as a valid version-3 JSONL file,
   with parent IDs re-chained exactly as the current exporter requires.
