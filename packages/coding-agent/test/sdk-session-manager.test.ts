@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, getModel, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { CodingAgentSqliteSessionRepository } from "../src/core/sqlite-session-repository.ts";
 
 describe("createAgentSession session manager defaults", () => {
 	let tempDir: string;
@@ -63,6 +65,29 @@ describe("createAgentSession session manager defaults", () => {
 		expect(existsSync(join(agentDir, "sessions.sqlite"))).toBe(true);
 		expect(existsSync(join(agentDir, "sessions"))).toBe(false);
 		await session.dispose();
+	});
+
+	it("durably persists SQLite prompt messages before prompt settlement", async () => {
+		const faux = registerFauxProvider();
+		faux.setResponses([fauxAssistantMessage("persisted")]);
+		const authStorage = AuthStorage.inMemory();
+		authStorage.setRuntimeApiKey(faux.getModel().provider, "test-key");
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			authStorage,
+			model: faux.getModel(),
+			persistentStore: "sqlite",
+		});
+		await session.prompt("hello");
+		const sessionId = session.sessionId;
+		await session.dispose();
+
+		const repository = new CodingAgentSqliteSessionRepository(join(agentDir, "sessions.sqlite"));
+		const reopened = await repository.openById(sessionId);
+		expect((await reopened.buildContext()).messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		await reopened.close();
+		faux.unregister();
 	});
 
 	it("keeps an explicit sessionManager override", async () => {

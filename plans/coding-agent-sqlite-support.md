@@ -371,7 +371,7 @@ npm run test --workspace packages/coding-agent -- test/persistent-store.test.ts 
 npx tsgo --noEmit
 ```
 
-## [ ] 12. Complete SQLite Runtime Workflows and Backend-Neutral UI/RPC Semantics
+## [x] 12. Complete SQLite Runtime Workflows and Backend-Neutral UI/RPC Semantics
 
 - Replace remaining direct `SessionManager.create/open/continueRecent/forkFrom`
   calls in `main.ts`, `sdk.ts`, and `agent-session-runtime.ts` with injected
