@@ -69,6 +69,24 @@ async function loadActiveBranchId(db: SqliteDatabase, sessionId: string): Promis
 	return row?.branch_id ?? null;
 }
 
+function getDiscoveryText(entry: SessionTreeEntry): { firstMessage: string | null; messageText: string | null } {
+	if (entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "assistant")) {
+		return { firstMessage: null, messageText: null };
+	}
+	const content = entry.message.content;
+	const text =
+		typeof content === "string"
+			? content
+			: content
+					.filter((part): part is { type: "text"; text: string } => part.type === "text")
+					.map((part) => part.text)
+					.join("\n");
+	return {
+		firstMessage: entry.message.role === "user" && text ? text : null,
+		messageText: text || null,
+	};
+}
+
 async function hasExistingChild(db: SqliteDatabase, sessionId: string, parentId: string | null): Promise<boolean> {
 	const row =
 		parentId === null
@@ -224,7 +242,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		const createdAt = new Date().toISOString();
 		await db
 			.prepare(
-				"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id, active_leaf_id) VALUES (?, ?, ?, ?, ?, ?)",
+				"INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id, active_leaf_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			)
 			.run(
 				options.sessionId,
@@ -233,6 +251,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				options.cwd,
 				options.parentSessionId ?? null,
 				null,
+				createdAt,
 			);
 		await db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(options.sessionId, 1);
 		await db
@@ -290,6 +309,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 
 	async appendEntry(entry: SessionTreeEntry): Promise<void> {
 		const encoded = encodeEntry(entry);
+		const discovery = getDiscoveryText(entry);
 		const previousMaterializedState: SessionMaterializedState = {
 			...this.materializedState,
 			labelsById: new Map(this.materializedState.labelsById),
@@ -321,8 +341,22 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				this.byId.set(entry.id, entry);
 				this.currentLeafId = leafIdAfterEntry(entry);
 				await this.db
-					.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?")
-					.run(this.currentLeafId, this.metadata.id);
+					.prepare(
+						`UPDATE sessions SET active_leaf_id = ?, updated_at = ?,
+						first_message = CASE WHEN first_message IS NULL AND ? IS NOT NULL THEN ? ELSE first_message END,
+						all_messages_text = CASE WHEN ? IS NULL THEN all_messages_text WHEN all_messages_text IS NULL OR all_messages_text = '' THEN ? ELSE all_messages_text || ' ' || ? END
+						WHERE id = ?`,
+					)
+					.run(
+						this.currentLeafId,
+						entry.timestamp,
+						discovery.firstMessage,
+						discovery.firstMessage,
+						discovery.messageText,
+						discovery.messageText,
+						discovery.messageText,
+						this.metadata.id,
+					);
 				if (entry.type === "leaf") {
 					this.activeBranchId = null;
 					await this.materializeBranch(entry.targetId);

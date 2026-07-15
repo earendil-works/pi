@@ -8,6 +8,11 @@ export interface SessionRow {
 	cwd: string;
 	parent_session_id: string | null;
 	active_leaf_id: string | null;
+	updated_at?: string | null;
+	first_message?: string | null;
+	all_messages_text?: string | null;
+	session_name?: string | null;
+	message_count?: number | null;
 }
 
 function parseMetadata(metadata: string | null, sessionId: string): Record<string, unknown> | undefined {
@@ -36,5 +41,10 @@ export function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetad
 		path,
 		parentSessionId: row.parent_session_id ?? undefined,
 		metadata: parseMetadata(row.metadata, row.id),
+		updatedAt: row.updated_at ?? undefined,
+		name: row.session_name?.trim() || undefined,
+		messageCount: row.message_count ?? undefined,
+		firstMessage: row.first_message ?? undefined,
+		allMessagesText: row.all_messages_text ?? undefined,
 	};
 }

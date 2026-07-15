@@ -7,7 +7,7 @@ import {
 	SqliteSessionRepo,
 } from "@earendil-works/pi-agent-core/sqlite";
 import { SqliteNodeExecutionEnv } from "@earendil-works/pi-agent-core/sqlite/env/node";
-import type { SessionReference } from "./session-manager.ts";
+import type { SessionInfo, SessionReference } from "./session-manager.ts";
 
 export const SQLITE_SESSIONS_DATABASE = "sessions.sqlite";
 
@@ -38,6 +38,24 @@ export class CodingAgentSqliteSessionRepository {
 
 	list(cwd?: string): Promise<SqliteSessionMetadata[]> {
 		return this.repo.list(cwd ? { cwd: resolve(cwd) } : {});
+	}
+
+	async listSessionInfo(cwd?: string): Promise<SessionInfo[]> {
+		return (await this.list(cwd)).map((metadata) => ({
+			path: `${metadata.path}#${metadata.id}`,
+			id: metadata.id,
+			reference: this.toReference(metadata),
+			cwd: metadata.cwd,
+			name: metadata.name,
+			parentReference: metadata.parentSessionId
+				? { backend: "sqlite", id: metadata.parentSessionId, storagePath: metadata.path }
+				: undefined,
+			created: new Date(metadata.createdAt),
+			modified: new Date(metadata.updatedAt ?? metadata.createdAt),
+			messageCount: metadata.messageCount ?? 0,
+			firstMessage: metadata.firstMessage ?? "(no messages)",
+			allMessagesText: metadata.allMessagesText ?? "",
+		}));
 	}
 
 	async continueRecent(cwd: string): Promise<Session<SqliteSessionMetadata>> {

@@ -32,6 +32,11 @@ export interface SqliteSessionMetadata extends SessionMetadata {
 	path: string;
 	parentSessionId?: string;
 	metadata?: Record<string, unknown>;
+	updatedAt?: string;
+	name?: string;
+	messageCount?: number;
+	firstMessage?: string;
+	allMessagesText?: string;
 }
 
 export interface SqliteSessionCreateOptions extends SessionCreateOptions {

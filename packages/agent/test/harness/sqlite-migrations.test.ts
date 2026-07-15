@@ -75,7 +75,7 @@ describe("SQLite migrations", () => {
 		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_session_discovery.sql"]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();
@@ -91,7 +91,9 @@ describe("SQLite migrations", () => {
 				]),
 			);
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
-			expect(sessionColumns.map((column) => column.name)).toContain("active_leaf_id");
+			expect(sessionColumns.map((column) => column.name)).toEqual(
+				expect.arrayContaining(["active_leaf_id", "updated_at", "first_message", "all_messages_text"]),
+			);
 			for (const tableName of [
 				"sessions",
 				"session_sequences",

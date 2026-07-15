@@ -196,7 +196,7 @@ npm run test --workspace packages/coding-agent -- --run test/rpc-prompt-response
 npx tsgo --noEmit
 ```
 
-## [ ] 6. Make Session Discovery and Selection Backend-Neutral
+## [x] 6. Make Session Discovery and Selection Backend-Neutral
 
 - Build the existing `SessionInfo` view for SQLite sessions, including created
   and modified times, parent identity, display name, message count, first user
