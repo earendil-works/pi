@@ -403,7 +403,7 @@ npm run test --workspace packages/coding-agent -- test/agent-session-persistence
 npx tsgo --noEmit
 ```
 
-## [ ] 13. Add Deterministic Process-Level SQLite E2E and Correct Readiness Documentation
+## [x] 13. Add Deterministic Process-Level SQLite E2E and Correct Readiness Documentation
 
 - Parameterize the deterministic RPC test backend so the same create → prompt →
   stop → new process → continue scenario runs with JSONL and SQLite.

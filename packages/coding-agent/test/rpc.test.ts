@@ -70,11 +70,11 @@ describe("RPC mode", () => {
 	let sessionDir: string;
 	let mockServer: Server;
 
-	function createRpcClient(args?: string[]): RpcClient {
+	function createRpcClient(args?: string[], env?: Record<string, string>): RpcClient {
 		return new RpcClient({
 			cliPath: join(__dirname, "..", "dist", "cli.js"),
 			cwd: join(__dirname, ".."),
-			env: { PI_CODING_AGENT_DIR: sessionDir },
+			env: { PI_CODING_AGENT_DIR: sessionDir, ...env },
 			provider: "mock",
 			model: "mock-model",
 			args,
@@ -193,6 +193,27 @@ describe("RPC mode", () => {
 		const restoredStats = await client.getSessionStats();
 		const restoredEntries = await client.getEntries();
 		expect(restoredState.messageCount).toBe(beforeState.messageCount);
+		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
+		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
+		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
+		expect(await client.getLastAssistantText()).toBe("hello");
+	}, 30000);
+
+	test("should restore a SQLite session in a new RPC process", async () => {
+		client = createRpcClient(undefined, { PERSISTENT_STORE: "sqlite" });
+		await client.start();
+		await client.promptAndWait("Reply with just the word 'hello'");
+		const beforeStats = await client.getSessionStats();
+		const beforeEntries = await client.getEntries();
+		await client.stop();
+
+		expect(existsSync(join(sessionDir, "sessions.sqlite"))).toBe(true);
+		expect(existsSync(join(sessionDir, "sessions"))).toBe(false);
+
+		client = createRpcClient(["--continue"], { PERSISTENT_STORE: "sqlite" });
+		await client.start();
+		const restoredStats = await client.getSessionStats();
+		const restoredEntries = await client.getEntries();
 		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
 		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
 		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
