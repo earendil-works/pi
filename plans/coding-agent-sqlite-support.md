@@ -303,10 +303,145 @@ npm run check
 npm run build
 ```
 
+## Corrective Follow-up
+
+Steps 1–9 established the core backend, repository, schema, interchange, and
+configuration primitives, but did not connect `PERSISTENT_STORE` or the SDK
+`persistentStore` option to the live coding-agent `SessionManager`. The steps
+below are required before SQLite can be described as usable by the CLI or SDK.
+
+## [ ] 10. Replace the JSONL-Only Runtime SessionManager with a Backend-Neutral Facade
+
+- Define one coding-agent session-manager interface consumed by `AgentSession`,
+  `AgentSessionRuntime`, interactive mode, RPC mode, export, and extensions.
+- Implement JSONL, SQLite, and memory adapters behind that interface. The SQLite
+  adapter must use `CodingAgentSqliteSessionRepository`; do not duplicate its
+  SQL or import agent-core schema internals.
+- Move cached synchronous reads (`getEntry`, `getEntries`, `getBranch`,
+  `getTree`, `getLabel`, `getSessionName`, and `buildSessionContext`) into the
+  facade and hydrate the cache before returning from asynchronous factories.
+- Make create, open, continue, append, branch/reset, rename, fork, delete, and
+  close backend operations asynchronous. Update cached state only after a
+  durable mutation succeeds.
+- Preserve the public JSONL `SessionManager.create/open/continueRecent/inMemory`
+  APIs as compatibility wrappers where possible, while ensuring new runtime
+  code depends only on the backend-neutral contract.
+- Add a shared coding-agent conformance suite that runs equivalent session-tree,
+  compaction, label, rename, fork, reopen, failure, and close scenarios against
+  memory, JSONL, and SQLite.
+
+**Acceptance:** the live coding-agent session contract has no JSONL file-system
+assumptions, and all three adapters pass the same behavioral suite.
+
+**Verify:**
+
+```sh
+npm run test --workspace packages/coding-agent -- test/session-manager test/sqlite-session-repository.test.ts test/backend-session-manager.test.ts
+npx tsgo --noEmit
+```
+
+## [ ] 11. Wire PERSISTENT_STORE and SDK Selection into Real Session Creation
+
+- Resolve `PERSISTENT_STORE` once during CLI startup after parsing `--no-session`.
+  `--no-session` must select memory without parsing or opening a persistent
+  backend.
+- Resolve `CreateAgentSessionOptions.persistentStore` in the SDK, with an
+  explicit option taking precedence over the environment.
+- Construct JSONL or SQLite managers from the resolved value in both CLI and SDK
+  paths; remove the current unused-option behavior.
+- Use one default SQLite database at `<agentDir>/sessions.sqlite`. In SQLite
+  mode, custom `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, and `sessionDir`
+  select the directory containing `sessions.sqlite`.
+- Route create, `--continue`, `--resume`, `--session <id>`, `--session-id`, and
+  `--fork` through the selected repository. Keep direct `.jsonl` paths as
+  explicit JSONL import/open operations.
+- Fail unsupported `PERSISTENT_STORE` values before creating runtime services,
+  and fail duplicate explicit IDs consistently in JSONL and SQLite.
+- Add CLI and SDK tests that assert the selected backend from actual created
+  artifacts, not only parser return values.
+
+**Acceptance:** `PERSISTENT_STORE=sqlite pi` and
+`createAgentSession({ persistentStore: "sqlite" })` create SQLite sessions and
+produce no JSONL session file; unset or `jsonl` continues to create JSONL.
+
+**Verify:**
+
+```sh
+npm run test --workspace packages/coding-agent -- test/persistent-store.test.ts test/sdk-session-storage.test.ts test/sqlite-cli-session.test.ts
+npx tsgo --noEmit
+```
+
+## [ ] 12. Complete SQLite Runtime Workflows and Backend-Neutral UI/RPC Semantics
+
+- Replace remaining direct `SessionManager.create/open/continueRecent/forkFrom`
+  calls in `main.ts`, `sdk.ts`, and `agent-session-runtime.ts` with injected
+  backend-neutral factories.
+- Make `/new`, `/resume`, `/fork`, `/clone`, rename, tree navigation, import,
+  JSONL export, HTML export, and delete work for SQLite without requiring a
+  `sessionFile`.
+- Replace internal uses of file paths as session identity with
+  `SessionReference`; retain `getSessionFile()` and RPC `sessionFile` only as
+  optional JSONL compatibility fields.
+- Ensure selector current-session highlighting and family grouping distinguish
+  multiple SQLite session IDs in one database.
+- Await all writes before RPC success responses, extension lifecycle events,
+  runtime replacement, and disposal. Close every opened SQLite session on
+  success, cancellation, and error paths.
+- Remove empty SQLite sessions that never persisted an assistant response, while
+  preserving the existing deferred-JSONL visibility behavior.
+- Add focused tests for every workflow in both JSONL and SQLite modes, including
+  cancelled switches and injected write/close failures.
+
+**Acceptance:** all user-visible session workflows operate equivalently on
+SQLite, and no production workflow assumes that a persisted session has a
+unique file path.
+
+**Verify:**
+
+```sh
+npm run test --workspace packages/coding-agent -- test/agent-session-persistence.test.ts test/suite/agent-session-runtime.test.ts test/sqlite-session-workflows.test.ts test/sqlite-session-roundtrip.test.ts
+npx tsgo --noEmit
+```
+
+## [ ] 13. Add Deterministic Process-Level SQLite E2E and Correct Readiness Documentation
+
+- Parameterize the deterministic RPC test backend so the same create → prompt →
+  stop → new process → continue scenario runs with JSONL and SQLite.
+- In the SQLite case, assert `sessions.sqlite` exists, no session `.jsonl` was
+  created, the restored session ID/entries/leaf match, and the database can be
+  reopened after process exit.
+- Add deterministic CLI process tests for SQLite list/resume, fork, JSONL
+  import/export, HTML export, and invalid `PERSISTENT_STORE` handling using the
+  local mock LLM.
+- Add a Bun/binary SQLite smoke test or explicitly gate/document binary support
+  until the Bun adapter is selected and validated.
+- Verify Linux and Windows path/locking behavior in CI, including WAL shutdown
+  and repeated process open/close cycles.
+- Audit README, SDK docs, examples, and changelog. Remove or qualify claims not
+  demonstrated by process-level tests, and only mark SQLite ready after those
+  tests pass.
+- Run the full repository validation suite and ensure the working tree remains
+  clean after generated-model build steps.
+
+**Acceptance:** a credentials-free process-level test proves that CLI and RPC
+sessions persist and restore through SQLite, supported runtimes are explicit,
+and documentation matches actual behavior.
+
+**Verify:**
+
+```sh
+npm run build
+npm run test --workspace packages/coding-agent -- test/rpc.test.ts test/sqlite-cli-session.test.ts
+npm test
+npm run check
+```
+
 ## Completion Criteria
 
 - `pi-coding-agent` supports create, resume, continue, list, search, rename,
   branch, fork, import, export, and delete with SQLite sessions.
+- `PERSISTENT_STORE=sqlite` and SDK `persistentStore: "sqlite"` create and
+  restore SQLite sessions without creating JSONL session files.
 - JSONL remains the default and all existing JSONL behavior remains covered.
 - Every persistent mutation and lifecycle close is awaited.
 - Session switching and process disposal leave no SQLite handles or queued
