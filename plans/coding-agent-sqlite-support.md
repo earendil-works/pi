@@ -136,7 +136,7 @@ npm run test:harness --workspace packages/agent
 npx tsgo --noEmit
 ```
 
-## [ ] 4. Wire Persistent-Store Selection into CLI and SDK Startup
+## [x] 4. Wire Persistent-Store Selection into CLI and SDK Startup
 
 - Define and export a validated `PersistentStore = "jsonl" | "sqlite"` type and
   one environment parser for `PERSISTENT_STORE`; default it to `jsonl`, normalize
