@@ -873,6 +873,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private closePromise: Promise<void> | undefined;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
@@ -1000,6 +1001,12 @@ export class SessionManager {
 		} finally {
 			closeSync(fd);
 		}
+	}
+
+	/** Await pending persistence and release backend resources. Safe to call repeatedly. */
+	close(): Promise<void> {
+		this.closePromise ??= Promise.resolve();
+		return this.closePromise;
 	}
 
 	isPersisted(): boolean {

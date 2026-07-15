@@ -313,6 +313,7 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _disposePromise: Promise<void> | undefined;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -834,7 +835,12 @@ export class AgentSession {
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
 	 */
-	dispose(): void {
+	dispose(): Promise<void> {
+		this._disposePromise ??= this._dispose();
+		return this._disposePromise;
+	}
+
+	private async _dispose(): Promise<void> {
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -842,7 +848,7 @@ export class AgentSession {
 			this.abortBash();
 			this.agent.abort();
 		} catch {
-			// Dispose must succeed even if an abort hook throws.
+			// Continue releasing session resources even if an abort hook throws.
 		}
 
 		this._extensionRunner.invalidate(
@@ -851,6 +857,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+		await this.sessionManager.close();
 	}
 
 	// =========================================================================

@@ -168,7 +168,7 @@ npm run test --workspace packages/coding-agent -- --run test/sqlite-cli-session.
 npx tsgo --noEmit
 ```
 
-## [ ] 5. Await Persistence Across Agent and Runtime Lifecycles
+## [x] 5. Await Persistence Across Agent and Runtime Lifecycles
 
 - Await message, custom-message, model, thinking-level, compaction, branch
   summary, label, and session-name writes in `AgentSession` and interactive
