@@ -150,6 +150,29 @@ describe("xAI OAuth device flow", () => {
 		});
 	});
 
+	it("falls back to the default poll interval when the response reports interval 0", async () => {
+		vi.useFakeTimers();
+		const startTime = new Date("2026-07-09T20:00:00Z");
+		vi.setSystemTime(startTime);
+		const pollTimes: number[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown) => {
+				if (requestUrl(input) === "https://auth.x.ai/oauth2/device/code") {
+					return jsonResponse(deviceCodeResponse({ interval: 0 }));
+				}
+				pollTimes.push(Date.now());
+				return jsonResponse(tokenResponse());
+			}),
+		);
+
+		const loginPromise = loginXaiForTest({ onDeviceCode: () => {} });
+		// RFC 8628 default interval is 5 seconds when the server does not require a wait.
+		await vi.advanceTimersByTimeAsync(5000);
+		await loginPromise;
+		expect(pollTimes).toEqual([startTime.getTime() + 5000]);
+	});
+
 	it.each(["http://accounts.x.ai/oauth2/device", "file:///etc/passwd", "not a url"])(
 		"rejects a non-https verification URI: %s",
 		async (verificationUri) => {

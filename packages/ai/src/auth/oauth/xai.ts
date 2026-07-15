@@ -105,12 +105,16 @@ function requestFailure(action: string, response: OAuthHttpResponse): Error {
 }
 
 function parseDeviceCode(body: JsonObject): XaiDeviceCode {
+	// RFC 8628 allows interval 0 (no minimum wait); fall back to the poller's
+	// default instead of failing on non-positive or malformed values.
 	const interval = body.interval;
+	const intervalSeconds =
+		typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
 	return {
 		deviceCode: requiredString(body, "device_code"),
 		userCode: requiredString(body, "user_code"),
 		verificationUri: validateVerificationUri(requiredString(body, "verification_uri")),
-		intervalSeconds: interval === undefined ? undefined : positiveNumber(body, "interval"),
+		intervalSeconds,
 		expiresInSeconds: positiveNumber(body, "expires_in"),
 	};
 }
@@ -183,7 +187,7 @@ async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promi
 			if (error === "expired_token") {
 				return { status: "failed", message: "xAI device code expired" };
 			}
-			return { status: "failed", message: requestFailure("device authorization", response).message };
+			return { status: "failed", message: requestFailure("device token polling", response).message };
 		},
 	});
 }
