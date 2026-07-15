@@ -42,6 +42,11 @@ describe("createAgentSession session manager defaults", () => {
 
 		expect(sessionDir).toBe(expectedSessionDir);
 		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
+		expect(session.sessionManager.getSessionReference()).toEqual({
+			backend: "jsonl",
+			id: session.sessionManager.getSessionId(),
+			storagePath: sessionFile,
+		});
 
 		session.dispose();
 	});
@@ -60,6 +65,10 @@ describe("createAgentSession session manager defaults", () => {
 
 		expect(session.sessionManager).toBe(sessionManager);
 		expect(session.sessionManager.isPersisted()).toBe(false);
+		expect(session.sessionManager.getSessionReference()).toEqual({
+			backend: "memory",
+			id: session.sessionManager.getSessionId(),
+		});
 
 		session.dispose();
 	});
