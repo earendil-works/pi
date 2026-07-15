@@ -272,6 +272,7 @@ export class Container implements Component {
 	}
 
 	invalidate(): void {
+		this.children = this.children.filter((c) => c != null);
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
@@ -280,6 +281,7 @@ export class Container implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 		for (const child of this.children) {
+			if (child == null) continue;
 			const childLines = child.render(width);
 			for (const line of childLines) {
 				lines.push(line);

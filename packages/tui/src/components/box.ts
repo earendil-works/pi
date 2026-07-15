@@ -65,6 +65,7 @@ export class Box implements Component {
 	}
 
 	invalidate(): void {
+		this.children = this.children.filter((c) => c != null);
 		this.invalidateCache();
 		for (const child of this.children) {
 			child.invalidate?.();
@@ -82,6 +83,7 @@ export class Box implements Component {
 		// Render all children
 		const childLines: string[] = [];
 		for (const child of this.children) {
+			if (child == null) continue;
 			const lines = child.render(contentWidth);
 			for (const line of lines) {
 				childLines.push(leftPad + line);
