@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, getModel, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { CodingAgentSqliteSessionRepository } from "../src/core/sqlite-session-repository.ts";
@@ -71,12 +72,35 @@ describe("createAgentSession session manager defaults", () => {
 		const faux = registerFauxProvider();
 		faux.setResponses([fauxAssistantMessage("persisted")]);
 		const authStorage = AuthStorage.inMemory();
-		authStorage.setRuntimeApiKey(faux.getModel().provider, "test-key");
+		const model = faux.getModel();
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "test-key" }));
+		const modelRuntime = await ModelRuntime.create({
+			credentials: authStorage,
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		modelRuntime.registerProvider(model.provider, {
+			baseUrl: model.baseUrl,
+			api: model.api,
+			models: [
+				{
+					id: model.id,
+					name: model.name,
+					api: model.api,
+					reasoning: model.reasoning,
+					input: model.input,
+					cost: model.cost,
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+					baseUrl: model.baseUrl,
+				},
+			],
+		});
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
-			authStorage,
-			model: faux.getModel(),
+			modelRuntime,
+			model,
 			persistentStore: "sqlite",
 		});
 		await session.prompt("hello");
