@@ -25,6 +25,7 @@ type XaiDeviceCode = {
 	deviceCode: string;
 	userCode: string;
 	verificationUri: string;
+	verificationUriComplete?: string;
 	intervalSeconds?: number;
 	expiresInSeconds: number;
 };
@@ -110,10 +111,15 @@ function parseDeviceCode(body: JsonObject): XaiDeviceCode {
 	const interval = body.interval;
 	const intervalSeconds =
 		typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
+	const verificationUriComplete =
+		typeof body.verification_uri_complete === "string" && body.verification_uri_complete.length > 0
+			? validateVerificationUri(body.verification_uri_complete)
+			: undefined;
 	return {
 		deviceCode: requiredString(body, "device_code"),
 		userCode: requiredString(body, "user_code"),
 		verificationUri: validateVerificationUri(requiredString(body, "verification_uri")),
+		verificationUriComplete,
 		intervalSeconds,
 		expiresInSeconds: positiveNumber(body, "expires_in"),
 	};
@@ -197,7 +203,7 @@ async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> 
 	interaction.notify({
 		type: "device_code",
 		userCode: device.userCode,
-		verificationUri: device.verificationUri,
+		verificationUri: device.verificationUriComplete ?? device.verificationUri,
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 	});
@@ -222,6 +228,7 @@ async function refreshXaiToken(refreshToken: string, signal?: AbortSignal): Prom
 
 export const xaiOAuth: OAuthAuth = {
 	name: "xAI (Grok/X subscription)",
+	loginLabel: "Sign in with SuperGrok or X Premium",
 	login: loginXai,
 	refresh: (credential, signal) => refreshXaiToken(credential.refresh, signal),
 

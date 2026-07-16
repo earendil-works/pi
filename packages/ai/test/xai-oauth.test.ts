@@ -173,6 +173,51 @@ describe("xAI OAuth device flow", () => {
 		expect(pollTimes).toEqual([startTime.getTime() + 5000]);
 	});
 
+	it("prefers verification_uri_complete when the server provides it", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown) => {
+				if (requestUrl(input) === "https://auth.x.ai/oauth2/device/code") {
+					return jsonResponse(
+						deviceCodeResponse({
+							verification_uri_complete: "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+						}),
+					);
+				}
+				return jsonResponse(tokenResponse());
+			}),
+		);
+
+		const deviceCodes: DeviceCodeInfo[] = [];
+		const loginPromise = loginXaiForTest({ onDeviceCode: (info) => deviceCodes.push(info) });
+		await vi.advanceTimersByTimeAsync(5000);
+		await loginPromise;
+		expect(deviceCodes).toEqual([
+			{
+				userCode: "ABCD-1234",
+				verificationUri: "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			},
+		]);
+	});
+
+	it("rejects a non-https verification_uri_complete", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				jsonResponse(
+					deviceCodeResponse({
+						verification_uri_complete: "http://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+					}),
+				),
+			),
+		);
+
+		await expect(loginXaiForTest({ onDeviceCode: () => {} })).rejects.toThrow("Untrusted verification URI");
+	});
+
 	it.each(["http://accounts.x.ai/oauth2/device", "file:///etc/passwd", "not a url"])(
 		"rejects a non-https verification URI: %s",
 		async (verificationUri) => {
