@@ -137,11 +137,18 @@ export class ModelRuntime implements Models {
 			(modelsPath
 				? new FileModelsStore(options.modelsStorePath ?? join(dirname(modelsPath), "models-store.json"))
 				: new InMemoryCodingAgentModelsStore());
-		const providers = builtinProviderCatalog
-			.builtinProviders()
-			.map((provider) =>
-				provider.id === "radius" ? provider : withRemoteCatalog(provider, options.catalogBaseUrl),
-			);
+		const providers = builtinProviderCatalog.builtinProviders().map((provider) => {
+			if (provider.id === "radius") return provider;
+			const withCatalog = withRemoteCatalog(provider, options.catalogBaseUrl);
+			if (provider.id !== "xai") return withCatalog;
+			// Restrict xAI to the built-in model list; the remote catalog may update
+			// those models (pricing, limits) but not add new ones.
+			const allowedIds = new Set(provider.getModels().map((model) => model.id));
+			return {
+				...withCatalog,
+				getModels: () => withCatalog.getModels().filter((model) => allowedIds.has(model.id)),
+			};
+		});
 		const runtime = new ModelRuntime(
 			credentials,
 			config,
