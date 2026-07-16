@@ -1724,6 +1724,37 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+
+		// Process Telnyx Inference models (not in models.dev; sourced from Telnyx /v2/ai/models)
+		// Telnyx is OpenAI-compatible. Flagship models: Kimi-K2.6, GLM-5.2, MiniMax-M3.
+		const telnyxCompat: OpenAICompletionsCompat = {
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+			maxTokensField: "max_tokens",
+			supportsStrictMode: false,
+		};
+		const telnyxBuiltinModels: Array<{ id: string; name: string; contextWindow: number; maxTokens: number; cost: { input: number; output: number; cacheRead: number; cacheWrite: number }; reasoning: boolean }> = [
+			{ id: "moonshotai/Kimi-K2.6", name: "Kimi K2.6 (Telnyx)", contextWindow: 262144, maxTokens: 262144, cost: { input: 0.665, output: 4.0, cacheRead: 0.08, cacheWrite: 0 }, reasoning: true },
+			{ id: "zai-org/GLM-5.2", name: "GLM 5.2 (Telnyx)", contextWindow: 1000000, maxTokens: 131072, cost: { input: 1.0, output: 4.0, cacheRead: 0.2, cacheWrite: 0 }, reasoning: true },
+			{ id: "MiniMaxAI/MiniMax-M3-MXFP8", name: "MiniMax M3 MXFP8 (Telnyx)", contextWindow: 1000000, maxTokens: 262144, cost: { input: 0.27, output: 1.1, cacheRead: 0.08, cacheWrite: 0 }, reasoning: true },
+		];
+		for (const m of telnyxBuiltinModels) {
+			models.push({
+				id: m.id,
+				name: m.name,
+				api: "openai-completions",
+				provider: "telnyx",
+				baseUrl: "https://api.telnyx.com/v2/ai",
+				reasoning: m.reasoning,
+				input: ["text"],
+				cost: m.cost,
+				contextWindow: m.contextWindow,
+				maxTokens: m.maxTokens,
+				compat: telnyxCompat,
+			});
+		}
+
 		// Process Xiaomi MiMo models
 		// Built-in `xiaomi` targets the API billing endpoint (single stable URL,
 		// keys from platform.xiaomimimo.com). The three `xiaomi-token-plan-*`

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Telnyx Inference as a built-in provider. OpenAI-compatible endpoint (api.telnyx.com/v2/ai) hosting open-source LLMs including Kimi-K2.6, GLM-5.2, and MiniMax-M3.
+
 ### Fixed
 
 - Fixed Kimi Coding requests to use Anthropic adaptive thinking effort without token budgets, and enabled empty thinking signatures for K3 and `kimi-for-coding`.
