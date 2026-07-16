@@ -4044,10 +4044,12 @@ export class InteractiveMode {
 				await this.session.prompt(message.text);
 			}
 
-			// Send first prompt (starts streaming)
-			const promptPromise = this.session.prompt(firstPrompt.text).catch((error) => {
-				restoreQueue(error);
-			});
+			// Start a prompt when idle, or queue it into a run still finishing compaction.
+			const promptPromise = this.session
+				.prompt(firstPrompt.text, { streamingBehavior: firstPrompt.mode })
+				.catch((error) => {
+					restoreQueue(error);
+				});
 
 			// Queue remaining messages
 			for (const message of rest) {
