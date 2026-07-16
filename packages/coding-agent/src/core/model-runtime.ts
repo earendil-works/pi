@@ -141,8 +141,7 @@ export class ModelRuntime implements Models {
 			if (provider.id === "radius") return provider;
 			const withCatalog = withRemoteCatalog(provider, options.catalogBaseUrl);
 			if (provider.id !== "xai") return withCatalog;
-			// Restrict xAI to the built-in model list; the remote catalog may update
-			// those models (pricing, limits) but not add new ones.
+			// Remote catalog may update built-in xAI models but not add new ones.
 			const allowedIds = new Set(provider.getModels().map((model) => model.id));
 			return {
 				...withCatalog,

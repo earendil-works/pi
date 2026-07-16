@@ -111,7 +111,6 @@ function parseDeviceCode(body: JsonObject): XaiDeviceCode {
 	const interval = body.interval;
 	const intervalSeconds =
 		typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
-	// RFC 8628 optional field: verification URI with the user code pre-filled.
 	const verificationUriComplete =
 		typeof body.verification_uri_complete === "string" && body.verification_uri_complete.length > 0
 			? validateVerificationUri(body.verification_uri_complete)
@@ -204,7 +203,6 @@ async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> 
 	interaction.notify({
 		type: "device_code",
 		userCode: device.userCode,
-		// Prefer the pre-filled URI so the user doesn't have to type the code manually.
 		verificationUri: device.verificationUriComplete ?? device.verificationUri,
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,

@@ -190,10 +190,7 @@ export interface OAuthAuth {
 	/** Display name, e.g. "Anthropic (Claude Pro/Max)". */
 	name: string;
 
-	/**
-	 * Optional label for the subscription login option in auth-type selectors,
-	 * e.g. "Sign in with SuperGrok or X Premium". Falls back to a generic label.
-	 */
+	/** Selector label for the subscription login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
 	login(interaction: AuthInteraction): Promise<OAuthCredential>;
