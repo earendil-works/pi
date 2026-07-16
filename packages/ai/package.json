@@ -46,6 +46,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"generate-models": "node scripts/generate-models.ts",
+		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "node scripts/generate-image-models.ts",
 		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
