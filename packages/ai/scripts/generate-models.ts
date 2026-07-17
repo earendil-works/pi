@@ -278,6 +278,30 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 } as const;
 
+// StepFun reasoning models expose top-level `reasoning_effort`. step-3.7-flash
+// accepts low/medium/high; step-3.5-flash and step-3.5-flash-2603 accept only
+// low/high. Map pi's canonical thinking levels to the raw StepFun effort values,
+// disabling tiers the model does not accept.
+const STEPFUN_PROVIDERS = new Set(["stepfun", "stepfun-ai", "stepfun-step-plan", "stepfun-ai-step-plan"]);
+const STEPFUN_EFFORT_LOW_MEDIUM_HIGH = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: null,
+	max: null,
+} as const;
+const STEPFUN_EFFORT_LOW_HIGH = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: null,
+} as const;
+
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -736,6 +760,13 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "ant-ling" && model.reasoning) {
 		// Ring reasons by default. Only high/xhigh have documented explicit effort controls.
 		mergeThinkingLevelMap(model, ANT_LING_RING_THINKING_LEVEL_MAP);
+	}
+	if (STEPFUN_PROVIDERS.has(model.provider) && model.reasoning) {
+		// step-3.7-flash accepts low/medium/high; the step-3.5-flash lane accepts low/high.
+		mergeThinkingLevelMap(
+			model,
+			model.id === "step-3.7-flash" ? STEPFUN_EFFORT_LOW_MEDIUM_HIGH : STEPFUN_EFFORT_LOW_HIGH,
+		);
 	}
 	if (model.provider === "github-copilot") {
 		const override = GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES[model.id];
@@ -1812,6 +1843,63 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					compat: xiaomiCompat,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+			}
+		}
+
+		// Process StepFun models.
+		// StepFun exposes four models.dev providers: direct chat endpoints for
+		// China (`stepfun`, api.stepfun.com/v1) and Global (`stepfun-ai`,
+		// api.stepfun.ai/v1), plus prepaid Step Plan routing endpoints for each
+		// region (`stepfun-step-plan`, `stepfun-ai-step-plan`, .../step_plan/v1).
+		// All share STEPFUN_API_KEY and speak the OpenAI-compatible protocol with
+		// DeepSeek-style reasoning (`reasoning_content` interleaved field, top-level
+		// `reasoning_effort`). Effort vocabulary is per-model (see the thinking-level
+		// map pass below): step-3.7-flash accepts low/medium/high; step-3.5-flash
+		// and step-3.5-flash-2603 accept low/high.
+		const stepfunCompat: OpenAICompletionsCompat = {
+			requiresReasoningContentOnAssistantMessages: true,
+			thinkingFormat: "deepseek",
+		};
+		// Models StepFun has taken offline. Skip them even if models.dev still lists them.
+		const stepfunOfflineModelIds = new Set(["step-1-32k", "step-2-16k"]);
+		const stepfunVariants = [
+			{ source: "stepfun", provider: "stepfun", baseUrl: "https://api.stepfun.com/v1" },
+			{ source: "stepfun-ai", provider: "stepfun-ai", baseUrl: "https://api.stepfun.ai/v1" },
+			{ source: "stepfun-step-plan", provider: "stepfun-step-plan", baseUrl: "https://api.stepfun.com/step_plan/v1" },
+			{
+				source: "stepfun-ai-step-plan",
+				provider: "stepfun-ai-step-plan",
+				baseUrl: "https://api.stepfun.ai/step_plan/v1",
+			},
+		] as const;
+
+		for (const { source, provider, baseUrl } of stepfunVariants) {
+			const providerModels = data[source]?.models;
+			if (!providerModels) continue;
+
+			for (const [modelId, model] of Object.entries(providerModels)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				if (stepfunOfflineModelIds.has(modelId)) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider,
+					baseUrl,
+					compat: stepfunCompat,
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {

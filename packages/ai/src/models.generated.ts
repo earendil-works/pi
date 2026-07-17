@@ -27,6 +27,10 @@ import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
+import { STEPFUN_MODELS } from "./providers/stepfun.models.ts";
+import { STEPFUN_AI_MODELS } from "./providers/stepfun-ai.models.ts";
+import { STEPFUN_AI_STEP_PLAN_MODELS } from "./providers/stepfun-ai-step-plan.models.ts";
+import { STEPFUN_STEP_PLAN_MODELS } from "./providers/stepfun-step-plan.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
@@ -64,6 +68,10 @@ export const MODELS = {
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
 	"openrouter": OPENROUTER_MODELS,
+	"stepfun": STEPFUN_MODELS,
+	"stepfun-ai": STEPFUN_AI_MODELS,
+	"stepfun-ai-step-plan": STEPFUN_AI_STEP_PLAN_MODELS,
+	"stepfun-step-plan": STEPFUN_STEP_PLAN_MODELS,
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,

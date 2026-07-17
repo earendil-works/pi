@@ -30,6 +30,10 @@ import { opencodeGoProvider } from "./opencode-go.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
 import { radiusProvider } from "./radius.ts";
+import { stepfunProvider } from "./stepfun.ts";
+import { stepfunAiProvider } from "./stepfun-ai.ts";
+import { stepfunAiStepPlanProvider } from "./stepfun-ai-step-plan.ts";
+import { stepfunStepPlanProvider } from "./stepfun-step-plan.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
 import { xaiProvider } from "./xai.ts";
@@ -104,6 +108,10 @@ export function builtinProviders(): Provider[] {
 		opencodeGoProvider(),
 		openrouterProvider(),
 		radiusProvider(),
+		stepfunProvider(),
+		stepfunAiProvider(),
+		stepfunStepPlanProvider(),
+		stepfunAiStepPlanProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
 		xaiProvider(),
