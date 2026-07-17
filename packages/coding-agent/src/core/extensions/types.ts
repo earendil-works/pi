@@ -1120,6 +1120,8 @@ export interface MessageRenderOptions {
 	expanded: boolean;
 }
 
+export type AssistantMarkdownTransformer = (markdown: string, context: { contentType: "text" | "thinking" }) => string;
+
 export interface EntryRenderOptions {
 	expanded: boolean;
 }
@@ -1255,6 +1257,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomMessageEntry. */
 	registerMessageRenderer<T = unknown>(customType: string, renderer: MessageRenderer<T>): void;
+
+	/** Register a transformer for assistant Markdown before Pi renders it in the interactive transcript. */
+	registerAssistantMarkdownTransformer(transformer: AssistantMarkdownTransformer): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
@@ -1648,6 +1653,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	assistantMarkdownTransformer?: AssistantMarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;

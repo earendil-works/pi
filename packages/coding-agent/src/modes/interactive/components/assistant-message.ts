@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import type { AssistantMarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -15,6 +16,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
+	private markdownTransformers: readonly AssistantMarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 
@@ -24,6 +26,7 @@ export class AssistantMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
+		markdownTransformers: readonly AssistantMarkdownTransformer[] = [],
 	) {
 		super();
 
@@ -31,6 +34,7 @@ export class AssistantMessageComponent extends Container {
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
+		this.markdownTransformers = markdownTransformers;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -85,6 +89,7 @@ export class AssistantMessageComponent extends Container {
 
 		// Clear content container
 		this.contentContainer.clear();
+		message = this.transformMarkdown(message);
 
 		const hasVisibleContent = message.content.some(
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
@@ -176,5 +181,36 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
+	}
+
+	private transformMarkdown(message: AssistantMessage): AssistantMessage {
+		if (this.markdownTransformers.length === 0) {
+			return message;
+		}
+
+		return {
+			...message,
+			content: message.content.map((content) => {
+				if (content.type !== "text" && content.type !== "thinking") {
+					return content;
+				}
+
+				let markdown = content.type === "text" ? content.text : content.thinking;
+				for (const transformer of this.markdownTransformers) {
+					try {
+						const transformed = transformer(markdown, {
+							contentType: content.type,
+						});
+						if (typeof transformed === "string") {
+							markdown = transformed;
+						}
+					} catch {
+						// Keep the current Markdown and continue with the next transformer.
+					}
+				}
+
+				return content.type === "text" ? { ...content, text: markdown } : { ...content, thinking: markdown };
+			}),
+		};
 	}
 }

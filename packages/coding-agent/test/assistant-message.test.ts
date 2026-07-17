@@ -116,6 +116,77 @@ describe("AssistantMessageComponent", () => {
 		expect(updatedLines.some((line) => line.startsWith("reasoning"))).toBe(true);
 	});
 
+	test("chains Markdown transformers in registration order", () => {
+		initTheme("dark");
+		const calls: string[] = [];
+		const message = createAssistantMessage([{ type: "text", text: "The result is $x^2$." }]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [
+			(markdown, context) => {
+				calls.push("formula");
+				expect(context.contentType).toBe("text");
+				return markdown.replace("$x^2$", "x²");
+			},
+			(markdown) => {
+				calls.push("suffix");
+				return `${markdown} Done.`;
+			},
+		]);
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("The result is x². Done.");
+		expect(calls).toEqual(["formula", "suffix"]);
+		component.updateContent(message);
+	});
+
+	test("continues the Markdown transformer chain when a transformer throws", () => {
+		initTheme("dark");
+		const calls: string[] = [];
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "still visible" }]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			[
+				(markdown) => {
+					calls.push("first");
+					return markdown.replace("still", "remains");
+				},
+				() => {
+					calls.push("throw");
+					throw new Error("broken transformer");
+				},
+				(markdown) => {
+					calls.push("last");
+					return `${markdown} after error`;
+				},
+			],
+		);
+
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("remains visible after error");
+		expect(calls).toEqual(["first", "throw", "last"]);
+	});
+
+	test("transforms text and thinking Markdown without mutating the original message", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "text", text: "answer" },
+			{ type: "thinking", thinking: "reasoning" },
+		]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [
+			(markdown, { contentType }) => {
+				return `${contentType}:${markdown}`;
+			},
+		]);
+
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		expect(rendered).toContain("text:answer");
+		expect(rendered).toContain("thinking:reasoning");
+		expect(message.content).toEqual([
+			{ type: "text", text: "answer" },
+			{ type: "thinking", thinking: "reasoning" },
+		]);
+	});
+
 	test("uses configured output padding for user messages", () => {
 		initTheme("dark");
 

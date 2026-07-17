@@ -61,6 +61,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import type {
+	AssistantMarkdownTransformer,
 	AutocompleteProviderFactory,
 	EditorFactory,
 	ExtensionCommandContext,
@@ -1747,6 +1748,10 @@ export class InteractiveMode {
 		return this.session.getToolDefinition(toolName);
 	}
 
+	private getAssistantMarkdownTransformers(): AssistantMarkdownTransformer[] {
+		return this.session.extensionRunner.getAssistantMarkdownTransformers();
+	}
+
 	/**
 	 * Set up keyboard shortcuts registered by extensions.
 	 */
@@ -2881,6 +2886,7 @@ export class InteractiveMode {
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
 						this.outputPad,
+						this.getAssistantMarkdownTransformers(),
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3252,6 +3258,7 @@ export class InteractiveMode {
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
 					this.outputPad,
+					this.getAssistantMarkdownTransformers(),
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;

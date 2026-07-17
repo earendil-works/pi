@@ -576,6 +576,21 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("message and entry renderers", () => {
+		it("gets assistant Markdown transformers in extension load order", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerAssistantMarkdownTransformer((markdown) => markdown);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "assistant-renderer-a.ts"), extCode);
+			fs.writeFileSync(path.join(extensionsDir, "assistant-renderer-b.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getAssistantMarkdownTransformers()).toHaveLength(2);
+		});
+
 		it("gets message renderer by type", async () => {
 			const extCode = `
 				export default function(pi) {

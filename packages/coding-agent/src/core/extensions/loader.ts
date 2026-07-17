@@ -31,6 +31,7 @@ import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type {
+	AssistantMarkdownTransformer,
 	EntryRenderer,
 	Extension,
 	ExtensionAPI,
@@ -277,6 +278,11 @@ function createExtensionAPI(
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
 			runtime.assertActive();
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
+		},
+
+		registerAssistantMarkdownTransformer(transformer: AssistantMarkdownTransformer): void {
+			runtime.assertActive();
+			extension.assistantMarkdownTransformer = transformer;
 		},
 
 		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {

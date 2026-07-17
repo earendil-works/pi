@@ -12,6 +12,7 @@ import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
+	AssistantMarkdownTransformer,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
@@ -555,6 +556,12 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	getAssistantMarkdownTransformers(): AssistantMarkdownTransformer[] {
+		return this.extensions.flatMap((ext) =>
+			ext.assistantMarkdownTransformer ? [ext.assistantMarkdownTransformer] : [],
+		);
 	}
 
 	getEntryRenderer(customType: string): EntryRenderer | undefined {
