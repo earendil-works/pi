@@ -719,7 +719,7 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 
 	// Handle newlines by processing each line separately
 	// Track ANSI state across lines so styles carry over after literal newlines
-	const inputLines = text.split("\n");
+	const inputLines = text.split(/\r\n|\r|\n/);
 	const result: string[] = [];
 	const tracker = new AnsiCodeTracker();
 
