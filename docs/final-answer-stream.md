@@ -150,7 +150,9 @@ Markers should appear only in the user prompt or diagnostic/tool output, not in 
 After changes:
 
 ```bash
-cd packages/ai && ./node_modules/.bin/vitest --run test/faux-provider.test.ts
+cd packages/ai && ./node_modules/.bin/vitest --run test/faux-provider.test.ts test/pi-messages.test.ts
+cd ../agent && ./node_modules/.bin/vitest --run test/agent-loop.test.ts
+cd ../coding-agent && ./node_modules/.bin/vitest --run test/system-prompt.test.ts test/assistant-message.test.ts test/export-html-final-answer.test.ts test/session-manager/file-operations.test.ts
 cd ../..
 npm run check
 ```

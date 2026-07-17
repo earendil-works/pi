@@ -65,6 +65,39 @@ describe("loadEntriesFromFile", () => {
 		expect(entries).toHaveLength(2);
 	});
 
+	it("persists and reloads final answer assistant content", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage({ role: "user", content: "hi", timestamp: 1 });
+		session.appendMessage({
+			role: "assistant",
+			content: [
+				{ type: "text", text: "scratch\n" },
+				{ type: "finalAnswer", text: "ship it" },
+			],
+			api: "openai-responses",
+			provider: "openai",
+			model: "mock",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		});
+
+		const reloaded = SessionManager.open(session.getSessionFile()!, tempDir);
+		const assistant = reloaded.buildSessionContext().messages.find((message) => message.role === "assistant");
+
+		expect(assistant?.content).toEqual([
+			{ type: "text", text: "scratch\n" },
+			{ type: "finalAnswer", text: "ship it" },
+		]);
+	});
+
 	it("opens session files larger than Node's max string length", () => {
 		const file = join(tempDir, "large.jsonl");
 		writeFileSync(

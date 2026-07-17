@@ -128,6 +128,45 @@ describe("agentLoop with AgentMessage", () => {
 		expect(eventTypes).toContain("agent_end");
 	});
 
+	it("propagates final answer stream events through message_update", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const partial = createAssistantMessage([]);
+				stream.push({ type: "start", partial });
+				partial.content.push({ type: "finalAnswer", text: "" });
+				stream.push({ type: "final_answer_start", contentIndex: 0, partial });
+				(partial.content[0] as { type: "finalAnswer"; text: string }).text = "Done";
+				stream.push({ type: "final_answer_delta", contentIndex: 0, delta: "Done", partial });
+				stream.push({ type: "final_answer_end", contentIndex: 0, content: "Done", partial });
+				stream.push({ type: "done", reason: "stop", message: partial });
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const updateTypes = events
+			.filter((event): event is Extract<AgentEvent, { type: "message_update" }> => event.type === "message_update")
+			.map((event) => event.assistantMessageEvent.type);
+
+		expect(updateTypes).toEqual(["final_answer_start", "final_answer_delta", "final_answer_end"]);
+	});
+
 	it("should handle custom message types via convertToLlm", async () => {
 		// Create a custom message type
 		interface CustomNotification {

@@ -60,6 +60,22 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
 	});
 
+	test("renders final answers with a distinct label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "scratch" },
+				{ type: "finalAnswer", text: "ship it" },
+			]),
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).toContain("scratch");
+		expect(rendered).toContain("Final answer");
+		expect(rendered).toContain("ship it");
+	});
+
 	test("renders length stops as visible errors", () => {
 		initTheme("dark");
 

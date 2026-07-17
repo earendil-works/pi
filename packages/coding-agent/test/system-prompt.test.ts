@@ -26,6 +26,32 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("final answer contract", () => {
+		test("includes final answer contract in default prompt", () => {
+			const prompt = buildSystemPrompt({
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("Final answer contract:");
+			expect(prompt).toContain("<final_answer>...</final_answer>");
+		});
+
+		test("includes final answer contract with custom system prompts", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "CUSTOM SYSTEM PROMPT",
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("CUSTOM SYSTEM PROMPT");
+			expect(prompt).toContain("Final answer contract:");
+			expect(prompt.indexOf("Final answer contract:")).toBeLessThan(prompt.indexOf("Current working directory:"));
+		});
+	});
+
 	describe("default tools", () => {
 		test("includes all default tools when snippets are provided", () => {
 			const prompt = buildSystemPrompt({

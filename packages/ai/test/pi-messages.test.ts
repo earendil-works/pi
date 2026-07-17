@@ -152,6 +152,30 @@ describe("pi-messages", () => {
 		});
 	});
 
+	it("reconstructs final answer stream events", async () => {
+		const { baseUrl } = await startServer({
+			events: [
+				{ type: "start" },
+				{ type: "final_answer_start", contentIndex: 0 },
+				{ type: "final_answer_delta", contentIndex: 0, delta: "Ship" },
+				{ type: "final_answer_delta", contentIndex: 0, delta: " it" },
+				{ type: "final_answer_end", contentIndex: 0, content: "Ship it" },
+				{ type: "done", reason: "stop", usage },
+			],
+		});
+		const model = createModel(baseUrl);
+
+		const events: AssistantMessageEvent[] = [];
+		const eventStream = stream(model, context, { apiKey: "test-key" });
+		for await (const event of eventStream) {
+			events.push(event);
+		}
+		const message = await eventStream.result();
+
+		expect(message.content).toEqual([{ type: "finalAnswer", text: "Ship it" }]);
+		expect(events.map((event) => event.type)).toContain("final_answer_delta");
+	});
+
 	it("appends debug=1 and reports response headers via onResponse", async () => {
 		const { baseUrl, requests } = await startServer({
 			headers: { "x-pi-gateway-upstream-provider": "anthropic" },
