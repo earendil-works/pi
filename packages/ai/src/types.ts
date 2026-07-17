@@ -205,6 +205,11 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	sessionId?: string;
 	/**
+	 * Emit raw provider stream events alongside normalized assistant events.
+	 * Only providers that explicitly support this option emit these events.
+	 */
+	emitProviderEvents?: boolean;
+	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.
@@ -339,6 +344,7 @@ export interface TextContent {
 	type: "text";
 	text: string;
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
+	annotations?: Array<Record<string, unknown>>;
 }
 
 export interface ThinkingContent {
@@ -520,6 +526,7 @@ export interface Context {
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
+	| { type: "provider_event"; event: unknown }
 	| { type: "text_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "text_end"; contentIndex: number; content: string; partial: AssistantMessage }
