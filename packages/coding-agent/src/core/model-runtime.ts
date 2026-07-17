@@ -246,11 +246,31 @@ export class ModelRuntime implements Models {
 			this.credentials.list(),
 		]);
 		const auth = new Map(checks);
+
+		// Preserve auth entries for extension providers that have apiKey configured
+		// This prevents race condition where async refresh clears provisional auth entries
+		for (const [providerId, config] of this.extensionProviders.entries()) {
+			if (config.apiKey && !auth.has(providerId)) {
+				auth.set(providerId, {
+					type: config.oauth && !config.apiKey ? "oauth" : "api_key",
+					source: "configured provider",
+				});
+			}
+		}
+
 		const configuredProviders = new Set(
 			checks
 				.filter((entry): entry is [string, AuthCheck] => entry[1] !== undefined)
 				.map(([providerId]) => providerId),
 		);
+
+		// Add extension providers with apiKey to configured providers
+		for (const [providerId, config] of this.extensionProviders.entries()) {
+			if (config.apiKey) {
+				configuredProviders.add(providerId);
+			}
+		}
+
 		this.snapshot = {
 			all: [...this.models.getModels()],
 			available: [...available],
