@@ -124,7 +124,7 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$MANUAL_PUBLISH" == "true" ]]; then
             allowed=true
             reason="manual publication"
-          elif (( local_day <= 5 && local_hour >= 10 && local_hour < 15 )); then
+          elif (( local_day <= 5 && local_hour >= 10 && local_hour < 15 && 10#$(TZ=Europe/Vienna date +%m) != 8 )); then
             if [[ "$EVENT_NAME" != "schedule" ]] || (( (local_hour - 10) % 2 == 0 )); then
               allowed=true
               reason="business-hours publication"
