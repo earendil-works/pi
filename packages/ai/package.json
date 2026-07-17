@@ -52,7 +52,7 @@
 		"generate-models": "node scripts/generate-models.ts",
 		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "node scripts/generate-image-models.ts",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "npm run generate-models && tsgo -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
