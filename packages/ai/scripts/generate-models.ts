@@ -228,9 +228,9 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 const KIMI_K3_THINKING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
-	low: null,
+	low: "low",
 	medium: null,
-	high: null,
+	high: "high",
 	xhigh: null,
 	max: "max",
 } as const;
