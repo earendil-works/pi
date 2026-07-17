@@ -251,6 +251,15 @@ const KIMI_K3_THINKING_LEVEL_MAP = {
 	xhigh: null,
 	max: "max",
 } as const;
+const KIMI_CODING_K3_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: "max",
+} as const;
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
 	input: 3,
@@ -1702,7 +1711,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						forceAdaptiveThinking: true,
 					},
 					reasoning: isKimiK3 || m.reasoning === true,
-					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
+					...(isKimiK3 ? { thinkingLevelMap: KIMI_CODING_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || impliedCost?.input || 0,
