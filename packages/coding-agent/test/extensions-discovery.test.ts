@@ -69,6 +69,28 @@ describe("extensions discovery", () => {
 		expect(result.extensions).toHaveLength(1);
 	});
 
+	it("loads the bundled marked parser", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "marked-import.ts"),
+			`
+				import { Marked } from "marked";
+				export default function(pi) {
+					const parser = new Marked();
+					pi.registerAssistantMarkdownTransformer((markdown) => {
+						parser.lexer(markdown);
+						return markdown;
+					});
+				}
+			`,
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0].assistantMarkdownTransformer).toBeDefined();
+	});
+
 	it("keeps the type-only pi-ai OAuth compatibility barrel resolvable", async () => {
 		fs.writeFileSync(
 			path.join(extensionsDir, "oauth-import.ts"),

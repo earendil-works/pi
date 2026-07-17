@@ -142,6 +142,7 @@ To share extensions via npm or git as pi packages, see [packages.md](packages.md
 |---------|---------|
 | `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
 | `typebox` | Schema definitions for tool parameters |
+| `marked` | Markdown lexer and parser |
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 

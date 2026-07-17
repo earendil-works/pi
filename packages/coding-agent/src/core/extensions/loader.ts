@@ -17,6 +17,7 @@ import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.
+import * as _bundledMarked from "marked";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
@@ -46,6 +47,7 @@ import type {
 
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
+	marked: _bundledMarked,
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
 	"typebox/value": _bundledTypeboxValue,
@@ -85,6 +87,7 @@ function getAliases(): Record<string, string> {
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
 	const packageIndex = path.resolve(__dirname, "../..", "index.js");
 
+	const markedEntry = require.resolve("marked");
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
 	const typeboxValueEntry = require.resolve("typebox/value");
@@ -126,6 +129,7 @@ function getAliases(): Record<string, string> {
 		"@mariozechner/pi-ai/compat": piAiCompatEntry,
 		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
 		"@mariozechner/pi-ai": piAiCompatEntry,
+		marked: markedEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,
 		"typebox/value": typeboxValueEntry,
