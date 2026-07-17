@@ -541,7 +541,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 			const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
 
 			for (const block of msg.content) {
-				if (block.type === "text") {
+				if (block.type === "text" || block.type === "finalAnswer") {
 					if (block.text.trim().length > 0) {
 						contentParts.push({ type: "text", text: sanitizeSurrogates(block.text) });
 					}
@@ -556,11 +556,13 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 					}
 					continue;
 				}
-				toolCalls.push({
-					id: block.id,
-					type: "function",
-					function: { name: block.name, arguments: JSON.stringify(block.arguments || {}) },
-				});
+				if (block.type === "toolCall") {
+					toolCalls.push({
+						id: block.id,
+						type: "function",
+						function: { name: block.name, arguments: JSON.stringify(block.arguments || {}) },
+					});
+				}
 			}
 
 			const assistantMessage: ChatCompletionStreamRequestMessage = { role: "assistant" };

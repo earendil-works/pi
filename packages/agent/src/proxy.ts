@@ -38,6 +38,9 @@ export type ProxyAssistantMessageEvent =
 	| { type: "text_start"; contentIndex: number }
 	| { type: "text_delta"; contentIndex: number; delta: string }
 	| { type: "text_end"; contentIndex: number; contentSignature?: string }
+	| { type: "final_answer_start"; contentIndex: number }
+	| { type: "final_answer_delta"; contentIndex: number; delta: string }
+	| { type: "final_answer_end"; contentIndex: number }
 	| { type: "thinking_start"; contentIndex: number }
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
 	| { type: "thinking_end"; contentIndex: number; contentSignature?: string }
@@ -273,6 +276,37 @@ function processProxyEvent(
 				};
 			}
 			throw new Error("Received text_end for non-text content");
+		}
+
+		case "final_answer_start":
+			partial.content[proxyEvent.contentIndex] = { type: "finalAnswer", text: "" };
+			return { type: "final_answer_start", contentIndex: proxyEvent.contentIndex, partial };
+
+		case "final_answer_delta": {
+			const content = partial.content[proxyEvent.contentIndex];
+			if (content?.type === "finalAnswer") {
+				content.text += proxyEvent.delta;
+				return {
+					type: "final_answer_delta",
+					contentIndex: proxyEvent.contentIndex,
+					delta: proxyEvent.delta,
+					partial,
+				};
+			}
+			throw new Error("Received final_answer_delta for non-finalAnswer content");
+		}
+
+		case "final_answer_end": {
+			const content = partial.content[proxyEvent.contentIndex];
+			if (content?.type === "finalAnswer") {
+				return {
+					type: "final_answer_end",
+					contentIndex: proxyEvent.contentIndex,
+					content: content.text,
+					partial,
+				};
+			}
+			throw new Error("Received final_answer_end for non-finalAnswer content");
 		}
 
 		case "thinking_start":

@@ -1,5 +1,5 @@
 import { type AgentMessage, uuidv7 } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { FinalAnswerContent, ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -601,7 +601,9 @@ function extractTextContent(message: Message): string {
 		return content;
 	}
 	return content
-		.filter((block): block is TextContent => block.type === "text")
+		.filter(
+			(block): block is TextContent | FinalAnswerContent => block.type === "text" || block.type === "finalAnswer",
+		)
 		.map((block) => block.text)
 		.join(" ");
 }

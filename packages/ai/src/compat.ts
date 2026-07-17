@@ -58,6 +58,7 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "./types.ts";
+import { parseFinalAnswerMarkers } from "./utils/final-answer-stream.ts";
 
 /** @deprecated Static catalog read. Use `getBuiltinModel` from "@earendil-works/pi-ai/providers/all" or `Models.getModel()`. */
 export const getModel = getBuiltinModel;
@@ -257,10 +258,12 @@ export function stream<TApi extends Api>(
 		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
 			return compatModels.stream(model, context, options as ModelsApiStreamOptions<TApi> | undefined);
 		}
-		return builtinProvider.stream(model, context, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
+		return parseFinalAnswerMarkers(
+			builtinProvider.stream(model, context, withEnvApiKey(model, options) as ApiStreamOptions<TApi>),
+		);
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, context, withEnvApiKey(model, options) as StreamOptions);
+	return parseFinalAnswerMarkers(provider.stream(model, context, withEnvApiKey(model, options) as StreamOptions));
 }
 
 export async function complete<TApi extends Api>(
@@ -282,10 +285,10 @@ export function streamSimple<TApi extends Api>(
 		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
 			return compatModels.streamSimple(model, context, options);
 		}
-		return builtinProvider.streamSimple(model, context, withEnvApiKey(model, options));
+		return parseFinalAnswerMarkers(builtinProvider.streamSimple(model, context, withEnvApiKey(model, options)));
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, context, withEnvApiKey(model, options));
+	return parseFinalAnswerMarkers(provider.streamSimple(model, context, withEnvApiKey(model, options)));
 }
 
 export async function completeSimple<TApi extends Api>(

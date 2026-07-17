@@ -3,6 +3,7 @@ import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
+	FinalAnswerContent,
 	ImageContent,
 	Message,
 	Model,
@@ -44,7 +45,7 @@ export interface FauxModelDefinition {
 	maxTokens?: number;
 }
 
-export type FauxContentBlock = TextContent | ThinkingContent | ToolCall;
+export type FauxContentBlock = TextContent | FinalAnswerContent | ThinkingContent | ToolCall;
 
 export function fauxText(text: string): TextContent {
 	return { type: "text", text };
@@ -52,6 +53,10 @@ export function fauxText(text: string): TextContent {
 
 export function fauxThinking(thinking: string): ThinkingContent {
 	return { type: "thinking", thinking };
+}
+
+export function fauxFinalAnswer(text: string): FinalAnswerContent {
+	return { type: "finalAnswer", text };
 }
 
 export function fauxToolCall(name: string, arguments_: ToolCall["arguments"], options: { id?: string } = {}): ToolCall {
@@ -159,10 +164,10 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(content: Array<TextContent | FinalAnswerContent | ThinkingContent | ToolCall>): string {
 	return content
 		.map((block) => {
-			if (block.type === "text") {
+			if (block.type === "text" || block.type === "finalAnswer") {
 				return block.text;
 			}
 			if (block.type === "thinking") {
@@ -353,6 +358,24 @@ async function streamWithDeltas(
 				content: block.thinking,
 				partial: { ...partial },
 			});
+			continue;
+		}
+
+		if (block.type === "finalAnswer") {
+			partial.content = [...partial.content, { type: "finalAnswer", text: "" }];
+			stream.push({ type: "final_answer_start", contentIndex: index, partial: { ...partial } });
+			for (const chunk of splitStringByTokenSize(block.text, minTokenSize, maxTokenSize)) {
+				await scheduleChunk(chunk, tokensPerSecond);
+				if (signal?.aborted) {
+					const aborted = createAbortedMessage(partial);
+					stream.push({ type: "error", reason: "aborted", error: aborted });
+					stream.end(aborted);
+					return;
+				}
+				(partial.content[index] as FinalAnswerContent).text += chunk;
+				stream.push({ type: "final_answer_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			}
+			stream.push({ type: "final_answer_end", contentIndex: index, content: block.text, partial: { ...partial } });
 			continue;
 		}
 

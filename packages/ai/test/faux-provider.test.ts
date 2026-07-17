@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	complete,
 	fauxAssistantMessage,
+	fauxFinalAnswer,
 	fauxText,
 	fauxThinking,
 	fauxToolCall,
@@ -44,6 +45,52 @@ describe("faux provider", () => {
 		expect(response.usage.output).toBeGreaterThan(0);
 		expect(response.usage.totalTokens).toBe(response.usage.input + response.usage.output);
 		expect(registration.state.callCount).toBe(1);
+	});
+
+	it("parses final answer markers from streamed text", async () => {
+		const registration = registerFauxProvider({ tokenSize: { min: 1, max: 4 } });
+		registrations.push(registration);
+		registration.setResponses([fauxAssistantMessage("trace <final_answer>Ship it</final_answer> after")]);
+
+		const result = stream(registration.getModel(), {
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		});
+		const events = await collectEvents(result);
+		const response = await result.result();
+
+		expect(events.map((event) => event.type)).toContain("final_answer_delta");
+		expect(response.content).toEqual([
+			{ type: "text", text: "trace " },
+			{ type: "finalAnswer", text: "Ship it" },
+			{ type: "text", text: " after" },
+		]);
+	});
+
+	it("does not persist empty text blocks for marker-only final answers", async () => {
+		const registration = registerFauxProvider({ tokenSize: { min: 1, max: 4 } });
+		registrations.push(registration);
+		registration.setResponses([fauxAssistantMessage("<final_answer>Only answer</final_answer>")]);
+
+		const response = await complete(registration.getModel(), {
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		});
+
+		expect(response.content).toEqual([{ type: "finalAnswer", text: "Only answer" }]);
+	});
+
+	it("streams native final answer content blocks", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([fauxAssistantMessage([fauxText("trace"), fauxFinalAnswer("Ship it")])]);
+
+		const response = await complete(registration.getModel(), {
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		});
+
+		expect(response.content).toEqual([
+			{ type: "text", text: "trace" },
+			{ type: "finalAnswer", text: "Ship it" },
+		]);
 	});
 
 	it("supports helper blocks for text, thinking, and tool calls", async () => {

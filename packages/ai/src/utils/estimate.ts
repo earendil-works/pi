@@ -49,11 +49,11 @@ export function estimateMessageTokens(message: Message): number {
 	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
 
 	for (const block of message.content) {
-		if (block.type === "text") {
+		if (block.type === "text" || block.type === "finalAnswer") {
 			chars += block.text.length;
 		} else if (block.type === "thinking") {
 			chars += block.thinking.length;
-		} else {
+		} else if (block.type === "toolCall") {
 			chars += block.name.length + safeJsonStringify(block.arguments).length;
 		}
 	}

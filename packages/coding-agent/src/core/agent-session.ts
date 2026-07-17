@@ -27,6 +27,7 @@ import type {
 import type {
 	AssistantMessage,
 	AuthResult,
+	FinalAnswerContent,
 	ImageContent,
 	Message,
 	Model,
@@ -3239,14 +3240,20 @@ export class AgentSession {
 
 		if (!lastAssistant) return undefined;
 
-		let text = "";
-		for (const content of (lastAssistant as AssistantMessage).content) {
-			if (content.type === "text") {
-				text += content.text;
-			}
-		}
+		const finalAnswerText = (lastAssistant as AssistantMessage).content
+			.filter((content): content is FinalAnswerContent => content.type === "finalAnswer")
+			.map((content) => content.text)
+			.join("")
+			.trim();
+		if (finalAnswerText) return finalAnswerText;
 
-		return text.trim() || undefined;
+		const text = (lastAssistant as AssistantMessage).content
+			.filter((content): content is TextContent => content.type === "text")
+			.map((content) => content.text)
+			.join("")
+			.trim();
+
+		return text || undefined;
 	}
 
 	// =========================================================================

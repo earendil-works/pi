@@ -330,6 +330,11 @@ export interface TextContent {
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
 }
 
+export interface FinalAnswerContent {
+	type: "finalAnswer";
+	text: string;
+}
+
 export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
@@ -387,7 +392,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | FinalAnswerContent | ThinkingContent | ToolCall)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -466,6 +471,9 @@ export type AssistantMessageEvent =
 	| { type: "text_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "text_end"; contentIndex: number; content: string; partial: AssistantMessage }
+	| { type: "final_answer_start"; contentIndex: number; partial: AssistantMessage }
+	| { type: "final_answer_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	| { type: "final_answer_end"; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }

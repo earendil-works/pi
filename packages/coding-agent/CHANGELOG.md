@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added first-class final-answer streaming in prompts, RPC documentation, TUI rendering, JSONL history, and HTML export.
+
 ## [0.80.10] - 2026-07-16
 
 ### New Features

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added propagation for structured `final_answer_*` assistant stream events.
+
 ## [0.80.10] - 2026-07-16
 
 ## [0.80.9] - 2026-07-16

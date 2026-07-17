@@ -28,6 +28,7 @@ import type {
 	StreamOptions,
 	Usage,
 } from "./types.ts";
+import { parseFinalAnswerMarkers } from "./utils/final-answer-stream.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
 
@@ -497,7 +498,9 @@ class ModelsImpl implements MutableModels {
 				model,
 				options as ModelsApiStreamOptions<Api> | undefined,
 			);
-			return provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>);
+			return parseFinalAnswerMarkers(
+				provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>),
+			);
 		});
 	}
 
@@ -513,7 +516,9 @@ class ModelsImpl implements MutableModels {
 		return lazyStream(model, async () => {
 			const provider = this.requireProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
+			return parseFinalAnswerMarkers(
+				provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions),
+			);
 		});
 	}
 

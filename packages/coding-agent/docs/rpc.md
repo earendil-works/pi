@@ -813,7 +813,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
-| `message_update` | Streaming update (text/thinking/toolcall deltas) |
+| `message_update` | Streaming update (text/finalAnswer/thinking/toolcall deltas) |
 | `message_end` | Message completes |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
@@ -903,6 +903,9 @@ The `assistantMessageEvent` field contains one of these delta types:
 | `text_start` | Text content block started |
 | `text_delta` | Text content chunk |
 | `text_end` | Text content block ended |
+| `final_answer_start` | Final answer content block started |
+| `final_answer_delta` | Final answer content chunk |
+| `final_answer_end` | Final answer content block ended |
 | `thinking_start` | Thinking block started |
 | `thinking_delta` | Thinking content chunk |
 | `thinking_end` | Thinking block ended |
@@ -918,6 +921,13 @@ Example streaming a text response:
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello","partial":{...}}}
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world","partial":{...}}}
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world","partial":{...}}}
+```
+
+Example streaming a final answer:
+```json
+{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"final_answer_start","contentIndex":1,"partial":{...}}}
+{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"final_answer_delta","contentIndex":1,"delta":"Ship it","partial":{...}}}
+{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"final_answer_end","contentIndex":1,"content":"Ship it","partial":{...}}}
 ```
 
 ### tool_execution_start / tool_execution_update / tool_execution_end
@@ -1319,7 +1329,8 @@ The `content` field can be a string or an array of `TextContent`/`ImageContent` 
 {
   "role": "assistant",
   "content": [
-    {"type": "text", "text": "Hello! How can I help?"},
+    {"type": "text", "text": "Scratch/debug narration when needed"},
+    {"type": "finalAnswer", "text": "Hello! How can I help?"},
     {"type": "thinking", "thinking": "User is greeting me..."},
     {"type": "toolCall", "id": "call_123", "name": "bash", "arguments": {"command": "ls"}}
   ],
@@ -1337,6 +1348,8 @@ The `content` field can be a string or an array of `TextContent`/`ImageContent` 
   "timestamp": 1733234567890
 }
 ```
+
+Assistant content blocks can include `text`, `finalAnswer`, `thinking`, and `toolCall`. `finalAnswer` is the canonical user-facing answer and may be rendered without trace/debug text by production clients.
 
 Stop reasons: `"stop"`, `"length"`, `"toolUse"`, `"error"`, `"aborted"`
 

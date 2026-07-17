@@ -116,8 +116,7 @@ export function transformMessages<TApi extends Api>(
 					};
 				}
 
-				if (block.type === "text") {
-					if (isSameModel) return block;
+				if (block.type === "text" || block.type === "finalAnswer") {
 					return {
 						type: "text" as const,
 						text: block.text,

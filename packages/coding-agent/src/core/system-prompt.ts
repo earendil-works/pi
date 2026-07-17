@@ -5,6 +5,15 @@
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
+const FINAL_ANSWER_CONTRACT = `Final answer contract:
+- Use normal assistant text for scratch/debug narration only when needed.
+- Put the actual user-facing answer inside <final_answer>...</final_answer>.
+- Use the final answer markers once per completed user request.`;
+
+function appendFinalAnswerContract(prompt: string): string {
+	return `${prompt}\n\n${FINAL_ANSWER_CONTRACT}`;
+}
+
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
@@ -66,6 +75,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
+		prompt = appendFinalAnswerContract(prompt);
 		prompt += `\nCurrent working directory: ${promptCwd}`;
 
 		return prompt;
@@ -156,6 +166,7 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += formatSkillsForPrompt(skills);
 	}
 
+	prompt = appendFinalAnswerContract(prompt);
 	prompt += `\nCurrent working directory: ${promptCwd}`;
 
 	return prompt;

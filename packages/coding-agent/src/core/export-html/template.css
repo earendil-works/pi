@@ -429,12 +429,29 @@
     }
 
     .message-timestamp + .assistant-text,
+    .message-timestamp + .final-answer-block,
     .message-timestamp + .thinking-block {
       padding-top: 0;
     }
 
-    .thinking-block + .assistant-text {
+    .thinking-block + .assistant-text,
+    .assistant-text + .final-answer-block,
+    .thinking-block + .final-answer-block {
       padding-top: 0;
+    }
+
+    .final-answer-block {
+      padding: var(--line-height);
+      color: var(--accent);
+    }
+
+    .final-answer-label {
+      font-weight: bold;
+      margin-bottom: var(--line-height);
+    }
+
+    .final-answer-text {
+      color: var(--accent);
     }
 
     .thinking-text {
@@ -466,7 +483,8 @@
       margin-top: var(--line-height);
     }
 
-    .assistant-text + .tool-execution {
+    .assistant-text + .tool-execution,
+    .final-answer-block + .tool-execution {
       margin-top: var(--line-height);
     }
 

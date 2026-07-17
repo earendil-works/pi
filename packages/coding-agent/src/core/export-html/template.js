@@ -296,7 +296,7 @@
         if (typeof content === 'string') return content.trim().length > 0;
         if (Array.isArray(content)) {
           for (const c of content) {
-            if (c.type === 'text' && c.text && c.text.trim().length > 0) return true;
+            if ((c.type === 'text' || c.type === 'finalAnswer') && c.text && c.text.trim().length > 0) return true;
           }
         }
         return false;
@@ -306,7 +306,7 @@
         if (typeof content === 'string') return content;
         if (Array.isArray(content)) {
           return content
-            .filter(c => c.type === 'text' && c.text)
+            .filter(c => (c.type === 'text' || c.type === 'finalAnswer') && c.text)
             .map(c => c.text)
             .join('');
         }
@@ -1246,6 +1246,11 @@
             for (const block of msg.content) {
               if (block.type === 'text' && block.text.trim()) {
                 html += `<div class="assistant-text markdown-content">${safeMarkedParse(block.text)}</div>`;
+              } else if (block.type === 'finalAnswer' && block.text.trim()) {
+                html += `<div class="final-answer-block">
+                  <div class="final-answer-label">Final answer</div>
+                  <div class="final-answer-text markdown-content">${safeMarkedParse(block.text)}</div>
+                </div>`;
               } else if (block.type === 'thinking' && block.thinking.trim()) {
                 html += `<div class="thinking-block">
                   <div class="thinking-text">${escapeHtml(block.thinking)}</div>
