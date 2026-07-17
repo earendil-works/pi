@@ -97,6 +97,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { createExternalEditorTempFile, removeExternalEditorTempFile } from "../../utils/external-editor-temp-file.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
@@ -3796,12 +3797,9 @@ export class InteractiveMode {
 		}
 
 		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.pi.md`);
+		const { directory: tempDir, file: tmpFile } = createExternalEditorTempFile("prompt.pi.md", currentText);
 
 		try {
-			// Write current content to temp file
-			fs.writeFileSync(tmpFile, currentText, "utf-8");
-
 			// Stop TUI to release terminal
 			this.ui.stop();
 
@@ -3829,12 +3827,7 @@ export class InteractiveMode {
 			}
 			// On non-zero exit, keep original text (no action needed)
 		} finally {
-			// Clean up temp file
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
+			removeExternalEditorTempFile(tempDir);
 
 			// Restart TUI
 			this.ui.start();

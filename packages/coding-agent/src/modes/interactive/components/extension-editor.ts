@@ -5,8 +5,6 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import {
 	Container,
 	Editor,
@@ -18,6 +16,10 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
+import {
+	createExternalEditorTempFile,
+	removeExternalEditorTempFile,
+} from "../../../utils/external-editor-temp-file.ts";
 import { getEditorTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -128,10 +130,9 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		}
 
 		const currentText = this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-extension-editor-${Date.now()}.md`);
+		const { directory: tempDir, file: tmpFile } = createExternalEditorTempFile("prompt.md", currentText);
 
 		try {
-			fs.writeFileSync(tmpFile, currentText, "utf-8");
 			this.tui.stop();
 
 			const [editor, ...editorArgs] = editorCmd.split(" ");
@@ -154,11 +155,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 				this.editor.setText(newContent);
 			}
 		} finally {
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
+			removeExternalEditorTempFile(tempDir);
 			this.tui.start();
 			// Force full re-render since external editor uses alternate screen
 			this.tui.requestRender(true);

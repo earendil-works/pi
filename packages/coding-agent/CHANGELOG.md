@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed slow Ctrl+G external-editor startup when the system temporary directory contains many files.
+
 ## [0.80.7] - 2026-07-14
 
 ### Breaking Changes
