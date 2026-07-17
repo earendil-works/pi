@@ -2923,6 +2923,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `custom-provider-gitlab-duo/` | GitLab Duo integration | `registerProvider` with OAuth |
 | **Messages & Communication** |||
 | `message-renderer.ts` | Custom message rendering | `registerMessageRenderer`, `sendMessage` |
+| `unicode-math.ts` | Display-only TeX-to-Unicode transformation for assistant Markdown | `registerAssistantMarkdownTransformer` |
 | `entry-renderer.ts` | TUI-only custom entry rendering | `registerEntryRenderer`, `appendEntry` |
 | `event-bus.ts` | Inter-extension events | `pi.events` |
 | **Session Metadata** |||

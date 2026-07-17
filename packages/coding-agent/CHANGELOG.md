@@ -6,6 +6,7 @@
 
 - Added chainable `pi.registerAssistantMarkdownTransformer()` hooks for display-only transformation of streaming and restored assistant Markdown.
 - Exposed the bundled `marked` parser to extensions.
+- Added a Unicode formula-rendering example extension.
 
 ## [0.80.10] - 2026-07-16
 
