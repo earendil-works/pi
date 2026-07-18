@@ -37,6 +37,8 @@ export interface AgentSessionRuntimeDiagnostic {
 export interface CreateAgentSessionServicesOptions {
 	cwd: string;
 	agentDir?: string;
+	/** Credential file path. Defaults to agentDir/auth.json. */
+	authPath?: string;
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
 	extensionFlagValues?: Map<string, boolean | string>;
@@ -139,7 +141,7 @@ export async function createAgentSessionServices(
 	const modelRuntime =
 		options.modelRuntime ??
 		(await ModelRuntime.create({
-			authPath: join(agentDir, "auth.json"),
+			authPath: options.authPath ? resolvePath(options.authPath) : join(agentDir, "auth.json"),
 			modelsPath: join(agentDir, "models.json"),
 		}));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);

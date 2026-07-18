@@ -663,6 +663,7 @@ pi --thinking high "Solve this complex problem"
 | Variable | Description |
 |----------|-------------|
 | `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
+| `PI_CODING_AGENT_AUTH_FILE` | Override only the credential file (default: `<PI_CODING_AGENT_DIR>/auth.json`). Processes using the same literal path share Pi's cross-process OAuth refresh lock while keeping other config state separate |
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
@@ -670,6 +671,8 @@ pi --thinking high "Solve this complex problem"
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
+
+`PI_CODING_AGENT_AUTH_FILE` is an explicit credential authority: login, logout, OAuth refresh, request auth, and model-catalog refresh all use it. Pi does not migrate legacy credentials from a different `PI_CODING_AGENT_DIR` into an explicit auth file. Protect the file as a secret and grant access only to processes that should share provider credentials.
 
 ---
 

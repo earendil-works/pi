@@ -5,7 +5,7 @@
 import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, getAuthPath, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
@@ -20,9 +20,14 @@ const EXTENSIONS_DOC_URL =
  */
 export function migrateAuthToAuthJson(): string[] {
 	const agentDir = getAgentDir();
-	const authPath = join(agentDir, "auth.json");
+	const defaultAuthPath = join(agentDir, "auth.json");
+	const authPath = getAuthPath();
 	const oauthPath = join(agentDir, "oauth.json");
 	const settingsPath = join(agentDir, "settings.json");
+
+	// An explicit auth authority is independent from this agent directory. Never
+	// move legacy private credentials into it implicitly; normal login/storage owns it.
+	if (authPath !== defaultAuthPath) return [];
 
 	// Skip if auth.json already exists
 	if (existsSync(authPath)) return [];

@@ -36,6 +36,12 @@ This is intentional. Pi is designed to operate on local source trees, invoke pro
 
 Project trust is only an input-loading guard. It prevents a repository from silently changing pi's settings or extensions before you approve it. It does not make untrusted code, untrusted prompts, or untrusted model output safe. Prompt injection from repository files, comments, documentation, context files, or build output is expected local-agent risk and cannot be reliably prevented by pi.
 
+## Shared Credential Files
+
+`PI_CODING_AGENT_AUTH_FILE` can place credentials outside `PI_CODING_AGENT_DIR`. Pi uses the same file for login, logout, request auth, model-catalog refresh, and OAuth token rotation. Multiple processes using the same literal path share the file's cross-process lock, which avoids concurrent refresh of one rotating token while allowing their remaining config state to stay separate.
+
+The override does not create a security boundary. Every process that can access the file can use or replace all credentials stored in it. Keep it on a trusted local filesystem, preserve restrictive permissions, and do not share it with containers, users, or agents that should have separate provider identities. Pi does not import legacy credentials from another agent directory into an explicit auth file.
+
 ## Running Untrusted or Unmonitored Work
 
 For untrusted repositories, generated code you do not intend to monitor closely, or unattended automation, run pi in a contained environment. Use a container, VM, micro-VM, remote sandbox, or policy-controlled sandbox with only the files and credentials required for the task.

@@ -35,8 +35,10 @@ export interface CreateAgentSessionOptions {
 	cwd?: string;
 	/** Global config directory. Default: ~/.pi/agent */
 	agentDir?: string;
+	/** Credential file path. Defaults to agentDir/auth.json (or the configured default when agentDir is omitted). */
+	authPath?: string;
 
-	/** Canonical model/auth runtime. Defaults to a runtime using agentDir/auth.json and models.json. */
+	/** Canonical model/auth runtime. Defaults to a runtime using authPath and agentDir/models.json. */
 	modelRuntime?: ModelRuntime;
 
 	/** Model to use. Default: from settings, else first available */
@@ -166,7 +168,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
 
-	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
+	const authPath = options.authPath
+		? resolvePath(options.authPath)
+		: options.agentDir
+			? join(agentDir, "auth.json")
+			: undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
 

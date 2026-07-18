@@ -5,9 +5,9 @@
 
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname } from "path";
 import lockfile from "proper-lockfile";
-import { getAgentDir } from "../config.ts";
+import { getAuthPath } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
@@ -28,7 +28,7 @@ export interface AuthStorageBackend {
 export class FileAuthStorageBackend implements AuthStorageBackend {
 	private authPath: string;
 
-	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
+	constructor(authPath: string = getAuthPath()) {
 		this.authPath = normalizePath(authPath);
 	}
 
@@ -178,7 +178,7 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	static create(authPath?: string): AuthStorage {
-		return new AuthStorage(new FileAuthStorageBackend(authPath ?? join(getAgentDir(), "auth.json")));
+		return new AuthStorage(new FileAuthStorageBackend(authPath ?? getAuthPath()));
 	}
 
 	static fromStorage(storage: AuthStorageBackend): AuthStorage {
@@ -258,10 +258,7 @@ export class AuthStorage implements CredentialStore {
  * One-off synchronous read of a stored credential from an auth.json file,
  * without instantiating a store or resolving configured key values.
  */
-export function readStoredCredential(
-	providerId: string,
-	authPath: string = join(getAgentDir(), "auth.json"),
-): Credential | undefined {
+export function readStoredCredential(providerId: string, authPath: string = getAuthPath()): Credential | undefined {
 	try {
 		const data = JSON.parse(readFileSync(normalizePath(authPath), "utf-8")) as AuthStorageData;
 		return data[providerId];

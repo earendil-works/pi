@@ -8,6 +8,7 @@ import {
 	CONFIG_DIR_NAME,
 	detectInstallMethod,
 	getAgentDir,
+	getAuthPath,
 	getPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
@@ -396,7 +397,7 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 
 async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	const modelRuntime = await ModelRuntime.create({
-		authPath: join(agentDir, "auth.json"),
+		authPath: getAuthPath(),
 		modelsPath: join(agentDir, "models.json"),
 		allowModelNetwork: false,
 	});

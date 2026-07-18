@@ -107,6 +107,67 @@ describe("AuthStorage", () => {
 		});
 	});
 
+	test("serializes rotating OAuth refresh across stores sharing one auth path", async () => {
+		const providerId = "rotating-oauth";
+		writeAuthJson({
+			[providerId]: {
+				type: "oauth",
+				access: "expired-access",
+				refresh: "refresh-1",
+				expires: 0,
+			},
+		});
+		let refreshCount = 0;
+		const provider: Provider = {
+			id: providerId,
+			name: "Rotating OAuth",
+			auth: {
+				oauth: {
+					name: "OAuth",
+					login: async () => {
+						throw new Error("not used");
+					},
+					refresh: async () => {
+						refreshCount++;
+						await new Promise((resolve) => setTimeout(resolve, 25));
+						return {
+							type: "oauth" as const,
+							access: "fresh-access",
+							refresh: "refresh-2",
+							expires: Date.now() + 60_000,
+						};
+					},
+					toAuth: async (credential) => ({ apiKey: credential.access }),
+				},
+			},
+			getModels: () => [],
+			stream: () => {
+				throw new Error("not used");
+			},
+			streamSimple: () => {
+				throw new Error("not used");
+			},
+		};
+		const first = createModels({ credentials: AuthStorage.create(authJsonPath) });
+		const second = createModels({ credentials: AuthStorage.create(authJsonPath) });
+		first.setProvider(provider);
+		second.setProvider(provider);
+
+		const [firstAuth, secondAuth] = await Promise.all([first.getAuth(providerId), second.getAuth(providerId)]);
+
+		expect(refreshCount).toBe(1);
+		expect(firstAuth).toMatchObject({ auth: { apiKey: "fresh-access" } });
+		expect(secondAuth).toMatchObject({ auth: { apiKey: "fresh-access" } });
+		expect(JSON.parse(readFileSync(authJsonPath, "utf8"))).toEqual({
+			[providerId]: {
+				type: "oauth",
+				access: "fresh-access",
+				refresh: "refresh-2",
+				expires: expect.any(Number),
+			},
+		});
+	});
+
 	test("delete removes one credential while preserving others", async () => {
 		writeAuthJson({
 			anthropic: { type: "api_key", key: "anthropic-key" },

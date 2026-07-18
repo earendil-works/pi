@@ -294,6 +294,7 @@ pi --exclude-tools ask_question
 | Variable | Description |
 |----------|-------------|
 | `PI_CODING_AGENT_DIR` | Override config directory; default is `~/.pi/agent` |
+| `PI_CODING_AGENT_AUTH_FILE` | Override only the credential file; default is `<PI_CODING_AGENT_DIR>/auth.json`. The same literal path gives multiple Pi processes one cross-process OAuth refresh lock |
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory; overridden by `--session-dir` |
 | `PI_PACKAGE_DIR` | Override package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
@@ -301,6 +302,8 @@ pi --exclude-tools ask_question
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
 | `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
+
+An explicit `PI_CODING_AGENT_AUTH_FILE` is used by login, logout, OAuth refresh, request auth, and model-catalog refresh. Pi does not migrate legacy credentials from a separate agent directory into it. Treat it as secret-bearing shared state and expose it only to processes that should share provider credentials.
 
 ## Design Principles
 

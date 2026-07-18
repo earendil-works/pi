@@ -493,6 +493,7 @@ export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
+export const ENV_AUTH_FILE = `${APP_NAME.toUpperCase()}_CODING_AGENT_AUTH_FILE`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
@@ -530,8 +531,12 @@ export function getModelsPath(): string {
 	return join(getAgentDir(), "models.json");
 }
 
-/** Get path to auth.json */
+/** Get path to auth.json, optionally independent from the agent config directory. */
 export function getAuthPath(): string {
+	const envPath = process.env[ENV_AUTH_FILE];
+	if (envPath) {
+		return expandTildePath(envPath);
+	}
 	return join(getAgentDir(), "auth.json");
 }
 
