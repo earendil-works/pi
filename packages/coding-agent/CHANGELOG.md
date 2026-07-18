@@ -7,7 +7,7 @@
 - Added `/exit` command that quits pi and prints the command to resume the session.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
-- Added a context size step (default vs extended) and a thinking level step to the `/model` picker for GitHub Copilot models that support them, plus a `[1M]` footer indicator and an extended context column in `--list-models`.
+- Added a context size step (default vs extended) and a thinking level step to the `/model` picker for GitHub Copilot models that support them, plus a footer indicator showing the active extended context size and an extended context column in `--list-models`.
 
 ### Fixed
 
@@ -15,6 +15,7 @@
 - Fixed obsolete custom UI, custom tool, and custom editor examples in the extension documentation ([#6735](https://github.com/earendil-works/pi/issues/6735)).
 - Fixed Kimi Coding sessions to show API-equivalent implied costs with the subscription indicator.
 - Fixed OpenAI Responses early stream endings to trigger automatic retry instead of ending the agent run ([#6727](https://github.com/earendil-works/pi/issues/6727)).
+- Fixed the footer's extended-context indicator to show the model's actual extended context window size instead of a hardcoded `[1M]`.
 
 ## [0.80.10] - 2026-07-16
 

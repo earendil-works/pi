@@ -162,7 +162,7 @@ describe("FooterComponent width handling", () => {
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
 	});
 
-	it("shows a [1M] indicator when the model is switched into extended context mode", () => {
+	it("shows a dynamic extended-context indicator when the model is switched into extended context mode", () => {
 		const session = createSession({
 			sessionName: "",
 			contextWindow: 1_000_000,
@@ -170,10 +170,21 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("test-model [1M]");
+		expect(stripAnsi(footer.render(120)[1])).toContain("test-model [1.0M]");
 	});
 
-	it("omits the [1M] indicator when the model is using its default context window", () => {
+	it("shows the actual extended context window size, not a hardcoded 1M", () => {
+		const session = createSession({
+			sessionName: "",
+			contextWindow: 1_050_000,
+			extendedContextWindow: 1_050_000,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("test-model [1.1M]");
+	});
+
+	it("omits the extended-context indicator when the model is using its default context window", () => {
 		const session = createSession({
 			sessionName: "",
 			contextWindow: 200_000,
@@ -181,6 +192,6 @@ describe("FooterComponent width handling", () => {
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).not.toContain("[1M]");
+		expect(stripAnsi(footer.render(120)[1])).not.toContain("[1.0M]");
 	});
 });

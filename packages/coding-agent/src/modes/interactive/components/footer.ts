@@ -173,7 +173,7 @@ export class FooterComponent implements Component {
 			state.model?.extendedContextWindow !== undefined &&
 			state.model.contextWindow === state.model.extendedContextWindow
 		) {
-			modelName += " [1M]";
+			modelName += ` [${formatTokens(state.model.extendedContextWindow)}]`;
 		}
 
 		let statsLeftWidth = visibleWidth(statsLeft);
