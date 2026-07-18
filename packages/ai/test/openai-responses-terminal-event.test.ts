@@ -107,8 +107,8 @@ async function* createEarlyEofEvents(): AsyncIterable<ResponseStreamEvent> {
 	} as ResponseStreamEvent;
 }
 
-async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
-	yield {
+function createCompletedEvent(): ResponseStreamEvent {
+	return {
 		type: "response.completed",
 		sequence_number: 0,
 		response: {
@@ -122,6 +122,10 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
 			},
 		},
 	} as unknown as ResponseStreamEvent;
+}
+
+async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
+	yield createCompletedEvent();
 }
 
 async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
@@ -151,6 +155,32 @@ async function* createFailedEvents(): AsyncIterable<ResponseStreamEvent> {
 			error: { code: "server_error", message: "boom" },
 		},
 	} as ResponseStreamEvent;
+}
+
+function createOpenAfterCompletedEvents(): {
+	events: AsyncIterable<ResponseStreamEvent>;
+	wasClosed: () => boolean;
+} {
+	let closed = false;
+	let emitted = false;
+	const events: AsyncIterable<ResponseStreamEvent> = {
+		[Symbol.asyncIterator]() {
+			return {
+				async next() {
+					if (!emitted) {
+						emitted = true;
+						return { done: false as const, value: createCompletedEvent() };
+					}
+					return new Promise<IteratorResult<ResponseStreamEvent>>(() => {});
+				},
+				async return() {
+					closed = true;
+					return { done: true as const, value: undefined };
+				},
+			};
+		},
+	};
+	return { events, wasClosed: () => closed };
 }
 
 describe("OpenAI Responses terminal event handling", () => {
@@ -201,6 +231,22 @@ describe("OpenAI Responses terminal event handling", () => {
 			cacheWrite: 3,
 			totalTokens: 27,
 		});
+	});
+
+	it("returns at response.completed without waiting for transport EOF", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+		const { events, wasClosed } = createOpenAfterCompletedEvents();
+
+		await expect(
+			Promise.race([
+				processResponsesStream(events, output, stream, model),
+				new Promise((_, reject) => setTimeout(() => reject(new Error("waited for transport EOF")), 100)),
+			]),
+		).resolves.toBeUndefined();
+		expect(wasClosed()).toBe(true);
+		expect(output.stopReason).toBe("stop");
 	});
 
 	it("finalizes incomplete terminal events as length stops", async () => {

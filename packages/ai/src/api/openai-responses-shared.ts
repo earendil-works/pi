@@ -572,6 +572,11 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			// A terminal response event is the semantic end of a Responses stream. Some compatible
+			// gateways keep the HTTP body open for seconds after this event (and may omit [DONE]);
+			// returning here lets AsyncIteratorClose abort that idle tail instead of delaying the
+			// assistant result and any tool dispatch until transport EOF.
+			return;
 		} else if (event.type === "error") {
 			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 		} else if (event.type === "response.failed") {
