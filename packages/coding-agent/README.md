@@ -197,6 +197,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+| `/exit` | Quit pi and print the command to resume this session |
 
 ### Keyboard Shortcuts
 

@@ -38,6 +38,7 @@ out.html
 packages/coding-agent/binaries/
 todo.md
 plans/
+docs/superpowers/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh

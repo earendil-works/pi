@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `/exit` command that quits pi and prints the command to resume the session.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
 
