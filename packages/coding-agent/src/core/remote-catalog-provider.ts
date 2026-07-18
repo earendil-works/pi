@@ -9,8 +9,19 @@ function mergeModels(baseline: readonly Model<Api>[], dynamic: readonly Model<Ap
 	const merged = [...baseline];
 	for (const model of dynamic) {
 		const index = merged.findIndex((entry) => entry.id === model.id);
-		if (index >= 0) merged[index] = model;
-		else merged.push(model);
+		if (index < 0) {
+			merged.push(model);
+			continue;
+		}
+		const existing = merged[index];
+		// The remote catalog predates the default/extended context window split and reports
+		// a single (already-extended) contextWindow with no extendedContextWindow field, which
+		// would otherwise collapse the locally curated choice. Keep the local split, but still
+		// take every other field (pricing, headers, thinkingLevelMap, etc.) from the fresh entry.
+		merged[index] =
+			existing.extendedContextWindow !== undefined
+				? { ...model, contextWindow: existing.contextWindow, extendedContextWindow: existing.extendedContextWindow }
+				: model;
 	}
 	return merged;
 }

@@ -21,6 +21,8 @@ function createSession(options: {
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
+	contextWindow?: number;
+	extendedContextWindow?: number;
 }): AgentSession {
 	const usage = options.usage;
 	const entries =
@@ -41,7 +43,8 @@ function createSession(options: {
 			model: {
 				id: options.modelId ?? "test-model",
 				provider: options.provider ?? "test",
-				contextWindow: 200_000,
+				contextWindow: options.contextWindow ?? 200_000,
+				extendedContextWindow: options.extendedContextWindow,
 				reasoning: options.reasoning ?? false,
 			},
 			thinkingLevel: options.thinkingLevel ?? "off",
@@ -51,7 +54,7 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () => ({ contextWindow: options.contextWindow ?? 200_000, percent: 12.3 }),
 		modelRuntime: {
 			isUsingOAuth: () => false,
 		},
@@ -157,5 +160,27 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+	});
+
+	it("shows a [1M] indicator when the model is switched into extended context mode", () => {
+		const session = createSession({
+			sessionName: "",
+			contextWindow: 1_000_000,
+			extendedContextWindow: 1_000_000,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("test-model [1M]");
+	});
+
+	it("omits the [1M] indicator when the model is using its default context window", () => {
+		const session = createSession({
+			sessionName: "",
+			contextWindow: 200_000,
+			extendedContextWindow: 1_000_000,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).not.toContain("[1M]");
 	});
 });

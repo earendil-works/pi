@@ -7,6 +7,7 @@
 - Added `/exit` command that quits pi and prints the command to resume the session.
 - Added built-in llama.cpp router support with `/login` connection setup and `/llama` Hugging Face model search and downloads, explicit loading, unloading, and live progress. See [llama.cpp](docs/llama-cpp.md).
 - Added extension registration for complete pi-ai providers, including native authentication, model refresh, filtering, and streaming behavior.
+- Added a context size step (default vs extended) and a thinking level step to the `/model` picker for GitHub Copilot models that support them, plus a `[1M]` footer indicator and an extended context column in `--list-models`.
 
 ### Fixed
 

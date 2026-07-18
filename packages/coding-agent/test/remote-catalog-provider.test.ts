@@ -82,6 +82,59 @@ describe("remote catalog provider", () => {
 		});
 	});
 
+	it("preserves the locally curated default/extended context window split when overlaying a matching remote model", async () => {
+		const baselineModel: Model<"openai-completions"> = {
+			...model("copilot-model"),
+			contextWindow: 200000,
+			extendedContextWindow: 1000000,
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+		};
+		// Simulates the pi.dev catalog: predates the context-window split, reports a single
+		// already-extended contextWindow, and updates pricing (which should still take effect).
+		const remoteModel: Model<"openai-completions"> = {
+			...model("copilot-model"),
+			contextWindow: 1000000,
+			cost: { input: 5, output: 10, cacheRead: 0, cacheWrite: 0 },
+		};
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(JSON.stringify([remoteModel]), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		const provider = withRemoteCatalog(
+			createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [baselineModel],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
+				},
+			}),
+		);
+		const store = new InMemoryModelsStore();
+
+		await provider.refreshModels?.({
+			credential: { type: "api_key" },
+			store: {
+				read: () => store.read(provider.id),
+				write: (entry) => store.write(provider.id, entry),
+				delete: () => store.delete(provider.id),
+			},
+			allowNetwork: true,
+		});
+
+		const merged = provider.getModels().find((entry) => entry.id === "copilot-model");
+		expect(merged?.contextWindow).toBe(200000);
+		expect(merged?.extendedContextWindow).toBe(1000000);
+		expect(merged?.cost).toEqual({ input: 5, output: 10, cacheRead: 0, cacheWrite: 0 });
+	});
+
 	it("treats unimplemented pi.dev catalog routes as an unavailable overlay", async () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not implemented", { status: 501 }));
 		const provider = withRemoteCatalog(

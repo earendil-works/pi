@@ -7,8 +7,9 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, modelsAreEqual } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -101,6 +102,7 @@ import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
+import { ContextSizeSelectorComponent } from "./components/context-size-selector.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -131,6 +133,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -4413,6 +4416,62 @@ export class InteractiveMode {
 		});
 	}
 
+	/**
+	 * Finalizes a model selection: applies the model (and optional thinking level override),
+	 * updates the UI, and shows the resulting status. Used as the last step of the chained
+	 * model -> context size -> thinking level picker flow in showModelSelector.
+	 */
+	private async finalizeModelSelection(
+		model: Model<any>,
+		done: () => void,
+		thinkingLevel?: ThinkingLevel,
+	): Promise<void> {
+		try {
+			await this.session.setModel(model);
+			if (thinkingLevel !== undefined) {
+				this.session.setThinkingLevel(thinkingLevel);
+			}
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			done();
+			const contextSuffix =
+				model.extendedContextWindow !== undefined && model.contextWindow === model.extendedContextWindow
+					? " (extended context)"
+					: "";
+			this.showStatus(`Model: ${model.id}${contextSuffix}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+			this.checkDaxnutsEasterEgg(model);
+		} catch (error) {
+			done();
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/**
+	 * Shows the thinking level step of the model picker chain if the model supports reasoning,
+	 * otherwise finalizes the selection immediately.
+	 */
+	private showThinkingLevelStep(model: Model<any>, done: () => void): void {
+		if (!model.reasoning) {
+			void this.finalizeModelSelection(model, done);
+			return;
+		}
+		this.showSelector((thinkingDone) => {
+			const availableLevels = getSupportedThinkingLevels(model) as ThinkingLevel[];
+			const thinkingSelector = new ThinkingSelectorComponent(
+				this.session.thinkingLevel,
+				availableLevels,
+				(level) => {
+					void this.finalizeModelSelection(model, thinkingDone, level);
+				},
+				() => {
+					void this.finalizeModelSelection(model, thinkingDone);
+				},
+			);
+			return { component: thinkingSelector, focus: thinkingSelector.getSelectList() };
+		});
+	}
+
 	private showModelSelector(initialSearchInput?: string): void {
 		this.showSelector((done) => {
 			const selector = new ModelSelectorComponent(
@@ -4421,19 +4480,29 @@ export class InteractiveMode {
 				this.settingsManager,
 				this.session.modelRuntime,
 				this.session.scopedModels,
-				async (model) => {
-					try {
-						await this.session.setModel(model);
-						this.footer.invalidate();
-						this.updateEditorBorderColor();
-						done();
-						this.showStatus(`Model: ${model.id}`);
-						void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-						this.checkDaxnutsEasterEgg(model);
-					} catch (error) {
-						done();
-						this.showError(error instanceof Error ? error.message : String(error));
+				(model) => {
+					if (model.extendedContextWindow === undefined) {
+						this.showThinkingLevelStep(model, done);
+						return;
 					}
+					const extendedContextWindow = model.extendedContextWindow;
+					this.showSelector((contextDone) => {
+						const isCurrentlyExtended =
+							modelsAreEqual(this.session.model, model) &&
+							this.session.model?.contextWindow === extendedContextWindow;
+						const contextSelector = new ContextSizeSelectorComponent(
+							model.contextWindow,
+							extendedContextWindow,
+							isCurrentlyExtended,
+							(choice) => {
+								this.showThinkingLevelStep({ ...model, contextWindow: choice.contextWindow }, contextDone);
+							},
+							() => {
+								this.showThinkingLevelStep(model, contextDone);
+							},
+						);
+						return { component: contextSelector, focus: contextSelector.getSelectList() };
+					});
 				},
 				() => {
 					done();

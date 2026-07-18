@@ -718,6 +718,12 @@ export interface Model<TApi extends Api> {
 	input: ("text" | "image")[];
 	cost: ModelCost;
 	contextWindow: number;
+	/**
+	 * Maximum context window when the model is switched into its extended/long-context mode.
+	 * Only present for models that support a distinct extended context tier (e.g. GitHub Copilot's
+	 * "extended 1M context" models). When absent, the model only has a single context window size.
+	 */
+	extendedContextWindow?: number;
 	maxTokens: number;
 	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */

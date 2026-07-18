@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `extendedContextWindow` field to `Model` and derived default/extended context window values for GitHub Copilot models with extended-capability support (Claude Sonnet 5, Opus 4.6/4.7/4.8, Sonnet 4.6, Fable 5, GPT-5.3-Codex, GPT-5.4/5.5/5.6, Gemini 3.1 Pro).
+
 ### Fixed
 
 - Fixed GitHub Copilot long-context pricing tiers in generated model metadata ([#6668](https://github.com/earendil-works/pi/issues/6668)).

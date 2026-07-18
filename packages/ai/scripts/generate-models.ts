@@ -359,18 +359,20 @@ const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new 
 ]);
 
 // GitHub's "Models with extended capabilities" table lists these Copilot models as supporting
-// the extended 1 million token context window.
-const GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = new Set([
-	"claude-fable-5",
-	"claude-opus-4.6",
-	"claude-opus-4.7",
-	"claude-opus-4.8",
-	"claude-sonnet-4.6",
-	"claude-sonnet-5",
-	"gpt-5.3-codex",
-	"gpt-5.4",
-	"gpt-5.5",
-]);
+// the extended 1 million token context window. These have flat pricing regardless of context
+// size, so models.dev has no tier signal for their default (non-extended) context window --
+// the default value here matches each model's non-extended sibling model (200000 for the Claude
+// family, matching Opus 4.5/Sonnet 4.5/Haiku 4.5; 400000 for GPT-5.3-Codex, matching GPT-5.2-Codex).
+const GITHUB_COPILOT_FLAT_PRICED_EXTENDED_CONTEXT_MODELS: Record<string, number> = {
+	"claude-fable-5": 200000,
+	"claude-opus-4.6": 200000,
+	"claude-opus-4.7": 200000,
+	"claude-opus-4.8": 200000,
+	"claude-sonnet-4.6": 200000,
+	"claude-sonnet-5": 200000,
+	"gpt-5.3-codex": 400000,
+};
+const GITHUB_COPILOT_FLAT_PRICED_EXTENDED_CONTEXT_WINDOW = 1000000;
 
 // Checked manually against the authenticated GitHub Copilot /models endpoint on 2026-06-15.
 // Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's catalog.
@@ -1853,8 +1855,18 @@ async function generateModels() {
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {
-		if (candidate.provider === "github-copilot" && GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS.has(candidate.id)) {
-			candidate.contextWindow = 1000000;
+		if (candidate.provider === "github-copilot") {
+			const flatPricedDefault = GITHUB_COPILOT_FLAT_PRICED_EXTENDED_CONTEXT_MODELS[candidate.id];
+			if (flatPricedDefault !== undefined) {
+				candidate.extendedContextWindow = GITHUB_COPILOT_FLAT_PRICED_EXTENDED_CONTEXT_WINDOW;
+				candidate.contextWindow = flatPricedDefault;
+			} else {
+				const tierThreshold = candidate.cost.tiers?.[0]?.inputTokensAbove;
+				if (tierThreshold !== undefined && tierThreshold < candidate.contextWindow) {
+					candidate.extendedContextWindow = candidate.contextWindow;
+					candidate.contextWindow = tierThreshold;
+				}
+			}
 		}
 
 		if (

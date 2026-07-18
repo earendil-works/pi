@@ -61,7 +61,10 @@ export async function listModels(modelRuntime: ModelRuntime, searchPattern?: str
 	const rows = filteredModels.map((m) => ({
 		provider: m.provider,
 		model: m.id,
-		context: formatTokenCount(m.contextWindow),
+		context:
+			m.extendedContextWindow !== undefined
+				? `${formatTokenCount(m.contextWindow)}->${formatTokenCount(m.extendedContextWindow)}`
+				: formatTokenCount(m.contextWindow),
 		maxOut: formatTokenCount(m.maxTokens),
 		thinking: m.reasoning ? "yes" : "no",
 		images: m.input.includes("image") ? "yes" : "no",
