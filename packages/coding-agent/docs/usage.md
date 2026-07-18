@@ -58,6 +58,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+| `/exit` | Quit pi and print the command to resume this session |
 
 ## Message Queue
 
