@@ -67,8 +67,18 @@ function getSortedIds(enabledIds: EnabledIds, allIds: string[]): string[] {
 
 interface ModelItem {
 	fullId: string;
-	model: Model<any>;
+	model: Model<any> | undefined;
 	enabled: boolean;
+	unresolved: boolean;
+}
+
+/** Display fields for a model item, deriving from fullId when the model is missing (orphan). */
+function itemDisplay(item: ModelItem): { id: string; provider: string; name: string } {
+	if (item.model) return { id: item.model.id, provider: item.model.provider, name: item.model.name };
+	const slash = item.fullId.indexOf("/");
+	return slash < 0
+		? { id: item.fullId, provider: "", name: item.fullId }
+		: { id: item.fullId.slice(slash + 1), provider: item.fullId.slice(0, slash), name: item.fullId };
 }
 
 export interface ModelsConfig {
@@ -152,14 +162,21 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	private buildItems(): ModelItem[] {
-		// Filter out IDs that no longer have a corresponding model (e.g., after logout)
+		// Keep resolvable models AND currently-enabled entries. Previously, enabled
+		// entries whose model no longer resolved (e.g. after /logout or a stale id)
+		// were filtered out entirely, making them impossible to remove from this UI.
+		// They now surface as "unavailable" items the user can toggle off.
 		return getSortedIds(this.enabledIds, this.allIds)
-			.filter((id) => this.modelsById.has(id))
-			.map((id) => ({
-				fullId: id,
-				model: this.modelsById.get(id)!,
-				enabled: isEnabled(this.enabledIds, id),
-			}));
+			.filter((id) => this.modelsById.has(id) || isEnabled(this.enabledIds, id))
+			.map((id) => {
+				const model = this.modelsById.get(id);
+				return {
+					fullId: id,
+					model,
+					enabled: isEnabled(this.enabledIds, id),
+					unresolved: !model,
+				};
+			});
 	}
 
 	private getFooterText(): string {
@@ -184,9 +201,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const query = this.searchInput.getValue();
 		const items = this.buildItems();
 		this.filteredItems = query
-			? fuzzyFilter(items, query, (i) =>
-					getModelSearchText({ id: i.model.id, provider: i.model.provider, name: i.model.name }),
-				)
+			? fuzzyFilter(items, query, (i) => getModelSearchText(itemDisplay(i)))
 			: items;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
@@ -216,10 +231,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const item = this.filteredItems[i]!;
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const modelText = isSelected ? theme.fg("accent", item.model.id) : item.model.id;
-			const providerBadge = theme.fg("muted", ` [${item.model.provider}]`);
+			const d = itemDisplay(item);
+			const modelText = item.unresolved
+				? theme.fg("dim", d.id)
+				: isSelected
+					? theme.fg("accent", d.id)
+					: d.id;
+			const providerBadge = theme.fg("muted", ` [${d.provider}]`);
+			const unavailable = item.unresolved ? theme.fg("warning", " unavailable") : "";
 			const status = allEnabled ? "" : item.enabled ? theme.fg("success", " ✓") : theme.fg("dim", " ✗");
-			this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${status}`, 0, 0));
+			this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${unavailable}${status}`, 0, 0));
 		}
 
 		// Add scroll indicator if needed
@@ -232,7 +253,8 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		if (this.filteredItems.length > 0) {
 			const selected = this.filteredItems[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			const nameSuffix = selected.unresolved ? " (toggle off to remove)" : "";
+			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${itemDisplay(selected).name}${nameSuffix}`), 0, 0));
 		}
 	}
 
@@ -311,7 +333,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		if (kb.matches(data, "app.models.toggleProvider")) {
 			const item = this.filteredItems[this.selectedIndex];
 			if (item) {
-				const provider = item.model.provider;
+				const provider = itemDisplay(item).provider;
 				const providerIds = this.allIds.filter((id) => this.modelsById.get(id)!.provider === provider);
 				const allEnabled = providerIds.every((id) => isEnabled(this.enabledIds, id));
 				this.enabledIds = allEnabled
