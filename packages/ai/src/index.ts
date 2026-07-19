@@ -43,4 +43,5 @@ export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
 export { contentText } from "./utils/text.ts";
 export * from "./utils/typebox-helpers.ts";
+export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";

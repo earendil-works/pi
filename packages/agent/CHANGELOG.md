@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Moved the `uuidv7` export to `@earendil-works/pi-ai`.
+
 ## [0.80.10] - 2026-07-16
 
 ## [0.80.9] - 2026-07-16
