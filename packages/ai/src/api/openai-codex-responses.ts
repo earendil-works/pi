@@ -46,6 +46,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { uuidv7 } from "../utils/uuid.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -259,7 +260,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				body = nextBody as RequestBody;
 			}
 			const codexSessionId = clampOpenAIPromptCacheKey(options?.sessionId);
-			const websocketRequestId = codexSessionId || createCodexRequestId();
+			const websocketRequestId = codexSessionId || uuidv7();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
@@ -1503,13 +1504,6 @@ function extractAccountId(token: string): string {
 	} catch {
 		throw new Error("Failed to extract accountId from token");
 	}
-}
-
-function createCodexRequestId(): string {
-	if (typeof globalThis.crypto?.randomUUID === "function") {
-		return globalThis.crypto.randomUUID();
-	}
-	return `codex_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function buildBaseCodexHeaders(
