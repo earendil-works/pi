@@ -76,6 +76,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
 - **Together AI**
+- **Upstage** (Solar LLMs)
 - **Hugging Face**
 - **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
@@ -424,6 +425,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
+| Upstage | `UPSTAGE_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |

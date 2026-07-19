@@ -496,6 +496,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isUpstage = provider === "upstage" || baseUrl.includes("api.upstage.ai");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 
 	const isNonStandard =
@@ -513,7 +514,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+		isAntLing ||
+		isUpstage;
 
 	const useMaxTokens =
 		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
@@ -742,6 +744,44 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		if (override) {
 			mergeThinkingLevelMap(model, override);
 		}
+	}
+	if (model.provider === "upstage" && model.id === "solar-pro2") {
+		// solar-pro2 supports only "minimal" and "high" reasoning effort values.
+		// Reasoning is disabled by default (off → null = don't send reasoning_effort).
+		mergeThinkingLevelMap(model, {
+			off: null,
+			minimal: "minimal",
+			low: "minimal",
+			medium: "high",
+			high: "high",
+			xhigh: "high",
+			max: "high",
+		});
+	}
+	if (model.provider === "upstage" && model.id === "solar-pro3") {
+		// solar-pro3 supports "low" (off), "medium" (30% budget, default), and "high" (60% budget).
+		// Default is medium (reasoning on), so off must explicitly send "low" to disable.
+		mergeThinkingLevelMap(model, {
+			off: "low",
+			minimal: "low",
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: "high",
+			max: "high",
+		});
+	}
+	if (model.provider === "upstage" && model.id === "solar-open2") {
+		// solar-open2 supports reasoning_effort: none, low, medium, high, xhigh, max.
+		mergeThinkingLevelMap(model, {
+			off: "none",
+			minimal: "low",
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: "xhigh",
+			max: "max",
+		});
 	}
 }
 
@@ -1826,6 +1866,34 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// Process Upstage (Solar LLM) models
+		// models.dev reports the base URL as https://api.upstage.ai/v1/solar, but the
+		// OpenAI-compatible chat completions endpoint uses https://api.upstage.ai/v1.
+		if (data.upstage?.models) {
+			for (const [modelId, model] of Object.entries(data.upstage.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "upstage",
+					baseUrl: "https://api.upstage.ai/v1",
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+			}
+		}
+
 		console.log(`Loaded ${models.length} tool-capable models from models.dev`);
 		return models;
 	} catch (error) {
@@ -2083,6 +2151,22 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...antLingModels);
+
+	// Upstage solar-open2: free always-reasoning model (not yet in models.dev).
+	// Supports reasoning_effort values: none, low, medium, high, xhigh, max.
+	// Thinking level map is applied in applyThinkingLevelMetadata.
+	allModels.push({
+		id: "solar-open2",
+		name: "solar-open2",
+		api: "openai-completions",
+		baseUrl: "https://api.upstage.ai/v1",
+		provider: "upstage",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 131072,
+		maxTokens: 8192,
+	});
 
 	for (const candidate of allModels) {
 		if (candidate.api === "openai-completions" && candidate.id.includes("deepseek-v4")) {

@@ -59,6 +59,7 @@ export type KnownProvider =
 	| "huggingface"
 	| "fireworks"
 	| "together"
+	| "upstage"
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"

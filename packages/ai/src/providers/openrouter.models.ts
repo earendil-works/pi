@@ -717,6 +717,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openrouter/auto";
 		provider: "openrouter";
 	};
+	"openrouter/auto-beta": Model<"openai-completions"> & {
+		id: "openrouter/auto-beta";
+		provider: "openrouter";
+	};
 	"openrouter/free": Model<"openai-completions"> & {
 		id: "openrouter/free";
 		provider: "openrouter";
@@ -967,6 +971,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"thedrummer/unslopnemo-12b": Model<"openai-completions"> & {
 		id: "thedrummer/unslopnemo-12b";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling";
 		provider: "openrouter";
 	};
 	"upstage/solar-pro-3": Model<"openai-completions"> & {
