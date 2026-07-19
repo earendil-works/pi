@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `contentText` for extracting joined text from message content.
+
 ### Fixed
 
 - Fixed GitHub Copilot long-context pricing tiers in generated model metadata ([#6668](https://github.com/earendil-works/pi/issues/6668)).
