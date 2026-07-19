@@ -15,6 +15,7 @@ const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 
 export function calculateContextTokens(usage: Usage): number {
+	if (!usage) return 0;
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 

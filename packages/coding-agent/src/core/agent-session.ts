@@ -3084,11 +3084,13 @@ export class AgentSession {
 					toolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
 				}
 				const usage = assistantMsg.usage;
-				totalInput += usage.input;
-				totalOutput += usage.output;
-				totalCacheRead += usage.cacheRead;
-				totalCacheWrite += usage.cacheWrite;
-				totalCost += usage.cost.total;
+				if (usage) {
+					totalInput += usage.input;
+					totalOutput += usage.output;
+					totalCacheRead += usage.cacheRead;
+					totalCacheWrite += usage.cacheWrite;
+					totalCost += usage.cost?.total ?? 0;
+				}
 			}
 		}
 
@@ -3133,7 +3135,7 @@ export class AgentSession {
 				const entry = branchEntries[i];
 				if (entry.type === "message" && entry.message.role === "assistant") {
 					const assistant = entry.message;
-					if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
+					if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error" && assistant.usage) {
 						const contextTokens = calculateContextTokens(assistant.usage);
 						if (contextTokens > 0) {
 							hasPostCompactionUsage = true;
