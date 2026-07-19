@@ -165,7 +165,7 @@ export const OPENCODE_MODELS = values as {
 		id: "gpt-5.6-terra";
 		provider: "opencode";
 	};
-	"grok-4.5": Model<"openai-completions"> & {
+	"grok-4.5": Model<"openai-responses"> & {
 		id: "grok-4.5";
 		provider: "opencode";
 	};

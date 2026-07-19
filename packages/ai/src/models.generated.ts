@@ -28,6 +28,7 @@ import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENROUTER_MODELS } from "./providers/openrouter.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
+import { UPSTAGE_MODELS } from "./providers/upstage.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
 import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
@@ -65,6 +66,7 @@ export const MODELS = {
 	"opencode-go": OPENCODE_GO_MODELS,
 	"openrouter": OPENROUTER_MODELS,
 	"together": TOGETHER_MODELS,
+	"upstage": UPSTAGE_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
 	"xai": XAI_MODELS,
 	"xiaomi": XIAOMI_MODELS,

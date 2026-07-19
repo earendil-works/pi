@@ -21,7 +21,7 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "glm-5.2";
 		provider: "opencode-go";
 	};
-	"grok-4.5": Model<"openai-completions"> & {
+	"grok-4.5": Model<"openai-responses"> & {
 		id: "grok-4.5";
 		provider: "opencode-go";
 	};

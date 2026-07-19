@@ -309,14 +309,6 @@ export const VERCEL_AI_GATEWAY_MODELS = values as {
 		id: "meta/llama-3.1-8b";
 		provider: "vercel-ai-gateway";
 	};
-	"meta/llama-3.2-11b": Model<"anthropic-messages"> & {
-		id: "meta/llama-3.2-11b";
-		provider: "vercel-ai-gateway";
-	};
-	"meta/llama-3.2-90b": Model<"anthropic-messages"> & {
-		id: "meta/llama-3.2-90b";
-		provider: "vercel-ai-gateway";
-	};
 	"meta/llama-3.3-70b": Model<"anthropic-messages"> & {
 		id: "meta/llama-3.3-70b";
 		provider: "vercel-ai-gateway";
