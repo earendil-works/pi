@@ -2476,6 +2476,25 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			);
 		});
 
+		it("should use bun info for npm update checks", async () => {
+			settingsManager = SettingsManager.inMemory({ npmCommand: ["bun"] });
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
+
+			const latest = await (packageManager as any).getLatestNpmVersion("@scope/pkg");
+			expect(latest).toBe("1.2.3");
+			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
+				"bun",
+				["info", "@scope/pkg", "version", "--json"],
+				expect.objectContaining({ cwd: tempDir }),
+			);
+		});
+
 		it("should wait for close before resolving captured stdout", async () => {
 			const managerWithInternals = packageManager as unknown as {
 				spawnCaptureCommand(

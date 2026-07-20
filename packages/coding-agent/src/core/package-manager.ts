@@ -1499,13 +1499,14 @@ export class DefaultPackageManager implements PackageManager {
 
 	private async getLatestNpmVersion(packageSpec: string, range?: string): Promise<string> {
 		const npmCommand = this.getNpmCommand();
+		const metadataCommand = this.getPackageManagerName() === "bun" ? "info" : "view";
 		const stdout = await this.runCommandCapture(
 			npmCommand.command,
-			[...npmCommand.args, "view", packageSpec, "version", "--json"],
+			[...npmCommand.args, metadataCommand, packageSpec, "version", "--json"],
 			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
 		);
 		const raw = stdout.trim();
-		if (!raw) throw new Error("Empty response from npm view");
+		if (!raw) throw new Error(`Empty response from ${metadataCommand}`);
 		const parsed = JSON.parse(raw) as unknown;
 		if (typeof parsed === "string") {
 			return parsed;
@@ -1515,7 +1516,7 @@ export class DefaultPackageManager implements PackageManager {
 			const latest = range ? maxSatisfying(versions, range) : [...versions].sort(rcompare)[0];
 			if (latest) return latest;
 		}
-		throw new Error("Unexpected response from npm view");
+		throw new Error(`Unexpected response from ${metadataCommand}`);
 	}
 
 	private async gitHasAvailableUpdate(installedPath: string): Promise<boolean> {
