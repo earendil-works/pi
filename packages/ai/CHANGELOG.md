@@ -7,6 +7,7 @@
 - Added `contentText` for extracting joined text from message content.
 - Added a shared `uuidv7` utility for time-ordered identifiers.
 - Added optional usage metadata to tool result messages ([#6671](https://github.com/earendil-works/pi/pull/6671) by [@davidbrai](https://github.com/davidbrai)).
+- Added Kimi Code subscription OAuth login (device authorization grant) for the `kimi-coding` provider, with token refresh and `KIMI_CODE_OAUTH_HOST`/`KIMI_OAUTH_HOST` host overrides.
 
 ### Fixed
 
