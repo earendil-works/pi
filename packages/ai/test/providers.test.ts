@@ -254,6 +254,37 @@ describe("envApiKeyAuth", () => {
 		expect(await auth.resolve({ ctx: fakeAuthContext({}) })).toBeUndefined();
 	});
 
+	it("surfaces provider-scoped credential env in the auth result (#6799)", async () => {
+		const auth = envApiKeyAuth("Azure OpenAI API key", ["AZURE_OPENAI_API_KEY"]);
+
+		const withStoredKey = await auth.resolve({
+			ctx: fakeAuthContext({}),
+			credential: {
+				type: "api_key",
+				key: "stored",
+				env: { AZURE_OPENAI_BASE_URL: "https://example.openai.azure.com" },
+			},
+		});
+		expect(withStoredKey?.auth.apiKey).toBe("stored");
+		expect(withStoredKey?.env).toEqual({ AZURE_OPENAI_BASE_URL: "https://example.openai.azure.com" });
+
+		// The api key itself may live in the credential env block, and the scoped
+		// env still flows through instead of the ambient environment.
+		const fromCredentialEnv = await auth.resolve({
+			ctx: fakeAuthContext({ AZURE_OPENAI_API_KEY: "ambient" }),
+			credential: {
+				type: "api_key",
+				env: { AZURE_OPENAI_API_KEY: "scoped", AZURE_OPENAI_BASE_URL: "https://example.openai.azure.com" },
+			},
+		});
+		expect(fromCredentialEnv?.auth.apiKey).toBe("scoped");
+		expect(fromCredentialEnv?.source).toBe("stored credential");
+		expect(fromCredentialEnv?.env).toEqual({
+			AZURE_OPENAI_API_KEY: "scoped",
+			AZURE_OPENAI_BASE_URL: "https://example.openai.azure.com",
+		});
+	});
+
 	it("login prompts for a secret and returns an api-key credential", async () => {
 		const auth = envApiKeyAuth("Test key", ["TEST_KEY"]);
 		const credential = await auth.login?.({

@@ -14,10 +14,15 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
-			if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
+			// Surface provider-scoped env from the stored credential (auth.json `env`)
+			// so provider config such as AZURE_OPENAI_BASE_URL resolves before process
+			// env. Per-field: prefer the credential value, fall back to ambient env.
+			const env = credential?.env;
+			if (credential?.key) return { auth: { apiKey: credential.key }, env, source: "stored credential" };
 			for (const envVar of envVars) {
-				const value = await ctx.env(envVar);
-				if (value) return { auth: { apiKey: value }, source: envVar };
+				const fromCredential = env?.[envVar];
+				const value = fromCredential ?? (await ctx.env(envVar));
+				if (value) return { auth: { apiKey: value }, env, source: fromCredential ? "stored credential" : envVar };
 			}
 			return undefined;
 		},
