@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as os from "node:os";
+import { dirname, join } from "node:path";
 import {
 	type Component,
 	Container,
@@ -172,6 +173,7 @@ class SessionSelectorHeader implements Component {
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
 				keyHint("app.session.delete", "delete"),
+				keyHint("app.session.archive", "archive"),
 				keyHint("app.session.togglePath", `path ${pathState}`),
 			];
 			if (this.showRenameHint) {
@@ -306,6 +308,7 @@ class SessionList implements Component, Focusable {
 	public onDeleteConfirmationChange?: (path: string | null) => void;
 	public onDeleteSession?: (sessionPath: string) => Promise<void>;
 	public onRenameSession?: (sessionPath: string) => void;
+	public onArchiveSession?: (sessionPath: string) => Promise<void>;
 	public onError?: (message: string) => void;
 	private maxVisible: number = 10; // Max sessions visible (one line each)
 
@@ -572,9 +575,21 @@ class SessionList implements Component, Focusable {
 			return;
 		}
 
-		// Ctrl+D: initiate delete confirmation (useful on terminals that don't distinguish Ctrl+Backspace from Backspace)
+		// Ctrl+D: initiate delete confirmation
 		if (kb.matches(keyData, "app.session.delete")) {
 			this.startDeleteConfirmationForSelectedSession();
+			return;
+		}
+
+		// Ctrl+A: archive selected session to .pi/archive/YYYY-MM/
+		if (kb.matches(keyData, "app.session.archive")) {
+			const selected = this.filteredSessions[this.selectedIndex];
+			if (!selected) return;
+			if (this.isCurrentSessionPath(selected.session.path)) {
+				this.onError?.("Cannot archive the currently active session");
+				return;
+			}
+			void this.onArchiveSession?.(selected.session.path);
 			return;
 		}
 
@@ -852,6 +867,34 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				this.header.setStatusMessage({ type: "error", message: `Failed to delete: ${errorMessage}` }, 3000);
 			}
 
+			this.requestRender();
+		};
+
+		// Handle session archive
+		this.sessionList.onArchiveSession = async (sessionPath: string) => {
+			try {
+				const s = statSync(sessionPath);
+				const month = s.mtime.toISOString().slice(0, 7);
+				const archiveDir = join(dirname(sessionPath), "..", "archive", month);
+				mkdirSync(archiveDir, { recursive: true });
+				renameSync(sessionPath, join(archiveDir, sessionPath.split(/[/\\]/).pop()!));
+
+				if (this.currentSessions) {
+					this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
+				}
+				if (this.allSessions) {
+					this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
+				}
+
+				const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
+				const showCwd = this.scope === "all";
+				this.sessionList.setSessions(sessions, showCwd);
+
+				this.header.setStatusMessage({ type: "info", message: "Session archived" }, 2000);
+				await this.refreshSessionsAfterMutation();
+			} catch (err) {
+				this.header.setStatusMessage({ type: "error", message: `Archive failed: ${err}` }, 3000);
+			}
 			this.requestRender();
 		};
 

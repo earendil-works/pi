@@ -40,6 +40,7 @@ export interface AppKeybindings {
 	"app.session.rename": true;
 	"app.session.delete": true;
 	"app.session.deleteNoninvasive": true;
+	"app.session.archive": true;
 	"app.models.save": true;
 	"app.models.enableAll": true;
 	"app.models.clearAll": true;
@@ -151,6 +152,10 @@ export const KEYBINDINGS = {
 	"app.session.deleteNoninvasive": {
 		defaultKeys: "ctrl+backspace",
 		description: "Delete session when query is empty",
+	},
+	"app.session.archive": {
+		defaultKeys: "ctrl+a",
+		description: "Archive session",
 	},
 	"app.models.save": {
 		defaultKeys: "ctrl+s",
@@ -266,6 +271,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	renameSession: "app.session.rename",
 	deleteSession: "app.session.delete",
 	deleteSessionNoninvasive: "app.session.deleteNoninvasive",
+	archiveSession: "app.session.archive",
 } as const satisfies Record<string, Keybinding>;
 
 function isLegacyKeybindingName(key: string): key is keyof typeof KEYBINDING_NAME_MIGRATIONS {
