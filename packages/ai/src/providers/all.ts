@@ -29,6 +29,8 @@ import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
+import { qwenTokenPlanProvider } from "./qwen-token-plan.ts";
+import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
 import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
@@ -103,6 +105,8 @@ export function builtinProviders(): Provider[] {
 		opencodeProvider(),
 		opencodeGoProvider(),
 		openrouterProvider(),
+		qwenTokenPlanProvider(),
+		qwenTokenPlanCnProvider(),
 		radiusProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
