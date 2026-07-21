@@ -76,6 +76,26 @@ describe("inline extension naming", () => {
 		expect(result.extensions[1].path).toBe("<inline:my-commands>");
 	});
 
+	it("preserves hidden state for named factories", async () => {
+		const { cwd, agentDir } = fixture("hidden");
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			extensionFactories: [{ name: "built-in", factory: noop, hidden: true }],
+		});
+
+		await loader.reload();
+
+		const result = loader.getExtensions();
+
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0].path).toBe("<inline:built-in>");
+		expect(result.extensions[0].hidden).toBe(true);
+	});
+
 	it("supports mixed bare and named factories", async () => {
 		const { cwd, agentDir } = fixture("mixed");
 		const loader = new DefaultResourceLoader({

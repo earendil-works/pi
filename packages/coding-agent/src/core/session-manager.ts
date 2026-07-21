@@ -1,5 +1,5 @@
-import { type AgentMessage, uuidv7 } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type ImageContent, type Message, type TextContent, uuidv7 } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -485,6 +485,16 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 }
 
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
+const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
+/** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+class SessionHeaderScanLimitError extends Error {
+	constructor(filePath: string) {
+		super(`Session header exceeds ${MAX_SESSION_HEADER_SCAN_BYTES}-byte scan limit: ${filePath}`);
+		this.name = "SessionHeaderScanLimitError";
+	}
+}
 
 function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
@@ -541,20 +551,69 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	return entries;
 }
 
+/**
+ * Inspect a physical line while searching for the first parsed session entry.
+ * Blank and malformed lines are skipped to match loadEntriesFromFile().
+ * Returns undefined to keep scanning, null for a parsed non-header entry, or the header.
+ */
+function parseSessionHeaderCandidate(line: string): SessionHeader | null | undefined {
+	if (!line.trim()) return undefined;
+	const entry = parseSessionEntryLine(line);
+	if (!entry) return undefined;
+	if (entry.type !== "session" || typeof (entry as { id?: unknown }).id !== "string") return null;
+	return entry;
+}
+
 function readSessionHeader(filePath: string): SessionHeader | null {
+	const fd = openSync(filePath, "r");
 	try {
-		const fd = openSync(filePath, "r");
-		const buffer = Buffer.alloc(512);
-		const bytesRead = readSync(fd, buffer, 0, 512, 0);
-		closeSync(fd);
-		const firstLine = buffer.toString("utf8", 0, bytesRead).split("\n")[0];
-		if (!firstLine) return null;
-		const header = JSON.parse(firstLine) as Record<string, unknown>;
-		if (header.type !== "session" || typeof header.id !== "string") {
-			return null;
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(SESSION_HEADER_READ_BUFFER_SIZE);
+		const lineChunks: string[] = [];
+		let scannedBytes = 0;
+
+		while (scannedBytes < MAX_SESSION_HEADER_SCAN_BYTES) {
+			const readLength = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scannedBytes);
+			const bytesRead = readSync(fd, buffer, 0, readLength, null);
+			if (bytesRead === 0) {
+				lineChunks.push(decoder.end());
+				return parseSessionHeaderCandidate(lineChunks.join("")) ?? null;
+			}
+			scannedBytes += bytesRead;
+
+			const chunk = decoder.write(buffer.subarray(0, bytesRead));
+			let lineStart = 0;
+			let newlineIndex = chunk.indexOf("\n", lineStart);
+			while (newlineIndex !== -1) {
+				lineChunks.push(chunk.slice(lineStart, newlineIndex));
+				const header = parseSessionHeaderCandidate(lineChunks.join(""));
+				if (header !== undefined) return header;
+				lineChunks.length = 0;
+				lineStart = newlineIndex + 1;
+				newlineIndex = chunk.indexOf("\n", lineStart);
+			}
+			lineChunks.push(chunk.slice(lineStart));
 		}
-		return header as unknown as SessionHeader;
+
+		// Probe for EOF so a final header without a newline is allowed when it ends
+		// exactly at the scan limit. Any additional byte exceeds the bounded scan.
+		const probe = Buffer.allocUnsafe(1);
+		if (readSync(fd, probe, 0, probe.length, null) === 0) {
+			lineChunks.push(decoder.end());
+			return parseSessionHeaderCandidate(lineChunks.join("")) ?? null;
+		}
+		throw new SessionHeaderScanLimitError(filePath);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function readSessionHeaderForDiscovery(filePath: string): SessionHeader | null {
+	try {
+		return readSessionHeader(filePath);
 	} catch {
+		// Discovery is best-effort: unreadable or oversized files are not sessions,
+		// and one corrupt file must not prevent other sessions from being found.
 		return null;
 	}
 }
@@ -576,7 +635,7 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
 		const files = readdirSync(resolvedSessionDir)
 			.filter((f) => f.endsWith(".jsonl"))
 			.map((f) => join(resolvedSessionDir, f))
-			.map((path) => ({ path, header: readSessionHeader(path) }))
+			.map((path) => ({ path, header: readSessionHeaderForDiscovery(path) }))
 			.filter(
 				(file): file is { path: string; header: SessionHeader } =>
 					file.header !== null &&
@@ -587,6 +646,7 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
 
 		return files[0]?.path || null;
 	} catch {
+		// Directory access and stat races make recent-session discovery unavailable.
 		return null;
 	}
 }
@@ -807,6 +867,7 @@ export class SessionManager {
 		sessionFile: string | undefined,
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
+		preloadedFileEntries?: FileEntry[],
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
@@ -816,7 +877,7 @@ export class SessionManager {
 		}
 
 		if (sessionFile) {
-			this.setSessionFile(sessionFile);
+			this._setSessionFile(sessionFile, preloadedFileEntries);
 		} else {
 			this.newSession(newSessionOptions);
 		}
@@ -824,9 +885,13 @@ export class SessionManager {
 
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
+		this._setSessionFile(sessionFile);
+	}
+
+	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
-			this.fileEntries = loadEntriesFromFile(this.sessionFile);
+			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
@@ -1451,13 +1516,24 @@ export class SessionManager {
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		const resolvedPath = resolvePath(path);
-		// Extract cwd from session header if possible, otherwise use process.cwd()
-		const entries = loadEntriesFromFile(resolvedPath);
-		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
-		const cwd = cwdOverride ?? header?.cwd ?? process.cwd();
+		let header: SessionHeader | null = null;
+		let preloadedFileEntries: FileEntry[] | undefined;
+		if (cwdOverride === undefined && existsSync(resolvedPath)) {
+			try {
+				header = readSessionHeader(resolvedPath);
+			} catch (error) {
+				if (!(error instanceof SessionHeaderScanLimitError)) throw error;
+				// The bounded scan is only a discovery optimization. A full load remains
+				// authoritative for legacy files with very large headers or prefixes.
+				preloadedFileEntries = loadEntriesFromFile(resolvedPath);
+				const firstEntry = preloadedFileEntries[0];
+				header = firstEntry?.type === "session" ? firstEntry : null;
+			}
+		}
+		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true);
+		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
 	}
 
 	/**

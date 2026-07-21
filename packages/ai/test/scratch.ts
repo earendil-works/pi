@@ -21,7 +21,7 @@ models.setProvider(anthropicProvider());
 const model = models.getModel("anthropic", "claude-haiku-4-5");
 if (!model) throw new Error("model not found");
 
-const auth = await models.getAuth(model);
+const auth = await models.getAuth(model.provider);
 console.log(`model: ${model.provider}/${model.id}`);
 console.log(`auth:  ${auth ? `configured via ${auth.source}` : "not configured"}\n`);
 if (!auth) process.exit(1);

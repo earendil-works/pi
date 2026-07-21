@@ -199,6 +199,15 @@ describe("substituteArgs - positional defaults", () => {
 		expect(substituteArgs(`List exactly \${1:-7} next steps`, [])).toBe("List exactly 7 next steps");
 	});
 
+	test("should support defaults for all arguments", () => {
+		const template = `\${@:-default}\n\${ARGUMENTS:-default}`;
+
+		expect(substituteArgs(template, [])).toBe("default\ndefault");
+		expect(substituteArgs(template, ["This", "would", "be", "the", "arguments"])).toBe(
+			"This would be the arguments\nThis would be the arguments",
+		);
+	});
+
 	test("should use positional arg when present", () => {
 		expect(substituteArgs(`List exactly \${1:-7} next steps`, ["3"])).toBe("List exactly 3 next steps");
 	});

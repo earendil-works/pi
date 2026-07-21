@@ -1,3 +1,4 @@
+import { uuidv7 } from "@earendil-works/pi-ai";
 import {
 	type LeafEntry,
 	SessionError,
@@ -5,7 +6,6 @@ import {
 	type SessionStorage,
 	type SessionTreeEntry,
 } from "../types.ts";
-import { uuidv7 } from "./uuid.ts";
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
 	if (entry.type !== "label") return;

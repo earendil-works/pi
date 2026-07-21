@@ -79,7 +79,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		label: "bedrock-claude-sonnet-4-5",
 	},
 	// xAI
-	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
+	{ provider: "xai", model: "grok-4.3", label: "xai-grok-4.3" },
 	// Cerebras
 	{ provider: "cerebras", model: "zai-glm-4.7", label: "cerebras-zai-glm-4.7" },
 	// Cloudflare Workers AI
@@ -109,7 +109,7 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
 	// Kimi For Coding
-	{ provider: "kimi-coding", model: "kimi-k2-thinking", label: "kimi-coding-k2-thinking" },
+	{ provider: "kimi-coding", model: "k2p7", label: "kimi-coding-k2p7" },
 	// Mistral
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax

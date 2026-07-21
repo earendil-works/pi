@@ -2,16 +2,9 @@
  * GitHub Copilot OAuth flow
  */
 
-import type { OAuthAuth, OAuthCredential } from "../../auth/types.ts";
 import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts";
-import type { Api, Model } from "../../types.ts";
+import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
-import type { OAuthCredentials, OAuthDeviceCodeInfo, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
-
-type CopilotCredentials = OAuthCredentials & {
-	enterpriseUrl?: string;
-	availableModelIds: string[];
-};
 
 const decode = (s: string) => atob(s);
 const CLIENT_ID = decode("SXYxLmI1MDdhMDhjODdlY2ZlOTg=");
@@ -44,7 +37,7 @@ type DeviceTokenErrorResponse = {
 	interval?: number;
 };
 
-export function normalizeDomain(input: string): string | null {
+function normalizeDomain(input: string): string | null {
 	const trimmed = input.trim();
 	if (!trimmed) return null;
 	try {
@@ -81,7 +74,7 @@ function getBaseUrlFromToken(token: string): string | null {
 	return `https://${apiHost}`;
 }
 
-export function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string): string {
+function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string): string {
 	// If we have a token, extract the base URL from proxy-ep
 	if (token) {
 		const urlFromToken = getBaseUrlFromToken(token);
@@ -251,7 +244,7 @@ async function pollForGitHubAccessToken(
 async function refreshGitHubCopilotAccessToken(
 	refreshToken: string,
 	enterpriseDomain?: string,
-): Promise<OAuthCredentials> {
+): Promise<OAuthCredential> {
 	const domain = enterpriseDomain || "github.com";
 	const urls = getUrls(domain);
 
@@ -275,6 +268,7 @@ async function refreshGitHubCopilotAccessToken(
 	}
 
 	return {
+		type: "oauth",
 		refresh: refreshToken,
 		access: token,
 		expires: expiresAt * 1000 - 5 * 60 * 1000,
@@ -285,10 +279,7 @@ async function refreshGitHubCopilotAccessToken(
 /**
  * Refresh GitHub Copilot token
  */
-export async function refreshGitHubCopilotToken(
-	refreshToken: string,
-	enterpriseDomain?: string,
-): Promise<OAuthCredentials> {
+async function refreshGitHubCopilotToken(refreshToken: string, enterpriseDomain?: string): Promise<OAuthCredential> {
 	const credentials = await refreshGitHubCopilotAccessToken(refreshToken, enterpriseDomain);
 	return {
 		...credentials,
@@ -326,68 +317,41 @@ async function enableGitHubCopilotModel(token: string, modelId: string, enterpri
  * Enable all known GitHub Copilot models that may require policy acceptance.
  * Called after successful login to ensure all models are available.
  */
-async function enableAllGitHubCopilotModels(
-	token: string,
-	enterpriseDomain?: string,
-	onProgress?: (model: string, success: boolean) => void,
-): Promise<void> {
+async function enableAllGitHubCopilotModels(token: string, enterpriseDomain?: string): Promise<void> {
 	const models = Object.values(GITHUB_COPILOT_MODELS);
 	await Promise.all(
 		models.map(async (model) => {
-			const success = await enableGitHubCopilotModel(token, model.id, enterpriseDomain);
-			onProgress?.(model.id, success);
+			await enableGitHubCopilotModel(token, model.id, enterpriseDomain);
 		}),
 	);
 }
 
-/**
- * Login with GitHub Copilot OAuth (device code flow)
- *
- * @param options.onDeviceCode - Callback with URL and user code
- * @param options.onPrompt - Callback to prompt user for input
- * @param options.onProgress - Optional progress callback
- * @param options.signal - Optional AbortSignal for cancellation
- */
-export async function loginGitHubCopilot(options: {
-	onDeviceCode: (info: OAuthDeviceCodeInfo) => void;
-	onPrompt: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
-	onProgress?: (message: string) => void;
-	signal?: AbortSignal;
-}): Promise<OAuthCredentials> {
-	const input = await options.onPrompt({
+async function loginGitHubCopilot(interaction: AuthInteraction): Promise<OAuthCredential> {
+	const input = await interaction.prompt({
+		type: "text",
 		message: "GitHub Enterprise URL/domain (blank for github.com)",
 		placeholder: "company.ghe.com",
-		allowEmpty: true,
 	});
-
-	if (options.signal?.aborted) {
-		throw new Error("Login cancelled");
-	}
+	if (interaction.signal?.aborted) throw new Error("Login cancelled");
 
 	const trimmed = input.trim();
 	const enterpriseDomain = normalizeDomain(input);
-	if (trimmed && !enterpriseDomain) {
-		throw new Error("Invalid GitHub Enterprise URL/domain");
-	}
+	if (trimmed && !enterpriseDomain) throw new Error("Invalid GitHub Enterprise URL/domain");
 	const domain = enterpriseDomain || "github.com";
 
 	const device = await startDeviceFlow(domain);
-	options.onDeviceCode({
+	interaction.notify({
+		type: "device_code",
 		userCode: device.user_code,
 		verificationUri: device.verification_uri,
 		intervalSeconds: device.interval,
 		expiresInSeconds: device.expires_in,
 	});
 
-	const githubAccessToken = await pollForGitHubAccessToken(domain, device, options.signal);
+	const githubAccessToken = await pollForGitHubAccessToken(domain, device, interaction.signal);
 	const credentials = await refreshGitHubCopilotAccessToken(githubAccessToken, enterpriseDomain ?? undefined);
-
-	// Enable all models after successful login
-	options.onProgress?.("Enabling models...");
+	interaction.notify({ type: "progress", message: "Enabling models..." });
 	await enableAllGitHubCopilotModels(credentials.access, enterpriseDomain ?? undefined);
-
-	// Fetch availability after policy enable so newly enabled models are included,
-	// while unavailable models are still filtered out.
 	return {
 		...credentials,
 		availableModelIds: await fetchAvailableGitHubCopilotModelIds(credentials.access, enterpriseDomain ?? undefined),
@@ -402,68 +366,14 @@ function copilotEnterpriseDomain(credential: OAuthCredential): string | undefine
 
 export const githubCopilotOAuth: OAuthAuth = {
 	name: "GitHub Copilot",
+	login: loginGitHubCopilot,
+	refresh: (credential) => refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential)),
 
-	async login(callbacks) {
-		const credentials = await loginGitHubCopilot({
-			onDeviceCode: (info) => callbacks.notify({ type: "device_code", ...info }),
-			onPrompt: (prompt) =>
-				callbacks.prompt({ type: "text", message: prompt.message, placeholder: prompt.placeholder }),
-			onProgress: (message) => callbacks.notify({ type: "progress", message }),
-			signal: callbacks.signal,
-		});
-		return { ...credentials, type: "oauth" };
-	},
-
-	async refresh(credential) {
-		return {
-			...(await refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential))),
-			type: "oauth",
-		};
-	},
-
-	/** Per-credential baseUrl from the token's proxy endpoint replaces the old `modifyModels` rewriting. */
+	/** Derive the credential-specific proxy endpoint for each request. */
 	async toAuth(credential) {
 		return {
 			apiKey: credential.access,
 			baseUrl: getGitHubCopilotBaseUrl(credential.access, copilotEnterpriseDomain(credential)),
 		};
-	},
-};
-
-export const githubCopilotOAuthProvider: OAuthProviderInterface = {
-	id: "github-copilot",
-	name: "GitHub Copilot",
-
-	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-		return loginGitHubCopilot({
-			onDeviceCode: callbacks.onDeviceCode,
-			onPrompt: callbacks.onPrompt,
-			onProgress: callbacks.onProgress,
-			signal: callbacks.signal,
-		});
-	},
-
-	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-		const creds = credentials as CopilotCredentials;
-		return refreshGitHubCopilotToken(creds.refresh, creds.enterpriseUrl);
-	},
-
-	getApiKey(credentials: OAuthCredentials): string {
-		return credentials.access;
-	},
-
-	modifyModels(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[] {
-		const creds = credentials as CopilotCredentials;
-		const domain = creds.enterpriseUrl ? (normalizeDomain(creds.enterpriseUrl) ?? undefined) : undefined;
-		const baseUrl = getGitHubCopilotBaseUrl(creds.access, domain);
-		// Older stored Pi auth entries do not have account-specific model IDs yet;
-		// keep their existing generated-catalog behavior until the next refresh/login.
-		const availableModelIds = "availableModelIds" in creds ? new Set(creds.availableModelIds) : undefined;
-
-		return models.flatMap((m) => {
-			if (m.provider !== "github-copilot") return [m];
-			if (availableModelIds && !availableModelIds.has(m.id)) return [];
-			return [{ ...m, baseUrl }];
-		});
 	},
 };

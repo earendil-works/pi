@@ -9,6 +9,7 @@ const bedrockExplicitRetryMessage =
 const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total request limit reached (288/48)";
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
+const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -33,6 +34,14 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: bunFetchSocketClosedMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("matches OpenAI Responses streams that end before terminal events", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIResponsesEarlyEofMessage }),
 			),
 		).toBe(true);
 	});

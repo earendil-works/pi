@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { streamSimple } from "../src/compat.ts";
+import { getModel, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface AnthropicPayload {
@@ -32,13 +32,18 @@ function makeModel(allowEmptySignature?: boolean): Model<"anthropic-messages"> {
 	};
 }
 
-function makeContext(thinkingSignature: string, thinking = "internal reasoning"): Context {
+function makeContext(
+	thinkingSignature: string,
+	thinking = "internal reasoning",
+	provider = "xiaomi-token-plan-ams",
+	model = "mimo-v2.5-pro",
+): Context {
 	const assistant: AssistantMessage = {
 		role: "assistant",
 		content: [{ type: "thinking", thinking, thinkingSignature }],
-		provider: "xiaomi-token-plan-ams",
+		provider,
 		api: "anthropic-messages",
-		model: "mimo-v2.5-pro",
+		model,
 		timestamp: Date.now(),
 		usage: {
 			input: 0,
@@ -88,6 +93,15 @@ describe("Anthropic empty thinking signature compat", () => {
 
 	it("preserves empty-signature thinking when allowEmptySignature is enabled", async () => {
 		const payload = await capturePayload(makeModel(true), makeContext(" "));
+		const assistant = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistant?.content).toEqual([{ type: "thinking", thinking: "internal reasoning", signature: "" }]);
+	});
+
+	it.each(["k3"] as const)("allows empty signatures for Kimi Coding %s", async (modelId) => {
+		const model = getModel("kimi-coding", modelId);
+		expect(model.compat?.allowEmptySignature).toBe(true);
+
+		const payload = await capturePayload(model, makeContext(" ", "internal reasoning", "kimi-coding", modelId));
 		const assistant = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistant?.content).toEqual([{ type: "thinking", thinking: "internal reasoning", signature: "" }]);
 	});

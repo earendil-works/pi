@@ -1,71 +1,74 @@
 #!/usr/bin/env node
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { getOAuthProvider, getOAuthProviders } from "./utils/oauth/index.ts";
-import type { OAuthCredentials, OAuthProviderId } from "./utils/oauth/types.ts";
+import type { AuthPrompt, OAuthCredential, Provider } from "./index.ts";
+import { builtinProviders } from "./providers/all.ts";
 
 const AUTH_FILE = "auth.json";
-const PROVIDERS = getOAuthProviders();
+const PROVIDERS = builtinProviders().filter(
+	(provider): provider is Provider & { auth: { oauth: NonNullable<Provider["auth"]["oauth"]> } } =>
+		provider.auth.oauth !== undefined,
+);
 
 function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
 	return new Promise((resolve) => rl.question(question, resolve));
 }
 
-function loadAuth(): Record<string, { type: "oauth" } & OAuthCredentials> {
+function loadAuth(): Record<string, OAuthCredential> {
 	if (!existsSync(AUTH_FILE)) return {};
 	try {
-		return JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
+		return JSON.parse(readFileSync(AUTH_FILE, "utf-8")) as Record<string, OAuthCredential>;
 	} catch {
 		return {};
 	}
 }
 
-function saveAuth(auth: Record<string, { type: "oauth" } & OAuthCredentials>): void {
+function saveAuth(auth: Record<string, OAuthCredential>): void {
 	writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf-8");
 }
 
-async function login(providerId: OAuthProviderId): Promise<void> {
-	const provider = getOAuthProvider(providerId);
-	if (!provider) {
-		console.error(`Unknown provider: ${providerId}`);
-		process.exit(1);
+async function answerPrompt(rl: ReturnType<typeof createInterface>, authPrompt: AuthPrompt): Promise<string> {
+	if (authPrompt.type === "select") {
+		console.log(`\n${authPrompt.message}`);
+		for (let index = 0; index < authPrompt.options.length; index++) {
+			console.log(`  ${index + 1}. ${authPrompt.options[index].label}`);
+		}
+		const choice = Number.parseInt(await prompt(rl, `Enter number (1-${authPrompt.options.length}): `), 10) - 1;
+		const selected = authPrompt.options[choice];
+		if (!selected) throw new Error("Invalid selection");
+		return selected.id;
 	}
+	return prompt(rl, `${authPrompt.message}${authPrompt.placeholder ? ` (${authPrompt.placeholder})` : ""}: `);
+}
 
+async function login(providerId: string): Promise<void> {
+	const provider = PROVIDERS.find((entry) => entry.id === providerId);
+	if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
-	const promptFn = (msg: string) => prompt(rl, `${msg} `);
-
 	try {
-		const credentials = await provider.login({
-			onAuth: (info) => {
-				console.log(`\nOpen this URL in your browser:\n${info.url}`);
-				if (info.instructions) console.log(info.instructions);
-				console.log();
-			},
-			onDeviceCode: (info) => {
-				console.log(`\nOpen this URL in your browser:\n${info.verificationUri}`);
-				console.log(`Enter code: ${info.userCode}`);
-				console.log();
-			},
-			onPrompt: async (p) => {
-				return await promptFn(`${p.message}${p.placeholder ? ` (${p.placeholder})` : ""}:`);
-			},
-			onSelect: async (p) => {
-				console.log(`\n${p.message}`);
-				for (let i = 0; i < p.options.length; i++) {
-					console.log(`  ${i + 1}. ${p.options[i].label}`);
+		const credential = await provider.auth.oauth.login({
+			prompt: (authPrompt) => answerPrompt(rl, authPrompt),
+			notify: (event) => {
+				switch (event.type) {
+					case "auth_url":
+						console.log(`\nOpen this URL in your browser:\n${event.url}`);
+						if (event.instructions) console.log(event.instructions);
+						break;
+					case "device_code":
+						console.log(`\nOpen this URL in your browser:\n${event.verificationUri}`);
+						console.log(`Enter code: ${event.userCode}`);
+						break;
+					case "info":
+					case "progress":
+						console.log(event.message);
+						break;
 				}
-				const choice = await promptFn(`Enter number (1-${p.options.length}):`);
-				const index = parseInt(choice, 10) - 1;
-				return p.options[index]?.id;
 			},
-			onProgress: (msg) => console.log(msg),
 		});
-
 		const auth = loadAuth();
-		auth[providerId] = { type: "oauth", ...credentials };
+		auth[providerId] = credential;
 		saveAuth(auth);
-
 		console.log(`\nCredentials saved to ${AUTH_FILE}`);
 	} finally {
 		rl.close();
@@ -75,73 +78,41 @@ async function login(providerId: OAuthProviderId): Promise<void> {
 async function main(): Promise<void> {
 	const args = process.argv.slice(2);
 	const command = args[0];
-
 	if (!command || command === "help" || command === "--help" || command === "-h") {
-		const providerList = PROVIDERS.map((p) => `  ${p.id.padEnd(20)} ${p.name}`).join("\n");
-		console.log(`Usage: npx @earendil-works/pi-ai <command> [provider]
-
-Commands:
-  login [provider]  Login to an OAuth provider
-  list              List available providers
-
-Providers:
-${providerList}
-
-Examples:
-  npx @earendil-works/pi-ai login              # interactive provider selection
-  npx @earendil-works/pi-ai login anthropic    # login to specific provider
-  npx @earendil-works/pi-ai list               # list providers
-`);
+		const providerList = PROVIDERS.map((provider) => `  ${provider.id.padEnd(20)} ${provider.name}`).join("\n");
+		console.log(
+			`Usage: npx @earendil-works/pi-ai <command> [provider]\n\nCommands:\n  login [provider]  Login to an OAuth provider\n  list              List available providers\n\nProviders:\n${providerList}`,
+		);
 		return;
 	}
-
 	if (command === "list") {
-		console.log("Available OAuth providers:\n");
-		for (const p of PROVIDERS) {
-			console.log(`  ${p.id.padEnd(20)} ${p.name}`);
-		}
+		for (const provider of PROVIDERS) console.log(`${provider.id.padEnd(20)} ${provider.name}`);
 		return;
 	}
-
 	if (command === "login") {
-		let provider = args[1] as OAuthProviderId | undefined;
-
-		if (!provider) {
+		let providerId = args[1];
+		if (!providerId) {
 			const rl = createInterface({ input: process.stdin, output: process.stdout });
-			console.log("Select a provider:\n");
-			for (let i = 0; i < PROVIDERS.length; i++) {
-				console.log(`  ${i + 1}. ${PROVIDERS[i].name}`);
+			try {
+				for (let index = 0; index < PROVIDERS.length; index++) {
+					console.log(`  ${index + 1}. ${PROVIDERS[index].name}`);
+				}
+				const index = Number.parseInt(await prompt(rl, `Enter number (1-${PROVIDERS.length}): `), 10) - 1;
+				providerId = PROVIDERS[index]?.id;
+			} finally {
+				rl.close();
 			}
-			console.log();
-
-			const choice = await prompt(rl, `Enter number (1-${PROVIDERS.length}): `);
-			rl.close();
-
-			const index = parseInt(choice, 10) - 1;
-			if (index < 0 || index >= PROVIDERS.length) {
-				console.error("Invalid selection");
-				process.exit(1);
-			}
-			provider = PROVIDERS[index].id;
 		}
-
-		if (!PROVIDERS.some((p) => p.id === provider)) {
-			console.error(`Unknown provider: ${provider}`);
-			console.error(`Use 'npx @earendil-works/pi-ai list' to see available providers`);
-			process.exit(1);
+		if (!providerId || !PROVIDERS.some((provider) => provider.id === providerId)) {
+			throw new Error(`Unknown provider: ${providerId ?? ""}`);
 		}
-
-		console.log(`Logging in to ${provider}...`);
-		await login(provider);
+		await login(providerId);
 		return;
 	}
-
-	console.error(`Unknown command: ${command}`);
-	console.error(`Use 'npx @earendil-works/pi-ai --help' for usage`);
-	process.exit(1);
+	throw new Error(`Unknown command: ${command}`);
 }
 
-main().catch((err) => {
-	console.error("Error:", err.message);
+main().catch((error: unknown) => {
+	console.error("Error:", error instanceof Error ? error.message : String(error));
 	process.exit(1);
 });

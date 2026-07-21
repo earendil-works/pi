@@ -8,8 +8,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { getOAuthApiKey } from "../src/utils/oauth/index.ts";
-import type { OAuthCredentials, OAuthProvider } from "../src/utils/oauth/types.ts";
+import type { OAuthCredentials } from "../src/auth/types.ts";
+import { builtinProviders } from "../src/providers/all.ts";
 
 const AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
 
@@ -65,28 +65,18 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 	}
 
 	if (entry.type === "oauth") {
-		// Build OAuthCredentials record for getOAuthApiKey
-		const oauthCredentials: Record<string, OAuthCredentials> = {};
-		for (const [key, value] of Object.entries(storage)) {
-			if (value.type === "oauth") {
-				const { type: _, ...creds } = value;
-				oauthCredentials[key] = creds;
-			}
-		}
-
-		let result: { newCredentials: OAuthCredentials; apiKey: string } | null = null;
+		const oauth = builtinProviders().find((candidate) => candidate.id === provider)?.auth.oauth;
+		if (!oauth) return undefined;
+		let credential = entry;
 		try {
-			result = await getOAuthApiKey(provider as OAuthProvider, oauthCredentials);
-		} catch (e) {
-			console.log(JSON.stringify(e));
+			if (Date.now() >= credential.expires) credential = await oauth.refresh(credential);
+		} catch (error) {
+			console.log(JSON.stringify(error));
+			return undefined;
 		}
-		if (!result) return undefined;
-
-		// Save refreshed credentials back to auth.json
-		storage[provider] = { type: "oauth", ...result.newCredentials };
+		storage[provider] = credential;
 		saveAuthStorage(storage);
-
-		return result.apiKey;
+		return (await oauth.toAuth(credential)).apiKey;
 	}
 
 	return undefined;

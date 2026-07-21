@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	loginOpenAICodexDeviceCode,
-	openaiCodexOAuthProvider,
-	refreshOpenAICodexToken,
-} from "../src/utils/oauth/openai-codex.ts";
+import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -43,6 +39,30 @@ function deviceAuthPendingResponse(): Response {
 		},
 		403,
 	);
+}
+
+function loginOpenAICodexDeviceCodeForTest(options: {
+	onDeviceCode(info: {
+		userCode: string;
+		verificationUri: string;
+		intervalSeconds?: number;
+		expiresInSeconds?: number;
+	}): void;
+	signal?: AbortSignal;
+}) {
+	return openaiCodexOAuth.login({
+		signal: options.signal,
+		prompt: async (prompt) => {
+			if (prompt.type !== "select") throw new Error(`Unexpected prompt: ${prompt.type}`);
+			return "device_code";
+		},
+		notify: (event) => {
+			if (event.type === "device_code") {
+				const { type: _, ...info } = event;
+				options.onDeviceCode(info);
+			}
+		},
+	});
 }
 
 describe("OpenAI Codex OAuth", () => {
@@ -125,7 +145,7 @@ describe("OpenAI Codex OAuth", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentialsPromise = loginOpenAICodexDeviceCode({
+		const credentialsPromise = loginOpenAICodexDeviceCodeForTest({
 			onDeviceCode: (info) => deviceInfos.push(info),
 		});
 
@@ -159,7 +179,7 @@ describe("OpenAI Codex OAuth", () => {
 		const accessToken = createAccessToken("account-456");
 		const selectPrompts: Array<{
 			message: string;
-			options: Array<{ id: string; label: string }>;
+			options: readonly { id: string; label: string }[];
 		}> = [];
 		const deviceInfos: Array<{
 			userCode: string;
@@ -199,20 +219,22 @@ describe("OpenAI Codex OAuth", () => {
 		);
 
 		await expect(
-			openaiCodexOAuthProvider.login({
-				onAuth: () => {
-					throw new Error("Browser login should not start");
-				},
-				onDeviceCode: (info) => deviceInfos.push(info),
-				onPrompt: async () => {
-					throw new Error("Prompt should not be used");
-				},
-				onSelect: async (prompt) => {
+			openaiCodexOAuth.login({
+				prompt: async (prompt) => {
+					if (prompt.type !== "select") throw new Error("Text prompt should not be used");
 					selectPrompts.push(prompt);
 					return "device_code";
 				},
+				notify: (event) => {
+					if (event.type === "auth_url") throw new Error("Browser login should not start");
+					if (event.type === "device_code") {
+						const { type: _, ...info } = event;
+						deviceInfos.push(info);
+					}
+				},
 			}),
 		).resolves.toMatchObject({
+			type: "oauth",
 			access: accessToken,
 			refresh: "refresh-token",
 			accountId: "account-456",
@@ -220,6 +242,7 @@ describe("OpenAI Codex OAuth", () => {
 
 		expect(selectPrompts).toEqual([
 			{
+				type: "select",
 				message: "Select OpenAI Codex login method:",
 				options: [
 					{ id: "browser", label: "Browser login (default)" },
@@ -239,11 +262,11 @@ describe("OpenAI Codex OAuth", () => {
 
 	it("cancels when OpenAI Codex login method selection is cancelled", async () => {
 		await expect(
-			openaiCodexOAuthProvider.login({
-				onAuth: () => {},
-				onDeviceCode: () => {},
-				onPrompt: async () => "",
-				onSelect: async () => undefined,
+			openaiCodexOAuth.login({
+				prompt: async () => {
+					throw new Error("Login cancelled");
+				},
+				notify: () => {},
 			}),
 		).rejects.toThrow("Login cancelled");
 	});
@@ -273,7 +296,7 @@ describe("OpenAI Codex OAuth", () => {
 			}),
 		);
 
-		const credentialsPromise = loginOpenAICodexDeviceCode({
+		const credentialsPromise = loginOpenAICodexDeviceCodeForTest({
 			onDeviceCode: () => {},
 			signal: controller.signal,
 		});
@@ -317,7 +340,7 @@ describe("OpenAI Codex OAuth", () => {
 			}),
 		);
 
-		const credentialsPromise = loginOpenAICodexDeviceCode({
+		const credentialsPromise = loginOpenAICodexDeviceCodeForTest({
 			onDeviceCode: () => {},
 		});
 		const rejectionPromise = credentialsPromise.then(
@@ -380,7 +403,7 @@ describe("OpenAI Codex OAuth", () => {
 			}),
 		);
 
-		const credentialsPromise = loginOpenAICodexDeviceCode({
+		const credentialsPromise = loginOpenAICodexDeviceCodeForTest({
 			onDeviceCode: () => {},
 		});
 
@@ -418,7 +441,7 @@ describe("OpenAI Codex OAuth", () => {
 		);
 
 		await expect(
-			loginOpenAICodexDeviceCode({
+			loginOpenAICodexDeviceCodeForTest({
 				onDeviceCode: () => {},
 			}),
 		).rejects.toThrow(
@@ -443,9 +466,14 @@ describe("OpenAI Codex OAuth", () => {
 			}),
 		);
 
-		await expect(refreshOpenAICodexToken("invalid-refresh-token")).rejects.toThrow(
-			/OpenAI Codex token refresh failed \(401\).*Could not validate your token/,
-		);
+		await expect(
+			openaiCodexOAuth.refresh({
+				type: "oauth",
+				access: "invalid-access-token",
+				refresh: "invalid-refresh-token",
+				expires: 0,
+			}),
+		).rejects.toThrow(/OpenAI Codex token refresh failed \(401\).*Could not validate your token/);
 		expect(consoleError).not.toHaveBeenCalled();
 	});
 });

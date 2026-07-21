@@ -1,6 +1,6 @@
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
+import { type AuthResolutionOverrides, ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
 import type { AuthContext, AuthResult, CredentialStore, ProviderAuth } from "./auth/types.ts";
 import type { CreateModelsOptions } from "./models.ts";
 import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ImagesOptions, ProviderImages } from "./types.ts";
@@ -68,11 +68,12 @@ export interface ImagesModels {
 	refresh(provider?: string): Promise<void>;
 
 	/**
-	 * Resolve request auth for an image model. Same contract as
+	 * Resolve request auth by provider id or image model. Same contract as
 	 * `Models.getAuth()`: undefined when unknown/unconfigured, rejects with
 	 * `ModelsError` ("oauth"/"auth") on real failures.
 	 */
-	getAuth(model: ImagesModel<ImagesApi>): Promise<AuthResult | undefined>;
+	getAuth(providerId: string, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
+	getAuth(model: ImagesModel<ImagesApi>, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
 
 	/**
 	 * Generate images through the owning provider with auth resolved and
@@ -167,10 +168,16 @@ class ImagesModelsImpl implements MutableImagesModels {
 		await Promise.allSettled(Array.from(this.providers.values(), async (entry) => entry.refreshModels?.()));
 	}
 
-	async getAuth(model: ImagesModel<ImagesApi>): Promise<AuthResult | undefined> {
-		const provider = this.providers.get(model.provider);
+	getAuth(providerId: string, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
+	getAuth(model: ImagesModel<ImagesApi>, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
+	async getAuth(
+		providerOrModel: string | ImagesModel<ImagesApi>,
+		overrides?: AuthResolutionOverrides,
+	): Promise<AuthResult | undefined> {
+		const providerId = typeof providerOrModel === "string" ? providerOrModel : providerOrModel.provider;
+		const provider = this.providers.get(providerId);
 		if (!provider) return undefined;
-		return resolveProviderAuth(provider, model, this.credentials, this.authContext);
+		return resolveProviderAuth(provider, this.credentials, this.authContext, overrides);
 	}
 
 	async generateImages(
@@ -184,7 +191,7 @@ class ImagesModelsImpl implements MutableImagesModels {
 				throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 			}
 
-			const resolution = await resolveProviderAuth(provider, model, this.credentials, this.authContext, {
+			const resolution = await this.getAuth(model, {
 				apiKey: options?.apiKey,
 				env: options?.env,
 			});
