@@ -49,8 +49,27 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Build binaries
-        run: ./scripts/build-binaries.sh
+      - name: Create source archive
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p release-assets
+          ./scripts/create-source-archive.sh \
+            --version "${VERSION}" \
+            --ref HEAD \
+            --out "release-assets/pi-${VERSION}-source.tar.gz"
+
+      - name: Build binaries from source archive
+        run: |
+          set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+          build_root="$(mktemp -d)"
+          trap 'rm -rf "${build_root}"' EXIT
+          tar -xzf "release-assets/pi-${VERSION}-source.tar.gz" -C "${build_root}"
+          "${build_root}/pi-${VERSION}/scripts/build-binaries.sh" \
+            --out "${GITHUB_WORKSPACE}/packages/coding-agent/binaries"
 
       - name: Prepare GitHub release payload
         run: |
@@ -83,7 +102,9 @@ jobs:
           cp "${binary_assets[@]}" "${GITHUB_WORKSPACE}/release-assets/"
 
           cd "${GITHUB_WORKSPACE}/release-assets"
+          source_asset="pi-${VERSION}-source.tar.gz"
           release_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -125,7 +146,10 @@ jobs:
 
           cd release-assets
 
+          VERSION="${RELEASE_TAG#v}"
+          source_asset="pi-${VERSION}-source.tar.gz"
           expected_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz
@@ -144,7 +168,7 @@ jobs:
 
           sha256sum -c SHA256SUMS
 
-      - name: Create draft GitHub Release and upload binaries
+      - name: Create draft GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -152,7 +176,10 @@ jobs:
 
           cd release-assets
 
+          VERSION="${RELEASE_TAG#v}"
+          source_asset="pi-${VERSION}-source.tar.gz"
           release_assets=(
+            "${source_asset}"
             pi-darwin-arm64.tar.gz
             pi-darwin-x64.tar.gz
             pi-linux-x64.tar.gz

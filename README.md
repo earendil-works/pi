@@ -59,6 +59,19 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+## Building standalone binaries from release source
+
+GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
+
+```bash
+VERSION="<release-version>"
+tar -xzf "pi-${VERSION}-source.tar.gz"
+cd "pi-${VERSION}"
+./scripts/build-binaries.sh --platform linux-x64 --out "$PWD/out"
+```
+
+The script installs dependencies, builds the monorepo, compiles the Bun executable, and stages its runtime assets. Package maintainers who provide dependencies separately can pass `--skip-install --skip-deps`.
+
 ## Supply-chain hardening
 
 We treat npm dependency changes as reviewed code changes.
