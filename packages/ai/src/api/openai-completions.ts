@@ -10,7 +10,7 @@ import type {
 	ChatCompletionSystemMessageParam,
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
-import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { applyReportedCost, calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -1184,6 +1184,8 @@ function parseChunkUsage(
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
+		cost?: number;
+		cost_details?: { upstream_inference_cost?: number | null };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1212,6 +1214,10 @@ function parseChunkUsage(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);
+	if (typeof rawUsage.cost === "number") {
+		// BYOK requests bill inference upstream, upstream_inference_cost carries that share (Vercel AI Gateway)
+		applyReportedCost(usage, rawUsage.cost + (rawUsage.cost_details?.upstream_inference_cost ?? 0));
+	}
 	return usage;
 }
 

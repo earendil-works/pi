@@ -7,7 +7,7 @@ import type {
 	RawMessageStreamEvent,
 	RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/messages.js";
-import { calculateCost } from "../models.ts";
+import { applyReportedCost, calculateCost } from "../models.ts";
 import type {
 	AnthropicMessagesCompat,
 	Api,
@@ -729,6 +729,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(model, output.usage);
+					// Vercel AI Gateway attaches the billed total to the final message_delta
+					const reportedCost = (event as { provider_metadata?: { gateway?: { cost?: string | number } } })
+						.provider_metadata?.gateway?.cost;
+					if (reportedCost != null) {
+						applyReportedCost(output.usage, Number(reportedCost));
+					}
 				}
 			}
 

@@ -658,6 +658,21 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 	return usage.cost;
 }
 
+// A provider-reported total is the billed amount and wins over catalog math, components are scaled to keep summing to it
+export function applyReportedCost(usage: Usage, reportedTotal: number): Usage["cost"] {
+	if (!Number.isFinite(reportedTotal) || reportedTotal < 0) return usage.cost;
+	const local = usage.cost.total;
+	if (local > 0) {
+		const scale = reportedTotal / local;
+		usage.cost.input *= scale;
+		usage.cost.output *= scale;
+		usage.cost.cacheRead *= scale;
+		usage.cost.cacheWrite *= scale;
+	}
+	usage.cost.total = reportedTotal;
+	return usage.cost;
+}
+
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
