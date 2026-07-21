@@ -20,9 +20,10 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - Radius
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
 ### OpenAI Codex
 
@@ -42,6 +43,12 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### OpenRouter
+
+- Run `/login openrouter`, then select **Sign in with OpenRouter** to open the OpenRouter PKCE authorization flow
+- The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
+- `OPENROUTER_API_KEY` remains available through **Use an API key**
 
 ### Radius
 

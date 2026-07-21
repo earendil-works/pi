@@ -3,6 +3,7 @@ import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
+import { openRouterOAuth } from "../src/auth/oauth/openrouter.ts";
 import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import { createModels } from "../src/models.ts";
 import * as extensionOAuthCompatibility from "../src/oauth.ts";
@@ -31,6 +32,12 @@ describe.sequential("OAuthAuth adapters", () => {
 	it("openai-codex toAuth derives the api key from the access token", async () => {
 		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
+	});
+
+	it("openrouter derives the api key and keeps the permanent credential on refresh", async () => {
+		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
+		expect(await openRouterOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
+		expect(await openRouterOAuth.refresh(credential)).toBe(credential);
 	});
 
 	it("xAI toAuth derives the api key from the access token", async () => {
