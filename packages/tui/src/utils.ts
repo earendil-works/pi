@@ -42,7 +42,7 @@ const leadingNonPrintingRegex = /^[\p{Default_Ignorable_Code_Point}\p{Control}\p
 const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
 
 // Cache for non-ASCII strings
-const WIDTH_CACHE_SIZE = 512;
+const WIDTH_CACHE_SIZE = 4096;
 const widthCache = new Map<string, number>();
 
 export const cjkBreakRegex =
@@ -223,9 +223,11 @@ export function visibleWidth(str: string): number {
 		return str.length;
 	}
 
-	// Check cache
+	// Check cache (LRU: refresh recency on hit)
 	const cached = widthCache.get(str);
 	if (cached !== undefined) {
+		widthCache.delete(str);
+		widthCache.set(str, cached);
 		return cached;
 	}
 
