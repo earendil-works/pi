@@ -208,6 +208,62 @@ describe("openai-codex streaming", () => {
 		expect(sawDone).toBe(true);
 	});
 
+	it("emits raw provider events through streamSimple over SSE", async () => {
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async () =>
+					new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
+								controller.close();
+							},
+						}),
+						{ status: 200, headers: { "content-type": "text/event-stream" } },
+					),
+			),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+		};
+		const providerEventTypes: string[] = [];
+
+		for await (const event of streamSimpleOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			emitProviderEvents: true,
+		})) {
+			if (
+				event.type === "provider_event" &&
+				typeof event.event === "object" &&
+				event.event !== null &&
+				"type" in event.event &&
+				typeof event.event.type === "string"
+			) {
+				providerEventTypes.push(event.event.type);
+			}
+		}
+
+		expect(providerEventTypes).toContain("response.output_item.added");
+		expect(providerEventTypes).toContain("response.completed");
+	});
+
 	it("completes after response.completed even when the SSE body stays open", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
@@ -1322,14 +1378,30 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
 		};
 
-		const result = await streamSimpleOpenAICodexResponses(model, context, {
+		const providerEventTypes: string[] = [];
+		const responseStream = streamSimpleOpenAICodexResponses(model, context, {
 			apiKey: token,
 			sessionId: "session-auto",
 			transport: "auto",
-		}).result();
+			emitProviderEvents: true,
+		});
+		for await (const event of responseStream) {
+			if (
+				event.type === "provider_event" &&
+				typeof event.event === "object" &&
+				event.event !== null &&
+				"type" in event.event &&
+				typeof event.event.type === "string"
+			) {
+				providerEventTypes.push(event.event.type);
+			}
+		}
+		const result = await responseStream.result();
 
 		expect(result.endTurn).toBe(false);
 		expect(sentBodies).toHaveLength(1);
+		expect(providerEventTypes).toContain("response.output_item.added");
+		expect(providerEventTypes).toContain("response.completed");
 		expect(capturedWebSocketHeaders?.["session-id"]).toBe("session-auto");
 		expect(capturedWebSocketHeaders?.session_id).toBeUndefined();
 		expect(capturedWebSocketHeaders?.["x-client-request-id"]).toBe("session-auto");

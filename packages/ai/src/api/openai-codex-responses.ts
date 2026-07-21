@@ -520,6 +520,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
+		emitProviderEvents: options?.emitProviderEvents,
 	} satisfies OpenAICodexResponsesOptions);
 };
 
@@ -665,6 +666,7 @@ async function processStream(
 	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
 		serviceTier: options?.serviceTier,
 		grammarToolInputProperties,
+		emitProviderEvents: options?.emitProviderEvents,
 		resolveServiceTier: resolveCodexServiceTier,
 		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 	});
@@ -1519,6 +1521,7 @@ async function processWebSocketStream(
 			{
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
+				emitProviderEvents: options?.emitProviderEvents,
 				resolveServiceTier: resolveCodexServiceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			},
