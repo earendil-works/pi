@@ -43,6 +43,13 @@ export interface NewSessionOptions {
 	parentSession?: string;
 }
 
+export interface AppendMessageOptions {
+	/** Entry ID previously returned by reserveEntryId(). */
+	id?: string;
+	/** Write the entry immediately, even before the first assistant message. */
+	flush?: boolean;
+}
+
 export interface SessionEntryBase {
 	type: string;
 	id: string;
@@ -213,6 +220,14 @@ export function assertValidSessionId(id: string): void {
 	if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(id)) {
 		throw new Error(
 			"Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
+		);
+	}
+}
+
+function assertValidEntryId(id: string): void {
+	if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(id)) {
+		throw new Error(
+			"Session entry id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
 		);
 	}
 }
@@ -863,6 +878,7 @@ export class SessionManager {
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
+	private reservedEntryIds: Set<string> = new Set();
 	private leafId: string | null = null;
 
 	private constructor(
@@ -945,6 +961,7 @@ export class SessionManager {
 		this.byId.clear();
 		this.labelsById.clear();
 		this.labelTimestampsById.clear();
+		this.reservedEntryIds.clear();
 		this.leafId = null;
 		this.flushed = false;
 
@@ -959,6 +976,7 @@ export class SessionManager {
 		this.byId.clear();
 		this.labelsById.clear();
 		this.labelTimestampsById.clear();
+		this.reservedEntryIds.clear();
 		this.leafId = null;
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
@@ -1012,11 +1030,12 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	_persist(entry: SessionEntry): void {
+	_persist(entry: SessionEntry, flush = false): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
+		const nextFileEntries = [...this.fileEntries, entry];
+		const hasAssistant = nextFileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+		if (!hasAssistant && !flush) {
 			if (this.flushed) {
 				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 			} else {
@@ -1029,7 +1048,7 @@ export class SessionManager {
 		if (!this.flushed) {
 			const fd = openSync(this.sessionFile, "wx");
 			try {
-				for (const e of this.fileEntries) {
+				for (const e of nextFileEntries) {
 					writeFileSync(fd, `${JSON.stringify(e)}\n`);
 				}
 			} finally {
@@ -1041,11 +1060,42 @@ export class SessionManager {
 		}
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	private _appendEntry(entry: SessionEntry, flush = false): void {
+		this._persist(entry, flush);
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
+	}
+
+	private _generateEntryId(): string {
+		return generateId({
+			has: (id) => this.byId.has(id) || this.reservedEntryIds.has(id),
+		});
+	}
+
+	/**
+	 * Reserve a session entry ID without appending an entry or advancing the leaf.
+	 * Pass an existing candidate to re-establish an unconsumed reservation after restart.
+	 */
+	reserveEntryId(candidate?: string): string {
+		if (candidate !== undefined) {
+			assertValidEntryId(candidate);
+			if (this.byId.has(candidate)) {
+				throw new Error(`Session entry ID already exists: ${candidate}`);
+			}
+			if (this.reservedEntryIds.has(candidate)) {
+				throw new Error(`Session entry ID is already reserved: ${candidate}`);
+			}
+		}
+
+		const id = candidate ?? this._generateEntryId();
+		this.reservedEntryIds.add(id);
+		return id;
+	}
+
+	/** Release an unconsumed entry ID reservation. */
+	releaseEntryId(id: string): boolean {
+		return this.reservedEntryIds.delete(id);
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1054,15 +1104,34 @@ export class SessionManager {
 	 * so it is easier to find them.
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
-	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+	appendMessage(message: Message | CustomMessage | BashExecutionMessage, options?: AppendMessageOptions): string {
+		let id: string;
+		if (options?.id !== undefined) {
+			if (this.byId.has(options.id)) {
+				throw new Error(`Session entry ID already exists: ${options.id}`);
+			}
+			if (!this.reservedEntryIds.delete(options.id)) {
+				throw new Error(`Session entry ID was not reserved: ${options.id}`);
+			}
+			id = options.id;
+		} else {
+			id = this._generateEntryId();
+		}
 		const entry: SessionMessageEntry = {
 			type: "message",
-			id: generateId(this.byId),
+			id,
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry);
+		try {
+			this._appendEntry(entry, options?.flush);
+		} catch (error) {
+			if (options?.id !== undefined) {
+				this.reservedEntryIds.add(options.id);
+			}
+			throw error;
+		}
 		return entry.id;
 	}
 
@@ -1070,7 +1139,7 @@ export class SessionManager {
 	appendThinkingLevelChange(thinkingLevel: string): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			thinkingLevel,
@@ -1083,7 +1152,7 @@ export class SessionManager {
 	appendModelChange(provider: string, modelId: string): string {
 		const entry: ModelChangeEntry = {
 			type: "model_change",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			provider,
@@ -1104,7 +1173,7 @@ export class SessionManager {
 	): string {
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			summary,
@@ -1124,7 +1193,7 @@ export class SessionManager {
 			type: "custom",
 			customType,
 			data,
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
@@ -1137,7 +1206,7 @@ export class SessionManager {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		const entry: SessionInfoEntry = {
 			type: "session_info",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
@@ -1180,7 +1249,7 @@ export class SessionManager {
 			content,
 			display,
 			details,
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
@@ -1235,7 +1304,7 @@ export class SessionManager {
 		}
 		const entry: LabelEntry = {
 			type: "label",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			targetId,
@@ -1391,7 +1460,7 @@ export class SessionManager {
 		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
-			id: generateId(this.byId),
+			id: this._generateEntryId(),
 			parentId: branchFromId,
 			timestamp: new Date().toISOString(),
 			fromId: branchFromId ?? "root",

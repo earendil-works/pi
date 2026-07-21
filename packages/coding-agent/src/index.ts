@@ -220,6 +220,7 @@ export {
 	type PromptTemplate,
 } from "./core/sdk.ts";
 export {
+	type AppendMessageOptions,
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,

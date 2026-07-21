@@ -227,6 +227,8 @@ export interface PromptOptions {
 	streamingBehavior?: "steer" | "followUp";
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/** ID returned by sessionManager.reserveEntryId(). The user entry is flushed before provider execution. */
+	userEntryId?: string;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
 }
@@ -303,6 +305,8 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Reserved session entry IDs keyed by provider-facing user message object identity. */
+	private _userEntryIds = new WeakMap<AgentMessage, string>();
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -534,6 +538,13 @@ export class AgentSession {
 		}
 	}
 
+	private _emitEntryAppended(entryId: string): void {
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) {
+			this._emit({ type: "entry_appended", entry });
+		}
+	}
+
 	private _emitQueueUpdate(): void {
 		this._emit({
 			type: "queue_update",
@@ -609,19 +620,28 @@ export class AgentSession {
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
 				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
+				const entryId = this.sessionManager.appendCustomMessageEntry(
 					event.message.customType,
 					event.message.content,
 					event.message.display,
 					event.message.details,
 				);
+				this._emitEntryAppended(entryId);
 			} else if (
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				const userEntryId = event.message.role === "user" ? this._userEntryIds.get(event.message) : undefined;
+				const entryId = this.sessionManager.appendMessage(
+					event.message,
+					userEntryId ? { id: userEntryId, flush: true } : undefined,
+				);
+				if (event.message.role === "user") {
+					this._userEntryIds.delete(event.message);
+				}
+				this._emitEntryAppended(entryId);
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -1105,6 +1125,10 @@ export class AgentSession {
 			if (expandPromptTemplates && text.startsWith("/")) {
 				const handled = await this._tryExecuteExtensionCommand(text);
 				if (handled) {
+					if (options?.userEntryId) {
+						this.sessionManager.releaseEntryId(options.userEntryId);
+						throw new Error("Prompt was handled as an extension command and did not create a user entry");
+					}
 					// Extension command executed, no prompt to send
 					preflightResult?.(true);
 					return;
@@ -1122,6 +1146,10 @@ export class AgentSession {
 					this.isStreaming ? options?.streamingBehavior : undefined,
 				);
 				if (inputResult.action === "handled") {
+					if (options?.userEntryId) {
+						this.sessionManager.releaseEntryId(options.userEntryId);
+						throw new Error("Prompt was handled by an input extension and did not create a user entry");
+					}
 					preflightResult?.(true);
 					return;
 				}
@@ -1146,9 +1174,9 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, options.userEntryId);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, options.userEntryId);
 				}
 				preflightResult?.(true);
 				return;
@@ -1192,11 +1220,15 @@ export class AgentSession {
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
-			messages.push({
+			const userMessage = {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
-			});
+			} satisfies AgentMessage;
+			if (options?.userEntryId) {
+				this._userEntryIds.set(userMessage, options.userEntryId);
+			}
+			messages.push(userMessage);
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
 			for (const msg of this._pendingNextTurnMessages) {
@@ -1351,35 +1383,43 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(text: string, images?: ImageContent[], userEntryId?: string): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer({
+		const userMessage = {
 			role: "user",
 			content,
 			timestamp: Date.now(),
-		});
+		} satisfies AgentMessage;
+		if (userEntryId) {
+			this._userEntryIds.set(userMessage, userEntryId);
+		}
+		this.agent.steer(userMessage);
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(text: string, images?: ImageContent[], userEntryId?: string): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({
+		const userMessage = {
 			role: "user",
 			content,
 			timestamp: Date.now(),
-		});
+		} satisfies AgentMessage;
+		if (userEntryId) {
+			this._userEntryIds.set(userMessage, userEntryId);
+		}
+		this.agent.followUp(userMessage);
 	}
 
 	/**
@@ -1488,16 +1528,26 @@ export class AgentSession {
 	/**
 	 * Clear all queued messages and return them.
 	 * Useful for restoring to editor when user aborts.
-	 * @returns Object with steering and followUp arrays
+	 * @returns Queued display text plus native entry IDs whose reservations were released
 	 */
-	clearQueue(): { steering: string[]; followUp: string[] } {
+	clearQueue(): { steering: string[]; followUp: string[]; cancelledEntryIds: string[] } {
 		const steering = [...this._steeringMessages];
 		const followUp = [...this._followUpMessages];
 		this._steeringMessages = [];
 		this._followUpMessages = [];
-		this.agent.clearAllQueues();
+		const cleared = this.agent.clearAllQueues();
+		const cancelledEntryIds: string[] = [];
+		for (const message of [...cleared.steering, ...cleared.followUp]) {
+			const entryId = this._userEntryIds.get(message);
+			if (entryId) {
+				this._userEntryIds.delete(message);
+				if (this.sessionManager.releaseEntryId(entryId)) {
+					cancelledEntryIds.push(entryId);
+				}
+			}
+		}
 		this._emitQueueUpdate();
-		return { steering, followUp };
+		return { steering, followUp, cancelledEntryIds };
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -2359,10 +2409,7 @@ export class AgentSession {
 				},
 				appendEntry: (customType, data) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data);
-					const entry = this.sessionManager.getEntry(entryId);
-					if (entry) {
-						this._emit({ type: "entry_appended", entry });
-					}
+					this._emitEntryAppended(entryId);
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);
