@@ -110,6 +110,12 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	it.each(["moonshotai", "moonshotai-cn"] as const)("uses the verified effort options for %s Kimi K3", (provider) => {
+		const model = getModel(provider, "kimi-k3");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
+	});
+
 	it("includes only low, high, max for Kimi Coding K3", () => {
 		const model = getModel("kimi-coding", "k3");
 		expect(model).toBeDefined();

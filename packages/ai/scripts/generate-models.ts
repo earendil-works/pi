@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -83,6 +84,7 @@ interface ModelsDevModel {
 	name: string;
 	tool_call?: boolean;
 	reasoning?: boolean;
+	reasoning_options?: ModelsDevReasoningOption[];
 	limit?: {
 		context?: number;
 		output?: number;
@@ -111,6 +113,12 @@ interface ModelsDevModel {
 		npm?: string;
 	};
 }
+
+interface ModelsDevProvider {
+	models?: Record<string, ModelsDevModel>;
+}
+
+type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
 interface NvidiaNimModelListItem {
 	id: string;
@@ -257,15 +265,6 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	max: "max",
 } as const;
 
-const KIMI_K3_THINKING_LEVEL_MAP = {
-	off: null,
-	minimal: null,
-	low: "low",
-	medium: null,
-	high: "high",
-	xhigh: null,
-	max: "max",
-} as const;
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
 	input: 3,
@@ -396,6 +395,43 @@ const GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES = {
 
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
 	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
+}
+
+const modelsDevReasoningOptions = new Map<string, ModelsDevReasoningOption[]>();
+
+function getModelKey(model: Pick<Model<Api>, "provider" | "id">): string {
+	return `${model.provider}:${model.id}`;
+}
+
+function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
+	if (sourceModel.reasoning_options !== undefined) {
+		modelsDevReasoningOptions.set(`${provider}:${id}`, sourceModel.reasoning_options);
+	}
+}
+
+function supportsDirectReasoningEffort(model: Model<Api>): boolean {
+	if (model.api === "anthropic-messages") return model.compat?.forceAdaptiveThinking === true;
+	if (
+		model.api === "openai-responses" ||
+		model.api === "azure-openai-responses" ||
+		model.api === "openai-codex-responses"
+	) {
+		return true;
+	}
+	if (model.api !== "openai-completions") return false;
+
+	const compat = {
+		...detectOpenAICompletionsCompat(model as Model<"openai-completions">),
+		...(model.compat as OpenAICompletionsCompat | undefined),
+	};
+	return compat.thinkingFormat === "openai" && compat.supportsReasoningEffort;
+}
+
+function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
+	const reasoningOptions = modelsDevReasoningOptions.get(getModelKey(model));
+	if (!reasoningOptions || !supportsDirectReasoningEffort(model)) return;
+	const thinkingLevelMap = getEffortThinkingLevelMap(reasoningOptions);
+	if (thinkingLevelMap) mergeThinkingLevelMap(model, thinkingLevelMap);
 }
 
 function getTogetherCompat(modelId: string, reasoning: boolean): OpenAICompletionsCompat {
@@ -957,7 +993,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		console.log("Fetching models from models.dev API...");
 		const response = await fetch("https://models.dev/api.json");
 		if (!response.ok) throw new Error(`models.dev API returned ${response.status}`);
-		const data = await response.json();
+		const data = (await response.json()) as ModelsDevCatalog;
 
 		const models: Model<any>[] = [];
 		const nvidiaNimModelIds = data.nvidia?.models ? await fetchNvidiaNimModelIds() : new Map<string, string>();
@@ -997,6 +1033,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
 			}
 		}
 
@@ -1023,6 +1060,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("anthropic", modelId, m);
 			}
 		}
 
@@ -1056,6 +1094,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: source.limit?.context || 4096,
 					maxTokens: source.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("google", modelId, source);
 			}
 		}
 
@@ -1097,6 +1136,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: source.limit?.context || 4096,
 					maxTokens: source.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("google-vertex", modelId, source);
 			}
 		}
 
@@ -1125,6 +1165,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("openai", modelId, m);
 			}
 		}
 
@@ -1151,6 +1192,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("groq", modelId, m);
 			}
 		}
 
@@ -1177,6 +1219,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("cerebras", modelId, m);
 			}
 		}
 
@@ -1204,6 +1247,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					compat: { sendSessionAffinityHeaders: true },
 				});
+				recordModelsDevReasoningOptions("cloudflare-workers-ai", modelId, m);
 			}
 		}
 
@@ -1260,6 +1304,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					...(compat ? { compat } : {}),
 				});
+				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
 			}
 		}
 
@@ -1288,6 +1333,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("xai", modelId, m);
 			}
 		}
 
@@ -1330,6 +1376,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
 					});
+					recordModelsDevReasoningOptions(provider, modelId, m);
 				}
 			}
 		}
@@ -1357,6 +1404,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("mistral", modelId, m);
 			}
 		}
 
@@ -1386,6 +1434,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("huggingface", modelId, m);
 			}
 		}
 
@@ -1423,6 +1472,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						supportsLongCacheRetention: false,
 					},
 				});
+				recordModelsDevReasoningOptions("fireworks", modelId, m);
 			}
 		}
 
@@ -1457,6 +1507,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("nvidia", liveModelId, m);
 			}
 		}
 
@@ -1489,6 +1540,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("together", modelId, m);
 			}
 		}
 
@@ -1596,6 +1648,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions(variant.provider, modelId, m);
 			}
 		}
 
@@ -1646,6 +1699,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				};
 
 				models.push(copilotModel);
+				recordModelsDevReasoningOptions("github-copilot", modelId, m);
 			}
 		}
 
@@ -1679,6 +1733,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
 					});
+					recordModelsDevReasoningOptions(provider, modelId, m);
 				}
 			}
 		}
@@ -1716,7 +1771,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						forceAdaptiveThinking: true,
 					},
 					reasoning: isKimiK3 || m.reasoning === true,
-					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || impliedCost?.input || 0,
@@ -1727,6 +1781,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions("kimi-coding", normalizedId, m);
 			}
 		}
 
@@ -1771,7 +1826,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider,
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
-					...(isKimiK3 ? { thinkingLevelMap: KIMI_K3_THINKING_LEVEL_MAP } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
@@ -1783,6 +1837,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					compat,
 				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -1839,6 +1894,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -1890,6 +1946,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -2394,8 +2451,9 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
-		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
+		applyModelsDevReasoningOptionMetadata(model);
+		applyThinkingLevelMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 	}
 
