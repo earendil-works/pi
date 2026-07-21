@@ -6,9 +6,17 @@ import { AMAZON_BEDROCK_MANTLE_OPENAI_RESPONSES_MODELS } from "./amazon-bedrock-
 const bedrockMantleAuth: ApiKeyAuth = {
 	name: "AWS credentials",
 	resolve: async ({ ctx, credential }) => {
-		if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
+		if (credential?.key) {
+			return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
+		}
 		if (await ctx.env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };
-		if (await ctx.env("AWS_PROFILE")) return { auth: {}, source: "AWS_PROFILE" };
+		if (credential?.env?.AWS_PROFILE ?? (await ctx.env("AWS_PROFILE"))) {
+			return {
+				auth: {},
+				env: credential?.env,
+				source: credential?.env?.AWS_PROFILE ? "stored credential" : "AWS_PROFILE",
+			};
+		}
 		if ((await ctx.env("AWS_ACCESS_KEY_ID")) && (await ctx.env("AWS_SECRET_ACCESS_KEY"))) {
 			return { auth: {}, source: "AWS access keys" };
 		}

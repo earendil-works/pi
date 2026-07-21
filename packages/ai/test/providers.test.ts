@@ -6,6 +6,7 @@ import { createModels, createProvider } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
 import { builtinModels, builtinProviders, getBuiltinModel } from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
+import { amazonBedrockMantleOpenAIResponsesProvider } from "../src/providers/amazon-bedrock-mantle-openai-responses.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { cloudflareAIGatewayProvider } from "../src/providers/cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "../src/providers/cloudflare-workers-ai.ts";
@@ -150,6 +151,26 @@ describe("builtin providers", () => {
 				signal: neverAbortedSignal,
 			}),
 		).toMatchObject({ auth: {}, env: { AWS_PROFILE: "work" } });
+	});
+
+	it("preserves stored Bedrock Mantle credential env", async () => {
+		const auth = amazonBedrockMantleOpenAIResponsesProvider().auth.apiKey!;
+		const env = { AWS_PROFILE: "work", AWS_REGION: "us-west-2" };
+
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({}),
+				credential: { type: "api_key", env },
+				signal: neverAbortedSignal,
+			}),
+		).toEqual({ auth: {}, env, source: "stored credential" });
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({}),
+				credential: { type: "api_key", key: "token", env },
+				signal: neverAbortedSignal,
+			}),
+		).toEqual({ auth: { apiKey: "token" }, env, source: "stored credential" });
 	});
 
 	it("reports bedrock as configured from ambient AWS credentials without an api key", async () => {
