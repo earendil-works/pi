@@ -8,9 +8,7 @@ export interface ExternalEditorOptions {
 	content: string;
 }
 
-export type ExternalEditorResult = { status: "success"; content: string } | { status: "unchanged" };
-
-export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
+export async function editInExternalEditor(options: ExternalEditorOptions): Promise<string | undefined> {
 	const directory = mkdtempSync(join(tmpdir(), "pi-editor-"));
 	const filePath = join(directory, "prompt.md");
 	try {
@@ -31,13 +29,10 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 		});
 
 		if (status !== 0) {
-			return { status: "unchanged" };
+			return undefined;
 		}
 
-		return {
-			status: "success",
-			content: readFileSync(filePath, "utf-8").replace(/\n$/, ""),
-		};
+		return readFileSync(filePath, "utf-8").replace(/\n$/, "");
 	} finally {
 		try {
 			rmSync(directory, { recursive: true, force: true });

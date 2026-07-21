@@ -14,12 +14,12 @@ writeFileSync(
 		filePath,
 		content: readFileSync(filePath, "utf-8"),
 		entries: readdirSync(directory),
-		mode: statSync(directory).mode & 0o777,
+		directoryMode: statSync(directory).mode & 0o777,
 	}),
 	"utf-8",
 );
 
-if (process.argv[3] === "fail") {
+if (process.argv.includes("--fail")) {
 	process.exit(1);
 }
-writeFileSync(filePath, "edited\n", "utf-8");
+writeFileSync(filePath, process.argv.includes("--empty") ? "" : "edited\n", "utf-8");

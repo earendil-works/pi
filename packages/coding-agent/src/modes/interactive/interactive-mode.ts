@@ -3782,12 +3782,12 @@ export class InteractiveMode {
 		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
 		this.ui.stop();
 		try {
-			const result = await editInExternalEditor({
+			const editedContent = await editInExternalEditor({
 				command: editorCmd,
 				content,
 			});
-			if (result.status === "success") {
-				this.editor.setText(result.content);
+			if (editedContent !== undefined) {
+				this.editor.setText(editedContent);
 			}
 		} finally {
 			this.ui.start();
