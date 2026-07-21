@@ -17,6 +17,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../utils/sdk-retries.ts";
 
 const DEFAULT_AZURE_API_VERSION = "v1";
 const AZURE_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]);
@@ -107,7 +108,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: PROVIDER_SDK_MAX_RETRIES,
 			};
 			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);

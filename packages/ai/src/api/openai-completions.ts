@@ -33,6 +33,7 @@ import type {
 	ToolResultMessage,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../utils/sdk-retries.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -219,7 +220,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				// Never enable the OpenAI SDK's own retries: they sleep the full
+				// Retry-After without a cap and without honoring AbortSignal.
+				maxRetries: PROVIDER_SDK_MAX_RETRIES,
 			};
 			const { data: openaiStream, response } = await client.chat.completions
 				.create(params, requestOptions)

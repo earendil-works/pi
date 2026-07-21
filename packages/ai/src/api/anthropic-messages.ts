@@ -39,6 +39,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../utils/sdk-retries.ts";
 
 /**
  * Resolve cache retention preference.
@@ -550,7 +551,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: PROVIDER_SDK_MAX_RETRIES,
 			};
 			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);

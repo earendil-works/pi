@@ -19,6 +19,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../utils/sdk-retries.ts";
 
 interface OpenRouterGeneratedImage {
 	image_url?: string | { url?: string };
@@ -64,7 +65,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 		const requestOptions = {
 			...(options?.signal ? { signal: options.signal } : {}),
 			...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-			maxRetries: options?.maxRetries ?? 0,
+			maxRetries: PROVIDER_SDK_MAX_RETRIES,
 		};
 		const { data: response, response: rawResponse } = await client.chat.completions
 			.create(params as unknown as ChatCompletionCreateParamsNonStreaming, requestOptions)

@@ -24,6 +24,7 @@ import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copi
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../utils/sdk-retries.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
@@ -134,7 +135,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: PROVIDER_SDK_MAX_RETRIES,
 			};
 			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);

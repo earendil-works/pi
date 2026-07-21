@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { Context, Model } from "../src/types.ts";
+import { PROVIDER_SDK_MAX_RETRIES } from "../src/utils/sdk-retries.ts";
 
 const mockState = vi.hoisted(() => ({
 	requestOptions: [] as unknown[],
@@ -74,13 +75,21 @@ describe("openai-completions provider retries", () => {
 		mockState.requestOptions = [];
 	});
 
-	it("disables SDK retries by default", async () => {
+	it("disables OpenAI SDK retries by default", async () => {
 		await consume();
-		expect(mockState.requestOptions).toEqual([expect.objectContaining({ maxRetries: 0 })]);
+		expect(mockState.requestOptions).toEqual([
+			expect.objectContaining({ maxRetries: PROVIDER_SDK_MAX_RETRIES }),
+		]);
 	});
 
-	it("honors explicit provider retry settings", async () => {
+	it("keeps OpenAI SDK retries disabled even when caller requests provider retries", async () => {
+		// OpenAI's client sleeps the full Retry-After without a cap and without
+		// honoring AbortSignal. Passing maxRetries through would freeze the UI
+		// (and Escape) on usage-limit 429s such as OpenCode GoUsageLimitError.
 		await consume({ maxRetries: 2 });
-		expect(mockState.requestOptions).toEqual([expect.objectContaining({ maxRetries: 2 })]);
+		expect(mockState.requestOptions).toEqual([
+			expect.objectContaining({ maxRetries: PROVIDER_SDK_MAX_RETRIES }),
+		]);
+		expect(PROVIDER_SDK_MAX_RETRIES).toBe(0);
 	});
 });
