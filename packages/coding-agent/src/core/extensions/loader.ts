@@ -410,6 +410,10 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
+		// Use a persistent cache directory so jiti compiled output survives
+		// OS temp directory cleanup. Without this, cold starts recompile all
+		// TypeScript extensions via Babel (~340ms for pi-powerline-footer).
+		cache: path.join(getAgentDir(), "cache", "jiti"),
 		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
 		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
 		// In Node.js/dev: use aliases to resolve to node_modules paths
