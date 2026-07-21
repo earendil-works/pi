@@ -8,7 +8,9 @@ export interface ExternalEditorOptions {
 	content: string;
 }
 
-export async function editInExternalEditor(options: ExternalEditorOptions): Promise<string | undefined> {
+export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
+
+export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
 	const directory = mkdtempSync(join(tmpdir(), "pi-editor-"));
 	const filePath = join(directory, "prompt.md");
 	try {
@@ -19,7 +21,7 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
 		// Node/libuv's console input read active after the parent pauses stdin, racing
 		// vim/nvim for the console input buffer until Ctrl+C cancels the pending read.
-		const status = await new Promise<number | null>((resolve) => {
+		const exitCode = await new Promise<number | null>((resolve) => {
 			const child = spawn(editor, [...editorArgs, filePath], {
 				stdio: "inherit",
 				shell: process.platform === "win32",
@@ -28,11 +30,11 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 			child.on("close", (code) => resolve(code));
 		});
 
-		if (status !== 0) {
-			return undefined;
+		if (exitCode !== 0) {
+			return { status: "failed" };
 		}
 
-		return readFileSync(filePath, "utf-8").replace(/\n$/, "");
+		return { status: "complete", content: readFileSync(filePath, "utf-8").replace(/\n$/, "") };
 	} finally {
 		try {
 			rmSync(directory, { recursive: true, force: true });

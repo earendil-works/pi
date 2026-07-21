@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { editInExternalEditor } from "../src/modes/interactive/external-editor.ts";
+import { type ExternalEditorResult, editInExternalEditor } from "../src/modes/interactive/external-editor.ts";
 
 const editorFixturePath = fileURLToPath(new URL("./fixtures/external-editor.mjs", import.meta.url));
 
@@ -15,7 +15,7 @@ interface EditorCapture {
 }
 
 async function runExternalEditor(fixtureFlag?: "--fail" | "--empty"): Promise<{
-	result: string | undefined;
+	result: ExternalEditorResult;
 	capture: EditorCapture;
 }> {
 	const testDirectory = mkdtempSync(join(tmpdir(), "pi-external-editor-test-"));
@@ -37,7 +37,7 @@ describe("editInExternalEditor", () => {
 		const { result, capture } = await runExternalEditor();
 		const directory = dirname(capture.filePath);
 
-		expect(result).toBe("edited");
+		expect(result).toEqual({ status: "complete", content: "edited" });
 		expect(dirname(directory)).toBe(tmpdir());
 		expect(basename(directory)).toMatch(/^pi-editor-.+$/);
 		expect(basename(capture.filePath)).toBe("prompt.md");
@@ -52,12 +52,12 @@ describe("editInExternalEditor", () => {
 	it("keeps the original content when the editor exits unsuccessfully", async () => {
 		const { result, capture } = await runExternalEditor("--fail");
 
-		expect(result).toBeUndefined();
+		expect(result).toEqual({ status: "failed" });
 		expect(existsSync(dirname(capture.filePath))).toBe(false);
 	});
 	it("returns empty content when the editor clears the prompt", async () => {
 		const { result } = await runExternalEditor("--empty");
 
-		expect(result).toBe("");
+		expect(result).toEqual({ status: "complete", content: "" });
 	});
 });

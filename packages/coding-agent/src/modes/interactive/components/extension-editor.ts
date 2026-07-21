@@ -117,12 +117,12 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		const content = this.editor.getText();
 		this.tui.stop();
 		try {
-			const editedContent = await editInExternalEditor({
+			const result = await editInExternalEditor({
 				command: this.externalEditorCommand,
 				content,
 			});
-			if (editedContent !== undefined) {
-				this.editor.setText(editedContent);
+			if (result.status === "complete") {
+				this.editor.setText(result.content);
 			}
 		} finally {
 			this.tui.start();
