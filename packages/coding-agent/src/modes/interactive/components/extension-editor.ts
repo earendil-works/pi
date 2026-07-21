@@ -25,7 +25,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private onCancelCallback: () => void;
 	private tui: TUI;
 	private keybindings: KeybindingsManager;
-	private externalEditorCommand: string | undefined;
+	private externalEditorCommand: string;
 
 	private _focused = false;
 	get focused(): boolean {
@@ -50,7 +50,11 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 
 		this.tui = tui;
 		this.keybindings = keybindings;
-		this.externalEditorCommand = externalEditorCommand;
+		this.externalEditorCommand =
+			externalEditorCommand ||
+			process.env.VISUAL ||
+			process.env.EDITOR ||
+			(process.platform === "win32" ? "notepad" : "nano");
 		this.onSubmitCallback = onSubmit;
 		this.onCancelCallback = onCancel;
 
@@ -76,14 +80,13 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add hint
-		const hasExternalEditor = !!this.getExternalEditorCommand();
 		const hint =
 			keyHint("tui.select.confirm", "submit") +
 			"  " +
 			keyHint("tui.input.newLine", "newline") +
 			"  " +
 			keyHint("tui.select.cancel", "cancel") +
-			(hasExternalEditor ? `  ${keyHint("app.editor.external", "external editor")}` : "");
+			`  ${keyHint("app.editor.external", "external editor")}`;
 		this.addChild(new Text(hint, 1, 0));
 
 		this.addChild(new Spacer(1));
@@ -102,7 +105,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 
 		// External editor (app keybinding)
 		if (this.keybindings.matches(keyData, "app.editor.external")) {
-			this.openExternalEditor();
+			void this.handleOpenExternalEditor();
 			return;
 		}
 
@@ -110,25 +113,12 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.editor.handleInput(keyData);
 	}
 
-	private getExternalEditorCommand(): string | undefined {
-		const editorCmd = this.externalEditorCommand || process.env.VISUAL || process.env.EDITOR;
-		if (editorCmd) {
-			return editorCmd;
-		}
-		return process.platform === "win32" ? "notepad" : "nano";
-	}
-
-	private async openExternalEditor(): Promise<void> {
-		const editorCmd = this.getExternalEditorCommand();
-		if (!editorCmd) {
-			return;
-		}
-
+	private async handleOpenExternalEditor(): Promise<void> {
 		const content = this.editor.getText();
 		this.tui.stop();
 		try {
 			const result = await editInExternalEditor({
-				command: editorCmd,
+				command: this.externalEditorCommand,
 				content,
 			});
 			if (result.status === "success") {
