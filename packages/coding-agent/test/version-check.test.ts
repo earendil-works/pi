@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
+	formatNetworkErrorDetails,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
+	isTransientNetworkError,
 } from "../src/utils/version-check.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
@@ -87,5 +89,24 @@ describe("version checks", () => {
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBeUndefined();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("detects transient network errors including dual-stack AggregateError causes", () => {
+		const timedOut = Object.assign(new Error("connect ETIMEDOUT 1.2.3.4:443"), { code: "ETIMEDOUT" });
+		const unreachable = Object.assign(new Error("connect ENETUNREACH ::1:443"), { code: "ENETUNREACH" });
+		const aggregate = new AggregateError([timedOut, unreachable], "");
+		const fetchFailed = new Error("fetch failed", { cause: aggregate });
+
+		expect(isTransientNetworkError(fetchFailed)).toBe(true);
+		expect(isTransientNetworkError(new Error("invalid json"))).toBe(false);
+	});
+
+	it("formats nested network error causes for user-facing messages", () => {
+		const timedOut = Object.assign(new Error("connect ETIMEDOUT 1.2.3.4:443"), { code: "ETIMEDOUT" });
+		const fetchFailed = new Error("fetch failed", { cause: timedOut });
+
+		expect(formatNetworkErrorDetails(fetchFailed)).toBe(
+			"fetch failed; cause=connect ETIMEDOUT 1.2.3.4:443; code=ETIMEDOUT",
+		);
 	});
 });

@@ -4,10 +4,82 @@ import { getPiUserAgent } from "./pi-user-agent.ts";
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
+/** Network error codes that are usually worth a single immediate retry. */
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+	"EAI_AGAIN",
+	"ECONNABORTED",
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"EHOSTUNREACH",
+	"ENETUNREACH",
+	"EPIPE",
+	"ETIMEDOUT",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_HEADERS_TIMEOUT",
+	"UND_ERR_SOCKET",
+]);
+
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
 	note?: string;
+}
+
+function collectErrorCodes(error: unknown, depth = 0, codes: string[] = []): string[] {
+	if (depth > 4 || error === undefined || error === null) {
+		return codes;
+	}
+	if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
+		codes.push(error.code);
+	}
+	if (error instanceof AggregateError) {
+		for (const nested of error.errors) {
+			collectErrorCodes(nested, depth + 1, codes);
+		}
+	}
+	if (error instanceof Error && error.cause !== undefined) {
+		collectErrorCodes(error.cause, depth + 1, codes);
+	}
+	return codes;
+}
+
+/**
+ * True for connection-setup / transport failures that often succeed on an immediate retry.
+ * Used by self-update; startup version checks stay fail-soft and do not retry.
+ */
+export function isTransientNetworkError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+	if (error.name === "TimeoutError" || error.name === "AbortError") {
+		return true;
+	}
+	if (error.message === "fetch failed" || /\b(ETIMEDOUT|ECONNRESET|ENETUNREACH|EAI_AGAIN)\b/.test(error.message)) {
+		return true;
+	}
+	return collectErrorCodes(error).some((code) => TRANSIENT_NETWORK_ERROR_CODES.has(code));
+}
+
+/** Flatten message + errno codes + cause chain for user-facing update errors. */
+export function formatNetworkErrorDetails(error: unknown, depth = 0): string {
+	if (depth > 4) {
+		return "...";
+	}
+	if (!(error instanceof Error)) {
+		return String(error);
+	}
+
+	const parts: string[] = [error.message];
+	if ("code" in error && typeof error.code === "string" && error.code) {
+		parts.push(`code=${error.code}`);
+	}
+	if (error instanceof AggregateError && error.errors.length > 0) {
+		const nested = error.errors.map((nestedError) => formatNetworkErrorDetails(nestedError, depth + 1)).join("; ");
+		parts.push(`errors=[${nested}]`);
+	} else if (error.cause !== undefined) {
+		parts.push(`cause=${formatNetworkErrorDetails(error.cause, depth + 1)}`);
+	}
+	return parts.join("; ");
 }
 
 export function comparePackageVersions(leftVersion: string, rightVersion: string): number | undefined {
