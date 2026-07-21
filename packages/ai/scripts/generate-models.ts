@@ -204,6 +204,7 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
+const BEDROCK_MANTLE_BASE_URL = "https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_HEADERS = {
 	"NVCF-POLL-SECONDS": "3600",
@@ -1014,13 +1015,6 @@ function getBedrockBaseUrl(modelId: string): string {
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
 }
 
-// Bedrock Mantle (OpenAI-compatible Responses API) is currently offered in
-// us-east-2 only. Pinning the region here keeps the bearer-token scope aligned
-// with the endpoint regardless of the caller's AWS_REGION.
-function getBedrockMantleBaseUrl(): string {
-	return "https://bedrock-mantle.us-east-2.api.aws/openai/v1";
-}
-
 function isBedrockMantleOpenAIResponsesModel(model: ModelsDevModel): boolean {
 	const api = model.provider?.api ?? "";
 	// Only the OpenAI-compatible Responses surface lives at `/openai/v1`. Other Mantle
@@ -1414,7 +1408,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						name: m.name || id,
 						api: "amazon-bedrock-mantle-openai-responses" as const,
 						provider: "amazon-bedrock-mantle-openai-responses" as const,
-						baseUrl: getBedrockMantleBaseUrl(),
+						baseUrl: BEDROCK_MANTLE_BASE_URL,
 						reasoning: m.reasoning === true,
 						input: (m.modalities?.input?.includes("image")
 							? ["text", "image"]

@@ -255,9 +255,12 @@ Amazon Bedrock Mantle exposes select models through an OpenAI-compatible Respons
 # Any Amazon Bedrock credential source works (profile, IAM keys, bearer token,
 # ECS task roles, IRSA).
 export AWS_PROFILE=your-profile
+
+# Optional. AWS_DEFAULT_REGION is also supported.
+export AWS_REGION=us-west-2
 ```
 
-Models are pinned to the region where they are offered (currently `us-east-2`), so `AWS_REGION` is not required.
+Built-in models use the requested region when available there. If the selected model is unavailable in that region, pi falls back to a supported region. A region is not required.
 
 ```bash
 pi --provider amazon-bedrock-mantle-openai-responses --model openai.gpt-5.5

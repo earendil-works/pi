@@ -14,6 +14,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { resolveBedrockMantleEndpoint } from "./amazon-bedrock-mantle-region.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -23,11 +24,11 @@ const TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", API])
 export interface AmazonBedrockMantleOpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	/** AWS region for the Bedrock Mantle endpoint and SigV4 signing scope. Falls back to AWS_REGION / AWS_DEFAULT_REGION. */
+	/** AWS region for the Bedrock Mantle endpoint and SigV4 signing scope. Unsupported model regions use a supported fallback. */
 	region?: string;
 	/** AWS named profile used to resolve credentials. Falls back to AWS_PROFILE. */
 	profile?: string;
-	/** Override the OpenAI-compatible base URL. Defaults to https://bedrock-mantle.<region>.api.aws/openai/v1. */
+	/** Override the OpenAI-compatible base URL. The built-in URL materializes its AWS region at request time. */
 	baseUrl?: string;
 	/** Long-lived Bedrock API key (bearer token). When set, it is used directly instead of AWS SigV4 credential signing. */
 	bearerToken?: string;
@@ -49,33 +50,15 @@ function formatError(error: unknown): string {
 	}
 }
 
-function getStandardBedrockMantleRegionFromHost(baseUrl: string | undefined): string | undefined {
-	if (!baseUrl) return undefined;
-	try {
-		const { hostname } = new URL(baseUrl);
-		const match = hostname.toLowerCase().match(/^bedrock-mantle\.([a-z0-9-]+)\.api\.aws$/);
-		return match?.[1];
-	} catch {
-		return undefined;
-	}
-}
-
 function buildProviderOptions(
 	model: Model<"amazon-bedrock-mantle-openai-responses">,
 	options?: AmazonBedrockMantleOpenAIResponsesOptions,
 ): BedrockProviderOptions {
-	const baseUrl = options?.baseUrl?.trim() || model.baseUrl?.trim() || undefined;
-	// The Mantle endpoint host determines the SigV4 signing region, so derive the
-	// region from the base URL first to keep the endpoint and signature in sync.
-	const region =
-		getStandardBedrockMantleRegionFromHost(baseUrl) ||
-		options?.region ||
-		getProviderEnvValue("AWS_REGION", options?.env) ||
-		getProviderEnvValue("AWS_DEFAULT_REGION", options?.env) ||
-		undefined;
+	const configuredBaseUrl = options?.baseUrl?.trim() || model.baseUrl.trim();
+	const { baseUrl, region } = resolveBedrockMantleEndpoint(model.id, configuredBaseUrl, options);
 	const endpoint: BedrockProviderOptions = {
 		...(region ? { region } : {}),
-		...(baseUrl ? { baseURL: baseUrl } : {}),
+		baseURL: baseUrl,
 	};
 
 	// Bearer and AWS credential modes are mutually exclusive in `bedrock()`; prefer

@@ -5,7 +5,7 @@
 ### Added
 
 - Added transcript usage notices for compaction and branch summaries when cache miss notices are enabled.
-- Added Amazon Bedrock Mantle as a selectable built-in provider (`amazon-bedrock-mantle-openai-responses`) with GPT-5.4, GPT-5.5, and GPT-5.6 Sol, Terra, and Luna models, including `max` thinking level support for GPT-5.6, reusing Amazon Bedrock AWS credentials. See [Providers](docs/providers.md) ([#6216](https://github.com/earendil-works/pi/pull/6216) by [@unexge](https://github.com/unexge)).
+- Added Amazon Bedrock Mantle as a selectable built-in provider (`amazon-bedrock-mantle-openai-responses`) with GPT-5.4, GPT-5.5, and GPT-5.6 Sol, Terra, and Luna models, including `max` thinking level support for GPT-5.6, region-aware endpoint routing with model-specific fallbacks, reusing Amazon Bedrock AWS credentials. See [Providers](docs/providers.md) ([#6216](https://github.com/earendil-works/pi/pull/6216) by [@unexge](https://github.com/unexge)).
 
 ### Fixed
 
