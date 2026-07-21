@@ -57,8 +57,8 @@ describe("editInExternalEditor", () => {
 		const tempRoot = dirname(directory);
 
 		expect(result).toEqual({ status: "complete", content: "edited" });
-		expect(tempRoot).toBe(join(agentDir, "tmp", "external-editor"));
-		expect(basename(directory)).toMatch(/^pi-editor-.+$/);
+		expect(tempRoot).toBe(join(agentDir, "tmp"));
+		expect(basename(directory)).toMatch(/^external-editor-.+$/);
 		expect(basename(capture.filePath)).toBe("prompt.md");
 		expect(capture.entries).toEqual(["prompt.md"]);
 		expect(capture.content).toBe("original");
