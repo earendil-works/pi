@@ -20,6 +20,7 @@ import { buildBaseOptions } from "./simple-options.ts";
 
 const API = "amazon-bedrock-mantle-openai-responses";
 const TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode", API]);
+const MIN_OUTPUT_TOKENS = 16;
 
 export interface AmazonBedrockMantleOpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -206,7 +207,7 @@ function buildParams(
 	};
 
 	if (options?.maxTokens) {
-		params.max_output_tokens = options.maxTokens;
+		params.max_output_tokens = Math.max(options.maxTokens, MIN_OUTPUT_TOKENS);
 	} else if (model.maxTokens) {
 		// Bedrock Mantle can return an empty completed response when reasoning and
 		// encrypted reasoning replay are requested without an output cap. Always send

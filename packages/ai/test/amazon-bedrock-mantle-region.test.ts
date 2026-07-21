@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type AmazonBedrockMantleOpenAIResponsesOptions,
 	stream as streamAmazonBedrockMantleOpenAIResponses,
+	streamSimple as streamSimpleAmazonBedrockMantleOpenAIResponses,
 } from "../src/api/amazon-bedrock-mantle-openai-responses.ts";
 import { resolveBedrockMantleEndpoint } from "../src/api/amazon-bedrock-mantle-region.ts";
 import { AMAZON_BEDROCK_MANTLE_OPENAI_RESPONSES_MODELS } from "../src/providers/amazon-bedrock-mantle-openai-responses.models.ts";
@@ -62,6 +63,23 @@ describe("Amazon Bedrock Mantle region routing", () => {
 		for (const model of Object.values(AMAZON_BEDROCK_MANTLE_OPENAI_RESPONSES_MODELS)) {
 			expect(model.baseUrl).toBe(TEMPLATE_BASE_URL);
 		}
+	});
+
+	it("clamps max_output_tokens to the endpoint minimum", async () => {
+		const model = AMAZON_BEDROCK_MANTLE_OPENAI_RESPONSES_MODELS["openai.gpt-5.4"];
+		let payload: unknown;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(completedResponse());
+
+		const result = await streamSimpleAmazonBedrockMantleOpenAIResponses(model, context, {
+			apiKey: "test-token",
+			maxTokens: 1,
+			onPayload: (request) => {
+				payload = request;
+			},
+		}).result();
+
+		expect(result.stopReason, result.errorMessage).toBe("stop");
+		expect(payload).toMatchObject({ max_output_tokens: 16 });
 	});
 
 	it("uses the requested region when the model is available there", async () => {
