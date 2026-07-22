@@ -1480,7 +1480,7 @@ async function processWebSocketStream(
 			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
 				includeSystemPrompt: false,
 				grammarToolInputProperties,
-			}).filter((item) => item.type !== "function_call_output");
+			}).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,
 				lastResponseId: output.responseId,

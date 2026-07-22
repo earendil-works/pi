@@ -1658,10 +1658,6 @@ describe("openai-codex streaming", () => {
 	it("sends only response input deltas in websocket-cached mode", async () => {
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
-		const responses = [
-			{ responseId: "resp_1", messageId: "msg_1", text: "Hello" },
-			{ responseId: "resp_2", messageId: "msg_2", text: "Done" },
-		];
 
 		class MockWebSocket {
 			static OPEN = 1;
@@ -1687,36 +1683,41 @@ describe("openai-codex streaming", () => {
 
 			send(data: string): void {
 				sentBodies.push(JSON.parse(data));
-				const response = responses.shift();
-				if (!response) throw new Error("unexpected websocket request");
+				const responseId = `resp_${sentBodies.length}`;
+				const outputEvents =
+					sentBodies.length === 1
+						? [
+								{
+									type: "response.output_item.added",
+									item: {
+										type: "custom_tool_call",
+										id: "ctc_1",
+										call_id: "call_1",
+										name: "sample_tool",
+										input: "",
+									},
+								},
+								{ type: "response.custom_tool_call_input.delta", item_id: "ctc_1", delta: "abc" },
+								{ type: "response.custom_tool_call_input.done", item_id: "ctc_1", input: "abc" },
+								{
+									type: "response.output_item.done",
+									item: {
+										type: "custom_tool_call",
+										id: "ctc_1",
+										call_id: "call_1",
+										name: "sample_tool",
+										input: "abc",
+									},
+								},
+							]
+						: [];
 				const events = [
-					{ type: "response.created", response: { id: response.responseId } },
-					{
-						type: "response.output_item.added",
-						item: {
-							type: "message",
-							id: response.messageId,
-							role: "assistant",
-							status: "in_progress",
-							content: [],
-						},
-					},
-					{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
-					{ type: "response.output_text.delta", delta: response.text },
-					{
-						type: "response.output_item.done",
-						item: {
-							type: "message",
-							id: response.messageId,
-							role: "assistant",
-							status: "completed",
-							content: [{ type: "output_text", text: response.text }],
-						},
-					},
+					{ type: "response.created", response: { id: responseId } },
+					...outputEvents,
 					{
 						type: "response.completed",
 						response: {
-							id: response.responseId,
+							id: responseId,
 							status: "completed",
 							usage: {
 								input_tokens: 5,
@@ -1758,10 +1759,19 @@ describe("openai-codex streaming", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 400000,
 			maxTokens: 128000,
+			compat: { supportsGrammarTools: true },
 		};
 		const firstContext: Context = {
 			systemPrompt: "You are a helpful assistant.",
-			messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+			messages: [{ role: "user", content: "Use the tool", timestamp: 1 }],
+			tools: [
+				{
+					name: "sample_tool",
+					description: "Sample tool",
+					parameters: Type.Object({ payload: Type.String() }),
+					constrainedSampling: { type: "grammar", variants: { openai_lark: "start: /[a-z]+/" } },
+				},
+			],
 		};
 
 		const first = await streamOpenAICodexResponses(model, firstContext, {
@@ -1771,8 +1781,20 @@ describe("openai-codex streaming", () => {
 		}).result();
 
 		const secondContext: Context = {
-			systemPrompt: "You are a helpful assistant.",
-			messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
+			...firstContext,
+			messages: [
+				...firstContext.messages,
+				first,
+				{
+					role: "toolResult",
+					toolCallId: "call_1|ctc_1",
+					toolName: "sample_tool",
+					content: [{ type: "text", text: "real result" }],
+					isError: false,
+					timestamp: 2,
+				},
+				{ role: "user", content: "Now finish", timestamp: 3 },
+			],
 		};
 		await streamOpenAICodexResponses(model, secondContext, {
 			apiKey: token,
@@ -1785,10 +1807,13 @@ describe("openai-codex streaming", () => {
 		const secondBody = sentBodies[1] as { input: unknown[]; previous_response_id?: string; store?: boolean };
 		expect(firstBody.store).toBe(false);
 		expect(firstBody.previous_response_id).toBeUndefined();
-		expect(firstBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Say hello" }] }]);
+		expect(firstBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Use the tool" }] }]);
 		expect(secondBody.store).toBe(false);
 		expect(secondBody.previous_response_id).toBe("resp_1");
-		expect(secondBody.input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Now finish" }] }]);
+		expect(secondBody.input).toEqual([
+			{ type: "custom_tool_call_output", call_id: "call_1", output: "real result" },
+			{ role: "user", content: [{ type: "input_text", text: "Now finish" }] },
+		]);
 		expect(getOpenAICodexWebSocketDebugStats("session-1")).toMatchObject({
 			requests: 2,
 			connectionsCreated: 1,
@@ -1797,7 +1822,7 @@ describe("openai-codex streaming", () => {
 			storeTrueRequests: 0,
 			fullContextRequests: 1,
 			deltaRequests: 1,
-			lastDeltaInputItems: 1,
+			lastDeltaInputItems: 2,
 			lastPreviousResponseId: "resp_1",
 		});
 	});

@@ -287,7 +287,7 @@ function buildParams(
 
 	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools, {
-			supportsStrictMode: true,
+			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 			supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
 		});
 	}

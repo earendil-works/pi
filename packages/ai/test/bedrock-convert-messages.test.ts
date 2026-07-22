@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
@@ -65,6 +66,25 @@ async function capturePayload(context: Context): Promise<unknown> {
 	}
 	return capturedPayload;
 }
+
+describe("Bedrock constrained sampling", () => {
+	it("enables native strict tool use for constrained tools", async () => {
+		const payload = await capturePayload({
+			messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }],
+			tools: [
+				{
+					name: "lookup",
+					description: "Look up a value",
+					parameters: Type.Object({ value: Type.String() }),
+					constrainedSampling: { type: "json_schema", strict: "require" },
+				},
+			],
+		});
+		const toolConfig = (payload as { toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> } }).toolConfig;
+
+		expect(toolConfig.tools[0].toolSpec.strict).toBe(true);
+	});
+});
 
 describe("bedrock convertMessages skips unknown content types", () => {
 	it("skips unknown user content blocks instead of throwing", async () => {
