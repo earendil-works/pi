@@ -2,71 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/fireworks.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const FIREWORKS_MODELS = values as {
-	"accounts/fireworks/models/deepseek-v4-flash": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/deepseek-v4-flash";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/deepseek-v4-pro": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/deepseek-v4-pro";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/glm-5p1": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/glm-5p1";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/glm-5p2": Model<"openai-completions"> & {
-		id: "accounts/fireworks/models/glm-5p2";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/gpt-oss-120b": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/gpt-oss-120b";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/gpt-oss-20b": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/gpt-oss-20b";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/kimi-k2p6": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/kimi-k2p6";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/kimi-k2p7-code": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/kimi-k2p7-code";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/minimax-m2p7": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/minimax-m2p7";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/minimax-m3": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/minimax-m3";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/models/qwen3p7-plus": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/models/qwen3p7-plus";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/glm-5p1-fast": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/routers/glm-5p1-fast";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/glm-5p2-fast": Model<"openai-completions"> & {
-		id: "accounts/fireworks/routers/glm-5p2-fast";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/kimi-k2p6-fast": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/routers/kimi-k2p6-fast";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/kimi-k2p6-turbo": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/routers/kimi-k2p6-turbo";
-		provider: "fireworks";
-	};
-	"accounts/fireworks/routers/kimi-k2p7-code-fast": Model<"anthropic-messages"> & {
-		id: "accounts/fireworks/routers/kimi-k2p7-code-fast";
-		provider: "fireworks";
-	};
-};
+export const FIREWORKS_MODELS: ModelCatalog<typeof values, "fireworks"> =
+	flattenModelCatalog("fireworks", values);

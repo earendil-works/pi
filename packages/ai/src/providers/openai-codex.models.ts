@@ -2,35 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/openai-codex.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const OPENAI_CODEX_MODELS = values as {
-	"gpt-5.3-codex-spark": Model<"openai-codex-responses"> & {
-		id: "gpt-5.3-codex-spark";
-		provider: "openai-codex";
-	};
-	"gpt-5.4": Model<"openai-codex-responses"> & {
-		id: "gpt-5.4";
-		provider: "openai-codex";
-	};
-	"gpt-5.4-mini": Model<"openai-codex-responses"> & {
-		id: "gpt-5.4-mini";
-		provider: "openai-codex";
-	};
-	"gpt-5.5": Model<"openai-codex-responses"> & {
-		id: "gpt-5.5";
-		provider: "openai-codex";
-	};
-	"gpt-5.6-luna": Model<"openai-codex-responses"> & {
-		id: "gpt-5.6-luna";
-		provider: "openai-codex";
-	};
-	"gpt-5.6-sol": Model<"openai-codex-responses"> & {
-		id: "gpt-5.6-sol";
-		provider: "openai-codex";
-	};
-	"gpt-5.6-terra": Model<"openai-codex-responses"> & {
-		id: "gpt-5.6-terra";
-		provider: "openai-codex";
-	};
-};
+export const OPENAI_CODEX_MODELS: ModelCatalog<typeof values, "openai-codex"> =
+	flattenModelCatalog("openai-codex", values);

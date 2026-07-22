@@ -2,71 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/google.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const GOOGLE_MODELS = values as {
-	"gemini-2.0-flash": Model<"google-generative-ai"> & {
-		id: "gemini-2.0-flash";
-		provider: "google";
-	};
-	"gemini-2.0-flash-lite": Model<"google-generative-ai"> & {
-		id: "gemini-2.0-flash-lite";
-		provider: "google";
-	};
-	"gemini-2.5-flash": Model<"google-generative-ai"> & {
-		id: "gemini-2.5-flash";
-		provider: "google";
-	};
-	"gemini-2.5-flash-lite": Model<"google-generative-ai"> & {
-		id: "gemini-2.5-flash-lite";
-		provider: "google";
-	};
-	"gemini-2.5-pro": Model<"google-generative-ai"> & {
-		id: "gemini-2.5-pro";
-		provider: "google";
-	};
-	"gemini-3-flash-preview": Model<"google-generative-ai"> & {
-		id: "gemini-3-flash-preview";
-		provider: "google";
-	};
-	"gemini-3-pro-preview": Model<"google-generative-ai"> & {
-		id: "gemini-3-pro-preview";
-		provider: "google";
-	};
-	"gemini-3.1-flash-lite": Model<"google-generative-ai"> & {
-		id: "gemini-3.1-flash-lite";
-		provider: "google";
-	};
-	"gemini-3.1-flash-lite-preview": Model<"google-generative-ai"> & {
-		id: "gemini-3.1-flash-lite-preview";
-		provider: "google";
-	};
-	"gemini-3.1-pro-preview": Model<"google-generative-ai"> & {
-		id: "gemini-3.1-pro-preview";
-		provider: "google";
-	};
-	"gemini-3.1-pro-preview-customtools": Model<"google-generative-ai"> & {
-		id: "gemini-3.1-pro-preview-customtools";
-		provider: "google";
-	};
-	"gemini-3.5-flash": Model<"google-generative-ai"> & {
-		id: "gemini-3.5-flash";
-		provider: "google";
-	};
-	"gemini-flash-latest": Model<"google-generative-ai"> & {
-		id: "gemini-flash-latest";
-		provider: "google";
-	};
-	"gemini-flash-lite-latest": Model<"google-generative-ai"> & {
-		id: "gemini-flash-lite-latest";
-		provider: "google";
-	};
-	"gemma-4-26b-a4b-it": Model<"google-generative-ai"> & {
-		id: "gemma-4-26b-a4b-it";
-		provider: "google";
-	};
-	"gemma-4-31b-it": Model<"google-generative-ai"> & {
-		id: "gemma-4-31b-it";
-		provider: "google";
-	};
-};
+export const GOOGLE_MODELS: ModelCatalog<typeof values, "google"> =
+	flattenModelCatalog("google", values);

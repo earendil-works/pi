@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/minimax.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const MINIMAX_MODELS = values as {
-	"MiniMax-M2.7": Model<"anthropic-messages"> & {
-		id: "MiniMax-M2.7";
-		provider: "minimax";
-	};
-	"MiniMax-M2.7-highspeed": Model<"anthropic-messages"> & {
-		id: "MiniMax-M2.7-highspeed";
-		provider: "minimax";
-	};
-	"MiniMax-M3": Model<"anthropic-messages"> & {
-		id: "MiniMax-M3";
-		provider: "minimax";
-	};
-};
+export const MINIMAX_MODELS: ModelCatalog<typeof values, "minimax"> =
+	flattenModelCatalog("minimax", values);

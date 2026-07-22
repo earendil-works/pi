@@ -5,6 +5,7 @@ import {
 	fauxProvider,
 	fauxToolCall,
 	type RegisterFauxProviderOptions,
+	type Usage,
 } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
@@ -14,7 +15,7 @@ import { InMemorySessionStorage } from "../../src/harness/session/memory-storage
 import { Session } from "../../src/harness/session/session.ts";
 import type { PromptTemplate, Skill } from "../../src/harness/types.ts";
 import type { AgentMessage, AgentTool } from "../../src/types.ts";
-import { calculateTool } from "../utils/calculate.ts";
+import { calculateTool, createCalculateToolWithUsage } from "../utils/calculate.ts";
 import { getCurrentTimeTool } from "../utils/get-current-time.ts";
 
 interface AppSkill extends Skill {
@@ -58,6 +59,34 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 function getReasoning(options: unknown): unknown {
 	if (!options || typeof options !== "object" || !("reasoning" in options)) return undefined;
 	return options.reasoning;
+}
+
+function createUsage(input: number, output: number, cacheRead = 0, cacheWrite = 0): Usage {
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		totalTokens: input + output + cacheRead + cacheWrite,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+function createUserMessage(text: string): AgentMessage {
+	return { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
+}
+
+function createAssistantMessage(text: string): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "faux",
+		provider: "faux",
+		model: "faux-1",
+		usage: createUsage(100, 50),
+		stopReason: "stop",
+		timestamp: Date.now(),
+	};
 }
 
 describe("AgentHarness", () => {
@@ -427,14 +456,18 @@ describe("AgentHarness", () => {
 				}),
 		]);
 		const session = new Session(new InMemorySessionStorage());
+		const toolUsage = createUsage(1, 2, 3, 4);
+		const patchedToolUsage = createUsage(5, 6, 7, 8);
+		const calculateToolWithUsage = createCalculateToolWithUsage(toolUsage);
 		const harness = new AgentHarness({
 			models,
 			env: new NodeExecutionEnv({ cwd: process.cwd() }),
 			session,
 			model: registration.getModel(),
-			tools: [calculateTool],
+			tools: [calculateToolWithUsage],
 		});
 		const seenToolCalls: Array<{ id: string; name: string; expression: unknown }> = [];
+		let seenToolUsage: Usage | undefined;
 		harness.on("tool_call", (event) => {
 			seenToolCalls.push({ id: event.toolCallId, name: event.toolName, expression: event.input.expression });
 			return undefined;
@@ -442,9 +475,11 @@ describe("AgentHarness", () => {
 		harness.on("tool_result", (event) => {
 			expect(event.toolCallId).toBe("call-1");
 			expect(event.toolName).toBe("calculate");
+			seenToolUsage = event.usage;
 			return {
 				content: [{ type: "text", text: "patched result" }],
 				details: { patched: true },
+				usage: patchedToolUsage,
 				terminate: true,
 			};
 		});
@@ -455,14 +490,281 @@ describe("AgentHarness", () => {
 			(entry) => entry.type === "message" && entry.message.role === "toolResult",
 		);
 		expect(seenToolCalls).toEqual([{ id: "call-1", name: "calculate", expression: "2 + 2" }]);
+		expect(seenToolUsage).toEqual(toolUsage);
 		expect(toolResult).toMatchObject({
 			type: "message",
 			message: {
 				role: "toolResult",
 				content: [{ type: "text", text: "patched result" }],
 				details: { patched: true },
+				usage: patchedToolUsage,
 			},
 		});
+	});
+
+	it("persists generated compaction usage", async () => {
+		const registration = newFaux();
+		registration.setResponses([fauxAssistantMessage("## Goal\nTest summary")]);
+		const session = new Session(new InMemorySessionStorage());
+		await session.appendMessage(createUserMessage("one"));
+		await session.appendMessage(createAssistantMessage("two"));
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+
+		const result = await harness.compact();
+		const compaction = (await session.getEntries()).find((entry) => entry.type === "compaction");
+
+		expect(result.usage?.totalTokens).toBeGreaterThan(0);
+		expect(compaction?.type === "compaction" ? compaction.usage : undefined).toEqual(result.usage);
+	});
+
+	it("persists hook-provided compaction usage", async () => {
+		const registration = newFaux();
+		const usage = createUsage(5, 6, 7, 8);
+		const session = new Session(new InMemorySessionStorage());
+		await session.appendMessage(createUserMessage("one"));
+		await session.appendMessage(createAssistantMessage("two"));
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+		harness.on("session_before_compact", (event) => ({
+			compaction: {
+				summary: "hook summary",
+				firstKeptEntryId: event.preparation.firstKeptEntryId,
+				tokensBefore: event.preparation.tokensBefore,
+				usage,
+			},
+		}));
+
+		const result = await harness.compact();
+		const compaction = (await session.getEntries()).find((entry) => entry.type === "compaction");
+
+		expect(result.usage).toEqual(usage);
+		expect(compaction?.type === "compaction" ? compaction.usage : undefined).toEqual(usage);
+	});
+
+	describe("summarization retries", () => {
+		it("retries transient compaction errors and emits retry events", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				},
+				() => {
+					calls++;
+					return fauxAssistantMessage("## Goal\nRecovered summary");
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			const result = await harness.compact();
+
+			expect(result.summary).toContain("Recovered summary");
+			expect(calls).toBe(2);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_finished:compaction",
+			]);
+		});
+
+		it("does not retry non-retryable compaction errors", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" });
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(event.type);
+				}
+			});
+
+			await expect(harness.compact()).rejects.toThrow("insufficient_quota");
+
+			expect(calls).toBe(1);
+			expect(retryEvents).toEqual([]);
+		});
+
+		it("exhausts transient compaction retries after maxRetries failures", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses(
+				Array.from({ length: 4 }, () => () => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				}),
+			);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			await expect(harness.compact()).rejects.toThrow("terminated");
+
+			expect(calls).toBe(4);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_finished:compaction",
+			]);
+		});
+
+		it("retries transient branch summary errors and emits retry events", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				},
+				() => {
+					calls++;
+					return fauxAssistantMessage("## Goal\nRecovered branch summary");
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			const targetId = await session.appendMessage(createUserMessage("first branch"));
+			await session.appendMessage(createAssistantMessage("first reply"));
+			await session.appendMessage(createUserMessage("abandoned work"));
+			await session.appendMessage(createAssistantMessage("abandoned reply"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			const result = await harness.navigateTree(targetId, { summarize: true });
+
+			expect(result.summaryEntry?.summary).toContain("Recovered branch summary");
+			expect(calls).toBe(2);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:branch_summary",
+				"retry_attempt_start:branch_summary",
+				"retry_finished:branch_summary",
+			]);
+		});
+	});
+
+	it("persists generated branch summary usage", async () => {
+		const registration = newFaux();
+		registration.setResponses([fauxAssistantMessage("## Goal\nBranch summary")]);
+		const session = new Session(new InMemorySessionStorage());
+		const targetId = await session.appendMessage(createUserMessage("first branch"));
+		await session.appendMessage(createAssistantMessage("first reply"));
+		await session.appendMessage(createUserMessage("abandoned work"));
+		await session.appendMessage(createAssistantMessage("abandoned reply"));
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+
+		const result = await harness.navigateTree(targetId, { summarize: true });
+
+		expect(result.summaryEntry?.usage?.totalTokens).toBeGreaterThan(0);
+	});
+
+	it("persists hook-provided branch summary usage", async () => {
+		const registration = newFaux();
+		const usage = createUsage(13, 14, 15, 16);
+		const session = new Session(new InMemorySessionStorage());
+		const targetId = await session.appendMessage(createUserMessage("first branch"));
+		await session.appendMessage(createAssistantMessage("first reply"));
+		await session.appendMessage(createUserMessage("abandoned work"));
+		await session.appendMessage(createAssistantMessage("abandoned reply"));
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+		harness.on("session_before_tree", () => ({
+			summary: { summary: "hook branch summary", usage },
+		}));
+
+		const result = await harness.navigateTree(targetId, { summarize: true });
+
+		expect(result.summaryEntry?.usage).toEqual(usage);
 	});
 
 	it("preserves app tool types for getters and update events", async () => {

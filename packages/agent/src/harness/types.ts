@@ -1,4 +1,13 @@
-import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
+import type {
+	ImageContent,
+	Model,
+	Models,
+	RetryPolicy,
+	SimpleStreamOptions,
+	TextContent,
+	Transport,
+	Usage,
+} from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
 import type { Session } from "./session/session.ts";
 
@@ -362,9 +371,11 @@ export interface ActiveToolsChangeEntry extends SessionTreeEntryBase {
 export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
 	type: "compaction";
 	summary: string;
-	firstKeptEntryId: string;
+	firstKeptEntryId?: string;
 	tokensBefore: number;
+	retainedTail?: AgentMessage[];
 	details?: T;
+	usage?: Usage;
 	fromHook?: boolean;
 }
 
@@ -373,6 +384,7 @@ export interface BranchSummaryEntry<T = unknown> extends SessionTreeEntryBase {
 	fromId: string;
 	summary: string;
 	details?: T;
+	usage?: Usage;
 	fromHook?: boolean;
 }
 
@@ -426,6 +438,14 @@ export interface SessionContext {
 	activeToolNames: string[] | null;
 }
 
+export interface SessionStats {
+	messageCount: number;
+	cachedTokens: number;
+	uncachedTokens: number;
+	totalTokens: number;
+	costTotal: number;
+}
+
 export interface SessionMetadata {
 	id: string;
 	createdAt: string;
@@ -436,6 +456,11 @@ export interface JsonlSessionMetadata extends SessionMetadata {
 	path: string;
 	parentSessionPath?: string;
 	metadata?: Record<string, unknown>;
+}
+
+export interface SessionEntryCursorOptions {
+	afterEntrySeq?: number;
+	limit?: number;
 }
 
 export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {
@@ -450,8 +475,10 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		type: TType,
 	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>>;
 	getLabel(id: string): Promise<string | undefined>;
-	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
-	getEntries(): Promise<SessionTreeEntry[]>;
+	getSessionName(): Promise<string | undefined>;
+	getSessionStats(): Promise<SessionStats>;
+	getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]>;
+	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]>;
 }
 
 export type { Session } from "./session/session.ts";
@@ -572,6 +599,7 @@ export interface ToolResultEvent {
 	content: Array<TextContent | ImageContent>;
 	details: unknown;
 	isError: boolean;
+	usage?: Usage;
 }
 
 export interface SessionBeforeCompactEvent {
@@ -600,6 +628,25 @@ export interface SessionTreeEvent {
 	oldLeafId: string | null;
 	summaryEntry?: BranchSummaryEntry;
 	fromHook?: boolean;
+}
+
+export interface RetryScheduledEvent {
+	type: "retry_scheduled";
+	operation: "compaction" | "branch_summary";
+	attempt: number;
+	maxAttempts: number;
+	delayMs: number;
+	errorMessage: string;
+}
+
+export interface RetryAttemptStartEvent {
+	type: "retry_attempt_start";
+	operation: "compaction" | "branch_summary";
+}
+
+export interface RetryFinishedEvent {
+	type: "retry_finished";
+	operation: "compaction" | "branch_summary";
 }
 
 export interface ModelUpdateEvent {
@@ -652,6 +699,9 @@ export type AgentHarnessOwnEvent<
 	| SessionCompactEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent
+	| RetryScheduledEvent
+	| RetryAttemptStartEvent
+	| RetryFinishedEvent
 	| ModelUpdateEvent
 	| ThinkingLevelUpdateEvent
 	| ResourcesUpdateEvent<TSkill, TPromptTemplate>
@@ -687,6 +737,7 @@ export interface ToolResultPatch {
 	content?: Array<TextContent | ImageContent>;
 	details?: unknown;
 	isError?: boolean;
+	usage?: Usage;
 	terminate?: boolean;
 }
 
@@ -697,7 +748,12 @@ export interface SessionBeforeCompactResult {
 
 export interface SessionBeforeTreeResult {
 	cancel?: boolean;
-	summary?: { summary: string; details?: unknown };
+	summary?: {
+		summary: string;
+		details?: unknown;
+		/** Usage from the LLM call that generated this summary, if available. */
+		usage?: Usage;
+	};
 	customInstructions?: string;
 	replaceInstructions?: boolean;
 	label?: string;
@@ -715,6 +771,9 @@ export type AgentHarnessEventResultMap = {
 	session_compact: undefined;
 	session_before_tree: SessionBeforeTreeResult | undefined;
 	session_tree: undefined;
+	retry_scheduled: undefined;
+	retry_attempt_start: undefined;
+	retry_finished: undefined;
 	model_update: undefined;
 	thinking_level_update: undefined;
 	resources_update: undefined;
@@ -736,8 +795,11 @@ export interface AbortResult {
 
 export interface CompactResult {
 	summary: string;
-	firstKeptEntryId: string;
+	firstKeptEntryId?: string;
 	tokensBefore: number;
+	/** Usage from the LLM call(s) that generated this summary, if available. */
+	usage?: Usage;
+	retainedTail?: AgentMessage[];
 	details?: unknown;
 }
 
@@ -757,6 +819,7 @@ export interface CompactionPreparation {
 	firstKeptEntryId: string;
 	messagesToSummarize: AgentMessage[];
 	turnPrefixMessages: AgentMessage[];
+	retainedTail: AgentMessage[];
 	isSplitTurn: boolean;
 	tokensBefore: number;
 	previousSummary?: string;
@@ -793,6 +856,7 @@ export interface GenerateBranchSummaryOptions {
 
 export interface BranchSummaryResult {
 	summary: string;
+	usage?: Usage;
 	readFiles: string[];
 	modifiedFiles: string[];
 }
@@ -828,6 +892,8 @@ export interface AgentHarnessOptions<
 		  }) => string | Promise<string>);
 	/** Curated stream/provider request options. Snapshotted at turn start. */
 	streamOptions?: AgentHarnessStreamOptions;
+	/** Optional retry policy for generated compaction and branch-summary requests. */
+	retry?: RetryPolicy;
 	model: Model<any>;
 	thinkingLevel?: ThinkingLevel;
 	activeToolNames?: string[];

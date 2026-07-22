@@ -84,7 +84,7 @@ describe("AgentSession dynamic provider registration", () => {
 		session: Awaited<ReturnType<typeof createSession>>,
 	): Promise<string | undefined> {
 		let baseUrl: string | undefined;
-		session.agent.streamFn = async (model) => {
+		session.agent.streamFunction = async (model) => {
 			baseUrl = model.baseUrl;
 			throw new Error("stop");
 		};

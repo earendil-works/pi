@@ -126,7 +126,7 @@ describe("createAgentSession provider attribution headers", () => {
 		});
 
 		try {
-			const stream = await session.agent.streamFn(
+			const stream = await session.agent.streamFunction(
 				model,
 				{ messages: [] },
 				{

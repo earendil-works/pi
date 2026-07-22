@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/ant-ling.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const ANT_LING_MODELS = values as {
-	"Ling-2.6-1T": Model<"openai-completions"> & {
-		id: "Ling-2.6-1T";
-		provider: "ant-ling";
-	};
-	"Ling-2.6-flash": Model<"openai-completions"> & {
-		id: "Ling-2.6-flash";
-		provider: "ant-ling";
-	};
-	"Ring-2.6-1T": Model<"openai-completions"> & {
-		id: "Ring-2.6-1T";
-		provider: "ant-ling";
-	};
-};
+export const ANT_LING_MODELS: ModelCatalog<typeof values, "ant-ling"> =
+	flattenModelCatalog("ant-ling", values);

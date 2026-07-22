@@ -1,10 +1,17 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, getModel, type Usage } from "@earendil-works/pi-ai/compat";
+import {
+	type AssistantMessage,
+	getModel,
+	streamSimple,
+	type ToolResultMessage,
+	type Usage,
+} from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { getUsageCostBreakdown } from "../src/core/usage-totals.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
@@ -48,6 +55,18 @@ function createUserMessage(text: string, timestamp: number) {
 	};
 }
 
+function createToolResultMessage(usage: Usage): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId: "tool-call-1",
+		toolName: "test_tool",
+		content: [{ type: "text", text: "tool result" }],
+		usage,
+		isError: false,
+		timestamp: 1,
+	};
+}
+
 async function createSession() {
 	const settingsManager = SettingsManager.inMemory();
 	const sessionManager = SessionManager.inMemory();
@@ -56,6 +75,7 @@ async function createSession() {
 	const session = new AgentSession({
 		agent: new Agent({
 			getApiKey: () => "test-key",
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant.",
@@ -141,6 +161,100 @@ describe("AgentSession.getSessionStats", () => {
 		} finally {
 			session.dispose();
 		}
+	});
+
+	it("includes branch summary usage in session totals", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.branchWithSummary(null, "summary", undefined, false, {
+				input: 10,
+				output: 20,
+				cacheRead: 30,
+				cacheWrite: 40,
+				totalTokens: 100,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			});
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.tokens).toEqual({ input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 });
+			expect(stats.cost).toBe(1);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("includes compaction usage in session totals", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			const firstKeptEntryId = sessionManager.appendMessage(createUserMessage("hello", 1));
+			sessionManager.appendCompaction("summary", firstKeptEntryId, 100, undefined, false, {
+				input: 10,
+				output: 20,
+				cacheRead: 30,
+				cacheWrite: 40,
+				totalTokens: 100,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			});
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.tokens).toEqual({ input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 });
+			expect(stats.cost).toBe(1);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("includes tool result usage in session totals", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendMessage(
+				createToolResultMessage({
+					input: 10,
+					output: 20,
+					cacheRead: 30,
+					cacheWrite: 40,
+					totalTokens: 100,
+					cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+				}),
+			);
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.tokens).toEqual({ input: 10, output: 20, cacheRead: 30, cacheWrite: 40, total: 100 });
+			expect(stats.cost).toBe(1);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("groups tool and summary usage separately from model-attributed usage", () => {
+		const sessionManager = SessionManager.inMemory();
+		const rootId = sessionManager.appendMessage(createUserMessage("hello", 1));
+		sessionManager.appendMessage({
+			...createAssistantMessage("response", 100, 2),
+			usage: { ...createUsage(100), cost: { ...createUsage(100).cost, total: 0.5 } },
+		});
+		sessionManager.appendMessage(
+			createToolResultMessage({ ...createUsage(100), cost: { ...createUsage(100).cost, total: 1 } }),
+		);
+		sessionManager.appendCompaction("summary", rootId, 100, undefined, false, {
+			...createUsage(100),
+			cost: { ...createUsage(100).cost, total: 2 },
+		});
+		sessionManager.branchWithSummary(null, "branch summary", undefined, false, {
+			...createUsage(100),
+			cost: { ...createUsage(100).cost, total: 3 },
+		});
+
+		expect(getUsageCostBreakdown(sessionManager.getEntries())).toEqual([
+			{ key: "Tools/summaries", cost: 6, tokens: 300 },
+			{ key: `${model.provider}/${model.id}`, cost: 0.5, tokens: 100 },
+		]);
 	});
 
 	it("ignores zero-usage messages when checking for post-compaction context usage", async () => {

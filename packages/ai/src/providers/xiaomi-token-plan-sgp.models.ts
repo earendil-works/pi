@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/xiaomi-token-plan-sgp.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const XIAOMI_TOKEN_PLAN_SGP_MODELS = values as {
-	"mimo-v2-pro": Model<"openai-completions"> & {
-		id: "mimo-v2-pro";
-		provider: "xiaomi-token-plan-sgp";
-	};
-	"mimo-v2.5": Model<"openai-completions"> & {
-		id: "mimo-v2.5";
-		provider: "xiaomi-token-plan-sgp";
-	};
-	"mimo-v2.5-pro": Model<"openai-completions"> & {
-		id: "mimo-v2.5-pro";
-		provider: "xiaomi-token-plan-sgp";
-	};
-};
+export const XIAOMI_TOKEN_PLAN_SGP_MODELS: ModelCatalog<typeof values, "xiaomi-token-plan-sgp"> =
+	flattenModelCatalog("xiaomi-token-plan-sgp", values);

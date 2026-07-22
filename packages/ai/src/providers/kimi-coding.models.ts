@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/kimi-coding.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const KIMI_CODING_MODELS = values as {
-	"k2p7": Model<"anthropic-messages"> & {
-		id: "k2p7";
-		provider: "kimi-coding";
-	};
-	"k3": Model<"anthropic-messages"> & {
-		id: "k3";
-		provider: "kimi-coding";
-	};
-	"kimi-for-coding-highspeed": Model<"anthropic-messages"> & {
-		id: "kimi-for-coding-highspeed";
-		provider: "kimi-coding";
-	};
-};
+export const KIMI_CODING_MODELS: ModelCatalog<typeof values, "kimi-coding"> =
+	flattenModelCatalog("kimi-coding", values);

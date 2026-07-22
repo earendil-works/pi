@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/xai.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const XAI_MODELS = values as {
-	"grok-4.3": Model<"openai-completions"> & {
-		id: "grok-4.3";
-		provider: "xai";
-	};
-	"grok-4.5": Model<"openai-responses"> & {
-		id: "grok-4.5";
-		provider: "xai";
-	};
-	"grok-build-0.1": Model<"openai-completions"> & {
-		id: "grok-build-0.1";
-		provider: "xai";
-	};
-};
+export const XAI_MODELS: ModelCatalog<typeof values, "xai"> =
+	flattenModelCatalog("xai", values);

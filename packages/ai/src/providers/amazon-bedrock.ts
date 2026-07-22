@@ -50,7 +50,9 @@ const bedrockAuth: ApiKeyAuth = {
 		return { type: "api_key" };
 	},
 	resolve: async ({ ctx, credential }) => {
-		if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
+		if (credential?.key) {
+			return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
+		}
 		if (await ctx.env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };
 		if (credential?.env?.AWS_PROFILE ?? (await ctx.env("AWS_PROFILE"))) {
 			return {

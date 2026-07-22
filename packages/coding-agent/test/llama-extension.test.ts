@@ -220,7 +220,7 @@ describe("llama.cpp extension", () => {
 					send({
 						model: "owner/repo:Q4_K_M",
 						event: "download_progress",
-						data: { "https://example/model.gguf": { done: 512, total: 1024 } },
+						data: { progress: { "https://example/model.gguf": { done: 512, total: 1024 } } },
 					});
 					status = "unloaded";
 					send({ model: "owner/repo:Q4_K_M", event: "download_finished", data: {} });

@@ -2,47 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/google-vertex.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const GOOGLE_VERTEX_MODELS = values as {
-	"gemini-2.5-flash": Model<"google-vertex"> & {
-		id: "gemini-2.5-flash";
-		provider: "google-vertex";
-	};
-	"gemini-2.5-flash-lite": Model<"google-vertex"> & {
-		id: "gemini-2.5-flash-lite";
-		provider: "google-vertex";
-	};
-	"gemini-2.5-pro": Model<"google-vertex"> & {
-		id: "gemini-2.5-pro";
-		provider: "google-vertex";
-	};
-	"gemini-3-flash-preview": Model<"google-vertex"> & {
-		id: "gemini-3-flash-preview";
-		provider: "google-vertex";
-	};
-	"gemini-3.1-flash-lite": Model<"google-vertex"> & {
-		id: "gemini-3.1-flash-lite";
-		provider: "google-vertex";
-	};
-	"gemini-3.1-pro-preview": Model<"google-vertex"> & {
-		id: "gemini-3.1-pro-preview";
-		provider: "google-vertex";
-	};
-	"gemini-3.1-pro-preview-customtools": Model<"google-vertex"> & {
-		id: "gemini-3.1-pro-preview-customtools";
-		provider: "google-vertex";
-	};
-	"gemini-3.5-flash": Model<"google-vertex"> & {
-		id: "gemini-3.5-flash";
-		provider: "google-vertex";
-	};
-	"gemini-flash-latest": Model<"google-vertex"> & {
-		id: "gemini-flash-latest";
-		provider: "google-vertex";
-	};
-	"gemini-flash-lite-latest": Model<"google-vertex"> & {
-		id: "gemini-flash-lite-latest";
-		provider: "google-vertex";
-	};
-};
+export const GOOGLE_VERTEX_MODELS: ModelCatalog<typeof values, "google-vertex"> =
+	flattenModelCatalog("google-vertex", values);

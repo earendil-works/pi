@@ -2,59 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/cloudflare-workers-ai.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const CLOUDFLARE_WORKERS_AI_MODELS = values as {
-	"@cf/google/gemma-4-26b-a4b-it": Model<"openai-completions"> & {
-		id: "@cf/google/gemma-4-26b-a4b-it";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/ibm-granite/granite-4.0-h-micro": Model<"openai-completions"> & {
-		id: "@cf/ibm-granite/granite-4.0-h-micro";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/meta/llama-3.3-70b-instruct-fp8-fast": Model<"openai-completions"> & {
-		id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/meta/llama-4-scout-17b-16e-instruct": Model<"openai-completions"> & {
-		id: "@cf/meta/llama-4-scout-17b-16e-instruct";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/mistralai/mistral-small-3.1-24b-instruct": Model<"openai-completions"> & {
-		id: "@cf/mistralai/mistral-small-3.1-24b-instruct";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/moonshotai/kimi-k2.6": Model<"openai-completions"> & {
-		id: "@cf/moonshotai/kimi-k2.6";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/moonshotai/kimi-k2.7-code": Model<"openai-completions"> & {
-		id: "@cf/moonshotai/kimi-k2.7-code";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/nvidia/nemotron-3-120b-a12b": Model<"openai-completions"> & {
-		id: "@cf/nvidia/nemotron-3-120b-a12b";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/openai/gpt-oss-120b": Model<"openai-completions"> & {
-		id: "@cf/openai/gpt-oss-120b";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/openai/gpt-oss-20b": Model<"openai-completions"> & {
-		id: "@cf/openai/gpt-oss-20b";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/qwen/qwen3-30b-a3b-fp8": Model<"openai-completions"> & {
-		id: "@cf/qwen/qwen3-30b-a3b-fp8";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/zai-org/glm-4.7-flash": Model<"openai-completions"> & {
-		id: "@cf/zai-org/glm-4.7-flash";
-		provider: "cloudflare-workers-ai";
-	};
-	"@cf/zai-org/glm-5.2": Model<"openai-completions"> & {
-		id: "@cf/zai-org/glm-5.2";
-		provider: "cloudflare-workers-ai";
-	};
-};
+export const CLOUDFLARE_WORKERS_AI_MODELS: ModelCatalog<typeof values, "cloudflare-workers-ai"> =
+	flattenModelCatalog("cloudflare-workers-ai", values);

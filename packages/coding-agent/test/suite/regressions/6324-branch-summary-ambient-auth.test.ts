@@ -17,7 +17,7 @@ describe("issue #6324 branch summary ambient auth", () => {
 		harnesses.push(harness);
 
 		let streamCallCount = 0;
-		harness.session.agent.streamFn = (model, _context, options) => {
+		harness.session.agent.streamFunction = (model, _context, options) => {
 			streamCallCount++;
 			expect(options?.apiKey).toBeUndefined();
 
@@ -37,7 +37,7 @@ describe("issue #6324 branch summary ambient auth", () => {
 						cacheRead: 0,
 						cacheWrite: 0,
 						totalTokens: 2,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
 					},
 					stopReason: "stop",
 					timestamp: Date.now(),
@@ -57,5 +57,6 @@ describe("issue #6324 branch summary ambient auth", () => {
 		expect(streamCallCount).toBe(1);
 		expect(result.summaryEntry?.type).toBe("branch_summary");
 		expect(result.summaryEntry?.summary).toContain("branch summary text");
+		expect(result.summaryEntry?.usage?.cost.total).toBe(0.25);
 	});
 });

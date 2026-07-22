@@ -2,31 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/xiaomi.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const XIAOMI_MODELS = values as {
-	"mimo-v2-flash": Model<"openai-completions"> & {
-		id: "mimo-v2-flash";
-		provider: "xiaomi";
-	};
-	"mimo-v2-omni": Model<"openai-completions"> & {
-		id: "mimo-v2-omni";
-		provider: "xiaomi";
-	};
-	"mimo-v2-pro": Model<"openai-completions"> & {
-		id: "mimo-v2-pro";
-		provider: "xiaomi";
-	};
-	"mimo-v2.5": Model<"openai-completions"> & {
-		id: "mimo-v2.5";
-		provider: "xiaomi";
-	};
-	"mimo-v2.5-pro": Model<"openai-completions"> & {
-		id: "mimo-v2.5-pro";
-		provider: "xiaomi";
-	};
-	"mimo-v2.5-pro-ultraspeed": Model<"openai-completions"> & {
-		id: "mimo-v2.5-pro-ultraspeed";
-		provider: "xiaomi";
-	};
-};
+export const XIAOMI_MODELS: ModelCatalog<typeof values, "xiaomi"> =
+	flattenModelCatalog("xiaomi", values);

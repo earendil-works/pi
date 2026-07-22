@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.81.1] - 2026-07-21
+
+## [0.81.0] - 2026-07-21
+
+### Fixed
+
+- Fixed terminal shutdown to clear the editor's inverted software cursor before restoring the hardware cursor, avoiding a duplicate cursor artifact ([#6790](https://github.com/earendil-works/pi/pull/6790) by [@dam9000](https://github.com/dam9000)).
+- Fixed ANSI-aware text wrapping to recognize CRLF and CR line endings while preserving styles across lines ([#6764](https://github.com/earendil-works/pi/pull/6764) by [@xz-dev](https://github.com/xz-dev)).
+- Fixed editor paste registry corruption when deleting paste markers: undo now restores the paste registry together with the text, and marker renumbering shifts registry entries in ascending id order, so submitted prompts no longer contain literal `[paste #N ...]` markers or the wrong paste's content ([#6844](https://github.com/earendil-works/pi/issues/6844)).
+
 ## [0.80.10] - 2026-07-16
 
 ## [0.80.9] - 2026-07-16

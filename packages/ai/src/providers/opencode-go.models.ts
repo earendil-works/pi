@@ -2,67 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/opencode-go.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const OPENCODE_GO_MODELS = values as {
-	"deepseek-v4-flash": Model<"openai-completions"> & {
-		id: "deepseek-v4-flash";
-		provider: "opencode-go";
-	};
-	"deepseek-v4-pro": Model<"openai-completions"> & {
-		id: "deepseek-v4-pro";
-		provider: "opencode-go";
-	};
-	"glm-5.1": Model<"openai-completions"> & {
-		id: "glm-5.1";
-		provider: "opencode-go";
-	};
-	"glm-5.2": Model<"openai-completions"> & {
-		id: "glm-5.2";
-		provider: "opencode-go";
-	};
-	"grok-4.5": Model<"openai-completions"> & {
-		id: "grok-4.5";
-		provider: "opencode-go";
-	};
-	"kimi-k2.6": Model<"openai-completions"> & {
-		id: "kimi-k2.6";
-		provider: "opencode-go";
-	};
-	"kimi-k2.7-code": Model<"openai-completions"> & {
-		id: "kimi-k2.7-code";
-		provider: "opencode-go";
-	};
-	"kimi-k3": Model<"openai-completions"> & {
-		id: "kimi-k3";
-		provider: "opencode-go";
-	};
-	"mimo-v2.5": Model<"openai-completions"> & {
-		id: "mimo-v2.5";
-		provider: "opencode-go";
-	};
-	"mimo-v2.5-pro": Model<"openai-completions"> & {
-		id: "mimo-v2.5-pro";
-		provider: "opencode-go";
-	};
-	"minimax-m2.7": Model<"openai-completions"> & {
-		id: "minimax-m2.7";
-		provider: "opencode-go";
-	};
-	"minimax-m3": Model<"anthropic-messages"> & {
-		id: "minimax-m3";
-		provider: "opencode-go";
-	};
-	"qwen3.6-plus": Model<"openai-completions"> & {
-		id: "qwen3.6-plus";
-		provider: "opencode-go";
-	};
-	"qwen3.7-max": Model<"anthropic-messages"> & {
-		id: "qwen3.7-max";
-		provider: "opencode-go";
-	};
-	"qwen3.7-plus": Model<"anthropic-messages"> & {
-		id: "qwen3.7-plus";
-		provider: "opencode-go";
-	};
-};
+export const OPENCODE_GO_MODELS: ModelCatalog<typeof values, "opencode-go"> =
+	flattenModelCatalog("opencode-go", values);

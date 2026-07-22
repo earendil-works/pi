@@ -2,35 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/groq.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const GROQ_MODELS = values as {
-	"llama-3.1-8b-instant": Model<"openai-completions"> & {
-		id: "llama-3.1-8b-instant";
-		provider: "groq";
-	};
-	"llama-3.3-70b-versatile": Model<"openai-completions"> & {
-		id: "llama-3.3-70b-versatile";
-		provider: "groq";
-	};
-	"meta-llama/llama-4-scout-17b-16e-instruct": Model<"openai-completions"> & {
-		id: "meta-llama/llama-4-scout-17b-16e-instruct";
-		provider: "groq";
-	};
-	"openai/gpt-oss-120b": Model<"openai-completions"> & {
-		id: "openai/gpt-oss-120b";
-		provider: "groq";
-	};
-	"openai/gpt-oss-20b": Model<"openai-completions"> & {
-		id: "openai/gpt-oss-20b";
-		provider: "groq";
-	};
-	"openai/gpt-oss-safeguard-20b": Model<"openai-completions"> & {
-		id: "openai/gpt-oss-safeguard-20b";
-		provider: "groq";
-	};
-	"qwen/qwen3-32b": Model<"openai-completions"> & {
-		id: "qwen/qwen3-32b";
-		provider: "groq";
-	};
-};
+export const GROQ_MODELS: ModelCatalog<typeof values, "groq"> =
+	flattenModelCatalog("groq", values);

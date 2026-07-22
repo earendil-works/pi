@@ -2,63 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/anthropic.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const ANTHROPIC_MODELS = values as {
-	"claude-fable-5": Model<"anthropic-messages"> & {
-		id: "claude-fable-5";
-		provider: "anthropic";
-	};
-	"claude-haiku-4-5": Model<"anthropic-messages"> & {
-		id: "claude-haiku-4-5";
-		provider: "anthropic";
-	};
-	"claude-haiku-4-5-20251001": Model<"anthropic-messages"> & {
-		id: "claude-haiku-4-5-20251001";
-		provider: "anthropic";
-	};
-	"claude-opus-4-1": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-1";
-		provider: "anthropic";
-	};
-	"claude-opus-4-1-20250805": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-1-20250805";
-		provider: "anthropic";
-	};
-	"claude-opus-4-5": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-5";
-		provider: "anthropic";
-	};
-	"claude-opus-4-5-20251101": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-5-20251101";
-		provider: "anthropic";
-	};
-	"claude-opus-4-6": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-6";
-		provider: "anthropic";
-	};
-	"claude-opus-4-7": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-7";
-		provider: "anthropic";
-	};
-	"claude-opus-4-8": Model<"anthropic-messages"> & {
-		id: "claude-opus-4-8";
-		provider: "anthropic";
-	};
-	"claude-sonnet-4-5": Model<"anthropic-messages"> & {
-		id: "claude-sonnet-4-5";
-		provider: "anthropic";
-	};
-	"claude-sonnet-4-5-20250929": Model<"anthropic-messages"> & {
-		id: "claude-sonnet-4-5-20250929";
-		provider: "anthropic";
-	};
-	"claude-sonnet-4-6": Model<"anthropic-messages"> & {
-		id: "claude-sonnet-4-6";
-		provider: "anthropic";
-	};
-	"claude-sonnet-5": Model<"anthropic-messages"> & {
-		id: "claude-sonnet-5";
-		provider: "anthropic";
-	};
-};
+export const ANTHROPIC_MODELS: ModelCatalog<typeof values, "anthropic"> =
+	flattenModelCatalog("anthropic", values);
