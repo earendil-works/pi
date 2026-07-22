@@ -7,7 +7,7 @@ import {
 	convertResponsesTools,
 	processResponsesStream,
 } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, Context, Model, Tool } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, Tool, ToolCall } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
 function makeModel(): Model<"openai-responses"> {
@@ -94,6 +94,13 @@ describe("constrained tool sampling", () => {
 			name: "sample_tool",
 			format: { type: "grammar", syntax: "lark", definition: "start: /[a-z]+/" },
 		});
+		expect(() =>
+			convertResponsesTools([makeTool({ constrainedSampling: { type: "grammar", variants: {} } })], {
+				supportsGrammarTools: true,
+			}),
+		).toThrow(
+			'Tool "sample_tool" cannot use grammar constrained sampling: no supported grammar variant was provided',
+		);
 
 		const fallback = convertResponsesTools([grammarTool], {
 			supportsGrammarTools: false,
@@ -104,6 +111,12 @@ describe("constrained tool sampling", () => {
 	});
 
 	it("replays grammar calls as custom Responses items", () => {
+		const replayedToolCall: ToolCall = {
+			type: "toolCall",
+			id: "call_1|ctc_1",
+			name: "sample_tool",
+			arguments: { payload: "abc" },
+		};
 		const context: Context = {
 			messages: [
 				{
@@ -111,14 +124,7 @@ describe("constrained tool sampling", () => {
 					api: "openai-responses",
 					provider: "openai",
 					model: "gpt-test",
-					content: [
-						{
-							type: "toolCall",
-							id: "call_1|ctc_1",
-							name: "sample_tool",
-							arguments: { payload: "abc" },
-						},
-					],
+					content: [replayedToolCall],
 					usage: makeUsage(),
 					stopReason: "toolUse",
 					timestamp: Date.now(),
@@ -133,6 +139,16 @@ describe("constrained tool sampling", () => {
 				},
 			],
 		};
+		for (const invalidArguments of [{}, { payload: 42 }]) {
+			replayedToolCall.arguments = invalidArguments;
+			expect(() =>
+				convertResponsesMessages(makeModel(), context, new Set(["openai"]), {
+					grammarToolInputProperties: new Map([["sample_tool", "payload"]]),
+				}),
+			).toThrow('Grammar tool call "sample_tool" requires argument "payload" to be a string');
+		}
+
+		replayedToolCall.arguments = { payload: "abc" };
 		const messages = convertResponsesMessages(makeModel(), context, new Set(["openai"]), {
 			grammarToolInputProperties: new Map([["sample_tool", "payload"]]),
 		});

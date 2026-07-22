@@ -5,7 +5,7 @@
 ### Fixed
 
 - Fixed OpenAI Codex cached WebSocket continuations after grammar tool calls to send only the real tool-result delta.
-- Fixed constrained tool sampling across Google, Amazon Bedrock, Mistral, and Azure OpenAI Responses adapters, including native strict-tool modes and compatibility overrides.
+- Fixed constrained tool sampling across Google, Amazon Bedrock, Mistral, and Azure OpenAI Responses adapters, including model-aware strict-tool capabilities, grammar configuration validation, and malformed grammar-call replay errors.
 - Fixed OpenRouter Anthropic cache breakpoints to advance through tool results and enabled cache control for `~anthropic/*-latest` aliases ([#6941](https://github.com/earendil-works/pi/pull/6941) by [@mteam88](https://github.com/mteam88)).
 
 ## [0.81.1] - 2026-07-21

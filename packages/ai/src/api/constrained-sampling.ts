@@ -18,6 +18,18 @@ export interface GrammarToolInputJsonBuffer {
 	closed: boolean;
 }
 
+export function getGrammarToolInput(
+	toolName: string,
+	arguments_: Record<string, unknown>,
+	inputProperty: string,
+): string {
+	const input = arguments_[inputProperty];
+	if (typeof input !== "string") {
+		throw new Error(`Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`);
+	}
+	return input;
+}
+
 export function appendGrammarToolInputJsonDelta(
 	buffer: GrammarToolInputJsonBuffer,
 	inputProperty: string,
@@ -99,15 +111,20 @@ export function resolveGrammarConstrainedSampling(
 		return undefined;
 	}
 
-	const definition = config.variants.openai_lark ?? config.variants.openai_regex;
-	if (definition === undefined) {
-		return undefined;
+	const larkDefinition = config.variants.openai_lark;
+	const regexDefinition = config.variants.openai_regex;
+	const hasLarkDefinition = typeof larkDefinition === "string" && larkDefinition.trim().length > 0;
+	const hasRegexDefinition = typeof regexDefinition === "string" && regexDefinition.trim().length > 0;
+	if (!hasLarkDefinition && !hasRegexDefinition) {
+		throw new Error(
+			`Tool "${tool.name}" cannot use grammar constrained sampling: no supported grammar variant was provided.`,
+		);
 	}
 
 	try {
 		return {
-			format: config.variants.openai_lark !== undefined ? "lark" : "regex",
-			definition,
+			format: hasLarkDefinition ? "lark" : "regex",
+			definition: hasLarkDefinition ? larkDefinition : regexDefinition!,
 			inputProperty: inferGrammarInputProperty(tool),
 		};
 	} catch (error) {

@@ -83,6 +83,7 @@ interface ModelsDevModel {
 	id: string;
 	name: string;
 	tool_call?: boolean;
+	structured_output?: boolean;
 	reasoning?: boolean;
 	reasoning_options?: ModelsDevReasoningOption[];
 	limit?: {
@@ -1056,6 +1057,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
+					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
 				});
 				recordModelsDevReasoningOptions("amazon-bedrock" as const, id, m);
 			}

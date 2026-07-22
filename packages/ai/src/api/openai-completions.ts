@@ -44,6 +44,7 @@ import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
 	type GrammarToolInputJsonBuffer,
+	getGrammarToolInput,
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -1122,14 +1123,12 @@ export function convertMessages(
 				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
 					if (customInputProperty !== undefined) {
-						const input = tc.arguments[customInputProperty];
 						return {
 							id: tc.id,
 							type: "custom",
 							custom: {
 								name: tc.name,
-								// We intentionally assume that non string inputs are empty strings.
-								input: sanitizeSurrogates(typeof input === "string" ? input : ""),
+								input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
 							},
 						};
 					}

@@ -229,7 +229,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -909,12 +909,13 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
 	if (!tools?.length) return undefined;
 	if (toolChoice === "none") return undefined;
 
 	const bedrockTools: BedrockTool[] = tools.map((tool) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, true);
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		return {
 			toolSpec: {
 				name: tool.name,

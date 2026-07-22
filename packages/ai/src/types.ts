@@ -633,6 +633,12 @@ export interface AnthropicMessagesCompat {
 	supportsToolReferences?: boolean;
 }
 
+/** Compatibility settings for Amazon Bedrock models. */
+export interface BedrockCompat {
+	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
+	supportsStrictMode?: boolean;
+}
+
 /**
  * OpenRouter provider routing preferences.
  * Controls which upstream providers OpenRouter routes requests to.
@@ -762,7 +768,9 @@ export interface Model<TApi extends Api> {
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "bedrock-converse-stream"
+					? BedrockCompat
+					: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

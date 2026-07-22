@@ -35,6 +35,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
+	getGrammarToolInput,
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
@@ -261,14 +262,14 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 
 					if (customInputProperty !== undefined) {
-						const input = toolCall.arguments[customInputProperty];
 						output.push({
 							type: "custom_tool_call",
 							id: itemId,
 							call_id: callId,
 							name: toolCall.name,
-							// We intentionally assume that non string inputs are empty strings.
-							input: sanitizeSurrogates(typeof input === "string" ? input : ""),
+							input: sanitizeSurrogates(
+								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
+							),
 						} satisfies ResponseOutputItem);
 					} else {
 						output.push({
