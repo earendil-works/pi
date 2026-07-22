@@ -346,6 +346,8 @@ export class InteractiveMode {
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
+	// Guard against starting a second fork while one is still in flight (#6321)
+	private isForking = false;
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
@@ -4523,6 +4525,11 @@ export class InteractiveMode {
 	}
 
 	private showUserMessageSelector(): void {
+		if (this.isForking) {
+			this.showStatus("A fork is already in progress");
+			return;
+		}
+
 		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
@@ -4536,7 +4543,9 @@ export class InteractiveMode {
 			const selector = new UserMessageSelectorComponent(
 				userMessages.map((m) => ({ id: m.entryId, text: m.text })),
 				async (entryId) => {
+					this.isForking = true;
 					done();
+					this.showStatus("Forking session...");
 					try {
 						const result = await this.runtimeHost.fork(entryId);
 						if (result.cancelled) {
@@ -4548,6 +4557,8 @@ export class InteractiveMode {
 						this.showStatus("Forked to new session");
 					} catch (error: unknown) {
 						this.showError(error instanceof Error ? error.message : String(error));
+					} finally {
+						this.isForking = false;
 					}
 				},
 				() => {
@@ -4561,12 +4572,19 @@ export class InteractiveMode {
 	}
 
 	private async handleCloneCommand(): Promise<void> {
+		if (this.isForking) {
+			this.showStatus("A fork is already in progress");
+			return;
+		}
+
 		const leafId = this.sessionManager.getLeafId();
 		if (!leafId) {
 			this.showStatus("Nothing to clone yet");
 			return;
 		}
 
+		this.isForking = true;
+		this.showStatus("Cloning session...");
 		try {
 			const result = await this.runtimeHost.fork(leafId, { position: "at" });
 			if (result.cancelled) {
@@ -4578,6 +4596,8 @@ export class InteractiveMode {
 			this.showStatus("Cloned to new session");
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
+		} finally {
+			this.isForking = false;
 		}
 	}
 
