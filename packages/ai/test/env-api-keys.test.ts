@@ -57,4 +57,18 @@ describe("environment API keys", () => {
 		expect(findEnvKeys("zai-coding-cn")).toEqual(["ZAI_CODING_CN_API_KEY"]);
 		expect(getEnvApiKey("zai-coding-cn")).toBe("zai-coding-cn-token");
 	});
+
+	it("resolves every StepFun provider from a shared STEPFUN_API_KEY", () => {
+		const original = process.env.STEPFUN_API_KEY;
+		process.env.STEPFUN_API_KEY = "stepfun-token";
+		try {
+			for (const provider of ["stepfun", "stepfun-ai", "stepfun-step-plan", "stepfun-ai-step-plan"] as const) {
+				expect(findEnvKeys(provider)).toEqual(["STEPFUN_API_KEY"]);
+				expect(getEnvApiKey(provider)).toBe("stepfun-token");
+			}
+		} finally {
+			if (original === undefined) delete process.env.STEPFUN_API_KEY;
+			else process.env.STEPFUN_API_KEY = original;
+		}
+	});
 });
