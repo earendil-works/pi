@@ -2094,6 +2094,46 @@ describe("openai-codex streaming", () => {
 		expect(codexRequests).toBe(2);
 	});
 
+	it.each([429, 503])("fails immediately when a %i retry delay exceeds the limit", async (status) => {
+		const token = mockToken();
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ error: { code: "temporarily_unavailable", message: "retry later" } }), {
+					status,
+					headers: { "content-type": "application/json", "retry-after": "2" },
+				}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const result = await streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			maxRetries: 3,
+			maxRetryDelayMs: 1000,
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("Server requested 2s retry delay (max: 1s)");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("zstd-compresses SSE request bodies", async () => {
 		const token = mockToken();
 		const encoder = new TextEncoder();

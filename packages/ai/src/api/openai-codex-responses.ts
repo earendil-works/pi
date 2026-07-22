@@ -158,9 +158,16 @@ function getRetryAfterDelayMs(headers: Headers): number | undefined {
 	return undefined;
 }
 
-function capRetryDelayMs(delayMs: number, options?: StreamOptions): number {
+class RetryDelayExceededError extends Error {}
+
+function validateRetryDelayMs(delayMs: number, options?: StreamOptions): number {
 	const maxRetryDelayMs = options?.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
-	return maxRetryDelayMs > 0 ? Math.min(delayMs, maxRetryDelayMs) : delayMs;
+	if (maxRetryDelayMs > 0 && delayMs > maxRetryDelayMs) {
+		throw new RetryDelayExceededError(
+			`Server requested ${Math.ceil(delayMs / 1000)}s retry delay (max: ${Math.ceil(maxRetryDelayMs / 1000)}s)`,
+		);
+	}
+	return delayMs;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -404,9 +411,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						const delayMs =
 							retryAfterDelayMs === undefined
 								? BASE_DELAY_MS * 2 ** attempt
-								: response.status === 429
-									? capRetryDelayMs(retryAfterDelayMs, options)
-									: retryAfterDelayMs;
+								: validateRetryDelayMs(retryAfterDelayMs, options);
 
 						await sleep(delayMs, options?.signal);
 						continue;
@@ -427,7 +432,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					}
 					lastError = error instanceof Error ? error : new Error(String(error));
 					// Network errors are retryable
-					if (attempt < maxRetries && !lastError.message.includes("usage limit")) {
+					if (
+						attempt < maxRetries &&
+						!(lastError instanceof RetryDelayExceededError) &&
+						!lastError.message.includes("usage limit")
+					) {
 						const delayMs = BASE_DELAY_MS * 2 ** attempt;
 						await sleep(delayMs, options?.signal);
 						continue;
