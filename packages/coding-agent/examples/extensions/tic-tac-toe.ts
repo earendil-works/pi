@@ -367,6 +367,7 @@ function renderBoardSnapshot(board: Cell[][], maxWidth: number): string[] {
 class TicTacToeComponent implements Component {
 	private state: GameState;
 	private onClose: () => void;
+	private onRestart: () => void;
 	private onUserPlay: (row: number, col: number) => void;
 	private tui: { requestRender: () => void };
 	private cachedLines: string[] = [];
@@ -377,11 +378,13 @@ class TicTacToeComponent implements Component {
 	constructor(
 		tui: { requestRender: () => void },
 		onClose: () => void,
+		onRestart: () => void,
 		onUserPlay: (row: number, col: number) => void,
 		state: GameState,
 	) {
 		this.tui = tui;
 		this.onClose = onClose;
+		this.onRestart = onRestart;
 		this.onUserPlay = onUserPlay;
 		this.state = state;
 	}
@@ -399,7 +402,7 @@ class TicTacToeComponent implements Component {
 		}
 		if (this.state.status !== "playing") {
 			if (data === "r" || data === "R") {
-				this.onClose();
+				this.onRestart();
 				return true;
 			}
 			return true;
@@ -629,12 +632,17 @@ function reconstructState(ctx: ExtensionContext): void {
 	gameActive = false;
 
 	for (const entry of ctx.sessionManager.getBranch()) {
-		if (entry.type !== "message") continue;
-		const msg = entry.message;
-		if (msg.role !== "toolResult") continue;
-		if (msg.toolName !== "tic_tac_toe" && msg.toolName !== "tic_tac_toe_see_board") continue;
+		let details: BoardDetails | undefined;
 
-		const details = msg.details as BoardDetails | undefined;
+		if (entry.type === "custom" && entry.customType === SAVE_TYPE) {
+			details = entry.data as BoardDetails | undefined;
+		} else if (entry.type === "message") {
+			const msg = entry.message;
+			if (msg.role !== "toolResult") continue;
+			if (msg.toolName !== "tic_tac_toe" && msg.toolName !== "tic_tac_toe_see_board") continue;
+			details = msg.details as BoardDetails | undefined;
+		}
+
 		if (details) {
 			gameState.board = details.board.map((row) => [...row]);
 			gameState.agentCursorRow = details.agentCursorRow;
@@ -787,6 +795,7 @@ Decide the target cell first, then dump every action for the turn in one go.
 			reconstructState(ctx);
 			if (gameState.status !== "playing") {
 				gameState = createInitialState();
+				pi.appendEntry(SAVE_TYPE, getBoardDetails());
 			}
 			gameActive = true;
 			pi.setSessionName("Tic-Tac-Toe");
@@ -798,6 +807,12 @@ Decide the target cell first, then dump every action for the turn in one go.
 						component = null;
 						gameActive = false;
 						done(undefined);
+					},
+					() => {
+						gameState = createInitialState();
+						gameActive = true;
+						pi.appendEntry(SAVE_TYPE, getBoardDetails());
+						component?.updateState(gameState);
 					},
 					(row, col) => {
 						gameState.board[row][col] = gameState.userMark;
