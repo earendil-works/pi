@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
+import { minimatch } from "minimatch";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
@@ -238,19 +239,20 @@ export function createFindToolDefinition(
 							current = parent;
 						}
 						if (!insideGitRepo) args.push("--no-require-git");
-						args.push("--max-results", String(effectiveLimit));
+						const filterWindowsPathGlob = process.platform === "win32" && pattern.includes("/");
+						if (!filterWindowsPathGlob) args.push("--max-results", String(effectiveLimit));
 
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
 						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
 						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
+						if (!filterWindowsPathGlob && pattern.includes("/")) {
 							args.push("--full-path");
 							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
 								effectivePattern = `**/${pattern}`;
 							}
 						}
-						args.push("--", effectivePattern, searchPath);
+						args.push("--", filterWindowsPathGlob ? "**" : effectivePattern, searchPath);
 
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
@@ -272,7 +274,13 @@ export function createFindToolDefinition(
 						});
 
 						rl.on("line", (line) => {
+							if (lines.length >= effectiveLimit) return;
+							if (filterWindowsPathGlob) {
+								const relativePath = toPosixPath(path.relative(searchPath, line.replace(/\r$/, "").trim()));
+								if (!minimatch(relativePath, pattern, { dot: true })) return;
+							}
 							lines.push(line);
+							if (filterWindowsPathGlob && lines.length >= effectiveLimit) stopChild?.();
 						});
 
 						child.on("error", (error) => {

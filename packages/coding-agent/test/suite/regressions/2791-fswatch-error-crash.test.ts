@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 /**
@@ -39,8 +40,8 @@ describe("issue #2791 fs.watch error event crashes process", () => {
 	});
 
 	it("process should survive an error event on the theme FSWatcher", () => {
-		const themeModulePath = join(__dirname, "../../../src/modes/interactive/theme/theme.ts").replace(/\\/g, "/");
-		const agentDir = join(tempRoot, "agent").replace(/\\/g, "/");
+		const themeModuleUrl = pathToFileURL(join(__dirname, "../../../src/modes/interactive/theme/theme.ts")).href;
+		const agentDir = join(tempRoot, "agent");
 
 		// Script that sets up the watcher and emits a synthetic error on it.
 		// If no .on('error') handler is attached, EventEmitter.emit('error')
@@ -49,9 +50,9 @@ describe("issue #2791 fs.watch error event crashes process", () => {
 		writeFileSync(
 			scriptPath,
 			`
-import { setTheme, stopThemeWatcher } from "${themeModulePath}";
+import { setTheme, stopThemeWatcher } from ${JSON.stringify(themeModuleUrl)};
 
-process.env.PI_CODING_AGENT_DIR = "${agentDir}";
+process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir)};
 
 setTheme("custom-test", true);
 

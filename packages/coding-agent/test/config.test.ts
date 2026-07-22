@@ -50,10 +50,19 @@ afterEach(() => {
 
 function createNpmPrefixInstall(template = "pi-prefix-"): { prefix: string; packageDir: string } {
 	const prefix = mkdtempSync(join(tmpdir(), template));
-	const root = join(prefix, "lib", "node_modules");
+	const root = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
 	const scopeDir = join(root, "@earendil-works");
 	const packageDir = join(scopeDir, "pi-coding-agent");
 	mkdirSync(packageDir, { recursive: true });
+	if (process.platform === "win32") {
+		const binDir = join(prefix, "bin");
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(
+			join(binDir, "npm.cmd"),
+			`@echo off\r\nif "%~1"=="--prefix" (shift & shift)\r\nif "%~1"=="root" if "%~2"=="-g" (echo ${root} & exit /b 0)\r\nexit /b 1\r\n`,
+		);
+		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+	}
 	tempDir = prefix;
 	process.env.PI_PACKAGE_DIR = packageDir;
 	setExecPath(join(packageDir, "dist", "cli.js"));
@@ -123,7 +132,7 @@ function createBunGlobalInstall(): { packageDir: string } {
 
 function createFakePnpmScript(root: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="root" if "%2"=="-g" echo ${root}\r\n`;
+		return `@echo off\r\nif "%~1"=="root" if "%~2"=="-g" echo ${root}\r\nexit /b 0\r\n`;
 	}
 	const escapedRoot = root.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "root" ] && [ "$2" = "-g" ]; then\n\tprintf '%s\\n' '${escapedRoot}'\n\texit 0\nfi\nexit 1\n`;
@@ -131,7 +140,7 @@ function createFakePnpmScript(root: string): string {
 
 function createFakeYarnScript(globalDir: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="global" if "%2"=="dir" echo ${globalDir}\r\n`;
+		return `@echo off\r\nif "%~1"=="global" if "%~2"=="dir" echo ${globalDir}\r\nexit /b 0\r\n`;
 	}
 	const escapedGlobalDir = globalDir.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "global" ] && [ "$2" = "dir" ]; then\n\tprintf '%s\\n' '${escapedGlobalDir}'\n\texit 0\nfi\nexit 1\n`;
@@ -139,10 +148,19 @@ function createFakeYarnScript(globalDir: string): string {
 
 function createFakeBunScript(bunBin: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="pm" if "%2"=="bin" if "%3"=="-g" echo ${bunBin}\r\n`;
+		return `@echo off\r\nif "%~1"=="pm" if "%~2"=="bin" if "%~3"=="-g" echo ${bunBin}\r\nexit /b 0\r\n`;
 	}
 	const escapedBunBin = bunBin.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "pm" ] && [ "$2" = "bin" ] && [ "$3" = "-g" ]; then\n\tprintf '%s\\n' '${escapedBunBin}'\n\texit 0\nfi\nexit 1\n`;
+}
+
+function expectedNpmGlobalStep(prefix: string, args: string[]): { command: string; args: string[]; display: string } {
+	const fullArgs = [...(process.platform === "win32" ? [] : ["--prefix", prefix]), ...args];
+	return {
+		command: "npm",
+		args: fullArgs,
+		display: ["npm", ...fullArgs].map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" "),
+	};
 }
 
 describe("detectInstallMethod", () => {
@@ -171,21 +189,16 @@ describe("detectInstallMethod", () => {
 		const { prefix } = createNpmPrefixInstall();
 
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+		const expected = expectedNpmGlobalStep(prefix, [
+			"install",
+			"-g",
+			"--ignore-scripts",
+			"--min-release-age=0",
+			"@earendil-works/pi-coding-agent",
+		]);
 
 		expect(detectInstallMethod()).toBe("npm");
-		expect(command).toEqual({
-			command: "npm",
-			args: [
-				"--prefix",
-				prefix,
-				"install",
-				"-g",
-				"--ignore-scripts",
-				"--min-release-age=0",
-				"@earendil-works/pi-coding-agent",
-			],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
-		});
+		expect(command).toEqual(expected);
 	});
 
 	test("self-updates exact npm versions without uninstalling the current package", () => {
@@ -195,43 +208,34 @@ describe("detectInstallMethod", () => {
 			packageName: "@earendil-works/pi-coding-agent",
 			installSpec: "@earendil-works/pi-coding-agent@1.2.3",
 		});
+		const expected = expectedNpmGlobalStep(prefix, [
+			"install",
+			"-g",
+			"--ignore-scripts",
+			"--min-release-age=0",
+			"@earendil-works/pi-coding-agent@1.2.3",
+		]);
 
-		expect(command).toEqual({
-			command: "npm",
-			args: [
-				"--prefix",
-				prefix,
-				"install",
-				"-g",
-				"--ignore-scripts",
-				"--min-release-age=0",
-				"@earendil-works/pi-coding-agent@1.2.3",
-			],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent@1.2.3`,
-		});
+		expect(command).toEqual(expected);
 	});
 
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
 
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+		const uninstall = expectedNpmGlobalStep(prefix, ["uninstall", "-g", "@mariozechner/pi-coding-agent"]);
+		const install = expectedNpmGlobalStep(prefix, [
+			"install",
+			"-g",
+			"--ignore-scripts",
+			"--min-release-age=0",
+			"@new-scope/pi",
+		]);
 
 		expect(command).toEqual({
-			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
-			steps: [
-				{
-					command: "npm",
-					args: ["--prefix", prefix, "uninstall", "-g", "@mariozechner/pi-coding-agent"],
-					display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent`,
-				},
-				{
-					command: "npm",
-					args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-					display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
-				},
-			],
+			...install,
+			display: `${uninstall.display} && ${install.display}`,
+			steps: [uninstall, install],
 		});
 	});
 
@@ -260,15 +264,15 @@ describe("detectInstallMethod", () => {
 
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", []);
 
-		expect(command?.args).toEqual([
-			"--prefix",
-			prefix,
-			"install",
-			"-g",
-			"--ignore-scripts",
-			"--min-release-age=0",
-			"@earendil-works/pi-coding-agent",
-		]);
+		expect(command?.args).toEqual(
+			expectedNpmGlobalStep(prefix, [
+				"install",
+				"-g",
+				"--ignore-scripts",
+				"--min-release-age=0",
+				"@earendil-works/pi-coding-agent",
+			]).args,
+		);
 	});
 
 	test("quotes npm self-update display paths", () => {
@@ -277,7 +281,13 @@ describe("detectInstallMethod", () => {
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
 
 		expect(command?.display).toBe(
-			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
+			expectedNpmGlobalStep(prefix, [
+				"install",
+				"-g",
+				"--ignore-scripts",
+				"--min-release-age=0",
+				"@earendil-works/pi-coding-agent",
+			]).display,
 		);
 	});
 
@@ -425,7 +435,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("does not self-update when npm install path is not writable", () => {
+	test.skipIf(process.platform === "win32")("does not self-update when npm install path is not writable", () => {
 		const { packageDir } = createNpmPrefixInstall();
 		chmodSync(packageDir, 0o500);
 

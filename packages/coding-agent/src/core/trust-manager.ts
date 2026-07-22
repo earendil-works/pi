@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
@@ -185,6 +185,10 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
 	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
+	const relativeToHome = relative(homeDir, currentDir);
+	const isWithinHome =
+		relativeToHome === "" ||
+		(relativeToHome !== ".." && !relativeToHome.startsWith(`..${sep}`) && !isAbsolute(relativeToHome));
 
 	const configDir = join(currentDir, CONFIG_DIR_NAME);
 	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
@@ -195,6 +199,9 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");
 		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
 			return true;
+		}
+		if (isWithinHome && currentDir === homeDir) {
+			return false;
 		}
 
 		const parentDir = dirname(currentDir);

@@ -185,6 +185,7 @@ Content`,
 		it("should resolve symlinked user and project resources once", async () => {
 			const previousHome = process.env.HOME;
 			process.env.HOME = tempDir;
+			const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
 
 			try {
 				const sharedDir = join(tempDir, "shared-resources");
@@ -212,14 +213,14 @@ Content`,
 
 				mkdirSync(join(agentDir), { recursive: true });
 				mkdirSync(join(tempDir, ".pi"), { recursive: true });
-				symlinkSync(sharedExtensionsDir, join(agentDir, "extensions"), "dir");
-				symlinkSync(sharedSkillsDir, join(agentDir, "skills"), "dir");
-				symlinkSync(sharedPromptsDir, join(agentDir, "prompts"), "dir");
-				symlinkSync(sharedThemesDir, join(agentDir, "themes"), "dir");
-				symlinkSync(sharedExtensionsDir, join(tempDir, ".pi", "extensions"), "dir");
-				symlinkSync(sharedSkillsDir, join(tempDir, ".pi", "skills"), "dir");
-				symlinkSync(sharedPromptsDir, join(tempDir, ".pi", "prompts"), "dir");
-				symlinkSync(sharedThemesDir, join(tempDir, ".pi", "themes"), "dir");
+				symlinkSync(sharedExtensionsDir, join(agentDir, "extensions"), directoryLinkType);
+				symlinkSync(sharedSkillsDir, join(agentDir, "skills"), directoryLinkType);
+				symlinkSync(sharedPromptsDir, join(agentDir, "prompts"), directoryLinkType);
+				symlinkSync(sharedThemesDir, join(agentDir, "themes"), directoryLinkType);
+				symlinkSync(sharedExtensionsDir, join(tempDir, ".pi", "extensions"), directoryLinkType);
+				symlinkSync(sharedSkillsDir, join(tempDir, ".pi", "skills"), directoryLinkType);
+				symlinkSync(sharedPromptsDir, join(tempDir, ".pi", "prompts"), directoryLinkType);
+				symlinkSync(sharedThemesDir, join(tempDir, ".pi", "themes"), directoryLinkType);
 
 				const result = await packageManager.resolve();
 

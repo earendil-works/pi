@@ -23,6 +23,22 @@ function callHandleCtrlZ(context: HandleCtrlZThis): void {
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown;
 
+function withProcessPlatform<T>(platform: string, callback: () => T): T {
+	const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+	Object.defineProperty(process, "platform", {
+		configurable: true,
+		value: platform,
+	});
+
+	try {
+		return callback();
+	} finally {
+		if (platformDescriptor) {
+			Object.defineProperty(process, "platform", platformDescriptor);
+		}
+	}
+}
+
 describe("InteractiveMode.handleCtrlZ", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
@@ -36,23 +52,12 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		};
 		const showStatus = vi.fn();
 		const context: HandleCtrlZThis & { showStatus: (message: string) => void } = { ui, showStatus };
-		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
-		Object.defineProperty(process, "platform", {
-			configurable: true,
-			value: "win32",
-		});
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
 		const processOnSpy = vi.spyOn(process, "on");
 		const processOnceSpy = vi.spyOn(process, "once");
 		const processKillSpy = vi.spyOn(process, "kill");
 
-		try {
-			callHandleCtrlZ(context);
-		} finally {
-			if (platformDescriptor) {
-				Object.defineProperty(process, "platform", platformDescriptor);
-			}
-		}
+		withProcessPlatform("win32", () => callHandleCtrlZ(context));
 
 		expect(showStatus).toHaveBeenCalledWith("Suspend to background is not supported on Windows");
 		expect(ui.stop).not.toHaveBeenCalled();
@@ -94,22 +99,24 @@ describe("InteractiveMode.handleCtrlZ", () => {
 			.mockImplementation(((_event: string, _listener: () => void) => process) as typeof process.removeListener);
 		const processKillSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
-		callHandleCtrlZ(context);
+		withProcessPlatform("linux", () => {
+			callHandleCtrlZ(context);
 
-		expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2 ** 30);
-		expect(processOnSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
-		expect(processOnceSpy).toHaveBeenCalledWith("SIGCONT", expect.any(Function));
-		expect(ui.stop).toHaveBeenCalledTimes(1);
-		expect(processKillSpy).toHaveBeenCalledWith(0, "SIGTSTP");
-		expect(sigintHandler).toBeDefined();
-		expect(sigcontHandler).toBeDefined();
+			expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2 ** 30);
+			expect(processOnSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
+			expect(processOnceSpy).toHaveBeenCalledWith("SIGCONT", expect.any(Function));
+			expect(ui.stop).toHaveBeenCalledTimes(1);
+			expect(processKillSpy).toHaveBeenCalledWith(0, "SIGTSTP");
+			expect(sigintHandler).toBeDefined();
+			expect(sigcontHandler).toBeDefined();
 
-		sigcontHandler?.();
+			sigcontHandler?.();
 
-		expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
-		expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", sigintHandler);
-		expect(ui.start).toHaveBeenCalledTimes(1);
-		expect(ui.requestRender).toHaveBeenCalledWith(true);
+			expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
+			expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", sigintHandler);
+			expect(ui.start).toHaveBeenCalledTimes(1);
+			expect(ui.requestRender).toHaveBeenCalledWith(true);
+		});
 	});
 
 	test("cleans up the temporary handlers if suspension fails", () => {
@@ -138,12 +145,14 @@ describe("InteractiveMode.handleCtrlZ", () => {
 			throw suspendError;
 		});
 
-		expect(() => callHandleCtrlZ(context)).toThrow(suspendError);
-		expect(ui.stop).toHaveBeenCalledTimes(1);
-		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-		expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
-		expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
-		expect(ui.start).not.toHaveBeenCalled();
-		expect(ui.requestRender).not.toHaveBeenCalled();
+		withProcessPlatform("linux", () => {
+			expect(() => callHandleCtrlZ(context)).toThrow(suspendError);
+			expect(ui.stop).toHaveBeenCalledTimes(1);
+			expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+			expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
+			expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
+			expect(ui.start).not.toHaveBeenCalled();
+			expect(ui.requestRender).not.toHaveBeenCalled();
+		});
 	});
 });

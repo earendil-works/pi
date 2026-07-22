@@ -859,7 +859,7 @@ class ResourceList implements Component, Focusable {
 
 	private getPackageResourcePattern(item: ResourceItem): string {
 		const baseDir = item.metadata.baseDir ?? dirname(item.path);
-		return relative(baseDir, item.path);
+		return relative(baseDir, item.path).replaceAll("\\", "/");
 	}
 }
 

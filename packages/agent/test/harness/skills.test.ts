@@ -43,7 +43,7 @@ Use this skill.
 			"actual/example/SKILL.md",
 			"---\nname: example\ndescription: Example skill\n---\nUse this skill.",
 		);
-		await symlink(join(root, "actual"), join(root, "skills-link"));
+		await symlink(join(root, "actual"), join(root, "skills-link"), process.platform === "win32" ? "junction" : "dir");
 
 		const { skills } = await loadSkills(env, "skills-link");
 

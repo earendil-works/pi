@@ -9,6 +9,8 @@ import {
 } from "../../src/harness/prompt-templates.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
+const skipFileSymlinkTests = process.platform === "win32";
+
 describe("loadPromptTemplates", () => {
 	it("loads markdown templates non-recursively from one or more dirs", async () => {
 		const root = createTempDir();
@@ -65,7 +67,7 @@ describe("loadPromptTemplates", () => {
 		});
 	});
 
-	it("loads explicit markdown files and symlinked files", async () => {
+	it.skipIf(skipFileSymlinkTests)("loads explicit markdown files and symlinked files", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		await env.writeFile("target.md", "---\ndescription: Target\n---\nTarget body");

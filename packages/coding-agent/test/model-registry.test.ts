@@ -19,8 +19,11 @@ describe("ModelRegistry", () => {
 	let tempDir: string;
 	let modelsJsonPath: string;
 	let authStorage: AuthStorage;
+	let previousOffline: string | undefined;
 
 	beforeEach(() => {
+		previousOffline = process.env.PI_OFFLINE;
+		process.env.PI_OFFLINE = "1";
 		tempDir = join(tmpdir(), `pi-test-model-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
@@ -28,6 +31,11 @@ describe("ModelRegistry", () => {
 	});
 
 	afterEach(() => {
+		if (previousOffline === undefined) {
+			delete process.env.PI_OFFLINE;
+		} else {
+			process.env.PI_OFFLINE = previousOffline;
+		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
