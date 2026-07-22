@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added `--ansteel` for fail-closed, evidence-first engineering reviews under mandatory three-role governance: three distinct configured role models, restricted built-in review tools, a QA veto gate, Staff and QA final sign-off on the Tech Lead consensus, and Markdown reports. See [Evidence-First Reviews](docs/ansteel.md).
+- Added `--ansteel` for fail-closed, evidence-first engineering reviews under mandatory three-role governance: three distinct configured role models, restricted built-in review tools, independent Staff and QA architecture challenges, an auditable issue ledger, at most two architecture revision rounds with independent verification, final Staff and QA sign-off on the Tech Lead consensus, and Markdown reports. See [Evidence-First Reviews](docs/ansteel.md).
 
 ## [0.81.1] - 2026-07-21
 

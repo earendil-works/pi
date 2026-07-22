@@ -174,7 +174,7 @@ See [Pi Packages](packages.md) for package sources and security notes.
 | `--export <in> [out]` | Export a session to HTML |
 | `--ansteel <topic>` | Run a mandatory three-role evidence-first engineering review and exit; see [Evidence-First Reviews](ansteel.md) |
 
-`--ansteel` requires `.pi/ansteel.json` with three distinct, authenticated `provider/model` entries. It never falls back to the currently selected model: QA has an initial veto gate, and both Staff Engineer and QA Engineer must explicitly sign off on the immutable Tech Lead consensus before the review can succeed.
+`--ansteel` requires `.pi/ansteel.json` with three distinct, authenticated `provider/model` entries. It never falls back to the currently selected model: Staff Engineer and QA Engineer independently challenge the same Tech Lead architecture, each revision must resolve the recorded issues, and both must explicitly verify a revision before Tech Lead can write consensus for final dual sign-off. Two unsuccessful revision rounds reject the review.
 
 In print mode, pi also reads piped stdin and merges it into the initial prompt:
 

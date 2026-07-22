@@ -62,6 +62,45 @@ function getLegacyCopyText(messages: readonly RawTurnMessage[]): string | undefi
 	return text.trim() || undefined;
 }
 
+const MUTUAL_REVIEW_STAGE_ORDER: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [
+	{ role: "tech-lead", stage: "architecture" },
+	{ role: "staff-engineer", stage: "staff-critique" },
+	{ role: "qa-engineer", stage: "qa-critique" },
+	{ role: "tech-lead", stage: "architecture-revision" },
+	{ role: "staff-engineer", stage: "staff-verification" },
+	{ role: "qa-engineer", stage: "qa-verification" },
+	{ role: "tech-lead", stage: "consensus" },
+	{ role: "staff-engineer", stage: "staff-sign-off" },
+	{ role: "qa-engineer", stage: "qa-sign-off" },
+];
+
+const MUTUAL_REVIEW_RESPONSES: Record<AnsteelDiscussionStage, string> = {
+	architecture: "[L1] Architecture v0",
+	"staff-critique": "ISSUE: STAFF-INITIAL\n[L2] Initial implementation concern",
+	"qa-critique": "ISSUE: QA-INITIAL\n[L2] Initial testability concern",
+	"architecture-revision": "RESOLUTION: STAFF-INITIAL | RESOLVED\nRESOLUTION: QA-INITIAL | RESOLVED",
+	"staff-verification": "VERDICT: APPROVE",
+	"qa-verification": "VERDICT: APPROVE",
+	consensus: "[L1] Immutable consensus",
+	"staff-sign-off": "VERDICT: APPROVE",
+	"qa-sign-off": "VERDICT: APPROVE",
+};
+
+function getStageFromPrompt(prompt: string): AnsteelDiscussionStage {
+	const match = /Current stage: ([a-z-]+)\./.exec(prompt);
+	if (!match || !(match[1] in MUTUAL_REVIEW_RESPONSES)) {
+		throw new Error(`Could not determine Ansteel stage from prompt: ${prompt}`);
+	}
+	return match[1] as AnsteelDiscussionStage;
+}
+
+function responseForMutualReviewStage(
+	stage: AnsteelDiscussionStage,
+	overrides: Partial<Record<AnsteelDiscussionStage, string>> = {},
+): string {
+	return overrides[stage] ?? MUTUAL_REVIEW_RESPONSES[stage];
+}
+
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -263,7 +302,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.failure).toEqual({
 			role: "tech-lead",
-			stage: "scope",
+			stage: "architecture",
 			reason: "provider request failed; listener cleanup also failed: listener cleanup failed",
 		});
 		expect(result.transcript).toEqual([]);
@@ -275,7 +314,7 @@ describe("runAnsteelDiscussion", () => {
 		const result = await runAnsteelDiscussion({
 			topic: "Review listener cleanup failure",
 			runRole: async ({ role, stage, prompt }) => {
-				if (role !== "tech-lead" || stage !== "scope") {
+				if (role !== "tech-lead" || stage !== "architecture") {
 					throw new Error(`Unexpected ${role} / ${stage}`);
 				}
 
@@ -292,7 +331,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.failure).toEqual({
 			role: "tech-lead",
-			stage: "scope",
+			stage: "architecture",
 			reason: "listener cleanup failed",
 		});
 		expect(result.transcript).toEqual([]);
@@ -303,20 +342,6 @@ describe("runAnsteelDiscussion", () => {
 		type TestModel = { provider: string; id: string };
 		const prompts: Array<{ role: AnsteelRole; text: string }> = [];
 		let qaMessages: RawTurnMessage[] | undefined;
-		const responses: Record<AnsteelRole, RawTurnMessage[]> = {
-			"tech-lead": [
-				{ role: "assistant", content: [{ type: "text", text: "[L1] Scope" }] },
-				{ role: "assistant", content: [{ type: "text", text: "[L1] Verification" }] },
-			],
-			"staff-engineer": [
-				{ role: "assistant", content: [{ type: "text", text: "[L2] Proposal" }] },
-				{ role: "assistant", content: [{ type: "text", text: "[L2] Revision" }] },
-			],
-			"qa-engineer": [
-				{ role: "assistant", content: [{ type: "text", text: "VERDICT: APPROVE" }] },
-				{ role: "assistant", content: [], stopReason: "aborted" },
-			],
-		};
 
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review current QA turn",
@@ -346,8 +371,11 @@ describe("runAnsteelDiscussion", () => {
 				return createAnsteelRawTurnSession({
 					prompt: async (text) => {
 						prompts.push({ role, text });
-						const response = responses[role].shift();
-						if (!response) throw new Error(`Unexpected ${role} response`);
+						const stage = getStageFromPrompt(text);
+						const response: RawTurnMessage =
+							stage === "qa-verification"
+								? { role: "assistant", content: [], stopReason: "aborted" }
+								: { role: "assistant", content: [{ type: "text", text: responseForMutualReviewStage(stage) }] };
 						messages.push(response);
 						assistantMessages.emit(response);
 					},
@@ -360,103 +388,282 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.consensus).toBeUndefined();
 		expect(result.transcript.at(-1)?.response).toBe("");
-		expect(getLegacyCopyText(qaMessages ?? [])).toBe("VERDICT: APPROVE");
-		expect(result.markdown).toContain("qa-engineer / veto returned an empty or whitespace-only response");
+		expect(getLegacyCopyText(qaMessages ?? [])).toBe("ISSUE: QA-INITIAL\n[L2] Initial testability concern");
+		expect(result.markdown).toContain("qa-engineer / qa-verification returned an empty or whitespace-only response");
 		expect(prompts.some(({ text }) => text.includes("Current stage: consensus."))).toBe(false);
 	});
 
-	it("stops before consensus when QA vetoes the proposal", async () => {
-		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; prompt: string }> = [];
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope and acceptance criteria", "[L1] Verification result"],
-			"staff-engineer": ["[L2] Initial proposal", "[L2] Revised proposal"],
-			"qa-engineer": ["[L3] Missing evidence", "VERDICT: REJECT\n[L1] The safety test is absent"],
-		};
+	it("routes one architecture through independent Staff and QA challenges before consensus", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: string; prompt: string }> = [];
+		const architecture = "[L1] Architecture v0: component boundaries, failure policy, and acceptance criteria";
 
 		const result = await runAnsteelDiscussion({
-			topic: "Review the motor safety change",
+			topic: "Review the motor safety architecture",
 			runRole: async ({ role, stage, prompt }) => {
 				calls.push({ role, stage, prompt });
-				const response = responses[role].shift();
-				if (!response) throw new Error(`Unexpected ${role}/${stage}`);
-				return response;
-			},
-		});
-
-		expect(result.verdict).toBe("rejected");
-		expect(result.consensus).toBeUndefined();
-		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual([
-			"tech-lead:scope",
-			"staff-engineer:proposal",
-			"qa-engineer:critique",
-			"staff-engineer:revision",
-			"tech-lead:verification",
-			"qa-engineer:veto",
-		]);
-		expect(result.markdown).toContain("VERDICT: REJECT");
-		expect(result.markdown).toContain("[L3] Missing evidence");
-	});
-
-	it("runs consensus only after QA approves and keeps the discussion transcript", async () => {
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verified", "[L2] Consensus "],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision", "VERDICT: APPROVE"],
-			"qa-engineer": [
-				"[L3] Question",
-				"[L2] Conditions met before the decision\nVERDICT: APPROVE\n[L2] Follow-up remains after the decision",
-				"VERDICT: APPROVE",
-			],
-		};
-
-		const result = await runAnsteelDiscussion({
-			topic: "Review the parser",
-			runRole: async ({ role, stage }) => {
-				const response = responses[role].shift();
-				if (!response) throw new Error(`Unexpected ${role}/${stage}`);
-				return response;
+				switch (stage) {
+					case "architecture":
+						return architecture;
+					case "staff-critique":
+						return "ISSUE: STAFF-1\n[L2] The driver interface cannot meet the proposed timing.";
+					case "qa-critique":
+						return "ISSUE: QA-1\n[L2] The fault-injection acceptance test is missing.";
+					case "architecture-revision":
+						return "RESOLUTION: STAFF-1 | RESOLVED\nRESOLUTION: QA-1 | RESOLVED";
+					case "staff-verification":
+						return "VERDICT: APPROVE\nSTAFF-VERIFICATION-PRIVATE";
+					case "qa-verification":
+						return "VERDICT: APPROVE\nQA-VERIFICATION-PRIVATE";
+					case "staff-sign-off":
+					case "qa-sign-off":
+						return "VERDICT: APPROVE";
+					case "consensus":
+						return "[L1] Immutable architecture consensus";
+					default:
+						return `[L2] ${role}/${stage}`;
+				}
 			},
 		});
 
 		expect(result.verdict).toBe("approved");
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual([
+			"tech-lead:architecture",
+			"staff-engineer:staff-critique",
+			"qa-engineer:qa-critique",
+			"tech-lead:architecture-revision",
+			"staff-engineer:staff-verification",
+			"qa-engineer:qa-verification",
+			"tech-lead:consensus",
+			"staff-engineer:staff-sign-off",
+			"qa-engineer:qa-sign-off",
+		]);
+
+		const staffCritiquePrompt = calls.find((call) => call.stage === "staff-critique")?.prompt ?? "";
+		const qaCritiquePrompt = calls.find((call) => call.stage === "qa-critique")?.prompt ?? "";
+		const architectureRevisionPrompt = calls.find((call) => call.stage === "architecture-revision")?.prompt ?? "";
+		const staffVerificationPrompt = calls.find((call) => call.stage === "staff-verification")?.prompt ?? "";
+		const qaVerificationPrompt = calls.find((call) => call.stage === "qa-verification")?.prompt ?? "";
+		expect(staffCritiquePrompt).toContain(architecture);
+		expect(qaCritiquePrompt).toContain(architecture);
+		expect(staffCritiquePrompt).not.toContain("The fault-injection acceptance test is missing.");
+		expect(qaCritiquePrompt).not.toContain("The driver interface cannot meet the proposed timing.");
+		expect(architectureRevisionPrompt).toContain("The driver interface cannot meet the proposed timing.");
+		expect(architectureRevisionPrompt).toContain("The fault-injection acceptance test is missing.");
+		for (const verificationPrompt of [staffVerificationPrompt, qaVerificationPrompt]) {
+			expect(verificationPrompt).toContain("RESOLUTION: STAFF-1 | RESOLVED");
+			expect(verificationPrompt).toContain("RESOLUTION: QA-1 | RESOLVED");
+			expect(verificationPrompt).toContain("STAFF-1 | staff-engineer | round 0 | resolved");
+			expect(verificationPrompt).toContain("QA-1 | qa-engineer | round 0 | resolved");
+		}
+		expect(qaVerificationPrompt).not.toContain("STAFF-VERIFICATION-PRIVATE");
+	});
+
+	it("returns verifier rejections to a second architecture revision before rejecting at the cap", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: string }> = [];
+		let revisionCount = 0;
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review repeated architecture objections",
+			runRole: async ({ role, stage }) => {
+				calls.push({ role, stage });
+				switch (stage) {
+					case "architecture":
+						return "[L1] Architecture v0";
+					case "staff-critique":
+						return "ISSUE: STAFF-INITIAL\n[L2] Initial implementation objection";
+					case "qa-critique":
+						return "ISSUE: QA-INITIAL\n[L2] Initial testability objection";
+					case "architecture-revision":
+						revisionCount++;
+						return revisionCount === 1
+							? ["RESOLUTION: STAFF-INITIAL | RESOLVED", "RESOLUTION: QA-INITIAL | RESOLVED"].join("\n")
+							: [
+									`RESOLUTION: STAFF-VERIFY-${revisionCount - 1} | RESOLVED`,
+									`RESOLUTION: QA-VERIFY-${revisionCount - 1} | RESOLVED`,
+								].join("\n");
+					case "staff-verification":
+						return `VERDICT: REJECT\nISSUE: STAFF-VERIFY-${revisionCount}\n[L1] The implementation still cannot meet the timing bound.`;
+					case "qa-verification":
+						return `VERDICT: REJECT\nISSUE: QA-VERIFY-${revisionCount}\n[L1] The safety test still cannot prove the fault path.`;
+					default:
+						return `[L2] ${role}/${stage}`;
+				}
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(calls.filter((call) => call.stage === "architecture-revision")).toHaveLength(2);
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("tech-lead:consensus");
+		expect(result.markdown).toContain("maximum of 2 architecture revision rounds");
+	});
+
+	it("rejects an architecture revision that does not answer every challenge ID", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: string }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review unresolved architecture challenge",
+			runRole: async ({ role, stage }) => {
+				calls.push({ role, stage });
+				switch (stage) {
+					case "architecture":
+						return "[L1] Architecture v0";
+					case "staff-critique":
+						return "ISSUE: STAFF-UNANSWERED\n[L2] Driver ownership is ambiguous.";
+					case "qa-critique":
+						return "ISSUE: QA-ANSWERED\n[L2] Error-path coverage is incomplete.";
+					case "architecture-revision":
+						return "RESOLUTION: QA-ANSWERED | RESOLVED";
+					default:
+						return `[L2] ${role}/${stage}`;
+				}
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.markdown).toContain("STAFF-UNANSWERED");
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("staff-engineer:staff-verification");
+	});
+
+	it("allows independent reviewers to record NO ISSUES", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review an architecture without objections",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"staff-critique": "NO ISSUES",
+					"qa-critique": "NO ISSUES",
+					"architecture-revision": "[L1] Architecture v1 remains unchanged after independent review.",
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual([]);
+		expect(result.markdown).toContain("No recorded challenge IDs.");
+	});
+
+	it.each([
+		["a trailing space on an issue marker", "ISSUE: STAFF-STRICT "],
+		["a trailing space on the no-issues marker", "NO ISSUES "],
+	])("rejects %s before the architecture revision", async (_description, staffCritique) => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review strict challenge marker parsing",
+			runRole: async ({ stage }) =>
+				stage === "staff-critique" ? staffCritique : responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.transcript.at(-1)?.stage).toBe("staff-critique");
+	});
+
+	it("rejects a resolution marker with trailing whitespace before verification", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review strict resolution marker parsing",
+			runRole: async ({ stage }) =>
+				stage === "architecture-revision"
+					? "RESOLUTION: STAFF-INITIAL | RESOLVED \nRESOLUTION: QA-INITIAL | RESOLVED"
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("unanswered-challenge");
+		expect(result.transcript.at(-1)?.stage).toBe("architecture-revision");
+	});
+
+	it("rejects a verification rejection that does not add a new issue", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review an unsupported verification rejection",
+			runRole: async ({ stage }) =>
+				stage === "qa-verification" ? "VERDICT: REJECT\nNO ISSUES" : responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.consensus).toBeUndefined();
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.markdown).toContain("qa-engineer rejected the architecture without adding a new ISSUE line");
+	});
+
+	it("returns a QA verification rejection to a second architecture revision before consensus", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; round?: number }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review the motor safety change",
+			runRole: async ({ role, stage, round }) => {
+				calls.push({ role, stage, round });
+				if (stage === "qa-verification" && round === 1) {
+					return "VERDICT: REJECT\nISSUE: QA-VERIFICATION-1\n[L1] The safety test is absent.";
+				}
+				if (stage === "architecture-revision" && round === 2) {
+					return "RESOLUTION: QA-VERIFICATION-1 | RESOLVED";
+				}
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.revisionRounds).toEqual([
+			{ round: 1, staffVerdict: "approved", qaVerdict: "rejected", outcome: "needs-revision" },
+			{ round: 2, staffVerdict: "approved", qaVerdict: "approved", outcome: "approved" },
+		]);
+		expect(
+			calls.map(({ role, stage, round }) => `${role}:${stage}${round === undefined ? "" : `:${round}`}`),
+		).toEqual([
+			"tech-lead:architecture",
+			"staff-engineer:staff-critique",
+			"qa-engineer:qa-critique",
+			"tech-lead:architecture-revision:1",
+			"staff-engineer:staff-verification:1",
+			"qa-engineer:qa-verification:1",
+			"tech-lead:architecture-revision:2",
+			"staff-engineer:staff-verification:2",
+			"qa-engineer:qa-verification:2",
+			"tech-lead:consensus",
+			"staff-engineer:staff-sign-off",
+			"qa-engineer:qa-sign-off",
+		]);
+		expect(result.markdown).toContain("QA-VERIFICATION-1");
+	});
+
+	it("runs consensus only after independent verification and keeps the discussion transcript", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review the parser",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					architecture: "[L1] Architecture boundary",
+					"staff-critique": "ISSUE: STAFF-PARSER\n[L2] The implementation path is underspecified.",
+					"qa-critique": "ISSUE: QA-PARSER\n[L3] The fault-path test still needs evidence.",
+					"architecture-revision": "RESOLUTION: STAFF-PARSER | RESOLVED\nRESOLUTION: QA-PARSER | RESOLVED",
+					"staff-verification": "VERDICT: APPROVE",
+					"qa-verification":
+						"[L2] Conditions met before the decision\nVERDICT: APPROVE\n[L2] Follow-up remains after the decision",
+					consensus: "[L2] Consensus ",
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
 		expect(result.consensus).toBe("[L2] Consensus ");
-		expect(result.markdown).toContain("[L2] Proposal");
-		expect(result.markdown).toContain("[L2] Revision");
-		expect(result.markdown).toContain("[L1] Verified");
+		expect(result.markdown).toContain("[L1] Architecture boundary");
+		expect(result.markdown).toContain("STAFF-PARSER");
+		expect(result.markdown).toContain("QA-PARSER");
 		expect(result.markdown).toContain("## Tech Lead Consensus\n\n[L2] Consensus \n");
 	});
 
 	it("requires Staff and QA final sign-off on the immutable Tech Lead consensus", async () => {
-		const calls: Array<{ role: AnsteelRole; stage: string; prompt: string }> = [];
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L1] Immutable consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision", "VERDICT: APPROVE"],
-			"qa-engineer": ["[L3] Critique", "VERDICT: APPROVE", "VERDICT: APPROVE"],
-		};
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; prompt: string }> = [];
 
 		const result = await runAnsteelDiscussion({
 			topic: "Review final governance sign-off",
 			runRole: async ({ role, stage, prompt }) => {
 				calls.push({ role, stage, prompt });
-				const response = responses[role].shift();
-				if (!response) throw new Error(`Unexpected ${role}/${stage}`);
-				return response;
+				return responseForMutualReviewStage(stage);
 			},
 		});
 
 		expect(result.verdict).toBe("approved");
 		expect(result.consensus).toBe("[L1] Immutable consensus");
-		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual([
-			"tech-lead:scope",
-			"staff-engineer:proposal",
-			"qa-engineer:critique",
-			"staff-engineer:revision",
-			"tech-lead:verification",
-			"qa-engineer:veto",
-			"tech-lead:consensus",
-			"staff-engineer:staff-sign-off",
-			"qa-engineer:qa-sign-off",
-		]);
-		for (const stage of ["staff-sign-off", "qa-sign-off"]) {
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual(
+			MUTUAL_REVIEW_STAGE_ORDER.map(({ role, stage }) => `${role}:${stage}`),
+		);
+		for (const stage of ["staff-sign-off", "qa-sign-off"] as const) {
 			const prompt = calls.find((call) => call.stage === stage)?.prompt ?? "";
 			expect(prompt).toContain("[L1] Immutable consensus");
 			expect(prompt).toContain("immutable");
@@ -476,9 +683,7 @@ describe("runAnsteelDiscussion", () => {
 				runRole: async ({ role, stage }) => {
 					calls.push({ role, stage });
 					if (role === rejectedRole && stage === rejectedStage) return rejectedResponse;
-					if (["veto", "staff-sign-off", "qa-sign-off"].includes(stage)) return "VERDICT: APPROVE";
-					if (stage === "consensus") return "[L1] Immutable consensus";
-					return `[L2] ${stage}`;
+					return responseForMutualReviewStage(stage);
 				},
 			});
 
@@ -498,7 +703,7 @@ describe("runAnsteelDiscussion", () => {
 				const rolePrompts = prompts.get(role) ?? [];
 				rolePrompts.push(prompt);
 				prompts.set(role, rolePrompts);
-				return ["veto", "staff-sign-off", "qa-sign-off"].includes(stage) ? "VERDICT: APPROVE" : `[L2] ${stage}`;
+				return responseForMutualReviewStage(stage);
 			},
 		});
 
@@ -524,49 +729,37 @@ describe("runAnsteelDiscussion", () => {
 		["an embedded contradictory verdict", "VERDICT: APPROVE\nThe audit says VERDICT: REJECT"],
 		["a pending marker after approval", "VERDICT: APPROVE\nVERDICT PENDING"],
 		["an isolated pending marker", "VERDICT PENDING"],
-	])("rejects %s without running consensus", async (_description, qaVeto) => {
+	])("rejects %s in QA verification without running consensus", async (_description, qaVerdict) => {
 		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [];
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L2] Consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision"],
-			"qa-engineer": ["[L3] Critique", qaVeto],
-		};
 
 		const result = await runAnsteelDiscussion({
 			topic: "Review the QA gate",
 			runRole: async ({ role, stage }) => {
 				calls.push({ role, stage });
-				const response = responses[role].shift();
-				if (!response) throw new Error(`Unexpected ${role}/${stage}`);
-				return response;
+				return stage === "qa-verification" ? qaVerdict : responseForMutualReviewStage(stage);
 			},
 		});
 
 		expect(result.verdict).toBe("rejected");
 		expect(result.consensus).toBeUndefined();
+		expect(result.terminationReason).toBe("invalid-verdict");
 		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("tech-lead:consensus");
 	});
 
 	it.each([
-		["tech-lead", "scope"],
-		["staff-engineer", "proposal"],
-		["qa-engineer", "critique"],
-		["staff-engineer", "revision"],
-		["tech-lead", "verification"],
-		["qa-engineer", "veto"],
+		["tech-lead", "architecture"],
+		["staff-engineer", "staff-critique"],
+		["qa-engineer", "qa-critique"],
+		["tech-lead", "architecture-revision"],
+		["staff-engineer", "staff-verification"],
+		["qa-engineer", "qa-verification"],
 		["tech-lead", "consensus"],
+		["staff-engineer", "staff-sign-off"],
+		["qa-engineer", "qa-sign-off"],
 	] as const)(
 		"rejects a whitespace-only %s / %s response without running later stages",
 		async (blankRole, blankStage) => {
-			const stageOrder: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [
-				{ role: "tech-lead", stage: "scope" },
-				{ role: "staff-engineer", stage: "proposal" },
-				{ role: "qa-engineer", stage: "critique" },
-				{ role: "staff-engineer", stage: "revision" },
-				{ role: "tech-lead", stage: "verification" },
-				{ role: "qa-engineer", stage: "veto" },
-				{ role: "tech-lead", stage: "consensus" },
-			];
+			const stageOrder = MUTUAL_REVIEW_STAGE_ORDER;
 			const rawWhitespace = " \t \r\n";
 			const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [];
 			const blankIndex = stageOrder.findIndex(({ role, stage }) => role === blankRole && stage === blankStage);
@@ -576,13 +769,16 @@ describe("runAnsteelDiscussion", () => {
 				runRole: async ({ role, stage }) => {
 					calls.push({ role, stage });
 					if (role === blankRole && stage === blankStage) return rawWhitespace;
-					if (stage === "veto") return "VERDICT: APPROVE";
-					return `[L2] ${stage}`;
+					return responseForMutualReviewStage(stage);
 				},
 			});
 
 			expect(result.verdict).toBe("rejected");
-			expect(result.consensus).toBeUndefined();
+			expect(result.consensus).toBe(
+				blankIndex > stageOrder.findIndex(({ stage }) => stage === "consensus")
+					? "[L1] Immutable consensus"
+					: undefined,
+			);
 			expect(calls).toEqual(stageOrder.slice(0, blankIndex + 1));
 			expect(result.transcript.at(-1)?.response).toBe(rawWhitespace);
 			expect(result.markdown).toContain(
@@ -599,10 +795,10 @@ describe("runAnsteelDiscussion", () => {
 			topic: "Review a failed provider call",
 			runRole: async ({ role, stage }) => {
 				calls.push({ role, stage });
-				if (role === "staff-engineer" && stage === "proposal") {
+				if (role === "staff-engineer" && stage === "staff-critique") {
 					throw new Error("provider connection closed");
 				}
-				return "[L1] Scope evidence ";
+				return "[L1] Architecture evidence ";
 			},
 		});
 
@@ -610,19 +806,19 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.consensus).toBeUndefined();
 		expect(result.failure).toEqual({
 			role: "staff-engineer",
-			stage: "proposal",
+			stage: "staff-critique",
 			reason: "provider connection closed",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "scope", response: "[L1] Scope evidence " }),
+			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence " }),
 		]);
 		expect(calls).toEqual([
-			{ role: "tech-lead", stage: "scope" },
-			{ role: "staff-engineer", stage: "proposal" },
+			{ role: "tech-lead", stage: "architecture" },
+			{ role: "staff-engineer", stage: "staff-critique" },
 		]);
 		expect(result.markdown).toContain("## Stage Failure");
 		expect(result.markdown).toContain("- Failed role: staff-engineer");
-		expect(result.markdown).toContain("- Failed stage: proposal");
+		expect(result.markdown).toContain("- Failed stage: staff-critique");
 		expect(result.markdown).toContain("- Reason: provider connection closed");
 	});
 
@@ -650,7 +846,7 @@ describe("runAnsteelDiscussion", () => {
 					prompt: async (prompt) => {
 						prompts.push({ role, prompt });
 						if (role === "staff-engineer") throw new Error("role session timed out");
-						return "[L1] Scope evidence ";
+						return "[L1] Architecture evidence ";
 					},
 					dispose: () => {
 						disposed.push(role);
@@ -663,11 +859,11 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.consensus).toBeUndefined();
 		expect(result.failure).toEqual({
 			role: "staff-engineer",
-			stage: "proposal",
+			stage: "staff-critique",
 			reason: "role session timed out",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "scope", response: "[L1] Scope evidence " }),
+			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence " }),
 		]);
 		expect(prompts.map(({ role }) => role)).toEqual(["tech-lead", "staff-engineer"]);
 		expect(prompts.some(({ prompt }) => prompt.includes("Current stage: consensus."))).toBe(false);
@@ -694,7 +890,7 @@ describe("runAnsteelDiscussion", () => {
 			createRoleSession: async ({ role }) => ({
 				prompt: async () => {
 					if (role === "staff-engineer") throw new Error("role session timed out");
-					return "[L1] Scope evidence";
+					return "[L1] Architecture evidence";
 				},
 				dispose: () => {
 					disposed.push(role);
@@ -707,11 +903,11 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.failure).toEqual({
 			role: "staff-engineer",
-			stage: "proposal",
+			stage: "staff-critique",
 			reason: "role session timed out",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "scope", response: "[L1] Scope evidence" }),
+			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence" }),
 		]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(result.cleanupFailures).toEqual([
@@ -754,7 +950,7 @@ describe("runAnsteelDiscussion", () => {
 			createRoleSession: async ({ role }) => ({
 				prompt: async () => {
 					if (role === "staff-engineer") throw new Error("provider request failed");
-					return "[L1] Scope evidence";
+					return "[L1] Architecture evidence";
 				},
 				dispose: () => {
 					disposed.push(role);
@@ -767,7 +963,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.failure).toEqual({
 			role: "staff-engineer",
-			stage: "proposal",
+			stage: "staff-critique",
 			reason: "provider request failed",
 		});
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
@@ -963,12 +1159,6 @@ describe("runAnsteelDiscussion", () => {
 		type TestModel = { provider: string; id: string };
 		const calls: Array<{ role: AnsteelRole; model: TestModel; tools: readonly string[] }> = [];
 		const disposed: AnsteelRole[] = [];
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L2] Consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision", "VERDICT: APPROVE"],
-			"qa-engineer": ["[L3] Critique", "VERDICT: APPROVE\n[L2] Accepted", "VERDICT: APPROVE"],
-		};
-
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review the parser",
 			cwd: process.cwd(),
@@ -984,11 +1174,7 @@ describe("runAnsteelDiscussion", () => {
 			createRoleSession: async ({ role, model, tools }) => {
 				calls.push({ role, model, tools });
 				return {
-					prompt: async () => {
-						const response = responses[role].shift();
-						if (response === undefined) throw new Error(`Unexpected response for ${role}`);
-						return response;
-					},
+					prompt: async (prompt) => responseForMutualReviewStage(getStageFromPrompt(prompt)),
 					dispose: () => {
 						disposed.push(role);
 					},
@@ -1005,12 +1191,6 @@ describe("runAnsteelDiscussion", () => {
 
 	it("preserves a trailing-space QA verdict from a role session and rejects it", async () => {
 		type TestModel = { provider: string; id: string };
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L2] Consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision"],
-			"qa-engineer": ["[L3] Critique", "VERDICT: APPROVE "],
-		};
-
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review the role-session QA gate",
 			cwd: process.cwd(),
@@ -1023,13 +1203,10 @@ describe("runAnsteelDiscussion", () => {
 				reportDirectory: "unused",
 			},
 			resolveModel: (provider, id) => ({ provider, id }),
-			createRoleSession: async ({ role }) => {
+			createRoleSession: async () => {
 				return {
-					prompt: async () => {
-						const response = responses[role].shift();
-						if (response === undefined) throw new Error(`Unexpected response for ${role}`);
-						return response;
-					},
+					prompt: async (prompt) =>
+						responseForMutualReviewStage(getStageFromPrompt(prompt), { "qa-verification": "VERDICT: APPROVE " }),
 					dispose: () => {},
 				};
 			},
@@ -1043,12 +1220,6 @@ describe("runAnsteelDiscussion", () => {
 
 	it("preserves a trailing-space rejected QA verdict when session cleanup fails", async () => {
 		type TestModel = { provider: string; id: string };
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L2] Consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision"],
-			"qa-engineer": ["[L3] Critique", "VERDICT: APPROVE "],
-		};
-
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review cleanup report integrity",
 			cwd: process.cwd(),
@@ -1062,11 +1233,8 @@ describe("runAnsteelDiscussion", () => {
 			},
 			resolveModel: (provider, id) => ({ provider, id }),
 			createRoleSession: async ({ role }) => ({
-				prompt: async () => {
-					const response = responses[role].shift();
-					if (response === undefined) throw new Error(`Unexpected ${role} response`);
-					return response;
-				},
+				prompt: async (prompt) =>
+					responseForMutualReviewStage(getStageFromPrompt(prompt), { "qa-verification": "VERDICT: APPROVE " }),
 				dispose: () => {
 					if (role === "qa-engineer") throw new Error("QA cleanup failed");
 				},
@@ -1084,12 +1252,6 @@ describe("runAnsteelDiscussion", () => {
 		type TestModel = { provider: string; id: string };
 		const calls: Array<{ role: AnsteelRole; prompt: string }> = [];
 		const disposed: AnsteelRole[] = [];
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision"],
-			"qa-engineer": ["[L3] Critique", " \t "],
-		};
-
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review the whitespace-only QA response",
 			cwd: process.cwd(),
@@ -1106,9 +1268,8 @@ describe("runAnsteelDiscussion", () => {
 				return {
 					prompt: async (prompt) => {
 						calls.push({ role, prompt });
-						const response = responses[role].shift();
-						if (response === undefined) throw new Error(`Unexpected response for ${role}`);
-						return response;
+						const stage = getStageFromPrompt(prompt);
+						return stage === "qa-verification" ? " \t " : responseForMutualReviewStage(stage);
 					},
 					dispose: () => {
 						disposed.push(role);
@@ -1120,30 +1281,21 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.consensus).toBeUndefined();
 		expect(result.transcript.at(-1)?.response).toBe(" \t ");
-		expect(result.markdown).toContain("qa-engineer / veto returned an empty or whitespace-only response");
+		expect(result.markdown).toContain("qa-engineer / qa-verification returned an empty or whitespace-only response");
 		expect(calls).toHaveLength(6);
 		expect(calls.some(({ prompt }) => prompt.includes("Current stage: consensus."))).toBe(false);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 	});
 
 	it("allows an exact QA approval marker with a Verdict rationale line", async () => {
-		const responses: Record<AnsteelRole, string[]> = {
-			"tech-lead": ["[L1] Scope", "[L1] Verification", "[L2] Consensus"],
-			"staff-engineer": ["[L2] Proposal", "[L2] Revision", "VERDICT: APPROVE"],
-			"qa-engineer": [
-				"[L3] Critique",
-				"VERDICT: APPROVE\nVerdict rationale: [L1] The required test passed\n[L2] Monitor the follow-up",
-				"VERDICT: APPROVE",
-			],
-		};
-
 		const result = await runAnsteelDiscussion({
 			topic: "Review the verdict parser",
-			runRole: async ({ role }) => {
-				const response = responses[role].shift();
-				if (!response) throw new Error(`Unexpected response for ${role}`);
-				return response;
-			},
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"qa-verification":
+						"VERDICT: APPROVE\nVerdict rationale: [L1] The required test passed\n[L2] Monitor the follow-up",
+					consensus: "[L2] Consensus",
+				}),
 		});
 
 		expect(result.verdict).toBe("approved");

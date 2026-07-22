@@ -7,12 +7,12 @@ export const ANSTEEL_ROLES = ["tech-lead", "staff-engineer", "qa-engineer"] as c
 export type AnsteelRole = (typeof ANSTEEL_ROLES)[number];
 
 export const ANSTEEL_DISCUSSION_STAGES = [
-	"scope",
-	"proposal",
-	"critique",
-	"revision",
-	"verification",
-	"veto",
+	"architecture",
+	"staff-critique",
+	"qa-critique",
+	"architecture-revision",
+	"staff-verification",
+	"qa-verification",
 	"consensus",
 	"staff-sign-off",
 	"qa-sign-off",
@@ -24,6 +24,7 @@ export interface AnsteelRoleCall {
 	role: AnsteelRole;
 	stage: AnsteelDiscussionStage;
 	prompt: string;
+	round?: number;
 }
 
 export interface AnsteelTranscriptEntry extends AnsteelRoleCall {
@@ -35,6 +36,31 @@ export interface AnsteelDiscussionFailure {
 	stage: AnsteelDiscussionStage;
 	reason: string;
 }
+
+export const ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS = 2;
+
+export interface AnsteelChallengeLedgerEntry {
+	id: string;
+	raisedBy: "staff-engineer" | "qa-engineer";
+	round: number;
+	status: "open" | "resolved";
+}
+
+export interface AnsteelRevisionRound {
+	round: number;
+	staffVerdict: "approved" | "rejected";
+	qaVerdict: "approved" | "rejected";
+	outcome: "approved" | "needs-revision";
+}
+
+export type AnsteelTerminationReason =
+	| "stage-failure"
+	| "blank-response"
+	| "invalid-verdict"
+	| "invalid-challenge-ledger"
+	| "unanswered-challenge"
+	| "max-revision-rounds-exhausted"
+	| "final-sign-off-rejected";
 
 export type AnsteelSetupFailurePhase = "configuration" | "model-resolution" | "session-construction";
 
@@ -64,9 +90,12 @@ export interface AnsteelDiscussionResult {
 	topic: string;
 	verdict: "approved" | "rejected";
 	transcript: AnsteelTranscriptEntry[];
+	challengeLedger: AnsteelChallengeLedgerEntry[];
+	revisionRounds: AnsteelRevisionRound[];
 	consensus?: string;
 	failure?: AnsteelDiscussionFailure;
 	cleanupFailures?: AnsteelSessionCleanupFailure[];
+	terminationReason?: AnsteelTerminationReason;
 	markdown: string;
 }
 
@@ -503,34 +532,48 @@ const CONFIDENCE_INSTRUCTIONS = [
 	"L4 requires an explicit statement of what is unknown and no conclusion.",
 ].join(" ");
 
+const ISSUE_LEDGER_INSTRUCTIONS = [
+	"When raising a challenge, put every required change on its own line as `ISSUE: <ID>` using an uppercase ID such as STAFF-1 or QA-1.",
+	"State evidence, impact, and the acceptance condition below each issue.",
+	"When there are no required changes, put exactly `NO ISSUES` on its own line.",
+].join(" ");
+
 const ROLE_INSTRUCTIONS: Record<AnsteelRole, string> = {
 	"tech-lead": [
-		"You are the Tech Lead in an evidence-first engineering review.",
-		"Define scope and acceptance criteria, verify disputed claims, and prioritize risks.",
+		"You are the Tech Lead and architect in an evidence-first engineering review.",
+		"Publish a complete architecture, respond to every open challenge, verify disputed claims, and prioritize risks.",
+		"An architecture revision must be a complete replacement architecture and must include one exact `RESOLUTION: <ID> | RESOLVED` line for every open challenge ID.",
 		CONFIDENCE_INSTRUCTIONS,
 	].join("\n"),
 	"staff-engineer": [
 		"You are the Staff Engineer in an evidence-first engineering review.",
-		"Propose and revise an implementable solution without hiding uncertainty.",
+		"Challenge implementation feasibility, interfaces, dependencies, sequencing, and operational cost without hiding uncertainty.",
 		CONFIDENCE_INSTRUCTIONS,
-		"Preserve unresolved L3 and L4 claims.",
-		"In the final sign-off stage end with exactly VERDICT: APPROVE or VERDICT: REJECT.",
+		ISSUE_LEDGER_INSTRUCTIONS,
+		"In verification and final sign-off stages end with exactly VERDICT: APPROVE or VERDICT: REJECT. A rejected verification must also add at least one new ISSUE line.",
 	].join("\n"),
 	"qa-engineer": [
 		"You are the QA Engineer in an evidence-first engineering review and have veto authority.",
 		"Look for counterexamples, missing evidence, unsafe assumptions, and untested behavior.",
 		CONFIDENCE_INSTRUCTIONS,
-		"In the veto stage end with exactly VERDICT: APPROVE or VERDICT: REJECT.",
+		ISSUE_LEDGER_INSTRUCTIONS,
+		"In verification and final sign-off stages end with exactly VERDICT: APPROVE or VERDICT: REJECT. A rejected verification must also add at least one new ISSUE line.",
 	].join("\n"),
 };
 
 const STAGE_INSTRUCTIONS: Record<AnsteelDiscussionStage, string> = {
-	scope: "Define the review boundary, key questions, required evidence, and acceptance criteria.",
-	proposal: "Produce an initial technical assessment and concrete recommendations for the review topic.",
-	critique: "Challenge the proposed assessment. Identify evidence gaps, invalid assumptions, and missing tests.",
-	revision: "Respond directly to QA's critique and revise the assessment. Do not silently discard unresolved issues.",
-	verification: "Verify disputed claims against the available evidence and state what remains unverified.",
-	veto: "Decide whether the revised assessment may proceed. End with the required explicit verdict marker.",
+	architecture:
+		"Publish the complete initial architecture: boundary, constraints, components, data/control flow, failure handling, evidence plan, and acceptance criteria.",
+	"staff-critique":
+		"Independently challenge the initial architecture for implementation feasibility. Do not assume the architecture is correct.",
+	"qa-critique":
+		"Independently challenge the same initial architecture for safety, testability, evidence gaps, and counterexamples. Do not assume the architecture is correct.",
+	"architecture-revision":
+		"Publish a complete revised architecture that responds to every open challenge in the supplied ledger. Do not silently discard an issue.",
+	"staff-verification":
+		"Verify the revised architecture's implementation feasibility against the supplied architecture version and ledger. End with the required explicit verdict marker.",
+	"qa-verification":
+		"Verify the revised architecture's safety, testability, and evidence against the supplied architecture version and ledger. End with the required explicit verdict marker.",
 	consensus:
 		"Produce the final consensus. Separate verified conclusions, unresolved risks, and required follow-up work.",
 	"staff-sign-off":
@@ -544,9 +587,23 @@ function formatTranscript(transcript: readonly AnsteelTranscriptEntry[]): string
 
 	return transcript
 		.map((entry, index) => {
-			return `### ${index + 1}. ${entry.role} / ${entry.stage}\n\n${entry.response}`;
+			const round = entry.round === undefined ? "" : ` / round ${entry.round}`;
+			return `### ${index + 1}. ${entry.role} / ${entry.stage}${round}\n\n${entry.response}`;
 		})
 		.join("\n\n");
+}
+
+function formatChallengeLedger(challengeLedger: readonly AnsteelChallengeLedgerEntry[]): string {
+	if (challengeLedger.length === 0) return "No recorded challenge IDs.";
+
+	return challengeLedger
+		.map((challenge) => `- ${challenge.id} | ${challenge.raisedBy} | round ${challenge.round} | ${challenge.status}`)
+		.join("\n");
+}
+
+interface BuildRolePromptOptions {
+	round?: number;
+	challengeLedger?: readonly AnsteelChallengeLedgerEntry[];
 }
 
 function buildRolePrompt(
@@ -554,24 +611,98 @@ function buildRolePrompt(
 	stage: AnsteelDiscussionStage,
 	topic: string,
 	transcript: readonly AnsteelTranscriptEntry[],
+	options: BuildRolePromptOptions = {},
 ): string {
 	return [
 		ROLE_INSTRUCTIONS[role],
 		`Review topic: ${topic}`,
 		`Current stage: ${stage}. ${STAGE_INSTRUCTIONS[stage]}`,
-		"Prior discussion follows. Treat it as claims to verify, not established facts.",
+		...(options.round === undefined
+			? []
+			: [`Architecture revision round: ${options.round} of ${ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS}.`]),
+		...(options.challengeLedger === undefined
+			? []
+			: [`Challenge ledger:\n${formatChallengeLedger(options.challengeLedger)}`]),
+		"Visible prior discussion follows. Treat it as claims to verify, not established facts.",
 		formatTranscript(transcript),
 	].join("\n\n");
 }
 
-function isQaVerdictCandidate(line: string): boolean {
+function isVerdictCandidate(line: string): boolean {
 	const contentAfterMarkdownPrefix = line.replace(/^\s*(?:(?:[-+*]|\d+[.)]|#{1,6}|>)\s+)+/, "");
 	return /\bVERDICT\s*:/i.test(line) || /^\s*VERDICT\s+(?:approve|reject|pending)\b/i.test(contentAfterMarkdownPrefix);
 }
 
-function hasExplicitApproval(response: string): boolean {
-	const verdictMarkers = response.split(/\r?\n/).filter(isQaVerdictCandidate);
-	return verdictMarkers.length === 1 && verdictMarkers[0] === "VERDICT: APPROVE";
+function getExplicitVerdict(response: string): "approved" | "rejected" | undefined {
+	const verdictMarkers = response.split(/\r?\n/).filter(isVerdictCandidate);
+	if (verdictMarkers.length !== 1) return undefined;
+	if (verdictMarkers[0] === "VERDICT: APPROVE") return "approved";
+	if (verdictMarkers[0] === "VERDICT: REJECT") return "rejected";
+	return undefined;
+}
+
+function parseIssueIds(response: string): { ids: string[]; error?: string } {
+	const lines = response.split(/\r?\n/);
+	const issueLines = lines.filter((line) => line.startsWith("ISSUE:"));
+	const hasNoIssuesMarker = lines.includes("NO ISSUES");
+	if (issueLines.length === 0) {
+		return hasNoIssuesMarker ? { ids: [] } : { ids: [], error: "must provide ISSUE lines or exactly NO ISSUES" };
+	}
+	if (hasNoIssuesMarker) return { ids: [], error: "cannot combine ISSUE lines with NO ISSUES" };
+
+	const ids: string[] = [];
+	for (const line of issueLines) {
+		const match = /^ISSUE: ([A-Z][A-Z0-9-]{1,63})$/.exec(line);
+		if (!match) return { ids: [], error: `has invalid issue marker: ${line}` };
+		ids.push(match[1]);
+	}
+	return new Set(ids).size === ids.length ? { ids } : { ids: [], error: "contains duplicate issue IDs" };
+}
+
+function parseResolutionIds(response: string): { ids: string[]; error?: string } {
+	const resolutionLines = response.split(/\r?\n/).filter((line) => line.startsWith("RESOLUTION:"));
+	const ids: string[] = [];
+	for (const line of resolutionLines) {
+		const match = /^RESOLUTION: ([A-Z][A-Z0-9-]{1,63}) \| RESOLVED$/.exec(line);
+		if (!match) return { ids: [], error: `has invalid resolution marker: ${line}` };
+		ids.push(match[1]);
+	}
+	return new Set(ids).size === ids.length ? { ids } : { ids: [], error: "contains duplicate resolution IDs" };
+}
+
+function addChallengeIds(
+	challengeLedger: AnsteelChallengeLedgerEntry[],
+	raisedBy: "staff-engineer" | "qa-engineer",
+	round: number,
+	response: string,
+	requireAtLeastOne = false,
+): string | undefined {
+	const parsed = parseIssueIds(response);
+	if (parsed.error) return `${raisedBy} ${parsed.error}`;
+	if (requireAtLeastOne && parsed.ids.length === 0) {
+		return `${raisedBy} rejected the architecture without adding a new ISSUE line`;
+	}
+	for (const id of parsed.ids) {
+		if (challengeLedger.some((challenge) => challenge.id === id)) {
+			return `${raisedBy} reused challenge ID ${id}`;
+		}
+		challengeLedger.push({ id, raisedBy, round, status: "open" });
+	}
+	return undefined;
+}
+
+function resolveOpenChallenges(challengeLedger: AnsteelChallengeLedgerEntry[], response: string): string | undefined {
+	const parsed = parseResolutionIds(response);
+	if (parsed.error) return parsed.error;
+	const openIds = challengeLedger.filter((challenge) => challenge.status === "open").map((challenge) => challenge.id);
+	const unknownIds = parsed.ids.filter((id) => !openIds.includes(id));
+	if (unknownIds.length > 0) return `responded to unknown or already closed challenge IDs: ${unknownIds.join(", ")}`;
+	const missingIds = openIds.filter((id) => !parsed.ids.includes(id));
+	if (missingIds.length > 0) return `did not answer open challenge IDs: ${missingIds.join(", ")}`;
+	for (const challenge of challengeLedger) {
+		if (challenge.status === "open") challenge.status = "resolved";
+	}
+	return undefined;
 }
 
 function isBlankRoleResponse(response: string): boolean {
@@ -637,21 +768,25 @@ function createMarkdown(
 	topic: string,
 	verdict: AnsteelDiscussionResult["verdict"],
 	transcript: readonly AnsteelTranscriptEntry[],
+	challengeLedger: readonly AnsteelChallengeLedgerEntry[],
+	revisionRounds: readonly AnsteelRevisionRound[],
 	consensus: string | undefined,
 	stopReason?: string,
 	failure?: AnsteelDiscussionFailure,
+	terminationReason?: AnsteelTerminationReason,
 ): string {
 	const status =
 		verdict === "approved"
-			? "Tech Lead consensus received Staff Engineer and QA Engineer final sign-off"
+			? "Architecture passed independent Staff and QA verification, then received final Staff Engineer and QA Engineer sign-off"
 			: (stopReason ?? "A required governance sign-off did not explicitly approve");
 	const sections = [
 		`# Ansteel Engineering Review: ${topic}`,
 		"## Status",
 		`- Result: ${verdict.toUpperCase()}`,
-		`- QA gate: ${status}`,
+		`- Governance status: ${status}`,
 		...(stopReason ? [`- Stop reason: ${stopReason}`] : []),
-		"- Governance gate: Tech Lead consensus requires final Staff Engineer and QA Engineer sign-off.",
+		...(terminationReason ? [`- Termination reason: ${terminationReason}`] : []),
+		"- Governance gate: the architecture must pass independent Staff and QA verification before Tech Lead consensus requires final Staff Engineer and QA Engineer sign-off.",
 		"- Confidence boundary: role separation alone is not cross-model verification. L1 claims require cited tool, file, test, or source evidence.",
 		...(failure
 			? [
@@ -661,6 +796,15 @@ function createMarkdown(
 					`- Reason: ${failure.reason}`,
 				]
 			: []),
+		"## Challenge Ledger",
+		formatChallengeLedger(challengeLedger),
+		"## Architecture Revision Rounds",
+		...(revisionRounds.length === 0
+			? ["- No completed architecture revision round."]
+			: revisionRounds.map(
+					(round) =>
+						`- Round ${round.round}: Staff ${round.staffVerdict.toUpperCase()}, QA ${round.qaVerdict.toUpperCase()}, ${round.outcome}`,
+				)),
 		"## Full Transcript",
 		formatTranscript(transcript),
 	];
@@ -679,70 +823,229 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 	}
 
 	const transcript: AnsteelTranscriptEntry[] = [];
+	const challengeLedger: AnsteelChallengeLedgerEntry[] = [];
+	const revisionRounds: AnsteelRevisionRound[] = [];
 	type StageResult = { response: string } | { failure: AnsteelDiscussionFailure };
-	const runStage = async (role: AnsteelRole, stage: AnsteelDiscussionStage): Promise<StageResult> => {
-		const prompt = buildRolePrompt(role, stage, topic, transcript);
+	interface RunStageOptions {
+		round?: number;
+		context?: readonly AnsteelTranscriptEntry[];
+		challengeLedger?: readonly AnsteelChallengeLedgerEntry[];
+	}
+	const runStage = async (
+		role: AnsteelRole,
+		stage: AnsteelDiscussionStage,
+		stageOptions: RunStageOptions = {},
+	): Promise<StageResult> => {
+		const prompt = buildRolePrompt(role, stage, topic, stageOptions.context ?? transcript, {
+			round: stageOptions.round,
+			challengeLedger: stageOptions.challengeLedger,
+		});
 		let response: string;
 		try {
-			response = await options.runRole({ role, stage, prompt });
+			response = await options.runRole({
+				role,
+				stage,
+				prompt,
+				...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
+			});
 		} catch (error) {
 			return { failure: { role, stage, reason: formatFailureReason(error) } };
 		}
-		transcript.push({ role, stage, prompt, response });
+		transcript.push({
+			role,
+			stage,
+			prompt,
+			response,
+			...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
+		});
 		return { response };
 	};
 	const reject = (
 		stopReason?: string,
 		failure?: AnsteelDiscussionFailure,
 		consensus?: string,
+		terminationReason?: AnsteelTerminationReason,
 	): AnsteelDiscussionResult => ({
 		topic,
 		verdict: "rejected",
 		transcript,
+		challengeLedger,
+		revisionRounds,
 		...(consensus ? { consensus } : {}),
 		...(failure ? { failure } : {}),
-		markdown: createMarkdown(topic, "rejected", transcript, consensus, stopReason, failure),
+		...(terminationReason ? { terminationReason } : {}),
+		markdown: createMarkdown(
+			topic,
+			"rejected",
+			transcript,
+			challengeLedger,
+			revisionRounds,
+			consensus,
+			stopReason,
+			failure,
+			terminationReason,
+		),
 	});
-	const preVetoStages: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [
-		{ role: "tech-lead", stage: "scope" },
-		{ role: "staff-engineer", stage: "proposal" },
-		{ role: "qa-engineer", stage: "critique" },
-		{ role: "staff-engineer", stage: "revision" },
-		{ role: "tech-lead", stage: "verification" },
-	];
-
-	for (const { role, stage } of preVetoStages) {
-		const stageResult = await runStage(role, stage);
+	const runRequiredStage = async (
+		role: AnsteelRole,
+		stage: AnsteelDiscussionStage,
+		stageOptions: RunStageOptions = {},
+	): Promise<{ response: string; entry: AnsteelTranscriptEntry } | { rejection: AnsteelDiscussionResult }> => {
+		const stageResult = await runStage(role, stage, stageOptions);
 		if ("failure" in stageResult) {
-			return reject(formatStageFailureStopReason(stageResult.failure), stageResult.failure);
+			return {
+				rejection: reject(
+					formatStageFailureStopReason(stageResult.failure),
+					stageResult.failure,
+					undefined,
+					"stage-failure",
+				),
+			};
 		}
-		const { response } = stageResult;
-		if (isBlankRoleResponse(response)) {
-			return reject(formatBlankResponseStopReason(role, stage));
+		if (isBlankRoleResponse(stageResult.response)) {
+			return {
+				rejection: reject(formatBlankResponseStopReason(role, stage), undefined, undefined, "blank-response"),
+			};
+		}
+		const entry = transcript.at(-1);
+		if (!entry) throw new Error(`Ansteel ${role} / ${stage} completed without a transcript entry`);
+		return { response: stageResult.response, entry };
+	};
+
+	const architectureResult = await runRequiredStage("tech-lead", "architecture");
+	if ("rejection" in architectureResult) return architectureResult.rejection;
+	const initialArchitecture = architectureResult.entry;
+
+	const staffCritiqueResult = await runRequiredStage("staff-engineer", "staff-critique", {
+		context: [initialArchitecture],
+	});
+	if ("rejection" in staffCritiqueResult) return staffCritiqueResult.rejection;
+	const staffCritiqueError = addChallengeIds(challengeLedger, "staff-engineer", 0, staffCritiqueResult.response);
+	if (staffCritiqueError) {
+		return reject(staffCritiqueError, undefined, undefined, "invalid-challenge-ledger");
+	}
+
+	const qaCritiqueResult = await runRequiredStage("qa-engineer", "qa-critique", {
+		context: [initialArchitecture],
+	});
+	if ("rejection" in qaCritiqueResult) return qaCritiqueResult.rejection;
+	const qaCritiqueError = addChallengeIds(challengeLedger, "qa-engineer", 0, qaCritiqueResult.response);
+	if (qaCritiqueError) {
+		return reject(qaCritiqueError, undefined, undefined, "invalid-challenge-ledger");
+	}
+
+	let currentArchitecture = initialArchitecture;
+	let revisionEvidence: AnsteelTranscriptEntry[] = [staffCritiqueResult.entry, qaCritiqueResult.entry];
+	let architectureAccepted = false;
+
+	for (let round = 1; round <= ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS; round++) {
+		const architectureRevisionResult = await runRequiredStage("tech-lead", "architecture-revision", {
+			round,
+			context: [currentArchitecture, ...revisionEvidence],
+			challengeLedger,
+		});
+		if ("rejection" in architectureRevisionResult) return architectureRevisionResult.rejection;
+		const resolutionError = resolveOpenChallenges(challengeLedger, architectureRevisionResult.response);
+		if (resolutionError) {
+			return reject(
+				`Architecture revision round ${round} ${resolutionError}`,
+				undefined,
+				undefined,
+				"unanswered-challenge",
+			);
+		}
+		currentArchitecture = architectureRevisionResult.entry;
+
+		const verificationLedger = challengeLedger.map((challenge) => ({ ...challenge }));
+		const verificationContext = [currentArchitecture];
+		const staffVerificationResult = await runRequiredStage("staff-engineer", "staff-verification", {
+			round,
+			context: verificationContext,
+			challengeLedger: verificationLedger,
+		});
+		if ("rejection" in staffVerificationResult) return staffVerificationResult.rejection;
+		const staffVerdict = getExplicitVerdict(staffVerificationResult.response);
+		if (!staffVerdict) {
+			return reject(
+				`staff-engineer / staff-verification did not provide the required exact verdict`,
+				undefined,
+				undefined,
+				"invalid-verdict",
+			);
+		}
+
+		const qaVerificationResult = await runRequiredStage("qa-engineer", "qa-verification", {
+			round,
+			context: verificationContext,
+			challengeLedger: verificationLedger,
+		});
+		if ("rejection" in qaVerificationResult) return qaVerificationResult.rejection;
+		const qaVerdict = getExplicitVerdict(qaVerificationResult.response);
+		if (!qaVerdict) {
+			return reject(
+				`qa-engineer / qa-verification did not provide the required exact verdict`,
+				undefined,
+				undefined,
+				"invalid-verdict",
+			);
+		}
+
+		revisionEvidence = [];
+		if (staffVerdict === "rejected") {
+			const staffVerificationError = addChallengeIds(
+				challengeLedger,
+				"staff-engineer",
+				round,
+				staffVerificationResult.response,
+				true,
+			);
+			if (staffVerificationError) {
+				return reject(staffVerificationError, undefined, undefined, "invalid-challenge-ledger");
+			}
+			revisionEvidence.push(staffVerificationResult.entry);
+		}
+		if (qaVerdict === "rejected") {
+			const qaVerificationError = addChallengeIds(
+				challengeLedger,
+				"qa-engineer",
+				round,
+				qaVerificationResult.response,
+				true,
+			);
+			if (qaVerificationError) {
+				return reject(qaVerificationError, undefined, undefined, "invalid-challenge-ledger");
+			}
+			revisionEvidence.push(qaVerificationResult.entry);
+		}
+
+		const outcome = staffVerdict === "approved" && qaVerdict === "approved" ? "approved" : "needs-revision";
+		revisionRounds.push({ round, staffVerdict, qaVerdict, outcome });
+		if (outcome === "approved") {
+			architectureAccepted = true;
+			break;
+		}
+		if (round === ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS) {
+			return reject(
+				`Architecture did not pass independent verification within the maximum of ${ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS} architecture revision rounds`,
+				undefined,
+				undefined,
+				"max-revision-rounds-exhausted",
+			);
 		}
 	}
 
-	const vetoResult = await runStage("qa-engineer", "veto");
-	if ("failure" in vetoResult) {
-		return reject(formatStageFailureStopReason(vetoResult.failure), vetoResult.failure);
-	}
-	const { response: veto } = vetoResult;
-	if (isBlankRoleResponse(veto)) {
-		return reject(formatBlankResponseStopReason("qa-engineer", "veto"));
-	}
-
-	if (!hasExplicitApproval(veto)) {
-		return reject();
+	if (!architectureAccepted) {
+		return reject(
+			"Architecture did not reach an approved revision round",
+			undefined,
+			undefined,
+			"max-revision-rounds-exhausted",
+		);
 	}
 
-	const consensusResult = await runStage("tech-lead", "consensus");
-	if ("failure" in consensusResult) {
-		return reject(formatStageFailureStopReason(consensusResult.failure), consensusResult.failure);
-	}
-	const { response: consensus } = consensusResult;
-	if (isBlankRoleResponse(consensus)) {
-		return reject(formatBlankResponseStopReason("tech-lead", "consensus"));
-	}
+	const consensusResult = await runRequiredStage("tech-lead", "consensus");
+	if ("rejection" in consensusResult) return consensusResult.rejection;
+	const consensus = consensusResult.response;
 
 	const finalSignOffStages: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [
 		{ role: "staff-engineer", stage: "staff-sign-off" },
@@ -751,14 +1054,23 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 	for (const { role, stage } of finalSignOffStages) {
 		const signOffResult = await runStage(role, stage);
 		if ("failure" in signOffResult) {
-			return reject(formatStageFailureStopReason(signOffResult.failure), signOffResult.failure, consensus);
+			return reject(
+				formatStageFailureStopReason(signOffResult.failure),
+				signOffResult.failure,
+				consensus,
+				"stage-failure",
+			);
 		}
-		const { response } = signOffResult;
-		if (isBlankRoleResponse(response)) {
-			return reject(formatBlankResponseStopReason(role, stage), undefined, consensus);
+		if (isBlankRoleResponse(signOffResult.response)) {
+			return reject(formatBlankResponseStopReason(role, stage), undefined, consensus, "blank-response");
 		}
-		if (!hasExplicitApproval(response)) {
-			return reject(`${role} / ${stage} did not provide the required explicit approval`, undefined, consensus);
+		if (getExplicitVerdict(signOffResult.response) !== "approved") {
+			return reject(
+				`${role} / ${stage} did not provide the required explicit approval`,
+				undefined,
+				consensus,
+				"final-sign-off-rejected",
+			);
 		}
 	}
 
@@ -766,7 +1078,9 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		topic,
 		verdict: "approved",
 		transcript,
+		challengeLedger,
+		revisionRounds,
 		consensus,
-		markdown: createMarkdown(topic, "approved", transcript, consensus),
+		markdown: createMarkdown(topic, "approved", transcript, challengeLedger, revisionRounds, consensus),
 	};
 }
