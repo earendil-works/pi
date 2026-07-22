@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentDir } from "../../config.ts";
 
 export interface ExternalEditorOptions {
 	command: string;
@@ -11,10 +11,7 @@ export interface ExternalEditorOptions {
 export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
 
 export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
-	const tempRoot = join(getAgentDir(), "tmp");
-	mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
-	chmodSync(tempRoot, 0o700);
-	const directory = mkdtempSync(join(tempRoot, "external-editor-"));
+	const directory = mkdtempSync(join(tmpdir(), "pi-editor-"));
 	const filePath = join(directory, "prompt.md");
 	try {
 		writeFileSync(filePath, options.content, "utf-8");
