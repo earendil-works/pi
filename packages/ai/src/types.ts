@@ -602,6 +602,20 @@ export interface AnthropicMessagesCompat {
 	supportsToolReferences?: boolean;
 }
 
+/** Compatibility settings for the Bedrock Converse API. */
+export interface BedrockConverseCompat {
+	/**
+	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
+	 * `output_config.effort`) regardless of the model id. Overrides the
+	 * id/name-based detection, which cannot know about Claude models released
+	 * after this package version, or application inference profiles whose ARN
+	 * and name both hide the model. Set to `false` to force fixed-budget
+	 * thinking on a model the detection would enable.
+	 * Default: unset (id/name-based detection).
+	 */
+	forceAdaptiveThinking?: boolean;
+}
+
 /**
  * OpenRouter provider routing preferences.
  * Controls which upstream providers OpenRouter routes requests to.
@@ -731,7 +745,9 @@ export interface Model<TApi extends Api> {
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "bedrock-converse-stream"
+					? BedrockConverseCompat
+					: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

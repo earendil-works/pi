@@ -400,7 +400,7 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 	}
 
 	if (isAnthropicClaudeModel(model)) {
-		if (supportsAdaptiveThinking(model.id, model.name)) {
+		if (usesAdaptiveThinking(model)) {
 			return stream(model, context, {
 				...base,
 				reasoning: options.reasoning,
@@ -585,6 +585,16 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
 	);
+}
+
+/**
+ * Whether requests for this model should use the adaptive thinking format.
+ * `compat.forceAdaptiveThinking` overrides the id/name-based detection, which
+ * cannot know about Claude models released after this package version or
+ * application inference profiles whose ARN and name both hide the model.
+ */
+function usesAdaptiveThinking(model: Model<"bedrock-converse-stream">): boolean {
+	return model.compat?.forceAdaptiveThinking ?? supportsAdaptiveThinking(model.id, model.name);
 }
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
@@ -1023,7 +1033,7 @@ function buildAdditionalModelRequestFields(
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
+		const result: Record<string, any> = usesAdaptiveThinking(model)
 			? {
 					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
@@ -1051,7 +1061,7 @@ function buildAdditionalModelRequestFields(
 					};
 				})();
 
-		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
+		if (!usesAdaptiveThinking(model) && (options.interleavedThinking ?? true)) {
 			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
 		}
 

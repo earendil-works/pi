@@ -142,6 +142,41 @@ describe("Bedrock thinking payload", () => {
 	});
 });
 
+describe("compat.forceAdaptiveThinking", () => {
+	it("forces adaptive thinking on a model the id/name detection does not match", async () => {
+		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			compat: { forceAdaptiveThinking: true },
+		};
+
+		const payload = await capturePayload(model);
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "high" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
+	it("opts out of adaptive thinking on a model the detection matches", async () => {
+		const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
+		const model: Model<"bedrock-converse-stream"> = {
+			...baseModel,
+			id: "global.anthropic.claude-opus-4-8-v1",
+			name: "Claude Opus 4.8 (Global)",
+			compat: { forceAdaptiveThinking: false },
+		};
+
+		const payload = await capturePayload(model);
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({
+			type: "enabled",
+			budget_tokens: 16384,
+			display: "summarized",
+		});
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toEqual(["interleaved-thinking-2025-05-14"]);
+	});
+});
+
 describe.skipIf(!hasBedrockCredentials())("Bedrock Claude max tokens E2E", () => {
 	it(
 		"uses the model maxTokens cap instead of Bedrock's 4096-token default for adaptive Claude models",
