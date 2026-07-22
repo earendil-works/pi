@@ -8,17 +8,28 @@ Stateful agent with tool execution and event streaming. Built on `@earendil-work
 npm install @earendil-works/pi-agent-core
 ```
 
+### SQLite session backends
+
+The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-storage-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other storage backends to ship as their own packages in the future.
+
 ## Quick Start
 
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+
+const models = createModels();
+models.setProvider(anthropicProvider());
+const model = models.getModel("anthropic", "claude-sonnet-4-6");
+if (!model) throw new Error("Model not found");
 
 const agent = new Agent({
   initialState: {
     systemPrompt: "You are a helpful assistant.",
-    model: getModel("anthropic", "claude-sonnet-4-20250514"),
+    model,
   },
+  streamFn: models.streamSimple.bind(models),
 });
 
 agent.subscribe((event) => {
@@ -115,13 +126,19 @@ Tools can also return `terminate: true` to hint that the automatic follow-up LLM
 Low-level loop callers can set `shouldStopAfterTurn` to stop gracefully after the current turn completes:
 
 ```typescript
-const stream = agentLoop(prompts, context, {
-  model,
-  convertToLlm,
-  shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
-    return shouldCompactBeforeNextTurn(context.messages);
+const stream = agentLoop(
+  prompts,
+  context,
+  {
+    model,
+    convertToLlm,
+    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
+      return shouldCompactBeforeNextTurn(context.messages);
+    },
   },
-});
+  undefined,
+  models.streamSimple.bind(models),
+);
 ```
 
 `shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason.
@@ -181,8 +198,8 @@ const agent = new Agent({
   // Follow-up mode: "one-at-a-time" (default) or "all"
   followUpMode: "one-at-a-time",
 
-  // Custom stream function (for proxy backends)
-  streamFn: streamProxy,
+  // Required stream function
+  streamFn: models.streamSimple.bind(models),
 
   // Session ID for provider caching
   sessionId: "session-123",
@@ -369,6 +386,7 @@ Handle custom types in `convertToLlm`:
 
 ```typescript
 const agent = new Agent({
+  streamFn: models.streamSimple.bind(models),
   convertToLlm: (messages) => messages.flatMap(m => {
     if (m.role === "notification") return []; // Filter out
     return [m];
@@ -471,12 +489,13 @@ const config: AgentLoopConfig = {
 
 const userMessage = { role: "user", content: "Hello", timestamp: Date.now() };
 
-for await (const event of agentLoop([userMessage], context, config)) {
+const streamFn = models.streamSimple.bind(models);
+for await (const event of agentLoop([userMessage], context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 
 // Continue from existing context
-for await (const event of agentLoopContinue(context, config)) {
+for await (const event of agentLoopContinue(context, config, undefined, streamFn)) {
   console.log(event.type);
 }
 ```

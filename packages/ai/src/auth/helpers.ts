@@ -14,7 +14,9 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
-			if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
+			if (credential?.key) {
+				return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
+			}
 			for (const envVar of envVars) {
 				const value = await ctx.env(envVar);
 				if (value) return { auth: { apiKey: value }, source: envVar };
@@ -31,7 +33,7 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
  * of bundles by loading through a bundler-opaque dynamic import (variable
  * specifier, see the bedrock lazy wrapper).
  */
-export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> }): OAuthAuth {
+export function lazyOAuth(input: { name: string; loginLabel?: string; load: () => Promise<OAuthAuth> }): OAuthAuth {
 	let promise: Promise<OAuthAuth> | undefined;
 	const loaded = () => {
 		promise ??= input.load();
@@ -39,6 +41,7 @@ export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> 
 	};
 	return {
 		name: input.name,
+		loginLabel: input.loginLabel,
 		login: async (interaction) => (await loaded()).login(interaction),
 		refresh: async (credential) => (await loaded()).refresh(credential),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),

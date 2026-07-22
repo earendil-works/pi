@@ -19,7 +19,9 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const compat: Required<OpenAICompletionsCompat> = {
+const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode"> & {
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+} = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,

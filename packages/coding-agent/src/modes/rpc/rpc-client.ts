@@ -281,6 +281,14 @@ export class RpcClient {
 	}
 
 	/**
+	 * Get list of available thinking levels for the current model.
+	 */
+	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
+		const response = await this.send({ type: "get_available_thinking_levels" });
+		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
 	 * Set steering mode.
 	 */
 	async setSteeringMode(mode: "all" | "one-at-a-time"): Promise<void> {

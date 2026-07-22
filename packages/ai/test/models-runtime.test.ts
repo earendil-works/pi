@@ -283,8 +283,9 @@ describe("Models runtime", () => {
 		expect(offline.getModel("dynamic", "fetched")).toBeDefined();
 	});
 
-	it("passes effective API-key credentials and skips unconfigured providers", async () => {
+	it("passes effective API-key credentials and refresh options while skipping unconfigured providers", async () => {
 		let effectiveCredential: unknown;
+		let forceRefresh: boolean | undefined;
 		let unconfiguredRefreshes = 0;
 		const models = createModels();
 		models.setProvider(
@@ -293,6 +294,7 @@ describe("Models runtime", () => {
 				auth: { apiKey: envKeyAuth("ambient-key") },
 				refreshModels: async (context) => {
 					effectiveCredential = context.credential;
+					forceRefresh = context.force;
 				},
 			}),
 		);
@@ -306,8 +308,9 @@ describe("Models runtime", () => {
 			}),
 		);
 
-		await models.refresh();
+		await models.refresh({ force: true });
 		expect(effectiveCredential).toEqual({ type: "api_key", key: "ambient-key", env: undefined });
+		expect(forceRefresh).toBe(true);
 		expect(unconfiguredRefreshes).toBe(0);
 	});
 

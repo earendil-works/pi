@@ -175,6 +175,16 @@ Summary:
 
 Event payloads describe what is happening. Harness getters describe latest config for future snapshots. Hook and listener settlement should be awaited in lifecycle order where possible; transport backpressure is handled below the harness by `AssistantMessageStream`, so the harness does not need a separate async event queue merely to keep SSE or websocket reads flowing.
 
+### Summarization retry events
+
+When the harness is configured with a retry policy, generated compaction and branch-summary requests emit retry lifecycle events for transient provider errors:
+
+- `retry_scheduled`: a retry was scheduled. Includes `operation: "compaction" | "branch_summary"`, `attempt`, `maxAttempts`, `delayMs`, and `errorMessage`.
+- `retry_attempt_start`: the backoff delay completed and the retried summarization request is starting. Includes `operation`.
+- `retry_finished`: the retry loop finished after success, exhaustion, or abort. Includes `operation`.
+
+These events are observational and do not accept hook results.
+
 ## Planned session facade
 
 Extensions should eventually interact with a harness-scoped `HarnessSession` facade rather than the raw session. The facade should wrap the internal session and enforce harness pending-write ordering semantics. Once this exists, hooks and event listeners can receive a context that exposes the full `AgentHarness` plus the session facade without giving direct access to unordered raw session writes.

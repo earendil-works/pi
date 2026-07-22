@@ -23,28 +23,29 @@ export type RadiusOAuthCredential = OAuthCredential & {
 	gatewayConfig?: RadiusGatewayConfig;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const model = value as Partial<RadiusGatewayModel>;
 	return (
-		isRecord(value) &&
-		typeof value.id === "string" &&
-		typeof value.name === "string" &&
-		typeof value.reasoning === "boolean" &&
-		Array.isArray(value.input) &&
-		isRecord(value.cost) &&
-		typeof value.contextWindow === "number" &&
-		typeof value.maxTokens === "number"
+		typeof model.id === "string" &&
+		typeof model.name === "string" &&
+		typeof model.reasoning === "boolean" &&
+		Array.isArray(model.input) &&
+		typeof model.cost === "object" &&
+		model.cost !== null &&
+		!Array.isArray(model.cost) &&
+		typeof model.contextWindow === "number" &&
+		typeof model.maxTokens === "number"
 	);
 }
 
 function sanitizeRadiusGatewayConfig(config: unknown): RadiusGatewayConfig | undefined {
-	if (!isRecord(config) || typeof config.baseUrl !== "string" || !Array.isArray(config.models)) return undefined;
+	if (typeof config !== "object" || config === null || Array.isArray(config)) return undefined;
+	const { baseUrl, models } = config as Partial<RadiusGatewayConfig>;
+	if (typeof baseUrl !== "string" || !Array.isArray(models)) return undefined;
 	return {
-		baseUrl: config.baseUrl,
-		models: config.models.filter(isRadiusGatewayModel).map((model) => ({ ...model })),
+		baseUrl,
+		models: models.filter(isRadiusGatewayModel).map((model) => ({ ...model })),
 	};
 }
 

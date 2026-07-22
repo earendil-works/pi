@@ -46,6 +46,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { uuidv7 } from "../utils/uuid.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -66,6 +67,7 @@ const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
+const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -259,7 +261,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				body = nextBody as RequestBody;
 			}
 			const codexSessionId = clampOpenAIPromptCacheKey(options?.sessionId);
-			const websocketRequestId = codexSessionId || createCodexRequestId();
+			const websocketRequestId = codexSessionId || uuidv7();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
 			const websocketHeaders = buildWebSocketHeaders(
 				model.headers,
@@ -272,6 +274,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
 			const transport = options?.transport || "auto";
+			let startEmitted = false;
 			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(options?.sessionId);
 			if (websocketDisabledForSession) {
 				recordWebSocketSseFallback(options?.sessionId);
@@ -280,6 +283,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			if (transport !== "sse" && !websocketDisabledForSession) {
 				let websocketStarted = false;
 				let retriedWebSocketConnectionLimit = false;
+				let retriedMissingWebSocketContinuation = false;
 				while (true) {
 					websocketStarted = false;
 					try {
@@ -292,6 +296,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							model,
 							() => {
 								websocketStarted = true;
+								if (!startEmitted) {
+									startEmitted = true;
+									stream.push({ type: "start", partial: output });
+								}
 							},
 							httpTimeoutMs,
 							websocketConnectTimeoutMs,
@@ -311,6 +319,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					} catch (error) {
 						const aborted = options?.signal?.aborted;
 						const connectionLimitBeforeStart = !websocketStarted && isWebSocketConnectionLimitReachedError(error);
+						const previousResponseNotFound = isPreviousResponseNotFoundError(error);
+						if (!aborted && previousResponseNotFound && !retriedMissingWebSocketContinuation) {
+							retriedMissingWebSocketContinuation = true;
+							continue;
+						}
 						if (!aborted && connectionLimitBeforeStart && !retriedWebSocketConnectionLimit) {
 							retriedWebSocketConnectionLimit = true;
 							continue;
@@ -431,7 +444,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error("No response body");
 			}
 
-			stream.push({ type: "start", partial: output });
+			if (!startEmitted) {
+				startEmitted = true;
+				stream.push({ type: "start", partial: output });
+			}
 			await processStream(response, output, stream, model, options);
 
 			if (options?.signal?.aborted) {
@@ -633,6 +649,10 @@ function isCodexNonTransportError(error: unknown): boolean {
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
 	return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
+}
+
+function isPreviousResponseNotFoundError(error: unknown): boolean {
+	return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
 }
 
 function extractCodexEventError(event: Record<string, unknown>): { code?: string; message?: string } {
@@ -1357,8 +1377,6 @@ function buildCachedWebSocketRequestBody(entry: CachedWebSocketConnection, body:
 
 async function* startWebSocketOutputOnFirstEvent(
 	events: AsyncIterable<ResponseStreamEvent>,
-	output: AssistantMessage,
-	stream: AssistantMessageEventStream,
 	onStart: () => void,
 ): AsyncGenerator<ResponseStreamEvent> {
 	let started = false;
@@ -1366,7 +1384,6 @@ async function* startWebSocketOutputOnFirstEvent(
 		if (!started) {
 			started = true;
 			onStart();
-			stream.push({ type: "start", partial: output });
 		}
 		yield event;
 	}
@@ -1421,8 +1438,6 @@ async function processWebSocketStream(
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
 				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)),
-				output,
-				stream,
 				onStart,
 			),
 			output,
@@ -1503,13 +1518,6 @@ function extractAccountId(token: string): string {
 	} catch {
 		throw new Error("Failed to extract accountId from token");
 	}
-}
-
-function createCodexRequestId(): string {
-	if (typeof globalThis.crypto?.randomUUID === "function") {
-		return globalThis.crypto.randomUUID();
-	}
-	return `codex_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function buildBaseCodexHeaders(

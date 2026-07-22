@@ -103,14 +103,11 @@ export class PiMessagesResponseError extends Error {
 	}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function parsePiMessagesErrorBody(body: string): PiMessagesErrorBody | undefined {
 	try {
-		const parsed = JSON.parse(body) as unknown;
-		return isRecord(parsed) && isRecord(parsed.error) ? (parsed as PiMessagesErrorBody) : undefined;
+		const parsed = JSON.parse(body) as PiMessagesErrorBody | null;
+		const error = parsed?.error;
+		return parsed && typeof error === "object" && error !== null && !Array.isArray(error) ? parsed : undefined;
 	} catch {
 		return undefined;
 	}

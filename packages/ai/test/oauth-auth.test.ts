@@ -3,6 +3,7 @@ import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
+import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import { createModels } from "../src/models.ts";
 import * as extensionOAuthCompatibility from "../src/oauth.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
@@ -29,6 +30,11 @@ describe.sequential("OAuthAuth adapters", () => {
 
 	it("openai-codex toAuth derives the api key from the access token", async () => {
 		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
+		expect(auth).toEqual({ apiKey: "token" });
+	});
+
+	it("xAI toAuth derives the api key from the access token", async () => {
+		const auth = await xaiOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 

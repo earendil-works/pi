@@ -59,15 +59,7 @@ describe("getSupportedThinkingLevels", () => {
 		(modelId) => {
 			const model = getModel("openai", modelId);
 			expect(model).toBeDefined();
-			expect(getSupportedThinkingLevels(model!)).toEqual([
-				"off",
-				"minimal",
-				"low",
-				"medium",
-				"high",
-				"xhigh",
-				"max",
-			]);
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
 		},
 	);
 
@@ -108,6 +100,18 @@ describe("getSupportedThinkingLevels", () => {
 			expect(model).toBeDefined();
 			expect(getSupportedThinkingLevels(model!)).toEqual(["minimal", "low", "medium", "high"]);
 		}
+	});
+
+	it.each(["moonshotai", "moonshotai-cn"] as const)("uses the verified effort options for %s Kimi K3", (provider) => {
+		const model = getModel(provider, "kimi-k3");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
+	});
+
+	it("includes only low, high, max for Kimi Coding K3", () => {
+		const model = getModel("kimi-coding", "k3");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
 	});
 
 	it("includes only high for OpenCode Grok Build", () => {

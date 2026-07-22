@@ -31,6 +31,7 @@ pi list                     # show installed packages from settings
 pi update                   # update pi only
 pi update --all             # update pi, update packages, and reconcile pinned git refs
 pi update --extensions      # update packages and reconcile pinned git refs only
+pi update --models          # refresh model catalogs only
 pi update --self            # update pi only
 pi update --self --force    # reinstall pi even if current
 pi update npm:@foo/bar      # update one package

@@ -1,6 +1,10 @@
-import { InMemoryModelsStore, type Model } from "@earendil-works/pi-ai";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 function model(id: string): Model<"openai-completions"> {
@@ -19,6 +23,118 @@ function model(id: string): Model<"openai-completions"> {
 }
 
 describe("extension provider model lifecycle", () => {
+	it("registers native pi-ai providers with their auth implementation", async () => {
+		const runtime = await ModelRuntime.create({
+			credentials: AuthStorage.inMemory(),
+			modelsStore: new InMemoryModelsStore(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		const nativeModel = {
+			...model("native"),
+			provider: "extension-native",
+			baseUrl: "https://fallback.test/v1",
+		};
+		const provider: Provider = {
+			id: "extension-native",
+			name: "Extension Native",
+			auth: {
+				apiKey: {
+					name: "Native setup",
+					login: async (interaction) => ({
+						type: "api_key",
+						key: await interaction.prompt({ type: "secret", message: "API key" }),
+					}),
+					check: async ({ credential }) =>
+						credential?.key ? { type: "api_key", source: "stored native key" } : undefined,
+					resolve: async ({ credential }) =>
+						credential?.key
+							? {
+									auth: { apiKey: credential.key, baseUrl: "https://resolved.test/v1" },
+									source: "stored native key",
+								}
+							: undefined,
+				},
+			},
+			getModels: () => [nativeModel],
+			stream: () => {
+				throw new Error("unused");
+			},
+			streamSimple: () => {
+				throw new Error("unused");
+			},
+		};
+
+		runtime.registerNativeProvider(provider);
+		const registry = new ModelRegistry(runtime);
+		expect(registry.getProvider("extension-native")).toBe(provider);
+		expect(registry.getRegisteredNativeProvider("extension-native")).toBe(provider);
+		expect(registry.getRegisteredProviderIds()).toContain("extension-native");
+		expect(registry.find("extension-native", "native")).toBeDefined();
+
+		await runtime.login("extension-native", "api_key", {
+			prompt: async () => "secret",
+			notify: () => {},
+		});
+		expect(await registry.getProviderAuth("extension-native")).toMatchObject({
+			auth: { apiKey: "secret", baseUrl: "https://resolved.test/v1" },
+		});
+
+		registry.unregisterProvider("extension-native");
+		expect(registry.getProvider("extension-native")).toBeUndefined();
+	});
+
+	it("applies models.json overrides above native providers", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-native-provider-"));
+		const modelsPath = join(tempDir, "models.json");
+		writeFileSync(
+			modelsPath,
+			JSON.stringify({
+				providers: {
+					"extension-native": {
+						modelOverrides: {
+							native: { contextWindow: 4242 },
+						},
+					},
+				},
+			}),
+		);
+		try {
+			const runtime = await ModelRuntime.create({
+				credentials: AuthStorage.inMemory(),
+				modelsStore: new InMemoryModelsStore(),
+				modelsPath,
+				allowModelNetwork: false,
+			});
+			const nativeModel = {
+				...model("native"),
+				provider: "extension-native",
+				baseUrl: "https://native.test/v1",
+			};
+			runtime.registerNativeProvider({
+				id: "extension-native",
+				name: "Extension Native",
+				auth: {
+					apiKey: {
+						name: "Native key",
+						resolve: async () => ({ auth: { apiKey: "key" }, source: "native" }),
+					},
+				},
+				getModels: () => [nativeModel],
+				stream: () => {
+					throw new Error("unused");
+				},
+				streamSimple: () => {
+					throw new Error("unused");
+				},
+			});
+
+			expect(runtime.getModel("extension-native", "native")?.contextWindow).toBe(4242);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("publishes refreshModels results without forcing ModelsStore persistence", async () => {
 		const modelsStore = new InMemoryModelsStore();
 		const runtime = await ModelRuntime.create({

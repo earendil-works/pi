@@ -1,7 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CompactionPreparation, compact, generateSummary } from "../src/core/compaction/index.ts";
+import {
+	type CompactionPreparation,
+	compact,
+	generateSummary,
+	generateSummaryWithUsage,
+} from "../src/core/compaction/index.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -57,7 +62,7 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("uses the provided thinking level for reasoning-capable models", async () => {
-		await generateSummary(
+		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
 			2000,
@@ -69,11 +74,20 @@ describe("generateSummary reasoning options", () => {
 			"medium",
 		);
 
+		expect(result.text).toBe("## Goal\nTest summary");
+		expect(result.usage).toEqual(mockSummaryResponse.usage);
+
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			reasoning: "medium",
 			apiKey: "test-key",
 		});
+	});
+
+	it("preserves the string result from generateSummary", async () => {
+		await expect(generateSummary(messages, createModel(false), 2000, "test-key")).resolves.toBe(
+			"## Goal\nTest summary",
+		);
 	});
 
 	it("does not set reasoning when thinking is off", async () => {
@@ -127,8 +141,15 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
 		};
 
-		await compact(preparation, createModel(false, 128000), "test-key");
+		const result = await compact(preparation, createModel(false, 128000), "test-key");
 
+		expect(result.usage).toEqual({
+			...mockSummaryResponse.usage,
+			input: 20,
+			output: 20,
+			totalTokens: 40,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		});
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
 	});
 });

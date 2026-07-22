@@ -3,7 +3,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
@@ -313,6 +313,7 @@ export class ExtensionRunner {
 		contextActions: ExtensionContextActions,
 		providerActions?: {
 			registerProvider?: (name: string, config: ProviderConfig) => void;
+			registerNativeProvider?: (provider: Provider) => void;
 			unregisterProvider?: (name: string) => void;
 		},
 	): void {
@@ -363,6 +364,23 @@ export class ExtensionRunner {
 			}
 		}
 		this.runtime.pendingProviderRegistrations = [];
+		for (const { provider, extensionPath } of this.runtime.pendingNativeProviderRegistrations) {
+			try {
+				if (providerActions?.registerNativeProvider) {
+					providerActions.registerNativeProvider(provider);
+				} else {
+					this.modelRegistry.registerProvider(provider);
+				}
+			} catch (err) {
+				this.emitError({
+					extensionPath,
+					event: "register_provider",
+					error: err instanceof Error ? err.message : String(err),
+					stack: err instanceof Error ? err.stack : undefined,
+				});
+			}
+		}
+		this.runtime.pendingNativeProviderRegistrations = [];
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
@@ -372,6 +390,13 @@ export class ExtensionRunner {
 				return;
 			}
 			this.modelRegistry.registerProvider(name, config);
+		};
+		this.runtime.registerNativeProvider = (provider) => {
+			if (providerActions?.registerNativeProvider) {
+				providerActions.registerNativeProvider(provider);
+				return;
+			}
+			this.modelRegistry.registerProvider(provider);
 		};
 		this.runtime.unregisterProvider = (name) => {
 			if (providerActions?.unregisterProvider) {
@@ -858,6 +883,10 @@ export class ExtensionRunner {
 						currentEvent.isError = handlerResult.isError;
 						modified = true;
 					}
+					if (handlerResult.usage !== undefined) {
+						currentEvent.usage = handlerResult.usage;
+						modified = true;
+					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -879,6 +908,7 @@ export class ExtensionRunner {
 			content: currentEvent.content,
 			details: currentEvent.details,
 			isError: currentEvent.isError,
+			usage: currentEvent.usage,
 		};
 	}
 

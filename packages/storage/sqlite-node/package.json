@@ -1,0 +1,38 @@
+{
+	"name": "@earendil-works/pi-storage-sqlite-node",
+	"version": "0.81.1",
+	"description": "Node sqlite storage backend for @earendil-works/pi-agent-core sessions",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
+		"build": "tsgo -p tsconfig.build.json && node ./scripts/prepare-dist.mjs copy-sqlite-migrations",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/storage/sqlite-node"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "^0.81.1",
+		"@earendil-works/pi-agent-core": "^0.81.1"
+	}
+}

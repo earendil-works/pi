@@ -44,6 +44,30 @@ describe("builtin providers", () => {
 		}
 	});
 
+	it("uses official Kimi K3 pricing for Moonshot providers", () => {
+		const models = builtinModels();
+		for (const provider of ["moonshotai", "moonshotai-cn"]) {
+			expect(models.getModel(provider, "kimi-k3")?.cost).toEqual({
+				input: 3,
+				output: 15,
+				cacheRead: 0.3,
+				cacheWrite: 0,
+			});
+		}
+	});
+
+	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {
+		const models = builtinModels();
+		const expectedCosts = {
+			k3: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+			"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
+		};
+
+		for (const [modelId, cost] of Object.entries(expectedCosts)) {
+			expect(models.getModel("kimi-coding", modelId)?.cost).toEqual(cost);
+		}
+	});
+
 	it("resolves anthropic auth from env with OAuth token precedence", async () => {
 		const models = createModels({
 			authContext: fakeAuthContext({ ANTHROPIC_API_KEY: "key", ANTHROPIC_OAUTH_TOKEN: "oauth-token" }),

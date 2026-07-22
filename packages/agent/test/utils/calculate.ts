@@ -1,3 +1,4 @@
+import type { Usage } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "../../src/types.ts";
 
@@ -30,3 +31,10 @@ export const calculateTool: AgentTool<typeof calculateSchema, undefined> = {
 		return calculate(args.expression);
 	},
 };
+
+export function createCalculateToolWithUsage(usage: Usage): AgentTool<typeof calculateSchema, undefined> {
+	return {
+		...calculateTool,
+		execute: async (_toolCallId: string, args: CalculateParams) => ({ ...calculate(args.expression), usage }),
+	};
+}

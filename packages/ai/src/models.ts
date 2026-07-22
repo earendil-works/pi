@@ -38,11 +38,15 @@ export interface RefreshModelsContext {
 	store: ProviderModelsStore;
 	/** False during offline/cache-only initialization. */
 	allowNetwork: boolean;
+	/** Bypass provider freshness checks and fetch immediately when network access is allowed. */
+	force?: boolean;
 	signal?: AbortSignal;
 }
 
 export interface ModelsRefreshOptions {
 	allowNetwork?: boolean;
+	/** Bypass provider freshness checks and fetch immediately when network access is allowed. */
+	force?: boolean;
 	signal?: AbortSignal;
 }
 
@@ -290,7 +294,13 @@ class ModelsImpl implements MutableModels {
 					stored = await this.readCredential(provider.id);
 					const credential = await this.resolveRefreshCredential(provider, stored, allowNetwork, options.signal);
 					if (!credential) return;
-					await provider.refreshModels({ credential, store, allowNetwork, signal: options.signal });
+					await provider.refreshModels({
+						credential,
+						store,
+						allowNetwork,
+						force: options.force,
+						signal: options.signal,
+					});
 				} catch (error) {
 					if (!options.signal?.aborted) {
 						errors.set(

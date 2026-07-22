@@ -68,11 +68,20 @@ async function runSessionSuite(
 			await session.appendMessage(createAssistantMessage("two"));
 			const user2 = await session.appendMessage(createUserMessage("three"));
 			await session.appendMessage(createAssistantMessage("four"));
-			await session.appendCompaction("summary", user2, 1234);
+			await session.appendCompaction("summary", user2, 1234, undefined, undefined, undefined, [
+				createUserMessage("three"),
+				createAssistantMessage("four"),
+			]);
 			await session.appendMessage(createUserMessage("five"));
 			const context = await session.buildContext();
 			expect(context.messages[0]?.role).toBe("compactionSummary");
 			expect(context.messages).toHaveLength(4);
+			expect(context.messages.map((message) => message.role)).toEqual([
+				"compactionSummary",
+				"user",
+				"assistant",
+				"user",
+			]);
 		});
 
 		it("supports moving with branch summary entries in context", async () => {
@@ -84,6 +93,49 @@ async function runSessionSuite(
 			expect(summaryEntry).toMatchObject({ type: "branch_summary", parentId: user1, fromId: user1 });
 			const context = await session.buildContext();
 			expect(context.messages[1]?.role).toBe("branchSummary");
+		});
+
+		it("persists compaction usage", async () => {
+			const session = new Session(await createStorage());
+			const firstKeptEntryId = await session.appendMessage(createUserMessage("one"));
+			const usage = {
+				input: 1,
+				output: 2,
+				cacheRead: 3,
+				cacheWrite: 4,
+				totalTokens: 10,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			};
+
+			const compactionId = await session.appendCompaction(
+				"summary",
+				firstKeptEntryId,
+				1234,
+				undefined,
+				false,
+				usage,
+			);
+
+			const compactionEntry = await session.getEntry(compactionId);
+			expect(compactionEntry?.type === "compaction" ? compactionEntry.usage : undefined).toEqual(usage);
+		});
+
+		it("persists branch summary usage", async () => {
+			const session = new Session(await createStorage());
+			const user1 = await session.appendMessage(createUserMessage("one"));
+			const usage = {
+				input: 1,
+				output: 2,
+				cacheRead: 3,
+				cacheWrite: 4,
+				totalTokens: 10,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			};
+
+			const summaryId = await session.moveTo(user1, { summary: "summary text", usage });
+
+			const summaryEntry = await session.getEntry(summaryId!);
+			expect(summaryEntry?.type === "branch_summary" ? summaryEntry.usage : undefined).toEqual(usage);
 		});
 
 		it("supports custom message entries in context", async () => {

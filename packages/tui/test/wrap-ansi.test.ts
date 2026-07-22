@@ -101,6 +101,26 @@ describe("wrapTextWithAnsi", () => {
 	});
 
 	describe("basic wrapping", () => {
+		it("should handle LF, CRLF, and CR line endings", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("first\nsecond\r\nthird\rfourth", 80), [
+				"first",
+				"second",
+				"third",
+				"fourth",
+			]);
+		});
+
+		it("should preserve ANSI state across CRLF and CR line endings", () => {
+			const red = "\x1b[31m";
+			const reset = "\x1b[0m";
+
+			assert.deepStrictEqual(wrapTextWithAnsi(`${red}first\r\nsecond\rthird${reset}`, 80), [
+				`${red}first`,
+				`${red}second`,
+				`${red}third${reset}`,
+			]);
+		});
+
 		it("should wrap plain text correctly", () => {
 			const text = "hello world this is a test";
 			const wrapped = wrapTextWithAnsi(text, 10);

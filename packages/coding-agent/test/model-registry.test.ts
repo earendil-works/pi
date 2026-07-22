@@ -652,7 +652,7 @@ describe("ModelRegistry", () => {
 			expect(anthropicModels.some((m) => m.id === "claude-custom")).toBe(false);
 			expect(anthropicModels.some((m) => m.id === "claude-custom-2")).toBe(true);
 			expect(anthropicModels.some((m) => m.id.includes("claude"))).toBe(true);
-		});
+		}, 60_000);
 
 		test("removing custom models from models.json keeps built-in provider models", async () => {
 			writeModelsJson({

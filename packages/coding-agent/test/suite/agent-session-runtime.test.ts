@@ -290,6 +290,19 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
 	});
 
+	it("reports why an unflushed session cannot be forked", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		const sessionFile = runtime.session.sessionFile;
+		const leafId = runtime.session.sessionManager.getLeafId();
+		expect(sessionFile).toBeDefined();
+		expect(existsSync(sessionFile!)).toBe(false);
+		expect(leafId).toBeTruthy();
+
+		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
+			"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
+		);
+	});
+
 	it("duplicates the current active branch when forking at the current position", async () => {
 		const { runtime } = await createRuntimeForTest(() => {});
 		await runtime.session.prompt("hello");

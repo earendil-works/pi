@@ -378,7 +378,7 @@ async function createHarnessWithResourceLoader(
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: options.tools ?? [],
 		},
-		streamFn,
+		streamFn: streamFn,
 	});
 
 	const sessionManager = SessionManager.inMemory();
