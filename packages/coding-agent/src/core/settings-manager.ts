@@ -851,7 +851,7 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? false;
 	}
 
-	getExternalEditorCommand(): string | undefined {
+	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
 			return configuredEditor;

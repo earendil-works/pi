@@ -80,12 +80,21 @@ describe("version checks", () => {
 		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ note: "**Read this**", version: "1.2.4" });
 	});
 
-	it("skips api calls when version checks are disabled", async () => {
+	it("skips automatic api calls when version checks are disabled", async () => {
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
-		await expect(getLatestPiVersion("1.2.3")).resolves.toBeUndefined();
+		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("allows direct api calls when automatic version checks are disabled", async () => {
+		process.env.PI_SKIP_VERSION_CHECK = "1";
+		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
+		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 });

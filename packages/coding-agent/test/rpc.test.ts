@@ -209,6 +209,28 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		expect(newState.thinkingLevel).toBe(result!.level);
 	}, 30000);
 
+	test("should get available thinking levels", async () => {
+		await client.start();
+
+		const levels = await client.getAvailableThinkingLevels();
+		expect(levels.length).toBeGreaterThan(0);
+
+		// The current level reported by get_state must be in the available list
+		const state = await client.getState();
+		expect(levels).toContain(state.thinkingLevel);
+
+		// cycle_thinking_level must only ever land on levels from get_available_thinking_levels
+		const initialLevel = state.thinkingLevel;
+		const cycled = await client.cycleThinkingLevel();
+		if (cycled) {
+			expect(levels).toContain(cycled.level);
+			// distinct cycle step (unless only one level)
+			if (levels.length > 1) {
+				expect(cycled.level).not.toBe(initialLevel);
+			}
+		}
+	}, 30000);
+
 	test("should get available models", async () => {
 		await client.start();
 

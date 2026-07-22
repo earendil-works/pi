@@ -73,6 +73,8 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 
 	const envMap: Record<string, string> = {
 		"ant-ling": "ANT_LING_API_KEY",
+		"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
+		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 		nvidia: "NVIDIA_API_KEY",
@@ -82,6 +84,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
 		xai: "XAI_API_KEY",
+		radius: "RADIUS_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",
 		"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
 		zai: "ZAI_API_KEY",

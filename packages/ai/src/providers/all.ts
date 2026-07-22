@@ -1,7 +1,7 @@
 import { createImagesModels, type ImagesProvider, type MutableImagesModels } from "../images-models.ts";
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
-import type { Api, KnownProvider, Model } from "../types.ts";
+import type { Api, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
@@ -29,6 +29,9 @@ import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
 import { openrouterProvider } from "./openrouter.ts";
 import { openrouterImagesProvider } from "./openrouter-images.ts";
+import { qwenTokenPlanProvider } from "./qwen-token-plan.ts";
+import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
+import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
 import { xaiProvider } from "./xai.ts";
@@ -39,13 +42,20 @@ import { xiaomiTokenPlanSgpProvider } from "./xiaomi-token-plan-sgp.ts";
 import { zaiProvider } from "./zai.ts";
 import { zaiCodingCnProvider } from "./zai-coding-cn.ts";
 
+export { radiusProvider };
+
+/** Providers present in the generated catalog. `KnownProvider` additionally
+ * includes purely dynamic providers (e.g. "radius") that have no static
+ * catalog entry. */
+export type BuiltinProvider = keyof typeof MODELS;
+
 type BuiltinModelApi<
-	TProvider extends KnownProvider,
+	TProvider extends BuiltinProvider,
 	TModelId extends keyof (typeof MODELS)[TProvider],
 > = (typeof MODELS)[TProvider][TModelId] extends { api: infer TApi } ? (TApi extends Api ? TApi : never) : never;
 
 /** Typed read of the generated built-in catalog. */
-export function getBuiltinModel<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
+export function getBuiltinModel<TProvider extends BuiltinProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
 	provider: TProvider,
 	modelId: TModelId,
 ): Model<BuiltinModelApi<TProvider, TModelId>> {
@@ -53,11 +63,16 @@ export function getBuiltinModel<TProvider extends KnownProvider, TModelId extend
 	return models?.[modelId as string] as Model<BuiltinModelApi<TProvider, TModelId>>;
 }
 
-export function getBuiltinProviders(): KnownProvider[] {
-	return Object.keys(MODELS) as KnownProvider[];
+export function getBuiltinProviders(): BuiltinProvider[] {
+	return Object.keys(MODELS) as BuiltinProvider[];
 }
 
-export function getBuiltinModels<TProvider extends KnownProvider>(
+/** URL of a generated provider catalog, used to compare its mtime with remote catalogs during development. */
+export function getBuiltinModelDataUrl(provider: BuiltinProvider): URL {
+	return new URL(`./data/${provider}.json`, import.meta.url);
+}
+
+export function getBuiltinModels<TProvider extends BuiltinProvider>(
 	provider: TProvider,
 ): Model<BuiltinModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {
 	const models = MODELS[provider] as Record<string, Model<Api>> | undefined;
@@ -95,6 +110,9 @@ export function builtinProviders(): Provider[] {
 		opencodeProvider(),
 		opencodeGoProvider(),
 		openrouterProvider(),
+		qwenTokenPlanProvider(),
+		qwenTokenPlanCnProvider(),
+		radiusProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
 		xaiProvider(),

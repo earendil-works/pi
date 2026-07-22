@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { complete, getModels, getProviders } from "../src/compat.ts";
+import { type BuiltinProvider, complete, getModels, getProviders } from "../src/compat.ts";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
 import type { Api, KnownProvider, Model, ProviderStreamOptions, Tool } from "../src/types.ts";
 import { resolveApiKey } from "./oauth.ts";
@@ -19,7 +19,7 @@ const echoTool: Tool<typeof echoToolSchema> = {
 
 interface AnthropicEagerE2ECase {
 	name: string;
-	provider: KnownProvider;
+	provider: BuiltinProvider;
 	model: Model<"anthropic-messages">;
 	apiKey: string | undefined;
 }
@@ -31,7 +31,7 @@ function getE2EApiKey(provider: KnownProvider): string | undefined {
 	return getEnvApiKey(provider);
 }
 
-function getAnthropicMessagesModels(provider: KnownProvider): Model<"anthropic-messages">[] {
+function getAnthropicMessagesModels(provider: BuiltinProvider): Model<"anthropic-messages">[] {
 	const models = getModels(provider) as Model<Api>[];
 	return models.filter((model) => model.api === "anthropic-messages") as Model<"anthropic-messages">[];
 }
@@ -64,7 +64,7 @@ function getProbePriority(model: Model<"anthropic-messages">): number {
 }
 
 function selectOneCasePerProvider(cases: AnthropicEagerE2ECase[]): AnthropicEagerE2ECase[] {
-	const byProvider = new Map<KnownProvider, AnthropicEagerE2ECase[]>();
+	const byProvider = new Map<BuiltinProvider, AnthropicEagerE2ECase[]>();
 	for (const testCase of cases) {
 		const providerCases = byProvider.get(testCase.provider) ?? [];
 		providerCases.push(testCase);

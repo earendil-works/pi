@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel } from "../src/compat.ts";
-import type { Model } from "../src/types.ts";
+import type { Message, Model } from "../src/types.ts";
 
 interface CacheControl {
 	type: "ephemeral";
@@ -74,6 +74,7 @@ vi.mock("openai", () => {
 async function capturePayload(
 	model: Model<"openai-completions">,
 	options?: { cacheRetention?: "none" | "short" | "long" },
+	messages?: Message[],
 ): Promise<CapturedParams> {
 	const timestamp = Date.now();
 
@@ -81,7 +82,7 @@ async function capturePayload(
 		model,
 		{
 			systemPrompt: "System prompt",
-			messages: [{ role: "user", content: "Hello", timestamp }],
+			messages: messages ?? [{ role: "user", content: "Hello", timestamp }],
 			tools: [
 				{
 					name: "read",
@@ -156,6 +157,47 @@ describe("openai-completions cacheControlFormat", () => {
 		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
+	});
+
+	it("moves the conversation cache marker to a tool result", async () => {
+		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		const timestamp = Date.now();
+		const params = await capturePayload(model, undefined, [
+			{ role: "user", content: "Read the file", timestamp },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
+				api: "openai-completions",
+				provider: "openrouter",
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call_1",
+				toolName: "read",
+				content: [{ type: "text", text: "file contents" }],
+				isError: false,
+				timestamp,
+			},
+		]);
+
+		const userMessage = params.messages.find((message) => message.role === "user");
+		expect(userMessage?.content).toBe("Read the file");
+
+		const toolMessage = params.messages[params.messages.length - 1];
+		expect(toolMessage.role).toBe("tool");
+		expect(Array.isArray(toolMessage.content)).toBe(true);
+		expect((toolMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
 	it("omits Anthropic-style cache markers when cacheRetention is none", async () => {

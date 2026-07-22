@@ -1,4 +1,17 @@
-import type { AssistantMessage, ImageContent, Model, Models, TextContent, Usage } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type Context,
+	contentText,
+	type ImageContent,
+	type Model,
+	type Models,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	type SimpleStreamOptions,
+	type TextContent,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import {
 	convertToLlm,
@@ -89,12 +102,50 @@ function getMessageFromEntryForCompaction(entry: SessionTreeEntry): AgentMessage
 export interface CompactionResult<T = unknown> {
 	/** Summary text that replaces compacted history in future context. */
 	summary: string;
-	/** Entry id where retained history starts. */
-	firstKeptEntryId: string;
+	/** Entry id where retained history starts. Optional during Pi 2.0 transition. */
+	firstKeptEntryId?: string;
 	/** Estimated context tokens before compaction. */
 	tokensBefore: number;
+	/** Usage from the LLM call(s) that generated this summary, if available. */
+	usage?: Usage;
+	/** Retained recent messages stored directly on the compaction entry. Optional during Pi 2.0 transition. */
+	retainedTail?: AgentMessage[];
 	/** Optional implementation-specific details stored with the compaction entry. */
 	details?: T;
+}
+
+export async function completeSimpleWithRetries(
+	models: Models,
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<AssistantMessage> {
+	return retryAssistantCall(() => models.completeSimple(model, context, options), retry, options.signal, callbacks);
+}
+
+function combineUsage(first: Usage, second: Usage): Usage {
+	return {
+		input: first.input + second.input,
+		output: first.output + second.output,
+		cacheRead: first.cacheRead + second.cacheRead,
+		cacheWrite: first.cacheWrite + second.cacheWrite,
+		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
+			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
+			: {}),
+		...(first.reasoning !== undefined || second.reasoning !== undefined
+			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
+			: {}),
+		totalTokens: first.totalTokens + second.totalTokens,
+		cost: {
+			input: first.cost.input + second.cost.input,
+			output: first.cost.output + second.cost.output,
+			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
+			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
+			total: first.cost.total + second.cost.total,
+		},
+	};
 }
 
 /** Compaction thresholds and retention settings. */
@@ -466,7 +517,37 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
 ): Promise<Result<string, CompactionError>> {
+	const result = await generateSummaryWithUsage(
+		currentMessages,
+		models,
+		model,
+		reserveTokens,
+		signal,
+		customInstructions,
+		previousSummary,
+		thinkingLevel,
+		retry,
+		callbacks,
+	);
+	return result.ok ? ok(result.value.text) : err(result.error);
+}
+
+/** Generate or update a conversation summary and return its provider usage. */
+export async function generateSummaryWithUsage(
+	currentMessages: AgentMessage[],
+	models: Models,
+	model: Model<any>,
+	reserveTokens: number,
+	signal?: AbortSignal,
+	customInstructions?: string,
+	previousSummary?: string,
+	thinkingLevel?: ThinkingLevel,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -496,10 +577,13 @@ export async function generateSummary(
 			? { maxTokens, signal, reasoning: thinkingLevel }
 			: { maxTokens, signal };
 
-	const response = await models.completeSimple(
+	const response = await completeSimpleWithRetries(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
+		retry,
+		callbacks,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
@@ -513,12 +597,9 @@ export async function generateSummary(
 		);
 	}
 
-	const textContent = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
+	const textContent = contentText(response.content);
 
-	return ok(textContent);
+	return ok({ text: textContent, usage: response.usage });
 }
 
 /** Prepared inputs for a compaction run. */
@@ -529,6 +610,8 @@ export interface CompactionPreparation {
 	messagesToSummarize: AgentMessage[];
 	/** Prefix messages summarized separately when compaction splits a turn. */
 	turnPrefixMessages: AgentMessage[];
+	/** Recent messages retained after compaction and stored on the compaction entry. */
+	retainedTail: AgentMessage[];
 	/** Whether compaction splits a turn. */
 	isSplitTurn: boolean;
 	/** Estimated context tokens before compaction. */
@@ -563,7 +646,9 @@ export function prepareCompaction(
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
 		previousSummary = prevCompaction.summary;
-		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
+		const firstKeptEntryIndex = prevCompaction.firstKeptEntryId
+			? pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId)
+			: -1;
 		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
 	}
 	const boundaryEnd = pathEntries.length;
@@ -590,6 +675,11 @@ export function prepareCompaction(
 			if (msg) turnPrefixMessages.push(msg);
 		}
 	}
+	const retainedTail: AgentMessage[] = [];
+	for (let i = cutPoint.firstKeptEntryIndex; i < boundaryEnd; i++) {
+		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+		if (msg) retainedTail.push(msg);
+	}
 	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
 	if (cutPoint.isSplitTurn) {
 		for (const msg of turnPrefixMessages) {
@@ -601,6 +691,7 @@ export function prepareCompaction(
 		firstKeptEntryId,
 		messagesToSummarize,
 		turnPrefixMessages,
+		retainedTail,
 		isSplitTurn: cutPoint.isSplitTurn,
 		tokensBefore,
 		previousSummary,
@@ -634,11 +725,14 @@ export async function compact(
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
 ): Promise<Result<CompactionResult, CompactionError>> {
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
 		turnPrefixMessages,
+		retainedTail,
 		isSplitTurn,
 		tokensBefore,
 		previousSummary,
@@ -651,22 +745,28 @@ export async function compact(
 	}
 
 	let summary: string;
+	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		const historyResult =
-			messagesToSummarize.length > 0
-				? await generateSummary(
-						messagesToSummarize,
-						models,
-						model,
-						settings.reserveTokens,
-						signal,
-						customInstructions,
-						previousSummary,
-						thinkingLevel,
-					)
-				: ok<string, CompactionError>("No prior history.");
-		if (!historyResult.ok) return err(historyResult.error);
+		let historyText = "No prior history.";
+		let historyUsage: Usage | undefined;
+		if (messagesToSummarize.length > 0) {
+			const historyResult = await generateSummaryWithUsage(
+				messagesToSummarize,
+				models,
+				model,
+				settings.reserveTokens,
+				signal,
+				customInstructions,
+				previousSummary,
+				thinkingLevel,
+				retry,
+				callbacks,
+			);
+			if (!historyResult.ok) return err(historyResult.error);
+			historyText = historyResult.value.text;
+			historyUsage = historyResult.value.usage;
+		}
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			models,
@@ -674,11 +774,16 @@ export async function compact(
 			settings.reserveTokens,
 			signal,
 			thinkingLevel,
+			retry,
+			callbacks,
 		);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
-		summary = `${historyResult.value}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value}`;
+		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value.text}`;
+		summaryUsage = historyUsage
+			? combineUsage(historyUsage, turnPrefixResult.value.usage)
+			: turnPrefixResult.value.usage;
 	} else {
-		const summaryResult = await generateSummary(
+		const summaryResult = await generateSummaryWithUsage(
 			messagesToSummarize,
 			models,
 			model,
@@ -687,9 +792,12 @@ export async function compact(
 			customInstructions,
 			previousSummary,
 			thinkingLevel,
+			retry,
+			callbacks,
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
-		summary = summaryResult.value;
+		summary = summaryResult.value.text;
+		summaryUsage = summaryResult.value.usage;
 	}
 
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
@@ -699,6 +807,8 @@ export async function compact(
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
+		usage: summaryUsage,
+		retainedTail,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
 	});
 }
@@ -709,7 +819,9 @@ async function generateTurnPrefixSummary(
 	reserveTokens: number,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
-): Promise<Result<string, CompactionError>> {
+	retry?: RetryPolicy,
+	callbacks?: RetryCallbacks,
+): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -725,12 +837,17 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
-	const response = await models.completeSimple(
-		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+	const completionOptions =
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
 			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal },
+			: { maxTokens, signal };
+	const response = await completeSimpleWithRetries(
+		models,
+		model,
+		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		completionOptions,
+		retry,
+		callbacks,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
@@ -744,10 +861,8 @@ async function generateTurnPrefixSummary(
 		);
 	}
 
-	return ok(
-		response.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text)
-			.join("\n"),
-	);
+	return ok({
+		text: contentText(response.content),
+		usage: response.usage,
+	});
 }

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,10 +10,11 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession stream options", () => {
 	let tempDir: string;
@@ -46,6 +47,7 @@ describe("createAgentSession stream options", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000,
 			maxTokens: 4096,
+			headers: { "x-model": "model" },
 		};
 	}
 
@@ -76,36 +78,44 @@ describe("createAgentSession stream options", () => {
 		api: Api,
 		settings: { httpIdleTimeoutMs?: number; websocketConnectTimeoutMs?: number },
 		requestOptions: SimpleStreamOptions = {},
+		extensionSource?: string,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
+		if (extensionSource) {
+			const extensionsDir = join(agentDir, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(join(extensionsDir, "headers.ts"), extensionSource);
+		}
 
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "test-api-key" }));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
 		let capturedOptions: SimpleStreamOptions | undefined;
 
 		modelRegistry.registerProvider(model.provider, {
 			api,
+			headers: { "x-provider": "provider" },
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
 				return createDoneStream(api);
 			},
 		});
 
+		const modelRuntime = getModelRuntime(modelRegistry);
 		const sessionManager = SessionManager.inMemory(cwd);
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
 			model,
-			authStorage,
-			modelRegistry,
+			modelRuntime,
 			settingsManager,
 			sessionManager,
 		});
 
 		try {
-			await session.agent.streamFn(model, { messages: [] }, requestOptions);
+			const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
+			await stream.result();
 			return capturedOptions;
 		} finally {
 			session.dispose();
@@ -149,5 +159,30 @@ describe("createAgentSession stream options", () => {
 		);
 
 		expect(options?.websocketConnectTimeoutMs).toBe(0);
+	});
+
+	it("runs before_provider_headers on assembled headers without forwarding the transform", async () => {
+		const options = await captureStreamOptions(
+			"openai-completions",
+			{},
+			{ headers: { "x-explicit": "explicit" } },
+			`export default function (pi) {
+				pi.on("before_provider_headers", (event) => {
+					event.headers["x-hook"] = [
+						event.headers["x-provider"],
+						event.headers["x-model"],
+						event.headers["x-explicit"],
+					].join(":");
+				});
+			}`,
+		);
+
+		expect(options?.headers).toMatchObject({
+			"x-provider": "provider",
+			"x-model": "model",
+			"x-explicit": "explicit",
+			"x-hook": "provider:model:explicit",
+		});
+		expect(options).not.toHaveProperty("transformHeaders");
 	});
 });

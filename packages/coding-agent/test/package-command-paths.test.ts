@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
@@ -371,6 +372,42 @@ describe("package commands", () => {
 		}
 	});
 
+	it("refreshes only model catalogs with update --models", async () => {
+		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
+		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		expect(create).toHaveBeenCalledWith({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			allowModelNetwork: false,
+		});
+		expect(refresh).toHaveBeenCalledWith({
+			allowNetwork: true,
+			force: true,
+			signal: expect.any(AbortSignal),
+		});
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("rejects update --models combined with another update target", async () => {
+		const create = vi.spyOn(ModelRuntime, "create");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models", "--self"])).resolves.toBeUndefined();
+
+		expect(create).not.toHaveBeenCalled();
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"--models cannot be combined with --self",
+		);
+		expect(process.exitCode).toBe(1);
+	});
+
 	it("cycles project package overrides in config local mode", async () => {
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () => JSON.stringify({ packages: ["npm:pi-tools"] }));
@@ -430,6 +467,32 @@ describe("package commands", () => {
 			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
+		}
+	});
+
+	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
+		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+		process.env.PI_SKIP_VERSION_CHECK = "1";
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		vi.stubGlobal("fetch", fetchMock);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(fetchMock).toHaveBeenCalledOnce();
+			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				`pi is already up to date (v${VERSION})`,
+			);
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			if (previousSkipVersionCheck === undefined) {
+				delete process.env.PI_SKIP_VERSION_CHECK;
+			} else {
+				process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
+			}
 		}
 	});
 

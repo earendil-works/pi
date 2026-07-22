@@ -1,4 +1,4 @@
-import type { Credential, CredentialStore } from "./types.ts";
+import type { Credential, CredentialInfo, CredentialStore } from "./types.ts";
 
 /**
  * Default in-memory credential store. Apps inject persistent stores.
@@ -25,6 +25,10 @@ export class InMemoryCredentialStore implements CredentialStore {
 
 	async read(providerId: string): Promise<Credential | undefined> {
 		return this.credentials.get(providerId);
+	}
+
+	async list(): Promise<readonly CredentialInfo[]> {
+		return [...this.credentials].map(([providerId, credential]) => ({ providerId, type: credential.type }));
 	}
 
 	modify(

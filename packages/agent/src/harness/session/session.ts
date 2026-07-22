@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
@@ -11,8 +11,10 @@ import type {
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
+	SessionEntryCursorOptions,
 	SessionInfoEntry,
 	SessionMetadata,
+	SessionStats,
 	SessionStorage,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
@@ -67,11 +69,19 @@ export function defaultContextEntryTransform(pathEntries: readonly SessionTreeEn
 
 	const entries: SessionTreeEntry[] = [compaction];
 	const compactionIdx = pathEntries.findIndex((entry) => entry.type === "compaction" && entry.id === compaction.id);
-	let foundFirstKept = false;
-	for (let i = 0; i < compactionIdx; i++) {
-		const entry = pathEntries[i]!;
-		if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-		if (foundFirstKept) entries.push(entry);
+	if (compaction.retainedTail) {
+		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
+			entries.push(pathEntries[i]!);
+		}
+		return entries;
+	}
+	if (compaction.firstKeptEntryId) {
+		let foundFirstKept = false;
+		for (let i = 0; i < compactionIdx; i++) {
+			const entry = pathEntries[i]!;
+			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
+			if (foundFirstKept) entries.push(entry);
+		}
 	}
 	for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
 		entries.push(pathEntries[i]!);
@@ -111,7 +121,10 @@ export function sessionEntryToContextMessages(
 		];
 	}
 	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+		return [
+			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+			...(entry.retainedTail ?? []),
+		];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
@@ -159,13 +172,13 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage.getEntry(id);
 	}
 
-	getEntries(): Promise<SessionTreeEntry[]> {
-		return this.storage.getEntries();
+	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return this.storage.getEntries(options);
 	}
 
 	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
 		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRoot(leafId);
+		return this.storage.getPathToRootOrCompaction(leafId);
 	}
 
 	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {
@@ -190,9 +203,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage.getLabel(id);
 	}
 
+	getSessionStats(): Promise<SessionStats> {
+		return this.storage.getSessionStats();
+	}
+
 	async getSessionName(): Promise<string | undefined> {
-		const entries = await this.storage.findEntries("session_info");
-		return entries[entries.length - 1]?.name?.trim() || undefined;
+		return this.storage.getSessionName();
 	}
 
 	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
@@ -243,10 +259,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async appendCompaction<T = unknown>(
 		summary: string,
-		firstKeptEntryId: string,
+		firstKeptEntryId: string | undefined,
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
+		usage?: Usage,
+		retainedTail?: AgentMessage[],
 	): Promise<string> {
 		return this.appendTypedEntry({
 			type: "compaction",
@@ -256,7 +274,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			summary,
 			firstKeptEntryId,
 			tokensBefore,
+			retainedTail,
 			details,
+			usage,
 			fromHook,
 		} satisfies CompactionEntry<T>);
 	}
@@ -317,7 +337,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async moveTo(
 		entryId: string | null,
-		summary?: { summary: string; details?: unknown; fromHook?: boolean },
+		summary?: { summary: string; details?: unknown; usage?: Usage; fromHook?: boolean },
 	): Promise<string | undefined> {
 		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
@@ -332,6 +352,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			fromId: entryId ?? "root",
 			summary: summary.summary,
 			details: summary.details,
+			usage: summary.usage,
 			fromHook: summary.fromHook,
 		} satisfies BranchSummaryEntry);
 	}

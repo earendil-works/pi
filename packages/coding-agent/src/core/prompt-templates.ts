@@ -60,6 +60,7 @@ export function parseCommandArgs(argsString: string): string[] {
  * - $1, $2, ... for positional args
  * - $@ and $ARGUMENTS for all args
  * - ${N:-default} for positional arg N with default when missing/empty
+ * - ${@:-default} and ${ARGUMENTS:-default} for all args with a default when empty
  * - ${@:N} for args from Nth onwards (bash-style slicing)
  * - ${@:N:L} for L args starting from Nth
  *
@@ -70,11 +71,11 @@ export function substituteArgs(content: string, args: string[]): string {
 	const allArgs = args.join(" ");
 
 	return content.replace(
-		/\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
-		(_match, defaultNum, defaultValue, sliceStart, sliceLength, simple) => {
-			if (defaultNum) {
-				const index = parseInt(defaultNum, 10) - 1;
-				const value = args[index];
+		/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
+		(_match, defaultTarget, defaultValue, sliceStart, sliceLength, simple) => {
+			if (defaultTarget) {
+				const value =
+					defaultTarget === "@" || defaultTarget === "ARGUMENTS" ? allArgs : args[parseInt(defaultTarget, 10) - 1];
 				return value ? value : defaultValue;
 			}
 

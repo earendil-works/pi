@@ -45,6 +45,10 @@ function getClientApiKey(provider: string, apiKey: string | undefined, headers: 
 	throw new Error(`No API key for provider: ${provider}`);
 }
 
+function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">) {
+	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+}
+
 /**
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
@@ -63,7 +67,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 	const isOpenAI = model.provider === "openai";
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
-		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
+		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? isOpenAI,
 		supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
@@ -87,6 +91,7 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
 /**
@@ -213,10 +218,14 @@ function createClient(
 	}
 
 	if (sessionId) {
-		if (compat.sendSessionIdHeader) {
-			headers.session_id = sessionId;
+		if (compat.sessionAffinityFormat === "openrouter") {
+			headers["x-session-id"] = sessionId;
+		} else {
+			if (compat.sessionAffinityFormat === "openai") {
+				headers.session_id = sessionId;
+			}
+			headers["x-client-request-id"] = sessionId;
 		}
-		headers["x-client-request-id"] = sessionId;
 	}
 
 	// Merge options headers last so they can override defaults
@@ -281,6 +290,10 @@ function buildParams(
 		});
 	}
 
+	if (options?.toolChoice !== undefined) {
+		params.tool_choice = options.toolChoice;
+	}
+
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
 			const effort = options?.reasoningEffort
@@ -296,6 +309,7 @@ function buildParams(
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
+		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
 	}
 
 	return params;

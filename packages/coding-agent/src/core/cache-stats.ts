@@ -29,9 +29,9 @@ export interface CacheWasteTotals {
 	missCount: number;
 }
 
-/** Minimal pricing lookup, satisfied by ModelRegistry. Cost is $/million tokens. */
+/** Minimal pricing lookup, satisfied by ModelRuntime. Cost is $/million tokens. */
 export interface ModelPriceSource {
-	find(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
+	getModel(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
 }
 
 /** The last request seen by the scan; everything in its prompt should be cached. */
@@ -79,7 +79,7 @@ function detectMiss(
 	const readPerToken =
 		usage.cacheRead > 0
 			? usage.cost.cacheRead / usage.cacheRead
-			: (models.find(message.provider, message.model)?.cost.cacheRead ?? 0) / 1_000_000;
+			: (models.getModel(message.provider, message.model)?.cost.cacheRead ?? 0) / 1_000_000;
 
 	return {
 		missedTokens,

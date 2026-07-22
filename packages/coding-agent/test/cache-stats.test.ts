@@ -12,7 +12,7 @@ const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 
 const models: ModelPriceSource = {
 	// $/million tokens; used as cache-read price fallback on full-miss turns
-	find: () => ({ cost: { cacheRead: 0.3 } }),
+	getModel: () => ({ cost: { cacheRead: 0.3 } }),
 };
 
 function assistant(options: {

@@ -1,3 +1,4 @@
+import { uuidv7 } from "@earendil-works/pi-ai";
 import {
 	type FileError,
 	type Result,
@@ -7,7 +8,6 @@ import {
 	type SessionTreeEntry,
 } from "../types.ts";
 import { Session } from "./session.ts";
-import { uuidv7 } from "./uuid.ts";
 
 export function createSessionId(): string {
 	return uuidv7();
@@ -47,5 +47,5 @@ export async function getEntriesToFork(
 		}
 		effectiveLeafId = target.parentId;
 	}
-	return storage.getPathToRoot(effectiveLeafId);
+	return storage.getPathToRootOrCompaction(effectiveLeafId);
 }

@@ -7,6 +7,10 @@ import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
 import {
 	AgentHarness,
+	createBashTool,
+	createEditTool,
+	createReadTool,
+	createWriteTool,
 	formatSkillsForSystemPrompt,
 	loadSourcedPromptTemplates,
 	loadSourcedSkills,
@@ -49,12 +53,13 @@ if (!model) {
 
 const session = new Session(new InMemorySessionStorage());
 const agent = new AgentHarness({
-	env,
 	session,
 	models,
 	model,
 	thinkingLevel: "low",
-	systemPrompt: ({ env, resources }) =>
+	tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
+	toolContext: { env },
+	systemPrompt: ({ resources }) =>
 		[
 			"You are a helpful assistant.",
 			formatSkillsForSystemPrompt(resources.skills ?? []),
@@ -68,5 +73,7 @@ const agent = new AgentHarness({
 	},
 });
 
-const response = await agent.prompt("What skills do you have? Any duplicates?");
+const response = await agent.prompt(
+	"What skills do you have? Any duplicates? Also use bash to get the current date and time, then read README.md and tell me what this project is about.",
+);
 console.log(response);

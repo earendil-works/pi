@@ -22,7 +22,7 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 	initTheme(options.settingsManager.getTheme(), true);
 
 	return new Promise((resolve) => {
-		const ui = new TUI(new ProcessTerminal());
+		const ui = new TUI(new ProcessTerminal(), undefined, options.agentDir);
 		let resolved = false;
 
 		const selector = new ConfigSelectorComponent(

@@ -1,4 +1,4 @@
-import { getOAuthProviders, type OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
+import type { AuthInfoLink, OAuthDeviceCodeInfo } from "@earendil-works/pi-ai";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import { openBrowser } from "../../../utils/open-browser.ts";
 import { theme } from "../theme/theme.ts";
@@ -38,8 +38,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.tui = tui;
 		this.onComplete = onComplete;
 
-		const providerInfo = getOAuthProviders().find((p) => p.id === providerId);
-		const providerName = providerNameOverride || providerInfo?.name || providerId;
+		const providerName = providerNameOverride || providerId;
 		const title = titleOverride ?? `Login to ${providerName}`;
 
 		// Top border
@@ -176,9 +175,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		});
 	}
 
-	/**
-	 * Show informational text before another login step.
-	 */
+	/** Show informational text before another login step. */
 	showDetails(lines: string[]): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
@@ -188,13 +185,19 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.tui.requestRender();
 	}
 
-	/**
-	 * Show informational text without prompting for input.
-	 */
-	showInfo(lines: string[]): void {
-		this.showDetails(lines);
+	/** Show provider-owned information and links without starting an auth callback flow. */
+	showInfo(message: string, links: readonly AuthInfoLink[] = [], showCloseHint = false): void {
 		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to close")})`, 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
+		for (const link of links) {
+			const text = link.label ? `${link.label}: ${link.url}` : link.url;
+			const hyperlink = `\x1b]8;;${link.url}\x07${text}\x1b]8;;\x07`;
+			this.contentContainer.addChild(new Text(theme.fg("accent", hyperlink), 1, 0));
+		}
+		if (showCloseHint) {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to close")})`, 1, 0));
+		}
 		this.tui.requestRender();
 	}
 

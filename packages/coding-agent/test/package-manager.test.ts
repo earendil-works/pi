@@ -722,6 +722,19 @@ Content`,
 			);
 		});
 
+		it("should pass legacy peer deps when uninstalling npm packages", async () => {
+			mkdirSync(join(agentDir, "npm"), { recursive: true });
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.remove("npm:@scope/pkg");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"npm",
+				["uninstall", "@scope/pkg", "--prefix", join(agentDir, "npm"), "--legacy-peer-deps"],
+				undefined,
+			);
+		});
+
 		it("should use bun --cwd for npm package installs", async () => {
 			settingsManager = SettingsManager.inMemory({
 				npmCommand: ["mise", "exec", "bun@1", "--", "bun"],
