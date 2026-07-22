@@ -3003,6 +3003,14 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
 				}
+				// Trim old chat children to prevent screen overflow + redraw storms
+				const maxChildren = parseInt(process.env.PI_MAX_CHAT_CHILDREN ?? "0", 10);
+				if (maxChildren > 0) {
+					const children = this.chatContainer.children;
+					while (children.length > maxChildren) {
+						children.shift();
+					}
+				}
 				this.ui.requestRender();
 				break;
 
