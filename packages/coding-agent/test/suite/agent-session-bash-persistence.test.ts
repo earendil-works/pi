@@ -239,4 +239,35 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(result.output).toContain("hello from custom ops");
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");
 	});
+
+	it("streams bash output to the callback and session events", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const callbackDeltas: string[] = [];
+		const eventUpdates: Array<{ id: string | undefined; delta: string }> = [];
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "bash_execution_update") {
+				eventUpdates.push({ id: event.id, delta: event.delta });
+			}
+		});
+		const operations: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				options.onData(Buffer.from("hello "));
+				options.onData(Buffer.from("world"));
+				return { exitCode: 0 };
+			},
+		};
+
+		await harness.session.executeBash("custom", (delta) => callbackDeltas.push(delta), {
+			id: "bash-1",
+			operations,
+		});
+		unsubscribe();
+
+		expect(callbackDeltas).toEqual(["hello ", "world"]);
+		expect(eventUpdates).toEqual([
+			{ id: "bash-1", delta: "hello " },
+			{ id: "bash-1", delta: "world" },
+		]);
+	});
 });
