@@ -1,13 +1,25 @@
 import { EventEmitter } from "node:events";
 import * as undici from "undici";
 
-export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
+/**
+ * Default HTTP body/headers idle timeout in milliseconds.
+ *
+ * `0` disables undici's per-socket idle timeout so slow local LLM backends
+ * (vLLM, LM Studio, llama.cpp, Ollama) that may stay silent for minutes during
+ * prompt evaluation / inter-token pauses are not disconnected prematurely
+ * (see #3715).  Provider-level timeouts (retry.provider.timeoutMs) still apply
+ * and are the preferred way to bound requests.  Set a non-zero value (e.g. via
+ * `/settings`) if you need an HTTP-level safety net.
+ */
+export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 0;
 
 export const HTTP_IDLE_TIMEOUT_CHOICES = [
 	{ label: "30 sec", timeoutMs: 30_000 },
 	{ label: "1 min", timeoutMs: 60_000 },
 	{ label: "2 min", timeoutMs: 120_000 },
 	{ label: "5 min", timeoutMs: 300_000 },
+	{ label: "10 min", timeoutMs: 600_000 },
+	{ label: "30 min", timeoutMs: 1_800_000 },
 	{ label: "disabled", timeoutMs: 0 },
 ] as const;
 

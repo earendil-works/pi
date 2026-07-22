@@ -332,7 +332,7 @@ describe("SettingsManager", () => {
 	});
 
 	describe("httpIdleTimeoutMs", () => {
-		it("should default to 5 minutes", () => {
+		it("should default to disabled (0)", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
 		});
