@@ -142,7 +142,7 @@ describe("ToolExecutionComponent parity", () => {
 				return { exitCode: 0 };
 			},
 		};
-		const tool = createBashToolDefinition(process.cwd(), { operations });
+		const tool = createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment: false });
 		const promise = tool.execute(
 			"tool-bash-1",
 			{ command: "sleep 10" },
@@ -163,7 +163,7 @@ describe("ToolExecutionComponent parity", () => {
 				return { exitCode: 0 };
 			},
 		};
-		const tool = createBashToolDefinition(process.cwd(), { operations });
+		const tool = createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment: false });
 		const result = await tool.execute(
 			"tool-bash-1b",
 			{ command: "generate output" },
