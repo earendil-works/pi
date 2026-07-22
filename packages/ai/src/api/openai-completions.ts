@@ -809,7 +809,7 @@ function addCacheControlToLastConversationMessage(
 ): void {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
-		if (message.role === "user" || message.role === "assistant") {
+		if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
 			if (addCacheControlToMessage(message, cacheControl)) {
 				return;
 			}
@@ -840,7 +840,7 @@ function addCacheControlToMessage(
 	message: ChatCompletionMessageParam,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
-	if (message.role === "user" || message.role === "assistant") {
+	if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
 		return addCacheControlToTextContent(message, cacheControl);
 	}
 	return false;
@@ -850,6 +850,7 @@ function addCacheControlToTextContent(
 	message:
 		| ChatCompletionInstructionMessageParam
 		| ChatCompletionAssistantMessageParam
+		| ChatCompletionToolMessageParam
 		| Extract<ChatCompletionMessageParam, { role: "user" }>,
 	cacheControl: OpenAICompatCacheControl,
 ): boolean {
