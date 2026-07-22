@@ -22,6 +22,17 @@ import {
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
+import {
+	ANSTEEL_ROLES,
+	type AnsteelConfig,
+	createAnsteelRawTurnSession,
+	createAnsteelSetupFailureMarkdown,
+	getAnsteelDefaultReportDirectory,
+	getAnsteelReviewExitCode,
+	loadAnsteelConfig,
+	runAnsteelProjectReview,
+	writeAnsteelReport,
+} from "./core/ansteel-discussion.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
@@ -30,6 +41,7 @@ import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/mod
 import type { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
@@ -98,6 +110,9 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
+	if (parsed.ansteel !== undefined) {
+		return "print";
+	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -797,9 +812,85 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createAgentSession");
 
-	if (appMode !== "interactive" && !session.model) {
+	if (appMode !== "interactive" && !session.model && parsed.ansteel === undefined) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
+	}
+
+	if (parsed.ansteel !== undefined) {
+		const reviewCwd = sessionManager.getCwd();
+		let config: AnsteelConfig | undefined;
+		try {
+			const loadedConfig = loadAnsteelConfig(reviewCwd);
+			config = loadedConfig;
+			const review = await runAnsteelProjectReview({
+				topic: parsed.ansteel,
+				cwd: reviewCwd,
+				config: loadedConfig,
+				resolveModel: (provider, id) => {
+					const model = modelRuntime.getModel(provider, id);
+					return model && modelRuntime.hasConfiguredAuth(model.provider) ? model : undefined;
+				},
+				createRoleSession: async ({ model, tools, cwd: roleCwd }) => {
+					const reviewResourceLoader = new DefaultResourceLoader({
+						cwd: roleCwd,
+						agentDir: services.agentDir,
+						settingsManager: services.settingsManager,
+						noExtensions: true,
+					});
+					await reviewResourceLoader.reload();
+					const created = await createAgentSessionFromServices({
+						services,
+						resourceLoader: reviewResourceLoader,
+						sessionManager: SessionManager.inMemory(roleCwd),
+						model,
+						tools: [...tools],
+						customTools: [],
+					});
+					return createAnsteelRawTurnSession({
+						prompt: (text) => created.session.prompt(text),
+						subscribeToAssistantMessageEnd: (listener) =>
+							created.session.subscribe((event) => {
+								if (event.type === "message_end" && event.message.role === "assistant") {
+									listener(event.message);
+								}
+							}),
+						dispose: () => created.session.dispose(),
+					});
+				},
+			});
+			const roleModels = ANSTEEL_ROLES.map((role) => {
+				const model = review.roleModels[role];
+				return `- ${role}: ${model.provider}/${model.id}`;
+			}).join("\n");
+			const modelBoundary =
+				"Mandatory governance resolved three distinct configured role models. Model diversity supplements, but does not replace, evidence verification.";
+			const reportPath = writeAnsteelReport({
+				reportDirectory: loadedConfig.reportDirectory,
+				topic: review.topic,
+				markdown: `${review.markdown}\n## Role Models\n\n${roleModels}\n\n${modelBoundary}\n`,
+			});
+
+			stopThemeWatcher();
+			restoreStdout();
+			console.log(`Ansteel review ${review.verdict}: ${reportPath}`);
+			process.exitCode = getAnsteelReviewExitCode(review.verdict);
+		} catch (error: unknown) {
+			stopThemeWatcher();
+			restoreStdout();
+			try {
+				const reportPath = writeAnsteelReport({
+					reportDirectory: config?.reportDirectory ?? getAnsteelDefaultReportDirectory(reviewCwd),
+					topic: parsed.ansteel,
+					markdown: createAnsteelSetupFailureMarkdown({ topic: parsed.ansteel, config, error }),
+				});
+				console.log(`Ansteel review rejected: ${reportPath}`);
+			} catch {
+				console.error(chalk.red("Ansteel review rejected and the failure report could not be written."));
+			}
+			process.exitCode = 1;
+		}
+		return;
 	}
 
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);

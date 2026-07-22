@@ -35,6 +35,7 @@ export interface Args {
 	extensions?: string[];
 	noExtensions?: boolean;
 	print?: boolean;
+	ansteel?: string;
 	export?: string;
 	noSkills?: boolean;
 	skills?: string[];
@@ -144,6 +145,12 @@ export function parseArgs(args: string[]): Args {
 				result.messages.push(next);
 				i++;
 			}
+		} else if (arg === "--ansteel") {
+			if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+				result.ansteel = args[++i];
+			} else {
+				result.diagnostics.push({ type: "error", message: "--ansteel requires a review topic" });
+			}
 		} else if (arg === "--export" && i + 1 < args.length) {
 			result.export = args[++i];
 		} else if ((arg === "--extension" || arg === "-e") && i + 1 < args.length) {
@@ -242,6 +249,7 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
+  --ansteel <topic>              Run an evidence-first multi-role engineering review and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
@@ -324,6 +332,9 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Evidence-first multi-role engineering review
+  ${APP_NAME} --ansteel "Review the motor safety change"
 
   # Disable one tool while keeping the rest available
   ${APP_NAME} --exclude-tools ask_question

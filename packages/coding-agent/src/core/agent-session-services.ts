@@ -52,6 +52,8 @@ export interface CreateAgentSessionServicesOptions {
  */
 export interface CreateAgentSessionFromServicesOptions {
 	services: AgentSessionServices;
+	/** Optional resource loader for an isolated session with the same runtime services. */
+	resourceLoader?: ResourceLoader;
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
@@ -205,7 +207,7 @@ export async function createAgentSessionFromServices(
 		agentDir: options.services.agentDir,
 		modelRuntime: options.services.modelRuntime,
 		settingsManager: options.services.settingsManager,
-		resourceLoader: options.services.resourceLoader,
+		resourceLoader: options.resourceLoader ?? options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,

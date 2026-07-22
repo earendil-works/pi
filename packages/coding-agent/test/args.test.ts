@@ -60,6 +60,18 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--ansteel flag", () => {
+		test("parses an engineering review topic", () => {
+			const result = parseArgs(["--ansteel", "Review the motor safety change"]);
+			expect(result.ansteel).toBe("Review the motor safety change");
+		});
+
+		test("reports a missing review topic", () => {
+			const result = parseArgs(["--ansteel"]);
+			expect(result.diagnostics).toContainEqual({ type: "error", message: "--ansteel requires a review topic" });
+		});
+	});
+
 	describe("--continue flag", () => {
 		test("parses --continue flag", () => {
 			const result = parseArgs(["--continue"]);

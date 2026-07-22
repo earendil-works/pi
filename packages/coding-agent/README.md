@@ -38,6 +38,7 @@ I regularly publish my own `pi-mono` work sessions here:
 
 - [Quick Start](#quick-start)
 - [Providers & Models](#providers--models)
+- [Evidence-First Reviews](#evidence-first-reviews)
 - [Interactive Mode](#interactive-mode)
   - [Editor](#editor)
   - [Commands](#commands)
@@ -140,6 +141,14 @@ Pi also supports the llama.cpp router server. Configure it with `/login llama.cp
 See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
+
+---
+
+## Evidence-First Reviews
+
+Use `pi --ansteel "topic"` to run a non-interactive engineering review under mandatory three-role governance. Tech Lead, Staff Engineer, and QA Engineer work through an evidence-labelled discussion; QA controls an initial veto gate, then Staff Engineer and QA Engineer must separately approve the same immutable Tech Lead consensus. Reports are saved under the project's `.pi/ansteel-reports/` directory by default.
+
+`.pi/ansteel.json` is required. It must name three distinct, authenticated Pi `provider/model` values and can restrict each role to built-in review tools. Missing, duplicate, or unavailable role models reject the review; there is no fallback to the current Pi model and no fourth architecture-review role. Model diversity supplements, but never replaces, cited evidence. See [Evidence-First Reviews](docs/ansteel.md) for the workflow, sign-off semantics, configuration, and report format.
 
 ---
 
@@ -542,6 +551,7 @@ pi config                    # Enable/disable package resources
 | `--mode json` | Output all events as JSON lines (see [docs/json.md](docs/json.md)) |
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
 | `--export <in> [out]` | Export session to HTML |
+| `--ansteel <topic>` | Run an evidence-first multi-role engineering review and exit (see [docs/ansteel.md](docs/ansteel.md)) |
 
 In print mode, pi also reads piped stdin and merges it into the initial prompt:
 
