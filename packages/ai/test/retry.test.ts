@@ -10,6 +10,8 @@ const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
+const wrappedDnsLookupError =
+	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -36,6 +38,15 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: bunFetchSocketClosedMessage }),
 			),
 		).toBe(true);
+	});
+
+	it.each([
+		wrappedDnsLookupError,
+		"connect ENOTFOUND api.example.com",
+		"EAI_AGAIN api.example.com",
+		"getaddrinfo failed for api.example.com",
+	])("matches DNS transport failure wording: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
 
 	it("matches OpenAI Responses streams that end before terminal events", () => {
