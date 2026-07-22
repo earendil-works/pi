@@ -67,6 +67,11 @@ export function getBuiltinProviders(): BuiltinProvider[] {
 	return Object.keys(MODELS) as BuiltinProvider[];
 }
 
+/** URL of a generated provider catalog, used to compare its mtime with remote catalogs during development. */
+export function getBuiltinModelDataUrl(provider: BuiltinProvider): URL {
+	return new URL(`./data/${provider}.json`, import.meta.url);
+}
+
 export function getBuiltinModels<TProvider extends BuiltinProvider>(
 	provider: TProvider,
 ): Model<BuiltinModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {

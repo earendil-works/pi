@@ -107,9 +107,11 @@ function parseLoadProgress(data: unknown): LlamaProgress | undefined {
 
 function parseDownloadProgress(data: unknown): LlamaProgress | undefined {
 	if (typeof data !== "object" || data === null) return undefined;
+	const nested = (data as { progress?: unknown }).progress;
+	const files = typeof nested === "object" && nested !== null ? nested : data;
 	let done = 0;
 	let total = 0;
-	for (const value of Object.values(data as Record<string, unknown>)) {
+	for (const value of Object.values(files as Record<string, unknown>)) {
 		if (typeof value !== "object" || value === null) continue;
 		const entry = value as { done?: unknown; total?: unknown };
 		if (typeof entry.done !== "number" || typeof entry.total !== "number") continue;

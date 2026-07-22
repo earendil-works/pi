@@ -24,7 +24,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
-			streamFunction: streamSimple,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "Test",

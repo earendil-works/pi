@@ -1,12 +1,12 @@
 import { hostname, platform } from "node:os";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
-import { getOrchestratorDir, getSocketPath, VERSION } from "./config.ts";
+import { getServerDir, getSocketPath, VERSION } from "./config.ts";
 import { loadMachine, saveMachine } from "./storage.ts";
 import type { InstanceRecord, MachineRecord, RadiusRegistration } from "./types.ts";
 
 const DEFAULT_RADIUS_URL = "https://radius.pi.dev/";
-const DEFAULT_ORCHESTRATOR_BASE_PATH = "/v1/";
+const DEFAULT_SERVER_BASE_PATH = "/v1/";
 const NOT_FOUND_RETRY_THRESHOLD = 3;
 const HEARTBEAT_BACKOFF_BASE_MS = 1_000;
 const HEARTBEAT_BACKOFF_MAX_MS = 30_000;
@@ -45,7 +45,7 @@ class RadiusHttpError extends Error {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-	const response = await fetch(new URL(path, getRadiusOrchestratorBaseUrl()), {
+	const response = await fetch(new URL(path, getRadiusServerBaseUrl()), {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${getRadiusAccessToken()}`,
@@ -62,7 +62,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function maybePost(path: string, body: unknown): Promise<void> {
-	const response = await fetch(new URL(path, getRadiusOrchestratorBaseUrl()), {
+	const response = await fetch(new URL(path, getRadiusServerBaseUrl()), {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${getRadiusAccessToken()}`,
@@ -108,13 +108,13 @@ export function getRadiusUrl(): string {
 	return process.env.PI_RADIUS_URL || DEFAULT_RADIUS_URL;
 }
 
-export function getRadiusOrchestratorBaseUrl(): string {
-	const explicitUrl = process.env.PI_RADIUS_ORCHESTRATOR_URL;
+export function getRadiusServerBaseUrl(): string {
+	const explicitUrl = process.env.PI_RADIUS_SERVER_URL;
 	if (explicitUrl) {
 		return explicitUrl;
 	}
 
-	return new URL(DEFAULT_ORCHESTRATOR_BASE_PATH, getRadiusUrl()).toString();
+	return new URL(DEFAULT_SERVER_BASE_PATH, getRadiusUrl()).toString();
 }
 
 function getStoredRadiusCredential(): OAuthCredential | undefined {
@@ -307,7 +307,7 @@ export class RadiusPresence {
 
 		try {
 			await maybePost(`machines/${this.machine.id}/heartbeat`, {
-				cwd: getOrchestratorDir(),
+				cwd: getServerDir(),
 				socketPath: getSocketPath(),
 			});
 			this.machineConsecutiveNotFoundCount = 0;

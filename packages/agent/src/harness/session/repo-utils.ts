@@ -47,5 +47,5 @@ export async function getEntriesToFork(
 		}
 		effectiveLeafId = target.parentId;
 	}
-	return storage.getPathToRoot(effectiveLeafId);
+	return storage.getPathToRootOrCompaction(effectiveLeafId);
 }

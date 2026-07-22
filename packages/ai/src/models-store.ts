@@ -2,6 +2,8 @@ import type { Api, Model } from "./types.ts";
 
 export interface ModelsStoreEntry {
 	models: readonly Model<Api>[];
+	/** Unix timestamp from the remote catalog's Last-Modified header. */
+	lastModified?: number;
 	/** Unix timestamp of the last completed remote check. */
 	checkedAt?: number;
 }

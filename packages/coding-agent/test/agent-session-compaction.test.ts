@@ -49,7 +49,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
-			streamFunction: streamSimple,
+			streamFn: streamSimple,
 			initialState: {
 				model,
 				systemPrompt: "You are a helpful assistant. Be concise.",

@@ -60,7 +60,7 @@ function isGetStateSuccess(
 	return response.success === true && response.command === "get_state" && "data" in response;
 }
 
-export class OrchestratorSupervisor {
+export class ServerSupervisor {
 	private readonly liveInstances = new Map<string, LiveInstance>();
 
 	private setStatus(live: LiveInstance, status: InstanceStatus): void {
@@ -339,7 +339,7 @@ export class OrchestratorSupervisor {
 	}
 }
 
-export const supervisor = new OrchestratorSupervisor();
+export const supervisor = new ServerSupervisor();
 
 radiusPresence.setCoordinator({
 	getLiveInstance(instanceId) {

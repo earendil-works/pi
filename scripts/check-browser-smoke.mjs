@@ -8,7 +8,7 @@ const agentTreeshakeOutputPath = join(tmpdir(), "pi-agent-treeshake-smoke.js");
 const errorLogPath = join(tmpdir(), "pi-browser-smoke-errors.log");
 const generatedCatalogDataDir = join(process.cwd(), "packages/ai/src/providers/data");
 
-// Fresh checkouts do not materialize provider JSON until npm run build.
+// Fresh checkouts do not materialize provider JSON until model data is hydrated.
 const generatedCatalogDataPlugin = {
 	name: "generated-model-catalog",
 	setup(build) {

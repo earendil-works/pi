@@ -550,6 +550,180 @@ describe("AgentHarness", () => {
 		expect(compaction?.type === "compaction" ? compaction.usage : undefined).toEqual(usage);
 	});
 
+	describe("summarization retries", () => {
+		it("retries transient compaction errors and emits retry events", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				},
+				() => {
+					calls++;
+					return fauxAssistantMessage("## Goal\nRecovered summary");
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			const result = await harness.compact();
+
+			expect(result.summary).toContain("Recovered summary");
+			expect(calls).toBe(2);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_finished:compaction",
+			]);
+		});
+
+		it("does not retry non-retryable compaction errors", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" });
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(event.type);
+				}
+			});
+
+			await expect(harness.compact()).rejects.toThrow("insufficient_quota");
+
+			expect(calls).toBe(1);
+			expect(retryEvents).toEqual([]);
+		});
+
+		it("exhausts transient compaction retries after maxRetries failures", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses(
+				Array.from({ length: 4 }, () => () => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				}),
+			);
+			const session = new Session(new InMemorySessionStorage());
+			await session.appendMessage(createUserMessage("one"));
+			await session.appendMessage(createAssistantMessage("two"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			await expect(harness.compact()).rejects.toThrow("terminated");
+
+			expect(calls).toBe(4);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_scheduled:compaction",
+				"retry_attempt_start:compaction",
+				"retry_finished:compaction",
+			]);
+		});
+
+		it("retries transient branch summary errors and emits retry events", async () => {
+			const registration = newFaux();
+			let calls = 0;
+			registration.setResponses([
+				() => {
+					calls++;
+					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" });
+				},
+				() => {
+					calls++;
+					return fauxAssistantMessage("## Goal\nRecovered branch summary");
+				},
+			]);
+			const session = new Session(new InMemorySessionStorage());
+			const targetId = await session.appendMessage(createUserMessage("first branch"));
+			await session.appendMessage(createAssistantMessage("first reply"));
+			await session.appendMessage(createUserMessage("abandoned work"));
+			await session.appendMessage(createAssistantMessage("abandoned reply"));
+			const harness = new AgentHarness({
+				models,
+				env: new NodeExecutionEnv({ cwd: process.cwd() }),
+				session,
+				model: registration.getModel(),
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			});
+			const retryEvents: string[] = [];
+			harness.subscribe((event) => {
+				if (
+					event.type === "retry_scheduled" ||
+					event.type === "retry_attempt_start" ||
+					event.type === "retry_finished"
+				) {
+					retryEvents.push(`${event.type}:${event.operation}`);
+				}
+			});
+
+			const result = await harness.navigateTree(targetId, { summarize: true });
+
+			expect(result.summaryEntry?.summary).toContain("Recovered branch summary");
+			expect(calls).toBe(2);
+			expect(retryEvents).toEqual([
+				"retry_scheduled:branch_summary",
+				"retry_attempt_start:branch_summary",
+				"retry_finished:branch_summary",
+			]);
+		});
+	});
+
 	it("persists generated branch summary usage", async () => {
 		const registration = newFaux();
 		registration.setResponses([fauxAssistantMessage("## Goal\nBranch summary")]);

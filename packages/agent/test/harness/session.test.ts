@@ -68,11 +68,20 @@ async function runSessionSuite(
 			await session.appendMessage(createAssistantMessage("two"));
 			const user2 = await session.appendMessage(createUserMessage("three"));
 			await session.appendMessage(createAssistantMessage("four"));
-			await session.appendCompaction("summary", user2, 1234);
+			await session.appendCompaction("summary", user2, 1234, undefined, undefined, undefined, [
+				createUserMessage("three"),
+				createAssistantMessage("four"),
+			]);
 			await session.appendMessage(createUserMessage("five"));
 			const context = await session.buildContext();
 			expect(context.messages[0]?.role).toBe("compactionSummary");
 			expect(context.messages).toHaveLength(4);
+			expect(context.messages.map((message) => message.role)).toEqual([
+				"compactionSummary",
+				"user",
+				"assistant",
+				"user",
+			]);
 		});
 
 		it("supports moving with branch summary entries in context", async () => {

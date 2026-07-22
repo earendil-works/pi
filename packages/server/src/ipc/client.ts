@@ -1,11 +1,11 @@
 import { createConnection } from "node:net";
 import { getSocketPath } from "../config.ts";
-import { encodeMessage, type OrchestratorRequest, type OrchestratorResponse, parseResponseLine } from "./protocol.ts";
+import { encodeMessage, parseResponseLine, type ServerRequest, type ServerResponse } from "./protocol.ts";
 
-export async function sendIpcRequest(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+export async function sendIpcRequest(request: ServerRequest): Promise<ServerResponse> {
 	const socketPath = getSocketPath();
 
-	return new Promise<OrchestratorResponse>((resolve, reject) => {
+	return new Promise<ServerResponse>((resolve, reject) => {
 		const socket = createConnection(socketPath);
 		let buffer = "";
 		let settled = false;
@@ -56,7 +56,7 @@ export async function sendIpcRequest(request: OrchestratorRequest): Promise<Orch
 				return;
 			}
 			settled = true;
-			reject(new Error(`Orchestrator socket closed before a response was received: ${socketPath}`));
+			reject(new Error(`Server socket closed before a response was received: ${socketPath}`));
 			cleanup();
 		});
 	});

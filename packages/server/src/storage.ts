@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { getInstancesPath, getMachinePath, getOrchestratorDir } from "./config.ts";
+import { getInstancesPath, getMachinePath, getServerDir } from "./config.ts";
 import type { InstanceRecord, MachineRecord } from "./types.ts";
 
-function ensureOrchestratorDir(): void {
-	const orchestratorDir = getOrchestratorDir();
-	if (!existsSync(orchestratorDir)) {
-		mkdirSync(orchestratorDir, { recursive: true });
+function ensureServerDir(): void {
+	const serverDir = getServerDir();
+	if (!existsSync(serverDir)) {
+		mkdirSync(serverDir, { recursive: true });
 	}
 }
 
@@ -20,7 +20,7 @@ export function loadMachine(): MachineRecord | undefined {
 }
 
 export function saveMachine(machine: MachineRecord): void {
-	ensureOrchestratorDir();
+	ensureServerDir();
 	writeFileSync(getMachinePath(), JSON.stringify(machine, null, 2));
 }
 
@@ -43,7 +43,7 @@ export function loadInstances(): InstanceRecord[] {
 }
 
 export function saveInstances(instances: InstanceRecord[]): void {
-	ensureOrchestratorDir();
+	ensureServerDir();
 	writeFileSync(getInstancesPath(), JSON.stringify(instances, null, 2));
 }
 

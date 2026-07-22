@@ -851,6 +851,9 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `summarization_retry_scheduled` | Retry scheduled for a transient compaction or branch-summary summarization error |
+| `summarization_retry_attempt_start` | Retried summarization request starts |
+| `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
 
 ### agent_start
@@ -1074,6 +1077,36 @@ On final failure (max retries exceeded):
   "success": false,
   "attempt": 3,
   "finalError": "529 overloaded_error: Overloaded"
+}
+```
+
+### summarization_retry_scheduled / summarization_retry_attempt_start / summarization_retry_finished
+
+Emitted when compaction or branch-summary summarization retries after a transient provider error. These events use the same retry settings as automatic assistant-turn retries.
+
+```json
+{
+  "type": "summarization_retry_scheduled",
+  "attempt": 1,
+  "maxAttempts": 3,
+  "delayMs": 2000,
+  "errorMessage": "terminated"
+}
+```
+
+```json
+{
+  "type": "summarization_retry_attempt_start",
+  "source": "compaction",
+  "reason": "threshold"
+}
+```
+
+For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
+
+```json
+{
+  "type": "summarization_retry_finished"
 }
 ```
 

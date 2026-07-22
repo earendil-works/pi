@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { getSocketPath } from "./config.ts";
 import { handleIpcRequest, openRpcStream } from "./handler.ts";
 import { startIpcServer } from "./ipc/server.ts";
-import { getRadiusOrchestratorBaseUrl, isRadiusEnabled, radiusPresence } from "./radius.ts";
+import { getRadiusServerBaseUrl, isRadiusEnabled, radiusPresence } from "./radius.ts";
 import { supervisor } from "./supervisor.ts";
 
 export async function serve(): Promise<void> {
@@ -19,7 +19,7 @@ export async function serve(): Promise<void> {
 		await supervisor.recoverAfterRestart();
 		if (isRadiusEnabled()) {
 			const machine = await radiusPresence.start();
-			console.log(`radius integration enabled: ${socketPath} -> ${getRadiusOrchestratorBaseUrl()}`);
+			console.log(`radius integration enabled: ${socketPath} -> ${getRadiusServerBaseUrl()}`);
 			if (machine) {
 				console.log(`radius machine id: ${machine.id}`);
 			}
@@ -34,7 +34,7 @@ export async function serve(): Promise<void> {
 		throw error;
 	}
 
-	console.log(`orchestrator listening on ${socketPath}`);
+	console.log(`server listening on ${socketPath}`);
 
 	let shutdownPromise: Promise<void> | undefined;
 	const shutdown = async (exitCode: number) => {

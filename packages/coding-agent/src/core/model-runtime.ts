@@ -143,7 +143,15 @@ export class ModelRuntime implements Models {
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
-				provider.id === "radius" ? provider : withRemoteCatalog(provider, options.catalogBaseUrl),
+				provider.id === "radius"
+					? provider
+					: withRemoteCatalog(
+							provider,
+							options.catalogBaseUrl,
+							builtinProviderCatalog.getBuiltinModelDataUrl(
+								provider.id as builtinProviderCatalog.BuiltinProvider,
+							),
+						),
 			);
 		const runtime = new ModelRuntime(
 			credentials,

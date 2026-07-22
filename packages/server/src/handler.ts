@@ -10,12 +10,12 @@ import type {
 	InstanceSummary,
 	ListRequest,
 	ListResponse,
-	OrchestratorRequest,
-	OrchestratorResponse,
 	RpcBridgeResponse,
 	RpcReadyResponse,
 	RpcRequest,
 	RpcStreamRequest,
+	ServerRequest,
+	ServerResponse,
 	SpawnRequest,
 	SpawnResponse,
 	StatusRequest,
@@ -53,8 +53,8 @@ export async function handleIpcRequest(request: StopRequest): Promise<StopRespon
 export async function handleIpcRequest(request: StatusRequest): Promise<StatusResponse | ErrorResponse>;
 export async function handleIpcRequest(request: RpcRequest): Promise<RpcBridgeResponse | ErrorResponse>;
 export async function handleIpcRequest(request: RpcStreamRequest): Promise<RpcReadyResponse | ErrorResponse>;
-export async function handleIpcRequest(request: OrchestratorRequest): Promise<OrchestratorResponse>;
-export async function handleIpcRequest(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+export async function handleIpcRequest(request: ServerRequest): Promise<ServerResponse>;
+export async function handleIpcRequest(request: ServerRequest): Promise<ServerResponse> {
 	switch (request.type) {
 		case "spawn": {
 			const instance = await supervisor.spawnInstance({

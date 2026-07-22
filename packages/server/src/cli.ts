@@ -18,7 +18,7 @@ const packageJson = JSON.parse(readFileSync(join(__dirname, "../package.json"), 
 
 function printHelp(): void {
 	console.log(
-		`orchestrator v${packageJson.version}\n\nUsage:\n  orchestrator serve\n  orchestrator list\n  orchestrator spawn [--cwd <path>] [--label <label>]\n  orchestrator status <instance-id>\n  orchestrator stop <instance-id>\n  orchestrator rpc <instance-id> <json-command>\n  orchestrator rpc-stream <instance-id>\n  orchestrator --help\n  orchestrator --version\n\nRPC stream stdin expects JSONL RpcCommand or extension_ui_response messages.`,
+		`server v${packageJson.version}\n\nUsage:\n  server serve\n  server list\n  server spawn [--cwd <path>] [--label <label>]\n  server status <instance-id>\n  server stop <instance-id>\n  server rpc <instance-id> <json-command>\n  server rpc-stream <instance-id>\n  server --help\n  server --version\n\nRPC stream stdin expects JSONL RpcCommand or extension_ui_response messages.`,
 	);
 }
 
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 	if (args[0] === "status") {
 		const instanceId = args[1];
 		if (!instanceId) {
-			console.error("Usage: orchestrator status <instance-id>");
+			console.error("Usage: server status <instance-id>");
 			process.exit(1);
 		}
 		printResponse(await sendIpcRequest({ type: "status", instanceId }));
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
 	if (args[0] === "stop") {
 		const instanceId = args[1];
 		if (!instanceId) {
-			console.error("Usage: orchestrator stop <instance-id>");
+			console.error("Usage: server stop <instance-id>");
 			process.exit(1);
 		}
 		printResponse(await sendIpcRequest({ type: "stop", instanceId }));
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
 		const instanceId = args[1];
 		const commandJson = args[2];
 		if (!instanceId || !commandJson) {
-			console.error("Usage: orchestrator rpc <instance-id> <json-command>");
+			console.error("Usage: server rpc <instance-id> <json-command>");
 			process.exit(1);
 		}
 		printResponse(
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
 	if (args[0] === "rpc-stream") {
 		const instanceId = args[1];
 		if (!instanceId) {
-			console.error("Usage: orchestrator rpc-stream <instance-id>");
+			console.error("Usage: server rpc-stream <instance-id>");
 			process.exit(1);
 		}
 		await rpcStream(instanceId);

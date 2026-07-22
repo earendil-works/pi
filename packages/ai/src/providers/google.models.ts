@@ -53,6 +53,14 @@ export const GOOGLE_MODELS = values as {
 		id: "gemini-3.5-flash";
 		provider: "google";
 	};
+	"gemini-3.5-flash-lite": Model<"google-generative-ai"> & {
+		id: "gemini-3.5-flash-lite";
+		provider: "google";
+	};
+	"gemini-3.6-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.6-flash";
+		provider: "google";
+	};
 	"gemini-flash-latest": Model<"google-generative-ai"> & {
 		id: "gemini-flash-latest";
 		provider: "google";

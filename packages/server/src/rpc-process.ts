@@ -144,7 +144,7 @@ export class RpcProcessInstance {
 		if (this.exited) {
 			throw new Error(`RPC process is not running. Stderr: ${this.stderrBuffer}`);
 		}
-		const id = command.id ?? `orchestrator_${++this.nextRequestId}_${randomUUID()}`;
+		const id = command.id ?? `server_${++this.nextRequestId}_${randomUUID()}`;
 		const fullCommand = { ...command, id };
 		return new Promise<RpcResponse>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });

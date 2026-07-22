@@ -1,7 +1,7 @@
 {
-	"name": "@earendil-works/pi-orchestrator",
-	"version": "0.80.10",
-	"description": "experimental orchestrator package for pi",
+	"name": "@earendil-works/pi-server",
+	"version": "0.81.1",
+	"description": "experimental server package for pi",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -10,6 +10,9 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		}
+	},
+	"bin": {
+		"server": "./dist/cli.js"
 	},
 	"files": [
 		"dist",
@@ -24,20 +27,20 @@
 	},
 	"keywords": [
 		"pi",
-		"orchestrator"
+		"server"
 	],
 	"author": "Earendil Works",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/orchestrator"
+		"directory": "packages/server"
 	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "^0.80.10"
+		"@earendil-works/pi-coding-agent": "^0.81.1"
 	},
 	"devDependencies": {
 		"shx": "0.4.0"

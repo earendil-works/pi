@@ -49,7 +49,7 @@ export interface RequestMap {
 	rpc_stream: RpcStreamRequest;
 }
 
-export type OrchestratorRequest = RequestMap[keyof RequestMap];
+export type ServerRequest = RequestMap[keyof RequestMap];
 
 export interface InstanceSummary {
 	id: string;
@@ -111,7 +111,7 @@ export interface ResponseMap {
 	rpc_stream: RpcReadyResponse;
 }
 
-export type OrchestratorResponse = ResponseMap[keyof ResponseMap] | ErrorResponse;
+export type ServerResponse = ResponseMap[keyof ResponseMap] | ErrorResponse;
 export type RpcClientMessage = RpcCommand | RpcExtensionUIResponse;
 export type RpcServerMessage =
 	| RpcReadyResponse
@@ -119,9 +119,9 @@ export type RpcServerMessage =
 	| AgentSessionEvent
 	| RpcExtensionUIRequest
 	| ErrorResponse;
-export type ProtocolMessage = OrchestratorRequest | OrchestratorResponse | RpcClientMessage | RpcServerMessage;
+export type ProtocolMessage = ServerRequest | ServerResponse | RpcClientMessage | RpcServerMessage;
 
-export type ResponseFor<T extends OrchestratorRequest> = T extends { type: infer K }
+export type ResponseFor<T extends ServerRequest> = T extends { type: infer K }
 	? K extends keyof ResponseMap
 		? ResponseMap[K] | ErrorResponse
 		: ErrorResponse
@@ -131,12 +131,12 @@ export function encodeMessage(message: ProtocolMessage): string {
 	return `${JSON.stringify(message)}\n`;
 }
 
-export function parseRequestLine(line: string): OrchestratorRequest {
-	const value = JSON.parse(line) as OrchestratorRequest;
+export function parseRequestLine(line: string): ServerRequest {
+	const value = JSON.parse(line) as ServerRequest;
 	return value;
 }
 
-export function parseResponseLine(line: string): OrchestratorResponse {
-	const value = JSON.parse(line) as OrchestratorResponse;
+export function parseResponseLine(line: string): ServerResponse {
+	const value = JSON.parse(line) as ServerResponse;
 	return value;
 }

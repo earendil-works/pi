@@ -114,7 +114,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 			systemPrompt: "Test",
 			tools: [],
 		},
-		streamFunction: (_model, _context, _options) => {
+		streamFn: (_model, _context, _options) => {
 			const stream = new MockAssistantStream();
 			queueMicrotask(() => {
 				stream.push({ type: "start", partial: createAssistantMessage("") });

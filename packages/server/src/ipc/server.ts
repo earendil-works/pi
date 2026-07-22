@@ -7,13 +7,13 @@ import {
 	encodeMessage,
 	type ListRequest,
 	type ListResponse,
-	type OrchestratorRequest,
-	type OrchestratorResponse,
 	parseRequestLine,
 	type RpcBridgeResponse,
 	type RpcReadyResponse,
 	type RpcRequest,
 	type RpcStreamRequest,
+	type ServerRequest,
+	type ServerResponse,
 	type SpawnRequest,
 	type SpawnResponse,
 	type StatusRequest,
@@ -29,7 +29,7 @@ export interface IpcRequestHandler {
 	(request: StatusRequest): Promise<StatusResponse | ErrorResponse> | StatusResponse | ErrorResponse;
 	(request: RpcRequest): Promise<RpcBridgeResponse | ErrorResponse> | RpcBridgeResponse | ErrorResponse;
 	(request: RpcStreamRequest): Promise<RpcReadyResponse | ErrorResponse> | RpcReadyResponse | ErrorResponse;
-	(request: OrchestratorRequest): Promise<OrchestratorResponse> | OrchestratorResponse;
+	(request: ServerRequest): Promise<ServerResponse> | ServerResponse;
 	openRpcStream(
 		instanceId: string,
 		onResponse: (response: RpcResponse) => void,
@@ -166,7 +166,7 @@ async function removeStaleSocketIfNeeded(socketPath: string): Promise<void> {
 
 	const isLive = await isSocketLive(socketPath);
 	if (isLive) {
-		throw new Error(`orchestrator is already running: ${socketPath}`);
+		throw new Error(`server is already running: ${socketPath}`);
 	}
 
 	unlinkSync(socketPath);

@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-with-deps",
   "private": true,
-  "version": "0.80.10",
+  "version": "0.81.1",
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",

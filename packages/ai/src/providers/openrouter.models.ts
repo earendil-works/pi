@@ -229,6 +229,14 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-3.5-flash";
 		provider: "openrouter";
 	};
+	"google/gemini-3.5-flash-lite": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash-lite";
+		provider: "openrouter";
+	};
+	"google/gemini-3.6-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.6-flash";
+		provider: "openrouter";
+	};
 	"google/gemma-3-12b-it": Model<"openai-completions"> & {
 		id: "google/gemma-3-12b-it";
 		provider: "openrouter";
@@ -955,10 +963,6 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"tencent/hy3-preview": Model<"openai-completions"> & {
 		id: "tencent/hy3-preview";
-		provider: "openrouter";
-	};
-	"tencent/hy3:free": Model<"openai-completions"> & {
-		id: "tencent/hy3:free";
 		provider: "openrouter";
 	};
 	"thedrummer/unslopnemo-12b": Model<"openai-completions"> & {

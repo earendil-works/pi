@@ -9,5 +9,5 @@ if (!model) throw new Error("Anthropic smoke-test model not found");
 
 export const agent = new Agent({
 	initialState: { model },
-	streamFunction: models.streamSimple.bind(models),
+	streamFn: models.streamSimple.bind(models),
 });

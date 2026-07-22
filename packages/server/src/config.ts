@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CONFIG_DIR_NAME = ".pi";
-const ENV_ORCHESTRATOR_DIR = "PI_ORCHESTRATOR_DIR";
+const ENV_SERVER_DIR = "PI_SERVER_DIR";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,28 +42,28 @@ try {
 
 export const VERSION: string = pkg.version || "0.0.0";
 
-export function getOrchestratorDir(): string {
-	const envDir = process.env[ENV_ORCHESTRATOR_DIR];
+export function getServerDir(): string {
+	const envDir = process.env[ENV_SERVER_DIR];
 	if (envDir) {
 		return envDir;
 	}
 
 	const piDir = process.env.PI_CONFIG_DIR || join(homedir(), CONFIG_DIR_NAME);
-	return join(piDir, "orchestrator");
+	return join(piDir, "server");
 }
 
 export function getAuthPath(): string {
-	return join(getOrchestratorDir(), "auth.json");
+	return join(getServerDir(), "auth.json");
 }
 
 export function getMachinePath(): string {
-	return join(getOrchestratorDir(), "machine.json");
+	return join(getServerDir(), "machine.json");
 }
 
 export function getInstancesPath(): string {
-	return join(getOrchestratorDir(), "instances.json");
+	return join(getServerDir(), "instances.json");
 }
 
 export function getSocketPath(): string {
-	return join(getOrchestratorDir(), "orchestrator.sock");
+	return join(getServerDir(), "server.sock");
 }

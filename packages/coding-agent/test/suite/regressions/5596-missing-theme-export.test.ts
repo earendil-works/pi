@@ -61,7 +61,7 @@ describe("regression #5596: missing configured theme export", () => {
 				tools: [],
 			},
 			convertToLlm,
-			streamFunction: streamSimple,
+			streamFn: streamSimple,
 		});
 		const session = new AgentSession({
 			agent,
