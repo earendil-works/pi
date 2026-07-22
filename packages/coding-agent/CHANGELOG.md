@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed long tool-calling runs bypassing the auto-compaction threshold until provider context overflow; Pi now compacts and resumes between completed tool turns ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
 ## [0.81.1] - 2026-07-21
 
 ### New Features

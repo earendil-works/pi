@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exposed `Agent.shouldStopAfterTurn` so hosts can end a run safely between completed tool turns before another provider request ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
 ## [0.81.1] - 2026-07-21
 
 ### Added

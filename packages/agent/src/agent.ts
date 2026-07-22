@@ -23,6 +23,7 @@ import type {
 	BeforeToolCallResult,
 	PrepareNextTurnContext,
 	QueueMode,
+	ShouldStopAfterTurnContext,
 	StreamFn,
 	ToolExecutionMode,
 } from "./types.ts";
@@ -118,6 +119,15 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/**
+	 * Called after each turn fully completes and `turn_end` has been emitted.
+	 *
+	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
+	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+	 *
+	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
+	 */
+	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 }
 
 class PendingMessageQueue {
@@ -206,6 +216,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Hook to stop the agent loop after the current turn completes. */
+	public shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -228,6 +240,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
 	}
 
 	/**
@@ -443,6 +456,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
+			shouldStopAfterTurn: this.shouldStopAfterTurn,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			prepareNextTurn:

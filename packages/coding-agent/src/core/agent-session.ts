@@ -22,6 +22,7 @@ import type {
 	AgentState,
 	AgentTool,
 	PrepareNextTurnContext,
+	ShouldStopAfterTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
@@ -323,6 +324,8 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	/** Whether the active tool loop stopped so threshold compaction can run and resume it. */
+	private _midTurnCompactionNeeded = false;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -391,6 +394,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installMidTurnCompactionHook();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -536,6 +540,41 @@ export class AgentSession {
 				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
+	}
+
+	/**
+	 * Install a shouldStopAfterTurn hook that triggers mid-turn compaction when
+	 * tool results push context over the threshold. Composes with any existing
+	 * shouldStopAfterTurn set on the Agent.
+	 */
+	private _installMidTurnCompactionHook(): void {
+		const previousShouldStop = this.agent.shouldStopAfterTurn;
+		this.agent.shouldStopAfterTurn = async (context: ShouldStopAfterTurnContext) => {
+			if (await previousShouldStop?.(context)) return true;
+			return this._midTurnShouldStop(context);
+		};
+	}
+
+	/**
+	 * Check whether the context after a completed tool turn exceeds the compaction
+	 * threshold. Only triggers when tool results are present (safe boundary).
+	 */
+	private _midTurnShouldStop(context: ShouldStopAfterTurnContext): boolean {
+		if (context.toolResults.length === 0) return false;
+
+		const settings = this.settingsManager.getCompactionSettings();
+		if (!settings.enabled) return false;
+
+		const contextWindow = this.model?.contextWindow ?? 0;
+		if (contextWindow === 0) return false;
+
+		const estimate = estimateContextTokens(context.context.messages);
+		if (shouldCompact(estimate.tokens, contextWindow, settings)) {
+			this._midTurnCompactionNeeded = "threshold";
+			return true;
+		}
+
+		return false;
 	}
 
 	// =========================================================================
@@ -1071,6 +1110,15 @@ export class AgentSession {
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
+		// Handle mid-turn threshold compaction first - stop was triggered between
+		// tool batches so we must continue after compaction to process pending results.
+		if (this._midTurnCompactionNeeded) {
+			this._midTurnCompactionNeeded = false;
+			// Continue only if compaction succeeds; otherwise another request would
+			// send the same oversized context.
+			return await this._runAutoCompaction("threshold", true);
+		}
+
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
 		if (!msg) {
@@ -2008,30 +2056,30 @@ export class AgentSession {
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
 
-		// Case 2: Threshold - context is getting large
-		// For error messages or all-zero usage messages, estimate from the last valid response.
-		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
-		// responses can still compact and do not reset context accounting.
-		let contextTokens: number;
-		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
-		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
-			const messages = this.agent.state.messages;
-			const estimate = estimateContextTokens(messages);
-			if (estimate.lastUsageIndex === null) return false; // No usage data at all
-			// Verify the usage source is post-compaction. Kept pre-compaction messages
-			// have stale usage reflecting the old (larger) context and would falsely
-			// trigger compaction right after one just finished.
+		// Case 2: Threshold - context is getting large. Include messages appended
+		// after the latest provider usage, notably tool results produced mid-run.
+		const messages = this.agent.state.messages;
+		const estimate = estimateContextTokens(messages);
+		let estimatedContextTokens: number | undefined;
+		if (estimate.lastUsageIndex !== null) {
+			// Kept pre-compaction messages retain stale usage from the larger context.
 			const usageMsg = messages[estimate.lastUsageIndex];
-			if (
+			const usageIsStale =
 				compactionEntry &&
 				usageMsg.role === "assistant" &&
-				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
-			) {
-				return false;
+				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime();
+			if (!usageIsStale) {
+				estimatedContextTokens = estimate.tokens;
 			}
-			contextTokens = estimate.tokens;
+		}
+
+		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
+		let contextTokens: number;
+		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
+			if (estimatedContextTokens === undefined) return false;
+			contextTokens = estimatedContextTokens;
 		} else {
-			contextTokens = directContextTokens;
+			contextTokens = Math.max(directContextTokens, estimatedContextTokens ?? 0);
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			return await this._runAutoCompaction("threshold", false);
