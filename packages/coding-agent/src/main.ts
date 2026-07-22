@@ -855,6 +855,7 @@ export async function main(args: string[], options?: MainOptions) {
 									listener(event.message);
 								}
 							}),
+						abort: () => created.session.abort(),
 						dispose: () => created.session.dispose(),
 					});
 				},

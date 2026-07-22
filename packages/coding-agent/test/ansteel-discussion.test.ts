@@ -26,6 +26,7 @@ type RawTurnSessionSource = {
 	readonly messages: readonly RawTurnMessage[];
 	prompt: (text: string) => Promise<void>;
 	subscribeToAssistantMessageEnd: (listener: (message: unknown) => void) => () => void;
+	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
 };
 
@@ -144,6 +145,22 @@ describe("runAnsteelDiscussion", () => {
 
 		expect(getLegacyCopyText(messages)).toBe("VERDICT: APPROVE");
 		expect(response).toBe("VERDICT: APPROVE ");
+	});
+
+	it("forwards the raw session abort hook", async () => {
+		let aborts = 0;
+		const session = createAnsteelRawTurnSession({
+			prompt: async () => {},
+			subscribeToAssistantMessageEnd: () => () => {},
+			abort: () => {
+				aborts++;
+			},
+			dispose: () => {},
+		});
+
+		expect(session.abort).toBeDefined();
+		await session.abort?.();
+		expect(aborts).toBe(1);
 	});
 
 	it("captures the current assistant event when compaction replaces the message list", async () => {
@@ -871,6 +888,63 @@ describe("runAnsteelDiscussion", () => {
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 	});
 
+	it("returns an auditable rejection when a project-stage prompt exceeds its timeout", async () => {
+		type TestModel = { provider: string; id: string };
+		const aborted: AnsteelRole[] = [];
+		const disposed: AnsteelRole[] = [];
+		let rejectStaffPrompt: ((reason?: unknown) => void) | undefined;
+
+		const result = await runAnsteelProjectReview<TestModel>({
+			topic: "Review a hung role session",
+			cwd: process.cwd(),
+			config: {
+				roles: {
+					"tech-lead": { model: "tech/lead", tools: ["read"] },
+					"staff-engineer": { model: "staff/engineer", tools: ["read"] },
+					"qa-engineer": { model: "qa/engineer", tools: ["read"] },
+				},
+				reportDirectory: "unused",
+				stageTimeoutMs: 20,
+			},
+			resolveModel: (provider, id) => ({ provider, id }),
+			createRoleSession: async ({ role }) => {
+				const session = {
+					prompt: async () => {
+						if (role === "staff-engineer") {
+							return await new Promise<string>((_resolve, reject) => {
+								rejectStaffPrompt = reject;
+							});
+						}
+						return "[L1] Architecture evidence";
+					},
+					abort: () => {
+						aborted.push(role);
+						if (role === "staff-engineer") rejectStaffPrompt?.(new Error("session aborted after timeout"));
+					},
+					dispose: () => {
+						disposed.push(role);
+					},
+				};
+				return session;
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.consensus).toBeUndefined();
+		expect(result.terminationReason).toBe("stage-timeout");
+		expect(result.failure).toEqual({
+			role: "staff-engineer",
+			stage: "staff-critique",
+			reason: "Stage exceeded the configured timeout of 20ms",
+			timeoutMs: 20,
+		});
+		expect(aborted).toEqual(["staff-engineer"]);
+		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
+		expect(result.markdown).toContain("- Termination reason: stage-timeout");
+		expect(result.markdown).toContain("- Timeout: 20ms");
+		await new Promise<void>((resolve) => setImmediate(resolve));
+	}, 1_000);
+
 	it("preserves a rejected prompt failure when session cleanup also fails", async () => {
 		type TestModel = { provider: string; id: string };
 		const disposed: AnsteelRole[] = [];
@@ -1030,6 +1104,26 @@ describe("runAnsteelDiscussion", () => {
 		expect(config.roles["staff-engineer"].model).toBe("openai/gpt-5");
 		expect(config.roles["qa-engineer"].model).toBe("deepseek/deepseek-chat");
 		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls"]);
+		expect(config.stageTimeoutMs).toBe(120_000);
+	});
+
+	it("rejects a stage timeout that cannot enforce a bounded review", () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-"));
+		temporaryDirectories.push(cwd);
+		mkdirSync(join(cwd, ".pi"));
+		writeFileSync(
+			join(cwd, ".pi", "ansteel.json"),
+			JSON.stringify({
+				stageTimeoutMs: 0,
+				roles: {
+					"tech-lead": { model: "anthropic/claude-sonnet" },
+					"staff-engineer": { model: "openai/gpt-5" },
+					"qa-engineer": { model: "deepseek/deepseek-chat" },
+				},
+			}),
+		);
+
+		expect(() => loadAnsteelConfig(cwd)).toThrow("Ansteel stageTimeoutMs must be an integer between 1");
 	});
 
 	it("requires a project-local Ansteel configuration", () => {

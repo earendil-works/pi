@@ -5,6 +5,7 @@
 ### Added
 
 - Added `--ansteel` for fail-closed, evidence-first engineering reviews under mandatory three-role governance: three distinct configured role models, restricted built-in review tools, independent Staff and QA architecture challenges, an auditable issue ledger, at most two architecture revision rounds with independent verification, final Staff and QA sign-off on the Tech Lead consensus, and Markdown reports. See [Evidence-First Reviews](docs/ansteel.md).
+- Bound every Ansteel role stage with a configurable, fail-closed deadline. A timed-out stage aborts its active role session, rejects the review with an auditable `stage-timeout` record, and allows the normal report path to complete.
 
 ## [0.81.1] - 2026-07-21
 

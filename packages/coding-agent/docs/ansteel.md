@@ -40,6 +40,8 @@ The coordinator runs these stages in order:
 
 The initial Staff and QA challenge prompts contain only the same architecture version 0, not the other role's response. A revision sees the prior architecture and both challenge records. The Staff and QA verification prompts each see the same revised architecture and challenge ledger, but not the other verifier's current-round response. Each role has its own in-memory session for the review. Those review sessions load no extensions and no custom tools; only the configured built-in review tools are available.
 
+Every role stage has a total wall-clock deadline independent of the provider HTTP idle timeout. The default is 120 seconds. When that deadline expires, Pi aborts the active role session, rejects the review with `stage-timeout`, and continues through normal cleanup and report writing rather than waiting indefinitely.
+
 ## Challenge ledger
 
 Every required change in an initial challenge must use its own exact marker, followed by evidence, impact, and an acceptance condition:
@@ -105,7 +107,8 @@ Create `.pi/ansteel.json` in the project being reviewed. The `model` field is re
       "tools": ["read", "grep", "find", "ls"]
     }
   },
-  "reportDirectory": ".pi/ansteel-reports"
+  "reportDirectory": ".pi/ansteel-reports",
+  "stageTimeoutMs": 120000
 }
 ```
 
@@ -114,6 +117,8 @@ Create `.pi/ansteel.json` in the project being reviewed. The `model` field is re
 The only allowed role tools are `read`, `grep`, `find`, `ls`, and `bash`. By default, Tech Lead and Staff Engineer receive all five. QA receives `read`, `grep`, `find`, and `ls`; QA cannot be granted `bash`. No review role can receive `edit`, `write`, extension tools, or SDK custom tools through this configuration.
 
 `reportDirectory` is resolved from the project directory and must remain inside it. Omit it to use the default `.pi/ansteel-reports` location.
+
+`stageTimeoutMs` is optional and defaults to `120000`. It must be an integer from `1` through `2147483647` milliseconds and cannot be disabled. The limit covers an entire role stage, including tool use and provider retries; it is separate from Pi's provider HTTP idle timeout.
 
 ## Reports and governance evidence
 

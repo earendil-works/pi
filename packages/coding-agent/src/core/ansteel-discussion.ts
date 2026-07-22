@@ -35,9 +35,12 @@ export interface AnsteelDiscussionFailure {
 	role: AnsteelRole;
 	stage: AnsteelDiscussionStage;
 	reason: string;
+	timeoutMs?: number;
 }
 
 export const ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS = 2;
+export const ANSTEEL_DEFAULT_STAGE_TIMEOUT_MS = 120_000;
+const ANSTEEL_MAX_STAGE_TIMEOUT_MS = 2_147_483_647;
 
 export interface AnsteelChallengeLedgerEntry {
 	id: string;
@@ -55,6 +58,7 @@ export interface AnsteelRevisionRound {
 
 export type AnsteelTerminationReason =
 	| "stage-failure"
+	| "stage-timeout"
 	| "blank-response"
 	| "invalid-verdict"
 	| "invalid-challenge-ledger"
@@ -84,6 +88,8 @@ export interface AnsteelSessionCleanupFailure {
 export interface RunAnsteelDiscussionOptions {
 	topic: string;
 	runRole: (call: AnsteelRoleCall) => Promise<string>;
+	stageTimeoutMs?: number;
+	abortRole?: (call: AnsteelRoleCall) => void | Promise<void>;
 }
 
 export interface AnsteelDiscussionResult {
@@ -116,6 +122,7 @@ export interface AnsteelRoleConfig {
 export interface AnsteelConfig {
 	roles: Record<AnsteelRole, AnsteelRoleConfig>;
 	reportDirectory: string;
+	stageTimeoutMs?: number;
 }
 
 export interface AnsteelModelReference {
@@ -125,6 +132,7 @@ export interface AnsteelModelReference {
 
 export interface AnsteelRoleSession {
 	prompt: (text: string) => Promise<string>;
+	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
 }
 
@@ -132,6 +140,7 @@ export interface AnsteelRoleSession {
 export interface AnsteelRawTurnSessionSource {
 	prompt: (text: string) => Promise<void>;
 	subscribeToAssistantMessageEnd: (listener: (message: unknown) => void) => () => void;
+	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
 }
 
@@ -226,6 +235,7 @@ export function createAnsteelRawTurnSession(source: AnsteelRawTurnSessionSource)
 
 			return rawAssistantText(assistantMessages.at(-1)) ?? "";
 		},
+		...(source.abort ? { abort: () => source.abort!() } : {}),
 		dispose: () => source.dispose(),
 	};
 }
@@ -273,6 +283,21 @@ function parseRoleConfig(role: AnsteelRole, value: unknown): AnsteelRoleConfig {
 	};
 }
 
+function normalizeAnsteelStageTimeoutMs(value: unknown): number {
+	const timeoutMs = value === undefined ? ANSTEEL_DEFAULT_STAGE_TIMEOUT_MS : value;
+	if (
+		typeof timeoutMs !== "number" ||
+		!Number.isInteger(timeoutMs) ||
+		timeoutMs <= 0 ||
+		timeoutMs > ANSTEEL_MAX_STAGE_TIMEOUT_MS
+	) {
+		throw new Error(
+			`Ansteel stageTimeoutMs must be an integer between 1 and ${ANSTEEL_MAX_STAGE_TIMEOUT_MS} milliseconds`,
+		);
+	}
+	return timeoutMs;
+}
+
 interface ParseAnsteelConfigOptions {
 	defaultReportDirectory: string;
 	resolveReportDirectory: (reportDirectory: string) => string;
@@ -289,6 +314,12 @@ function parseAnsteelConfig(value: unknown, options: ParseAnsteelConfigOptions):
 	if (value.reportDirectory !== undefined && typeof value.reportDirectory !== "string") {
 		throw new AnsteelGovernanceSetupError("Ansteel config reportDirectory must be a string", "configuration");
 	}
+	let stageTimeoutMs: number;
+	try {
+		stageTimeoutMs = normalizeAnsteelStageTimeoutMs(value.stageTimeoutMs);
+	} catch (error) {
+		throw new AnsteelGovernanceSetupError(formatFailureReason(error), "configuration");
+	}
 
 	const roleSettings = value.roles ?? {};
 	return {
@@ -301,6 +332,7 @@ function parseAnsteelConfig(value: unknown, options: ParseAnsteelConfigOptions):
 			value.reportDirectory === undefined
 				? options.defaultReportDirectory
 				: options.resolveReportDirectory(value.reportDirectory),
+		stageTimeoutMs,
 	};
 }
 
@@ -500,11 +532,13 @@ export async function runAnsteelProjectReview<TModel extends AnsteelModelReferen
 
 		const discussion = await runAnsteelDiscussion({
 			topic: options.topic,
+			stageTimeoutMs: config.stageTimeoutMs,
 			runRole: async ({ role, prompt }) => {
 				const session = sessions.get(role);
 				if (!session) throw new Error(`Ansteel role session is missing: ${role}`);
 				return await session.prompt(prompt);
 			},
+			abortRole: ({ role }) => sessions.get(role)?.abort?.(),
 		});
 
 		reviewResult = { ...discussion, roleModels };
@@ -764,6 +798,10 @@ function formatStageFailureStopReason(failure: AnsteelDiscussionFailure): string
 	return `${failure.role} / ${failure.stage} failed: ${failure.reason}. The review stopped before consensus could be accepted.`;
 }
 
+function getStageFailureTerminationReason(failure: AnsteelDiscussionFailure): AnsteelTerminationReason {
+	return failure.timeoutMs === undefined ? "stage-failure" : "stage-timeout";
+}
+
 function createMarkdown(
 	topic: string,
 	verdict: AnsteelDiscussionResult["verdict"],
@@ -794,6 +832,7 @@ function createMarkdown(
 					`- Failed role: ${failure.role}`,
 					`- Failed stage: ${failure.stage}`,
 					`- Reason: ${failure.reason}`,
+					...(failure.timeoutMs === undefined ? [] : [`- Timeout: ${failure.timeoutMs}ms`]),
 				]
 			: []),
 		"## Challenge Ledger",
@@ -821,11 +860,16 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 	if (!topic) {
 		throw new Error("Ansteel discussion requires a review topic");
 	}
+	const stageTimeoutMs = normalizeAnsteelStageTimeoutMs(options.stageTimeoutMs);
 
 	const transcript: AnsteelTranscriptEntry[] = [];
 	const challengeLedger: AnsteelChallengeLedgerEntry[] = [];
 	const revisionRounds: AnsteelRevisionRound[] = [];
 	type StageResult = { response: string } | { failure: AnsteelDiscussionFailure };
+	type TimedRoleResult =
+		| { kind: "response"; response: string }
+		| { kind: "failure"; error: unknown }
+		| { kind: "timeout" };
 	interface RunStageOptions {
 		round?: number;
 		context?: readonly AnsteelTranscriptEntry[];
@@ -840,17 +884,43 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 			round: stageOptions.round,
 			challengeLedger: stageOptions.challengeLedger,
 		});
-		let response: string;
-		try {
-			response = await options.runRole({
-				role,
-				stage,
-				prompt,
-				...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
-			});
-		} catch (error) {
-			return { failure: { role, stage, reason: formatFailureReason(error) } };
+		const call: AnsteelRoleCall = {
+			role,
+			stage,
+			prompt,
+			...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
+		};
+		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+		const roleResult: Promise<TimedRoleResult> = Promise.resolve()
+			.then(() => options.runRole(call))
+			.then(
+				(response) => ({ kind: "response", response }),
+				(error) => ({ kind: "failure", error }),
+			);
+		const timeoutResult = new Promise<TimedRoleResult>((resolve) => {
+			timeoutHandle = setTimeout(() => resolve({ kind: "timeout" }), stageTimeoutMs);
+		});
+		const timedResult = await Promise.race([roleResult, timeoutResult]);
+		if (timeoutHandle) clearTimeout(timeoutHandle);
+		if (timedResult.kind === "timeout") {
+			try {
+				void Promise.resolve(options.abortRole?.(call)).catch(() => {});
+			} catch {
+				// Preserve the timeout as the governing failure; session cleanup still runs afterward.
+			}
+			return {
+				failure: {
+					role,
+					stage,
+					reason: `Stage exceeded the configured timeout of ${stageTimeoutMs}ms`,
+					timeoutMs: stageTimeoutMs,
+				},
+			};
 		}
+		if (timedResult.kind === "failure") {
+			return { failure: { role, stage, reason: formatFailureReason(timedResult.error) } };
+		}
+		const response = timedResult.response;
 		transcript.push({
 			role,
 			stage,
@@ -898,7 +968,7 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 					formatStageFailureStopReason(stageResult.failure),
 					stageResult.failure,
 					undefined,
-					"stage-failure",
+					getStageFailureTerminationReason(stageResult.failure),
 				),
 			};
 		}
@@ -1058,7 +1128,7 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 				formatStageFailureStopReason(signOffResult.failure),
 				signOffResult.failure,
 				consensus,
-				"stage-failure",
+				getStageFailureTerminationReason(signOffResult.failure),
 			);
 		}
 		if (isBlankRoleResponse(signOffResult.response)) {
