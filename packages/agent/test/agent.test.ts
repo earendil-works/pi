@@ -439,6 +439,46 @@ describe("Agent", () => {
 		expect(events.filter((event) => event.type === "tool_execution_update")).toHaveLength(0);
 	});
 
+	it("stops after a tool turn when shouldStopAfterTurn is installed", async () => {
+		const schema = Type.Object({});
+		let providerCalls = 0;
+		const tool: AgentTool<typeof schema, Record<string, never>> = {
+			name: "evidence",
+			label: "Evidence",
+			description: "Returns a test result",
+			parameters: schema,
+			execute: async () => ({ content: [{ type: "text", text: "evidence" }], details: {} }),
+		};
+		const agent = new Agent({
+			initialState: { tools: [tool] },
+			streamFn: () => {
+				providerCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantToolUseMessage([
+							{ type: "toolCall", id: "evidence-1", name: "evidence", arguments: {} },
+						]),
+					});
+				});
+				return stream;
+			},
+		});
+		let stopChecks = 0;
+		agent.shouldStopAfterTurn = ({ toolResults }) => {
+			stopChecks++;
+			expect(toolResults).toHaveLength(1);
+			return true;
+		};
+
+		await agent.prompt("review the evidence");
+
+		expect(providerCalls).toBe(1);
+		expect(stopChecks).toBe(1);
+	});
+
 	it("should update state with mutators", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 

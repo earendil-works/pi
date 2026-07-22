@@ -27,6 +27,7 @@ import {
 	type AnsteelConfig,
 	createAnsteelRawTurnSession,
 	createAnsteelSetupFailureMarkdown,
+	createAnsteelToolBudget,
 	getAnsteelDefaultReportDirectory,
 	getAnsteelReviewExitCode,
 	loadAnsteelConfig,
@@ -831,12 +832,17 @@ export async function main(args: string[], options?: MainOptions) {
 					const model = modelRuntime.getModel(provider, id);
 					return model && modelRuntime.hasConfiguredAuth(model.provider) ? model : undefined;
 				},
-				createRoleSession: async ({ model, tools, cwd: roleCwd }) => {
+				createRoleSession: async ({ model, tools, cwd: roleCwd, maxToolCallsPerStage }) => {
 					const reviewResourceLoader = new DefaultResourceLoader({
 						cwd: roleCwd,
 						agentDir: services.agentDir,
 						settingsManager: services.settingsManager,
 						noExtensions: true,
+						noContextFiles: true,
+						noSkills: true,
+						noPromptTemplates: true,
+						systemPrompt: "",
+						appendSystemPrompt: [],
 					});
 					await reviewResourceLoader.reload();
 					const created = await createAgentSessionFromServices({
@@ -847,14 +853,38 @@ export async function main(args: string[], options?: MainOptions) {
 						tools: [...tools],
 						customTools: [],
 					});
+					const toolBudget = createAnsteelToolBudget(maxToolCallsPerStage);
+					const previousBeforeToolCall = created.session.agent.beforeToolCall;
+					const previousShouldStopAfterTurn = created.session.agent.shouldStopAfterTurn;
+					created.session.agent.toolExecution = "sequential";
+					created.session.agent.beforeToolCall = async (context, signal) => {
+						const previousResult = await previousBeforeToolCall?.(context, signal);
+						if (previousResult?.block) {
+							toolBudget.recordBlockedToolCall(
+								previousResult.reason ?? "Ansteel tool request was blocked by the session policy.",
+							);
+							return previousResult;
+						}
+						return toolBudget.beforeToolCall(context.toolCall.name, context.args);
+					};
+					created.session.agent.shouldStopAfterTurn = async (context) => {
+						if (await previousShouldStopAfterTurn?.(context)) return true;
+						return toolBudget.getStageFailureReason() !== undefined;
+					};
 					return createAnsteelRawTurnSession({
-						prompt: (text) => created.session.prompt(text),
+						prompt: async (text) => {
+							toolBudget.reset();
+							await created.session.prompt(text);
+							const policyFailure = toolBudget.getStageFailureReason();
+							if (policyFailure) throw new Error(policyFailure);
+						},
 						subscribeToAssistantMessageEnd: (listener) =>
 							created.session.subscribe((event) => {
 								if (event.type === "message_end" && event.message.role === "assistant") {
 									listener(event.message);
 								}
 							}),
+						subscribeToAgentEvent: (listener) => created.session.subscribe(listener),
 						abort: () => created.session.abort(),
 						dispose: () => created.session.dispose(),
 					});

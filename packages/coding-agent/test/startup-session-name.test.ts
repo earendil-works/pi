@@ -7,6 +7,7 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const tempDirs: string[] = [];
+const CLI_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
 
 afterEach(() => {
 	for (const dir of tempDirs.splice(0)) {
@@ -82,7 +83,7 @@ async function runCli(args: string[], dirs: CliDirs): Promise<CliResult> {
 	return new Promise((resolvePromise, reject) => {
 		const timeout = setTimeout(() => {
 			child.kill("SIGKILL");
-		}, 10_000);
+		}, CLI_TIMEOUT_MS);
 		child.on("error", (error) => {
 			clearTimeout(timeout);
 			reject(error);

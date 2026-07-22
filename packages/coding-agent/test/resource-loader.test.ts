@@ -434,6 +434,27 @@ Project skill content`,
 
 			expect(loader.getAppendSystemPrompt()).toContain("Additional instructions.");
 		});
+
+		it("should suppress project and global system prompts for an isolated role loader", async () => {
+			const piDir = join(cwd, ".pi");
+			mkdirSync(piDir, { recursive: true });
+			writeFileSync(join(piDir, "SYSTEM.md"), "Project system prompt.");
+			writeFileSync(join(piDir, "APPEND_SYSTEM.md"), "Project appended prompt.");
+			writeFileSync(join(agentDir, "SYSTEM.md"), "Global system prompt.");
+			writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Global appended prompt.");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noContextFiles: true,
+				systemPrompt: "",
+				appendSystemPrompt: [],
+			});
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
+			expect(loader.getAppendSystemPrompt()).toEqual([]);
+		});
 	});
 
 	describe("extendResources", () => {

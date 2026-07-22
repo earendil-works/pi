@@ -9,6 +9,7 @@ import {
 	type AnsteelRole,
 	createAnsteelRawTurnSession,
 	createAnsteelSetupFailureMarkdown,
+	createAnsteelToolBudget,
 	getAnsteelReviewExitCode,
 	loadAnsteelConfig,
 	runAnsteelDiscussion,
@@ -20,12 +21,14 @@ type RawTurnMessage = {
 	role: string;
 	content?: Array<{ type: string; text?: string }>;
 	stopReason?: string;
+	errorMessage?: string;
 };
 
 type RawTurnSessionSource = {
 	readonly messages: readonly RawTurnMessage[];
 	prompt: (text: string) => Promise<void>;
 	subscribeToAssistantMessageEnd: (listener: (message: unknown) => void) => () => void;
+	subscribeToAgentEvent?: (listener: (event: unknown) => void) => () => void;
 	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
 };
@@ -38,6 +41,22 @@ function createAssistantMessageEmitter(): {
 	return {
 		emit: (message) => {
 			for (const listener of listeners) listener(message);
+		},
+		subscribe: (listener) => {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
+	};
+}
+
+function createAgentEventEmitter(): {
+	emit: (event: unknown) => void;
+	subscribe: (listener: (event: unknown) => void) => () => void;
+} {
+	const listeners = new Set<(event: unknown) => void>();
+	return {
+		emit: (event) => {
+			for (const listener of listeners) listener(event);
 		},
 		subscribe: (listener) => {
 			listeners.add(listener);
@@ -112,6 +131,40 @@ afterEach(() => {
 });
 
 describe("runAnsteelDiscussion", () => {
+	it("bounds each role stage to a finite number of safe tool executions", () => {
+		const budget = createAnsteelToolBudget(2);
+
+		expect(budget.beforeToolCall("read", { path: "src/main.ts" })).toBeUndefined();
+		expect(budget.beforeToolCall("find", { pattern: "*.ts" })).toBeUndefined();
+		expect(budget.beforeToolCall("grep", { pattern: "TODO" })).toEqual({
+			block: true,
+			reason:
+				"Ansteel stage tool budget of 2 executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.",
+		});
+		expect(budget.getStageFailureReason()).toBe(
+			"Ansteel stage tool budget of 2 executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.",
+		);
+
+		budget.reset();
+		expect(budget.beforeToolCall("bash", { command: "npm test" })).toEqual({
+			block: true,
+			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
+		});
+		expect(budget.getStageFailureReason()).toBe("Ansteel bash requires an explicit timeout of at most 20 seconds.");
+		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 21 })).toEqual({
+			block: true,
+			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
+		});
+		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 20 })).toEqual({
+			block: true,
+			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
+		});
+
+		budget.reset();
+		expect(budget.getStageFailureReason()).toBeUndefined();
+		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 20 })).toBeUndefined();
+	});
+
 	it("reads only the raw assistant text created by the current prompt", async () => {
 		const messages: RawTurnMessage[] = [
 			{
@@ -212,6 +265,51 @@ describe("runAnsteelDiscussion", () => {
 		expect(response).toBe("[L1] Final verified response ");
 	});
 
+	it("records a stage audit trail with tool lifecycle events", async () => {
+		const assistantMessages = createAssistantMessageEmitter();
+		const agentEvents = createAgentEventEmitter();
+		const session = createAnsteelRawTurnSession({
+			prompt: async () => {
+				agentEvents.emit({
+					type: "tool_execution_start",
+					toolCallId: "read-1",
+					toolName: "read",
+					args: { path: "src/main.ts" },
+				});
+				agentEvents.emit({
+					type: "tool_execution_end",
+					toolCallId: "read-1",
+					toolName: "read",
+					result: { content: [] },
+					isError: false,
+				});
+				assistantMessages.emit({
+					role: "assistant",
+					content: [{ type: "text", text: "[L1] Evidence reviewed" }],
+					stopReason: "stop",
+				});
+			},
+			subscribeToAssistantMessageEnd: assistantMessages.subscribe,
+			subscribeToAgentEvent: agentEvents.subscribe,
+			dispose: () => {},
+		});
+
+		await session.prompt("review evidence");
+
+		const auditableSession = session as typeof session & {
+			getLastStageAudit?: () => { events: Array<Record<string, unknown>> };
+		};
+		expect(auditableSession.getLastStageAudit?.()).toEqual({
+			events: [
+				expect.objectContaining({ type: "stage-prompt-start" }),
+				expect.objectContaining({ type: "tool-execution-start", toolName: "read" }),
+				expect.objectContaining({ type: "tool-execution-end", toolName: "read", isError: false }),
+				expect.objectContaining({ type: "assistant-message-end", stopReason: "stop" }),
+				expect.objectContaining({ type: "stage-prompt-end" }),
+			],
+		});
+	});
+
 	it("does not reuse an older assistant message when no current assistant event is emitted", async () => {
 		const assistantMessages = createAssistantMessageEmitter();
 		const source: RawTurnSessionSource = {
@@ -224,6 +322,77 @@ describe("runAnsteelDiscussion", () => {
 		const response = await createAnsteelRawTurnSession(source).prompt("veto");
 
 		expect(response).toBe("");
+	});
+
+	it("surfaces a redacted provider error instead of treating it as an empty role reply", async () => {
+		const assistantMessages = createAssistantMessageEmitter();
+		const session = createAnsteelRawTurnSession({
+			prompt: async () => {
+				assistantMessages.emit({
+					role: "assistant",
+					content: [],
+					stopReason: "error",
+					errorMessage: "Provider rejected Authorization: Bearer top-secret-token",
+				});
+			},
+			subscribeToAssistantMessageEnd: assistantMessages.subscribe,
+			dispose: () => {},
+		});
+
+		await expect(session.prompt("inspect failure")).rejects.toThrow(
+			"Ansteel role provider error: Provider rejected Authorization: Bearer [REDACTED]",
+		);
+		const audit = session.getLastStageAudit?.();
+		expect(audit?.events).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: "assistant-message-end", stopReason: "error" }),
+				expect.objectContaining({ type: "stage-prompt-error" }),
+			]),
+		);
+		expect(audit?.events).not.toEqual(
+			expect.arrayContaining([expect.objectContaining({ type: "stage-prompt-end" })]),
+		);
+	});
+
+	it("attempts every raw-session listener cleanup after one cleanup fails", async () => {
+		let agentEventUnsubscribes = 0;
+		const assistantMessages = createAssistantMessageEmitter();
+		const session = createAnsteelRawTurnSession({
+			prompt: async () => {
+				assistantMessages.emit({
+					role: "assistant",
+					content: [{ type: "text", text: "[L1] Evidence" }],
+					stopReason: "stop",
+				});
+			},
+			subscribeToAssistantMessageEnd: (listener) => {
+				const unsubscribe = assistantMessages.subscribe(listener);
+				return () => {
+					unsubscribe();
+					throw new Error("assistant listener cleanup failed");
+				};
+			},
+			subscribeToAgentEvent: () => () => {
+				agentEventUnsubscribes++;
+			},
+			dispose: () => {},
+		});
+
+		await expect(session.prompt("verify cleanup")).rejects.toThrow("assistant listener cleanup failed");
+		expect(agentEventUnsubscribes).toBe(1);
+	});
+
+	it("redacts thrown role failures before they reach the discussion report", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Redact provider failure",
+			runRole: async () => {
+				throw new Error("Provider rejected Authorization: Bearer sk-unit-test-provider-secret");
+			},
+		});
+
+		expect(result.failure?.reason).toBe("Provider rejected Authorization: Bearer [REDACTED]");
+		expect(result.markdown).toContain("Bearer [REDACTED]");
+		expect(result.markdown).not.toContain("sk-unit-test-provider-secret");
 	});
 
 	it("unsubscribes a failed prompt listener before a later stage emits an assistant message", async () => {
@@ -924,6 +1093,12 @@ describe("runAnsteelDiscussion", () => {
 					dispose: () => {
 						disposed.push(role);
 					},
+					getLastStageAudit: () => ({
+						events: [
+							{ type: "stage-prompt-start" as const, elapsedMs: 0 },
+							{ type: "tool-execution-start" as const, elapsedMs: 1, toolName: "find" },
+						],
+					}),
 				};
 				return session;
 			},
@@ -942,8 +1117,128 @@ describe("runAnsteelDiscussion", () => {
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(result.markdown).toContain("- Termination reason: stage-timeout");
 		expect(result.markdown).toContain("- Timeout: 20ms");
+		expect(result.markdown).toContain("## Stage Audit Trail");
+		expect(result.markdown).toContain("tool-execution-start: find");
+		expect((result as typeof result & { stageAudits?: unknown }).stageAudits).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: "staff-engineer",
+					stage: "staff-critique",
+					events: expect.arrayContaining([expect.objectContaining({ toolName: "find" })]),
+				}),
+			]),
+		);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 	}, 1_000);
+
+	it("archives timeout and abort events that arrive asynchronously", async () => {
+		type TestModel = { provider: string; id: string };
+		const staffAgentEvents = createAgentEventEmitter();
+		const staffAssistantMessages = createAssistantMessageEmitter();
+		let rejectStaffPrompt: ((reason?: unknown) => void) | undefined;
+
+		const result = await runAnsteelProjectReview<TestModel>({
+			topic: "Archive timeout abort audit",
+			cwd: process.cwd(),
+			config: {
+				roles: {
+					"tech-lead": { model: "tech/lead", tools: ["read"] },
+					"staff-engineer": { model: "staff/engineer", tools: ["read"] },
+					"qa-engineer": { model: "qa/engineer", tools: ["read"] },
+				},
+				reportDirectory: "unused",
+				stageTimeoutMs: 20,
+			},
+			resolveModel: (provider, id) => ({ provider, id }),
+			createRoleSession: async ({ role }) => {
+				if (role !== "staff-engineer") {
+					return { prompt: async () => "[L1] Architecture evidence", dispose: () => {} };
+				}
+
+				return createAnsteelRawTurnSession({
+					prompt: async () =>
+						await new Promise<void>((_resolve, reject) => {
+							rejectStaffPrompt = reject;
+						}),
+					subscribeToAssistantMessageEnd: staffAssistantMessages.subscribe,
+					subscribeToAgentEvent: staffAgentEvents.subscribe,
+					abort: async () => {
+						await Promise.resolve();
+						staffAgentEvents.emit({
+							type: "tool_execution_end",
+							toolCallId: "abort-read",
+							toolName: "read",
+							isError: true,
+						});
+						staffAssistantMessages.emit({
+							role: "assistant",
+							content: [],
+							stopReason: "error",
+							errorMessage: "aborted after timeout",
+						});
+						rejectStaffPrompt?.(new Error("session aborted after timeout"));
+					},
+					dispose: () => {},
+				});
+			},
+		});
+
+		const audit = result.stageAudits.find(
+			(candidate) => candidate.role === "staff-engineer" && candidate.stage === "staff-critique",
+		);
+		expect(audit?.events).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: "stage-timeout" }),
+				expect.objectContaining({ type: "tool-execution-end", toolName: "read", isError: true }),
+				expect.objectContaining({ type: "assistant-message-end", stopReason: "error" }),
+			]),
+		);
+	});
+
+	it("does not wait indefinitely for a timed-out role abort", async () => {
+		type TestModel = { provider: string; id: string };
+		let failTimeout: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const result = await Promise.race([
+				runAnsteelProjectReview<TestModel>({
+					topic: "Bound a hung timeout abort",
+					cwd: process.cwd(),
+					config: {
+						roles: {
+							"tech-lead": { model: "tech/lead", tools: ["read"] },
+							"staff-engineer": { model: "staff/engineer", tools: ["read"] },
+							"qa-engineer": { model: "qa/engineer", tools: ["read"] },
+						},
+						reportDirectory: "unused",
+						stageTimeoutMs: 20,
+					},
+					resolveModel: (provider, id) => ({ provider, id }),
+					createRoleSession: async ({ role }) => ({
+						prompt: async () => {
+							if (role === "staff-engineer") return await new Promise<string>(() => {});
+							return "[L1] Architecture evidence";
+						},
+						abort: () => {
+							if (role === "staff-engineer") return new Promise<void>(() => {});
+						},
+						dispose: () => {},
+					}),
+				}),
+				new Promise<never>((_resolve, reject) => {
+					failTimeout = setTimeout(() => reject(new Error("Timed-out role abort was not bounded")), 1_000);
+				}),
+			]);
+
+			expect(result.failure).toEqual({
+				role: "staff-engineer",
+				stage: "staff-critique",
+				reason: "Stage exceeded the configured timeout of 20ms",
+				timeoutMs: 20,
+			});
+		} finally {
+			if (failTimeout) clearTimeout(failTimeout);
+		}
+	});
 
 	it("preserves a rejected prompt failure when session cleanup also fails", async () => {
 		type TestModel = { provider: string; id: string };
@@ -968,7 +1263,9 @@ describe("runAnsteelDiscussion", () => {
 				},
 				dispose: () => {
 					disposed.push(role);
-					if (role === "tech-lead") throw new Error("tech-lead cleanup failed");
+					if (role === "tech-lead") {
+						throw new Error("tech-lead cleanup failed Authorization: Bearer sk-unit-test-cleanup-secret");
+					}
 					if (role === "staff-engineer") throw new Error("staff-engineer cleanup failed");
 				},
 			}),
@@ -985,11 +1282,12 @@ describe("runAnsteelDiscussion", () => {
 		]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(result.cleanupFailures).toEqual([
-			{ role: "tech-lead", reason: "tech-lead cleanup failed" },
+			{ role: "tech-lead", reason: "tech-lead cleanup failed Authorization: Bearer [REDACTED]" },
 			{ role: "staff-engineer", reason: "staff-engineer cleanup failed" },
 		]);
 		expect(result.markdown).toContain("## Session Cleanup Failures");
-		expect(result.markdown).toContain("- tech-lead: tech-lead cleanup failed");
+		expect(result.markdown).toContain("- tech-lead: tech-lead cleanup failed Authorization: Bearer [REDACTED]");
+		expect(result.markdown).not.toContain("sk-unit-test-cleanup-secret");
 		expect(result.markdown).toContain("- staff-engineer: staff-engineer cleanup failed");
 	});
 
@@ -1105,6 +1403,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(config.roles["qa-engineer"].model).toBe("deepseek/deepseek-chat");
 		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls"]);
 		expect(config.stageTimeoutMs).toBe(120_000);
+		expect(config.maxToolCallsPerStage).toBe(4);
 	});
 
 	it("rejects a stage timeout that cannot enforce a bounded review", () => {
@@ -1124,6 +1423,25 @@ describe("runAnsteelDiscussion", () => {
 		);
 
 		expect(() => loadAnsteelConfig(cwd)).toThrow("Ansteel stageTimeoutMs must be an integer between 1");
+	});
+
+	it("rejects an Ansteel tool budget that cannot bound a role stage", () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-"));
+		temporaryDirectories.push(cwd);
+		mkdirSync(join(cwd, ".pi"));
+		writeFileSync(
+			join(cwd, ".pi", "ansteel.json"),
+			JSON.stringify({
+				maxToolCallsPerStage: 0,
+				roles: {
+					"tech-lead": { model: "anthropic/claude-sonnet" },
+					"staff-engineer": { model: "openai/gpt-5" },
+					"qa-engineer": { model: "deepseek/deepseek-chat" },
+				},
+			}),
+		);
+
+		expect(() => loadAnsteelConfig(cwd)).toThrow("Ansteel maxToolCallsPerStage must be an integer between 1");
 	});
 
 	it("requires a project-local Ansteel configuration", () => {

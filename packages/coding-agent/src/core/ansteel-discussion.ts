@@ -38,9 +38,42 @@ export interface AnsteelDiscussionFailure {
 	timeoutMs?: number;
 }
 
+export type AnsteelStageAuditEventType =
+	| "stage-prompt-start"
+	| "stage-prompt-end"
+	| "stage-prompt-error"
+	| "stage-timeout"
+	| "assistant-message-end"
+	| "tool-execution-start"
+	| "tool-execution-end";
+
+/**
+ * A redacted lifecycle event captured while a governance role handles one stage.
+ * Tool arguments, output, provider payloads, and error text are intentionally excluded.
+ */
+export interface AnsteelStageAuditEvent {
+	type: AnsteelStageAuditEventType;
+	elapsedMs: number;
+	toolName?: string;
+	isError?: boolean;
+	stopReason?: string;
+	durationMs?: number;
+}
+
+export interface AnsteelStageAudit {
+	role: AnsteelRole;
+	stage: AnsteelDiscussionStage;
+	round?: number;
+	events: AnsteelStageAuditEvent[];
+}
+
 export const ANSTEEL_MAX_ARCHITECTURE_REVISION_ROUNDS = 2;
 export const ANSTEEL_DEFAULT_STAGE_TIMEOUT_MS = 120_000;
+export const ANSTEEL_DEFAULT_MAX_TOOL_CALLS_PER_STAGE = 4;
+export const ANSTEEL_MAX_BASH_TIMEOUT_SECONDS = 20;
 const ANSTEEL_MAX_STAGE_TIMEOUT_MS = 2_147_483_647;
+const ANSTEEL_MAX_TOOL_CALLS_PER_STAGE = 32;
+const ANSTEEL_ABORT_GRACE_MS = 250;
 
 export interface AnsteelChallengeLedgerEntry {
 	id: string;
@@ -89,13 +122,16 @@ export interface RunAnsteelDiscussionOptions {
 	topic: string;
 	runRole: (call: AnsteelRoleCall) => Promise<string>;
 	stageTimeoutMs?: number;
+	maxToolCallsPerStage?: number;
 	abortRole?: (call: AnsteelRoleCall) => void | Promise<void>;
+	getStageAudit?: (call: AnsteelRoleCall) => { events: AnsteelStageAuditEvent[] } | undefined;
 }
 
 export interface AnsteelDiscussionResult {
 	topic: string;
 	verdict: "approved" | "rejected";
 	transcript: AnsteelTranscriptEntry[];
+	stageAudits: AnsteelStageAudit[];
 	challengeLedger: AnsteelChallengeLedgerEntry[];
 	revisionRounds: AnsteelRevisionRound[];
 	consensus?: string;
@@ -123,6 +159,7 @@ export interface AnsteelConfig {
 	roles: Record<AnsteelRole, AnsteelRoleConfig>;
 	reportDirectory: string;
 	stageTimeoutMs?: number;
+	maxToolCallsPerStage?: number;
 }
 
 export interface AnsteelModelReference {
@@ -134,12 +171,14 @@ export interface AnsteelRoleSession {
 	prompt: (text: string) => Promise<string>;
 	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
+	getLastStageAudit?: () => { events: AnsteelStageAuditEvent[] };
 }
 
 /** The minimal AgentSession surface needed to capture a single raw assistant turn. */
 export interface AnsteelRawTurnSessionSource {
 	prompt: (text: string) => Promise<void>;
 	subscribeToAssistantMessageEnd: (listener: (message: unknown) => void) => () => void;
+	subscribeToAgentEvent?: (listener: (event: unknown) => void) => () => void;
 	abort?: () => void | Promise<void>;
 	dispose: () => void | Promise<void>;
 }
@@ -149,6 +188,7 @@ export interface CreateAnsteelRoleSessionOptions<TModel extends AnsteelModelRefe
 	model: TModel;
 	tools: readonly AnsteelReviewTool[];
 	cwd: string;
+	maxToolCallsPerStage: number;
 }
 
 export interface RunAnsteelProjectReviewOptions<TModel extends AnsteelModelReference> {
@@ -198,16 +238,71 @@ function rawAssistantText(message: unknown): string | undefined {
 	}, "");
 }
 
+function rawAssistantProviderError(message: unknown): string | undefined {
+	if (!isRecord(message) || message.role !== "assistant" || message.stopReason !== "error") return undefined;
+	const reason =
+		typeof message.errorMessage === "string" && message.errorMessage.trim().length > 0
+			? sanitizeAnsteelFailureReason(message.errorMessage)
+			: "The provider ended the role stage with an unspecified error";
+	return `Ansteel role provider error: ${reason}`;
+}
+
+function elapsedSince(startedAt: number): number {
+	return Math.max(0, Date.now() - startedAt);
+}
+
+function recordAnsteelAgentEvent(
+	event: unknown,
+	startedAt: number,
+	toolStartedAt: Map<string, number>,
+	events: AnsteelStageAuditEvent[],
+): void {
+	if (!isRecord(event) || typeof event.type !== "string") return;
+
+	const elapsedMs = elapsedSince(startedAt);
+	if (event.type === "tool_execution_start" && typeof event.toolName === "string") {
+		if (typeof event.toolCallId === "string") toolStartedAt.set(event.toolCallId, elapsedMs);
+		events.push({ type: "tool-execution-start", elapsedMs, toolName: event.toolName });
+		return;
+	}
+	if (event.type === "tool_execution_end" && typeof event.toolName === "string") {
+		const startedAtMs = typeof event.toolCallId === "string" ? toolStartedAt.get(event.toolCallId) : undefined;
+		events.push({
+			type: "tool-execution-end",
+			elapsedMs,
+			toolName: event.toolName,
+			...(typeof event.isError === "boolean" ? { isError: event.isError } : {}),
+			...(startedAtMs === undefined ? {} : { durationMs: Math.max(0, elapsedMs - startedAtMs) }),
+		});
+		return;
+	}
+}
+
 /**
  * Adapts a session so every review stage receives only the raw assistant text
  * emitted by that stage's prompt. Empty and aborted messages remain empty.
  */
 export function createAnsteelRawTurnSession(source: AnsteelRawTurnSessionSource): AnsteelRoleSession {
+	let lastStageAudit: { events: AnsteelStageAuditEvent[] } = { events: [] };
 	return {
 		prompt: async (text) => {
+			const startedAt = Date.now();
+			const toolStartedAt = new Map<string, number>();
+			const auditEvents: AnsteelStageAuditEvent[] = [{ type: "stage-prompt-start", elapsedMs: 0 }];
+			lastStageAudit = { events: auditEvents };
 			const assistantMessages: unknown[] = [];
 			const unsubscribe = source.subscribeToAssistantMessageEnd((message) => {
 				assistantMessages.push(message);
+				if (isRecord(message) && message.role === "assistant") {
+					auditEvents.push({
+						type: "assistant-message-end",
+						elapsedMs: elapsedSince(startedAt),
+						...(typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+					});
+				}
+			});
+			const unsubscribeAgentEvents = source.subscribeToAgentEvent?.((event) => {
+				recordAnsteelAgentEvent(event, startedAt, toolStartedAt, auditEvents);
 			});
 			let promptFailed = false;
 			let promptFailure: unknown;
@@ -217,26 +312,105 @@ export function createAnsteelRawTurnSession(source: AnsteelRawTurnSessionSource)
 			} catch (error) {
 				promptFailed = true;
 				promptFailure = error;
+				auditEvents.push({ type: "stage-prompt-error", elapsedMs: elapsedSince(startedAt) });
+			}
+			const providerError = promptFailed ? undefined : rawAssistantProviderError(assistantMessages.at(-1));
+			const primaryFailure = promptFailed ? promptFailure : providerError ? new Error(providerError) : undefined;
+			if (!promptFailed) {
+				auditEvents.push({
+					type: primaryFailure ? "stage-prompt-error" : "stage-prompt-end",
+					elapsedMs: elapsedSince(startedAt),
+				});
 			}
 
+			const listenerCleanupFailures: unknown[] = [];
 			try {
 				unsubscribe();
 			} catch (listenerCleanupFailure) {
-				if (promptFailed) {
-					throw new Error(
-						`${formatFailureReason(promptFailure)}; listener cleanup also failed: ${formatFailureReason(listenerCleanupFailure)}`,
-						{ cause: promptFailure },
-					);
-				}
-				throw listenerCleanupFailure;
+				listenerCleanupFailures.push(listenerCleanupFailure);
+			}
+			try {
+				unsubscribeAgentEvents?.();
+			} catch (listenerCleanupFailure) {
+				listenerCleanupFailures.push(listenerCleanupFailure);
 			}
 
-			if (promptFailed) throw promptFailure;
+			if (primaryFailure !== undefined) {
+				if (listenerCleanupFailures.length > 0) {
+					throw new Error(
+						`${sanitizeAnsteelFailureReason(primaryFailure)}; listener cleanup also failed: ${listenerCleanupFailures
+							.map(sanitizeAnsteelFailureReason)
+							.join("; ")}`,
+						{ cause: primaryFailure },
+					);
+				}
+				throw primaryFailure;
+			}
+			if (listenerCleanupFailures.length > 0) {
+				if (listenerCleanupFailures.length === 1) throw listenerCleanupFailures[0];
+				throw new Error(
+					listenerCleanupFailures.map(sanitizeAnsteelFailureReason).join("; listener cleanup also failed: "),
+				);
+			}
 
 			return rawAssistantText(assistantMessages.at(-1)) ?? "";
 		},
 		...(source.abort ? { abort: () => source.abort!() } : {}),
 		dispose: () => source.dispose(),
+		getLastStageAudit: () => ({ events: lastStageAudit.events.map((event) => ({ ...event })) }),
+	};
+}
+
+export interface AnsteelToolBudget {
+	reset: () => void;
+	beforeToolCall: (toolName: string, args: unknown) => { block: true; reason: string } | undefined;
+	getStageFailureReason: () => string | undefined;
+	recordBlockedToolCall: (reason: string) => void;
+}
+
+/** Enforces bounded, evidence-oriented tool use for one role stage. */
+export function createAnsteelToolBudget(maxToolCallsPerStage: number): AnsteelToolBudget {
+	const maxToolCalls = normalizeAnsteelMaxToolCallsPerStage(maxToolCallsPerStage);
+	let usedToolCalls = 0;
+	let stageFailureReason: string | undefined;
+	const blockStage = (reason: string): { block: true; reason: string } => {
+		stageFailureReason ??= reason;
+		return { block: true, reason: stageFailureReason };
+	};
+
+	return {
+		reset: () => {
+			usedToolCalls = 0;
+			stageFailureReason = undefined;
+		},
+		getStageFailureReason: () => stageFailureReason,
+		recordBlockedToolCall: (reason) => {
+			stageFailureReason ??= reason;
+		},
+		beforeToolCall: (toolName, args) => {
+			if (stageFailureReason) return { block: true, reason: stageFailureReason };
+			if (usedToolCalls >= maxToolCalls) {
+				return blockStage(
+					`Ansteel stage tool budget of ${maxToolCalls} executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.`,
+				);
+			}
+
+			usedToolCalls++;
+			if (toolName === "bash") {
+				const timeout = isRecord(args) ? args.timeout : undefined;
+				if (
+					typeof timeout !== "number" ||
+					!Number.isFinite(timeout) ||
+					timeout <= 0 ||
+					timeout > ANSTEEL_MAX_BASH_TIMEOUT_SECONDS
+				) {
+					return blockStage(
+						`Ansteel bash requires an explicit timeout of at most ${ANSTEEL_MAX_BASH_TIMEOUT_SECONDS} seconds.`,
+					);
+				}
+			}
+			return undefined;
+		},
 	};
 }
 
@@ -298,6 +472,21 @@ function normalizeAnsteelStageTimeoutMs(value: unknown): number {
 	return timeoutMs;
 }
 
+function normalizeAnsteelMaxToolCallsPerStage(value: unknown): number {
+	const maxToolCalls = value === undefined ? ANSTEEL_DEFAULT_MAX_TOOL_CALLS_PER_STAGE : value;
+	if (
+		typeof maxToolCalls !== "number" ||
+		!Number.isInteger(maxToolCalls) ||
+		maxToolCalls <= 0 ||
+		maxToolCalls > ANSTEEL_MAX_TOOL_CALLS_PER_STAGE
+	) {
+		throw new Error(
+			`Ansteel maxToolCallsPerStage must be an integer between 1 and ${ANSTEEL_MAX_TOOL_CALLS_PER_STAGE}`,
+		);
+	}
+	return maxToolCalls;
+}
+
 interface ParseAnsteelConfigOptions {
 	defaultReportDirectory: string;
 	resolveReportDirectory: (reportDirectory: string) => string;
@@ -315,10 +504,12 @@ function parseAnsteelConfig(value: unknown, options: ParseAnsteelConfigOptions):
 		throw new AnsteelGovernanceSetupError("Ansteel config reportDirectory must be a string", "configuration");
 	}
 	let stageTimeoutMs: number;
+	let maxToolCallsPerStage: number;
 	try {
 		stageTimeoutMs = normalizeAnsteelStageTimeoutMs(value.stageTimeoutMs);
+		maxToolCallsPerStage = normalizeAnsteelMaxToolCallsPerStage(value.maxToolCallsPerStage);
 	} catch (error) {
-		throw new AnsteelGovernanceSetupError(formatFailureReason(error), "configuration");
+		throw new AnsteelGovernanceSetupError(sanitizeAnsteelFailureReason(error), "configuration");
 	}
 
 	const roleSettings = value.roles ?? {};
@@ -333,6 +524,7 @@ function parseAnsteelConfig(value: unknown, options: ParseAnsteelConfigOptions):
 				? options.defaultReportDirectory
 				: options.resolveReportDirectory(value.reportDirectory),
 		stageTimeoutMs,
+		maxToolCallsPerStage,
 	};
 }
 
@@ -412,9 +604,10 @@ export function writeAnsteelReport(options: WriteAnsteelReportOptions): string {
 	return reportPath;
 }
 
-function sanitizeAnsteelSetupFailureReason(error: unknown): string {
+function sanitizeAnsteelFailureReason(error: unknown): string {
 	return formatFailureReason(error)
 		.replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+		.replace(/\bsk-[A-Za-z0-9._-]+\b/g, "[REDACTED]")
 		.replace(/\b(api[-_ ]?key|secret|token)\s*[:=]\s*[^\s,;]+/gi, "$1: [REDACTED]")
 		.replace(/[\r\n\t]+/g, " ")
 		.replace(/\s{2,}/g, " ")
@@ -438,7 +631,7 @@ export function createAnsteelSetupFailureMarkdown(options: CreateAnsteelSetupFai
 		"- Governance gate: setup rejected",
 		`- Failed role: ${role}`,
 		`- Failed phase: ${phase}`,
-		`- Reason: ${sanitizeAnsteelSetupFailureReason(options.error)}`,
+		`- Reason: ${sanitizeAnsteelFailureReason(options.error)}`,
 		"## Required Role Models",
 		...configuredModels,
 		"- Requirement: Tech Lead, Staff Engineer, and QA Engineer must use three distinct configured provider/model values.",
@@ -485,7 +678,7 @@ export async function runAnsteelProjectReview<TModel extends AnsteelModelReferen
 			try {
 				reference = parseModelReference(roleConfig.model);
 			} catch (error) {
-				throw new AnsteelGovernanceSetupError(formatFailureReason(error), "model-resolution", role);
+				throw new AnsteelGovernanceSetupError(sanitizeAnsteelFailureReason(error), "model-resolution", role);
 			}
 			const configuredModel = options.resolveModel(reference.provider, reference.id);
 			if (!configuredModel) {
@@ -523,22 +716,25 @@ export async function runAnsteelProjectReview<TModel extends AnsteelModelReferen
 						model: roleModels[role],
 						tools: roleConfig.tools,
 						cwd: options.cwd,
+						maxToolCallsPerStage: config.maxToolCallsPerStage ?? ANSTEEL_DEFAULT_MAX_TOOL_CALLS_PER_STAGE,
 					}),
 				);
 			} catch (error) {
-				throw new AnsteelGovernanceSetupError(formatFailureReason(error), "session-construction", role);
+				throw new AnsteelGovernanceSetupError(sanitizeAnsteelFailureReason(error), "session-construction", role);
 			}
 		}
 
 		const discussion = await runAnsteelDiscussion({
 			topic: options.topic,
 			stageTimeoutMs: config.stageTimeoutMs,
+			maxToolCallsPerStage: config.maxToolCallsPerStage,
 			runRole: async ({ role, prompt }) => {
 				const session = sessions.get(role);
 				if (!session) throw new Error(`Ansteel role session is missing: ${role}`);
 				return await session.prompt(prompt);
 			},
 			abortRole: ({ role }) => sessions.get(role)?.abort?.(),
+			getStageAudit: ({ role }) => sessions.get(role)?.getLastStageAudit?.(),
 		});
 
 		reviewResult = { ...discussion, roleModels };
@@ -638,6 +834,7 @@ function formatChallengeLedger(challengeLedger: readonly AnsteelChallengeLedgerE
 interface BuildRolePromptOptions {
 	round?: number;
 	challengeLedger?: readonly AnsteelChallengeLedgerEntry[];
+	maxToolCallsPerStage?: number;
 }
 
 function buildRolePrompt(
@@ -657,6 +854,7 @@ function buildRolePrompt(
 		...(options.challengeLedger === undefined
 			? []
 			: [`Challenge ledger:\n${formatChallengeLedger(options.challengeLedger)}`]),
+		`Tool governance: execute at most ${options.maxToolCallsPerStage ?? ANSTEEL_DEFAULT_MAX_TOOL_CALLS_PER_STAGE} tools during this stage. Bash calls must set timeout to no more than ${ANSTEEL_MAX_BASH_TIMEOUT_SECONDS} seconds. A blocked tool request or exhausted budget terminates this stage and rejects the review; do not repeat it.`,
 		"Visible prior discussion follows. Treat it as claims to verify, not established facts.",
 		formatTranscript(transcript),
 	].join("\n\n");
@@ -774,7 +972,7 @@ async function disposeAnsteelRoleSessions(
 		try {
 			await session.dispose();
 		} catch (error) {
-			cleanupFailures.push({ role, reason: formatFailureReason(error) });
+			cleanupFailures.push({ role, reason: sanitizeAnsteelFailureReason(error) });
 		}
 	}
 	return cleanupFailures;
@@ -802,10 +1000,60 @@ function getStageFailureTerminationReason(failure: AnsteelDiscussionFailure): An
 	return failure.timeoutMs === undefined ? "stage-failure" : "stage-timeout";
 }
 
+async function abortTimedOutAnsteelRole(
+	abortRole: RunAnsteelDiscussionOptions["abortRole"],
+	call: AnsteelRoleCall,
+): Promise<void> {
+	if (!abortRole) return;
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			Promise.resolve().then(() => abortRole(call)),
+			new Promise<void>((resolve) => {
+				timeoutHandle = setTimeout(resolve, ANSTEEL_ABORT_GRACE_MS);
+			}),
+		]);
+	} catch {
+		// The configured stage timeout remains the governing failure.
+	} finally {
+		if (timeoutHandle) clearTimeout(timeoutHandle);
+	}
+}
+
+function formatAuditValue(value: string): string {
+	return value.replace(/[\r\n]/g, " ").replace(/[^a-zA-Z0-9_.:-]/g, "_");
+}
+
+function formatStageAudits(stageAudits: readonly AnsteelStageAudit[]): string {
+	if (stageAudits.length === 0) return "No stage event audit was available.";
+
+	return stageAudits
+		.map((audit, index) => {
+			const round = audit.round === undefined ? "" : ` / round ${audit.round}`;
+			const events =
+				audit.events.length === 0
+					? "- No lifecycle events were captured."
+					: audit.events
+							.map((event) => {
+								const detail = [
+									event.toolName ? `: ${formatAuditValue(event.toolName)}` : "",
+									event.stopReason ? `; stop=${formatAuditValue(event.stopReason)}` : "",
+									event.isError === undefined ? "" : `; error=${event.isError}`,
+									event.durationMs === undefined ? "" : `; duration=${event.durationMs}ms`,
+								].join("");
+								return `- ${event.type}${detail}; elapsed=${event.elapsedMs}ms`;
+							})
+							.join("\n");
+			return `### ${index + 1}. ${audit.role} / ${audit.stage}${round}\n\n${events}`;
+		})
+		.join("\n\n");
+}
+
 function createMarkdown(
 	topic: string,
 	verdict: AnsteelDiscussionResult["verdict"],
 	transcript: readonly AnsteelTranscriptEntry[],
+	stageAudits: readonly AnsteelStageAudit[],
 	challengeLedger: readonly AnsteelChallengeLedgerEntry[],
 	revisionRounds: readonly AnsteelRevisionRound[],
 	consensus: string | undefined,
@@ -835,6 +1083,8 @@ function createMarkdown(
 					...(failure.timeoutMs === undefined ? [] : [`- Timeout: ${failure.timeoutMs}ms`]),
 				]
 			: []),
+		"## Stage Audit Trail",
+		formatStageAudits(stageAudits),
 		"## Challenge Ledger",
 		formatChallengeLedger(challengeLedger),
 		"## Architecture Revision Rounds",
@@ -861,8 +1111,10 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		throw new Error("Ansteel discussion requires a review topic");
 	}
 	const stageTimeoutMs = normalizeAnsteelStageTimeoutMs(options.stageTimeoutMs);
+	const maxToolCallsPerStage = normalizeAnsteelMaxToolCallsPerStage(options.maxToolCallsPerStage);
 
 	const transcript: AnsteelTranscriptEntry[] = [];
+	const stageAudits: AnsteelStageAudit[] = [];
 	const challengeLedger: AnsteelChallengeLedgerEntry[] = [];
 	const revisionRounds: AnsteelRevisionRound[] = [];
 	type StageResult = { response: string } | { failure: AnsteelDiscussionFailure };
@@ -880,15 +1132,33 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		stage: AnsteelDiscussionStage,
 		stageOptions: RunStageOptions = {},
 	): Promise<StageResult> => {
+		const stageStartedAt = Date.now();
 		const prompt = buildRolePrompt(role, stage, topic, stageOptions.context ?? transcript, {
 			round: stageOptions.round,
 			challengeLedger: stageOptions.challengeLedger,
+			maxToolCallsPerStage,
 		});
 		const call: AnsteelRoleCall = {
 			role,
 			stage,
 			prompt,
 			...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
+		};
+		const captureStageAudit = (terminalEvent?: AnsteelStageAuditEvent): void => {
+			let auditEvents: AnsteelStageAuditEvent[] | undefined;
+			try {
+				const audit = options.getStageAudit?.(call);
+				if (audit) auditEvents = audit.events.map((event) => ({ ...event }));
+			} catch {
+				// Audit collection must not turn an otherwise governed failure into an unarchived crash.
+			}
+			if (!auditEvents && !terminalEvent) return;
+			stageAudits.push({
+				role,
+				stage,
+				...(stageOptions.round === undefined ? {} : { round: stageOptions.round }),
+				events: [...(auditEvents ?? []), ...(terminalEvent ? [{ ...terminalEvent }] : [])],
+			});
 		};
 		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 		const roleResult: Promise<TimedRoleResult> = Promise.resolve()
@@ -903,11 +1173,8 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		const timedResult = await Promise.race([roleResult, timeoutResult]);
 		if (timeoutHandle) clearTimeout(timeoutHandle);
 		if (timedResult.kind === "timeout") {
-			try {
-				void Promise.resolve(options.abortRole?.(call)).catch(() => {});
-			} catch {
-				// Preserve the timeout as the governing failure; session cleanup still runs afterward.
-			}
+			await abortTimedOutAnsteelRole(options.abortRole, call);
+			captureStageAudit({ type: "stage-timeout", elapsedMs: elapsedSince(stageStartedAt) });
 			return {
 				failure: {
 					role,
@@ -918,9 +1185,11 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 			};
 		}
 		if (timedResult.kind === "failure") {
-			return { failure: { role, stage, reason: formatFailureReason(timedResult.error) } };
+			captureStageAudit();
+			return { failure: { role, stage, reason: sanitizeAnsteelFailureReason(timedResult.error) } };
 		}
 		const response = timedResult.response;
+		captureStageAudit();
 		transcript.push({
 			role,
 			stage,
@@ -939,6 +1208,7 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		topic,
 		verdict: "rejected",
 		transcript,
+		stageAudits,
 		challengeLedger,
 		revisionRounds,
 		...(consensus ? { consensus } : {}),
@@ -948,6 +1218,7 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 			topic,
 			"rejected",
 			transcript,
+			stageAudits,
 			challengeLedger,
 			revisionRounds,
 			consensus,
@@ -1148,9 +1419,10 @@ export async function runAnsteelDiscussion(options: RunAnsteelDiscussionOptions)
 		topic,
 		verdict: "approved",
 		transcript,
+		stageAudits,
 		challengeLedger,
 		revisionRounds,
 		consensus,
-		markdown: createMarkdown(topic, "approved", transcript, challengeLedger, revisionRounds, consensus),
+		markdown: createMarkdown(topic, "approved", transcript, stageAudits, challengeLedger, revisionRounds, consensus),
 	};
 }
