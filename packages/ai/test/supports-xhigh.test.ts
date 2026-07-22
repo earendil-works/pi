@@ -59,15 +59,7 @@ describe("getSupportedThinkingLevels", () => {
 		(modelId) => {
 			const model = getModel("openai", modelId);
 			expect(model).toBeDefined();
-			expect(getSupportedThinkingLevels(model!)).toEqual([
-				"off",
-				"minimal",
-				"low",
-				"medium",
-				"high",
-				"xhigh",
-				"max",
-			]);
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
 		},
 	);
 
