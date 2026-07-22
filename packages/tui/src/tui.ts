@@ -1286,9 +1286,11 @@ export class TUI extends Container {
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
+			// PI_NO_FULL_CLEAR=1: skip clear, always do incremental render
+			const actualClear = clear && process.env.PI_NO_FULL_CLEAR !== "1";
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			if (clear) {
+			if (actualClear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H"; // Clear screen + home
 				// Only clear scrollback if PI_NO_SCROLLBACK_CLEAR is not set
