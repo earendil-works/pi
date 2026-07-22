@@ -95,12 +95,21 @@ export class AssistantMessageComponent extends Container {
 		}
 
 		// Render content in order
+		const maxLines = parseInt(process.env.PI_MAX_MESSAGE_LINES ?? "0", 10);
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme));
+				let textContent = content.text.trim();
+				// Limit displayed lines if PI_MAX_MESSAGE_LINES is set
+				if (maxLines > 0) {
+					const lines = textContent.split("\n");
+					if (lines.length > maxLines) {
+						textContent = lines.slice(0, maxLines).join("\n") + `\n... (${lines.length - maxLines} more lines hidden)`;
+					}
+				}
+				this.contentContainer.addChild(new Markdown(textContent, this.outputPad, 0, this.markdownTheme));
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
