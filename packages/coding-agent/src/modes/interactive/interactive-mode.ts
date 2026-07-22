@@ -1783,6 +1783,7 @@ export class InteractiveMode {
 			sessionManager: this.sessionManager,
 			modelRegistry: extensionRunner.getModelRegistry(),
 			model: this.session.model,
+			thinkingLevel: this.session.thinkingLevel,
 			isIdle: () => this.session.isIdle,
 			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 			signal: this.session.agent.signal,

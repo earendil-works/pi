@@ -68,6 +68,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 ## Reference
 
+- [Environment variables](environment-variables.md) - Pi process configuration and session metadata available to bash tools.
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
 
 ## Platform setup

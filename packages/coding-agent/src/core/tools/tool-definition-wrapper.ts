@@ -13,8 +13,8 @@ export function wrapToolDefinition<TDetails = unknown>(
 		parameters: definition.parameters,
 		prepareArguments: definition.prepareArguments,
 		executionMode: definition.executionMode,
-		execute: (toolCallId, params, signal, onUpdate) =>
-			definition.execute(toolCallId, params, signal, onUpdate, ctxFactory?.() as ExtensionContext),
+		execute: (toolCallId, params, signal, onUpdate, ctx?: ExtensionContext) =>
+			definition.execute(toolCallId, params, signal, onUpdate, ctx ?? (ctxFactory?.() as ExtensionContext)),
 	};
 }
 
