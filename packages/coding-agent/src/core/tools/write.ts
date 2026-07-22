@@ -62,14 +62,13 @@ function highlightSingleLine(line: string, lang: string): string {
 	return highlighted[0] ?? "";
 }
 
-function refreshWriteHighlightPrefix(cache: WriteHighlightCache): void {
-	const prefixCount = Math.min(WRITE_PARTIAL_FULL_HIGHLIGHT_LINES, cache.normalizedLines.length);
-	if (prefixCount === 0) return;
-	const prefixSource = cache.normalizedLines.slice(0, prefixCount).join("\n");
-	const prefixHighlighted = highlightCode(prefixSource, cache.lang);
-	for (let i = 0; i < prefixCount; i++) {
-		cache.highlightedLines[i] =
-			prefixHighlighted[i] ?? highlightSingleLine(cache.normalizedLines[i] ?? "", cache.lang);
+function refreshWriteHighlightTail(cache: WriteHighlightCache): void {
+	const start = Math.max(0, cache.normalizedLines.length - WRITE_PARTIAL_FULL_HIGHLIGHT_LINES);
+	const tailLines = cache.normalizedLines.slice(start);
+	const tailHighlighted = highlightCode(tailLines.join("\n"), cache.lang);
+	for (let i = 0; i < tailLines.length; i++) {
+		const lineIndex = start + i;
+		cache.highlightedLines[lineIndex] = tailHighlighted[i] ?? highlightSingleLine(tailLines[i] ?? "", cache.lang);
 	}
 }
 
@@ -116,7 +115,7 @@ function updateWriteHighlightCacheIncremental(
 		cache.normalizedLines.push(segments[i]);
 		cache.highlightedLines.push(highlightSingleLine(segments[i], cache.lang));
 	}
-	refreshWriteHighlightPrefix(cache);
+	refreshWriteHighlightTail(cache);
 	return cache;
 }
 
@@ -149,13 +148,13 @@ function formatWriteCall(
 			: normalizeDisplayText(fileContent).split("\n");
 		const lines = trimTrailingEmptyLines(renderedLines);
 		const totalLines = lines.length;
-		const maxLines = options.expanded ? lines.length : 10;
-		const displayLines = lines.slice(0, maxLines);
-		const remaining = lines.length - maxLines;
-		text += `\n\n${displayLines.map((line) => (lang ? line : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines, ${totalLines} total,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+		const displayLines = options.expanded ? lines : lines.slice(-10);
+		const omitted = totalLines - displayLines.length;
+		text += "\n\n";
+		if (omitted > 0) {
+			text += `${theme.fg("muted", `... (${omitted} earlier lines, ${totalLines} total,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}\n`;
 		}
+		text += displayLines.map((line) => (lang ? line : theme.fg("toolOutput", replaceTabs(line)))).join("\n");
 	}
 
 	return text;

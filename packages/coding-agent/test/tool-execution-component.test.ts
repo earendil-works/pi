@@ -380,6 +380,32 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).not.toContain("two\n\n");
 	});
 
+	test("shows the latest lines in collapsed write previews", () => {
+		const content = Array.from({ length: 12 }, (_, i) => `line-${String(i + 1).padStart(2, "0")}`).join("\n");
+		const component = new ToolExecutionComponent(
+			"write",
+			"tool-write-tail-preview",
+			{ path: "notes.txt", content },
+			{},
+			createWriteToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(120).join("\n"));
+		expect(collapsed).not.toContain("line-01");
+		expect(collapsed).not.toContain("line-02");
+		expect(collapsed).toContain("2 earlier lines, 12 total");
+		expect(collapsed.indexOf("2 earlier lines")).toBeLessThan(collapsed.indexOf("line-03"));
+		expect(collapsed).toContain("line-12");
+
+		component.setExpanded(true);
+		const expanded = stripAnsi(component.render(120).join("\n"));
+		expect(expanded).toContain("line-01");
+		expect(expanded).toContain("line-12");
+		expect(expanded).not.toContain("earlier lines");
+	});
+
 	test("trims trailing blank display lines from read results", () => {
 		const component = new ToolExecutionComponent(
 			"read",
