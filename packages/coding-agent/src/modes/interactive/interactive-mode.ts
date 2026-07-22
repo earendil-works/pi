@@ -1076,8 +1076,16 @@ export class InteractiveMode {
 	 * Get a short path relative to the package root for display.
 	 */
 	private getShortPath(fullPath: string, sourceInfo?: SourceInfo): string {
+		const normalizedFullPath = fullPath.replace(/\\/g, "/");
 		const baseDir = sourceInfo?.baseDir;
 		if (baseDir && this.isPackageSource(sourceInfo)) {
+			const normalizedBaseDir = baseDir.replace(/\\/g, "/");
+			const npmRootMatch = normalizedBaseDir.match(/^(.*\/node_modules)\/(@?[^/]+(?:\/[^/]+)?)$/);
+			// If fullPath is under the same node_modules root as baseDir, preserve that relative topology.
+			if (npmRootMatch?.[1] && normalizedFullPath.startsWith(`${npmRootMatch[1]}/`)) {
+				return path.posix.relative(normalizedBaseDir, normalizedFullPath);
+			}
+
 			const relativePath = path.relative(path.resolve(baseDir), path.resolve(fullPath));
 			if (
 				relativePath &&
@@ -1091,12 +1099,12 @@ export class InteractiveMode {
 		}
 
 		const source = sourceInfo?.source ?? "";
-		const npmMatch = fullPath.match(/node_modules\/(@?[^/]+(?:\/[^/]+)?)\/(.*)/);
+		const npmMatch = normalizedFullPath.match(/node_modules\/(@?[^/]+(?:\/[^/]+)?)\/(.*)/);
 		if (npmMatch && source.startsWith("npm:")) {
 			return npmMatch[2];
 		}
 
-		const gitMatch = fullPath.match(/git\/[^/]+\/[^/]+\/(.*)/);
+		const gitMatch = normalizedFullPath.match(/git\/[^/]+\/[^/]+\/(.*)/);
 		if (gitMatch && source.startsWith("git:")) {
 			return gitMatch[1];
 		}
