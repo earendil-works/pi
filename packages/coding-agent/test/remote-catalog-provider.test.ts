@@ -1,4 +1,3 @@
-import { statSync } from "node:fs";
 import {
 	createProvider,
 	InMemoryModelsStore,
@@ -25,7 +24,7 @@ function model(id: string): Model<"openai-completions"> {
 	};
 }
 
-function testProvider(localCatalogUrl?: URL) {
+function testProvider(localGeneratedAt?: number) {
 	return withRemoteCatalog(
 		createProvider({
 			id: "test-provider",
@@ -41,7 +40,7 @@ function testProvider(localCatalogUrl?: URL) {
 			},
 		}),
 		"https://pi.dev",
-		localCatalogUrl,
+		localGeneratedAt,
 	);
 }
 
@@ -80,19 +79,18 @@ describe("remote catalog provider", () => {
 	});
 
 	it("prefers the newer of the generated and remote catalogs", async () => {
-		const localCatalogUrl = new URL(import.meta.url);
-		const localMtime = statSync(localCatalogUrl).mtimeMs;
-		const newerHeader = new Date(localMtime + 60_000).toUTCString();
+		const localGeneratedAt = Date.parse("2026-07-23T10:00:00.000Z");
+		const newerHeader = new Date(localGeneratedAt + 60_000).toUTCString();
 		const responses = [
 			new Response(JSON.stringify({ old: model("old") }), {
-				headers: { "last-modified": new Date(localMtime - 60_000).toUTCString() },
+				headers: { "last-modified": new Date(localGeneratedAt - 60_000).toUTCString() },
 			}),
 			new Response(JSON.stringify({ newer: model("newer") }), {
 				headers: { "last-modified": newerHeader },
 			}),
 		];
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
-		const provider = testProvider(localCatalogUrl);
+		const provider = testProvider(localGeneratedAt);
 		const store = new InMemoryModelsStore();
 		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
 

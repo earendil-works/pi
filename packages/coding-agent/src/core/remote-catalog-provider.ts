@@ -1,4 +1,3 @@
-import { stat } from "node:fs/promises";
 import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
 import { VERSION } from "../config.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -32,13 +31,10 @@ function parseCatalog(providerId: string, value: unknown): Model<Api>[] {
 
 function remoteModels(
 	entry: ModelsStoreEntry | undefined,
-	localLastModified: number | undefined,
+	localGeneratedAt: number | undefined,
 ): readonly Model<Api>[] {
 	if (!entry) return [];
-	if (
-		localLastModified !== undefined &&
-		(entry.lastModified === undefined || entry.lastModified <= localLastModified)
-	) {
+	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
 		return [];
 	}
 	return entry.models;
@@ -48,7 +44,7 @@ function remoteModels(
 export function withRemoteCatalog(
 	provider: Provider,
 	catalogBaseUrl: string = DEFAULT_CATALOG_BASE_URL,
-	localCatalogUrl?: URL,
+	localGeneratedAt?: number,
 ): Provider {
 	let dynamicModels: readonly Model<Api>[] = [];
 	let inflightRefresh: Promise<void> | undefined;
@@ -59,16 +55,8 @@ export function withRemoteCatalog(
 		refreshModels: (context) => {
 			inflightRefresh ??= (async () => {
 				try {
-					const localLastModified = localCatalogUrl
-						? await stat(localCatalogUrl).then(
-								(value) => value.mtimeMs,
-								() => undefined,
-							)
-						: undefined;
 					const stored = await context.store.read();
-					dynamicModels = remoteModels(stored, localLastModified).filter(
-						(model) => model.provider === provider.id,
-					);
+					dynamicModels = remoteModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
 					if (!context.allowNetwork || context.signal?.aborted) return;
 					if (
 						!context.force &&
@@ -105,7 +93,7 @@ export function withRemoteCatalog(
 						checkedAt,
 						lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
 					};
-					dynamicModels = remoteModels(entry, localLastModified);
+					dynamicModels = remoteModels(entry, localGeneratedAt);
 					await context.store.write(entry);
 				} finally {
 					inflightRefresh = undefined;

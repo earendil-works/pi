@@ -140,18 +140,13 @@ export class ModelRuntime implements Models {
 			(modelsPath
 				? new FileModelsStore(options.modelsStorePath ?? join(dirname(modelsPath), "models-store.json"))
 				: new InMemoryCodingAgentModelsStore());
+		const builtinModelDataGeneratedAt = builtinProviderCatalog.getBuiltinModelDataGeneratedAt();
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
 				provider.id === "radius"
 					? provider
-					: withRemoteCatalog(
-							provider,
-							options.catalogBaseUrl,
-							builtinProviderCatalog.getBuiltinModelDataUrl(
-								provider.id as builtinProviderCatalog.BuiltinProvider,
-							),
-						),
+					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
 			);
 		const runtime = new ModelRuntime(
 			credentials,

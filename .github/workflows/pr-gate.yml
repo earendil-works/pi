@@ -116,11 +116,11 @@ jobs:
             console.log(`${prAuthor} is not approved, closing PR`);
 
             const message = [
-              'This PR was auto-closed. Only contributors approved with `lgtm` can open PRs. Open an issue first.',
+              'This PR was auto-closed. Only contributors approved with `lgtm` can open PRs. Open an issue first and ask a maintainer for approval.',
               '',
               `Maintainers review auto-closed issues daily. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
               '',
-              'If a maintainer replies `lgtmi`, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open.',
+              'If a maintainer replies `lgtmi`, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open. The command must be at the start of the reply (optionally after one or more `@username` mentions) or at the end.',
               '',
               `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
             ].join('\n');

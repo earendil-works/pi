@@ -2985,6 +2985,10 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "bash_execution_update":
+				// The bash execution callback handles TUI output rendering.
+				break;
+
 			case "tool_execution_start": {
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {

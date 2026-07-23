@@ -20,6 +20,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -72,6 +73,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsStrictMode: model.compat?.supportsStrictMode ?? isOpenAI,
 		supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
+		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 	};
 }
 
@@ -143,9 +145,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
+			const { data: openaiStream, response } = await retryProviderRequest(
+				() => client.responses.create(params, requestOptions).withResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -262,12 +271,14 @@ function buildParams(
 	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const params: ResponseCreateParamsStreaming = {
+	const disableImplicitPromptCache = cacheRetention === "none" && compat.supportsExplicitPromptCacheMode;
+	const params: ResponseCreateParamsStreaming & { prompt_cache_options?: { mode: "explicit" } } = {
 		model: model.id,
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
+		prompt_cache_options: disableImplicitPromptCache ? { mode: "explicit" } : undefined,
 		store: false,
 	};
 

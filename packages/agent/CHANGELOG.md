@@ -14,6 +14,10 @@
 
 - Aligned harness tool path handling, edit serialization, shell output capture, explicit non-inherited environments, and cross-platform process cleanup with coding-agent behavior.
 
+### Fixed
+
+- Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
+
 ## [0.81.1] - 2026-07-21
 
 ### Added

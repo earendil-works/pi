@@ -575,6 +575,8 @@ export interface OpenAIResponsesCompat {
 	supportsGrammarTools?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
+	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
+	supportsExplicitPromptCacheMode?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */

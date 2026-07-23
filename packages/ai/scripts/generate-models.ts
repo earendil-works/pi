@@ -677,6 +677,18 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	};
 }
 
+// OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
+// those models accept `prompt_cache_options`; older models reject the parameter.
+// https://developers.openai.com/api/docs/guides/prompt-caching
+function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
+	if (model.provider !== "openai" || model.api !== "openai-responses") return;
+	if (!(model.cost.cacheWrite > 0)) return;
+	model.compat = {
+		...(model.compat as OpenAIResponsesCompat | undefined),
+		supportsExplicitPromptCacheMode: true,
+	};
+}
+
 function isGemini3ProModel(modelId: string): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(modelId.toLowerCase());
 }
@@ -2482,6 +2494,7 @@ async function generateModels() {
 		applyThinkingLevelMetadata(model);
 		applyGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
+		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 
 	// Group by provider and deduplicate by model ID
@@ -2534,6 +2547,8 @@ async function generateModels() {
 		}
 	}
 
+	const generatedAt = new Date().toISOString();
+
 	if (!generatorOptions.jsonOnly) {
 		// Stage and validate all provider values before replacing the current generated data.
 		const providersDir = join(packageRoot, "src/providers");
@@ -2553,7 +2568,7 @@ async function generateModels() {
 			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
-				createModelDataManifest(modelDataStructure, fileContents),
+				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 

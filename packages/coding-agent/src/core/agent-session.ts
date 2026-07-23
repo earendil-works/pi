@@ -176,7 +176,9 @@ export type AgentSessionEvent =
 			source: "compaction";
 			reason: "manual" | "threshold" | "overflow";
 	  }
-	| { type: "summarization_retry_finished" };
+	| { type: "summarization_retry_finished" }
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -2760,12 +2762,13 @@ export class AgentSession {
 	 * @param command The bash command to execute
 	 * @param onChunk Optional streaming callback for output
 	 * @param options.excludeFromContext If true, command output won't be sent to LLM (!! prefix)
+	 * @param options.id Optional identifier included in bash execution update events
 	 * @param options.operations Custom BashOperations for remote execution
 	 */
 	async executeBash(
 		command: string,
 		onChunk?: (chunk: string) => void,
-		options?: { excludeFromContext?: boolean; operations?: BashOperations },
+		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations },
 	): Promise<BashResult> {
 		this._bashAbortController = new AbortController();
 
@@ -2780,7 +2783,10 @@ export class AgentSession {
 				this.sessionManager.getCwd(),
 				options?.operations ?? createLocalBashOperations({ shellPath }),
 				{
-					onChunk,
+					onChunk: (delta) => {
+						onChunk?.(delta);
+						this._emit({ type: "bash_execution_update", id: options?.id, delta });
+					},
 					signal: this._bashAbortController.signal,
 				},
 			);

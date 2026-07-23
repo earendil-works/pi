@@ -23,7 +23,7 @@ Common options:
 - **Responses**: JSON objects with `type: "response"` indicating command success/failure
 - **Events**: Agent events streamed to stdout as JSON lines
 
-All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`.
+All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`. `bash_execution_update` events also include the `id` of their originating `bash` command.
 
 ### Framing
 
@@ -455,15 +455,18 @@ Response:
 
 #### bash
 
-Execute a shell command and add output to conversation context.
+Execute a shell command and add output to conversation context. Output streams as `bash_execution_update` events while the command runs; the response contains the final result.
 
 ```json
-{"type": "bash", "command": "ls -la"}
+{"id": "req-1", "type": "bash", "command": "ls -la"}
 ```
+
+Include an `id` to associate streamed `bash_execution_update` events with this command.
 
 Response:
 ```json
 {
+  "id": "req-1",
   "type": "response",
   "command": "bash",
   "success": true,
@@ -494,7 +497,7 @@ If output was truncated, includes `fullOutputPath`:
 
 **How bash results reach the LLM:**
 
-The `bash` command executes immediately and returns a `BashResult`. Internally, a `BashExecutionMessage` is created and stored in the agent's message state. This message does NOT emit an event.
+The `bash` command executes immediately and returns a `BashResult`. Internally, a `BashExecutionMessage` is created and stored in the agent's message state.
 
 When the next `prompt` command is sent, all messages (including `BashExecutionMessage`) are transformed before being sent to the LLM. The `BashExecutionMessage` is converted to a `UserMessage` with this format:
 
@@ -509,7 +512,6 @@ drwxr-xr-x ...
 This means:
 1. Bash output is included in the LLM context on the **next prompt**, not immediately
 2. Multiple bash commands can be executed before a prompt; all outputs will be included
-3. No event is emitted for the `BashExecutionMessage` itself
 
 #### abort_bash
 
@@ -829,7 +831,7 @@ Each command has:
 
 ## Events
 
-Events are streamed to stdout as JSON lines during agent operation. Events do NOT include an `id` field (only responses do).
+Events are streamed to stdout as JSON lines during agent operation. Events do not generally include an `id` field; `bash_execution_update` includes the `id` of its originating `bash` command when one was provided.
 
 ### Event Types
 
@@ -843,6 +845,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `message_start` | Message begins |
 | `message_update` | Streaming update (text/thinking/toolcall deltas) |
 | `message_end` | Message completes |
+| `bash_execution_update` | Direct RPC bash command output chunk |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
@@ -949,6 +952,20 @@ Example streaming a text response:
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello","partial":{...}}}
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world","partial":{...}}}
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world","partial":{...}}}
+```
+
+### bash_execution_update
+
+Emitted once for each output chunk from a direct `bash` command. `id` matches the command's `id`, allowing clients to associate output with the correct command.
+
+Events stream all output while the command runs, even if the final `bash` response's `output` is truncated.
+
+```json
+{
+  "type": "bash_execution_update",
+  "id": "req-1",
+  "delta": "total 48\n"
+}
 ```
 
 ### tool_execution_start / tool_execution_update / tool_execution_end

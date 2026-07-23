@@ -255,6 +255,53 @@ describe("resolveModelScopeWithDiagnostics", () => {
 			warn.mockRestore();
 		}
 	});
+
+	test("resolves bracketed model ids as exact references before glob matching", async () => {
+		const bracketedModel: Model<"anthropic-messages"> = {
+			id: "bracketed-model[1m]",
+			name: "Bracketed Model",
+			api: "anthropic-messages",
+			provider: "custom",
+			baseUrl: "https://example.invalid",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const registry = {
+			getAvailable: () => [...allModels, bracketedModel],
+		} as unknown as Parameters<typeof resolveModelScopeWithDiagnostics>[1];
+
+		const result = await resolveModelScopeWithDiagnostics(["custom/bracketed-model[1m]"], registry);
+
+		expect(result.scopedModels.map((scoped) => scoped.model.id)).toEqual(["bracketed-model[1m]"]);
+		expect(result.diagnostics).toEqual([]);
+	});
+
+	test("resolves bracketed model ids with thinking levels as exact references before glob matching", async () => {
+		const bracketedModel: Model<"anthropic-messages"> = {
+			id: "bracketed-model[1m]",
+			name: "Bracketed Model",
+			api: "anthropic-messages",
+			provider: "custom",
+			baseUrl: "https://example.invalid",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		};
+		const registry = {
+			getAvailable: () => [...allModels, bracketedModel],
+		} as unknown as Parameters<typeof resolveModelScopeWithDiagnostics>[1];
+
+		const result = await resolveModelScopeWithDiagnostics(["custom/bracketed-model[1m]:high"], registry);
+
+		expect(result.scopedModels.map((scoped) => scoped.model.id)).toEqual(["bracketed-model[1m]"]);
+		expect(result.scopedModels[0].thinkingLevel).toBe("high");
+		expect(result.diagnostics).toEqual([]);
+	});
 });
 
 describe("resolveCliModel", () => {

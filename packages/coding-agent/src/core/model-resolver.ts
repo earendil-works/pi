@@ -293,6 +293,14 @@ export async function resolveModelScopeWithDiagnostics(
 				}
 			}
 
+			const exactMatch = findExactModelReferenceMatch(globPattern, availableModels);
+			if (exactMatch) {
+				if (!scopedModels.find((sm) => modelsAreEqual(sm.model, exactMatch))) {
+					scopedModels.push({ model: exactMatch, thinkingLevel });
+				}
+				continue;
+			}
+
 			// Match against "provider/modelId" format OR just model ID
 			// This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
 			const matchingModels = availableModels.filter((m) => {
