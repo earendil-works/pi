@@ -11,6 +11,7 @@ import {
 	type SimpleStreamOptions,
 	type TextContent,
 	type Usage,
+	uuidv7,
 } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import {
@@ -122,8 +123,12 @@ export async function completeSimpleWithRetries(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 ): Promise<AssistantMessage> {
-	// Summaries are standalone requests, so avoid cache writes that cannot be reused.
-	const requestOptions: SimpleStreamOptions = { ...options, cacheRetention: "none" };
+	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
+	const requestOptions: SimpleStreamOptions = {
+		...options,
+		cacheRetention: "none",
+		sessionId: uuidv7(),
+	};
 	return retryAssistantCall(
 		() => models.completeSimple(model, context, requestOptions),
 		retry,
