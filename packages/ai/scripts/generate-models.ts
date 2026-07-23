@@ -515,7 +515,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
-	supportsGrammarTools: false,
+	supportsOpenAIGrammarTools: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
@@ -604,7 +604,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
-		supportsGrammarTools: false,
+		supportsOpenAIGrammarTools: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(
@@ -646,11 +646,19 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function applyStrictToolCompatMetadata(model: Model<Api>): void {
+	if (model.provider === "openai" && model.api === "openai-responses") {
+		model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsStrictMode: true };
+	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
+		mergeAnthropicMessagesCompat(model, { supportsStrictTools: true });
+	}
+}
+
 // Responses endpoints verified (OpenAI, ChatGPT Codex backend, GitHub Copilot,
 // opencode zen) or documented (Azure OpenAI, Cloudflare AI Gateway) to pass
 // OpenAI custom grammar tools through. OpenAI rejects `type: "custom"` tools
 // for pre-GPT-5 models (gpt-4.x, gpt-4o, o-series).
-const GRAMMAR_TOOL_PROVIDERS = new Set([
+const OPENAI_GRAMMAR_TOOL_PROVIDERS = new Set([
 	"openai",
 	"openai-codex",
 	"azure-openai-responses",
@@ -658,13 +666,17 @@ const GRAMMAR_TOOL_PROVIDERS = new Set([
 	"opencode",
 	"cloudflare-ai-gateway",
 ]);
-const GRAMMAR_TOOL_APIS = new Set<Api>(["openai-responses", "azure-openai-responses", "openai-codex-responses"]);
+const OPENAI_GRAMMAR_TOOL_APIS = new Set<Api>([
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+]);
 
-function applyGrammarToolCompatMetadata(model: Model<Api>): void {
-	if (!GRAMMAR_TOOL_APIS.has(model.api) || !GRAMMAR_TOOL_PROVIDERS.has(model.provider)) return;
+function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
+	if (!OPENAI_GRAMMAR_TOOL_APIS.has(model.api) || !OPENAI_GRAMMAR_TOOL_PROVIDERS.has(model.provider)) return;
 	const match = /^gpt-(\d+)/.exec(model.id);
 	if (!match || Number(match[1]) < 5) return;
-	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsGrammarTools: true };
+	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
 }
 
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
@@ -2492,7 +2504,8 @@ async function generateModels() {
 		applyOpenAICompletionsCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
-		applyGrammarToolCompatMetadata(model);
+		applyStrictToolCompatMetadata(model);
+		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}

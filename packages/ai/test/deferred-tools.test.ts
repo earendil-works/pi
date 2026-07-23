@@ -369,7 +369,7 @@ describe("deferred tools", () => {
 			chatTemplateKwargs: {},
 			zaiToolStream: false,
 			supportsStrictMode: false,
-			supportsGrammarTools: false,
+			supportsOpenAIGrammarTools: false,
 			cacheControlFormat: undefined,
 			sendSessionAffinityHeaders: false,
 			deferredToolsMode: "kimi",

@@ -738,7 +738,7 @@ interface ProviderModelConfig {
     supportsReasoningEffort?: boolean;
     supportsUsageInStreaming?: boolean;
     supportsStrictMode?: boolean;
-    supportsGrammarTools?: boolean; // openai-completions/openai-responses; false falls back to normal function tools
+    supportsOpenAIGrammarTools?: boolean; // openai-completions/openai-responses; false falls back to normal function tools
     maxTokensField?: "max_completion_tokens" | "max_tokens";
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;

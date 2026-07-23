@@ -265,7 +265,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const accountId = extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
-				model.compat?.supportsGrammarTools ?? false,
+				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
@@ -520,9 +520,11 @@ function buildRequestBody(
 	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
-		model.compat?.supportsGrammarTools ?? false,
+		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ): RequestBody {
+	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
+	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const toolPlacement = splitDeferredTools(context, model.compat?.supportsToolSearch ?? false);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
@@ -530,8 +532,8 @@ function buildRequestBody(
 		deferredTools: toolPlacement.deferred,
 		toolOptions: {
 			strict: null,
-			supportsStrictMode: false,
-			supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
+			supportsStrictMode,
+			supportsOpenAIGrammarTools,
 		},
 	});
 
@@ -559,8 +561,8 @@ function buildRequestBody(
 	if (toolPlacement.immediate.length > 0) {
 		body.tools = convertResponsesTools(toolPlacement.immediate, {
 			strict: null,
-			supportsStrictMode: false,
-			supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
+			supportsStrictMode,
+			supportsOpenAIGrammarTools,
 		});
 	}
 

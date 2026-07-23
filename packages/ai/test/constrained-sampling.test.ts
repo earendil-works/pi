@@ -89,25 +89,29 @@ describe("constrained tool sampling", () => {
 		const grammarTool = makeTool({
 			constrainedSampling: { type: "grammar", variants: { openai_lark: "start: /[a-z]+/" } },
 		});
-		expect(convertResponsesTools([grammarTool], { supportsGrammarTools: true })[0]).toMatchObject({
+		expect(convertResponsesTools([grammarTool], { supportsOpenAIGrammarTools: true })[0]).toMatchObject({
 			type: "custom",
 			name: "sample_tool",
 			format: { type: "grammar", syntax: "lark", definition: "start: /[a-z]+/" },
 		});
 		expect(() =>
 			convertResponsesTools([makeTool({ constrainedSampling: { type: "grammar", variants: {} } })], {
-				supportsGrammarTools: true,
+				supportsOpenAIGrammarTools: true,
 			}),
 		).toThrow(
 			'Tool "sample_tool" cannot use grammar constrained sampling: no supported grammar variant was provided',
 		);
 
 		const fallback = convertResponsesTools([grammarTool], {
-			supportsGrammarTools: false,
+			supportsOpenAIGrammarTools: false,
 			supportsStrictMode: false,
 		})[0];
 		expect(fallback).toMatchObject({ type: "function", name: "sample_tool" });
 		expect("strict" in (fallback as object)).toBe(false);
+
+		expect(convertResponsesTools([makeTool({ constrainedSampling: false })])).toEqual(
+			convertResponsesTools([makeTool()]),
+		);
 	});
 
 	it("replays grammar calls as custom Responses items", () => {

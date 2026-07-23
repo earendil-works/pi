@@ -65,13 +65,12 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 }
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
-	const isOpenAI = model.provider === "openai";
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
-		supportsStrictMode: model.compat?.supportsStrictMode ?? isOpenAI,
-		supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
+		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
+		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 	};
@@ -134,7 +133,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
-				compat.supportsGrammarTools,
+				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
 			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
@@ -257,7 +256,7 @@ function buildParams(
 	compat: Required<OpenAIResponsesCompat> = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
-		compat.supportsGrammarTools,
+		compat.supportsOpenAIGrammarTools,
 	),
 ) {
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
@@ -266,7 +265,7 @@ function buildParams(
 		deferredTools: toolPlacement.deferred,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
-			supportsGrammarTools: compat.supportsGrammarTools,
+			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		},
 	});
 
@@ -297,7 +296,7 @@ function buildParams(
 	if (toolPlacement.immediate.length > 0) {
 		params.tools = convertResponsesTools(toolPlacement.immediate, {
 			supportsStrictMode: compat.supportsStrictMode,
-			supportsGrammarTools: compat.supportsGrammarTools,
+			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
 	}
 

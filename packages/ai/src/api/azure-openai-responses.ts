@@ -103,7 +103,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			const client = createClient(model, apiKey, options);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
-				model.compat?.supportsGrammarTools ?? false,
+				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
 			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
@@ -270,7 +270,7 @@ function buildParams(
 	deploymentName: string,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
-		model.compat?.supportsGrammarTools ?? false,
+		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
 ) {
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
@@ -296,7 +296,7 @@ function buildParams(
 	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools, {
 			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
-			supportsGrammarTools: model.compat?.supportsGrammarTools ?? false,
+			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		});
 	}
 

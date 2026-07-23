@@ -855,6 +855,75 @@ describe("openai-codex streaming", () => {
 		expect(requestedToolChoice).toBe("required");
 	});
 
+	it("sets Codex strict mode explicitly and honors constrained sampling", async () => {
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed" });
+		let requestedTools: Array<{ type?: string; name?: string; strict?: boolean | null }> | undefined;
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async () =>
+					new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(encoder.encode(sse));
+								controller.close();
+							},
+						}),
+						{ status: 200, headers: { "content-type": "text/event-stream" } },
+					),
+			),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+
+		await streamOpenAICodexResponses(
+			model,
+			{
+				messages: [{ role: "user", content: "Use a tool", timestamp: Date.now() }],
+				tools: [
+					{
+						name: "optional",
+						description: "Optional constrained sampling",
+						parameters: Type.Object({ value: Type.String() }),
+						constrainedSampling: false,
+					},
+					{
+						name: "strict",
+						description: "Strict constrained sampling",
+						parameters: Type.Object({ value: Type.String() }, { additionalProperties: false }),
+						constrainedSampling: { type: "json_schema", strict: "prefer" },
+					},
+				],
+			},
+			{
+				apiKey: token,
+				transport: "sse",
+				onPayload: (payload) => {
+					requestedTools = (payload as { tools?: typeof requestedTools }).tools;
+				},
+			},
+		).result();
+
+		expect(requestedTools).toMatchObject([
+			{ type: "function", name: "optional", strict: null },
+			{ type: "function", name: "strict", strict: true },
+		]);
+	});
+
 	it.each(["gpt-5.3-codex", "gpt-5.4", "gpt-5.5"])("clamps %s minimal reasoning effort to low", async (modelId) => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
@@ -1904,7 +1973,7 @@ describe("openai-codex streaming", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 400000,
 			maxTokens: 128000,
-			compat: { supportsGrammarTools: true },
+			compat: { supportsOpenAIGrammarTools: true },
 		};
 		const firstContext: Context = {
 			systemPrompt: "You are a helpful assistant.",

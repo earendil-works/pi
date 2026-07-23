@@ -1258,7 +1258,7 @@ describe("openai-completions tool_choice", () => {
 				chatTemplateKwargs: {},
 				zaiToolStream: false,
 				supportsStrictMode: true,
-				supportsGrammarTools: false,
+				supportsOpenAIGrammarTools: false,
 				sendSessionAffinityHeaders: false,
 				sessionAffinityFormat: "openai",
 				supportsLongCacheRetention: true,

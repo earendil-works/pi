@@ -97,7 +97,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	cacheControlFormat: Type.Optional(Type.Literal("anthropic")),
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
 	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
-	supportsGrammarTools: Type.Optional(Type.Boolean()),
+	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
 	deferredToolsMode: Type.Optional(Type.Literal("kimi")),
@@ -114,7 +114,7 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
-	supportsGrammarTools: Type.Optional(Type.Boolean()),
+	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
 	supportsToolSearch: Type.Optional(Type.Boolean()),
 });
 

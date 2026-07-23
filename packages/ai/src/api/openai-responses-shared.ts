@@ -125,7 +125,7 @@ export interface ConvertResponsesMessagesOptions {
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	supportsStrictMode?: boolean;
-	supportsGrammarTools?: boolean;
+	supportsOpenAIGrammarTools?: boolean;
 	deferLoading?: boolean;
 }
 
@@ -344,10 +344,10 @@ export function convertResponsesMessages<TApi extends Api>(
 export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const defaultStrict = options?.strict === undefined ? false : options.strict;
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
-	const supportsGrammarTools = options?.supportsGrammarTools ?? false;
+	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
 	return tools.map((tool) => {
-		const grammar = resolveGrammarConstrainedSampling(tool, supportsGrammarTools);
+		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
 				type: "custom",
@@ -362,7 +362,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			} satisfies OpenAITool;
 		}
 
-		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode) ?? defaultStrict;
+		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		const functionTool: Omit<Extract<OpenAITool, { type: "function" }>, "strict"> & {
 			strict?: Extract<OpenAITool, { type: "function" }>["strict"];
 		} = {
@@ -373,7 +373,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			...(options?.deferLoading ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
-			functionTool.strict = strict;
+			functionTool.strict = constrainedStrict ?? defaultStrict;
 		}
 		return functionTool as OpenAITool;
 	});

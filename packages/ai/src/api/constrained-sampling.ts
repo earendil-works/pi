@@ -100,14 +100,14 @@ export function resolveJsonSchemaStrictSampling(tool: Tool, supportsStrictMode: 
 
 export function resolveGrammarConstrainedSampling(
 	tool: Tool,
-	supportsGrammarTools: boolean,
+	supportsOpenAIGrammarTools: boolean,
 ): GrammarConstrainedSampling | undefined {
 	const config = tool.constrainedSampling;
 	if (!config || config.type !== "grammar") {
 		return undefined;
 	}
 
-	if (!supportsGrammarTools) {
+	if (!supportsOpenAIGrammarTools) {
 		return undefined;
 	}
 
@@ -135,11 +135,11 @@ export function resolveGrammarConstrainedSampling(
 
 export function createGrammarToolInputProperties(
 	tools: Tool[] | undefined,
-	supportsGrammarTools: boolean,
+	supportsOpenAIGrammarTools: boolean,
 ): ReadonlyMap<string, string> {
 	const properties = new Map<string, string>();
 	for (const tool of tools ?? []) {
-		const grammar = resolveGrammarConstrainedSampling(tool, supportsGrammarTools);
+		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			properties.set(tool.name, grammar.inputProperty);
 		}
