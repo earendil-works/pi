@@ -630,6 +630,7 @@ describe("runAnsteelDiscussion", () => {
 		const staffVerificationPrompt = calls.find((call) => call.stage === "staff-verification")?.prompt ?? "";
 		const qaVerificationPrompt = calls.find((call) => call.stage === "qa-verification")?.prompt ?? "";
 		expect(staffCritiquePrompt).toContain(architecture);
+		expect(staffCritiquePrompt).toContain("no leading or trailing whitespace");
 		expect(qaCritiquePrompt).toContain(architecture);
 		expect(staffCritiquePrompt).not.toContain("The fault-injection acceptance test is missing.");
 		expect(qaCritiquePrompt).not.toContain("The driver interface cannot meet the proposed timing.");
@@ -1390,7 +1391,7 @@ describe("runAnsteelDiscussion", () => {
 			JSON.stringify({
 				roles: {
 					"tech-lead": { model: "anthropic/claude-sonnet" },
-					"staff-engineer": { model: "openai/gpt-5" },
+					"staff-engineer": { model: "openai/gpt-5", thinkingLevel: "high" },
 					"qa-engineer": { model: "deepseek/deepseek-chat" },
 				},
 			}),
@@ -1400,6 +1401,7 @@ describe("runAnsteelDiscussion", () => {
 
 		expect(config.roles["tech-lead"].model).toBe("anthropic/claude-sonnet");
 		expect(config.roles["staff-engineer"].model).toBe("openai/gpt-5");
+		expect(config.roles["staff-engineer"].thinkingLevel).toBe("high");
 		expect(config.roles["qa-engineer"].model).toBe("deepseek/deepseek-chat");
 		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls"]);
 		expect(config.stageTimeoutMs).toBe(120_000);
@@ -1567,9 +1569,40 @@ describe("runAnsteelDiscussion", () => {
 		expect(createdSessionCount).toBe(0);
 	});
 
+	it("rejects an unsupported role thinking level before creating any role session", async () => {
+		type TestModel = { provider: string; id: string };
+		let createdSessionCount = 0;
+
+		await expect(
+			runAnsteelProjectReview<TestModel>({
+				topic: "Review supplied thinking-level validation",
+				cwd: process.cwd(),
+				config: {
+					roles: {
+						"tech-lead": { model: "tech/lead", tools: ["read"] },
+						"staff-engineer": { model: "staff/engineer", thinkingLevel: "unsupported", tools: ["read"] },
+						"qa-engineer": { model: "qa/engineer", tools: ["read"] },
+					},
+					reportDirectory: "unused",
+				} as unknown as AnsteelConfig,
+				resolveModel: (provider, id) => ({ provider, id }),
+				createRoleSession: async () => {
+					createdSessionCount++;
+					return {
+						prompt: async () => "VERDICT: APPROVE",
+						dispose: () => {},
+					};
+				},
+			}),
+		).rejects.toThrow("Ansteel role staff-engineer thinkingLevel must be one of");
+
+		expect(createdSessionCount).toBe(0);
+	});
+
 	it("creates isolated role sessions with the configured models", async () => {
 		type TestModel = { provider: string; id: string };
-		const calls: Array<{ role: AnsteelRole; model: TestModel; tools: readonly string[] }> = [];
+		const calls: Array<{ role: AnsteelRole; model: TestModel; thinkingLevel?: string; tools: readonly string[] }> =
+			[];
 		const disposed: AnsteelRole[] = [];
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review the parser",
@@ -1577,14 +1610,14 @@ describe("runAnsteelDiscussion", () => {
 			config: {
 				roles: {
 					"tech-lead": { model: "claude/sonnet", tools: ["read", "bash"] },
-					"staff-engineer": { model: "openai/gpt-5", tools: ["read", "grep"] },
+					"staff-engineer": { model: "openai/gpt-5", thinkingLevel: "high", tools: ["read", "grep"] },
 					"qa-engineer": { model: "deepseek/chat", tools: ["read", "grep", "find", "ls"] },
 				},
 				reportDirectory: "unused",
 			},
 			resolveModel: (provider, id) => ({ provider, id }),
-			createRoleSession: async ({ role, model, tools }) => {
-				calls.push({ role, model, tools });
+			createRoleSession: async ({ role, model, thinkingLevel, tools }) => {
+				calls.push({ role, model, thinkingLevel, tools });
 				return {
 					prompt: async (prompt) => responseForMutualReviewStage(getStageFromPrompt(prompt)),
 					dispose: () => {
@@ -1597,6 +1630,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("approved");
 		expect(result.roleModels["tech-lead"]).toEqual({ provider: "claude", id: "sonnet" });
 		expect(result.roleModels["staff-engineer"]).toEqual({ provider: "openai", id: "gpt-5" });
+		expect(calls.find(({ role }) => role === "staff-engineer")?.thinkingLevel).toBe("high");
 		expect(calls.map(({ role }) => role)).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 	});

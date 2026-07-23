@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getCwdRelativePath, resolvePath } from "../utils/paths.ts";
 
 export const ANSTEEL_ROLES = ["tech-lead", "staff-engineer", "qa-engineer"] as const;
@@ -150,9 +151,12 @@ export const ANSTEEL_REVIEW_TOOLS = ["read", "grep", "find", "ls", "bash"] as co
 
 export type AnsteelReviewTool = (typeof ANSTEEL_REVIEW_TOOLS)[number];
 
+const ANSTEEL_THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 export interface AnsteelRoleConfig {
 	model: string;
 	tools: AnsteelReviewTool[];
+	thinkingLevel?: ThinkingLevel;
 }
 
 export interface AnsteelConfig {
@@ -187,6 +191,7 @@ export interface CreateAnsteelRoleSessionOptions<TModel extends AnsteelModelRefe
 	role: AnsteelRole;
 	model: TModel;
 	tools: readonly AnsteelReviewTool[];
+	thinkingLevel?: ThinkingLevel;
 	cwd: string;
 	maxToolCallsPerStage: number;
 }
@@ -439,6 +444,18 @@ function parseRoleTools(role: AnsteelRole, value: unknown): AnsteelReviewTool[] 
 	return [...new Set(tools)];
 }
 
+function parseRoleThinkingLevel(role: AnsteelRole, value: unknown): ThinkingLevel | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || !ANSTEEL_THINKING_LEVELS.includes(value as ThinkingLevel)) {
+		throw new AnsteelGovernanceSetupError(
+			`Ansteel role ${role} thinkingLevel must be one of ${ANSTEEL_THINKING_LEVELS.join(", ")}`,
+			"configuration",
+			role,
+		);
+	}
+	return value as ThinkingLevel;
+}
+
 function parseRoleConfig(role: AnsteelRole, value: unknown): AnsteelRoleConfig {
 	if (!isRecord(value)) {
 		throw new AnsteelGovernanceSetupError(`Ansteel role ${role} must be an object`, "configuration", role);
@@ -454,6 +471,7 @@ function parseRoleConfig(role: AnsteelRole, value: unknown): AnsteelRoleConfig {
 	return {
 		model: value.model,
 		tools: parseRoleTools(role, value.tools),
+		thinkingLevel: parseRoleThinkingLevel(role, value.thinkingLevel),
 	};
 }
 
@@ -715,6 +733,7 @@ export async function runAnsteelProjectReview<TModel extends AnsteelModelReferen
 						role,
 						model: roleModels[role],
 						tools: roleConfig.tools,
+						thinkingLevel: roleConfig.thinkingLevel,
 						cwd: options.cwd,
 						maxToolCallsPerStage: config.maxToolCallsPerStage ?? ANSTEEL_DEFAULT_MAX_TOOL_CALLS_PER_STAGE,
 					}),
@@ -764,6 +783,7 @@ const CONFIDENCE_INSTRUCTIONS = [
 
 const ISSUE_LEDGER_INSTRUCTIONS = [
 	"When raising a challenge, put every required change on its own line as `ISSUE: <ID>` using an uppercase ID such as STAFF-1 or QA-1.",
+	"Each ISSUE marker must be a bare ASCII line with no Markdown formatting and no leading or trailing whitespace.",
 	"State evidence, impact, and the acceptance condition below each issue.",
 	"When there are no required changes, put exactly `NO ISSUES` on its own line.",
 ].join(" ");

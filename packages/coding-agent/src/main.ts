@@ -832,7 +832,7 @@ export async function main(args: string[], options?: MainOptions) {
 					const model = modelRuntime.getModel(provider, id);
 					return model && modelRuntime.hasConfiguredAuth(model.provider) ? model : undefined;
 				},
-				createRoleSession: async ({ model, tools, cwd: roleCwd, maxToolCallsPerStage }) => {
+				createRoleSession: async ({ model, tools, thinkingLevel, cwd: roleCwd, maxToolCallsPerStage }) => {
 					const reviewResourceLoader = new DefaultResourceLoader({
 						cwd: roleCwd,
 						agentDir: services.agentDir,
@@ -850,6 +850,7 @@ export async function main(args: string[], options?: MainOptions) {
 						resourceLoader: reviewResourceLoader,
 						sessionManager: SessionManager.inMemory(roleCwd),
 						model,
+						thinkingLevel,
 						tools: [...tools],
 						customTools: [],
 					});

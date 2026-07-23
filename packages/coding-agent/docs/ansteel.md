@@ -100,6 +100,7 @@ Create `.pi/ansteel.json` in the project being reviewed. The `model` field is re
     },
     "staff-engineer": {
       "model": "<provider-b>/<model-id-b>",
+      "thinkingLevel": "high",
       "tools": ["read", "grep", "find", "ls", "bash"]
     },
     "qa-engineer": {
@@ -108,17 +109,22 @@ Create `.pi/ansteel.json` in the project being reviewed. The `model` field is re
     }
   },
   "reportDirectory": ".pi/ansteel-reports",
-  "stageTimeoutMs": 120000
+  "stageTimeoutMs": 120000,
+  "maxToolCallsPerStage": 8
 }
 ```
 
 `model` must use the exact `provider/model` form known to Pi, and that provider must have configured authentication. There is no current-model fallback.
+
+`thinkingLevel` is optional per role and accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Pi clamps the selected level to the configured model's supported levels. Set it explicitly when a provider requires thinking to be enabled; it does not change the role's tool or governance permissions.
 
 The only allowed role tools are `read`, `grep`, `find`, `ls`, and `bash`. By default, Tech Lead and Staff Engineer receive all five. QA receives `read`, `grep`, `find`, and `ls`; QA cannot be granted `bash`. No review role can receive `edit`, `write`, extension tools, or SDK custom tools through this configuration.
 
 `reportDirectory` is resolved from the project directory and must remain inside it. Omit it to use the default `.pi/ansteel-reports` location.
 
 `stageTimeoutMs` is optional and defaults to `120000`. It must be an integer from `1` through `2147483647` milliseconds and cannot be disabled. The limit covers an entire role stage, including tool use and provider retries; it is separate from Pi's provider HTTP idle timeout.
+
+`maxToolCallsPerStage` is optional and defaults to `4`. It must be an integer from `1` through `32`. A tool request beyond the configured budget rejects the current review stage rather than allowing an unbounded tool loop.
 
 ## Reports and governance evidence
 
