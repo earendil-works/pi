@@ -25,15 +25,19 @@ describe("ModelRegistry", () => {
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
 		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
+		vi.stubEnv("PI_OFFLINE", "1");
+		vi.spyOn(globalThis, "fetch");
 	});
 
 	afterEach(() => {
+		const fetchSpy = vi.mocked(fetch);
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
 		clearApiKeyCache();
 		vi.restoreAllMocks();
+		vi.unstubAllEnvs();
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
 	/** Create minimal provider config  */
