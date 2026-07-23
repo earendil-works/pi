@@ -605,6 +605,7 @@ describe("harness compaction", () => {
 		getOrThrow(await compact(preparation, models, model));
 
 		expect(seenOptions.map((options) => options?.maxTokens)).toEqual([128000, 128000]);
+		expect(seenOptions.map((options) => options?.cacheRetention)).toEqual(["none", "none"]);
 	});
 
 	it("returns compaction error results without throwing", async () => {
