@@ -16,6 +16,7 @@ import {
 	runAnsteelProjectReview,
 	writeAnsteelReport,
 } from "../src/core/ansteel-discussion.ts";
+import { getAnsteelModelBoundary } from "../src/main.ts";
 
 type RawTurnMessage = {
 	role: string;
@@ -86,7 +87,13 @@ const MUTUAL_REVIEW_STAGE_ORDER: Array<{ role: AnsteelRole; stage: AnsteelDiscus
 	{ role: "tech-lead", stage: "architecture" },
 	{ role: "staff-engineer", stage: "staff-critique" },
 	{ role: "qa-engineer", stage: "qa-critique" },
+	{ role: "tech-lead", stage: "tech-lead-cross-examination" },
+	{ role: "staff-engineer", stage: "staff-cross-examination" },
+	{ role: "qa-engineer", stage: "qa-cross-examination" },
 	{ role: "tech-lead", stage: "architecture-revision" },
+	{ role: "staff-engineer", stage: "staff-revision" },
+	{ role: "qa-engineer", stage: "qa-revision" },
+	{ role: "tech-lead", stage: "tech-lead-verification" },
 	{ role: "staff-engineer", stage: "staff-verification" },
 	{ role: "qa-engineer", stage: "qa-verification" },
 	{ role: "tech-lead", stage: "consensus" },
@@ -94,11 +101,33 @@ const MUTUAL_REVIEW_STAGE_ORDER: Array<{ role: AnsteelRole; stage: AnsteelDiscus
 	{ role: "qa-engineer", stage: "qa-sign-off" },
 ];
 
+const COMPLETE_WORK_CARD = [
+	"## Conclusion\n[L2] The proposed work card is ready for peer review.",
+	"## Evidence\n[L2] Current project evidence was reviewed.",
+	"## Assumptions and Unknowns\n[L3] Remaining uncertainty has a verification path.",
+	"## Alternatives and Trade-offs\n[L2] The selected approach has stated trade-offs.",
+	"## Self-Refutation Conditions\n[L3] Contradictory evidence would invalidate this work card.",
+	"## Questions for Peers\n[L2] Review the stated evidence and trade-offs.",
+].join("\n\n");
+
+function completeWorkCard(response: string): string {
+	return `${response}\n\n${COMPLETE_WORK_CARD}`;
+}
+
 const MUTUAL_REVIEW_RESPONSES: Record<AnsteelDiscussionStage, string> = {
-	architecture: "[L1] Architecture v0",
-	"staff-critique": "ISSUE: STAFF-INITIAL\n[L2] Initial implementation concern",
-	"qa-critique": "ISSUE: QA-INITIAL\n[L2] Initial testability concern",
-	"architecture-revision": "RESOLUTION: STAFF-INITIAL | RESOLVED\nRESOLUTION: QA-INITIAL | RESOLVED",
+	architecture: `[L2] Tech Lead work card\n\n${COMPLETE_WORK_CARD}`,
+	"staff-critique": `[L2] Staff Engineer work card\n\n${COMPLETE_WORK_CARD}`,
+	"qa-critique": `[L2] QA Engineer work card\n\n${COMPLETE_WORK_CARD}`,
+	"tech-lead-cross-examination":
+		"ISSUE: TL-CROSS | TARGET: staff-engineer\nNO ISSUES | TARGET: qa-engineer\n[L2] Challenge the implementation trade-off.",
+	"staff-cross-examination":
+		"ISSUE: STAFF-CROSS | TARGET: qa-engineer\nNO ISSUES | TARGET: tech-lead\n[L2] Challenge the test strategy.",
+	"qa-cross-examination":
+		"ISSUE: QA-CROSS | TARGET: tech-lead\nNO ISSUES | TARGET: staff-engineer\n[L2] Challenge the evidence boundary.",
+	"architecture-revision": `RESOLUTION: QA-CROSS | RESOLVED\n[L2] Tech Lead revised work card\n\n${COMPLETE_WORK_CARD}`,
+	"staff-revision": `RESOLUTION: TL-CROSS | RESOLVED\n[L2] Staff revised work card\n\n${COMPLETE_WORK_CARD}`,
+	"qa-revision": `RESOLUTION: STAFF-CROSS | RESOLVED\n[L2] QA revised work card\n\n${COMPLETE_WORK_CARD}`,
+	"tech-lead-verification": "VERDICT: APPROVE",
 	"staff-verification": "VERDICT: APPROVE",
 	"qa-verification": "VERDICT: APPROVE",
 	consensus: "[L1] Immutable consensus",
@@ -131,6 +160,459 @@ afterEach(() => {
 });
 
 describe("runAnsteelDiscussion", () => {
+	it("reports the single-model boundary without claiming model diversity", () => {
+		expect(getAnsteelModelBoundary(true)).toContain("may share the same configured model");
+		expect(getAnsteelModelBoundary(true)).not.toContain("three distinct configured role models");
+		expect(getAnsteelModelBoundary(false)).toBe(
+			"Mandatory governance resolved three distinct configured role models. Model diversity supplements, but does not replace, evidence verification.",
+		);
+	});
+
+	it("emits a visible start and completion event for every completed stage", async () => {
+		const progress: string[] = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review visible discussion progress",
+			onStageEvent: ({ type, role, stage }) => {
+				progress.push(`${type}:${role}/${stage}`);
+			},
+			runRole: async ({ stage }) => responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(progress).toEqual(
+			MUTUAL_REVIEW_STAGE_ORDER.flatMap(({ role, stage }) => [
+				`started:${role}/${stage}`,
+				`completed:${role}/${stage}`,
+			]),
+		);
+	});
+
+	it("asks each role for a concise response so later roles can consume the full transcript", async () => {
+		let firstPrompt = "";
+
+		await runAnsteelDiscussion({
+			topic: "Review concise discussion prompts",
+			runRole: async ({ prompt }) => {
+				firstPrompt = prompt;
+				return "";
+			},
+		});
+
+		expect(firstPrompt).toContain(
+			"Response limit: keep the response within 800 tokens unless code or evidence requires more.",
+		);
+	});
+
+	it("gives every initial work-card stage an exact heading and marker discipline", async () => {
+		const prompts = new Map<AnsteelDiscussionStage, string>();
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review work-card prompt compliance",
+			runRole: async ({ stage, prompt }) => {
+				prompts.set(stage, prompt);
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+		for (const stage of ["architecture", "staff-critique", "qa-critique"] as const) {
+			const prompt = prompts.get(stage) ?? "";
+			expect(prompt).toContain("Begin the response with exactly `## Conclusion`.");
+			expect(prompt).toContain(
+				"Include each exact heading once with nonempty content: `## Conclusion`, `## Evidence`, `## Assumptions and Unknowns`, `## Alternatives and Trade-offs`, `## Self-Refutation Conditions`, and `## Questions for Peers`.",
+			);
+			expect(prompt).toContain(
+				"Do not emit `VERDICT`, `ISSUE`, `NO ISSUES`, or `RESOLUTION` markers in this initial work-card stage.",
+			);
+		}
+	});
+
+	it("gives every revision stage an exact resolution-before-work-card contract", async () => {
+		const prompts = new Map<AnsteelDiscussionStage, string>();
+		const assignedTechLeadIds = ["STAFF-1", "STAFF-2", "STAFF-3", "QA-1", "QA-2", "QA-3", "QA-4"];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review a complete Tech Lead resolution ledger",
+			runRole: async ({ stage, prompt }) => {
+				prompts.set(stage, prompt);
+				switch (stage) {
+					case "staff-cross-examination":
+						return [
+							"ISSUE: STAFF-1 | TARGET: tech-lead",
+							"ISSUE: STAFF-2 | TARGET: tech-lead",
+							"ISSUE: STAFF-3 | TARGET: tech-lead",
+							"NO ISSUES | TARGET: qa-engineer",
+						].join("\n");
+					case "qa-cross-examination":
+						return [
+							"ISSUE: QA-1 | TARGET: tech-lead",
+							"ISSUE: QA-2 | TARGET: tech-lead",
+							"ISSUE: QA-3 | TARGET: tech-lead",
+							"ISSUE: QA-4 | TARGET: tech-lead",
+							"NO ISSUES | TARGET: staff-engineer",
+						].join("\n");
+					case "architecture-revision":
+						return completeWorkCard(assignedTechLeadIds.map((id) => `RESOLUTION: ${id} | RESOLVED`).join("\n"));
+					case "qa-revision":
+						return completeWorkCard("[L2] No open challenge is assigned.");
+					default:
+						return responseForMutualReviewStage(stage);
+				}
+			},
+		});
+
+		expect(result.terminationReason).toBeUndefined();
+		expect(result.verdict).toBe("approved");
+		for (const stage of ["architecture-revision", "staff-revision", "qa-revision"] as const) {
+			const prompt = prompts.get(stage) ?? "";
+			expect(prompt).toContain(
+				"Before the revised work card, for every open challenge ID assigned to you, emit exactly one whole-line `RESOLUTION: <assigned-ID> | RESOLVED` marker.",
+			);
+			expect(prompt).toContain("Emit no `RESOLUTION` marker when no open challenge ID is assigned to you.");
+			expect(prompt).toContain(
+				"After those resolution markers, publish the revised work card with each exact heading once and nonempty content: `## Conclusion`, `## Evidence`, `## Assumptions and Unknowns`, `## Alternatives and Trade-offs`, `## Self-Refutation Conditions`, and `## Questions for Peers`.",
+			);
+			expect(prompt).toContain(
+				"Do not emit `VERDICT`, `ISSUE`, or `NO ISSUES` markers in this revision stage; reserve them for a subsequent verification stage if required.",
+			);
+		}
+		for (const id of assignedTechLeadIds) {
+			expect(prompts.get("architecture-revision")).toContain(`- ${id} from`);
+		}
+	});
+
+	it("rejects an initial work card that omits required visible sections", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review incomplete initial work card",
+			runRole: async ({ stage }) =>
+				stage === "architecture"
+					? "## Conclusion\n[L2] The architecture is ready for review."
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("incomplete-work-card");
+		expect(result.transcript.at(-1)?.stage).toBe("architecture");
+		expect(result.markdown).toContain("missing required visible sections: Evidence");
+	});
+
+	it("rejects a work card with an empty required section body", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review empty work-card evidence",
+			runRole: async ({ stage }) =>
+				stage === "architecture"
+					? [
+							"## Conclusion",
+							"[L2] The architecture is ready for review.",
+							"## Evidence",
+							"## Assumptions and Unknowns",
+							"[L3] The integration dependency remains to be checked.",
+							"## Alternatives and Trade-offs",
+							"[L2] The direct path has the lowest operational cost.",
+							"## Self-Refutation Conditions",
+							"[L3] A failing integration test invalidates this proposal.",
+							"## Questions for Peers",
+							"[L2] Verify the proposed evidence boundary.",
+						].join("\n\n")
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("incomplete-work-card");
+		expect(result.markdown).toContain("missing required visible sections: Evidence");
+	});
+
+	it("rejects a work card whose required section contains only a non-required heading", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review heading-only work-card evidence",
+			runRole: async ({ stage }) =>
+				stage === "architecture"
+					? [
+							"## Conclusion",
+							"[L2] The architecture is ready for review.",
+							"## Evidence",
+							"## Placeholder",
+							"## Assumptions and Unknowns",
+							"[L3] The integration dependency remains to be checked.",
+							"## Alternatives and Trade-offs",
+							"[L2] The direct path has the lowest operational cost.",
+							"## Self-Refutation Conditions",
+							"[L3] A failing integration test invalidates this proposal.",
+							"## Questions for Peers",
+							"[L2] Verify the proposed evidence boundary.",
+						].join("\n\n")
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("incomplete-work-card");
+		expect(result.markdown).toContain("missing required visible sections: Evidence");
+	});
+
+	it("accepts required headings wrapped by an outer Markdown heading", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review wrapped work-card headings",
+			runRole: async ({ stage }) =>
+				stage === "architecture"
+					? `[L2] Wrapped work card\n\n${COMPLETE_WORK_CARD.replace(/^## /gm, "### ## ")}`
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("approved");
+	});
+
+	it.each(["#", "####"])(
+		"rejects a wrapped required heading with an alternate inner level (%s)",
+		async (innerLevel) => {
+			const result = await runAnsteelDiscussion({
+				topic: "Review invalid wrapped work-card headings",
+				runRole: async ({ stage }) =>
+					stage === "architecture"
+						? `[L2] Invalid wrapped work card\n\n${COMPLETE_WORK_CARD.replace(/^## /gm, `### ${innerLevel} `)}`
+						: responseForMutualReviewStage(stage),
+			});
+
+			expect(result.verdict).toBe("rejected");
+			expect(result.terminationReason).toBe("incomplete-work-card");
+		},
+	);
+
+	it("accepts parenthesized qualifiers on every required revision heading", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review qualified revision headings",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"architecture-revision": completeWorkCard("RESOLUTION: QA-CROSS | RESOLVED").replace(
+						/^## (.+)$/gm,
+						"## $1 (Revised)",
+					),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+	});
+
+	it("rejects a revision heading with an arbitrary required-section suffix", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review arbitrary revision heading suffix",
+			runRole: async ({ stage }) =>
+				stage === "architecture-revision"
+					? completeWorkCard("RESOLUTION: QA-CROSS | RESOLVED").replace("## Conclusion", "## Conclusion notes")
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("incomplete-work-card");
+		expect(result.transcript.at(-1)?.stage).toBe("architecture-revision");
+	});
+
+	it("rejects a qualified revision heading with an empty body", async () => {
+		const revision = completeWorkCard("RESOLUTION: QA-CROSS | RESOLVED")
+			.replace(/^## (.+)$/gm, "## $1 (Revised)")
+			.replace(
+				"## Conclusion (Revised)\n[L2] The proposed work card is ready for peer review.",
+				"## Conclusion (Revised)",
+			);
+		const result = await runAnsteelDiscussion({
+			topic: "Review empty qualified revision heading",
+			runRole: async ({ stage }) =>
+				stage === "architecture-revision" ? revision : responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("incomplete-work-card");
+		expect(result.markdown).toContain("missing required visible sections: Conclusion");
+	});
+
+	it("accepts an ISSUE marker in a Markdown heading", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review Markdown issue formatting",
+			runRole: async ({ stage }) => {
+				if (stage === "staff-cross-examination") {
+					return "### ISSUE: STAFF-HEADING | TARGET: qa-engineer\nNO ISSUES | TARGET: tech-lead\nProvide a clearer invariant.";
+				}
+				if (stage === "qa-revision") return completeWorkCard("RESOLUTION: STAFF-HEADING | RESOLVED\n[L2] Revised.");
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+	});
+
+	it("allows a targeted no-issues marker alongside an issue for the other peer", async () => {
+		let staffCrossExaminationPrompt = "";
+		const result = await runAnsteelDiscussion({
+			topic: "Review per-peer cross-examination markers",
+			runRole: async ({ stage, prompt }) => {
+				if (stage === "staff-cross-examination") {
+					staffCrossExaminationPrompt = prompt;
+					return "ISSUE: STAFF-PER-PEER | TARGET: tech-lead\n### NO ISSUES | TARGET: qa-engineer\n[L2] The architecture needs a clearer invariant.";
+				}
+				if (stage === "architecture-revision") {
+					return completeWorkCard("RESOLUTION: STAFF-PER-PEER | RESOLVED\nRESOLUTION: QA-CROSS | RESOLVED");
+				}
+				if (stage === "qa-revision") return completeWorkCard("[L2] No challenge is assigned to QA.");
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(staffCrossExaminationPrompt).toContain("NO ISSUES | TARGET: tech-lead");
+	});
+
+	it("rejects a cross-examination response that omits one peer", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review missing cross-examination peer coverage",
+			runRole: async ({ stage }) =>
+				stage === "staff-cross-examination"
+					? "ISSUE: STAFF-ONLY-ONE | TARGET: tech-lead\n[L2] The interface contract is incomplete."
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.markdown).toContain("must cover every peer role");
+	});
+
+	it("accepts a RESOLUTION marker in a Markdown heading", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review Markdown resolution heading formatting",
+			runRole: async ({ stage }) => {
+				if (stage === "staff-cross-examination") {
+					return "ISSUE: STAFF-RESOLUTION-HEADING | TARGET: qa-engineer\nNO ISSUES | TARGET: tech-lead";
+				}
+				if (stage === "qa-revision")
+					return completeWorkCard("### RESOLUTION: STAFF-RESOLUTION-HEADING | RESOLVED\n[L2] Revised.");
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+	});
+
+	it("rejects a zero-width-only role response as blank", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review zero-width role output",
+			runRole: async ({ stage }) =>
+				stage === "qa-verification" ? "\u200B\u200C\u200D\uFEFF" : responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("blank-response");
+		expect(result.markdown).toContain("qa-engineer / qa-verification returned an empty or whitespace-only response");
+	});
+
+	it("rejects a cross-examination issue without a target role", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review an untargeted cross-examination issue",
+			runRole: async ({ stage }) => {
+				if (stage === "staff-cross-examination") return "ISSUE: STAFF-SHORT\nClarify the invariant";
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+	});
+
+	it("rejects a self-targeted cross-examination issue", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review a self-targeted challenge",
+			runRole: async ({ stage }) =>
+				stage === "tech-lead-cross-examination"
+					? "ISSUE: TL-SELF | TARGET: tech-lead\n[L2] This must be rejected."
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.markdown).toContain("cannot challenge its own work card");
+	});
+
+	it("rejects a cross-examination response that combines issues with NO ISSUES", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review contradictory cross-examination markers",
+			runRole: async ({ stage }) =>
+				stage === "staff-cross-examination"
+					? "ISSUE: STAFF-CONTRADICTION | TARGET: tech-lead\nNO ISSUES"
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+	});
+
+	it("ignores a NO ISSUES commentary heading after valid targeted issues", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review no-issues commentary after targeted challenges",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"tech-lead-cross-examination": [
+						"### ISSUE: TL-COMMENT-STAFF | TARGET: staff-engineer",
+						"### ISSUE: TL-COMMENT-QA | TARGET: qa-engineer",
+						"### NO ISSUES (remaining claims)",
+					].join("\n"),
+					"staff-revision": completeWorkCard("RESOLUTION: TL-COMMENT-STAFF | RESOLVED"),
+					"qa-revision": completeWorkCard(
+						"RESOLUTION: STAFF-CROSS | RESOLVED\nRESOLUTION: TL-COMMENT-QA | RESOLVED",
+					),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "TL-COMMENT-STAFF", targetRole: "staff-engineer", status: "resolved" }),
+				expect.objectContaining({ id: "TL-COMMENT-QA", targetRole: "qa-engineer", status: "resolved" }),
+			]),
+		);
+	});
+
+	it("does not let NO ISSUES commentary cover an unchallenged peer", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review unchallenged peer after no-issues commentary",
+			runRole: async ({ stage }) =>
+				stage === "tech-lead-cross-examination"
+					? "ISSUE: TL-COMMENT-ONLY | TARGET: staff-engineer\nNO ISSUES: QA claims are already covered above."
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.markdown).toContain("must cover every peer role with an ISSUE or targeted NO ISSUES marker");
+	});
+
+	it("rejects a bold RESOLUTION marker embedded in prose", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review embedded Markdown resolution formatting",
+			runRole: async ({ stage }) => {
+				if (stage === "staff-cross-examination") {
+					return "ISSUE: STAFF-TABLE | TARGET: qa-engineer\nNO ISSUES | TARGET: tech-lead\nClarify the boundary.";
+				}
+				if (stage === "qa-revision")
+					return completeWorkCard("The summary says **RESOLUTION: STAFF-TABLE | RESOLVED**.");
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("unanswered-challenge");
+		expect(result.transcript.at(-1)?.stage).toBe("qa-revision");
+	});
+
+	it("accepts an emphasized verification verdict", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review Markdown verdict formatting",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"staff-verification": "**VERDICT: APPROVE**",
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+	});
+
 	it("bounds each role stage to a finite number of safe tool executions", () => {
 		const budget = createAnsteelToolBudget(2);
 
@@ -141,24 +623,25 @@ describe("runAnsteelDiscussion", () => {
 			reason:
 				"Ansteel stage tool budget of 2 executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.",
 		});
-		expect(budget.getStageFailureReason()).toBe(
-			"Ansteel stage tool budget of 2 executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.",
-		);
+		expect(budget.getStageFailureReason()).toBeUndefined();
 
 		budget.reset();
 		expect(budget.beforeToolCall("bash", { command: "npm test" })).toEqual({
 			block: true,
 			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
 		});
-		expect(budget.getStageFailureReason()).toBe("Ansteel bash requires an explicit timeout of at most 20 seconds.");
+		expect(budget.getStageFailureReason()).toBeUndefined();
 		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 21 })).toEqual({
 			block: true,
 			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
 		});
+		expect(budget.getStageFailureReason()).toBeUndefined();
 		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 20 })).toEqual({
 			block: true,
-			reason: "Ansteel bash requires an explicit timeout of at most 20 seconds.",
+			reason:
+				"Ansteel stage tool budget of 2 executions is exhausted. Provide the evidence-labelled conclusion without requesting more tools.",
 		});
+		expect(budget.getStageFailureReason()).toBeUndefined();
 
 		budget.reset();
 		expect(budget.getStageFailureReason()).toBeUndefined();
@@ -574,14 +1057,18 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.consensus).toBeUndefined();
 		expect(result.transcript.at(-1)?.response).toBe("");
-		expect(getLegacyCopyText(qaMessages ?? [])).toBe("ISSUE: QA-INITIAL\n[L2] Initial testability concern");
+		expect(getLegacyCopyText(qaMessages ?? [])).toBe(MUTUAL_REVIEW_RESPONSES["qa-revision"]);
 		expect(result.markdown).toContain("qa-engineer / qa-verification returned an empty or whitespace-only response");
 		expect(prompts.some(({ text }) => text.includes("Current stage: consensus."))).toBe(false);
 	});
 
-	it("routes one architecture through independent Staff and QA challenges before consensus", async () => {
+	it("runs three independent work cards, cross-examination, and three-role verification before consensus", async () => {
 		const calls: Array<{ role: AnsteelRole; stage: string; prompt: string }> = [];
-		const architecture = "[L1] Architecture v0: component boundaries, failure policy, and acceptance criteria";
+		const techCard = completeWorkCard(
+			"[L2] Tech work card: component boundaries, failure policy, and acceptance criteria",
+		);
+		const staffCard = completeWorkCard("[L2] Staff work card: implementation sequencing and interface constraints");
+		const qaCard = completeWorkCard("[L2] QA work card: test oracle and fault-injection plan");
 
 		const result = await runAnsteelDiscussion({
 			topic: "Review the motor safety architecture",
@@ -589,13 +1076,25 @@ describe("runAnsteelDiscussion", () => {
 				calls.push({ role, stage, prompt });
 				switch (stage) {
 					case "architecture":
-						return architecture;
+						return techCard;
 					case "staff-critique":
-						return "ISSUE: STAFF-1\n[L2] The driver interface cannot meet the proposed timing.";
+						return staffCard;
 					case "qa-critique":
-						return "ISSUE: QA-1\n[L2] The fault-injection acceptance test is missing.";
+						return qaCard;
+					case "tech-lead-cross-examination":
+						return "ISSUE: TL-1 | TARGET: staff-engineer\nNO ISSUES | TARGET: qa-engineer\n[L2] The driver interface cannot meet the proposed timing.";
+					case "staff-cross-examination":
+						return "ISSUE: STAFF-1 | TARGET: qa-engineer\nNO ISSUES | TARGET: tech-lead\n[L2] The fault-injection acceptance test is missing.";
+					case "qa-cross-examination":
+						return "ISSUE: QA-1 | TARGET: tech-lead\nNO ISSUES | TARGET: staff-engineer\n[L2] The architecture lacks a failure boundary.";
 					case "architecture-revision":
-						return "RESOLUTION: STAFF-1 | RESOLVED\nRESOLUTION: QA-1 | RESOLVED";
+						return completeWorkCard("RESOLUTION: QA-1 | RESOLVED");
+					case "staff-revision":
+						return completeWorkCard("RESOLUTION: TL-1 | RESOLVED");
+					case "qa-revision":
+						return completeWorkCard("RESOLUTION: STAFF-1 | RESOLVED");
+					case "tech-lead-verification":
+						return "VERDICT: APPROVE\nTL-VERIFICATION-PRIVATE";
 					case "staff-verification":
 						return "VERDICT: APPROVE\nSTAFF-VERIFICATION-PRIVATE";
 					case "qa-verification":
@@ -612,40 +1111,44 @@ describe("runAnsteelDiscussion", () => {
 		});
 
 		expect(result.verdict).toBe("approved");
-		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual([
-			"tech-lead:architecture",
-			"staff-engineer:staff-critique",
-			"qa-engineer:qa-critique",
-			"tech-lead:architecture-revision",
-			"staff-engineer:staff-verification",
-			"qa-engineer:qa-verification",
-			"tech-lead:consensus",
-			"staff-engineer:staff-sign-off",
-			"qa-engineer:qa-sign-off",
-		]);
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toEqual(
+			MUTUAL_REVIEW_STAGE_ORDER.map(({ role, stage }) => `${role}:${stage}`),
+		);
 
 		const staffCritiquePrompt = calls.find((call) => call.stage === "staff-critique")?.prompt ?? "";
 		const qaCritiquePrompt = calls.find((call) => call.stage === "qa-critique")?.prompt ?? "";
+		const staffCrossExaminationPrompt = calls.find((call) => call.stage === "staff-cross-examination")?.prompt ?? "";
 		const architectureRevisionPrompt = calls.find((call) => call.stage === "architecture-revision")?.prompt ?? "";
+		const staffRevisionPrompt = calls.find((call) => call.stage === "staff-revision")?.prompt ?? "";
+		const techLeadVerificationPrompt = calls.find((call) => call.stage === "tech-lead-verification")?.prompt ?? "";
 		const staffVerificationPrompt = calls.find((call) => call.stage === "staff-verification")?.prompt ?? "";
 		const qaVerificationPrompt = calls.find((call) => call.stage === "qa-verification")?.prompt ?? "";
-		expect(staffCritiquePrompt).toContain(architecture);
+		expect(staffCritiquePrompt).not.toContain(techCard);
+		expect(qaCritiquePrompt).not.toContain(techCard);
 		expect(staffCritiquePrompt).toContain("no leading or trailing whitespace");
-		expect(qaCritiquePrompt).toContain(architecture);
-		expect(staffCritiquePrompt).not.toContain("The fault-injection acceptance test is missing.");
-		expect(qaCritiquePrompt).not.toContain("The driver interface cannot meet the proposed timing.");
-		expect(architectureRevisionPrompt).toContain("The driver interface cannot meet the proposed timing.");
-		expect(architectureRevisionPrompt).toContain("The fault-injection acceptance test is missing.");
-		for (const verificationPrompt of [staffVerificationPrompt, qaVerificationPrompt]) {
+		expect(staffCritiquePrompt).toContain("Never repeat an `ISSUE:` marker");
+		expect(staffCritiquePrompt).toContain("Do not read or cite prior Ansteel reports");
+		expect(staffCrossExaminationPrompt).toContain(techCard);
+		expect(staffCrossExaminationPrompt).toContain(staffCard);
+		expect(staffCrossExaminationPrompt).toContain(qaCard);
+		expect(architectureRevisionPrompt).toContain("The architecture lacks a failure boundary.");
+		expect(staffRevisionPrompt).toContain("The driver interface cannot meet the proposed timing.");
+		for (const verificationPrompt of [techLeadVerificationPrompt, staffVerificationPrompt, qaVerificationPrompt]) {
+			expect(verificationPrompt).toContain("RESOLUTION: TL-1 | RESOLVED");
 			expect(verificationPrompt).toContain("RESOLUTION: STAFF-1 | RESOLVED");
 			expect(verificationPrompt).toContain("RESOLUTION: QA-1 | RESOLVED");
-			expect(verificationPrompt).toContain("STAFF-1 | staff-engineer | round 0 | resolved");
-			expect(verificationPrompt).toContain("QA-1 | qa-engineer | round 0 | resolved");
+			expect(verificationPrompt).toContain("TL-1 | tech-lead -> staff-engineer | round 0 | resolved");
+			expect(verificationPrompt).toContain(
+				"The final nonblank line of your response must be exactly `VERDICT: APPROVE` or exactly `VERDICT: REJECT`.",
+			);
+			expect(verificationPrompt).toContain(
+				"If you reject, add at least one new targeted `ISSUE: <ID> | TARGET: <role>` marker before that final verdict line.",
+			);
 		}
 		expect(qaVerificationPrompt).not.toContain("STAFF-VERIFICATION-PRIVATE");
 	});
 
-	it("returns verifier rejections to a second architecture revision before rejecting at the cap", async () => {
+	it("returns verifier rejections to a second collaborative revision before rejecting at the cap", async () => {
 		const calls: Array<{ role: AnsteelRole; stage: string }> = [];
 		let revisionCount = 0;
 
@@ -654,26 +1157,23 @@ describe("runAnsteelDiscussion", () => {
 			runRole: async ({ role, stage }) => {
 				calls.push({ role, stage });
 				switch (stage) {
-					case "architecture":
-						return "[L1] Architecture v0";
-					case "staff-critique":
-						return "ISSUE: STAFF-INITIAL\n[L2] Initial implementation objection";
-					case "qa-critique":
-						return "ISSUE: QA-INITIAL\n[L2] Initial testability objection";
 					case "architecture-revision":
 						revisionCount++;
-						return revisionCount === 1
-							? ["RESOLUTION: STAFF-INITIAL | RESOLVED", "RESOLUTION: QA-INITIAL | RESOLVED"].join("\n")
-							: [
-									`RESOLUTION: STAFF-VERIFY-${revisionCount - 1} | RESOLVED`,
-									`RESOLUTION: QA-VERIFY-${revisionCount - 1} | RESOLVED`,
-								].join("\n");
-					case "staff-verification":
-						return `VERDICT: REJECT\nISSUE: STAFF-VERIFY-${revisionCount}\n[L1] The implementation still cannot meet the timing bound.`;
+						return completeWorkCard(
+							revisionCount === 1 ? "RESOLUTION: QA-CROSS | RESOLVED" : "[L2] No new Tech Lead challenge.",
+						);
+					case "staff-revision":
+						return completeWorkCard(
+							revisionCount === 1 ? "RESOLUTION: TL-CROSS | RESOLVED" : "RESOLUTION: QA-VERIFY-1 | RESOLVED",
+						);
+					case "qa-revision":
+						return completeWorkCard(
+							revisionCount === 1 ? "RESOLUTION: STAFF-CROSS | RESOLVED" : "[L2] No new QA challenge.",
+						);
 					case "qa-verification":
-						return `VERDICT: REJECT\nISSUE: QA-VERIFY-${revisionCount}\n[L1] The safety test still cannot prove the fault path.`;
+						return `VERDICT: REJECT\nISSUE: QA-VERIFY-${revisionCount} | TARGET: staff-engineer\n[L1] The safety test still cannot prove the fault path.`;
 					default:
-						return `[L2] ${role}/${stage}`;
+						return responseForMutualReviewStage(stage);
 				}
 			},
 		});
@@ -681,7 +1181,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(calls.filter((call) => call.stage === "architecture-revision")).toHaveLength(2);
 		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("tech-lead:consensus");
-		expect(result.markdown).toContain("maximum of 2 architecture revision rounds");
+		expect(result.markdown).toContain("maximum of 2 revision rounds");
 	});
 
 	it("rejects an architecture revision that does not answer every challenge ID", async () => {
@@ -693,13 +1193,13 @@ describe("runAnsteelDiscussion", () => {
 				calls.push({ role, stage });
 				switch (stage) {
 					case "architecture":
-						return "[L1] Architecture v0";
+						return completeWorkCard("[L1] Architecture v0");
 					case "staff-critique":
-						return "ISSUE: STAFF-UNANSWERED\n[L2] Driver ownership is ambiguous.";
+						return completeWorkCard("ISSUE: STAFF-UNANSWERED\n[L2] Driver ownership is ambiguous.");
 					case "qa-critique":
-						return "ISSUE: QA-ANSWERED\n[L2] Error-path coverage is incomplete.";
+						return completeWorkCard("ISSUE: QA-ANSWERED\n[L2] Error-path coverage is incomplete.");
 					case "architecture-revision":
-						return "RESOLUTION: QA-ANSWERED | RESOLVED";
+						return completeWorkCard("RESOLUTION: QA-ANSWERED | RESOLVED");
 					default:
 						return `[L2] ${role}/${stage}`;
 				}
@@ -716,9 +1216,14 @@ describe("runAnsteelDiscussion", () => {
 			topic: "Review an architecture without objections",
 			runRole: async ({ stage }) =>
 				responseForMutualReviewStage(stage, {
-					"staff-critique": "NO ISSUES",
-					"qa-critique": "NO ISSUES",
-					"architecture-revision": "[L1] Architecture v1 remains unchanged after independent review.",
+					"tech-lead-cross-examination": "NO ISSUES",
+					"staff-cross-examination": "NO ISSUES",
+					"qa-cross-examination": "NO ISSUES",
+					"architecture-revision": completeWorkCard(
+						"[L2] Tech Lead work card remains unchanged after independent review.",
+					),
+					"staff-revision": completeWorkCard("[L2] Staff work card remains unchanged after independent review."),
+					"qa-revision": completeWorkCard("[L2] QA work card remains unchanged after independent review."),
 				}),
 		});
 
@@ -727,33 +1232,187 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.markdown).toContain("No recorded challenge IDs.");
 	});
 
-	it.each([
-		["a trailing space on an issue marker", "ISSUE: STAFF-STRICT "],
-		["a trailing space on the no-issues marker", "NO ISSUES "],
-	])("rejects %s before the architecture revision", async (_description, staffCritique) => {
+	it("tolerates a redundant targeted NO ISSUES marker without discarding peer challenges", async () => {
 		const result = await runAnsteelDiscussion({
-			topic: "Review strict challenge marker parsing",
+			topic: "Review redundant targeted no-issues commentary",
 			runRole: async ({ stage }) =>
-				stage === "staff-critique" ? staffCritique : responseForMutualReviewStage(stage),
+				responseForMutualReviewStage(stage, {
+					"staff-cross-examination": [
+						"ISSUE: STAFF-REDUNDANT-1 | TARGET: tech-lead",
+						"ISSUE: STAFF-REDUNDANT-2 | TARGET: tech-lead",
+						"ISSUE: STAFF-REDUNDANT-3 | TARGET: qa-engineer",
+						"NO ISSUES | TARGET: tech-lead",
+					].join("\n"),
+					"architecture-revision": completeWorkCard(
+						"RESOLUTION: QA-CROSS | RESOLVED\nRESOLUTION: STAFF-REDUNDANT-1 | RESOLVED\nRESOLUTION: STAFF-REDUNDANT-2 | RESOLVED",
+					),
+					"qa-revision": completeWorkCard("RESOLUTION: STAFF-REDUNDANT-3 | RESOLVED"),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ id: "STAFF-REDUNDANT-1", targetRole: "tech-lead", status: "resolved" }),
+				expect.objectContaining({ id: "STAFF-REDUNDANT-2", targetRole: "tech-lead", status: "resolved" }),
+				expect.objectContaining({ id: "STAFF-REDUNDANT-3", targetRole: "qa-engineer", status: "resolved" }),
+			]),
+		);
+	});
+
+	it("accepts exact whole-line inline-code cross-examination and resolution markers", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review inline-code Ansteel markers",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"tech-lead-cross-examination":
+						"`ISSUE: TL-INLINE | TARGET: staff-engineer`\n`NO ISSUES | TARGET: qa-engineer`",
+					"staff-cross-examination":
+						"`ISSUE: STAFF-INLINE | TARGET: qa-engineer`\n`NO ISSUES | TARGET: tech-lead`",
+					"qa-cross-examination": "`ISSUE: QA-INLINE | TARGET: tech-lead`\n`NO ISSUES | TARGET: staff-engineer`",
+					"architecture-revision": completeWorkCard("`RESOLUTION: QA-INLINE | RESOLVED`"),
+					"staff-revision": completeWorkCard("`RESOLUTION: TL-INLINE | RESOLVED`"),
+					"qa-revision": completeWorkCard("`RESOLUTION: STAFF-INLINE | RESOLVED`"),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual([
+			expect.objectContaining({ id: "TL-INLINE", targetRole: "staff-engineer", status: "resolved" }),
+			expect.objectContaining({ id: "STAFF-INLINE", targetRole: "qa-engineer", status: "resolved" }),
+			expect.objectContaining({ id: "QA-INLINE", targetRole: "tech-lead", status: "resolved" }),
+		]);
+	});
+
+	it("accepts an exact whole-line inline-code plain NO ISSUES marker", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review inline-code no-issues markers",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"tech-lead-cross-examination": "`NO ISSUES`",
+					"staff-cross-examination": "`NO ISSUES`",
+					"qa-cross-examination": "`NO ISSUES`",
+					"architecture-revision": completeWorkCard("[L2] No Tech Lead revision is required."),
+					"staff-revision": completeWorkCard("[L2] No Staff revision is required."),
+					"qa-revision": completeWorkCard("[L2] No QA revision is required."),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual([]);
+	});
+
+	it("accepts exact whole-line bold cross-examination and resolution markers", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review bold Ansteel markers",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"tech-lead-cross-examination":
+						"**ISSUE: TL-BOLD | TARGET: staff-engineer**\n**NO ISSUES | TARGET: qa-engineer**",
+					"staff-cross-examination":
+						"**ISSUE: STAFF-BOLD | TARGET: qa-engineer**\n**NO ISSUES | TARGET: tech-lead**",
+					"qa-cross-examination": "**ISSUE: QA-BOLD | TARGET: tech-lead**\n**NO ISSUES | TARGET: staff-engineer**",
+					"architecture-revision": completeWorkCard("**RESOLUTION: QA-BOLD | RESOLVED**"),
+					"staff-revision": completeWorkCard("**RESOLUTION: TL-BOLD | RESOLVED**"),
+					"qa-revision": completeWorkCard("**RESOLUTION: STAFF-BOLD | RESOLVED**"),
+				}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.challengeLedger).toEqual([
+			expect.objectContaining({ id: "TL-BOLD", targetRole: "staff-engineer", status: "resolved" }),
+			expect.objectContaining({ id: "STAFF-BOLD", targetRole: "qa-engineer", status: "resolved" }),
+			expect.objectContaining({ id: "QA-BOLD", targetRole: "tech-lead", status: "resolved" }),
+		]);
+	});
+
+	it.each([
+		[
+			"a bold marker embedded in prose",
+			"The review says **ISSUE: TL-EMBEDDED-BOLD | TARGET: staff-engineer** and **NO ISSUES | TARGET: qa-engineer**.",
+		],
+		[
+			"partially wrapped bold markers",
+			"**ISSUE: TL-PARTIAL-BOLD | TARGET: staff-engineer\nNO ISSUES | TARGET: qa-engineer**",
+		],
+	])("rejects %s during cross-examination", async (_description, response) => {
+		const result = await runAnsteelDiscussion({
+			topic: "Reject non-whole-line bold markers",
+			runRole: async ({ stage }) =>
+				stage === "tech-lead-cross-examination" ? response : responseForMutualReviewStage(stage),
 		});
 
 		expect(result.verdict).toBe("rejected");
 		expect(result.terminationReason).toBe("invalid-challenge-ledger");
-		expect(result.transcript.at(-1)?.stage).toBe("staff-critique");
+		expect(result.transcript.at(-1)?.stage).toBe("tech-lead-cross-examination");
+	});
+
+	it("rejects inline-code markers embedded in prose", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Reject embedded inline-code markers",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"tech-lead-cross-examination":
+						"The review says `ISSUE: TL-EMBEDDED | TARGET: staff-engineer` and `NO ISSUES | TARGET: qa-engineer`.",
+					"staff-cross-examination":
+						"The review says `ISSUE: STAFF-EMBEDDED | TARGET: qa-engineer` and `NO ISSUES | TARGET: tech-lead`.",
+					"qa-cross-examination":
+						"The review says `ISSUE: QA-EMBEDDED | TARGET: tech-lead` and `NO ISSUES | TARGET: staff-engineer`.",
+					"architecture-revision": completeWorkCard("The review says `RESOLUTION: QA-EMBEDDED | RESOLVED`."),
+					"staff-revision": completeWorkCard("The review says `RESOLUTION: TL-EMBEDDED | RESOLVED`."),
+					"qa-revision": completeWorkCard("The review says `RESOLUTION: STAFF-EMBEDDED | RESOLVED`."),
+				}),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.transcript.at(-1)?.stage).toBe("tech-lead-cross-examination");
+	});
+
+	it("rejects a resolution marker embedded in inline-code prose", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Reject embedded inline-code resolutions",
+			runRole: async ({ stage }) =>
+				responseForMutualReviewStage(stage, {
+					"staff-revision": completeWorkCard(
+						"The revision says `RESOLUTION: TL-CROSS | RESOLVED`, but does not provide a whole-line marker.",
+					),
+				}),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("unanswered-challenge");
+		expect(result.transcript.at(-1)?.stage).toBe("staff-revision");
+		expect(result.markdown).toContain("did not answer open challenge IDs: TL-CROSS");
+	});
+
+	it.each([
+		["a trailing space on an issue marker", "ISSUE: STAFF-STRICT "],
+		["a trailing space on the no-issues marker", "NO ISSUES "],
+	])("rejects %s before the collaborative revision", async (_description, staffCritique) => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review strict challenge marker parsing",
+			runRole: async ({ stage }) =>
+				stage === "staff-cross-examination" ? staffCritique : responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.transcript.at(-1)?.stage).toBe("staff-cross-examination");
 	});
 
 	it("rejects a resolution marker with trailing whitespace before verification", async () => {
 		const result = await runAnsteelDiscussion({
 			topic: "Review strict resolution marker parsing",
 			runRole: async ({ stage }) =>
-				stage === "architecture-revision"
-					? "RESOLUTION: STAFF-INITIAL | RESOLVED \nRESOLUTION: QA-INITIAL | RESOLVED"
+				stage === "staff-revision"
+					? completeWorkCard("RESOLUTION: TL-CROSS | RESOLVED ")
 					: responseForMutualReviewStage(stage),
 		});
 
 		expect(result.verdict).toBe("rejected");
 		expect(result.terminationReason).toBe("unanswered-challenge");
-		expect(result.transcript.at(-1)?.stage).toBe("architecture-revision");
+		expect(result.transcript.at(-1)?.stage).toBe("staff-revision");
 	});
 
 	it("rejects a verification rejection that does not add a new issue", async () => {
@@ -766,10 +1425,10 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.verdict).toBe("rejected");
 		expect(result.consensus).toBeUndefined();
 		expect(result.terminationReason).toBe("invalid-challenge-ledger");
-		expect(result.markdown).toContain("qa-engineer rejected the architecture without adding a new ISSUE line");
+		expect(result.markdown).toContain("qa-engineer rejected the revised work cards without adding a new ISSUE line");
 	});
 
-	it("returns a QA verification rejection to a second architecture revision before consensus", async () => {
+	it("returns a targeted QA verification rejection to a second collaborative revision before consensus", async () => {
 		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; round?: number }> = [];
 
 		const result = await runAnsteelDiscussion({
@@ -777,10 +1436,13 @@ describe("runAnsteelDiscussion", () => {
 			runRole: async ({ role, stage, round }) => {
 				calls.push({ role, stage, round });
 				if (stage === "qa-verification" && round === 1) {
-					return "VERDICT: REJECT\nISSUE: QA-VERIFICATION-1\n[L1] The safety test is absent.";
+					return "VERDICT: REJECT\nISSUE: QA-VERIFICATION-1 | TARGET: staff-engineer\n[L1] The safety test is absent.";
 				}
-				if (stage === "architecture-revision" && round === 2) {
-					return "RESOLUTION: QA-VERIFICATION-1 | RESOLVED";
+				if (stage === "staff-revision" && round === 2) {
+					return completeWorkCard("RESOLUTION: QA-VERIFICATION-1 | RESOLVED");
+				}
+				if ((stage === "architecture-revision" || stage === "qa-revision") && round === 2) {
+					return completeWorkCard("[L2] No newly assigned challenge.");
 				}
 				return responseForMutualReviewStage(stage);
 			},
@@ -788,26 +1450,42 @@ describe("runAnsteelDiscussion", () => {
 
 		expect(result.verdict).toBe("approved");
 		expect(result.revisionRounds).toEqual([
-			{ round: 1, staffVerdict: "approved", qaVerdict: "rejected", outcome: "needs-revision" },
-			{ round: 2, staffVerdict: "approved", qaVerdict: "approved", outcome: "approved" },
+			{
+				round: 1,
+				techLeadVerdict: "approved",
+				staffVerdict: "approved",
+				qaVerdict: "rejected",
+				outcome: "needs-revision",
+			},
+			{
+				round: 2,
+				techLeadVerdict: "approved",
+				staffVerdict: "approved",
+				qaVerdict: "approved",
+				outcome: "approved",
+			},
 		]);
-		expect(
-			calls.map(({ role, stage, round }) => `${role}:${stage}${round === undefined ? "" : `:${round}`}`),
-		).toEqual([
-			"tech-lead:architecture",
-			"staff-engineer:staff-critique",
-			"qa-engineer:qa-critique",
-			"tech-lead:architecture-revision:1",
-			"staff-engineer:staff-verification:1",
-			"qa-engineer:qa-verification:1",
-			"tech-lead:architecture-revision:2",
-			"staff-engineer:staff-verification:2",
-			"qa-engineer:qa-verification:2",
-			"tech-lead:consensus",
-			"staff-engineer:staff-sign-off",
-			"qa-engineer:qa-sign-off",
-		]);
+		expect(calls.filter((call) => call.stage === "staff-revision")).toHaveLength(2);
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).toContain("tech-lead:consensus");
 		expect(result.markdown).toContain("QA-VERIFICATION-1");
+	});
+
+	it("rejects a bare QA verification issue before another revision", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; round?: number }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review an unassigned verification issue",
+			runRole: async ({ role, stage, round }) => {
+				calls.push({ role, stage, round });
+				if (stage === "qa-verification" && round === 1) return "VERDICT: REJECT\nISSUE: QA-BARE";
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(calls.some((call) => call.round === 2)).toBe(false);
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("tech-lead:consensus");
 	});
 
 	it("runs consensus only after independent verification and keeps the discussion transcript", async () => {
@@ -815,11 +1493,7 @@ describe("runAnsteelDiscussion", () => {
 			topic: "Review the parser",
 			runRole: async ({ stage }) =>
 				responseForMutualReviewStage(stage, {
-					architecture: "[L1] Architecture boundary",
-					"staff-critique": "ISSUE: STAFF-PARSER\n[L2] The implementation path is underspecified.",
-					"qa-critique": "ISSUE: QA-PARSER\n[L3] The fault-path test still needs evidence.",
-					"architecture-revision": "RESOLUTION: STAFF-PARSER | RESOLVED\nRESOLUTION: QA-PARSER | RESOLVED",
-					"staff-verification": "VERDICT: APPROVE",
+					architecture: completeWorkCard("[L1] Tech Lead parser work card"),
 					"qa-verification":
 						"[L2] Conditions met before the decision\nVERDICT: APPROVE\n[L2] Follow-up remains after the decision",
 					consensus: "[L2] Consensus ",
@@ -828,9 +1502,10 @@ describe("runAnsteelDiscussion", () => {
 
 		expect(result.verdict).toBe("approved");
 		expect(result.consensus).toBe("[L2] Consensus ");
-		expect(result.markdown).toContain("[L1] Architecture boundary");
-		expect(result.markdown).toContain("STAFF-PARSER");
-		expect(result.markdown).toContain("QA-PARSER");
+		expect(result.markdown).toContain("[L1] Tech Lead parser work card");
+		expect(result.markdown).toContain("TL-CROSS");
+		expect(result.markdown).toContain("STAFF-CROSS");
+		expect(result.markdown).toContain("QA-CROSS");
 		expect(result.markdown).toContain("## Tech Lead Consensus\n\n[L2] Consensus \n");
 	});
 
@@ -985,7 +1660,7 @@ describe("runAnsteelDiscussion", () => {
 				if (role === "staff-engineer" && stage === "staff-critique") {
 					throw new Error("provider connection closed");
 				}
-				return "[L1] Architecture evidence ";
+				return completeWorkCard("[L1] Architecture evidence ");
 			},
 		});
 
@@ -997,7 +1672,11 @@ describe("runAnsteelDiscussion", () => {
 			reason: "provider connection closed",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence " }),
+			expect.objectContaining({
+				role: "tech-lead",
+				stage: "architecture",
+				response: completeWorkCard("[L1] Architecture evidence "),
+			}),
 		]);
 		expect(calls).toEqual([
 			{ role: "tech-lead", stage: "architecture" },
@@ -1033,7 +1712,7 @@ describe("runAnsteelDiscussion", () => {
 					prompt: async (prompt) => {
 						prompts.push({ role, prompt });
 						if (role === "staff-engineer") throw new Error("role session timed out");
-						return "[L1] Architecture evidence ";
+						return completeWorkCard("[L1] Architecture evidence ");
 					},
 					dispose: () => {
 						disposed.push(role);
@@ -1050,7 +1729,11 @@ describe("runAnsteelDiscussion", () => {
 			reason: "role session timed out",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence " }),
+			expect.objectContaining({
+				role: "tech-lead",
+				stage: "architecture",
+				response: completeWorkCard("[L1] Architecture evidence "),
+			}),
 		]);
 		expect(prompts.map(({ role }) => role)).toEqual(["tech-lead", "staff-engineer"]);
 		expect(prompts.some(({ prompt }) => prompt.includes("Current stage: consensus."))).toBe(false);
@@ -1085,7 +1768,7 @@ describe("runAnsteelDiscussion", () => {
 								rejectStaffPrompt = reject;
 							});
 						}
-						return "[L1] Architecture evidence";
+						return completeWorkCard("[L1] Architecture evidence");
 					},
 					abort: () => {
 						aborted.push(role);
@@ -1153,7 +1836,7 @@ describe("runAnsteelDiscussion", () => {
 			resolveModel: (provider, id) => ({ provider, id }),
 			createRoleSession: async ({ role }) => {
 				if (role !== "staff-engineer") {
-					return { prompt: async () => "[L1] Architecture evidence", dispose: () => {} };
+					return { prompt: async () => completeWorkCard("[L1] Architecture evidence"), dispose: () => {} };
 				}
 
 				return createAnsteelRawTurnSession({
@@ -1217,7 +1900,7 @@ describe("runAnsteelDiscussion", () => {
 					createRoleSession: async ({ role }) => ({
 						prompt: async () => {
 							if (role === "staff-engineer") return await new Promise<string>(() => {});
-							return "[L1] Architecture evidence";
+							return completeWorkCard("[L1] Architecture evidence");
 						},
 						abort: () => {
 							if (role === "staff-engineer") return new Promise<void>(() => {});
@@ -1260,7 +1943,7 @@ describe("runAnsteelDiscussion", () => {
 			createRoleSession: async ({ role }) => ({
 				prompt: async () => {
 					if (role === "staff-engineer") throw new Error("role session timed out");
-					return "[L1] Architecture evidence";
+					return completeWorkCard("[L1] Architecture evidence");
 				},
 				dispose: () => {
 					disposed.push(role);
@@ -1279,7 +1962,11 @@ describe("runAnsteelDiscussion", () => {
 			reason: "role session timed out",
 		});
 		expect(result.transcript).toEqual([
-			expect.objectContaining({ role: "tech-lead", stage: "architecture", response: "[L1] Architecture evidence" }),
+			expect.objectContaining({
+				role: "tech-lead",
+				stage: "architecture",
+				response: completeWorkCard("[L1] Architecture evidence"),
+			}),
 		]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(result.cleanupFailures).toEqual([
@@ -1323,7 +2010,7 @@ describe("runAnsteelDiscussion", () => {
 			createRoleSession: async ({ role }) => ({
 				prompt: async () => {
 					if (role === "staff-engineer") throw new Error("provider request failed");
-					return "[L1] Architecture evidence";
+					return completeWorkCard("[L1] Architecture evidence");
 				},
 				dispose: () => {
 					disposed.push(role);
@@ -1382,7 +2069,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(disposed).toEqual(["tech-lead"]);
 	});
 
-	it("loads independent role models while keeping QA read-only", () => {
+	it("loads independent role models with evidence tools for every role", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-"));
 		temporaryDirectories.push(cwd);
 		mkdirSync(join(cwd, ".pi"));
@@ -1403,9 +2090,52 @@ describe("runAnsteelDiscussion", () => {
 		expect(config.roles["staff-engineer"].model).toBe("openai/gpt-5");
 		expect(config.roles["staff-engineer"].thinkingLevel).toBe("high");
 		expect(config.roles["qa-engineer"].model).toBe("deepseek/deepseek-chat");
-		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls"]);
+		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls", "bash"]);
 		expect(config.stageTimeoutMs).toBe(120_000);
 		expect(config.maxToolCallsPerStage).toBe(4);
+	});
+
+	it("loads role-local memory and skill paths", () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-"));
+		temporaryDirectories.push(cwd);
+		mkdirSync(join(cwd, ".pi"));
+		writeFileSync(
+			join(cwd, ".pi", "ansteel.json"),
+			JSON.stringify({
+				roles: {
+					"tech-lead": { model: "anthropic/claude-sonnet" },
+					"staff-engineer": {
+						model: "openai/gpt-5",
+						memoryFile: ".pi/ansteel-memory/staff-engineer.md",
+						skillPaths: [".pi/ansteel-skills/staff-engineer"],
+					},
+					"qa-engineer": { model: "deepseek/deepseek-chat" },
+				},
+			}),
+		);
+
+		const config = loadAnsteelConfig(cwd);
+
+		expect(config.roles["staff-engineer"].memoryFile).toBe(join(cwd, ".pi", "ansteel-memory", "staff-engineer.md"));
+		expect(config.roles["staff-engineer"].skillPaths).toEqual([join(cwd, ".pi", "ansteel-skills", "staff-engineer")]);
+	});
+
+	it("rejects role-local resources outside the reviewed project", () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-"));
+		temporaryDirectories.push(cwd);
+		mkdirSync(join(cwd, ".pi"));
+		writeFileSync(
+			join(cwd, ".pi", "ansteel.json"),
+			JSON.stringify({
+				roles: {
+					"tech-lead": { model: "anthropic/claude-sonnet" },
+					"staff-engineer": { model: "openai/gpt-5", memoryFile: "../other-project/memory.md" },
+					"qa-engineer": { model: "deepseek/deepseek-chat" },
+				},
+			}),
+		);
+
+		expect(() => loadAnsteelConfig(cwd)).toThrow("Ansteel role resources must stay inside the reviewed project");
 	});
 
 	it("rejects a stage timeout that cannot enforce a bounded review", () => {
@@ -1507,6 +2237,35 @@ describe("runAnsteelDiscussion", () => {
 		expect(createdSessionCount).toBe(0);
 	});
 
+	it("permits duplicate role models only when single-model mode is explicit", async () => {
+		type TestModel = { provider: string; id: string };
+		const createdRoles: AnsteelRole[] = [];
+
+		await runAnsteelProjectReview<TestModel>({
+			topic: "Review explicit single-model mode",
+			cwd: process.cwd(),
+			config: {
+				roles: {
+					"tech-lead": { model: "deepseek/deepseek-v4-pro", tools: ["read"] },
+					"staff-engineer": { model: "deepseek/deepseek-v4-pro", tools: ["read"] },
+					"qa-engineer": { model: "deepseek/deepseek-v4-pro", tools: ["read"] },
+				},
+				reportDirectory: "unused",
+				allowSingleModel: true,
+			},
+			resolveModel: (provider, id) => ({ provider, id }),
+			createRoleSession: async ({ role }) => {
+				createdRoles.push(role);
+				return {
+					prompt: async (prompt) => responseForMutualReviewStage(getStageFromPrompt(prompt)),
+					dispose: () => {},
+				};
+			},
+		});
+
+		expect(createdRoles).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
+	});
+
 	it("rejects duplicate role models before creating governance sessions", async () => {
 		type TestModel = { provider: string; id: string };
 		let createdSessionCount = 0;
@@ -1539,34 +2298,35 @@ describe("runAnsteelDiscussion", () => {
 		expect(createdSessionCount).toBe(0);
 	});
 
-	it("rejects supplied QA bash configuration before creating any role session", async () => {
+	it("permits supplied QA bash configuration for evidence verification", async () => {
 		type TestModel = { provider: string; id: string };
 		let createdSessionCount = 0;
+		const sessionSkillPaths: Array<readonly string[]> = [];
 
-		await expect(
-			runAnsteelProjectReview<TestModel>({
-				topic: "Review supplied configuration validation",
-				cwd: process.cwd(),
-				config: {
-					roles: {
-						"tech-lead": { model: "tech/lead", tools: ["read"] },
-						"staff-engineer": { model: "staff/engineer", tools: ["read"] },
-						"qa-engineer": { model: "qa/engineer", tools: ["read", "bash"] },
-					},
-					reportDirectory: "unused",
+		await runAnsteelProjectReview<TestModel>({
+			topic: "Review supplied configuration validation",
+			cwd: process.cwd(),
+			config: {
+				roles: {
+					"tech-lead": { model: "tech/lead", tools: ["read"] },
+					"staff-engineer": { model: "staff/engineer", tools: ["read"] },
+					"qa-engineer": { model: "qa/engineer", tools: ["read", "bash"] },
 				},
-				resolveModel: (provider, id) => ({ provider, id }),
-				createRoleSession: async () => {
-					createdSessionCount++;
-					return {
-						prompt: async () => "VERDICT: APPROVE",
-						dispose: () => {},
-					};
-				},
-			}),
-		).rejects.toThrow("Ansteel QA cannot use bash");
+				reportDirectory: "unused",
+			},
+			resolveModel: (provider, id) => ({ provider, id }),
+			createRoleSession: async ({ skillPaths }) => {
+				createdSessionCount++;
+				sessionSkillPaths.push(skillPaths);
+				return {
+					prompt: async (prompt) => responseForMutualReviewStage(getStageFromPrompt(prompt)),
+					dispose: () => {},
+				};
+			},
+		});
 
-		expect(createdSessionCount).toBe(0);
+		expect(createdSessionCount).toBe(3);
+		expect(sessionSkillPaths).toEqual([[], [], []]);
 	});
 
 	it("rejects an unsupported role thinking level before creating any role session", async () => {
@@ -1601,8 +2361,14 @@ describe("runAnsteelDiscussion", () => {
 
 	it("creates isolated role sessions with the configured models", async () => {
 		type TestModel = { provider: string; id: string };
-		const calls: Array<{ role: AnsteelRole; model: TestModel; thinkingLevel?: string; tools: readonly string[] }> =
-			[];
+		const calls: Array<{
+			role: AnsteelRole;
+			model: TestModel;
+			thinkingLevel?: string;
+			memoryFile?: string;
+			skillPaths: readonly string[];
+			tools: readonly string[];
+		}> = [];
 		const disposed: AnsteelRole[] = [];
 		const result = await runAnsteelProjectReview<TestModel>({
 			topic: "Review the parser",
@@ -1610,14 +2376,20 @@ describe("runAnsteelDiscussion", () => {
 			config: {
 				roles: {
 					"tech-lead": { model: "claude/sonnet", tools: ["read", "bash"] },
-					"staff-engineer": { model: "openai/gpt-5", thinkingLevel: "high", tools: ["read", "grep"] },
+					"staff-engineer": {
+						model: "openai/gpt-5",
+						thinkingLevel: "high",
+						memoryFile: ".pi/ansteel-memory/staff.md",
+						skillPaths: [".pi/ansteel-skills/staff"],
+						tools: ["read", "grep"],
+					},
 					"qa-engineer": { model: "deepseek/chat", tools: ["read", "grep", "find", "ls"] },
 				},
 				reportDirectory: "unused",
 			},
 			resolveModel: (provider, id) => ({ provider, id }),
-			createRoleSession: async ({ role, model, thinkingLevel, tools }) => {
-				calls.push({ role, model, thinkingLevel, tools });
+			createRoleSession: async ({ role, model, thinkingLevel, memoryFile, skillPaths, tools }) => {
+				calls.push({ role, model, thinkingLevel, memoryFile, skillPaths, tools });
 				return {
 					prompt: async (prompt) => responseForMutualReviewStage(getStageFromPrompt(prompt)),
 					dispose: () => {
@@ -1631,6 +2403,12 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.roleModels["tech-lead"]).toEqual({ provider: "claude", id: "sonnet" });
 		expect(result.roleModels["staff-engineer"]).toEqual({ provider: "openai", id: "gpt-5" });
 		expect(calls.find(({ role }) => role === "staff-engineer")?.thinkingLevel).toBe("high");
+		expect(calls.find(({ role }) => role === "staff-engineer")?.memoryFile).toBe(
+			join(process.cwd(), ".pi", "ansteel-memory", "staff.md"),
+		);
+		expect(calls.find(({ role }) => role === "staff-engineer")?.skillPaths).toEqual([
+			join(process.cwd(), ".pi", "ansteel-skills", "staff"),
+		]);
 		expect(calls.map(({ role }) => role)).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 	});
@@ -1728,7 +2506,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.consensus).toBeUndefined();
 		expect(result.transcript.at(-1)?.response).toBe(" \t ");
 		expect(result.markdown).toContain("qa-engineer / qa-verification returned an empty or whitespace-only response");
-		expect(calls).toHaveLength(6);
+		expect(calls).toHaveLength(12);
 		expect(calls.some(({ prompt }) => prompt.includes("Current stage: consensus."))).toBe(false);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 	});

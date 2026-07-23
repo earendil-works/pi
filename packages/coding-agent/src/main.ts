@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -63,6 +64,12 @@ import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
+
+export function getAnsteelModelBoundary(allowSingleModel: boolean): string {
+	return allowSingleModel
+		? "Ansteel is configured to allow a single model, so role sessions may share the same configured model. This review is not cross-model verification; evidence verification remains required."
+		: "Mandatory governance resolved three distinct configured role models. Model diversity supplements, but does not replace, evidence verification.";
+}
 
 /**
  * Read all content from piped stdin.
@@ -832,17 +839,47 @@ export async function main(args: string[], options?: MainOptions) {
 					const model = modelRuntime.getModel(provider, id);
 					return model && modelRuntime.hasConfiguredAuth(model.provider) ? model : undefined;
 				},
-				createRoleSession: async ({ model, tools, thinkingLevel, cwd: roleCwd, maxToolCallsPerStage }) => {
+				onStageEvent: ({ type, role, stage, reason }) => {
+					const status =
+						type === "started"
+							? "started"
+							: type === "completed"
+								? "completed"
+								: type === "timed-out"
+									? "timed out"
+									: "failed";
+					process.stderr.write(`[Ansteel] ${role} / ${stage} ${status}${reason ? `: ${reason}` : ""}\n`);
+				},
+				createRoleSession: async ({
+					model,
+					tools,
+					thinkingLevel,
+					memoryFile,
+					skillPaths,
+					cwd: roleCwd,
+					maxToolCallsPerStage,
+				}) => {
+					if (memoryFile !== undefined && !existsSync(memoryFile)) {
+						throw new Error(`Ansteel role memory file does not exist: ${memoryFile}`);
+					}
+					const roleMemory = memoryFile === undefined ? undefined : readFileSync(memoryFile, "utf-8").trim();
 					const reviewResourceLoader = new DefaultResourceLoader({
 						cwd: roleCwd,
 						agentDir: services.agentDir,
 						settingsManager: services.settingsManager,
 						noExtensions: true,
 						noContextFiles: true,
+						additionalSkillPaths: [...skillPaths],
 						noSkills: true,
 						noPromptTemplates: true,
 						systemPrompt: "",
-						appendSystemPrompt: [],
+						appendSystemPrompt:
+							roleMemory === undefined || roleMemory.length === 0
+								? []
+								: [
+										"Role-local memory follows. Treat it as fallible context and verify it against current evidence.\n\n" +
+											roleMemory,
+									],
 					});
 					await reviewResourceLoader.reload();
 					const created = await createAgentSessionFromServices({
@@ -895,8 +932,7 @@ export async function main(args: string[], options?: MainOptions) {
 				const model = review.roleModels[role];
 				return `- ${role}: ${model.provider}/${model.id}`;
 			}).join("\n");
-			const modelBoundary =
-				"Mandatory governance resolved three distinct configured role models. Model diversity supplements, but does not replace, evidence verification.";
+			const modelBoundary = getAnsteelModelBoundary(loadedConfig.allowSingleModel === true);
 			const reportPath = writeAnsteelReport({
 				reportDirectory: loadedConfig.reportDirectory,
 				topic: review.topic,
@@ -905,6 +941,8 @@ export async function main(args: string[], options?: MainOptions) {
 
 			stopThemeWatcher();
 			restoreStdout();
+			console.log(review.markdown);
+			console.log("");
 			console.log(`Ansteel review ${review.verdict}: ${reportPath}`);
 			process.exitCode = getAnsteelReviewExitCode(review.verdict);
 		} catch (error: unknown) {
