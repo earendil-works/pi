@@ -6,6 +6,7 @@
 import * as fs from "node:fs";
 import { createRequire, type RegisterHooksOptions } from "node:module";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
 import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
@@ -115,12 +116,62 @@ interface NodeModuleWithHooks {
 }
 
 const require = createRequire(import.meta.url);
+const nodeExtensionRootRefCounts = new Map<string, number>();
 let nativeModuleHooksRegistered = false;
+
+function registerNodeExtensionRoot(extensionPath: string): () => void {
+	if (isBunRuntime) return () => {};
+
+	// Treat the containing directory as the shared module boundary so extensions,
+	// sibling helpers, private dependencies, and colocated SDK code reuse Pi's modules.
+	const lexicalRoot = path.dirname(path.resolve(extensionPath));
+	const roots = new Set([lexicalRoot]);
+	try {
+		roots.add(fs.realpathSync(lexicalRoot));
+	} catch {
+		// The lexical root still scopes resolution when realpath is unavailable.
+	}
+	for (const root of roots) nodeExtensionRootRefCounts.set(root, (nodeExtensionRootRefCounts.get(root) ?? 0) + 1);
+
+	let registered = true;
+	return () => {
+		if (!registered) return;
+		registered = false;
+		for (const root of roots) {
+			const nextCount = (nodeExtensionRootRefCounts.get(root) ?? 0) - 1;
+			if (nextCount === 0) nodeExtensionRootRefCounts.delete(root);
+			else nodeExtensionRootRefCounts.set(root, nextCount);
+		}
+	};
+}
+
+function isNodeExtensionImporter(parentURL: string | undefined): boolean {
+	if (parentURL === undefined || !parentURL.startsWith("file:")) return false;
+
+	let importerPath: string;
+	try {
+		importerPath = fileURLToPath(parentURL);
+	} catch {
+		return false;
+	}
+	for (const root of nodeExtensionRootRefCounts.keys()) {
+		const relative = path.relative(root, importerPath);
+		if (
+			relative === "" ||
+			(!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+		) {
+			return true;
+		}
+	}
+	return false;
+}
 
 function ensureNativeModuleHooks(): void {
 	if (nativeModuleHooksRegistered) return;
 
 	if (isBunRuntime) {
+		// Bun's builder.module() does not expose the importer, so its existing bridge remains process-wide.
+		// TODO: Use registerHooks() here too once https://github.com/oven-sh/bun/issues/27369 is resolved.
 		const bun = (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
 		if (!bun) {
 			throw new Error("Bun runtime does not expose Bun.plugin()");
@@ -138,8 +189,9 @@ function ensureNativeModuleHooks(): void {
 		const { registerHooks } = require("node:module") as NodeModuleWithHooks;
 		registerHooks({
 			resolve(specifier, context, nextResolve) {
+				// The hook is process-wide, but only imports originating under a loaded extension root are redirected.
 				const hostSpecifier = HOST_MODULE_SPECIFIERS[specifier];
-				if (!hostSpecifier) {
+				if (!hostSpecifier || !isNodeExtensionImporter(context.parentURL)) {
 					return nextResolve(specifier, context);
 				}
 				return nextResolve(hostSpecifier, { ...context, parentURL: import.meta.url });
@@ -478,11 +530,14 @@ async function loadExtension(
 	cacheToken?: ExtensionCacheToken,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
+	// Keep the root registered after success because extension handlers can use dynamic imports later.
+	const unregisterNodeExtensionRoot = registerNodeExtensionRoot(resolvedPath);
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath, cacheToken);
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
+			unregisterNodeExtensionRoot();
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
 
@@ -493,6 +548,7 @@ async function loadExtension(
 
 		return { extension, error: null };
 	} catch (err) {
+		unregisterNodeExtensionRoot();
 		const message = err instanceof Error ? err.message : String(err);
 		return { extension: null, error: `Failed to load extension: ${message}` };
 	}

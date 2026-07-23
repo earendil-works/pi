@@ -1,3 +1,5 @@
+export const moduleOrigin = "private-copy";
+
 let active = false;
 
 export class KeybindingsManager {

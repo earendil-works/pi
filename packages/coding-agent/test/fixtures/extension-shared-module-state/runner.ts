@@ -1,6 +1,7 @@
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	getKeybindings,
 	isKittyProtocolActive,
@@ -13,12 +14,27 @@ import { keyText, withFileMutationQueue } from "../../../src/index.ts";
 
 const fixtureDir = process.argv[2];
 if (!fixtureDir) throw new Error("Fixture directory argument is required");
+const sdkHostImporterPath = process.argv[3];
+if (!sdkHostImporterPath) throw new Error("SDK host importer path argument is required");
 
+const sdkHostImporter = (await import(pathToFileURL(sdkHostImporterPath).href)) as {
+	readTuiModuleOrigin(): Promise<string>;
+};
+// The SDK host helper resolves its own private pi-tui copy before extension hooks are installed.
+// A failed extension is deliberately colocated with that helper: if its pending Node scope leaks,
+// the next helper import changes from the private copy to Pi's host module.
+const sdkHostModuleOriginBeforeExtensionLoad = await sdkHostImporter.readTuiModuleOrigin();
+await loadExtensions([path.join(path.dirname(sdkHostImporterPath), "failing-extension.mjs")], fixtureDir);
+const sdkHostModuleOriginAfterFailedExtensionLoad = await sdkHostImporter.readTuiModuleOrigin();
+
+// Successful extensions live in a sibling directory. Under Node, every SDK host observation must
+// remain equal to the original private-copy marker.
 const extensionTypes = ["ts", "mjs", "cjs"] as const;
 const result = await loadExtensions(
 	extensionTypes.map((extension) => path.join(fixtureDir, `extension.${extension}`)),
 	fixtureDir,
 );
+const sdkHostModuleOriginAfterExtensionLoad = await sdkHostImporter.readTuiModuleOrigin();
 const commands = new Map(
 	result.extensions.flatMap((extension) => [...extension.commands.values()]).map((command) => [command.name, command]),
 );
@@ -143,5 +159,10 @@ console.log(
 		kittySettersShareState,
 		keybindingsShared,
 		queuesShared,
+		sdkHostModuleOrigins: {
+			beforeExtensionLoad: sdkHostModuleOriginBeforeExtensionLoad,
+			afterFailedExtensionLoad: sdkHostModuleOriginAfterFailedExtensionLoad,
+			afterExtensionLoad: sdkHostModuleOriginAfterExtensionLoad,
+		},
 	}),
 );
