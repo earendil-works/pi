@@ -309,6 +309,11 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 ]);
+const OPENAI_EXPLICIT_CACHE_BREAKPOINT_MODEL_IDS = new Set([
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.4-pro",
@@ -2112,6 +2117,19 @@ async function generateModels() {
 	for (const model of missingOpenAiModels) {
 		if (!allModels.some((m) => m.provider === model.provider && m.id === model.id)) {
 			allModels.push(model);
+		}
+	}
+	for (const candidate of allModels) {
+		if (
+			candidate.provider === "openai"
+			&& candidate.api === "openai-responses"
+			&& candidate.baseUrl === "https://api.openai.com/v1"
+			&& OPENAI_EXPLICIT_CACHE_BREAKPOINT_MODEL_IDS.has(candidate.id)
+		) {
+			candidate.compat = {
+				...candidate.compat,
+				cacheControlFormat: "openai-content-block",
+			};
 		}
 	}
 

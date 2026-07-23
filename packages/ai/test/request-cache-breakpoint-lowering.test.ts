@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import { getModel } from "../src/compat.ts";
 import {
 	type AssistantMessage,
 	type Context,
@@ -123,6 +124,14 @@ function createAnthropicModel(): Model<"anthropic-messages"> {
 }
 
 describe("request cache breakpoint provider lowering", () => {
+	it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
+		"enables explicit content breakpoints only for verified official OpenAI model %s",
+		(modelId) => {
+			expect(getModel("openai", modelId).compat?.cacheControlFormat).toBe("openai-content-block");
+			expect(getModel("openai-codex", modelId).compat?.cacheControlFormat).toBeUndefined();
+		},
+	);
+
 	it("lowers one marked image block for explicitly capable OpenAI Chat Completions models", async () => {
 		const context: Context = {
 			messages: [
