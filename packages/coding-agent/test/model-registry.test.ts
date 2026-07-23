@@ -25,6 +25,7 @@ describe("ModelRegistry", () => {
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
 		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
 	});
 
 	afterEach(() => {
@@ -652,7 +653,7 @@ describe("ModelRegistry", () => {
 			expect(anthropicModels.some((m) => m.id === "claude-custom")).toBe(false);
 			expect(anthropicModels.some((m) => m.id === "claude-custom-2")).toBe(true);
 			expect(anthropicModels.some((m) => m.id.includes("claude"))).toBe(true);
-		}, 60_000);
+		});
 
 		test("removing custom models from models.json keeps built-in provider models", async () => {
 			writeModelsJson({
