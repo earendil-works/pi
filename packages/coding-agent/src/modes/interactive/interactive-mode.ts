@@ -4612,7 +4612,7 @@ export class InteractiveMode {
 				this.ui.terminal.rows,
 				async (entryId) => {
 					// Selecting the current leaf is a no-op (already there)
-					if (entryId === realLeafId) {
+					if (entryId === this.sessionManager.getLeafId()) {
 						done();
 						this.showStatus("Already at this point");
 						return;
@@ -4653,6 +4653,19 @@ export class InteractiveMode {
 							// User made a complete choice
 							break;
 						}
+					}
+
+					if (this.session.isStreaming) {
+						const interruptChoice = await this.showExtensionSelector(
+							"Stop the current response to navigate the session tree?",
+							["Stop and navigate", "Cancel"],
+						);
+						if (interruptChoice !== "Stop and navigate") {
+							this.showTreeSelector(entryId);
+							return;
+						}
+						this.restoreQueuedMessagesToEditor();
+						await this.session.abort();
 					}
 
 					// Set up escape handler and status indicator if summarizing
