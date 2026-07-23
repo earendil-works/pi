@@ -37,9 +37,11 @@ import type {
 	AgentHarnessSystemPrompt,
 	AgentHarnessTool,
 	AgentHarnessToolContextSource,
+	CommittedOwnerIdentity,
 	CompactResult,
 	NavigateTreeResult,
 	PendingSessionWrite,
+	ProjectedOwnerIdentity,
 	PromptTemplate,
 	Session,
 	Skill,
@@ -157,6 +159,7 @@ interface AgentHarnessTurnState<
 	TTool extends AgentHarnessTool<TContext> = AgentHarnessTool<TContext>,
 > {
 	messages: AgentMessage[];
+	messageSourceEntryIds: string[];
 	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
 	toolContext: TContext;
 	streamOptions: AgentHarnessStreamOptions;
@@ -179,6 +182,10 @@ export class AgentHarness<
 	private phase: AgentHarnessPhase = "idle";
 	private runAbortController?: AbortController;
 	private runPromise?: Promise<void>;
+	private activeTurnSessionId?: string;
+	private activeMessageSourceEntryIds?: string[];
+	private committedOwner?: CommittedOwnerIdentity;
+	private pendingHostOwnerMessage?: UserMessage;
 	private pendingSessionWrites: PendingSessionWrite[] = [];
 	private model: Model<any>;
 	private thinkingLevel: ThinkingLevel;
@@ -352,7 +359,8 @@ export class AgentHarness<
 	}
 
 	private async createTurnState(): Promise<AgentHarnessTurnState<TContext, TSkill, TPromptTemplate, TTool>> {
-		const context = await this.session.buildContext();
+		const projection = await this.session.buildContextProjection();
+		const { context, messageSourceEntryIds } = projection;
 		const resources = this.getResources();
 		const sessionMetadata = await this.session.getMetadata();
 		const toolContext = await this.resolveToolContext();
@@ -374,6 +382,7 @@ export class AgentHarness<
 		}
 		return {
 			messages: context.messages,
+			messageSourceEntryIds,
 			resources,
 			toolContext,
 			streamOptions: cloneStreamOptions(this.streamOptions),
@@ -449,7 +458,8 @@ export class AgentHarness<
 			reasoning: turnState.thinkingLevel === "off" ? undefined : turnState.thinkingLevel,
 			convertToLlm,
 			transformContext: async (messages) => {
-				const result = await this.emitHook({ type: "context", messages: [...messages] });
+				const owner = await this.resolveCommittedOwner(getTurnState().sessionId, messages);
+				const result = await this.emitHook({ type: "context", messages: [...messages], owner });
 				return result?.messages ?? messages;
 			},
 			beforeToolCall: async ({ toolCall, args }) => {
@@ -503,6 +513,73 @@ export class AgentHarness<
 			throw new AgentHarnessError("invalid_argument", `${message}: ${duplicates.join(", ")}`);
 	}
 
+	private async resolveCommittedOwner(
+		sessionId: string,
+		messages: readonly AgentMessage[],
+	): Promise<ProjectedOwnerIdentity> {
+		const owner = this.committedOwner;
+		if (!owner) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				"No committed owner identity is available for context projection",
+			);
+		}
+		if (owner.sessionId !== sessionId) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				`Committed owner session identity ${owner.sessionId} does not match current session generation ${sessionId}`,
+			);
+		}
+		const metadata = await this.session.getMetadata();
+		if (metadata.id !== sessionId) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				`Committed owner session identity ${sessionId} does not match current session generation ${metadata.id}`,
+			);
+		}
+		const activeSourceEntryIds = this.activeMessageSourceEntryIds;
+		if (!activeSourceEntryIds) {
+			throw new AgentHarnessError("invalid_state", "No active context provenance is available for committed owner");
+		}
+		const projection = await this.session.buildContextProjection();
+		if (projection.context.messages.length !== projection.messageSourceEntryIds.length) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				"Committed owner session projection has inconsistent message provenance",
+			);
+		}
+		if (messages.length !== activeSourceEntryIds.length) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				"Committed owner event messages do not match active context provenance length",
+			);
+		}
+		if (
+			activeSourceEntryIds.length !== projection.messageSourceEntryIds.length ||
+			activeSourceEntryIds.some((entryId, index) => entryId !== projection.messageSourceEntryIds[index])
+		) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				"Committed owner active context provenance does not match the session projection",
+			);
+		}
+		const matches = activeSourceEntryIds.flatMap((entryId, index) => (entryId === owner.entryId ? [index] : []));
+		if (matches.length !== 1) {
+			throw new AgentHarnessError(
+				"invalid_state",
+				`Committed owner ${owner.entryId} must resolve exactly once in the context projection`,
+			);
+		}
+		const messageIndex = matches[0]!;
+		if (projection.context.messages[messageIndex]?.role !== "user" || messages[messageIndex]?.role !== "user") {
+			throw new AgentHarnessError(
+				"invalid_state",
+				`Committed owner ${owner.entryId} does not project to a user message at index ${messageIndex}`,
+			);
+		}
+		return { ...owner, messageIndex };
+	}
+
 	private validateToolNames(toolNames: string[], tools: Map<string, TTool> = this.tools): void {
 		this.validateUniqueNames(toolNames, "Duplicate active tool name(s)");
 		const missing = toolNames.filter((name) => !tools.has(name));
@@ -537,7 +614,25 @@ export class AgentHarness<
 
 	private async handleAgentEvent(event: AgentEvent, signal?: AbortSignal): Promise<void> {
 		if (event.type === "message_end") {
-			await this.session.appendMessage(event.message);
+			const sourceEntryIds = this.activeMessageSourceEntryIds;
+			if (!sourceEntryIds || !this.activeTurnSessionId) {
+				throw new AgentHarnessError(
+					"invalid_state",
+					"Cannot append an agent message outside an active session context projection",
+				);
+			}
+			const entryId = await this.session.appendMessage(event.message);
+			sourceEntryIds.push(entryId);
+			if (event.message === this.pendingHostOwnerMessage) {
+				if (this.committedOwner) {
+					throw new AgentHarnessError(
+						"invalid_state",
+						"Host owner message was committed more than once in the active session generation",
+					);
+				}
+				this.committedOwner = { entryId, sessionId: this.activeTurnSessionId };
+				this.pendingHostOwnerMessage = undefined;
+			}
 			await this.emitAny(event, signal);
 			return;
 		}
@@ -558,7 +653,13 @@ export class AgentHarness<
 			await this.flushPendingSessionWrites();
 			this.phase = "idle";
 			await this.emitAny(event, signal);
-			await this.emitOwn({ type: "settled", nextTurnCount: this.nextTurnQueue.length }, signal);
+			if (!this.committedOwner) {
+				throw new AgentHarnessError("invalid_state", "Agent run settled without a committed owner identity");
+			}
+			await this.emitOwn(
+				{ type: "settled", nextTurnCount: this.nextTurnQueue.length, owner: { ...this.committedOwner } },
+				signal,
+			);
 			return;
 		}
 		await this.emitAny(event, signal);
@@ -584,7 +685,8 @@ export class AgentHarness<
 		options?: { images?: ImageContent[] },
 	): Promise<AssistantMessage> {
 		let activeTurnState = turnState;
-		let messages: AgentMessage[] = [createUserMessage(text, options?.images)];
+		const hostOwnerMessage = createUserMessage(text, options?.images);
+		let messages: AgentMessage[] = [hostOwnerMessage];
 		if (this.nextTurnQueue.length > 0) {
 			const queuedMessages = this.nextTurnQueue.splice(0);
 			try {
@@ -605,9 +707,14 @@ export class AgentHarness<
 		if (beforeResult?.messages) messages = [...messages, ...beforeResult.messages];
 
 		const abortController = new AbortController();
+		this.activeTurnSessionId = turnState.sessionId;
+		this.activeMessageSourceEntryIds = [...turnState.messageSourceEntryIds];
+		this.committedOwner = undefined;
+		this.pendingHostOwnerMessage = hostOwnerMessage;
 		const getTurnState = () => activeTurnState;
 		const setTurnState = (nextTurnState: AgentHarnessTurnState<TContext, TSkill, TPromptTemplate, TTool>) => {
 			activeTurnState = nextTurnState;
+			this.activeMessageSourceEntryIds = [...nextTurnState.messageSourceEntryIds];
 		};
 		this.runAbortController = abortController;
 		const runResultPromise = (async () => {
@@ -651,6 +758,10 @@ export class AgentHarness<
 				await this.flushPendingSessionWrites();
 			} finally {
 				this.runAbortController = undefined;
+				this.activeTurnSessionId = undefined;
+				this.activeMessageSourceEntryIds = undefined;
+				this.committedOwner = undefined;
+				this.pendingHostOwnerMessage = undefined;
 			}
 		}
 	}

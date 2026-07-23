@@ -36,6 +36,18 @@ export interface SessionContextBuildOptions {
 	entryProjectors?: Readonly<Record<string, CustomEntryContextMessageProjector>>;
 }
 
+/**
+ * A session context plus the exact source entry for every projected message.
+ *
+ * `messageSourceEntryIds` is parallel to `context.messages` and is produced by
+ * the same projection pass. It is intentionally separate from SessionContext
+ * so existing context consumers do not need to carry provenance they do not use.
+ */
+export interface SessionContextProjection {
+	context: SessionContext;
+	messageSourceEntryIds: string[];
+}
+
 function deriveSessionContextState(pathEntries: readonly SessionTreeEntry[]): Omit<SessionContext, "messages"> {
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
@@ -139,12 +151,28 @@ export function buildSessionContext(
 	pathEntries: readonly SessionTreeEntry[],
 	options: SessionContextBuildOptions = {},
 ): SessionContext {
+	return buildSessionContextProjection(pathEntries, options).context;
+}
+
+export function buildSessionContextProjection(
+	pathEntries: readonly SessionTreeEntry[],
+	options: SessionContextBuildOptions = {},
+): SessionContextProjection {
 	const state = deriveSessionContextState(pathEntries);
 	const contextEntries = buildContextEntries(pathEntries, options);
-	const messages = contextEntries.flatMap((entry, index) =>
-		sessionEntryToContextMessages(entry, index, contextEntries, options),
-	);
-	return { ...state, messages };
+	const messages: AgentMessage[] = [];
+	const messageSourceEntryIds: string[] = [];
+	for (const [index, entry] of contextEntries.entries()) {
+		const projectedMessages = sessionEntryToContextMessages(entry, index, contextEntries, options);
+		messages.push(...projectedMessages);
+		for (let messageIndex = 0; messageIndex < projectedMessages.length; messageIndex++) {
+			messageSourceEntryIds.push(entry.id);
+		}
+	}
+	return {
+		context: { ...state, messages },
+		messageSourceEntryIds,
+	};
 }
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
@@ -186,7 +214,11 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	}
 
 	async buildContext(options: SessionContextBuildOptions = {}): Promise<SessionContext> {
-		return buildSessionContext(await this.getBranch(), this.mergeContextBuildOptions(options));
+		return (await this.buildContextProjection(options)).context;
+	}
+
+	async buildContextProjection(options: SessionContextBuildOptions = {}): Promise<SessionContextProjection> {
+		return buildSessionContextProjection(await this.getBranch(), this.mergeContextBuildOptions(options));
 	}
 
 	private mergeContextBuildOptions(options: SessionContextBuildOptions): SessionContextBuildOptions {

@@ -576,9 +576,30 @@ export interface AbortEvent {
 	clearedFollowUp: AgentMessage[];
 }
 
+/**
+ * Identity of the current user owner after its atomic session append.
+ *
+ * `sessionId` is the conversation/generation identity captured for the run;
+ * `entryId` is the exact committed session-tree entry, never a content match.
+ */
+export interface CommittedOwnerIdentity {
+	entryId: string;
+	sessionId: string;
+}
+
+/**
+ * Exact location of the committed owner in a context projection.
+ *
+ * The index is derived from session-entry provenance, never message content.
+ */
+export interface ProjectedOwnerIdentity extends CommittedOwnerIdentity {
+	messageIndex: number;
+}
+
 export interface SettledEvent {
 	type: "settled";
 	nextTurnCount: number;
+	owner: CommittedOwnerIdentity;
 }
 
 export interface BeforeAgentStartEvent<
@@ -595,6 +616,7 @@ export interface BeforeAgentStartEvent<
 export interface ContextEvent {
 	type: "context";
 	messages: AgentMessage[];
+	owner: ProjectedOwnerIdentity;
 }
 
 export interface BeforeProviderRequestEvent {
