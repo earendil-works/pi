@@ -4,9 +4,8 @@
  */
 
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, type RegisterHooksOptions } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
 import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
@@ -21,7 +20,7 @@ import { createJiti } from "jiti/static";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBunRuntime } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
@@ -44,7 +43,7 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
-/** Modules available to extensions via virtualModules (for compiled Bun binary) */
+/** Host module objects supplied to Jiti and the Bun native-module bridge. */
 const VIRTUAL_MODULES: Record<string, unknown> = {
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
@@ -71,70 +70,84 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 };
 
-const require = createRequire(import.meta.url);
+const hostCodingAgentUrl = new URL(
+	import.meta.url.endsWith(".ts") ? "../../index.ts" : "../../index.js",
+	import.meta.url,
+).href;
 
 /**
- * Get aliases for jiti (used in Node.js/development mode).
- * In Bun binary mode, virtualModules is used instead.
+ * Node resolve hooks cannot return module objects like Bun's builder.module().
+ * Map every extension-visible name to the canonical specifier loaded by the host instead.
  */
-let _aliases: Record<string, string> | null = null;
+const HOST_MODULE_SPECIFIERS: Record<string, string> = {
+	typebox: "typebox",
+	"typebox/compile": "typebox/compile",
+	"typebox/value": "typebox/value",
+	"@sinclair/typebox": "typebox",
+	"@sinclair/typebox/compile": "typebox/compile",
+	"@sinclair/typebox/value": "typebox/value",
+	"@earendil-works/pi-agent-core": "@earendil-works/pi-agent-core",
+	"@earendil-works/pi-tui": "@earendil-works/pi-tui",
+	"@earendil-works/pi-ai": "@earendil-works/pi-ai/compat",
+	"@earendil-works/pi-ai/compat": "@earendil-works/pi-ai/compat",
+	"@earendil-works/pi-ai/oauth": "@earendil-works/pi-ai/oauth",
+	"@earendil-works/pi-ai/providers/all": "@earendil-works/pi-ai/providers/all",
+	"@earendil-works/pi-coding-agent": hostCodingAgentUrl,
+	"@mariozechner/pi-agent-core": "@earendil-works/pi-agent-core",
+	"@mariozechner/pi-tui": "@earendil-works/pi-tui",
+	"@mariozechner/pi-ai": "@earendil-works/pi-ai/compat",
+	"@mariozechner/pi-ai/compat": "@earendil-works/pi-ai/compat",
+	"@mariozechner/pi-ai/oauth": "@earendil-works/pi-ai/oauth",
+	"@mariozechner/pi-ai/providers/all": "@earendil-works/pi-ai/providers/all",
+	"@mariozechner/pi-coding-agent": hostCodingAgentUrl,
+};
 
-function getAliases(): Record<string, string> {
-	if (_aliases) return _aliases;
+interface BunPluginBuilder {
+	module(specifier: string, callback: () => { exports: unknown; loader: "object" }): void;
+}
 
-	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+interface BunRuntime {
+	plugin(options: { name: string; setup(builder: BunPluginBuilder): void }): void;
+}
 
-	const typeboxEntry = require.resolve("typebox");
-	const typeboxCompileEntry = require.resolve("typebox/compile");
-	const typeboxValueEntry = require.resolve("typebox/value");
+interface NodeModuleWithHooks {
+	registerHooks(options: RegisterHooksOptions): void;
+}
 
-	const packagesRoot = path.resolve(__dirname, "../../../../");
-	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
-		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
-		if (fs.existsSync(workspacePath)) {
-			return workspacePath;
+const require = createRequire(import.meta.url);
+let nativeModuleHooksRegistered = false;
+
+function ensureNativeModuleHooks(): void {
+	if (nativeModuleHooksRegistered) return;
+
+	if (isBunRuntime) {
+		const bun = (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun;
+		if (!bun) {
+			throw new Error("Bun runtime does not expose Bun.plugin()");
 		}
-		return fileURLToPath(import.meta.resolve(specifier));
-	};
+		bun.plugin({
+			name: "pi-extension-host-modules",
+			setup(builder) {
+				for (const [specifier, exports] of Object.entries(VIRTUAL_MODULES)) {
+					builder.module(specifier, () => ({ exports, loader: "object" }));
+				}
+			},
+		});
+	} else {
+		// Bun does not export registerHooks from node:module, so resolve it only in the Node branch.
+		const { registerHooks } = require("node:module") as NodeModuleWithHooks;
+		registerHooks({
+			resolve(specifier, context, nextResolve) {
+				const hostSpecifier = HOST_MODULE_SPECIFIERS[specifier];
+				if (!hostSpecifier) {
+					return nextResolve(specifier, context);
+				}
+				return nextResolve(hostSpecifier, { ...context, parentURL: import.meta.url });
+			},
+		});
+	}
 
-	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@earendil-works/pi-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@earendil-works/pi-tui");
-	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
-	// superset of the core entrypoint): existing extensions using the old
-	// global API keep working at runtime until compat is removed.
-	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@earendil-works/pi-ai/compat");
-	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
-	const piAiProvidersEntry = resolveWorkspaceOrImport(
-		"ai/dist/providers/all.js",
-		"@earendil-works/pi-ai/providers/all",
-	);
-
-	_aliases = {
-		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
-		"@earendil-works/pi-agent-core": piAgentCoreEntry,
-		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
-		"@earendil-works/pi-ai/compat": piAiCompatEntry,
-		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
-		"@earendil-works/pi-ai": piAiCompatEntry,
-		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
-		"@mariozechner/pi-agent-core": piAgentCoreEntry,
-		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
-		"@mariozechner/pi-ai/compat": piAiCompatEntry,
-		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
-		"@mariozechner/pi-ai": piAiCompatEntry,
-		typebox: typeboxEntry,
-		"typebox/compile": typeboxCompileEntry,
-		"typebox/value": typeboxValueEntry,
-		"@sinclair/typebox": typeboxEntry,
-		"@sinclair/typebox/compile": typeboxCompileEntry,
-		"@sinclair/typebox/value": typeboxValueEntry,
-	};
-
-	return _aliases;
+	nativeModuleHooksRegistered = true;
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
@@ -408,12 +421,18 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		}
 	}
 
+	// jiti.import() may delegate ESM to the native runtime, bypassing Jiti's virtualModules
+	// and alias resolution. Register native hooks first so those imports resolve from the
+	// host instead of an extension's node_modules and therefore share global module state.
+	ensureNativeModuleHooks();
+
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		// Jiti resolves imports in transpiled modules before the native runtime sees
+		// the original bare specifier. Native hooks only cover imports Jiti delegates.
+		virtualModules: VIRTUAL_MODULES,
+		// In Bun binary, disable native loading because bundled packages have no filesystem entries.
+		...(isBunBinary ? { tryNative: false } : {}),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });

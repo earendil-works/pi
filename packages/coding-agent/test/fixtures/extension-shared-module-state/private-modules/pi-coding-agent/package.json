@@ -1,0 +1,5 @@
+{
+	"name": "@earendil-works/pi-coding-agent",
+	"type": "module",
+	"exports": "./index.js"
+}
