@@ -1544,8 +1544,28 @@ export class SessionManager {
 			}
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
-		// If no sessionDir provided, derive from file's parent directory
-		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+		// When no sessionDir is provided, prefer the cwd's DEFAULT session directory when it
+		// already exists, falling back to the file's parent directory otherwise.
+		//
+		// This restores the `sessionDir === getDefaultSessionDirPath(cwd)` invariant that
+		// `list()`'s filterCwd heuristic and `usesDefaultSessionDir()` rely on. Without it,
+		// resuming (open()) a session whose stored cwd differs from the "native" cwd of the
+		// directory the file happens to live in — a project dir that aggregates sessions from
+		// multiple cwds (git worktrees, a shared --session-dir, a relocated/renamed project) —
+		// leaves sessionDir pointing at that aggregate dir while cwd is the resumed session's
+		// own cwd. The next /resume then arms the cwd filter (`dir !== getDefaultSessionDirPath(cwd)`)
+		// and collapses the picker to same-cwd sessions only — frequently a single self-reference.
+		// Defaulting to the cwd's own default dir (when present) keeps /resume showing the full
+		// project list after a resume, matching the fresh-launch picker. The existsSync guard
+		// preserves prior behavior for ad-hoc paths and projects whose default dir was never
+		// created, and avoids creating a stray directory as a side effect of opening a file.
+		let dir: string;
+		if (sessionDir) {
+			dir = normalizePath(sessionDir);
+		} else {
+			const defaultDir = getDefaultSessionDirPath(cwd);
+			dir = existsSync(defaultDir) ? defaultDir : resolve(resolvedPath, "..");
+		}
 		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
 	}
 
