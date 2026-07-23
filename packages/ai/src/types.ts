@@ -27,6 +27,15 @@ export type KnownApi =
 
 export type Api = KnownApi | (string & {});
 
+/**
+ * Request-only marker for a provider cache breakpoint on a user content block.
+ *
+ * The symbol is intentionally invisible to JSON and model-visible text. Callers
+ * must add it only to private request projections, never to untrusted or durable
+ * content. Provider adapters consume or strip it before serialization.
+ */
+export const REQUEST_CACHE_BREAKPOINT: unique symbol = Symbol("pi.requestCacheBreakpoint");
+
 export type KnownImagesApi = "openrouter-images";
 
 export type ImagesApi = KnownImagesApi | (string & {});
@@ -330,6 +339,7 @@ export interface TextContent {
 	type: "text";
 	text: string;
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
+	[REQUEST_CACHE_BREAKPOINT]?: true;
 }
 
 export interface ThinkingContent {
@@ -346,6 +356,7 @@ export interface ImageContent {
 	type: "image";
 	data: string; // base64 encoded image data
 	mimeType: string; // e.g., "image/jpeg", "image/png"
+	[REQUEST_CACHE_BREAKPOINT]?: true;
 }
 
 export interface ToolCall {
@@ -361,6 +372,16 @@ export interface Usage {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
+	/**
+	 * True only when the provider explicitly reported a valid cache-read count,
+	 * including an explicit zero. False or undefined means unavailable.
+	 */
+	cacheReadReported?: boolean;
+	/**
+	 * True only when the provider explicitly reported a valid cache-write count,
+	 * including an explicit zero. False or undefined means unavailable.
+	 */
+	cacheWriteReported?: boolean;
 	/** Subset of `cacheWrite` written with 1h retention. Only Anthropic reports this split. */
 	cacheWrite1h?: number;
 	/**
@@ -524,8 +545,13 @@ export interface OpenAICompletionsCompat {
 	zaiToolStream?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
-	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user, assistant, or tool-result text content. */
-	cacheControlFormat?: "anthropic";
+	/**
+	 * Explicit cache-control convention. `"anthropic"` applies Anthropic-style
+	 * markers to the system prompt, last tool definition, and last conversation
+	 * text. `"openai-content-block"` enables one private user-content breakpoint
+	 * only for an endpoint whose support has been independently verified.
+	 */
+	cacheControlFormat?: "anthropic" | "openai-content-block";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: false. */
 	sendSessionAffinityHeaders?: boolean;
 	/** Provider-specific deferred tool serialization mode. */
@@ -546,6 +572,12 @@ export interface OpenAIResponsesCompat {
 	supportsLongCacheRetention?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
+	/**
+	 * Explicit cache-control convention. `"openai-content-block"` enables one
+	 * private user-content breakpoint only for an endpoint whose support has
+	 * been independently verified. Default: undefined.
+	 */
+	cacheControlFormat?: "openai-content-block";
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */

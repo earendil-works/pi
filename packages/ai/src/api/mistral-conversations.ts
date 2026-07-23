@@ -21,6 +21,7 @@ import type {
 	Tool,
 	ToolCall,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -271,7 +272,7 @@ function shouldUsePromptCaching(options?: MistralOptions): options is MistralOpt
 	return options?.cacheRetention !== "none" && !!options?.sessionId;
 }
 
-function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): number {
+function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): { tokens: number; reported: boolean } {
 	const rawUsage = usage as {
 		promptTokensDetails?: { cachedTokens?: unknown } | null;
 		prompt_tokens_details?: { cached_tokens?: unknown } | null;
@@ -286,10 +287,12 @@ function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): num
 		rawUsage.promptTokenDetails?.cachedTokens ??
 		rawUsage.prompt_token_details?.cached_tokens ??
 		rawUsage.numCachedTokens ??
-		rawUsage.num_cached_tokens ??
-		0;
-	const cachedTokens = typeof rawCachedTokens === "number" && Number.isFinite(rawCachedTokens) ? rawCachedTokens : 0;
-	return Math.min(promptTokens, Math.max(0, cachedTokens));
+		rawUsage.num_cached_tokens;
+	const normalized = normalizeCacheTokenUsage(rawCachedTokens);
+	return {
+		tokens: Math.min(Math.max(0, promptTokens), normalized.tokens),
+		reported: normalized.reported,
+	};
 }
 
 async function consumeChatStream(
@@ -334,10 +337,12 @@ async function consumeChatStream(
 			const promptTokens = chunk.usage.promptTokens || 0;
 			const cachedPromptTokens = getMistralCachedPromptTokens(chunk.usage, promptTokens);
 
-			output.usage.input = Math.max(0, promptTokens - cachedPromptTokens);
+			output.usage.input = Math.max(0, promptTokens - cachedPromptTokens.tokens);
 			output.usage.output = chunk.usage.completionTokens || 0;
-			output.usage.cacheRead = cachedPromptTokens;
+			output.usage.cacheRead = cachedPromptTokens.tokens;
 			output.usage.cacheWrite = 0;
+			output.usage.cacheReadReported = cachedPromptTokens.reported;
+			output.usage.cacheWriteReported = false;
 			output.usage.totalTokens =
 				chunk.usage.totalTokens ||
 				output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;

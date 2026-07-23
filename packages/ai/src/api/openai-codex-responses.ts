@@ -883,6 +883,17 @@ export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
 	websocketSessionCache.clear();
 }
 
+/**
+ * Forget request/response continuation payloads for a completed owner turn
+ * without closing or evicting the reusable WebSocket connection.
+ */
+export function clearOpenAICodexWebSocketContinuation(sessionId: string): void {
+	const entry = websocketSessionCache.get(sessionId);
+	if (entry) {
+		entry.continuation = undefined;
+	}
+}
+
 registerSessionResourceCleanup(closeOpenAICodexWebSocketSessions);
 
 function isWebSocketSseFallbackActive(sessionId: string | undefined): boolean {

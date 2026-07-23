@@ -49,6 +49,10 @@ function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "pro
 	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
 }
 
+type ResolvedOpenAIResponsesCompat = Omit<Required<OpenAIResponsesCompat>, "cacheControlFormat"> & {
+	cacheControlFormat?: OpenAIResponsesCompat["cacheControlFormat"];
+};
+
 /**
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
@@ -63,17 +67,18 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
-function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+function getCompat(model: Model<"openai-responses">): ResolvedOpenAIResponsesCompat {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
+		cacheControlFormat: model.compat?.cacheControlFormat,
 	};
 }
 
 function getPromptCacheRetention(
-	compat: Required<OpenAIResponsesCompat>,
+	compat: ResolvedOpenAIResponsesCompat,
 	cacheRetention: CacheRetention,
 ): "24h" | undefined {
 	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
@@ -240,12 +245,13 @@ function createClient(
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
 	const compat = getCompat(model);
+	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		deferredTools: toolPlacement.deferred,
+		requestCacheBreakpoint: cacheRetention !== "none" && compat.cacheControlFormat === "openai-content-block",
 	});
 
-	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,

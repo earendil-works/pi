@@ -11,6 +11,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { hasCacheableRequestCacheBreakpoint, type RequestCacheBreakpointContent } from "../request-cache-breakpoint.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -32,6 +33,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
@@ -139,6 +141,10 @@ interface OpenAICompatCacheControl {
 	ttl?: string;
 }
 
+interface OpenAIExplicitPromptCacheBreakpoint {
+	mode: "explicit";
+}
+
 type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
 	"cacheControlFormat" | "deferredToolsMode"
@@ -164,6 +170,11 @@ type OpenAIEncryptedReasoningDetail = {
 
 type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
+	prompt_cache_breakpoint?: OpenAIExplicitPromptCacheBreakpoint;
+};
+
+type ChatCompletionImagePartWithPromptCacheBreakpoint = ChatCompletionContentPartImage & {
+	prompt_cache_breakpoint?: OpenAIExplicitPromptCacheBreakpoint;
 };
 
 type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletionTool & {
@@ -586,7 +597,9 @@ function buildParams(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
 ) {
-	const messages = convertMessages(model, context, compat);
+	const messages = convertMessages(model, context, compat, {
+		requestCacheBreakpoint: cacheRetention !== "none" && compat.cacheControlFormat === "openai-content-block",
+	});
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -895,6 +908,7 @@ export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
 	compat: ResolvedOpenAICompletionsCompat,
+	options?: { requestCacheBreakpoint?: boolean },
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
@@ -925,6 +939,17 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
+	let selectedCacheBreakpoint: RequestCacheBreakpointContent | undefined;
+	if (options?.requestCacheBreakpoint) {
+		for (const message of transformedMessages) {
+			if (message.role !== "user" || !Array.isArray(message.content)) continue;
+			for (const block of message.content) {
+				if (hasCacheableRequestCacheBreakpoint(block)) {
+					selectedCacheBreakpoint = block;
+				}
+			}
+		}
+	}
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
@@ -957,14 +982,20 @@ export function convertMessages(
 						return {
 							type: "text",
 							text: sanitizeSurrogates(item.text),
-						} satisfies ChatCompletionContentPartText;
+							...(item === selectedCacheBreakpoint
+								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
+								: {}),
+						} satisfies ChatCompletionTextPartWithCacheControl;
 					} else {
 						return {
 							type: "image_url",
 							image_url: {
 								url: `data:${item.mimeType};base64,${item.data}`,
 							},
-						} satisfies ChatCompletionContentPartImage;
+							...(item === selectedCacheBreakpoint
+								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
+								: {}),
+						} satisfies ChatCompletionImagePartWithPromptCacheBreakpoint;
 					}
 				});
 				if (content.length === 0) continue;
@@ -1195,8 +1226,10 @@ function parseChunkUsage(
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const cacheRead = normalizeCacheTokenUsage(
+		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens,
+	);
+	const cacheWrite = normalizeCacheTokenUsage(rawUsage.prompt_tokens_details?.cache_write_tokens);
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
@@ -1206,16 +1239,18 @@ function parseChunkUsage(
 	// Do not subtract writes from cached_tokens, otherwise spec-compliant
 	// providers are under-reported. DS4 mirrors this contract too:
 	// https://github.com/antirez/ds4/pull/29
-	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+	const input = Math.max(0, promptTokens - cacheRead.tokens - cacheWrite.tokens);
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
-		cacheRead: cacheReadTokens,
-		cacheWrite: cacheWriteTokens,
+		cacheRead: cacheRead.tokens,
+		cacheWrite: cacheWrite.tokens,
+		cacheReadReported: cacheRead.reported,
+		cacheWriteReported: cacheWrite.reported,
 		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
-		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
+		totalTokens: input + outputTokens + cacheRead.tokens + cacheWrite.tokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);

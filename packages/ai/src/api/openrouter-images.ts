@@ -16,6 +16,7 @@ import type {
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -169,23 +170,27 @@ function parseUsage(
 	model: ImagesModel<"openrouter-images">,
 ) {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const reportedCachedTokens = normalizeCacheTokenUsage(rawUsage.prompt_tokens_details?.cached_tokens);
+	const cacheWriteTokens = normalizeCacheTokenUsage(rawUsage.prompt_tokens_details?.cache_write_tokens);
 	const cacheReadTokens =
-		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
-	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+		cacheWriteTokens.tokens > 0
+			? Math.max(0, reportedCachedTokens.tokens - cacheWriteTokens.tokens)
+			: reportedCachedTokens.tokens;
+	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens.tokens);
 	const output = rawUsage.completion_tokens || 0;
 	const usage = {
 		input,
 		output,
 		cacheRead: cacheReadTokens,
-		cacheWrite: cacheWriteTokens,
-		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
+		cacheWrite: cacheWriteTokens.tokens,
+		cacheReadReported: reportedCachedTokens.reported,
+		cacheWriteReported: cacheWriteTokens.reported,
+		totalTokens: input + output + cacheReadTokens + cacheWriteTokens.tokens,
 		cost: {
 			input: (model.cost.input / 1000000) * input,
 			output: (model.cost.output / 1000000) * output,
 			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
-			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
+			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens.tokens,
 			total: 0,
 		},
 	};

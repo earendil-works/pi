@@ -8,6 +8,7 @@ import type {
 	RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { calculateCost } from "../models.ts";
+import { type RequestCacheBreakpointSelection, selectRequestCacheBreakpoint } from "../request-cache-breakpoint.ts";
 import type {
 	AnthropicMessagesCompat,
 	Api,
@@ -29,6 +30,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -572,11 +574,21 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
+					const cacheRead = normalizeCacheTokenUsage(event.message.usage.cache_read_input_tokens);
+					const cacheWrite = normalizeCacheTokenUsage(event.message.usage.cache_creation_input_tokens);
+					const cacheWrite1h = normalizeCacheTokenUsage(
+						event.message.usage.cache_creation?.ephemeral_1h_input_tokens,
+					);
 					output.usage.input = event.message.usage.input_tokens || 0;
 					output.usage.output = event.message.usage.output_tokens || 0;
-					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
-					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
-					output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
+					output.usage.cacheRead = cacheRead.tokens;
+					output.usage.cacheWrite = cacheWrite.tokens;
+					output.usage.cacheReadReported = cacheRead.reported;
+					output.usage.cacheWriteReported = cacheWrite.reported;
+					output.usage.cacheWrite1h =
+						cacheWrite.reported && cacheWrite1h.reported
+							? Math.min(cacheWrite.tokens, cacheWrite1h.tokens)
+							: undefined;
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -712,17 +724,25 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
 					if (event.usage) {
+						const rawUsage = event.usage as typeof event.usage & Record<string, unknown>;
 						if (event.usage.input_tokens != null) {
 							output.usage.input = event.usage.input_tokens;
 						}
 						if (event.usage.output_tokens != null) {
 							output.usage.output = event.usage.output_tokens;
 						}
-						if (event.usage.cache_read_input_tokens != null) {
-							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+						if (Object.hasOwn(rawUsage, "cache_read_input_tokens")) {
+							const cacheRead = normalizeCacheTokenUsage(rawUsage.cache_read_input_tokens);
+							output.usage.cacheRead = cacheRead.tokens;
+							output.usage.cacheReadReported = cacheRead.reported;
 						}
-						if (event.usage.cache_creation_input_tokens != null) {
-							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						if (Object.hasOwn(rawUsage, "cache_creation_input_tokens")) {
+							const cacheWrite = normalizeCacheTokenUsage(rawUsage.cache_creation_input_tokens);
+							output.usage.cacheWrite = cacheWrite.tokens;
+							output.usage.cacheWriteReported = cacheWrite.reported;
+							if (output.usage.cacheWrite1h !== undefined) {
+								output.usage.cacheWrite1h = Math.min(cacheWrite.tokens, output.usage.cacheWrite1h);
+							}
 						}
 						// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
 						// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
@@ -933,6 +953,7 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
+	const requestCacheBreakpoint = selectRequestCacheBreakpoint(context.messages);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	const toolPlacement = splitDeferredTools(
@@ -956,6 +977,7 @@ function buildParams(
 			compat.allowEmptySignature,
 			deferredToolNames,
 			normalizeToolName,
+			requestCacheBreakpoint,
 		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
@@ -1101,6 +1123,7 @@ function convertMessages(
 	allowEmptySignature = false,
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
+	requestCacheBreakpoint: RequestCacheBreakpointSelection = { requested: false },
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 	const loadedToolNames = new Set<string>();
@@ -1118,13 +1141,14 @@ function convertMessages(
 				}
 			} else {
 				const blocks: ContentBlockParam[] = msg.content.map((item) => {
+					let block: ContentBlockParam;
 					if (item.type === "text") {
-						return {
+						block = {
 							type: "text",
 							text: sanitizeSurrogates(item.text),
 						};
 					} else {
-						return {
+						block = {
 							type: "image",
 							source: {
 								type: "base64",
@@ -1133,6 +1157,10 @@ function convertMessages(
 							},
 						};
 					}
+					if (cacheControl && item === requestCacheBreakpoint.content) {
+						(block as ContentBlockParam & { cache_control?: CacheControlEphemeral }).cache_control = cacheControl;
+					}
+					return block;
 				});
 				const filteredBlocks = blocks.filter((b) => {
 					if (b.type === "text") {
@@ -1235,7 +1263,7 @@ function convertMessages(
 	}
 
 	// Add cache_control to the last user message to cache conversation history
-	if (cacheControl && params.length > 0) {
+	if (cacheControl && !requestCacheBreakpoint.requested && params.length > 0) {
 		const lastMessage = params[params.length - 1];
 		if (lastMessage.role === "user") {
 			if (Array.isArray(lastMessage.content)) {

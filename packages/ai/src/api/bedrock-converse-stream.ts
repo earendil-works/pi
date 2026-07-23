@@ -47,6 +47,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -524,10 +525,14 @@ function handleMetadata(
 	output: AssistantMessage,
 ): void {
 	if (event.usage) {
+		const cacheRead = normalizeCacheTokenUsage(event.usage.cacheReadInputTokens);
+		const cacheWrite = normalizeCacheTokenUsage(event.usage.cacheWriteInputTokens);
 		output.usage.input = event.usage.inputTokens || 0;
 		output.usage.output = event.usage.outputTokens || 0;
-		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
-		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
+		output.usage.cacheRead = cacheRead.tokens;
+		output.usage.cacheWrite = cacheWrite.tokens;
+		output.usage.cacheReadReported = cacheRead.reported;
+		output.usage.cacheWriteReported = cacheWrite.reported;
 		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;
 		calculateCost(model, output.usage);
 	}

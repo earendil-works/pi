@@ -15,6 +15,7 @@ import type {
 	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
 import { calculateCost } from "../models.ts";
+import { hasCacheableRequestCacheBreakpoint, type RequestCacheBreakpointContent } from "../request-cache-breakpoint.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -29,6 +30,7 @@ import type {
 	ToolCall,
 	Usage,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -80,6 +82,11 @@ export interface OpenAIResponsesStreamOptions {
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	deferredTools?: ReadonlyMap<string, Tool>;
+	/**
+	 * Lower one valid private user-content marker. Callers must enable this only
+	 * for an explicitly verified endpoint and when cache retention is enabled.
+	 */
+	requestCacheBreakpoint?: boolean;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -88,6 +95,13 @@ export interface ConvertResponsesToolsOptions {
 }
 
 type OpenAIFunctionTool = Extract<OpenAITool, { type: "function" }>;
+type OpenAIExplicitPromptCacheBreakpoint = { mode: "explicit" };
+type ResponseInputTextWithPromptCacheBreakpoint = ResponseInputText & {
+	prompt_cache_breakpoint?: OpenAIExplicitPromptCacheBreakpoint;
+};
+type ResponseInputImageWithPromptCacheBreakpoint = ResponseInputImage & {
+	prompt_cache_breakpoint?: OpenAIExplicitPromptCacheBreakpoint;
+};
 
 // =============================================================================
 // Message conversion
@@ -128,6 +142,17 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	let selectedCacheBreakpoint: RequestCacheBreakpointContent | undefined;
+	if (options?.requestCacheBreakpoint) {
+		for (const message of transformedMessages) {
+			if (message.role !== "user" || !Array.isArray(message.content)) continue;
+			for (const block of message.content) {
+				if (hasCacheableRequestCacheBreakpoint(block)) {
+					selectedCacheBreakpoint = block;
+				}
+			}
+		}
+	}
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	if (includeSystemPrompt && context.systemPrompt) {
@@ -153,13 +178,19 @@ export function convertResponsesMessages<TApi extends Api>(
 						return {
 							type: "input_text",
 							text: sanitizeSurrogates(item.text),
-						} satisfies ResponseInputText;
+							...(item === selectedCacheBreakpoint
+								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
+								: {}),
+						} satisfies ResponseInputTextWithPromptCacheBreakpoint;
 					}
 					return {
 						type: "input_image",
 						detail: "auto",
 						image_url: `data:${item.mimeType};base64,${item.data}`,
-					} satisfies ResponseInputImage;
+						...(item === selectedCacheBreakpoint
+							? { prompt_cache_breakpoint: { mode: "explicit" as const } }
+							: {}),
+					} satisfies ResponseInputImageWithPromptCacheBreakpoint;
 				});
 				if (content.length === 0) continue;
 				messages.push({
@@ -419,14 +450,16 @@ export async function processResponsesStream<TApi extends Api>(
 			const inputDetails = response.usage.input_tokens_details as
 				| { cached_tokens?: number; cache_write_tokens?: number }
 				| undefined;
-			const cachedTokens = inputDetails?.cached_tokens || 0;
-			const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
+			const cacheRead = normalizeCacheTokenUsage(inputDetails?.cached_tokens);
+			const cacheWrite = normalizeCacheTokenUsage(inputDetails?.cache_write_tokens);
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
-				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
+				input: Math.max(0, (response.usage.input_tokens || 0) - cacheRead.tokens - cacheWrite.tokens),
 				output: response.usage.output_tokens || 0,
-				cacheRead: cachedTokens,
-				cacheWrite: cacheWriteTokens,
+				cacheRead: cacheRead.tokens,
+				cacheWrite: cacheWrite.tokens,
+				cacheReadReported: cacheRead.reported,
+				cacheWriteReported: cacheWrite.reported,
 				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },

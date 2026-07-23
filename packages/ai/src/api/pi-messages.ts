@@ -22,6 +22,7 @@ import type {
 	ThinkingLevel,
 	ToolCall,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
@@ -162,6 +163,25 @@ function createEmptyUsage(): PiMessagesUsage {
 	};
 }
 
+function normalizePiMessagesUsage(usage: PiMessagesUsage): PiMessagesUsage {
+	const raw = usage as PiMessagesUsage & Record<string, unknown>;
+	const cacheRead = normalizeCacheTokenUsage(raw.cacheRead);
+	const cacheWrite = normalizeCacheTokenUsage(raw.cacheWrite);
+	const cacheReadDeclared =
+		typeof raw.cacheReadReported === "boolean" ? raw.cacheReadReported : Object.hasOwn(raw, "cacheRead");
+	const cacheWriteDeclared =
+		typeof raw.cacheWriteReported === "boolean" ? raw.cacheWriteReported : Object.hasOwn(raw, "cacheWrite");
+	const cacheReadReported = cacheRead.reported && cacheReadDeclared;
+	const cacheWriteReported = cacheWrite.reported && cacheWriteDeclared;
+	return {
+		...usage,
+		cacheRead: cacheReadReported ? cacheRead.tokens : 0,
+		cacheWrite: cacheWriteReported ? cacheWrite.tokens : 0,
+		cacheReadReported,
+		cacheWriteReported,
+	};
+}
+
 function appendRewriteDiagnostic(message: AssistantMessage, rewrite: PiMessagesRewriteImpact | undefined): void {
 	if (!rewrite) {
 		return;
@@ -191,7 +211,7 @@ function createEventConverter(model: Model<"pi-messages">) {
 			case "done":
 				Object.assign(partial, {
 					stopReason: event.reason,
-					usage: event.usage,
+					usage: normalizePiMessagesUsage(event.usage),
 					responseId: event.responseId,
 				});
 				appendRewriteDiagnostic(partial, event.rewrite);
@@ -199,7 +219,7 @@ function createEventConverter(model: Model<"pi-messages">) {
 			case "error":
 				Object.assign(partial, {
 					stopReason: event.reason,
-					usage: event.usage,
+					usage: normalizePiMessagesUsage(event.usage),
 					errorMessage: event.errorMessage,
 					responseId: event.responseId,
 				});

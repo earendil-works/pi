@@ -24,6 +24,7 @@ import type {
 	ThinkingContent,
 	ToolCall,
 } from "../types.ts";
+import { normalizeCacheTokenUsage } from "../utils/cache-usage.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -232,13 +233,15 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (chunk.usageMetadata) {
+					const cacheRead = normalizeCacheTokenUsage(chunk.usageMetadata.cachedContentTokenCount);
 					output.usage = {
-						input:
-							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
+						input: Math.max(0, (chunk.usageMetadata.promptTokenCount || 0) - cacheRead.tokens),
 						output:
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
-						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
+						cacheRead: cacheRead.tokens,
 						cacheWrite: 0,
+						cacheReadReported: cacheRead.reported,
+						cacheWriteReported: false,
 						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
