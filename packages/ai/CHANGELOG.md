@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixed `cacheRetention: "none"` to disable implicit prompt-cache writes for supported OpenAI models ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
+- Fixed `cacheRetention: "none"` to disable implicit prompt-cache writes for supported OpenAI models and session-based caching for OpenAI Codex ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
 - Fixed OpenAI and Anthropic provider retry waits to honor abort signals and configured delay limits ([#6911](https://github.com/earendil-works/pi/issues/6911)).
 - Fixed OpenRouter Anthropic cache breakpoints to advance through tool results and enabled cache control for `~anthropic/*-latest` aliases ([#6941](https://github.com/earendil-works/pi/pull/6941) by [@mteam88](https://github.com/mteam88)).
 
