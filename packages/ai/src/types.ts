@@ -399,6 +399,8 @@ export interface AssistantMessage {
 	usage: Usage;
 	stopReason: StopReason;
 	errorMessage?: string;
+	/** Override the collapsed thinking label for this specific message. */
+	hiddenThinkingLabel?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 

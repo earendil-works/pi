@@ -127,8 +127,9 @@ export class AssistantMessageComponent extends Container {
 
 				if (this.hideThinkingBlock) {
 					// Show one static label for each run of thinking blocks when hidden.
+					const label = this.lastMessage?.hiddenThinkingLabel ?? this.hiddenThinkingLabel;
 					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0),
+						new Text(theme.italic(theme.fg("thinkingText", label)), this.outputPad, 0),
 					);
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
