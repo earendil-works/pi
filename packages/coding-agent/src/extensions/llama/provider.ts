@@ -111,11 +111,20 @@ export function createLlamaProvider(): LlamaProviderController {
 		},
 		getModels: () => models,
 		refreshModels: async (context: RefreshModelsContext): Promise<void> => {
+			const stored = await context.store.read();
+			if (stored) {
+				models = stored.models.filter(
+					(model): model is Model<"openai-completions"> =>
+						model.provider === LLAMA_PROVIDER_ID && model.api === "openai-completions",
+				);
+			}
+
 			if (!context.allowNetwork || context.signal?.aborted || context.credential?.type !== "api_key") return;
 			const serverUrl = credentialServerUrl(context.credential);
 			if (!serverUrl) return;
 			const catalog = await new LlamaClient(serverUrl, context.credential.key).list({ signal: context.signal });
 			setCatalog(catalog, serverUrl);
+			if (!context.signal?.aborted) await context.store.write({ models, checkedAt: Date.now() });
 		},
 		stream: (model, context, options) => stream(model, context, options as ProviderStreamOptions | undefined),
 		streamSimple: (model, context, options) => streamSimple(model, context, options),
