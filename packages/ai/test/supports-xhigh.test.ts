@@ -16,6 +16,13 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
+	it("includes xhigh and max for Anthropic Opus 5 on anthropic-messages API", () => {
+		const model = getModel("anthropic", "claude-opus-5");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(model!)).toContain("max");
+	});
+
 	it("includes max but not xhigh for Anthropic Sonnet 4.6 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-6");
 		expect(model).toBeDefined();
@@ -131,6 +138,13 @@ describe("getSupportedThinkingLevels", () => {
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
+	});
+
+	it("includes xhigh and max for Bedrock Claude Opus 5", () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-5");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
 	it("includes xhigh and max but not off for Bedrock Claude Fable 5", () => {
