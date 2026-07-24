@@ -5,6 +5,7 @@
 ### Added
 
 - Exposed `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` to commands run by built-in and factory-created bash tools.
+- Exposed the `outputPad` setting to custom message renderers.
 
 ### Fixed
 
