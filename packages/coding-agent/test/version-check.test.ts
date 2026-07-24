@@ -35,6 +35,7 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -43,6 +44,7 @@ describe("version checks", () => {
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -59,6 +61,7 @@ describe("version checks", () => {
 	});
 
 	it("returns the active package metadata from the version check api", async () => {
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () =>
 			Response.json({
 				packageName: "@new-scope/pi",
@@ -74,6 +77,7 @@ describe("version checks", () => {
 	});
 
 	it("returns update notes from the version check api", async () => {
+		delete process.env.PI_OFFLINE;
 		const fetchMock = vi.fn(async () => Response.json({ note: " **Read this** ", version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -90,6 +94,7 @@ describe("version checks", () => {
 	});
 
 	it("allows direct api calls when automatic version checks are disabled", async () => {
+		delete process.env.PI_OFFLINE;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);

@@ -65,6 +65,7 @@ interface PackageManagerPathInternals {
 }
 
 describe("DefaultPackageManager git update", () => {
+	const originalOffline = process.env.PI_OFFLINE;
 	let tempDir: string;
 	let remoteDir: string; // Simulates the "remote" repository
 	let agentDir: string; // The agent directory where extensions are installed
@@ -78,6 +79,7 @@ describe("DefaultPackageManager git update", () => {
 	const gitSource = "git:github.com/test/extension";
 
 	beforeEach(() => {
+		delete process.env.PI_OFFLINE;
 		tempDir = join(tmpdir(), `git-update-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		remoteDir = join(tempDir, "remote");
@@ -97,6 +99,11 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	afterEach(() => {
+		if (originalOffline === undefined) {
+			delete process.env.PI_OFFLINE;
+		} else {
+			process.env.PI_OFFLINE = originalOffline;
+		}
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}

@@ -13,6 +13,7 @@ export default defineConfig({
 		globals: true,
 		environment: "node",
 		testTimeout: 30000,
+		env: { PI_OFFLINE: "1" },
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
 		server: {

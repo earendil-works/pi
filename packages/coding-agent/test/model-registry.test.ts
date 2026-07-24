@@ -25,7 +25,6 @@ describe("ModelRegistry", () => {
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
 		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		vi.stubEnv("PI_OFFLINE", "1");
 	});
 
 	afterEach(() => {
@@ -34,7 +33,6 @@ describe("ModelRegistry", () => {
 		}
 		clearApiKeyCache();
 		vi.restoreAllMocks();
-		vi.unstubAllEnvs();
 	});
 
 	/** Create minimal provider config  */
