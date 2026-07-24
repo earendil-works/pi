@@ -1,0 +1,21 @@
+{
+	"name": "@earendil-works/pi-evals",
+	"version": "0.82.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"clean": "shx rm -rf .eval",
+		"eval": "node scripts/run-evals.mjs"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^0.82.0",
+		"@mariozechner/pi-agent-core": "npm:@earendil-works/pi-agent-core@0.82.0",
+		"@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@0.82.0",
+		"@types/node": "24.12.4",
+		"@vitest-evals/harness-pi-ai": "0.15.0",
+		"shx": "0.4.0",
+		"typescript": "5.9.3",
+		"vitest-evals": "0.15.0",
+		"vitest": "4.1.9"
+	}
+}
