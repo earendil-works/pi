@@ -132,6 +132,52 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(harness.session.isBashRunning).toBe(false);
 	});
 
+	it("rejects overlapping user bash commands", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		let execCalls = 0;
+		let finishFirst: (() => void) | undefined;
+		const operations: BashOperations = {
+			exec: async () => {
+				execCalls++;
+				if (execCalls > 1) return { exitCode: 0 };
+
+				return await new Promise<{ exitCode: number | null }>((resolve) => {
+					finishFirst = () => resolve({ exitCode: 0 });
+				});
+			},
+		};
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		let secondOutcome: { status: "pending" | "fulfilled" | "rejected"; error?: unknown } = {
+			status: "pending",
+		};
+		const secondBash = harness.session.executeBash("second", undefined, { operations }).then(
+			() => {
+				secondOutcome = { status: "fulfilled" };
+			},
+			(error: unknown) => {
+				secondOutcome = { status: "rejected", error };
+			},
+		);
+		await Promise.resolve();
+		const secondOutcomeBeforeFirstSettles = secondOutcome;
+		const startedCommandsBeforeFirstSettles = execCalls;
+		const runningBeforeFirstSettles = harness.session.isBashRunning;
+
+		finishFirst?.();
+		await Promise.all([firstBash, secondBash]);
+
+		expect(secondOutcomeBeforeFirstSettles).toMatchObject({
+			status: "rejected",
+			error: { message: "A user bash command is already running" },
+		});
+		expect(startedCommandsBeforeFirstSettles).toBe(1);
+		expect(runningBeforeFirstSettles).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
 	it("persists user, assistant, toolResult, and custom messages in order", async () => {
 		const echoTool: AgentTool = {
 			name: "echo",

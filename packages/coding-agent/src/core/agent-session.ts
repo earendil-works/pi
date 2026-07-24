@@ -2770,6 +2770,10 @@ export class AgentSession {
 		onChunk?: (chunk: string) => void,
 		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations },
 	): Promise<BashResult> {
+		if (this._bashAbortController !== undefined) {
+			throw new Error("A user bash command is already running");
+		}
+
 		this._bashAbortController = new AbortController();
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
