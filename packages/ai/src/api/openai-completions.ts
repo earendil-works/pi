@@ -52,6 +52,7 @@ import {
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions } from "./simple-options.ts";
+import { normalizeOpenAIToolParameters } from "./tool-schema.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -1304,7 +1305,7 @@ function convertTools(
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: tool.parameters as Record<string, unknown>, // TypeBox already generates JSON Schema
+				parameters: normalizeOpenAIToolParameters(tool.parameters),
 				// Only include strict if provider supports it. Some reject unknown fields.
 				...(compat.supportsStrictMode !== false && { strict: strict ?? false }),
 			},
