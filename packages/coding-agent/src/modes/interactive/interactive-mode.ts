@@ -4497,7 +4497,7 @@ export class InteractiveMode {
 		}
 
 		for (const diagnostic of configuredScope?.diagnostics ?? []) {
-			if (diagnostic.message !== `No models match pattern "${diagnostic.pattern}"`) continue;
+			if (diagnostic.code !== "no-match") continue;
 			currentEnabledIds ??= [];
 			if (!currentEnabledIds.includes(diagnostic.pattern)) currentEnabledIds.push(diagnostic.pattern);
 		}
