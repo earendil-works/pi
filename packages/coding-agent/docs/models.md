@@ -211,6 +211,8 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 
 A cost tier supplies a complete alternate rate set and applies to the full request when total input usage (`input + cacheRead + cacheWrite`) exceeds `inputTokensAbove`. When multiple tiers match, the highest threshold wins.
 
+Catalog rates are a fallback. When an API reports the billed cost in the response (Vercel AI Gateway, OpenRouter with usage accounting), pi uses the reported total and scales the cost components so they keep summing to it, so a custom model without `cost` still shows real spend on those providers.
+
 ```json
 {
   "cost": {

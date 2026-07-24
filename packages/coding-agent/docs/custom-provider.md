@@ -558,6 +558,15 @@ output.usage.totalTokens = output.usage.input + output.usage.output +
 calculateCost(model, output.usage);
 ```
 
+When the API reports the billed cost in the response, prefer it over catalog math with the exported `applyReportedCost(usage, reportedTotal)`. It sets `cost.total` to the reported value and scales the components so they keep summing to it, invalid values (negative, non-finite) are ignored:
+
+```typescript
+calculateCost(model, output.usage);
+if (typeof response.usage.cost === "number") {
+  applyReportedCost(output.usage, response.usage.cost);
+}
+```
+
 ### Context Overflow Errors
 
 When a request exceeds the model's context window, pi can recover automatically by compacting the conversation and retrying. This recovery only kicks in if pi recognizes the failure as an overflow.

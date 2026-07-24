@@ -225,6 +225,8 @@ for (const block of response.content) {
 
 Snippets in the rest of this README assume a `models` collection set up like this (with the relevant providers registered).
 
+`usage.cost` is computed from the model's catalog rates. When an API reports the billed cost in the response (Vercel AI Gateway, OpenRouter with usage accounting), the reported total is used instead and catalog rates only serve as the fallback, cost components are scaled so they keep summing to the total.
+
 ## Providers and Models
 
 A **provider** is the runtime unit: it owns its model catalog, its auth (API key resolution, OAuth flows), and its stream behavior. A `Models` collection holds providers and routes every request to the provider that owns the model.

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { applyReportedCost } from "../src/models.ts";
-import type { Model, Usage } from "../src/types.ts";
+import type { AssistantMessage, Model, Usage } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	chunkSets: [] as unknown[][],
@@ -193,6 +193,39 @@ describe("openai-completions reported cost", () => {
 		expect(message.usage.cost.total).toBe(0.012);
 	});
 
+	it("ignores upstream_inference_cost for non-BYOK responses", async () => {
+		mockState.chunkSets = [
+			[
+				{
+					id: "gen_test",
+					model: "moonshotai/kimi-k3",
+					choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }],
+				},
+				{
+					id: "gen_test",
+					model: "moonshotai/kimi-k3",
+					choices: [],
+					usage: {
+						prompt_tokens: 1000,
+						completion_tokens: 1000,
+						cost: 0.018,
+						is_byok: false,
+						cost_details: { upstream_inference_cost: 0.018 },
+					},
+				},
+			],
+		];
+
+		const model = gatewayCompletionsModel({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+		const message = await streamOpenAICompletions(
+			model,
+			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{ apiKey: "test" },
+		).result();
+
+		expect(message.usage.cost.total).toBe(0.018);
+	});
+
 	it("keeps the local calculation when no cost is reported", async () => {
 		mockState.chunkSets = [
 			[
@@ -254,62 +287,82 @@ function gatewayAnthropicModel(cost: Model<"anthropic-messages">["cost"]): Model
 	};
 }
 
+function kimiSseEvents(gatewayCost: string): Array<{ event: string; data: string }> {
+	return [
+		{
+			event: "message_start",
+			data: JSON.stringify({
+				type: "message_start",
+				message: {
+					id: "gen_test",
+					usage: {
+						input_tokens: 0,
+						output_tokens: 0,
+						cache_read_input_tokens: 91,
+						cache_creation_input_tokens: 0,
+					},
+				},
+			}),
+		},
+		{
+			event: "content_block_start",
+			data: JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+		},
+		{
+			event: "content_block_delta",
+			data: JSON.stringify({
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "hi" },
+			}),
+		},
+		{
+			event: "content_block_stop",
+			data: JSON.stringify({ type: "content_block_stop", index: 0 }),
+		},
+		{
+			event: "message_delta",
+			data: JSON.stringify({
+				type: "message_delta",
+				delta: { stop_reason: "end_turn" },
+				usage: { output_tokens: 100 },
+				provider_metadata: { gateway: { cost: gatewayCost } },
+			}),
+		},
+		{
+			event: "message_stop",
+			data: JSON.stringify({ type: "message_stop" }),
+		},
+	];
+}
+
+async function runAnthropicStream(model: Model<"anthropic-messages">, gatewayCost: string): Promise<AssistantMessage> {
+	return await streamAnthropic(
+		model,
+		{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+		{ client: createFakeAnthropicClient(createSseResponse(kimiSseEvents(gatewayCost))) },
+	).result();
+}
+
 describe("anthropic-messages reported cost", () => {
 	it("uses provider_metadata.gateway.cost from the final message_delta", async () => {
-		const response = createSseResponse([
-			{
-				event: "message_start",
-				data: JSON.stringify({
-					type: "message_start",
-					message: {
-						id: "gen_test",
-						usage: {
-							input_tokens: 0,
-							output_tokens: 0,
-							cache_read_input_tokens: 91,
-							cache_creation_input_tokens: 0,
-						},
-					},
-				}),
-			},
-			{
-				event: "content_block_start",
-				data: JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
-			},
-			{
-				event: "content_block_delta",
-				data: JSON.stringify({
-					type: "content_block_delta",
-					index: 0,
-					delta: { type: "text_delta", text: "hi" },
-				}),
-			},
-			{
-				event: "content_block_stop",
-				data: JSON.stringify({ type: "content_block_stop", index: 0 }),
-			},
-			{
-				event: "message_delta",
-				data: JSON.stringify({
-					type: "message_delta",
-					delta: { stop_reason: "end_turn" },
-					usage: { output_tokens: 100 },
-					provider_metadata: { gateway: { cost: "0.0015273" } },
-				}),
-			},
-			{
-				event: "message_stop",
-				data: JSON.stringify({ type: "message_stop" }),
-			},
-		]);
-
 		const model = gatewayAnthropicModel({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-		const message = await streamAnthropic(
-			model,
-			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
-			{ client: createFakeAnthropicClient(response) },
-		).result();
-
+		const message = await runAnthropicStream(model, "0.0015273");
 		expect(message.usage.cost.total).toBe(0.0015273);
+	});
+
+	it("scales catalog-derived components to the reported total", async () => {
+		// Local calc: 91 cacheRead * 0.3/M + 100 output * 15/M = 0.0015273, half the reported total.
+		const model = gatewayAnthropicModel({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 });
+		const message = await runAnthropicStream(model, "0.0030546");
+		expect(message.usage.cost.total).toBe(0.0030546);
+		expect(message.usage.cost.cacheRead).toBeCloseTo(0.0000546);
+		expect(message.usage.cost.output).toBeCloseTo(0.003);
+	});
+
+	it("keeps the local calculation when the reported value is invalid", async () => {
+		const model = gatewayAnthropicModel({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 });
+		const message = await runAnthropicStream(model, "not-a-number");
+		expect(message.usage.cost.total).toBeCloseTo(0.0015273);
 	});
 });

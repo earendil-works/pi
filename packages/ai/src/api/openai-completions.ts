@@ -1185,6 +1185,7 @@ function parseChunkUsage(
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 		cost?: number;
+		is_byok?: boolean;
 		cost_details?: { upstream_inference_cost?: number | null };
 	},
 	model: Model<"openai-completions">,
@@ -1215,8 +1216,9 @@ function parseChunkUsage(
 	};
 	calculateCost(model, usage);
 	if (typeof rawUsage.cost === "number") {
-		// BYOK requests bill inference upstream, upstream_inference_cost carries that share (Vercel AI Gateway)
-		applyReportedCost(usage, rawUsage.cost + (rawUsage.cost_details?.upstream_inference_cost ?? 0));
+		// BYOK responses bill inference upstream, upstream_inference_cost carries that share (Vercel AI Gateway, OpenRouter)
+		const upstreamCost = rawUsage.is_byok === true ? (rawUsage.cost_details?.upstream_inference_cost ?? 0) : 0;
+		applyReportedCost(usage, rawUsage.cost + upstreamCost);
 	}
 	return usage;
 }
