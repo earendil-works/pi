@@ -486,6 +486,7 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("opus-4.7") ||
 		modelId.includes("opus-4-8") ||
 		modelId.includes("opus-4.8") ||
+		modelId.includes("opus-5") ||
 		modelId.includes("sonnet-4-6") ||
 		modelId.includes("sonnet-4.6") ||
 		modelId.includes("sonnet-5") ||
@@ -496,7 +497,7 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
+	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8") || id.includes("opus-5");
 }
 
 const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
@@ -748,7 +749,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	// Anthropic adaptive-thinking effort support (per Anthropic adaptive thinking docs):
 	// - "max" is available on all adaptive-thinking Claude models.
-	// - "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
+	// - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, and Fable 5.
 	if (
 		model.id.includes("opus-4-6") ||
 		model.id.includes("opus-4.6") ||
@@ -762,6 +763,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
 		model.id.includes("opus-4.8") ||
+		model.id.includes("opus-5") ||
 		model.id.includes("sonnet-5") ||
 		model.id.includes("sonnet.5")
 	) {
