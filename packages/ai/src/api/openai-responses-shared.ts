@@ -94,6 +94,11 @@ export interface ConvertResponsesToolsOptions {
 	deferLoading?: boolean;
 }
 
+export interface ConvertedResponsesMessages {
+	messages: ResponseInput;
+	requestCacheBreakpointSelected: boolean;
+}
+
 type OpenAIFunctionTool = Extract<OpenAITool, { type: "function" }>;
 type OpenAIExplicitPromptCacheBreakpoint = { mode: "explicit" };
 type ResponseInputTextWithPromptCacheBreakpoint = ResponseInputText & {
@@ -113,6 +118,15 @@ export function convertResponsesMessages<TApi extends Api>(
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	return convertResponsesMessagesWithCachePlan(model, context, allowedToolCallProviders, options).messages;
+}
+
+export function convertResponsesMessagesWithCachePlan<TApi extends Api>(
+	model: Model<TApi>,
+	context: Context,
+	allowedToolCallProviders: ReadonlySet<string>,
+	options?: ConvertResponsesMessagesOptions,
+): ConvertedResponsesMessages {
 	const messages: ResponseInput = [];
 	const loadedToolNames = new Set<string>();
 
@@ -321,7 +335,11 @@ export function convertResponsesMessages<TApi extends Api>(
 		msgIndex++;
 	}
 
-	return messages;
+	return {
+		messages,
+		requestCacheBreakpointSelected:
+			selectedCacheBreakpoint.messageIndex !== undefined && selectedCacheBreakpoint.contentIndex !== undefined,
+	};
 }
 
 // =============================================================================

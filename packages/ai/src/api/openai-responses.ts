@@ -22,8 +22,17 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	clampOpenAIPromptCacheKey,
+	getOpenAIExplicitPromptCacheOptions,
+	type OpenAIExplicitPromptCacheOptions,
+	planOpenAIPromptCache,
+} from "./openai-prompt-cache.ts";
+import {
+	convertResponsesMessagesWithCachePlan,
+	convertResponsesTools,
+	processResponsesStream,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -77,13 +86,6 @@ function getCompat(model: Model<"openai-responses">): ResolvedOpenAIResponsesCom
 	};
 }
 
-function getPromptCacheRetention(
-	compat: ResolvedOpenAIResponsesCompat,
-	cacheRetention: CacheRetention,
-): "24h" | undefined {
-	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
-}
-
 function formatOpenAIResponsesError(error: unknown): string {
 	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
 }
@@ -95,6 +97,10 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
+
+type ResponseCreateParamsStreamingWithPromptCacheOptions = ResponseCreateParamsStreaming & {
+	prompt_cache_options?: OpenAIExplicitPromptCacheOptions;
+};
 
 /**
  * Generate function for OpenAI Responses API
@@ -135,7 +141,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as ResponseCreateParamsStreaming;
+				params = nextParams as ResponseCreateParamsStreamingWithPromptCacheOptions;
 			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
@@ -246,18 +252,27 @@ function createClient(
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
 	const compat = getCompat(model);
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
+	const promptCachePlan = planOpenAIPromptCache(
+		compat.cacheControlFormat === "openai-content-block",
+		cacheRetention,
+		compat.supportsLongCacheRetention,
+	);
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
-	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+	const converted = convertResponsesMessagesWithCachePlan(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		deferredTools: toolPlacement.deferred,
-		requestCacheBreakpoint: cacheRetention !== "none" && compat.cacheControlFormat === "openai-content-block",
+		requestCacheBreakpoint: promptCachePlan.requestCacheBreakpoint,
 	});
 
-	const params: ResponseCreateParamsStreaming = {
+	const params: ResponseCreateParamsStreamingWithPromptCacheOptions = {
 		model: model.id,
-		input: messages,
+		input: converted.messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
-		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
+		prompt_cache_retention: promptCachePlan.promptCacheRetention,
+		prompt_cache_options: getOpenAIExplicitPromptCacheOptions(
+			promptCachePlan,
+			converted.requestCacheBreakpointSelected,
+		),
 		store: false,
 	};
 

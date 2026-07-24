@@ -1,4 +1,6 @@
+import { type UsageInfoDollarDefs, usageInfoDollarDefsFromJSON } from "@mistralai/mistralai/models/components";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import {
@@ -24,6 +26,11 @@ type RawCompletionsUsage = {
 
 const completionsState = vi.hoisted(() => ({
 	usage: {} as RawCompletionsUsage,
+	requests: 0,
+}));
+
+const mistralState = vi.hoisted(() => ({
+	usage: undefined as UsageInfoDollarDefs | undefined,
 	requests: 0,
 }));
 
@@ -59,16 +66,40 @@ vi.mock("openai", () => {
 	return { default: FakeOpenAI };
 });
 
-function createModel<TApi extends "openai-completions" | "openai-responses">(api: TApi): Model<TApi> {
+vi.mock("@mistralai/mistralai", () => {
+	class FakeMistral {
+		chat = {
+			stream: async () => {
+				mistralState.requests += 1;
+				return {
+					async *[Symbol.asyncIterator]() {
+						yield {
+							data: {
+								id: "mistral-usage-response",
+								choices: [{ finishReason: "stop", delta: {} }],
+								usage: mistralState.usage,
+							},
+						};
+					},
+				};
+			},
+		};
+	}
+	return { Mistral: FakeMistral };
+});
+
+function createModel<TApi extends "mistral-conversations" | "openai-completions" | "openai-responses">(
+	api: TApi,
+): Model<TApi> {
 	return {
 		id: "cache-usage-test",
 		name: "Cache usage test",
 		api,
-		provider: "openai",
-		baseUrl: "https://api.openai.com/v1",
+		provider: api === "mistral-conversations" ? "mistral" : "openai",
+		baseUrl: api === "mistral-conversations" ? "https://api.mistral.ai" : "https://api.openai.com/v1",
 		reasoning: false,
 		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 3 },
 		contextWindow: 128_000,
 		maxTokens: 16_384,
 	} as Model<TApi>;
@@ -120,10 +151,18 @@ async function parseResponsesUsage(inputTokenDetails: unknown): Promise<Usage> {
 	return output.usage;
 }
 
+function decodeMistralUsage(raw: Record<string, unknown>): UsageInfoDollarDefs {
+	const result = usageInfoDollarDefsFromJSON(JSON.stringify(raw));
+	if (!result.ok) throw result.error;
+	return result.value;
+}
+
 describe("cache usage availability", () => {
 	beforeEach(() => {
 		completionsState.usage = {};
 		completionsState.requests = 0;
+		mistralState.usage = undefined;
+		mistralState.requests = 0;
 	});
 
 	afterEach(() => {
@@ -185,6 +224,89 @@ describe("cache usage availability", () => {
 			cacheWriteReported: false,
 		});
 	});
+
+	it.each([
+		[
+			"read positive",
+			{ cached_tokens: 9 },
+			{ cacheRead: 9, cacheReadReported: true, cacheWrite: 0, cacheWriteReported: false },
+		],
+		[
+			"read explicit zero",
+			{ cached_tokens: 0 },
+			{ cacheRead: 0, cacheReadReported: true, cacheWrite: 0, cacheWriteReported: false },
+		],
+		[
+			"read invalid",
+			{ cached_tokens: -1 },
+			{ cacheRead: 0, cacheReadReported: false, cacheWrite: 0, cacheWriteReported: false },
+		],
+		["read absent", {}, { cacheRead: 0, cacheReadReported: false, cacheWrite: 0, cacheWriteReported: false }],
+		[
+			"write positive",
+			{ cache_write_tokens: 7 },
+			{ cacheRead: 0, cacheReadReported: false, cacheWrite: 7, cacheWriteReported: true },
+		],
+		[
+			"write explicit zero",
+			{ cache_write_tokens: 0 },
+			{ cacheRead: 0, cacheReadReported: false, cacheWrite: 0, cacheWriteReported: true },
+		],
+		[
+			"write invalid",
+			{ cache_write_tokens: -1 },
+			{ cacheRead: 0, cacheReadReported: false, cacheWrite: 0, cacheWriteReported: false },
+		],
+		["write absent", {}, { cacheRead: 0, cacheReadReported: false, cacheWrite: 0, cacheWriteReported: false }],
+	] as const)(
+		"normalizes OpenAI Responses %s through the AssistantMessage boundary",
+		async (_label, inputTokenDetails, expected) => {
+			await expect(parseResponsesUsage(inputTokenDetails)).resolves.toMatchObject(expected);
+		},
+	);
+
+	it.each([
+		["positive", { cached_tokens: 7 }, 7, true],
+		["explicit zero", { cached_tokens: 0 }, 0, true],
+		["invalid", { cached_tokens: -1 }, 0, false],
+		["absent", undefined, 0, false],
+	] as const)(
+		"preserves Mistral decoder %s cache-read field availability",
+		async (_label, promptTokensDetails, expectedTokens, expectedReported) => {
+			mistralState.usage = decodeMistralUsage({
+				prompt_tokens: 20,
+				completion_tokens: 3,
+				total_tokens: 23,
+				...(promptTokensDetails === undefined
+					? {}
+					: {
+							prompt_tokens_details: {
+								audio_tokens: 0,
+								...promptTokensDetails,
+							},
+						}),
+			});
+
+			const result = await streamMistral(
+				createModel("mistral-conversations"),
+				{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+				{ apiKey: "test" },
+			).result();
+
+			expect(result.usage).toMatchObject({
+				input: 20 - expectedTokens,
+				output: 3,
+				cacheRead: expectedTokens,
+				cacheReadReported: expectedReported,
+				cacheWrite: 0,
+				cacheWriteReported: false,
+				totalTokens: 23,
+			});
+			expect(result.usage.cost.total).toBeCloseTo(
+				((20 - expectedTokens) * 1 + 3 * 2 + expectedTokens * 0.5) / 1_000_000,
+			);
+		},
+	);
 
 	it("tracks OpenAI Chat Completions read and write field presence independently", async () => {
 		const model = createModel("openai-completions");

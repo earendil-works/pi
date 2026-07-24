@@ -9,6 +9,7 @@
  * models.json custom provider with `"api": "pi-messages"`.
  */
 
+import { stripRequestCacheBreakpoints } from "../request-cache-breakpoint-dispatch.ts";
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -384,7 +385,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			let payload: unknown = {
 				model: model.id,
-				context,
+				context: stripRequestCacheBreakpoints(context),
 				options: {
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,

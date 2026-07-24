@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
@@ -72,10 +72,13 @@ function blocksWithField(payload: Record<string, unknown>, field: string): Array
 	return blocks;
 }
 
-function createCompletionsModel(supported: boolean): Model<"openai-completions"> {
+function createCompletionsModel(
+	supported: boolean,
+	overrides: Partial<Model<"openai-completions">> = {},
+): Model<"openai-completions"> {
 	return {
-		id: "gpt-4o-mini",
-		name: "GPT-4o mini",
+		id: supported ? "gpt-5.6-test" : "gpt-5.4-test",
+		name: supported ? "GPT-5.6 test" : "GPT-5.4 test",
 		api: "openai-completions",
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
@@ -87,13 +90,17 @@ function createCompletionsModel(supported: boolean): Model<"openai-completions">
 		compat: {
 			cacheControlFormat: supported ? "openai-content-block" : undefined,
 		},
+		...overrides,
 	};
 }
 
-function createResponsesModel(supported: boolean): Model<"openai-responses"> {
+function createResponsesModel(
+	supported: boolean,
+	overrides: Partial<Model<"openai-responses">> = {},
+): Model<"openai-responses"> {
 	return {
-		id: "gpt-5.4",
-		name: "GPT-5.4",
+		id: supported ? "gpt-5.6-test" : "gpt-5.4-test",
+		name: supported ? "GPT-5.6 test" : "GPT-5.4 test",
 		api: "openai-responses",
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
@@ -105,6 +112,7 @@ function createResponsesModel(supported: boolean): Model<"openai-responses"> {
 		compat: {
 			cacheControlFormat: supported ? "openai-content-block" : undefined,
 		},
+		...overrides,
 	};
 }
 
@@ -124,6 +132,10 @@ function createAnthropicModel(): Model<"anthropic-messages"> {
 }
 
 describe("request cache breakpoint provider lowering", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
 		"enables explicit content breakpoints only for verified official OpenAI model %s",
 		(modelId) => {
@@ -161,7 +173,8 @@ describe("request cache breakpoint provider lowering", () => {
 
 		expect(captures).toBe(1);
 		expect(payload.prompt_cache_key).toBe("completions-session");
-		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(payload.prompt_cache_options).toEqual({ mode: "explicit", ttl: "30m" });
+		expect(payload.prompt_cache_retention).toBeUndefined();
 		expect(payload.cache_control).toBeUndefined();
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([
@@ -196,7 +209,8 @@ describe("request cache breakpoint provider lowering", () => {
 
 		expect(captures).toBe(1);
 		expect(payload.prompt_cache_key).toBe("responses-session");
-		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(payload.prompt_cache_options).toEqual({ mode: "explicit", ttl: "30m" });
+		expect(payload.prompt_cache_retention).toBeUndefined();
 		expect(payload.cache_control).toBeUndefined();
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([
@@ -241,8 +255,162 @@ describe("request cache breakpoint provider lowering", () => {
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
 		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(payload.prompt_cache_retention).toBeUndefined();
 		expect(JSON.stringify(payload)).not.toContain("requestCacheBreakpoint");
 	});
+
+	it.each([
+		["openai-completions", createCompletionsModel(true), streamOpenAICompletions],
+		["openai-responses", createResponsesModel(true), streamOpenAIResponses],
+	] as const)(
+		"preserves only the implicit cache key for capable %s requests without a valid marker",
+		async (_api, model, streamApi) => {
+			const contexts: Context[] = [
+				{
+					messages: [{ role: "user", content: [{ type: "text", text: "unmarked" }], timestamp: 1 }],
+				},
+				{
+					messages: [
+						{
+							role: "user",
+							content: [
+								{
+									type: "text",
+									text: "malformed",
+									[REQUEST_CACHE_BREAKPOINT]: "true",
+								} as unknown as TextContent,
+							],
+							timestamp: 1,
+						},
+					],
+				},
+			];
+
+			for (const context of contexts) {
+				const { payload, captures } = await capturePayload((onPayload) =>
+					streamApi(model as never, context, {
+						apiKey: "test",
+						sessionId: "implicit-session",
+						onPayload,
+					}),
+				);
+
+				expect(captures).toBe(1);
+				expect(payload.prompt_cache_key).toBe("implicit-session");
+				expect(payload.prompt_cache_options).toBeUndefined();
+				expect(payload.prompt_cache_retention).toBeUndefined();
+				expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
+			}
+		},
+	);
+
+	it.each([
+		["openai-completions", createCompletionsModel(true), streamOpenAICompletions],
+		["openai-responses", createResponsesModel(true), streamOpenAIResponses],
+	] as const)(
+		"rejects unsupported long retention for capable %s before payload dispatch",
+		async (_api, model, streamApi) => {
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
+			let captures = 0;
+			const result = await streamApi(
+				model as never,
+				{
+					messages: [
+						{
+							role: "user",
+							content: [markRequestCacheBreakpoint({ type: "text", text: "stable prefix" })],
+							timestamp: 1,
+						},
+					],
+				},
+				{
+					apiKey: "test",
+					cacheRetention: "long",
+					sessionId: "long-session",
+					onPayload: () => {
+						captures += 1;
+					},
+				},
+			).result();
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/explicit prompt cache.*long retention.*unsupported/i);
+			expect(captures).toBe(0);
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each([
+		["openai-completions", createCompletionsModel(false), streamOpenAICompletions],
+		["openai-responses", createResponsesModel(false), streamOpenAIResponses],
+	] as const)("keeps verified older %s requests on the legacy long-retention path", async (_api, model, streamApi) => {
+		const context: Context = {
+			messages: [{ role: "user", content: [{ type: "text", text: "stable prefix" }], timestamp: 1 }],
+		};
+
+		const { payload, captures } = await capturePayload((onPayload) =>
+			streamApi(model as never, context, {
+				apiKey: "test",
+				cacheRetention: "long",
+				sessionId: "legacy-session",
+				onPayload,
+			}),
+		);
+
+		expect(captures).toBe(1);
+		expect(payload.prompt_cache_key).toBe("legacy-session");
+		expect(payload.prompt_cache_retention).toBe("24h");
+		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
+	});
+
+	it.each([
+		[
+			"openai-completions",
+			createCompletionsModel(false, {
+				id: "gpt-5.6-name-only",
+				provider: "custom-compatible",
+				baseUrl: "https://compatible.example/v1",
+			}),
+			streamOpenAICompletions,
+		],
+		[
+			"openai-responses",
+			createResponsesModel(false, {
+				id: "gpt-5.6-name-only",
+				provider: "custom-compatible",
+				baseUrl: "https://compatible.example/v1",
+			}),
+			streamOpenAIResponses,
+		],
+	] as const)(
+		"does not infer explicit cache support from the %s model name on an unverified endpoint",
+		async (_api, model, streamApi) => {
+			const context: Context = {
+				messages: [
+					{
+						role: "user",
+						content: [markRequestCacheBreakpoint({ type: "text", text: "stable prefix" })],
+						timestamp: 1,
+					},
+				],
+			};
+
+			const { payload, captures } = await capturePayload((onPayload) =>
+				streamApi(model as never, context, {
+					apiKey: "test",
+					sessionId: "unverified-session",
+					onPayload,
+				}),
+			);
+
+			expect(captures).toBe(1);
+			expect(payload.prompt_cache_options).toBeUndefined();
+			expect(payload.prompt_cache_retention).toBeUndefined();
+			expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
+		},
+	);
 
 	it.each([
 		["openai-completions", createCompletionsModel(true), streamOpenAICompletions],
@@ -269,6 +437,7 @@ describe("request cache breakpoint provider lowering", () => {
 
 		expect(payload.prompt_cache_key).toBeUndefined();
 		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(payload.prompt_cache_retention).toBeUndefined();
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
 	});

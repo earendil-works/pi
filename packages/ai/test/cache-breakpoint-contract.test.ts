@@ -1,4 +1,15 @@
+import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it } from "vitest";
+import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { stream as streamGoogleGenerativeAI } from "../src/api/google-generative-ai.ts";
+import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
+import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
+import { stream as streamOpenAICodexResponses } from "../src/api/openai-codex-responses.ts";
+import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import { stream as streamPiMessages } from "../src/api/pi-messages.ts";
 import { complete as completeCompat, registerApiProvider, resetApiProviders } from "../src/compat.ts";
 import {
 	type Context,
@@ -11,10 +22,13 @@ import {
 	markRequestCacheBreakpoint,
 	REQUEST_CACHE_BREAKPOINT,
 	REQUEST_CACHE_BREAKPOINT_BEHAVIOR_BY_API,
+	type StreamOptions,
 	selectRequestCacheBreakpoint,
 	type TextContent,
 } from "../src/index.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+
+const STOP_AFTER_PAYLOAD = new Error("payload captured");
 
 const KNOWN_APIS = [
 	"openai-completions",
@@ -62,6 +76,69 @@ function contextHasRequestCacheBreakpoint(context: Context): boolean {
 		}
 	}
 	return false;
+}
+
+function payloadHasRequestCacheBreakpoint(value: unknown, seen = new WeakSet<object>()): boolean {
+	if (!value || typeof value !== "object") return false;
+	if (seen.has(value)) return false;
+	seen.add(value);
+	if (Reflect.ownKeys(value).includes(REQUEST_CACHE_BREAKPOINT)) return true;
+	for (const key of Reflect.ownKeys(value)) {
+		if (payloadHasRequestCacheBreakpoint((value as Record<PropertyKey, unknown>)[key], seen)) return true;
+	}
+	return false;
+}
+
+function payloadHasField(value: unknown, field: string, seen = new WeakSet<object>()): boolean {
+	if (!value || typeof value !== "object") return false;
+	if (seen.has(value)) return false;
+	seen.add(value);
+	if (Object.hasOwn(value, field)) return true;
+	for (const key of Reflect.ownKeys(value)) {
+		if (payloadHasField((value as Record<PropertyKey, unknown>)[key], field, seen)) return true;
+	}
+	return false;
+}
+
+function createSerializationModel<TApi extends KnownApi>(api: TApi, overrides: Partial<Model<TApi>> = {}): Model<TApi> {
+	return {
+		id: "serialization-contract",
+		name: "Serialization contract",
+		api,
+		provider: "serialization-contract",
+		baseUrl: "https://example.test/v1",
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 16_384,
+		...overrides,
+	} as Model<TApi>;
+}
+
+function createCodexToken(): string {
+	const payload = Buffer.from(
+		JSON.stringify({
+			"https://api.openai.com/auth": {
+				chatgpt_account_id: "acct_serialization_contract",
+			},
+		}),
+	).toString("base64url");
+	return `header.${payload}.signature`;
+}
+
+async function captureAdapterPayload(
+	run: (onPayload: NonNullable<StreamOptions["onPayload"]>) => AssistantMessageEventStream,
+): Promise<{ payload: unknown; captures: number }> {
+	let payload: unknown;
+	let captures = 0;
+	await run((_nextPayload) => {
+		captures += 1;
+		payload = _nextPayload;
+		throw STOP_AFTER_PAYLOAD;
+	}).result();
+	if (payload === undefined) throw new Error("Expected provider payload to be captured");
+	return { payload, captures };
 }
 
 function completedStream(model: Model<"openai-responses">): AssistantMessageEventStream {
@@ -231,6 +308,130 @@ describe("request cache breakpoint contract", () => {
 
 		expect(receivedContext).toBeDefined();
 		expect(contextHasRequestCacheBreakpoint(receivedContext!)).toBe(false);
+		expect(contextHasRequestCacheBreakpoint(context)).toBe(true);
+	});
+
+	it("consumes or strips the marker through every KnownApi real serialization path", async () => {
+		const context = markedContext();
+		const cases: Array<{
+			api: KnownApi;
+			expectedLoweredField?: "prompt_cache_breakpoint" | "cache_control";
+			run: (onPayload: NonNullable<StreamOptions["onPayload"]>) => AssistantMessageEventStream;
+		}> = [
+			{
+				api: "openai-completions",
+				expectedLoweredField: "prompt_cache_breakpoint",
+				run: (onPayload) =>
+					streamOpenAICompletions(
+						createSerializationModel("openai-completions", {
+							provider: "openai",
+							baseUrl: "https://api.openai.com/v1",
+							compat: { cacheControlFormat: "openai-content-block" },
+						}),
+						context,
+						{ apiKey: "test", sessionId: "serialization-session", onPayload },
+					),
+			},
+			{
+				api: "mistral-conversations",
+				run: (onPayload) =>
+					streamMistral(createSerializationModel("mistral-conversations"), context, {
+						apiKey: "test",
+						onPayload,
+					}),
+			},
+			{
+				api: "openai-responses",
+				expectedLoweredField: "prompt_cache_breakpoint",
+				run: (onPayload) =>
+					streamOpenAIResponses(
+						createSerializationModel("openai-responses", {
+							provider: "openai",
+							baseUrl: "https://api.openai.com/v1",
+							compat: { cacheControlFormat: "openai-content-block" },
+						}),
+						context,
+						{ apiKey: "test", sessionId: "serialization-session", onPayload },
+					),
+			},
+			{
+				api: "azure-openai-responses",
+				run: (onPayload) =>
+					streamAzureOpenAIResponses(
+						createSerializationModel("azure-openai-responses", {
+							baseUrl: "https://serialization.openai.azure.com/openai/v1",
+						}),
+						context,
+						{ apiKey: "test", onPayload },
+					),
+			},
+			{
+				api: "openai-codex-responses",
+				run: (onPayload) =>
+					streamOpenAICodexResponses(
+						createSerializationModel("openai-codex-responses", {
+							provider: "openai-codex",
+							baseUrl: "https://chatgpt.com/backend-api",
+						}),
+						context,
+						{ apiKey: createCodexToken(), transport: "sse", onPayload },
+					),
+			},
+			{
+				api: "anthropic-messages",
+				expectedLoweredField: "cache_control",
+				run: (onPayload) =>
+					streamAnthropic(createSerializationModel("anthropic-messages"), context, {
+						apiKey: "test",
+						onPayload,
+					}),
+			},
+			{
+				api: "bedrock-converse-stream",
+				run: (onPayload) =>
+					streamBedrock(createSerializationModel("bedrock-converse-stream"), context, {
+						env: { AWS_BEDROCK_SKIP_AUTH: "1" },
+						onPayload,
+					}),
+			},
+			{
+				api: "google-generative-ai",
+				run: (onPayload) =>
+					streamGoogleGenerativeAI(createSerializationModel("google-generative-ai"), context, {
+						apiKey: "test",
+						onPayload,
+					}),
+			},
+			{
+				api: "google-vertex",
+				run: (onPayload) =>
+					streamGoogleVertex(createSerializationModel("google-vertex"), context, {
+						apiKey: "test",
+						onPayload,
+					}),
+			},
+			{
+				api: "pi-messages",
+				run: (onPayload) =>
+					streamPiMessages(createSerializationModel("pi-messages"), context, {
+						apiKey: "test",
+						onPayload,
+					}),
+			},
+		];
+
+		expect(cases.map(({ api }) => api)).toEqual(KNOWN_APIS);
+		for (const testCase of cases) {
+			const { payload, captures } = await captureAdapterPayload(testCase.run);
+			expect(captures, testCase.api).toBe(1);
+			expect(payloadHasRequestCacheBreakpoint(payload), testCase.api).toBe(false);
+			expect(payloadHasField(payload, "prompt_cache_breakpoint"), testCase.api).toBe(
+				testCase.expectedLoweredField === "prompt_cache_breakpoint",
+			);
+			expect(payloadHasField(payload, "cache_control"), testCase.api).toBe(
+				testCase.expectedLoweredField === "cache_control",
+			);
+		}
 		expect(contextHasRequestCacheBreakpoint(context)).toBe(true);
 	});
 });

@@ -43,7 +43,12 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	clampOpenAIPromptCacheKey,
+	getOpenAIExplicitPromptCacheOptions,
+	type OpenAIExplicitPromptCacheOptions,
+	planOpenAIPromptCache,
+} from "./openai-prompt-cache.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -181,6 +186,11 @@ type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletion
 	cache_control?: OpenAICompatCacheControl;
 };
 
+type ChatCompletionCreateParamsStreamingWithPromptCacheOptions =
+	OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming & {
+		prompt_cache_options?: OpenAIExplicitPromptCacheOptions;
+	};
+
 function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
@@ -226,7 +236,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
+				params = nextParams as ChatCompletionCreateParamsStreamingWithPromptCacheOptions;
 			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
@@ -597,12 +607,18 @@ function buildParams(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env),
 ) {
-	const messages = convertMessages(model, context, compat, {
-		requestCacheBreakpoint: cacheRetention !== "none" && compat.cacheControlFormat === "openai-content-block",
+	const promptCachePlan = planOpenAIPromptCache(
+		compat.cacheControlFormat === "openai-content-block",
+		cacheRetention,
+		compat.supportsLongCacheRetention,
+	);
+	const converted = convertMessagesWithCachePlan(model, context, compat, {
+		requestCacheBreakpoint: promptCachePlan.requestCacheBreakpoint,
 	});
+	const messages = converted.messages;
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
-	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+	const params: ChatCompletionCreateParamsStreamingWithPromptCacheOptions = {
 		model: model.id,
 		messages,
 		stream: true,
@@ -611,7 +627,11 @@ function buildParams(
 			(cacheRetention === "long" && compat.supportsLongCacheRetention)
 				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
-		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
+		prompt_cache_retention: promptCachePlan.promptCacheRetention,
+		prompt_cache_options: getOpenAIExplicitPromptCacheOptions(
+			promptCachePlan,
+			converted.requestCacheBreakpointSelected,
+		),
 	};
 
 	if (compat.supportsUsageInStreaming !== false) {
@@ -910,6 +930,15 @@ export function convertMessages(
 	compat: ResolvedOpenAICompletionsCompat,
 	options?: { requestCacheBreakpoint?: boolean },
 ): ChatCompletionMessageParam[] {
+	return convertMessagesWithCachePlan(model, context, compat, options).messages;
+}
+
+function convertMessagesWithCachePlan(
+	model: Model<"openai-completions">,
+	context: Context,
+	compat: ResolvedOpenAICompletionsCompat,
+	options?: { requestCacheBreakpoint?: boolean },
+): { messages: ChatCompletionMessageParam[]; requestCacheBreakpointSelected: boolean } {
 	const params: ChatCompletionMessageParam[] = [];
 
 	const normalizeToolCallId = (id: string): string => {
@@ -1187,7 +1216,11 @@ export function convertMessages(
 		lastRole = msg.role;
 	}
 
-	return params;
+	return {
+		messages: params,
+		requestCacheBreakpointSelected:
+			selectedCacheBreakpoint.messageIndex !== undefined && selectedCacheBreakpoint.contentIndex !== undefined,
+	};
 }
 
 function convertTools(
