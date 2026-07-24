@@ -9,10 +9,15 @@
 ### Added
 
 - Added context-aware `read`, `write`, `edit`, and `bash` harness tools backed by `ExecutionEnv`, including async bash execution preparation.
+- Added committed owner entry identity to context and settled harness events.
 
 ### Changed
 
 - Aligned harness tool path handling, edit serialization, shell output capture, explicit non-inherited environments, and cross-platform process cleanup with coding-agent behavior.
+
+### Fixed
+
+- Fixed split-turn compaction usage aggregation to preserve cache read/write reporting availability.
 
 ## [0.81.1] - 2026-07-21
 
