@@ -24,6 +24,23 @@ Ansteel review approved: /project/.pi/ansteel-reports/ansteel-2026-07-22-10-30-0
 
 There is no fallback to the current Pi model. Before naming each role model, make sure it is available and authenticated in Pi. Use `/login`, `pi --list-models`, and the normal [Providers](providers.md) and [Custom models](models.md) setup as needed.
 
+## Run an interactive team
+
+`--ansteel` is a bounded review that exits. For ordinary project work with three persistent roles, start Pi in interactive mode and use the built-in team command instead:
+
+```text
+/ansteel-team start "Review the motor safety change"
+/ansteel-team ask "Compare the encoder implementations and identify the next safe task"
+/ansteel-team status
+/ansteel-team stop
+```
+
+`start` creates or resumes a dedicated Pi session for Tech Lead, Staff Engineer, and QA Engineer using the role models in `.pi/ansteel.json`. A new team first performs three independent investigations, then a public cross-examination round. `ask` continues the work with each role's private session history plus the same public collaboration ledger. Role responses are shown in the host Pi timeline as public updates; hidden reasoning and raw provider payloads are not shared.
+
+Project state lives under `.pi/ansteel-team/`: `team.json` records the team and role-session locations, and `events.jsonl` is an append-only public ledger. `stop` disposes live role sessions but retains these files so a later `start` can resume the team. Starting a different topic requires removing or archiving the existing team state first.
+
+This first interactive-team increment is intentionally read-oriented: it grants only the tools declared for each role in `.pi/ansteel.json`, which currently excludes `edit` and `write`. The next execution increment adds task ownership, controlled write access, and peer review against the resulting diff and test evidence. Do not interpret this team mode as approval to make unreviewed changes.
+
 ## Review flow
 
 The coordinator runs these stages in order:

@@ -38,6 +38,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
+| `/ansteel-team <start\|ask\|status\|stop>` | Manage persistent Tech Lead, Staff Engineer, and QA Engineer project sessions; see [Evidence-First Reviews](ansteel.md#run-an-interactive-team) |
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
@@ -175,6 +176,8 @@ See [Pi Packages](packages.md) for package sources and security notes.
 | `--ansteel <topic>` | Run a mandatory three-role evidence-first engineering review and exit; see [Evidence-First Reviews](ansteel.md) |
 
 `--ansteel` requires `.pi/ansteel.json` with three distinct, authenticated `provider/model` entries. It never falls back to the currently selected model: Staff Engineer and QA Engineer independently challenge the same Tech Lead architecture, each revision must resolve the recorded issues, and both must explicitly verify a revision before Tech Lead can write consensus for final dual sign-off. Two unsuccessful revision rounds reject the review. Each role stage has a bounded `stageTimeoutMs` deadline (120 seconds by default); a timeout aborts the active session and rejects the review with an auditable report.
+
+In interactive mode, `/ansteel-team` uses the same role configuration to keep three project-local role sessions and a public event ledger. It is not the batch review command: use `start <topic>` to initialize the team, `ask <message>` to continue the shared work, `status` to inspect it, and `stop` to release live sessions without deleting the persisted state. The initial team mode is read-oriented and does not grant `edit` or `write`; task-owned changes and peer diff review are a later governance stage.
 
 In print mode, pi also reads piped stdin and merges it into the initial prompt:
 
