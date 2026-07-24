@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed narrow terminals crashing when the editor's bottom scroll indicator exceeded the terminal width ([#6962](https://github.com/earendil-works/pi/issues/6962)).
+
 ## [0.81.1] - 2026-07-21
 
 ## [0.81.0] - 2026-07-21

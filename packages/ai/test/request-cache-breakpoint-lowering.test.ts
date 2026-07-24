@@ -111,6 +111,7 @@ function createResponsesModel(
 		maxTokens: 128_000,
 		compat: {
 			cacheControlFormat: supported ? "openai-content-block" : undefined,
+			supportsExplicitPromptCacheMode: supported,
 		},
 		...overrides,
 	};
@@ -415,7 +416,7 @@ describe("request cache breakpoint provider lowering", () => {
 	it.each([
 		["openai-completions", createCompletionsModel(true), streamOpenAICompletions],
 		["openai-responses", createResponsesModel(true), streamOpenAIResponses],
-	] as const)("strips %s content markers when cache retention is disabled", async (_api, model, streamApi) => {
+	] as const)("disables implicit %s cache writes without lowering content markers", async (_api, model, streamApi) => {
 		const context: Context = {
 			messages: [
 				{
@@ -436,7 +437,7 @@ describe("request cache breakpoint provider lowering", () => {
 		);
 
 		expect(payload.prompt_cache_key).toBeUndefined();
-		expect(payload.prompt_cache_options).toBeUndefined();
+		expect(payload.prompt_cache_options).toEqual({ mode: "explicit" });
 		expect(payload.prompt_cache_retention).toBeUndefined();
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 		expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);

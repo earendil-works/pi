@@ -4,7 +4,7 @@ export const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 
 export interface OpenAIExplicitPromptCacheOptions {
 	mode: "explicit";
-	ttl: "30m";
+	ttl?: "30m";
 }
 
 export interface OpenAIPromptCachePlan {

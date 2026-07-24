@@ -466,10 +466,33 @@ export interface AssistantImages {
 
 import type { TSchema } from "typebox";
 
+/** OpenAI grammar variants for constrained sampling. */
+export type GrammarFormat = "openai_lark" | "openai_regex";
+
+export type GrammarVariants = Partial<Record<GrammarFormat, string>>;
+
+/**
+ * Optional provider-side constrained sampling configs for a tool.
+ *
+ * The `json_schema` value roughly maps to the concept of `strict` in APIs which is
+ * implemented as json-schema constrained sampling by APIs. Grammar variants let
+ * callers provide provider-specific encodings of the same intended language.
+ */
+export type ConstrainedSamplingConfig =
+	| {
+			type: "json_schema";
+			strict: "prefer" | "require";
+	  }
+	| {
+			type: "grammar";
+			variants: GrammarVariants;
+	  };
+
 export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
+	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
 export interface Context {
@@ -543,6 +566,8 @@ export interface OpenAICompletionsCompat {
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
 	zaiToolStream?: boolean;
+	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
+	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 	/**
@@ -570,6 +595,10 @@ export interface OpenAIResponsesCompat {
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports `prompt_cache_retention: "24h"`. Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly. */
+	supportsStrictMode?: boolean;
+	/** Whether to emit OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
+	supportsOpenAIGrammarTools?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
 	/**
@@ -578,6 +607,13 @@ export interface OpenAIResponsesCompat {
 	 * been independently verified. Default: undefined.
 	 */
 	cacheControlFormat?: "openai-content-block";
+	/**
+	 * Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit
+	 * prompt caching). This also permits `{ mode: "explicit" }` without a
+	 * breakpoint when `cacheRetention` is `"none"` to disable implicit writes.
+	 * Older OpenAI models reject the parameter. Default: false.
+	 */
+	supportsExplicitPromptCacheMode?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -626,12 +662,20 @@ export interface AnthropicMessagesCompat {
 	forceAdaptiveThinking?: boolean;
 	/** Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: false. */
 	allowEmptySignature?: boolean;
+	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
+	supportsStrictTools?: boolean;
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+}
+
+/** Compatibility settings for Amazon Bedrock models. */
+export interface BedrockCompat {
+	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
+	supportsStrictMode?: boolean;
 }
 
 /**
@@ -759,11 +803,13 @@ export interface Model<TApi extends Api> {
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
-		: TApi extends "openai-responses" | "openai-codex-responses"
+		: TApi extends "openai-responses" | "azure-openai-responses" | "openai-codex-responses"
 			? OpenAIResponsesCompat
 			: TApi extends "anthropic-messages"
 				? AnthropicMessagesCompat
-				: never;
+				: TApi extends "bedrock-converse-stream"
+					? BedrockCompat
+					: never;
 }
 
 export interface ImagesModel<TApi extends ImagesApi>

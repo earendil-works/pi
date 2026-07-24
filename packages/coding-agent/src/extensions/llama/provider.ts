@@ -12,8 +12,6 @@ import { LlamaClient, type LlamaModelInfo, llamaInferenceUrl, normalizeLlamaServ
 
 export const LLAMA_PROVIDER_ID = "llama.cpp";
 export const DEFAULT_LLAMA_SERVER_URL = "http://127.0.0.1:8080";
-const DEFAULT_MAX_TOKENS = 16384;
-
 function credentialServerUrl(credential: ApiKeyCredential | undefined): string | undefined {
 	const value = credential?.env?.LLAMA_BASE_URL;
 	return typeof value === "string" && value.trim() ? normalizeLlamaServerUrl(value) : undefined;
@@ -40,7 +38,7 @@ function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-comp
 		input: model.architecture?.input_modalities?.includes("image") ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,
-		maxTokens: Math.min(DEFAULT_MAX_TOKENS, contextWindow),
+		maxTokens: contextWindow,
 		compat: {
 			supportsStore: false,
 			supportsDeveloperRole: false,

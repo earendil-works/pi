@@ -51,6 +51,7 @@ import {
 	type ProviderDispatchTransport,
 } from "../utils/provider-outcome.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -208,12 +209,17 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 
 			const accountId = extractAccountId(apiKey);
-			let body = buildRequestBody(model, context, options);
+			const grammarToolInputProperties = createGrammarToolInputProperties(
+				context.tools,
+				model.compat?.supportsOpenAIGrammarTools ?? false,
+			);
+			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
+			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
+			let body = buildRequestBody(model, context, options, codexSessionId, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
-			const codexSessionId = clampOpenAIPromptCacheKey(options?.sessionId);
 			const websocketRequestId = codexSessionId || uuidv7();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
 			const websocketHeaders = buildWebSocketHeaders(
@@ -228,9 +234,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
 			const transport = options?.transport || "auto";
 			let startEmitted = false;
-			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(options?.sessionId);
+			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
 			if (websocketDisabledForSession) {
-				recordWebSocketSseFallback(options?.sessionId);
+				recordWebSocketSseFallback(cacheSessionId);
 			}
 
 			if (transport !== "sse" && !websocketDisabledForSession) {
@@ -252,6 +258,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						},
 						httpTimeoutMs,
 						websocketConnectTimeoutMs,
+						cacheSessionId,
+						grammarToolInputProperties,
 						options,
 					);
 
@@ -275,8 +283,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						throw error;
 					}
 					appendProviderTransportFallbackDiagnostic(output, transport);
-					recordWebSocketFailure(options?.sessionId);
-					recordWebSocketSseFallback(options?.sessionId);
+					recordWebSocketFailure(cacheSessionId);
+					recordWebSocketSseFallback(cacheSessionId);
 				}
 			}
 
@@ -330,7 +338,15 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, () => markProviderStreamStarted("sse"), options);
+			await processStream(
+				response,
+				output,
+				stream,
+				model,
+				() => markProviderStreamStarted("sse"),
+				grammarToolInputProperties,
+				options,
+			);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -340,8 +356,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				// partialJson is only a streaming scratch buffer; never persist it.
+				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { customInput?: unknown }).customInput;
 			}
 			if (providerDispatch) {
 				appendProviderOutcomeUncertainDiagnostic(output, providerDispatch.transport, providerDispatch.phase);
@@ -387,12 +404,25 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 function buildRequestBody(
 	model: Model<"openai-codex-responses">,
 	context: Context,
-	options?: OpenAICodexResponsesOptions,
+	options: OpenAICodexResponsesOptions | undefined,
+	cacheSessionId: string | undefined,
+	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
+		context.tools,
+		model.compat?.supportsOpenAIGrammarTools ?? false,
+	),
 ): RequestBody {
+	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
+	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const toolPlacement = splitDeferredTools(context, model.compat?.supportsToolSearch ?? false);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
+		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
+		toolOptions: {
+			strict: null,
+			supportsStrictMode,
+			supportsOpenAIGrammarTools,
+		},
 	});
 
 	const body: RequestBody = {
@@ -403,7 +433,7 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key: cacheSessionId,
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
@@ -417,7 +447,11 @@ function buildRequestBody(
 	}
 
 	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null });
+		body.tools = convertResponsesTools(toolPlacement.immediate, {
+			strict: null,
+			supportsStrictMode,
+			supportsOpenAIGrammarTools,
+		});
 	}
 
 	if (options?.reasoningEffort !== undefined) {
@@ -500,6 +534,7 @@ async function processStream(
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
 	onStart: () => void,
+	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
 	await processResponsesStream(
@@ -509,6 +544,7 @@ async function processStream(
 		model,
 		{
 			serviceTier: options?.serviceTier,
+			grammarToolInputProperties,
 			resolveServiceTier: resolveCodexServiceTier,
 			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 		},
@@ -1303,12 +1339,14 @@ async function processWebSocketStream(
 	onStart: () => void,
 	idleTimeoutMs: number | undefined,
 	websocketConnectTimeoutMs: number | undefined,
+	cacheSessionId: string | undefined,
+	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
 	const { socket, entry, reused, release } = await acquireWebSocket(
 		url,
 		headers,
-		options?.sessionId,
+		cacheSessionId,
 		options?.signal,
 		websocketConnectTimeoutMs,
 		options?.env,
@@ -1319,7 +1357,7 @@ async function processWebSocketStream(
 	// WebSocket continuation still works via connection-scoped previous_response_id state.
 	const fullBody = body;
 	const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
-	const stats = options?.sessionId ? getOrCreateWebSocketDebugStats(options.sessionId) : undefined;
+	const stats = cacheSessionId ? getOrCreateWebSocketDebugStats(cacheSessionId) : undefined;
 	if (stats) {
 		stats.requests++;
 		if (reused) stats.connectionsReused++;
@@ -1353,6 +1391,7 @@ async function processWebSocketStream(
 			model,
 			{
 				serviceTier: options?.serviceTier,
+				grammarToolInputProperties,
 				resolveServiceTier: resolveCodexServiceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			},
@@ -1362,7 +1401,8 @@ async function processWebSocketStream(
 		} else if (useCachedContext && entry && output.responseId) {
 			const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
 				includeSystemPrompt: false,
-			}).filter((item) => item.type !== "function_call_output");
+				grammarToolInputProperties,
+			}).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
 			entry.continuation = {
 				lastRequestBody: fullBody,
 				lastResponseId: output.responseId,

@@ -55,6 +55,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -229,7 +230,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -913,16 +914,22 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
-	if (!tools?.length || toolChoice === "none") return undefined;
+	if (!tools?.length) return undefined;
+	if (toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters as unknown as DocumentType },
-		},
-	}));
+	const bedrockTools: BedrockTool[] = tools.map((tool) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		return {
+			toolSpec: {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: { json: tool.parameters as unknown as DocumentType },
+				...(strict === true ? { strict: true } : {}),
+			},
+		};
+	});
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {

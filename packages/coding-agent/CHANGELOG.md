@@ -11,6 +11,7 @@
 - Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported.
 - Fixed split-turn compaction usage aggregation to preserve cache read/write reporting availability.
 - Fixed explicit self-updates when `PI_SKIP_VERSION_CHECK` is set ([#6977](https://github.com/earendil-works/pi/issues/6977)).
+- Updated the packaged `protobufjs` dependency to 7.6.5 to address GHSA-j3f2-48v5-ccww ([#7005](https://github.com/earendil-works/pi/issues/7005)).
 
 ## [0.81.1] - 2026-07-21
 
