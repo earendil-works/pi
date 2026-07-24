@@ -55,6 +55,10 @@ export class VirtualTerminal implements Terminal {
 		return this._columns;
 	}
 
+	get cols(): number {
+		return this._columns;
+	}
+
 	get rows(): number {
 		return this._rows;
 	}

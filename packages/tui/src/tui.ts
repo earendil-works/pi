@@ -255,8 +255,19 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	/** Cached rendered lines */
+	private cachedLines?: string[];
+	/** Cached width for which lines were rendered */
+	private cachedWidth?: number;
+	/** Dirty flag - set when content changes, cleared on render */
+	private dirty = true;
+	/** Last known children count to detect mutations */
+	private lastChildrenCount = 0;
+	/** Track child render outputs to detect changes */
+	private lastChildRenders: string[][] = [];
 
 	addChild(component: Component): void {
+		this.dirty = true;
 		this.children.push(component);
 	}
 
@@ -269,22 +280,54 @@ export class Container implements Component {
 
 	clear(): void {
 		this.children = [];
+		this.dirty = true;
 	}
 
 	invalidate(): void {
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+		this.dirty = true;
 	}
 
 	render(width: number): string[] {
+		// Detect if children array was mutated directly
+		if (this.children.length !== this.lastChildrenCount) {
+			this.dirty = true;
+			this.lastChildrenCount = this.children.length;
+		}
+
+		// If not dirty, check if any child's render output changed (by reference)
+		if (!this.dirty && this.cachedLines && this.cachedWidth === width) {
+			let childChanged = false;
+			for (let i = 0; i < this.children.length; i++) {
+				const childLines = this.children[i].render(width);
+				if (childLines !== this.lastChildRenders[i]) {
+					childChanged = true;
+					break;
+				}
+			}
+			if (!childChanged) {
+				return this.cachedLines;
+			}
+		}
+
 		const lines: string[] = [];
+		const newChildRenders: string[][] = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			newChildRenders.push(childLines);
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
+
+		// Cache the result and clear dirty flag
+		this.cachedLines = lines;
+		this.cachedWidth = width;
+		this.lastChildRenders = newChildRenders;
+		this.dirty = false;
+
 		return lines;
 	}
 }
@@ -292,14 +335,26 @@ export class Container implements Component {
 /**
  * TUI - Main class for managing terminal UI with differential rendering
  */
+export interface RenderStats {
+	totalLines: number;
+	processedLines: number;
+	widthMeasures: number;
+	resetAllocs: number;
+}
+
 export class TUI extends Container {
 	public terminal: Terminal;
+	public lastRenderStats: RenderStats | null = null;
 	private previousLines: string[] = [];
+	/** Un-reset versions of previous lines for windowing comparison */
+	private previousLinesUnreset: string[] = [];
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
 	private focusedComponent: Component | null = null;
 	private inputListeners = new Set<InputListener>();
+	/** Number of leading transcript lines that are committed (stable, above viewport, unchanged) */
+	private committedLineCount = 0;
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
@@ -627,9 +682,17 @@ export class TUI extends Container {
 		return topmost;
 	}
 
+	override clear(): void {
+		super.clear();
+		// Escape hatch: reset windowing on clear (forces full repaint next frame)
+		this.committedLineCount = 0;
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
+		// Escape hatch: reset windowing on invalidate (forces full repaint next frame)
+		this.committedLineCount = 0;
 	}
 
 	start(): void {
@@ -1094,14 +1157,17 @@ export class TUI extends Container {
 
 	private static readonly SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 
-	private applyLineResets(lines: string[]): string[] {
+	private applyLineResets(lines: string[], stats?: { resetAllocs: number }, startIndex = 0): string[] {
 		const reset = TUI.SEGMENT_RESET;
-		for (let i = 0; i < lines.length; i++) {
+		let allocCount = 0;
+		for (let i = startIndex; i < lines.length; i++) {
 			const line = lines[i];
 			if (!isImageLine(line)) {
 				lines[i] = normalizeTerminalOutput(line) + reset;
+				allocCount++;
 			}
 		}
+		if (stats) stats.resetAllocs = allocCount;
 		return lines;
 	}
 
@@ -1269,18 +1335,62 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
+		// When the terminal is resized, the memoized component tree may still hold
+		// lines wrapped to the previous width. Invalidate before rendering so every
+		// component recomputes at the current width (prevents stale-width lines from
+		// leaking into the committed prefix / diff and overflowing the width guard).
+		if (widthChanged || heightChanged) {
+			this.invalidate();
+		}
+
 		// Render all components to get new lines
 		let newLines = this.render(width);
+
+		// Initialize render stats
+		const stats: RenderStats = {
+			totalLines: 0,
+			processedLines: 0,
+			widthMeasures: 0,
+			resetAllocs: 0,
+		};
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
 
+		stats.totalLines = newLines.length;
+
+		// Save un-reset lines early (before any escape hatches or applyLineResets) for next frame
+		this.previousLinesUnreset = newLines.slice();
+
+		// Viewport windowing: determine committed prefix (compare against un-reset versions)
+		// Committed lines are stable (above viewport) and unchanged since last frame
+		const currentViewportTop = Math.max(0, newLines.length - height);
+		let safeCommitCount = 0;
+		if (this.previousLinesUnreset.length > 0 && currentViewportTop > 0) {
+			// Conservative: only commit lines that are definitely above viewport AND unchanged
+			const maxCommittable = Math.min(currentViewportTop, this.previousLinesUnreset.length, newLines.length);
+			// Find the longest prefix of unchanged lines (reference equality check)
+			for (let i = 0; i < maxCommittable; i++) {
+				if (this.previousLinesUnreset[i] === newLines[i]) {
+					safeCommitCount = i + 1;
+				} else {
+					// Line changed - stop here (conservative: don't commit partial runs)
+					break;
+				}
+			}
+		}
+		this.committedLineCount = safeCommitCount;
+
+		// Stats: only count non-committed lines as "processed"
+		stats.processedLines = newLines.length - this.committedLineCount;
+
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
-		newLines = this.applyLineResets(newLines);
+		// Apply line resets only to non-committed lines (windowed processing)
+		newLines = this.applyLineResets(newLines, stats, this.committedLineCount);
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
@@ -1337,14 +1447,18 @@ export class TUI extends Container {
 		// First render - just output everything without clearing (assumes clean screen)
 		if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
 			logRedraw("first render");
+			this.committedLineCount = 0; // Escape hatch: full render
 			fullRender(false);
+			this.lastRenderStats = stats;
 			return;
 		}
 
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
+			this.committedLineCount = 0; // Escape hatch: full render on resize
 			fullRender(true);
+			this.lastRenderStats = stats;
 			return;
 		}
 
@@ -1353,7 +1467,9 @@ export class TUI extends Container {
 		// In that environment, a full redraw causes the entire history to replay on every toggle.
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
+			this.committedLineCount = 0; // Escape hatch: full render on resize
 			fullRender(true);
+			this.lastRenderStats = stats;
 			return;
 		}
 
@@ -1362,15 +1478,18 @@ export class TUI extends Container {
 		// Configurable via setClearOnShrink() or PI_CLEAR_ON_SHRINK=0 env var
 		if (this.clearOnShrink && newLines.length < this.maxLinesRendered && this.overlayStack.length === 0) {
 			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
+			this.committedLineCount = 0; // Escape hatch: full render on clear
 			fullRender(true);
+			this.lastRenderStats = stats;
 			return;
 		}
 
-		// Find first and last changed lines
+		// Find first and last changed lines (skip committed prefix which we know is unchanged)
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
-		for (let i = 0; i < maxLines; i++) {
+		const diffStartIndex = this.committedLineCount; // Skip committed lines in diff
+		for (let i = diffStartIndex; i < maxLines; i++) {
 			const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
 			const newLine = i < newLines.length ? newLines[i] : "";
 
@@ -1396,11 +1515,20 @@ export class TUI extends Container {
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
 		// No changes - but still need to update hardware cursor position if it moved
+		// Exception: if height changed (viewport moved), render the new viewport even if no content changed
 		if (firstChanged === -1) {
-			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousViewportTop = prevViewportTop;
-			this.previousHeight = height;
-			return;
+			if (heightChanged && isTermuxSession()) {
+				// Height changed in Termux: need to render new viewport bounds
+				// Set firstChanged to the committed boundary so we render from there
+				firstChanged = this.committedLineCount;
+				lastChanged = newLines.length - 1;
+			} else {
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousViewportTop = prevViewportTop;
+				this.previousHeight = height;
+				this.lastRenderStats = stats;
+				return;
+			}
 		}
 
 		// All changes are in deleted lines (nothing to render, just clear)
@@ -1412,7 +1540,9 @@ export class TUI extends Container {
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
 					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
+					this.committedLineCount = 0; // Escape hatch: full render
 					fullRender(true);
+					this.lastRenderStats = stats;
 					return;
 				}
 				const lineDiff = computeLineDiff(targetRow);
@@ -1423,7 +1553,9 @@ export class TUI extends Container {
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
 					logRedraw(`extraLines > height (${extraLines} > ${height})`);
+					this.committedLineCount = 0; // Escape hatch: full render
 					fullRender(true);
+					this.lastRenderStats = stats;
 					return;
 				}
 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
@@ -1449,6 +1581,7 @@ export class TUI extends Container {
 			this.previousWidth = width;
 			this.previousHeight = height;
 			this.previousViewportTop = prevViewportTop;
+			this.lastRenderStats = stats;
 			return;
 		}
 
@@ -1456,7 +1589,9 @@ export class TUI extends Container {
 		// If the first changed line is above the previous viewport, we need a full redraw.
 		if (firstChanged < prevViewportTop) {
 			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+			this.committedLineCount = 0; // Escape hatch: full render
 			fullRender(true);
+			this.lastRenderStats = stats;
 			return;
 		}
 
@@ -1494,7 +1629,7 @@ export class TUI extends Container {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			const line = newLines[i];
+			let line = newLines[i];
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
@@ -1503,7 +1638,9 @@ export class TUI extends Container {
 					logRedraw(
 						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
 					);
+					this.committedLineCount = 0; // Escape hatch: full render
 					fullRender(true);
+					this.lastRenderStats = stats;
 					return;
 				}
 
@@ -1520,32 +1657,20 @@ export class TUI extends Container {
 
 			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(os.homedir(), ".pi", "agent", "pi-crash.log");
-				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
-					`Terminal width: ${width}`,
-					`Line ${i} visible width: ${visibleWidth(line)}`,
-					"",
-					"=== All rendered lines ===",
-					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
-					"",
-				].join("\n");
-				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-				fs.writeFileSync(crashLogPath, crashData);
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					`Debug log written to: ${crashLogPath}`,
-				].join("\n");
-				throw new Error(errorMsg);
+				// Safety net: a line that exceeds the terminal width would corrupt the
+				// display, and historically this threw and killed the whole session.
+				// Truncate to the current width instead so the TUI degrades gracefully
+				// rather than crashing (e.g. a memoized component briefly returning a
+				// line wrapped to a previous, wider terminal during a resize).
+				if (process.env.PI_DEBUG_REDRAW === "1") {
+					const debugLogPath = path.join(os.homedir(), ".pi", "agent", "pi-overflow.log");
+					fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
+					fs.appendFileSync(
+						debugLogPath,
+						`[${new Date().toISOString()}] line ${i} width ${visibleWidth(line)} > ${width}; truncated\n`,
+					);
+				}
+				line = sliceByColumn(line, 0, width, true);
 			}
 			buffer += line;
 		}
@@ -1615,6 +1740,7 @@ export class TUI extends Container {
 		// Position hardware cursor for IME
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
+		this.lastRenderStats = stats;
 		this.previousLines = newLines;
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
