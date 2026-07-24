@@ -46,6 +46,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { AgentSession } from "../agent-session.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -207,6 +208,25 @@ export interface ExtensionUIContext {
 			onHandle?: (handle: OverlayHandle) => void;
 		},
 	): Promise<T>;
+
+	/**
+	 * Point the interactive renderer (chat transcript, footer, editor submit
+	 * routing, terminal title) at an external {@link AgentSession} — for example
+	 * an in-process subagent session — reusing the entire main render pipeline
+	 * instead of a simulated overlay. Pass `undefined` to return to the session
+	 * pi is actually running. Setting a new session while one is already rendered
+	 * switches directly.
+	 *
+	 * Unlike {@link ExtensionCommandContext.switchSession} (which loads a session
+	 * from a path and disposes the current one), this neither creates nor
+	 * destroys sessions — the running session keeps executing in the background,
+	 * and the passed session must already be a fully initialized `AgentSession`
+	 * (its extensions are NOT re-bound). A real session switch (`/new`,
+	 * `/resume`, `/fork`, `/reload`) resets this override automatically.
+	 *
+	 * TUI mode only; a no-op in non-interactive modes.
+	 */
+	setRenderedSession(session: AgentSession | undefined): Promise<void>;
 
 	/** Paste text into the editor, triggering paste handling (collapse for large content). */
 	pasteToEditor(text: string): void;

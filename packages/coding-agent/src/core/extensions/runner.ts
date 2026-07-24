@@ -246,6 +246,7 @@ const noOpUIContext: ExtensionUIContext = {
 	setHeader: () => {},
 	setTitle: () => {},
 	custom: async () => undefined as never,
+	setRenderedSession: async () => {},
 	pasteToEditor: () => {},
 	setEditorText: () => {},
 	getEditorText: () => "",

@@ -229,6 +229,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			return undefined as never;
 		},
 
+		async setRenderedSession() {
+			// Session presentation not supported in RPC mode (no interactive renderer)
+		},
+
 		pasteToEditor(text: string): void {
 			// Paste handling not supported in RPC mode - falls back to setEditorText
 			this.setEditorText(text);

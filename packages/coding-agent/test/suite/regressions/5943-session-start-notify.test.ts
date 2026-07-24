@@ -26,6 +26,7 @@ function createUiContext(
 		setHeader: () => {},
 		setTitle: () => {},
 		custom: async <T>() => undefined as T,
+		setRenderedSession: async () => {},
 		pasteToEditor: () => {},
 		setEditorText: () => {},
 		getEditorText: () => "",

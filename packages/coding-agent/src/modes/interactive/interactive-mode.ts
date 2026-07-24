@@ -427,8 +427,12 @@ export class InteractiveMode {
 	private themeController: InteractiveThemeController;
 
 	// Convenience accessors
+	// `session` is overridable by setRenderedSession(): the renderer follows the
+	// override while `mainSession` always reads the runtime's own (lifecycle code
+	// that must never see it).
+	private presentedSession: AgentSession | undefined = undefined;
 	private get session(): AgentSession {
-		return this.runtimeHost.session;
+		return this.presentedSession ?? this.runtimeHost.session;
 	}
 	private get agent() {
 		return this.session.agent;
@@ -445,6 +449,10 @@ export class InteractiveMode {
 		this.options = options;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			// A real main-session replacement is starting (new/resume/fork/reload).
+			// Drop any active presentation first so rebindCurrentSession rebinds the
+			// real session, not a stale presented one.
+			this.presentedSession = undefined;
 			this.resetExtensionUI();
 		});
 		this.runtimeHost.setRebindSession(async () => {
@@ -1761,6 +1769,46 @@ export class InteractiveMode {
 	}
 
 	/**
+	 * Point the interactive renderer (transcript, footer, editor submit routing,
+	 * title) at an external {@link AgentSession}, reusing the main render
+	 * pipeline. Pass `undefined` to return to the running session. Switching
+	 * while one is already rendered replaces it.
+	 *
+	 * Unlike `switchSession(path)`, this neither creates nor destroys sessions —
+	 * the running session keeps executing in the background. `session` must be a
+	 * fully initialized `AgentSession` (its extensions are NOT re-bound). A real
+	 * session switch (/new, /resume, /fork, /reload) resets the override first.
+	 */
+	async setRenderedSession(session: AgentSession | undefined): Promise<void> {
+		const target = session ?? undefined;
+		if (this.presentedSession === target) return;
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
+		// Not resetExtensionUI(): it clears extension widgets, which would drop the
+		// caller's own fleet bar and strand the user in the presented session.
+		this.presentedSession = target;
+		this.syncSessionBoundUI();
+		this.renderCurrentSessionState();
+		this.subscribeToAgent();
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Re-point the UI pieces that hold their own session reference (rather than
+	 * reading the `session` getter each frame) at the current `session`. Called
+	 * on present/restore. Deliberately narrower than applyRuntimeSettings(),
+	 * which also reconfigures global HTTP/editor state we must not touch for an
+	 * in-process presentation.
+	 */
+	private syncSessionBoundUI(): void {
+		this.footer.setSession(this.session);
+		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
+		this.updateEditorBorderColor();
+		this.updateTerminalTitle();
+	}
+
+	/**
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
@@ -2154,6 +2202,7 @@ export class InteractiveMode {
 			setHeader: (factory) => this.setExtensionHeader(factory),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
+			setRenderedSession: (session) => this.setRenderedSession(session),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
 			getEditorText: () => this.editor.getExpandedText?.() ?? this.editor.getText(),
