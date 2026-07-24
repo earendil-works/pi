@@ -15,11 +15,12 @@ function createInteractiveContext(options: {
 }) {
 	let selector: ScopedModelsSelectorComponent | undefined;
 	const setScopedModels = vi.fn();
+	const getAvailable = vi.fn().mockResolvedValue(options.allModels);
 	const context = {
 		session: {
 			modelRuntime: {
 				refresh: vi.fn(),
-				getAvailable: vi.fn().mockResolvedValue(options.allModels),
+				getAvailable,
 			},
 			scopedModels: options.scopedModels ?? [],
 			setScopedModels,
@@ -35,7 +36,7 @@ function createInteractiveContext(options: {
 		updateAvailableProviderCount: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
-	return { context, getSelector: () => selector, setScopedModels };
+	return { context, getAvailable, getSelector: () => selector, setScopedModels };
 }
 
 async function showModelsSelector(context: object): Promise<void> {
@@ -88,20 +89,42 @@ describe("issue #6949 unavailable scoped models", () => {
 		expect(persisted).toEqual([[availableId]]);
 	});
 
-	it("passes unmatched settings patterns to the selector", async () => {
+	it("passes unmatched settings patterns to the selector with one combined resolution", async () => {
 		const harness = await createHarness({ models: [{ id: "available", name: "Available" }] });
 		harnesses.push(harness);
-		const unavailableId = `${harness.models[0].provider}/unavailable`;
-		const { context, getSelector } = createInteractiveContext({
+		const unavailableIds = ["unavailable-one", "unavailable-two"].map((id) => `${harness.models[0].provider}/${id}`);
+		const { context, getAvailable, getSelector } = createInteractiveContext({
 			allModels: [],
-			enabledModelIds: [unavailableId],
+			enabledModelIds: unavailableIds,
 		});
 
 		await showModelsSelector(context);
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
-		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${unavailableId} [unavailable] ✗`);
+		const rendered = stripAnsi(selector.render(100).join("\n"));
+		for (const unavailableId of unavailableIds) {
+			expect(rendered).toContain(`${unavailableId} [unavailable] ✗`);
+		}
+		expect(getAvailable).toHaveBeenCalledTimes(2);
+	});
+
+	it("opens when only a session-scoped model is unavailable", async () => {
+		const harness = await createHarness({ models: [{ id: "unavailable", name: "Unavailable" }] });
+		harnesses.push(harness);
+		const model = harness.models[0];
+		const fullId = `${model.provider}/${model.id}`;
+		const { context, getSelector } = createInteractiveContext({
+			allModels: [],
+			enabledModelIds: [],
+			scopedModels: [{ model }],
+		});
+
+		await showModelsSelector(context);
+
+		const selector = getSelector();
+		if (!selector) throw new Error("Expected scoped-model selector to open");
+		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${fullId} [unavailable] ✗`);
 	});
 
 	it("does not clear a partial scope when an enabled model is unavailable", async () => {

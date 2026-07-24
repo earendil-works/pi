@@ -4470,14 +4470,18 @@ export class InteractiveMode {
 		const allModels = [...(await this.session.modelRuntime.getAvailable())];
 		const allModelIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
 		const configuredPatterns = this.settingsManager.getEnabledModels();
+		const sessionScopedModels = this.session.scopedModels;
 
-		if (allModels.length === 0 && !configuredPatterns?.length) {
+		if (allModels.length === 0 && !configuredPatterns?.length && sessionScopedModels.length === 0) {
 			this.showStatus("No models available");
 			return;
 		}
 
+		const configuredScope = configuredPatterns?.length
+			? await resolveModelScopeWithDiagnostics(configuredPatterns, this.session.modelRuntime)
+			: undefined;
+
 		// Check if session has scoped models (from previous session-only changes or CLI --models)
-		const sessionScopedModels = this.session.scopedModels;
 		const hasSessionScope = sessionScopedModels.length > 0;
 
 		// Build enabled model IDs from session state or settings
@@ -4486,16 +4490,16 @@ export class InteractiveMode {
 		if (hasSessionScope) {
 			// Use current session's scoped models
 			currentEnabledIds = sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
-		} else if (configuredPatterns?.length) {
-			const { scopedModels } = await resolveModelScopeWithDiagnostics(configuredPatterns, this.session.modelRuntime);
-			currentEnabledIds = scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
+		} else if (configuredScope) {
+			currentEnabledIds = configuredScope.scopedModels.map(
+				(scoped) => `${scoped.model.provider}/${scoped.model.id}`,
+			);
 		}
 
-		for (const pattern of configuredPatterns ?? []) {
-			const { scopedModels } = await resolveModelScopeWithDiagnostics([pattern], this.session.modelRuntime);
-			if (scopedModels.length > 0) continue;
+		for (const diagnostic of configuredScope?.diagnostics ?? []) {
+			if (diagnostic.message !== `No models match pattern "${diagnostic.pattern}"`) continue;
 			currentEnabledIds ??= [];
-			if (!currentEnabledIds.includes(pattern)) currentEnabledIds.push(pattern);
+			if (!currentEnabledIds.includes(diagnostic.pattern)) currentEnabledIds.push(diagnostic.pattern);
 		}
 
 		// Helper to update session's scoped models (session-only, no persist)
