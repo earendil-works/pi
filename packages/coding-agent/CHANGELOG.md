@@ -367,6 +367,7 @@
 
 ### Fixed
 
+- Fixed idle custom messages with `triggerTurn: true` to run cancellable `before_agent_start` preflight before provider invocation while preserving native trigger provenance, durable cancellation records, and runtime capability detection.
 - Fixed compaction and branch summaries for providers whose authentication resolves entirely to request headers ([#5871](https://github.com/earendil-works/pi/issues/5871))
 - Fixed unavailable scoped models being hidden from `/models`, allowing them to be removed without editing settings manually ([#6949](https://github.com/earendil-works/pi/issues/6949), [#7032](https://github.com/earendil-works/pi/pull/7032) by [@christianklotz](https://github.com/christianklotz)).
 - Fixed startup context file discovery to skip directories that match context file names such as `AGENTS.md`, which produced `EISDIR` warnings ([#7106](https://github.com/earendil-works/pi/pull/7106) by [@mrexodia](https://github.com/mrexodia)).

@@ -529,12 +529,13 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired before any agent loop triggered by a user prompt or an idle custom message. Can cancel the turn, inject a message, and/or modify the system prompt.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
-  // event.prompt - user's prompt text
-  // event.images - attached images (if any)
+  // event.triggerMessage - user or custom message that triggered the turn
+  // event.prompt - text extracted from the trigger (user prompts are expanded first)
+  // event.images - images attached to the trigger (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
   // event.systemPromptOptions - structured options used to build the system prompt
@@ -548,6 +549,10 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .skills - loaded skills
 
   return {
+    // Set cancel: true to stop before any provider request. Later handlers do not run.
+    cancel: false,
+    // When cancelling, also provide cancelReason; it is recorded durably and
+    // returned to async session callers.
     // Inject a persistent message (stored in session, sent to LLM)
     message: {
       customType: "my-extension",
@@ -562,7 +567,19 @@ pi.on("before_agent_start", async (event, ctx) => {
 
 The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
-Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
+Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again. Returning `{ cancel: true }` stops the chain and the turn before `agent_start` or any provider request; injected messages and system-prompt changes collected during that cancelled preflight are discarded.
+
+Cancellation does not erase delivery history. Pi persists the native user/custom trigger, then appends a `turn-preflight-cancellation` custom session entry whose data contains the cancelling extension's full `source`, the normalized `cancelReason`, and `triggerMessageEntryId`. The cancellation entry's structural parent is also the trigger entry. If `cancelReason` is empty or omitted, Pi records `"Cancelled by before_agent_start handler"`.
+
+`event.triggerMessage` preserves the triggering message's native role and metadata. For `pi.sendMessage(..., { triggerTurn: true })`, it is the original custom message with its `customType`, `content`, `display`, and `details`; Pi does not convert it into a user message to run preflight.
+
+Extensions that depend on this contract must feature-detect it rather than inspect Pi's version:
+
+```typescript
+if (pi.capabilities?.turnPreflight) {
+  // Native trigger provenance, cancellation records, and provider-zero cancellation are available.
+}
+```
 
 #### agent_start / agent_end / agent_settled
 
@@ -1241,7 +1258,7 @@ pi.registerCommand("switch", {
 
 ### Session replacement lifecycle and footguns
 
-`withSession` receives a fresh `ReplacedSessionContext`, which extends `ExtensionCommandContext` with async `sendMessage()` and `sendUserMessage()` helpers bound to the replacement session.
+`withSession` receives a fresh `ReplacedSessionContext`, which extends `ExtensionCommandContext` with async `sendMessage()` and `sendUserMessage()` helpers bound to the replacement session. `await ctx.sendMessage(...)` returns `{ cancelled: false }` or `{ cancelled: true, cancelReason }` when a `before_agent_start` handler cancels an idle triggered turn before provider invocation.
 
 Lifecycle and footguns:
 - `withSession` runs only after the old session has emitted `session_shutdown`, the old runtime has been torn down, the replacement session has been rebound, and the new extension instance has already received `session_start`.
@@ -1416,7 +1433,7 @@ pi.sendMessage({
   - `"steer"` (default) - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
-- `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
+- `triggerTurn: true` - If agent is idle, run `before_agent_start`, then trigger an LLM response unless the preflight is cancelled. A cancelled trigger is still persisted with its linked cancellation entry. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
 
 ### pi.sendUserMessage(content, options?)
 

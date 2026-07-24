@@ -114,9 +114,15 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 
 /** Combined result from all before_agent_start handlers */
 interface BeforeAgentStartCombinedResult {
+	cancellation?: {
+		source: Extension["sourceInfo"];
+		cancelReason: string;
+	};
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
 }
+
+const DEFAULT_TURN_PREFLIGHT_CANCEL_REASON = "Cancelled by before_agent_start handler";
 
 /**
  * Events handled by the generic emit() method.
@@ -1083,7 +1089,13 @@ export class ExtensionRunner {
 		images: ImageContent[] | undefined,
 		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptOptions,
+		triggerMessage?: AgentMessage,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
+		const effectiveTriggerMessage = triggerMessage ?? {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: prompt }, ...(images ?? [])],
+			timestamp: Date.now(),
+		};
 		let currentSystemPrompt = systemPrompt;
 		const ctx = Object.defineProperties(
 			{},
@@ -1104,6 +1116,7 @@ export class ExtensionRunner {
 				try {
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
+						triggerMessage: structuredClone(effectiveTriggerMessage),
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
@@ -1113,6 +1126,14 @@ export class ExtensionRunner {
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
+						if (result.cancel) {
+							return {
+								cancellation: {
+									source: structuredClone(ext.sourceInfo),
+									cancelReason: result.cancelReason?.trim() || DEFAULT_TURN_PREFLIGHT_CANCEL_REASON,
+								},
+							};
+						}
 						if (result.message) {
 							messages.push(result.message);
 						}
