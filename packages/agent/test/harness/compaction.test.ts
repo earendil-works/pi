@@ -56,6 +56,18 @@ function createMockUsage(input: number, output: number, cacheRead = 0, cacheWrit
 	};
 }
 
+function withCacheAvailability(
+	usage: Usage,
+	cacheReadReported: boolean | undefined,
+	cacheWriteReported: boolean | undefined,
+): Usage {
+	return {
+		...usage,
+		...(cacheReadReported === undefined ? {} : { cacheReadReported }),
+		...(cacheWriteReported === undefined ? {} : { cacheWriteReported }),
+	};
+}
+
 function createUserMessage(text: string): AgentMessage {
 	return {
 		role: "user",
@@ -635,11 +647,34 @@ describe("harness compaction", () => {
 		expect(invalidResult).toMatchObject({ ok: false, error: { code: "invalid_session" } });
 	});
 
-	it("combines usage for split-turn compaction summaries", async () => {
+	it.each([
+		{
+			label: "all-reported positive cache usage",
+			historyUsage: withCacheAvailability(createMockUsage(1, 2, 3, 4), true, true),
+			turnPrefixUsage: withCacheAvailability(createMockUsage(5, 6, 7, 8), true, true),
+			expected: withCacheAvailability(createMockUsage(6, 8, 10, 12), true, true),
+		},
+		{
+			label: "all-reported explicit zero cache usage",
+			historyUsage: withCacheAvailability(createMockUsage(1, 2), true, true),
+			turnPrefixUsage: withCacheAvailability(createMockUsage(5, 6), true, true),
+			expected: withCacheAvailability(createMockUsage(6, 8), true, true),
+		},
+		{
+			label: "mixed reported and unavailable cache usage",
+			historyUsage: withCacheAvailability(createMockUsage(1, 2, 3, 4), true, true),
+			turnPrefixUsage: withCacheAvailability(createMockUsage(5, 6, 0, 8), false, true),
+			expected: withCacheAvailability(createMockUsage(6, 8, 3, 12), false, true),
+		},
+		{
+			label: "legacy cache usage without availability",
+			historyUsage: createMockUsage(1, 2, 3, 4),
+			turnPrefixUsage: createMockUsage(5, 6, 7, 8),
+			expected: withCacheAvailability(createMockUsage(6, 8, 10, 12), false, false),
+		},
+	])("combines $label for split-turn compaction summaries", async ({ historyUsage, turnPrefixUsage, expected }) => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const { model } = createFauxModel(false);
-		const historyUsage = createMockUsage(1, 2, 3, 4);
-		const turnPrefixUsage = createMockUsage(5, 6, 7, 8);
 		const usageModels = createModelsWithSimpleResponses([
 			{ ...fauxAssistantMessage("history summary"), usage: historyUsage },
 			{ ...fauxAssistantMessage("turn prefix summary"), usage: turnPrefixUsage },
@@ -657,7 +692,7 @@ describe("harness compaction", () => {
 
 		const result = getOrThrow(await compact(preparation, usageModels, model));
 
-		expect(result.usage).toEqual(createMockUsage(6, 8, 10, 12));
+		expect(result.usage).toEqual(expected);
 	});
 
 	it("passes reasoning through turn-prefix summaries when enabled", async () => {

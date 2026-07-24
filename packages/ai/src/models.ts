@@ -13,6 +13,10 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ProviderModelsStore } from "./models-store.ts";
+import {
+	isTrustedRequestCacheBreakpointAdapter,
+	stripRequestCacheBreakpoints,
+} from "./request-cache-breakpoint-dispatch.ts";
 import type {
 	Api,
 	ApiStreamOptions,
@@ -575,7 +579,8 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 
 	const dispatch = (
 		model: Model<Api>,
-		run: (streams: ProviderStreams) => AssistantMessageEventStream,
+		context: Context,
+		run: (streams: ProviderStreams, providerContext: Context) => AssistantMessageEventStream,
 	): AssistantMessageEventStream => {
 		const streams = apiFor(model);
 		if (!streams) {
@@ -583,7 +588,10 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 				throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
 			});
 		}
-		return run(streams);
+		const providerContext = isTrustedRequestCacheBreakpointAdapter(streams)
+			? context
+			: stripRequestCacheBreakpoints(context);
+		return run(streams, providerContext);
 	};
 
 	return {
@@ -616,9 +624,10 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 				}
 			: undefined,
 		filterModels: input.filterModels,
-		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
+		stream: (model, context, options) =>
+			dispatch(model, context, (streams, providerContext) => streams.stream(model, providerContext, options)),
 		streamSimple: (model, context, options) =>
-			dispatch(model, (streams) => streams.streamSimple(model, context, options)),
+			dispatch(model, context, (streams, providerContext) => streams.streamSimple(model, providerContext, options)),
 	};
 }
 

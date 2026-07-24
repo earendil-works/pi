@@ -15,7 +15,7 @@ import type {
 	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
 import { calculateCost } from "../models.ts";
-import { hasCacheableRequestCacheBreakpoint, type RequestCacheBreakpointContent } from "../request-cache-breakpoint.ts";
+import { isSelectedRequestCacheBreakpoint, selectRequestCacheBreakpoint } from "../request-cache-breakpoint.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -142,17 +142,9 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
-	let selectedCacheBreakpoint: RequestCacheBreakpointContent | undefined;
-	if (options?.requestCacheBreakpoint) {
-		for (const message of transformedMessages) {
-			if (message.role !== "user" || !Array.isArray(message.content)) continue;
-			for (const block of message.content) {
-				if (hasCacheableRequestCacheBreakpoint(block)) {
-					selectedCacheBreakpoint = block;
-				}
-			}
-		}
-	}
+	const selectedCacheBreakpoint = options?.requestCacheBreakpoint
+		? selectRequestCacheBreakpoint(transformedMessages)
+		: { requested: false };
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	if (includeSystemPrompt && context.systemPrompt) {
@@ -165,7 +157,8 @@ export function convertResponsesMessages<TApi extends Api>(
 	}
 
 	let msgIndex = 0;
-	for (const msg of transformedMessages) {
+	for (let sourceMessageIndex = 0; sourceMessageIndex < transformedMessages.length; sourceMessageIndex++) {
+		const msg = transformedMessages[sourceMessageIndex];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
@@ -173,23 +166,24 @@ export function convertResponsesMessages<TApi extends Api>(
 					content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
 				});
 			} else {
-				const content: ResponseInputContent[] = msg.content.map((item): ResponseInputContent => {
+				const content: ResponseInputContent[] = msg.content.map((item, contentIndex): ResponseInputContent => {
+					const selected = isSelectedRequestCacheBreakpoint(
+						selectedCacheBreakpoint,
+						sourceMessageIndex,
+						contentIndex,
+					);
 					if (item.type === "text") {
 						return {
 							type: "input_text",
 							text: sanitizeSurrogates(item.text),
-							...(item === selectedCacheBreakpoint
-								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
-								: {}),
+							...(selected ? { prompt_cache_breakpoint: { mode: "explicit" as const } } : {}),
 						} satisfies ResponseInputTextWithPromptCacheBreakpoint;
 					}
 					return {
 						type: "input_image",
 						detail: "auto",
 						image_url: `data:${item.mimeType};base64,${item.data}`,
-						...(item === selectedCacheBreakpoint
-							? { prompt_cache_breakpoint: { mode: "explicit" as const } }
-							: {}),
+						...(selected ? { prompt_cache_breakpoint: { mode: "explicit" as const } } : {}),
 					} satisfies ResponseInputImageWithPromptCacheBreakpoint;
 				});
 				if (content.length === 0) continue;

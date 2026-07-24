@@ -11,7 +11,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { hasCacheableRequestCacheBreakpoint, type RequestCacheBreakpointContent } from "../request-cache-breakpoint.ts";
+import { isSelectedRequestCacheBreakpoint, selectRequestCacheBreakpoint } from "../request-cache-breakpoint.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -939,17 +939,9 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
-	let selectedCacheBreakpoint: RequestCacheBreakpointContent | undefined;
-	if (options?.requestCacheBreakpoint) {
-		for (const message of transformedMessages) {
-			if (message.role !== "user" || !Array.isArray(message.content)) continue;
-			for (const block of message.content) {
-				if (hasCacheableRequestCacheBreakpoint(block)) {
-					selectedCacheBreakpoint = block;
-				}
-			}
-		}
-	}
+	const selectedCacheBreakpoint = options?.requestCacheBreakpoint
+		? selectRequestCacheBreakpoint(transformedMessages)
+		: { requested: false };
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
@@ -977,27 +969,26 @@ export function convertMessages(
 					content: sanitizeSurrogates(msg.content),
 				});
 			} else {
-				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
-					if (item.type === "text") {
-						return {
-							type: "text",
-							text: sanitizeSurrogates(item.text),
-							...(item === selectedCacheBreakpoint
-								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
-								: {}),
-						} satisfies ChatCompletionTextPartWithCacheControl;
-					} else {
-						return {
-							type: "image_url",
-							image_url: {
-								url: `data:${item.mimeType};base64,${item.data}`,
-							},
-							...(item === selectedCacheBreakpoint
-								? { prompt_cache_breakpoint: { mode: "explicit" as const } }
-								: {}),
-						} satisfies ChatCompletionImagePartWithPromptCacheBreakpoint;
-					}
-				});
+				const content: ChatCompletionContentPart[] = msg.content.map(
+					(item, contentIndex): ChatCompletionContentPart => {
+						const selected = isSelectedRequestCacheBreakpoint(selectedCacheBreakpoint, i, contentIndex);
+						if (item.type === "text") {
+							return {
+								type: "text",
+								text: sanitizeSurrogates(item.text),
+								...(selected ? { prompt_cache_breakpoint: { mode: "explicit" as const } } : {}),
+							} satisfies ChatCompletionTextPartWithCacheControl;
+						} else {
+							return {
+								type: "image_url",
+								image_url: {
+									url: `data:${item.mimeType};base64,${item.data}`,
+								},
+								...(selected ? { prompt_cache_breakpoint: { mode: "explicit" as const } } : {}),
+							} satisfies ChatCompletionImagePartWithPromptCacheBreakpoint;
+						}
+					},
+				);
 				if (content.length === 0) continue;
 				params.push({
 					role: "user",

@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -54,6 +54,36 @@ const mockSummaryResponse: AssistantMessage = {
 };
 
 const messages: AgentMessage[] = [{ role: "user", content: "Summarize this.", timestamp: Date.now() }];
+
+function createUsage(
+	cacheRead: number,
+	cacheWrite: number,
+	cacheReadReported?: boolean,
+	cacheWriteReported?: boolean,
+): Usage {
+	return {
+		input: 10,
+		output: 10,
+		cacheRead,
+		cacheWrite,
+		...(cacheReadReported === undefined ? {} : { cacheReadReported }),
+		...(cacheWriteReported === undefined ? {} : { cacheWriteReported }),
+		totalTokens: 20 + cacheRead + cacheWrite,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+function createSplitPreparation(): CompactionPreparation {
+	return {
+		firstKeptEntryId: "entry-keep",
+		messagesToSummarize: messages,
+		turnPrefixMessages: messages,
+		isSplitTurn: true,
+		tokensBefore: 600000,
+		fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+		settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
+	};
+}
 
 describe("generateSummary reasoning options", () => {
 	beforeEach(() => {
@@ -143,25 +173,52 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: messages,
-			turnPrefixMessages: messages,
-			isSplitTurn: true,
-			tokensBefore: 600000,
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
-		};
-
-		const result = await compact(preparation, createModel(false, 128000), "test-key");
+		const result = await compact(createSplitPreparation(), createModel(false, 128000), "test-key");
 
 		expect(result.usage).toEqual({
 			...mockSummaryResponse.usage,
 			input: 20,
 			output: 20,
+			cacheReadReported: false,
+			cacheWriteReported: false,
 			totalTokens: 40,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		});
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+	});
+
+	it.each([
+		{
+			label: "all-reported positive cache usage",
+			historyUsage: createUsage(3, 4, true, true),
+			turnPrefixUsage: createUsage(7, 8, true, true),
+			expected: { cacheRead: 10, cacheWrite: 12, cacheReadReported: true, cacheWriteReported: true },
+		},
+		{
+			label: "all-reported explicit zero cache usage",
+			historyUsage: createUsage(0, 0, true, true),
+			turnPrefixUsage: createUsage(0, 0, true, true),
+			expected: { cacheRead: 0, cacheWrite: 0, cacheReadReported: true, cacheWriteReported: true },
+		},
+		{
+			label: "mixed reported and unavailable cache usage",
+			historyUsage: createUsage(3, 4, true, true),
+			turnPrefixUsage: createUsage(0, 8, false, true),
+			expected: { cacheRead: 3, cacheWrite: 12, cacheReadReported: false, cacheWriteReported: true },
+		},
+		{
+			label: "legacy cache usage without availability",
+			historyUsage: createUsage(3, 4),
+			turnPrefixUsage: createUsage(7, 8),
+			expected: { cacheRead: 10, cacheWrite: 12, cacheReadReported: false, cacheWriteReported: false },
+		},
+	])("preserves $label across split-turn aggregation", async ({ historyUsage, turnPrefixUsage, expected }) => {
+		completeSimpleMock
+			.mockResolvedValueOnce({ ...mockSummaryResponse, usage: historyUsage })
+			.mockResolvedValueOnce({ ...mockSummaryResponse, usage: turnPrefixUsage });
+
+		const result = await compact(createSplitPreparation(), createModel(false), "test-key");
+
+		expect(result.usage).toMatchObject(expected);
 	});
 });

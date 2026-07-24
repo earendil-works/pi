@@ -1,3 +1,4 @@
+import { trustRequestCacheBreakpointAdapter } from "../request-cache-breakpoint-dispatch.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 
@@ -66,10 +67,10 @@ export function lazyStream(
  * loads. Load failures terminate the returned stream with an error event.
  */
 export function lazyApi(load: () => Promise<ProviderStreams>): ProviderStreams {
-	return {
+	return trustRequestCacheBreakpointAdapter({
 		stream: (model, context, options) =>
 			lazyStream(model, async () => (await load()).stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			lazyStream(model, async () => (await load()).streamSimple(model, context, options)),
-	};
+	});
 }

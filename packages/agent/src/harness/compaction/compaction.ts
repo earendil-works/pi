@@ -131,6 +131,8 @@ function combineUsage(first: Usage, second: Usage): Usage {
 		output: first.output + second.output,
 		cacheRead: first.cacheRead + second.cacheRead,
 		cacheWrite: first.cacheWrite + second.cacheWrite,
+		cacheReadReported: first.cacheReadReported === true && second.cacheReadReported === true,
+		cacheWriteReported: first.cacheWriteReported === true && second.cacheWriteReported === true,
 		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
 			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
 			: {}),

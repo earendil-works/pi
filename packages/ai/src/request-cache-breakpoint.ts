@@ -6,7 +6,8 @@ export type RequestCacheBreakpointBehavior = "capability-gated" | "lower" | "str
 
 export interface RequestCacheBreakpointSelection {
 	requested: boolean;
-	content?: RequestCacheBreakpointContent;
+	messageIndex?: number;
+	contentIndex?: number;
 }
 
 /**
@@ -38,10 +39,12 @@ export function isRequestCacheBreakpointContentCacheable(content: RequestCacheBr
 }
 
 export function hasRequestCacheBreakpoint(content: unknown): content is RequestCacheBreakpointContent {
+	if (typeof content !== "object" || content === null) return false;
+	if ((content as { [REQUEST_CACHE_BREAKPOINT]?: unknown })[REQUEST_CACHE_BREAKPOINT] !== true) return false;
+	const candidate = content as Record<PropertyKey, unknown>;
 	return (
-		typeof content === "object" &&
-		content !== null &&
-		(content as { [REQUEST_CACHE_BREAKPOINT]?: unknown })[REQUEST_CACHE_BREAKPOINT] === true
+		(candidate.type === "text" && typeof candidate.text === "string") ||
+		(candidate.type === "image" && typeof candidate.data === "string" && typeof candidate.mimeType === "string")
 	);
 }
 
@@ -52,24 +55,42 @@ export function hasCacheableRequestCacheBreakpoint(
 }
 
 /**
- * Select the last valid marked user block while retaining whether any marker
- * was requested. Adapters can then fail closed instead of silently moving an
- * invalid marker to a different block.
+ * Select the last marked user block from the exact transformed graph consumed
+ * by a serializer. Structural coordinates survive later block conversion and
+ * avoid coupling cache policy to object identity. A malformed later marker
+ * clears an earlier valid selection so adapters fail closed.
  */
 export function selectRequestCacheBreakpoint(messages: readonly Message[]): RequestCacheBreakpointSelection {
 	let requested = false;
-	let content: RequestCacheBreakpointContent | undefined;
-	for (const message of messages) {
+	let messageIndex: number | undefined;
+	let contentIndex: number | undefined;
+	for (let nextMessageIndex = 0; nextMessageIndex < messages.length; nextMessageIndex++) {
+		const message = messages[nextMessageIndex];
 		if (message.role !== "user" || !Array.isArray(message.content)) continue;
-		for (const block of message.content) {
-			if (!hasRequestCacheBreakpoint(block)) continue;
+		for (let nextContentIndex = 0; nextContentIndex < message.content.length; nextContentIndex++) {
+			const block = message.content[nextContentIndex];
+			if (!Object.hasOwn(block, REQUEST_CACHE_BREAKPOINT)) continue;
 			requested = true;
-			if (isRequestCacheBreakpointContentCacheable(block)) {
-				content = block;
+			if (hasRequestCacheBreakpoint(block) && isRequestCacheBreakpointContentCacheable(block)) {
+				messageIndex = nextMessageIndex;
+				contentIndex = nextContentIndex;
+			} else {
+				messageIndex = undefined;
+				contentIndex = undefined;
 			}
 		}
 	}
-	return content ? { requested, content } : { requested };
+	return messageIndex !== undefined && contentIndex !== undefined
+		? { requested, messageIndex, contentIndex }
+		: { requested };
+}
+
+export function isSelectedRequestCacheBreakpoint(
+	selection: RequestCacheBreakpointSelection,
+	messageIndex: number,
+	contentIndex: number,
+): boolean {
+	return selection.messageIndex === messageIndex && selection.contentIndex === contentIndex;
 }
 
 /**

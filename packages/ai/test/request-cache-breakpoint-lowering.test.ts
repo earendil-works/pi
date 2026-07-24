@@ -333,6 +333,38 @@ describe("request cache breakpoint provider lowering", () => {
 		expect(cacheControlledBlocks(payload)).toEqual([]);
 	});
 
+	it.each([
+		["openai-responses", createResponsesModel(true), streamOpenAIResponses],
+		["anthropic-messages", createAnthropicModel(), streamAnthropic],
+	] as const)(
+		"fails closed when a valid %s marker is followed by a malformed marker",
+		async (_api, model, streamApi) => {
+			const context: Context = {
+				messages: [
+					{
+						role: "user",
+						content: [
+							markRequestCacheBreakpoint({ type: "text", text: "valid prefix" }),
+							{
+								type: "text",
+								text: "malformed tail",
+								[REQUEST_CACHE_BREAKPOINT]: "true",
+							} as unknown as TextContent,
+						],
+						timestamp: 1,
+					},
+				],
+			};
+
+			const { payload } = await capturePayload((onPayload) =>
+				streamApi(model as never, context, { apiKey: "test", onPayload }),
+			);
+
+			expect(cacheControlledBlocks(payload)).toEqual([]);
+			expect(explicitPromptCacheBreakpointBlocks(payload)).toEqual([]);
+		},
+	);
+
 	it("strips explicit Anthropic markers when cache retention is disabled", async () => {
 		const model = createAnthropicModel();
 		const context: Context = {

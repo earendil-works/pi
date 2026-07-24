@@ -93,6 +93,12 @@ const usage = {
 	cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 },
 };
 
+const normalizedUsage = {
+	...usage,
+	cacheReadReported: true,
+	cacheWriteReported: true,
+};
+
 describe("pi-messages", () => {
 	it("streams text and tool calls and resolves the terminal message", async () => {
 		const { baseUrl, requests } = await startServer({
@@ -129,7 +135,7 @@ describe("pi-messages", () => {
 		const message = await eventStream.result();
 
 		expect(message.stopReason).toBe("toolUse");
-		expect(message.usage).toEqual(usage);
+		expect(message.usage).toEqual(normalizedUsage);
 		expect(message.responseId).toBe("resp_1");
 		expect(message.model).toBe("auto");
 		expect(message.provider).toBe("radius");
@@ -201,7 +207,52 @@ describe("pi-messages", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe("Upstream failed");
-		expect(message.usage).toEqual(usage);
+		expect(message.usage).toEqual(normalizedUsage);
+	});
+
+	it("honors explicit cache-usage availability independently", async () => {
+		const { baseUrl } = await startServer({
+			events: [
+				{
+					type: "done",
+					reason: "stop",
+					usage: {
+						...usage,
+						cacheRead: 9,
+						cacheWrite: 0,
+						cacheReadReported: false,
+						cacheWriteReported: true,
+					},
+				},
+			],
+		});
+		const model = createModel(baseUrl);
+
+		const message = await stream(model, context, { apiKey: "test-key" }).result();
+
+		expect(message.usage).toMatchObject({
+			cacheRead: 0,
+			cacheReadReported: false,
+			cacheWrite: 0,
+			cacheWriteReported: true,
+		});
+	});
+
+	it("treats legacy omitted cache fields as unavailable", async () => {
+		const { cacheRead: _cacheRead, cacheWrite: _cacheWrite, ...legacyUsage } = usage;
+		const { baseUrl } = await startServer({
+			events: [{ type: "done", reason: "stop", usage: legacyUsage }],
+		});
+		const model = createModel(baseUrl);
+
+		const message = await stream(model, context, { apiKey: "test-key" }).result();
+
+		expect(message.usage).toMatchObject({
+			cacheRead: 0,
+			cacheReadReported: false,
+			cacheWrite: 0,
+			cacheWriteReported: false,
+		});
 	});
 
 	it("errors when no API key is provided", async () => {

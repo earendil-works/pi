@@ -41,6 +41,7 @@ import { piMessagesApi } from "./api/pi-messages.lazy.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
 import type { ModelsApiStreamOptions } from "./models.ts";
 import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
+import { stripRequestCacheBreakpoints } from "./request-cache-breakpoint-dispatch.ts";
 
 export type { BuiltinProvider } from "./providers/all.ts";
 
@@ -95,6 +96,7 @@ interface ApiProviderInternal {
 type RegisteredApiProvider = {
 	provider: ApiProviderInternal;
 	sourceId?: string;
+	trustedRequestCacheBreakpointAdapter: boolean;
 };
 
 const apiProviderRegistry = new Map<string, RegisteredApiProvider>();
@@ -127,6 +129,14 @@ export function registerApiProvider<TApi extends Api, TOptions extends StreamOpt
 	provider: ApiProvider<TApi, TOptions>,
 	sourceId?: string,
 ): void {
+	registerApiProviderInternal(provider, sourceId, false);
+}
+
+function registerApiProviderInternal<TApi extends Api, TOptions extends StreamOptions>(
+	provider: ApiProvider<TApi, TOptions>,
+	sourceId: string | undefined,
+	trustedRequestCacheBreakpointAdapter: boolean,
+): void {
 	apiProviderRegistry.set(provider.api, {
 		provider: {
 			api: provider.api,
@@ -134,6 +144,7 @@ export function registerApiProvider<TApi extends Api, TOptions extends StreamOpt
 			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple),
 		},
 		sourceId,
+		trustedRequestCacheBreakpointAdapter,
 	});
 }
 
@@ -198,9 +209,14 @@ const builtinApiProviderInstances = new Map<Api, ReturnType<typeof getApiProvide
 export function registerBuiltInApiProviders(): void {
 	for (const [api, streams] of BUILTIN_APIS) {
 		if (!getApiProvider(api)) {
-			registerApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
+			registerApiProviderInternal(
+				{ api, stream: streams.stream, streamSimple: streams.streamSimple },
+				undefined,
+				true,
+			);
 		}
-		builtinApiProviderInstances.set(api, getApiProvider(api));
+		const entry = apiProviderRegistry.get(api);
+		builtinApiProviderInstances.set(api, entry?.trustedRequestCacheBreakpointAdapter ? entry.provider : undefined);
 	}
 }
 
@@ -260,7 +276,7 @@ export function stream<TApi extends Api>(
 		return builtinProvider.stream(model, context, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, context, withEnvApiKey(model, options) as StreamOptions);
+	return provider.stream(model, stripRequestCacheBreakpoints(context), withEnvApiKey(model, options) as StreamOptions);
 }
 
 export async function complete<TApi extends Api>(
@@ -285,7 +301,7 @@ export function streamSimple<TApi extends Api>(
 		return builtinProvider.streamSimple(model, context, withEnvApiKey(model, options));
 	}
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, context, withEnvApiKey(model, options));
+	return provider.streamSimple(model, stripRequestCacheBreakpoints(context), withEnvApiKey(model, options));
 }
 
 export async function completeSimple<TApi extends Api>(

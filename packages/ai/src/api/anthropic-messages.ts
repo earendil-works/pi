@@ -8,7 +8,11 @@ import type {
 	RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { calculateCost } from "../models.ts";
-import { type RequestCacheBreakpointSelection, selectRequestCacheBreakpoint } from "../request-cache-breakpoint.ts";
+import {
+	isSelectedRequestCacheBreakpoint,
+	type RequestCacheBreakpointSelection,
+	selectRequestCacheBreakpoint,
+} from "../request-cache-breakpoint.ts";
 import type {
 	AnthropicMessagesCompat,
 	Api,
@@ -953,8 +957,8 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
-	const requestCacheBreakpoint = selectRequestCacheBreakpoint(context.messages);
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const requestCacheBreakpoint = selectRequestCacheBreakpoint(transformedMessages);
 	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	const toolPlacement = splitDeferredTools(
 		{ ...context, messages: transformedMessages },
@@ -1140,7 +1144,7 @@ function convertMessages(
 					});
 				}
 			} else {
-				const blocks: ContentBlockParam[] = msg.content.map((item) => {
+				const blocks: ContentBlockParam[] = msg.content.map((item, contentIndex) => {
 					let block: ContentBlockParam;
 					if (item.type === "text") {
 						block = {
@@ -1157,7 +1161,7 @@ function convertMessages(
 							},
 						};
 					}
-					if (cacheControl && item === requestCacheBreakpoint.content) {
+					if (cacheControl && isSelectedRequestCacheBreakpoint(requestCacheBreakpoint, i, contentIndex)) {
 						(block as ContentBlockParam & { cache_control?: CacheControlEphemeral }).cache_control = cacheControl;
 					}
 					return block;
