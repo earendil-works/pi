@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
@@ -15,7 +16,8 @@ import {
 	type SelfUpdatePackageTarget,
 	VERSION,
 } from "./config.ts";
-import type { ExtensionFactory } from "./core/extensions/types.ts";
+import type { InlineExtension } from "./core/extensions/types.ts";
+import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -30,7 +32,7 @@ import {
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
-type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
+type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string } | { type: "models" };
 
 const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
 	heading: (text) => chalk.bold(chalk.yellow(text)),
@@ -81,10 +83,27 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
+}
+
+const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
+
+function printConfigCommandHelp(): void {
+	console.log(`${chalk.bold("Usage:")}
+  ${CONFIG_COMMAND_USAGE}
+
+Open the resource configuration TUI to enable or disable package resources.
+Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
+Press Tab in the TUI to switch between global and project-local modes.
+
+Options:
+  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
+  -a, --approve     Trust project-local files for this command with -l
+  -na, --no-approve Ignore project-local files for this command with -l
+`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {
@@ -132,11 +151,12 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update pi and installed packages.
+Update pi, installed packages, or model catalogs.
 
 Options:
   --self                  Update pi only (default when no target is given)
   --extensions            Update installed packages only
+  --models                Refresh model catalogs only
   --all                   Update pi and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
@@ -146,6 +166,7 @@ Options:
 Short forms:
   ${APP_NAME} update                Update pi only
   ${APP_NAME} update --all          Update pi and all extensions
+  ${APP_NAME} update --models       Refresh model catalogs only
   ${APP_NAME} update <source>       Update one package
   ${APP_NAME} update pi             Update pi only (self works as alias to pi)
 `);
@@ -188,6 +209,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let source: string | undefined;
 	let selfFlag = false;
 	let extensionsFlag = false;
+	let modelsFlag = false;
 	let allFlag = false;
 	let extensionFlagSource: string | undefined;
 
@@ -219,6 +241,15 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		if (arg === "--extensions") {
 			if (command === "update") {
 				extensionsFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--models") {
+			if (command === "update") {
+				modelsFlag = true;
 			} else {
 				invalidOption = invalidOption ?? arg;
 			}
@@ -287,15 +318,24 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let updateTarget: UpdateTarget | undefined;
 	let showExtensionsSkippedNote = false;
 	if (command === "update") {
-		if (allFlag && (selfFlag || extensionsFlag || extensionFlagSource)) {
+		if (allFlag && (selfFlag || extensionsFlag || modelsFlag || extensionFlagSource)) {
 			conflictingOptions =
-				conflictingOptions ?? "--all cannot be combined with --self, --extensions, or --extension";
+				conflictingOptions ?? "--all cannot be combined with --self, --extensions, --models, or --extension";
 		}
 		if (allFlag && source) {
 			conflictingOptions = conflictingOptions ?? "--all cannot be combined with a positional source";
 		}
 
-		if (extensionFlagSource) {
+		if (modelsFlag) {
+			if (selfFlag || extensionsFlag || allFlag || extensionFlagSource) {
+				conflictingOptions =
+					conflictingOptions ?? "--models cannot be combined with --self, --extensions, --all, or --extension";
+			}
+			if (source) {
+				conflictingOptions = conflictingOptions ?? "--models cannot be combined with a positional source";
+			}
+			updateTarget = { type: "models" };
+		} else if (extensionFlagSource) {
 			if (selfFlag || extensionsFlag || allFlag) {
 				conflictingOptions =
 					conflictingOptions ?? "--extension cannot be combined with --self, --extensions, or --all";
@@ -354,6 +394,33 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 	return target.type === "all" || target.type === "extensions";
 }
 
+async function refreshModelCatalogs(agentDir: string): Promise<void> {
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(agentDir, "auth.json"),
+		modelsPath: join(agentDir, "models.json"),
+		allowModelNetwork: false,
+	});
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15_000);
+	try {
+		const result = await modelRuntime.refresh({
+			allowNetwork: true,
+			force: true,
+			signal: controller.signal,
+		});
+		if (result.aborted) {
+			throw new Error("Model catalog refresh timed out.");
+		}
+		if (result.errors.size > 0) {
+			const details = Array.from(result.errors, ([provider, error]) => `${provider}: ${error.message}`).join("; ");
+			throw new Error(`Could not refresh model catalogs: ${details}`);
+		}
+	} finally {
+		clearTimeout(timeout);
+	}
+	console.log(chalk.green("Model catalogs refreshed"));
+}
+
 function printSelfUpdateUnavailable(
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = PACKAGE_NAME,
@@ -370,6 +437,11 @@ function printSelfUpdateUnavailable(
 
 function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
+}
+
+function printPnpmSelfUpdateMetadataHint(): void {
+	console.error(chalk.yellow("If pnpm reports missing package versions, its cached registry metadata may be stale."));
+	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`));
 }
 
 function printSelfUpdateNote(note: string): void {
@@ -461,20 +533,8 @@ function prepareWindowsNpmSelfUpdate(): void {
 	quarantineWindowsNativeDependencies(packageDir);
 }
 
-function parseProjectTrustOverride(args: readonly string[]): boolean | undefined {
-	let trustOverride: boolean | undefined;
-	for (const arg of args) {
-		if (arg === "--approve" || arg === "-a") {
-			trustOverride = true;
-		} else if (arg === "--no-approve" || arg === "-na") {
-			trustOverride = false;
-		}
-	}
-	return trustOverride;
-}
-
 export interface PackageCommandRuntimeOptions {
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }
 
 interface CommandSettingsResult {
@@ -497,7 +557,7 @@ async function createCommandSettingsManager(options: {
 	agentDir: string;
 	projectTrustOverride?: boolean;
 	useSavedProjectTrustOnly?: boolean;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }): Promise<CommandSettingsResult> {
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const projectTrustWarnings: string[] = [];
@@ -544,8 +604,36 @@ export async function handleConfigCommand(
 	args: string[],
 	runtimeOptions: PackageCommandRuntimeOptions = {},
 ): Promise<boolean> {
-	if (args[0] !== "config") {
+	const [command, ...rest] = args;
+	if (command !== "config") {
 		return false;
+	}
+
+	if (rest.includes("-h") || rest.includes("--help")) {
+		printConfigCommandHelp();
+		return true;
+	}
+
+	let local = false;
+	let projectTrustOverride: boolean | undefined;
+	for (const arg of rest) {
+		if (arg === "-l" || arg === "--local") {
+			local = true;
+		} else if (arg === "-a" || arg === "--approve") {
+			projectTrustOverride = true;
+		} else if (arg === "-na" || arg === "--no-approve") {
+			projectTrustOverride = false;
+		} else if (arg.startsWith("-")) {
+			console.error(chalk.red(`Unknown option ${arg} for "config".`));
+			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${CONFIG_COMMAND_USAGE}".`));
+			process.exitCode = 1;
+			return true;
+		} else {
+			console.error(chalk.red(`Unexpected argument ${arg}.`));
+			console.error(chalk.dim(`Usage: ${CONFIG_COMMAND_USAGE}`));
+			process.exitCode = 1;
+			return true;
+		}
 	}
 
 	const cwd = process.cwd();
@@ -553,19 +641,33 @@ export async function handleConfigCommand(
 	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
 		cwd,
 		agentDir,
-		projectTrustOverride: parseProjectTrustOverride(args),
+		projectTrustOverride,
 		extensionFactories: runtimeOptions.extensionFactories,
 	});
 	reportProjectTrustWarnings(projectTrustWarnings);
+	if (local && !settingsManager.isProjectTrusted()) {
+		console.error(chalk.red("Project is not trusted. Use --approve to modify local resource config."));
+		process.exitCode = 1;
+		return true;
+	}
 	reportSettingsErrors(settingsManager, "config command");
-	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-	const resolvedPaths = await packageManager.resolve();
+	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const globalResolvedPaths = await new DefaultPackageManager({
+		cwd,
+		agentDir,
+		settingsManager: globalSettingsManager,
+	}).resolve();
+	const projectResolvedPaths = settingsManager.isProjectTrusted()
+		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
+		: globalResolvedPaths;
 
 	await selectConfig({
-		resolvedPaths,
+		resolvedPaths: { global: globalResolvedPaths, project: projectResolvedPaths },
 		settingsManager,
 		cwd,
 		agentDir,
+		writeScope: local ? "project" : "global",
+		projectModeAvailable: settingsManager.isProjectTrusted(),
 	});
 
 	process.exit(0);
@@ -618,6 +720,17 @@ export async function handlePackageCommand(
 		console.error(chalk.red(`Missing ${options.command} source.`));
 		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
 		process.exitCode = 1;
+		return true;
+	}
+
+	if (options.command === "update" && options.updateTarget?.type === "models") {
+		try {
+			await refreshModelCatalogs(getAgentDir());
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Unknown model catalog refresh error";
+			console.error(chalk.red(`Error: ${message}`));
+			process.exitCode = 1;
+		}
 		return true;
 	}
 
@@ -753,6 +866,9 @@ export async function handlePackageCommand(
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : "Unknown package command error";
 						console.error(chalk.red(`Error: ${message}`));
+						if (installMethod === "pnpm") {
+							printPnpmSelfUpdateMetadataHint();
+						}
 						printSelfUpdateFallback(selfUpdateCommand);
 						process.exitCode = 1;
 						return true;

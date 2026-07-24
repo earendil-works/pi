@@ -1,6 +1,6 @@
 # Providers
 
-Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, pi knows all available models. The list is updated with every pi release.
+Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. Built-in catalogs ship with pi; configured providers may refresh newer catalogs and cache them in `~/.pi/agent/models-store.json` for offline use.
 
 ## Table of Contents
 
@@ -8,6 +8,7 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
+- [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -18,8 +19,11 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
+- xAI (Grok/X subscription)
+- OpenRouter (OAuth-minted API key billed from OpenRouter credits)
+- Radius
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
 ### OpenAI Codex
 
@@ -34,6 +38,21 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
+
+### xAI (Grok/X subscription)
+
+- Run `/login xai`, then select **Use a subscription**
+- `XAI_API_KEY` remains available through **Use an API key**
+
+### OpenRouter
+
+- Run `/login openrouter`, then select **Sign in with OpenRouter** to open the OpenRouter PKCE authorization flow
+- The authorization creates a user-controlled OpenRouter API key billed from your OpenRouter credits
+- `OPENROUTER_API_KEY` remains available through **Use an API key**
+
+### Radius
+
+Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
 
 ## API Keys
 
@@ -55,6 +74,7 @@ pi
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
+| Amazon Bedrock | `AWS_BEARER_TOKEN_BEDROCK` | `amazon-bedrock` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
@@ -67,12 +87,15 @@ pi
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
+| Radius | `RADIUS_API_KEY` | `radius` |
 | Hugging Face | `HF_TOKEN` | `huggingface` |
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
+| Qwen Token Plan | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
+| Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-cn` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
@@ -95,6 +118,8 @@ Store credentials in `~/.pi/agent/auth.json`:
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." },
   "together": { "type": "api_key", "key": "..." },
+  "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
+  "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },
   "xiaomi": { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-cn":  { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-ams": { "type": "api_key", "key": "..." },
@@ -169,6 +194,8 @@ export AZURE_OPENAI_DEPLOYMENT_NAME_MAP=gpt-4=my-gpt4,gpt-4o=my-gpt4o
 ```
 
 ### Amazon Bedrock
+
+Use `/login amazon-bedrock` to store a Bedrock API key, or configure one of the ambient AWS credential sources below:
 
 ```bash
 # Option 1: AWS Profile
@@ -258,6 +285,12 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+## llama.cpp
+
+Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
+
+See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
 ## Custom Providers
 

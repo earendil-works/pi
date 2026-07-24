@@ -10,6 +10,7 @@ import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 
 // ============================================================================
@@ -35,6 +36,7 @@ export type RpcCommand =
 	// Thinking
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
 	| { id?: string; type: "cycle_thinking_level" }
+	| { id?: string; type: "get_available_thinking_levels" }
 
 	// Queue modes
 	| { id?: string; type: "set_steering_mode"; mode: "all" | "one-at-a-time" }
@@ -59,6 +61,8 @@ export type RpcCommand =
 	| { id?: string; type: "fork"; entryId: string }
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
+	| { id?: string; type: "get_entries"; since?: string }
+	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 
@@ -151,6 +155,13 @@ export type RpcResponse =
 			success: true;
 			data: { level: ThinkingLevel } | null;
 	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_available_thinking_levels";
+			success: true;
+			data: { levels: ThinkingLevel[] };
+	  }
 
 	// Queue modes
 	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
@@ -180,6 +191,20 @@ export type RpcResponse =
 			command: "get_fork_messages";
 			success: true;
 			data: { messages: Array<{ entryId: string; text: string }> };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_entries";
+			success: true;
+			data: { entries: SessionEntry[]; leafId: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_tree";
+			success: true;
+			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
 	| {
 			id?: string;

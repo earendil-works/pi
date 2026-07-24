@@ -2,6 +2,92 @@
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-07-24
+
+### Breaking Changes
+
+- Replaced `AgentHarness`'s `ExecutionEnv` dependency and context-free `AgentTool` inputs with application-defined `toolContext` values and context-aware `AgentHarnessTool` definitions.
+
+### Added
+
+- Added context-aware `read`, `write`, `edit`, and `bash` harness tools backed by `ExecutionEnv`, including async bash execution preparation.
+
+### Changed
+
+- Aligned harness tool path handling, edit serialization, shell output capture, explicit non-inherited environments, and cross-platform process cleanup with coding-agent behavior.
+
+### Fixed
+
+- Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
+
+## [0.81.1] - 2026-07-21
+
+### Added
+
+- Added retry policy support and lifecycle events for compaction and branch-summary operations in `AgentHarness` ([#6901](https://github.com/earendil-works/pi/pull/6901) by [@davidbrai](https://github.com/davidbrai)).
+
+### Fixed
+
+- Restored the `Agent` `streamFn` option and host-configurable fallback for omitted agent-loop stream functions without reintroducing a `pi-ai/compat` dependency ([#6915](https://github.com/earendil-works/pi/issues/6915)).
+
+## [0.81.0] - 2026-07-21
+
+### Breaking Changes
+
+- Changed `SessionStorage` to use `getPathToRootOrCompaction()`, require session name and statistics methods, support cursor-based entry reads, and store retained compaction tails as self-contained checkpoints ([#6594](https://github.com/earendil-works/pi/pull/6594) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Moved the `uuidv7` export to `@earendil-works/pi-ai` ([#6834](https://github.com/earendil-works/pi/pull/6834) by [@xl0](https://github.com/xl0)).
+- Replaced the optional `Agent` `streamFn` fallback with a required `streamFunction` and made low-level loop stream functions required, preventing `@earendil-works/pi-ai/compat` and all built-in providers from entering selective-provider bundles ([#6851](https://github.com/earendil-works/pi/issues/6851)).
+
+### Added
+
+- Added usage metadata to tool results, compaction entries, and branch summaries in the agent harness ([#6671](https://github.com/earendil-works/pi/pull/6671) by [@davidbrai](https://github.com/davidbrai)).
+
+## [0.80.10] - 2026-07-16
+
+## [0.80.9] - 2026-07-16
+
+## [0.80.8] - 2026-07-16
+
+## [0.80.7] - 2026-07-14
+
+### Added
+
+- Added `AgentToolResult.addedToolNames` propagation to `ToolResultMessage` so tools introduced by a result can be loaded from that transcript point onward ([#6474](https://github.com/earendil-works/pi-mono/pull/6474)).
+
+## [0.80.6] - 2026-07-09
+
+### Added
+
+- Added the `max` model thinking level after `xhigh`.
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Added
+
+- Added configurable harness session context entry transforms and custom-entry message projectors.
+- Added custom metadata support in JSONL session headers ([#6417](https://github.com/earendil-works/pi/pull/6417) by [@ArcadiaLin](https://github.com/ArcadiaLin)).
+- Exported `InMemorySessionStorage` and `JsonlSessionStorage` ([#6435](https://github.com/earendil-works/pi/issues/6435)).
+
+### Fixed
+
+- Fixed harness split-turn compaction to serialize summary requests so single-concurrency providers are not asked to run overlapping generations ([#5536](https://github.com/earendil-works/pi/issues/5536)).
+- Fixed harness tool calls from length-truncated assistant messages to fail instead of waiting for missing tool results ([#6285](https://github.com/earendil-works/pi/pull/6285)).
+- Fixed harness session ingestion to normalize `null` message content before context projection, avoiding crashes on lax imported transcripts ([#6343](https://github.com/earendil-works/pi/pull/6343)).
+- Fixed non-positive or oversized harness shell execution timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
+- Fixed harness session storage short entry ids to use the random tail of the generated uuidv7 instead of the timestamp prefix, which was nearly constant between calls ([#6242](https://github.com/earendil-works/pi/issues/6242)).
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added `prepareNextTurnWithContext` for `Agent` users that need the next-turn loop context.
+
+### Fixed
+
+- Fixed `Agent.prepareNextTurn` to keep receiving the run abort signal instead of the next-turn context.
+
 ## [0.80.2] - 2026-06-23
 
 ### Changed

@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-07-24
+
+### Fixed
+
+- Fixed debug and crash logs to use the configured TUI log directory, including `PI_CODING_AGENT_DIR`, instead of always writing under `~/.pi/agent` ([#6958](https://github.com/earendil-works/pi/pull/6958) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed narrow terminals crashing when the editor's bottom scroll indicator exceeded the terminal width ([#7015](https://github.com/earendil-works/pi/pull/7015) by [@christianklotz](https://github.com/christianklotz)).
+
+## [0.81.1] - 2026-07-21
+
+## [0.81.0] - 2026-07-21
+
+### Fixed
+
+- Fixed terminal shutdown to clear the editor's inverted software cursor before restoring the hardware cursor, avoiding a duplicate cursor artifact ([#6790](https://github.com/earendil-works/pi/pull/6790) by [@dam9000](https://github.com/dam9000)).
+- Fixed ANSI-aware text wrapping to recognize CRLF and CR line endings while preserving styles across lines ([#6764](https://github.com/earendil-works/pi/pull/6764) by [@xz-dev](https://github.com/xz-dev)).
+- Fixed editor paste registry corruption when deleting paste markers: undo now restores the paste registry together with the text, and marker renumbering shifts registry entries in ascending id order, so submitted prompts no longer contain literal `[paste #N ...]` markers or the wrong paste's content ([#6844](https://github.com/earendil-works/pi/issues/6844)).
+
+## [0.80.10] - 2026-07-16
+
+## [0.80.9] - 2026-07-16
+
+## [0.80.8] - 2026-07-16
+
+### Fixed
+
+- Fixed terminal output to normalize tab characters consistently ([#6697](https://github.com/earendil-works/pi-mono/pull/6697) by [@xz-dev](https://github.com/xz-dev)).
+
+## [0.80.7] - 2026-07-14
+
+### Fixed
+
+- Fixed legacy terminal decoding for Alt+symbol key combinations such as `Alt+,` and `Alt+.` ([#6523](https://github.com/earendil-works/pi-mono/pull/6523) by [@ribelo](https://github.com/ribelo)).
+
+## [0.80.6] - 2026-07-09
+
+## [0.80.5] - 2026-07-09
+
+## [0.80.4] - 2026-07-09
+
+### Fixed
+
+- Fixed editor paste marker accounting when paste markers are deleted or terminal state is cleared, preventing stale paste state after marker removal ([#6397](https://github.com/earendil-works/pi/pull/6397) by [@affanali2k3](https://github.com/affanali2k3)).
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added an opt-in Markdown renderer option to preserve source backslash escapes for transcript rendering ([#6105](https://github.com/earendil-works/pi/issues/6105)).
+
 ## [0.80.2] - 2026-06-23
 
 ## [0.80.1] - 2026-06-23

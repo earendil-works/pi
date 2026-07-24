@@ -43,6 +43,7 @@ Harness config is the latest runtime configuration set by the application or ext
 - thinking level
 - tools
 - active tool names
+- tool context source
 - resources
 - stream options
 - system prompt or system prompt provider
@@ -66,6 +67,7 @@ A turn snapshot is the concrete state used for one LLM turn. It is created by `c
 - thinking level
 - all tools
 - active tools
+- resolved tool context
 - stream options
 - derived session id
 
@@ -73,11 +75,19 @@ Static option values are used directly. System-prompt provider callbacks are inv
 
 Resource arrays are shallow-copied when a snapshot is created. Individual skill and prompt-template objects are not deep-copied.
 
+`toolContext` is application-defined and required when the configured tools require a non-`undefined` context. A static value is reused, while a zero-argument sync or async provider is resolved once for each turn snapshot. Harness tools receive that resolved value when they execute. Individual tools can structurally require only the context fields they use.
+
 Stream options are shallow-copied when a snapshot is created. `headers` and `metadata` maps are shallow-copied; their values are not deep-copied. Credentials from `getApiKeyAndHeaders()` are resolved per provider request so expiring tokens can refresh, but the configured stream options and derived session id come from the current turn snapshot.
+
+### Built-in tools
+
+The package exports `createReadTool()`, `createWriteTool()`, `createEditTool()`, and `createBashTool()`. They perform filesystem and shell operations exclusively through the `ExecutionEnv` supplied in their tool context. Each tool structurally requires the shared `ExecutionToolContext`, containing `env: ExecutionEnv`; applications may provide additional fields. `createReadTool()` accepts an optional image processor for host-provided conversion and resizing without imposing an image-processing dependency on the agent package. `createBashTool()` accepts an async `prepare` hook that can mutate the command, working directory, environment, and environment-inheritance policy using the current tool context.
 
 ### Session
 
 The session contains persisted entries only. Session reads return persisted state and do not include queued writes.
+
+`Session.buildContextEntries()` returns the compaction-aware entry sequence used for model context construction. `Session.buildContext()` derives runtime state from the full active branch, then projects those context entries to `AgentMessage[]`. Custom entries are omitted from model context by default; applications can pass `entryProjectors` to the `Session` constructor or `buildContext()` to project selected custom entries into messages. Applications can also pass stacked `entryTransforms`, which run after the default compaction transform, to filter or reorder context entries before projection.
 
 Session storage implementations must persist leaf changes as `leaf` entries. `setLeafId()` is not an in-memory-only cursor update; it appends a durable entry whose `targetId` is the active tree leaf or `null` for root. Reopening storage must reconstruct the current leaf from the latest persisted leaf-affecting entry.
 
@@ -173,6 +183,16 @@ Summary:
 
 Event payloads describe what is happening. Harness getters describe latest config for future snapshots. Hook and listener settlement should be awaited in lifecycle order where possible; transport backpressure is handled below the harness by `AssistantMessageStream`, so the harness does not need a separate async event queue merely to keep SSE or websocket reads flowing.
 
+### Summarization retry events
+
+When the harness is configured with a retry policy, generated compaction and branch-summary requests emit retry lifecycle events for transient provider errors:
+
+- `retry_scheduled`: a retry was scheduled. Includes `operation: "compaction" | "branch_summary"`, `attempt`, `maxAttempts`, `delayMs`, and `errorMessage`.
+- `retry_attempt_start`: the backoff delay completed and the retried summarization request is starting. Includes `operation`.
+- `retry_finished`: the retry loop finished after success, exhaustion, or abort. Includes `operation`.
+
+These events are observational and do not accept hook results.
+
 ## Planned session facade
 
 Extensions should eventually interact with a harness-scoped `HarnessSession` facade rather than the raw session. The facade should wrap the internal session and enforce harness pending-write ordering semantics. Once this exists, hooks and event listeners can receive a context that exposes the full `AgentHarness` plus the session facade without giving direct access to unordered raw session writes.
@@ -254,7 +274,7 @@ Done:
 - Added `setTools(tools, activeToolNames?)`.
 - Added `setActiveTools(toolNames)`.
 - Invalid active tool names reject with `AgentHarnessError`.
-- Added generic app tool shape via `AgentHarness<TSkill, TPromptTemplate, TTool>`.
+- Added generic app tool and context shapes via `AgentHarness<TContext, TSkill, TPromptTemplate, TTool>`.
 - Exported `QueueMode` from core types.
 - Added `AgentHarnessOptions.steeringMode` and `followUpMode`.
 - Added live `getSteeringMode()` / `setSteeringMode()` and `getFollowUpMode()` / `setFollowUpMode()`.

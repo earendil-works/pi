@@ -29,12 +29,15 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -177,7 +180,23 @@ function getAnthropicCompat(
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? true,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
+		supportsStrictTools: model.compat?.supportsStrictTools ?? false,
+		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
 	};
+}
+
+/**
+ * Default for `supportsToolReferences`: first-party Anthropic models except
+ * Haiku (rejects client-side tool_reference blocks) and models that predate
+ * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
+ */
+function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
+	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
+	const version = model.id.match(/^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/);
+	if (!version) return false;
+	const major = Number(version[1]);
+	const minor = version[2] && version[2].length < 8 ? Number(version[2]) : 0;
+	return major > 4 || (major === 4 && minor >= 5);
 }
 
 export interface AnthropicOptions extends StreamOptions {
@@ -534,9 +553,16 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: 0,
 			};
-			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+			const response = await retryProviderRequest(
+				() => client.messages.create({ ...params, stream: true }, requestOptions).asResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -687,25 +713,27 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					}
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
-					if (event.usage.input_tokens != null) {
-						output.usage.input = event.usage.input_tokens;
-					}
-					if (event.usage.output_tokens != null) {
-						output.usage.output = event.usage.output_tokens;
-					}
-					if (event.usage.cache_read_input_tokens != null) {
-						output.usage.cacheRead = event.usage.cache_read_input_tokens;
-					}
-					if (event.usage.cache_creation_input_tokens != null) {
-						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
-					}
-					// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
-					// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
-					// its Usage type, so read it through a narrow cast. Verified against the live API.
-					const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
-						.output_tokens_details?.thinking_tokens;
-					if (thinkingTokens != null) {
-						output.usage.reasoning = thinkingTokens;
+					if (event.usage) {
+						if (event.usage.input_tokens != null) {
+							output.usage.input = event.usage.input_tokens;
+						}
+						if (event.usage.output_tokens != null) {
+							output.usage.output = event.usage.output_tokens;
+						}
+						if (event.usage.cache_read_input_tokens != null) {
+							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+						}
+						if (event.usage.cache_creation_input_tokens != null) {
+							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
+						// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
+						// its Usage type, so read it through a narrow cast. Verified against the live API.
+						const thinkingTokens = (event.usage as { output_tokens_details?: { thinking_tokens?: number } })
+							.output_tokens_details?.thinking_tokens;
+						if (thinkingTokens != null) {
+							output.usage.reasoning = thinkingTokens;
+						}
 					}
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
@@ -742,7 +770,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7+ and Fable 5 support "xhigh".
+ * Note: effort "max" is available on all adaptive-thinking Claude models, while native
+ * "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
  */
 function mapThinkingLevelToEffort(
 	model: Model<"anthropic-messages">,
@@ -906,9 +935,30 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
+	const toolPlacement = splitDeferredTools(
+		{ ...context, messages: transformedMessages },
+		compat.supportsToolReferences,
+		normalizeToolName,
+	);
+	let immediateTools = toolPlacement.immediate;
+	let deferredTools = [...toolPlacement.deferred.values()];
+	if (immediateTools.length === 0 && deferredTools.length > 0) {
+		immediateTools = deferredTools;
+		deferredTools = [];
+	}
+	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
-		messages: convertMessages(context.messages, model, isOAuthToken, cacheControl, compat.allowEmptySignature),
+		messages: convertMessages(
+			transformedMessages,
+			isOAuthToken,
+			cacheControl,
+			compat.allowEmptySignature,
+			deferredToolNames,
+			normalizeToolName,
+		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
 	};
@@ -945,13 +995,24 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertTools(
-			context.tools,
-			isOAuthToken,
-			compat.supportsEagerToolInputStreaming,
-			compat.supportsCacheControlOnTools ? cacheControl : undefined,
-		);
+	if (immediateTools.length > 0 || deferredTools.length > 0) {
+		params.tools = [
+			...convertTools(
+				immediateTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				compat.supportsCacheControlOnTools ? cacheControl : undefined,
+			),
+			...convertTools(
+				deferredTools,
+				isOAuthToken,
+				compat.supportsEagerToolInputStreaming,
+				compat.supportsStrictTools,
+				undefined,
+				true,
+			),
+		];
 	}
 
 	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.
@@ -1008,17 +1069,51 @@ function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
+function convertToolResult(
+	msg: ToolResultMessage,
+	isOAuthToken: boolean,
+	deferredToolNames: ReadonlySet<string>,
+	loadedToolNames: Set<string>,
+	normalizeToolName: (name: string) => string,
+): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
+	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
+	for (const name of msg.addedToolNames ?? []) {
+		const normalizedName = normalizeToolName(name);
+		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
+		loadedToolNames.add(normalizedName);
+		references.push({
+			type: "tool_reference",
+			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
+		});
+	}
+	const convertedContent = convertContentBlocks(msg.content);
+	// Anthropic rejects tool references mixed with ordinary tool-result content.
+	return {
+		toolResult: {
+			type: "tool_result",
+			tool_use_id: msg.toolCallId,
+			content: references.length > 0 ? references : convertedContent,
+			is_error: msg.isError,
+		},
+		siblingContent:
+			references.length === 0
+				? []
+				: typeof convertedContent === "string"
+					? [{ type: "text", text: convertedContent }]
+					: convertedContent,
+	};
+}
+
 function convertMessages(
-	messages: Message[],
-	model: Model<"anthropic-messages">,
+	transformedMessages: Message[],
 	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
 	allowEmptySignature = false,
+	deferredToolNames: ReadonlySet<string> = new Set(),
+	normalizeToolName: (name: string) => string = (name) => name,
 ): MessageParam[] {
 	const params: MessageParam[] = [];
-
-	// Transform messages for cross-provider compatibility
-	const transformedMessages = transformMessages(messages, model, normalizeToolCallId);
+	const loadedToolNames = new Set<string>();
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -1080,11 +1175,13 @@ function convertMessages(
 						});
 						continue;
 					}
-					if (block.thinking.trim().length === 0) continue;
+					const thinkingSignature = block.thinkingSignature;
+					const hasThinkingSignature = !!thinkingSignature && thinkingSignature.trim().length > 0;
+					if (block.thinking.trim().length === 0 && !hasThinkingSignature) continue;
 					// If thinking signature is missing/empty (e.g., from aborted stream),
 					// convert to plain text for Anthropic. Some compatible providers emit
 					// and accept empty signatures, so let marked models preserve the block.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+					if (!hasThinkingSignature) {
 						blocks.push(
 							allowEmptySignature
 								? {
@@ -1101,7 +1198,7 @@ function convertMessages(
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
+							signature: thinkingSignature,
 						});
 					}
 				} else if (block.type === "toolCall") {
@@ -1119,37 +1216,30 @@ function convertMessages(
 				content: blocks,
 			});
 		} else if (msg.role === "toolResult") {
-			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint
+			// Collect all consecutive toolResult messages, needed for z.ai Anthropic endpoint.
 			const toolResults: ContentBlockParam[] = [];
-
-			// Add the current tool result
-			toolResults.push({
-				type: "tool_result",
-				tool_use_id: msg.toolCallId,
-				content: convertContentBlocks(msg.content),
-				is_error: msg.isError,
-			});
-
-			// Look ahead for consecutive toolResult messages
-			let j = i + 1;
+			const siblingContent: ContentBlockParam[] = [];
+			let j = i;
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
-				const nextMsg = transformedMessages[j] as ToolResultMessage; // We know it's a toolResult
-				toolResults.push({
-					type: "tool_result",
-					tool_use_id: nextMsg.toolCallId,
-					content: convertContentBlocks(nextMsg.content),
-					is_error: nextMsg.isError,
-				});
+				const converted = convertToolResult(
+					transformedMessages[j] as ToolResultMessage,
+					isOAuthToken,
+					deferredToolNames,
+					loadedToolNames,
+					normalizeToolName,
+				);
+				toolResults.push(converted.toolResult);
+				siblingContent.push(...converted.siblingContent);
 				j++;
 			}
 
-			// Skip the messages we've already processed
+			// Skip the messages we've already processed.
 			i = j - 1;
 
-			// Add a single user message with all tool results
+			// Displaced reference-bearing results must follow every tool_result block.
 			params.push({
 				role: "user",
-				content: toolResults,
+				content: [...toolResults, ...siblingContent],
 			});
 		}
 	}
@@ -1189,22 +1279,35 @@ function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
+	supportsStrictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
+	deferLoading = false,
 ): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
 		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		const legacyInputSchema = {
+			type: "object" as const,
+			properties: schema.properties ?? {},
+			required: schema.required ?? [],
+		};
+		const inputSchema =
+			strict === true
+				? {
+						...(tool.parameters as Record<string, unknown>),
+						...legacyInputSchema,
+					}
+				: legacyInputSchema;
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			input_schema: {
-				type: "object",
-				properties: schema.properties ?? {},
-				required: schema.required ?? [],
-			},
+			...(strict === true ? { strict: true } : {}),
+			input_schema: inputSchema,
+			...(deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});

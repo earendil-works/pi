@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
@@ -11,19 +11,35 @@ import type {
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
+	SessionEntryCursorOptions,
 	SessionInfoEntry,
 	SessionMetadata,
+	SessionStats,
 	SessionStorage,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
 } from "../types.ts";
 import { SessionError } from "../types.ts";
 
-export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
+export type ContextEntryTransform = (entries: readonly SessionTreeEntry[]) => readonly SessionTreeEntry[];
+
+export type CustomEntryContextMessageProjector = (
+	entry: CustomEntry,
+	index: number,
+	entries: readonly SessionTreeEntry[],
+) => readonly AgentMessage[] | undefined;
+
+export interface SessionContextBuildOptions {
+	/** Additional entry transforms applied after the default compaction transform. */
+	entryTransforms?: readonly ContextEntryTransform[];
+	/** Optional custom-entry projectors. Custom entries are omitted from model context by default. */
+	entryProjectors?: Readonly<Record<string, CustomEntryContextMessageProjector>>;
+}
+
+function deriveSessionContextState(pathEntries: readonly SessionTreeEntry[]): Omit<SessionContext, "messages"> {
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
 	let activeToolNames: string[] | null = null;
-	let compaction: CompactionEntry | null = null;
 
 	for (const entry of pathEntries) {
 		if (entry.type === "thinking_level_change") {
@@ -34,56 +50,110 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 			model = { provider: entry.message.provider, modelId: entry.message.model };
 		} else if (entry.type === "active_tools_change") {
 			activeToolNames = [...entry.activeToolNames];
-		} else if (entry.type === "compaction") {
-			compaction = entry;
 		}
 	}
 
-	const messages: AgentMessage[] = [];
-	const appendMessage = (entry: SessionTreeEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message as AgentMessage);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(
-					entry.customType,
-					entry.content as string | (TextContent | ImageContent)[],
-					entry.display,
-					entry.details,
-					entry.timestamp,
-				),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
+	return { thinkingLevel, model, activeToolNames };
+}
 
-	if (compaction) {
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
-		const compactionIdx = pathEntries.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
+export function defaultContextEntryTransform(pathEntries: readonly SessionTreeEntry[]): SessionTreeEntry[] {
+	let compaction: CompactionEntry | null = null;
+	for (const entry of pathEntries) {
+		if (entry.type === "compaction") {
+			compaction = entry;
+		}
+	}
+	if (!compaction) {
+		return [...pathEntries];
+	}
+
+	const entries: SessionTreeEntry[] = [compaction];
+	const compactionIdx = pathEntries.findIndex((entry) => entry.type === "compaction" && entry.id === compaction.id);
+	if (compaction.retainedTail) {
+		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
+			entries.push(pathEntries[i]!);
+		}
+		return entries;
+	}
+	if (compaction.firstKeptEntryId) {
 		let foundFirstKept = false;
 		for (let i = 0; i < compactionIdx; i++) {
 			const entry = pathEntries[i]!;
 			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-			if (foundFirstKept) appendMessage(entry);
-		}
-		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
-			appendMessage(pathEntries[i]!);
-		}
-	} else {
-		for (const entry of pathEntries) {
-			appendMessage(entry);
+			if (foundFirstKept) entries.push(entry);
 		}
 	}
+	for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
+		entries.push(pathEntries[i]!);
+	}
+	return entries;
+}
 
-	return { messages, thinkingLevel, model, activeToolNames };
+export function buildContextEntries(
+	pathEntries: readonly SessionTreeEntry[],
+	options: SessionContextBuildOptions = {},
+): SessionTreeEntry[] {
+	let entries = defaultContextEntryTransform(pathEntries);
+	for (const transform of options.entryTransforms ?? []) {
+		entries = [...transform(entries)];
+	}
+	return entries;
+}
+
+export function sessionEntryToContextMessages(
+	entry: SessionTreeEntry,
+	index: number,
+	entries: readonly SessionTreeEntry[],
+	options: SessionContextBuildOptions = {},
+): AgentMessage[] {
+	if (entry.type === "message") {
+		return [entry.message as AgentMessage];
+	}
+	if (entry.type === "custom_message") {
+		return [
+			createCustomMessage(
+				entry.customType,
+				entry.content as string | (TextContent | ImageContent)[],
+				entry.display,
+				entry.details,
+				entry.timestamp,
+			),
+		];
+	}
+	if (entry.type === "compaction") {
+		return [
+			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+			...(entry.retainedTail ?? []),
+		];
+	}
+	if (entry.type === "branch_summary" && entry.summary) {
+		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
+	}
+	if (entry.type === "custom") {
+		return [...(options.entryProjectors?.[entry.customType]?.(entry, index, entries) ?? [])];
+	}
+	return [];
+}
+
+export function buildSessionContext(
+	pathEntries: readonly SessionTreeEntry[],
+	options: SessionContextBuildOptions = {},
+): SessionContext {
+	const state = deriveSessionContextState(pathEntries);
+	const contextEntries = buildContextEntries(pathEntries, options);
+	const messages = contextEntries.flatMap((entry, index) =>
+		sessionEntryToContextMessages(entry, index, contextEntries, options),
+	);
+	return { ...state, messages };
 }
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
+	private contextBuildOptions: SessionContextBuildOptions;
 
-	constructor(storage: SessionStorage<TMetadata>) {
+	constructor(storage: SessionStorage<TMetadata>, contextBuildOptions: SessionContextBuildOptions = {}) {
 		this.storage = storage;
+		this.contextBuildOptions = contextBuildOptions;
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -102,26 +172,43 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage.getEntry(id);
 	}
 
-	getEntries(): Promise<SessionTreeEntry[]> {
-		return this.storage.getEntries();
+	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return this.storage.getEntries(options);
 	}
 
 	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
 		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRoot(leafId);
+		return this.storage.getPathToRootOrCompaction(leafId);
 	}
 
-	async buildContext(): Promise<SessionContext> {
-		return buildSessionContext(await this.getBranch());
+	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {
+		return buildContextEntries(await this.getBranch(), this.mergeContextBuildOptions(options));
+	}
+
+	async buildContext(options: SessionContextBuildOptions = {}): Promise<SessionContext> {
+		return buildSessionContext(await this.getBranch(), this.mergeContextBuildOptions(options));
+	}
+
+	private mergeContextBuildOptions(options: SessionContextBuildOptions): SessionContextBuildOptions {
+		return {
+			entryTransforms: [...(this.contextBuildOptions.entryTransforms ?? []), ...(options.entryTransforms ?? [])],
+			entryProjectors: {
+				...(this.contextBuildOptions.entryProjectors ?? {}),
+				...(options.entryProjectors ?? {}),
+			},
+		};
 	}
 
 	getLabel(id: string): Promise<string | undefined> {
 		return this.storage.getLabel(id);
 	}
 
+	getSessionStats(): Promise<SessionStats> {
+		return this.storage.getSessionStats();
+	}
+
 	async getSessionName(): Promise<string | undefined> {
-		const entries = await this.storage.findEntries("session_info");
-		return entries[entries.length - 1]?.name?.trim() || undefined;
+		return this.storage.getSessionName();
 	}
 
 	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
@@ -172,10 +259,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async appendCompaction<T = unknown>(
 		summary: string,
-		firstKeptEntryId: string,
+		firstKeptEntryId: string | undefined,
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
+		usage?: Usage,
+		retainedTail?: AgentMessage[],
 	): Promise<string> {
 		return this.appendTypedEntry({
 			type: "compaction",
@@ -185,7 +274,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			summary,
 			firstKeptEntryId,
 			tokensBefore,
+			retainedTail,
 			details,
+			usage,
 			fromHook,
 		} satisfies CompactionEntry<T>);
 	}
@@ -246,7 +337,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	async moveTo(
 		entryId: string | null,
-		summary?: { summary: string; details?: unknown; fromHook?: boolean },
+		summary?: { summary: string; details?: unknown; usage?: Usage; fromHook?: boolean },
 	): Promise<string | undefined> {
 		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
@@ -261,6 +352,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			fromId: entryId ?? "root",
 			summary: summary.summary,
 			details: summary.details,
+			usage: summary.usage,
 			fromHook: summary.fromHook,
 		} satisfies BranchSummaryEntry);
 	}

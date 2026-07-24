@@ -37,11 +37,14 @@ const compat = {
 	chatTemplateKwargs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
+	supportsOpenAIGrammarTools: false,
 	cacheControlFormat: undefined,
 	sendSessionAffinityHeaders: false,
+	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat">> & {
+} satisfies Omit<Required<OpenAICompletionsCompat>, "cacheControlFormat" | "deferredToolsMode"> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
+	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
 
 function buildModel(baseUrl = "http://127.0.0.1:1"): Model<"openai-completions"> {

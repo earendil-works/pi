@@ -8,7 +8,7 @@ import { type BashOperations, createBashToolDefinition } from "../src/core/tools
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
@@ -142,7 +142,7 @@ describe("ToolExecutionComponent parity", () => {
 				return { exitCode: 0 };
 			},
 		};
-		const tool = createBashToolDefinition(process.cwd(), { operations });
+		const tool = createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment: false });
 		const promise = tool.execute(
 			"tool-bash-1",
 			{ command: "sleep 10" },
@@ -163,7 +163,7 @@ describe("ToolExecutionComponent parity", () => {
 				return { exitCode: 0 };
 			},
 		};
-		const tool = createBashToolDefinition(process.cwd(), { operations });
+		const tool = createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment: false });
 		const result = await tool.execute(
 			"tool-bash-1b",
 			{ command: "generate output" },
@@ -399,6 +399,24 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("one");
 		expect(rendered).toContain("two");
 		expect(rendered).not.toContain("two\n\n");
+	});
+
+	test("does not syntax-highlight read errors based on the requested file path", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-read-error-highlighting",
+			{ path: "config.exs", offset: 120, limit: 130 },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		const error = "Offset 120 is beyond end of file (96 lines total)";
+		component.updateResult({ content: [{ type: "text", text: error }], details: undefined, isError: true }, false);
+
+		const rendered = component.render(120).join("\n");
+		expect(stripAnsi(rendered)).toContain(error);
+		expect(rendered).toContain(theme.fg("toolOutput", error));
 	});
 
 	test("collapses ordinary read results until expanded", () => {

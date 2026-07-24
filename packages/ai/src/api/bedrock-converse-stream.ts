@@ -47,12 +47,14 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -151,7 +153,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		// Resolve bearer token for Bedrock API key auth.
 		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
 		const bearerToken =
-			options.bearerToken || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) || undefined;
+			options.bearerToken ||
+			options.apiKey ||
+			getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) ||
+			undefined;
 		const useBearerToken = bearerToken !== undefined && !skipAuth;
 
 		// in Node.js/Bun environment only
@@ -224,7 +229,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -256,7 +261,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.contentBlockStop) {
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
-					output.stopReason = mapStopReason(item.messageStop.stopReason);
+					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
+					output.stopReason = stopReason;
+					if (errorMessage) {
+						output.errorMessage = errorMessage;
+					}
 				} else if (item.metadata) {
 					handleMetadata(item.metadata, model, output);
 				} else if (item.internalServerException) {
@@ -277,7 +286,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
-				throw new Error("An unknown error occurred");
+				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -327,15 +336,22 @@ const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/lat
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
-	const dataRetentionHint = /data retention mode/i.test(message)
+	const norm = normalizeProviderError(error);
+	// Surface the raw HTTP body (with status) when the SDK did not fold it into
+	// the message; otherwise fall back to the message. This is what stops a
+	// gateway 403 from collapsing to `Unknown: UnknownError`.
+	const core =
+		!norm.messageCarriesBody && norm.status !== undefined && norm.body !== undefined
+			? `${norm.status}: ${norm.body}`
+			: norm.message;
+	const dataRetentionHint = /data retention mode/i.test(core)
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}${dataRetentionHint}`;
+		return `${prefix}: ${core}${dataRetentionHint}`;
 	}
-	return `${message}${dataRetentionHint}`;
+	return `${core}${dataRetentionHint}`;
 }
 
 /**
@@ -567,13 +583,16 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
 			s.includes("sonnet-4-6") ||
+			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
 	);
 }
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("fable-5"));
+	return candidates.some(
+		(s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-5") || s.includes("fable-5"),
+	);
 }
 
 function mapThinkingLevelToEffort(
@@ -631,7 +650,7 @@ function isAnthropicClaudeModel(model: Model<"bedrock-converse-stream">): boolea
 
 /**
  * Check if the model supports prompt caching.
- * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models
+ * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models, Claude 5 models
  *
  * For base models and system-defined inference profiles the model ID / ARN
  * contains the model name, so we can decide locally.
@@ -651,6 +670,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
 		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
+	// Claude 5 models (fable-5, sonnet-5)
+	if (candidates.some((s) => s.includes("fable-5") || s.includes("sonnet-5"))) return true;
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (candidates.some((s) => s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
@@ -888,16 +909,22 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
-	if (!tools?.length || toolChoice === "none") return undefined;
+	if (!tools?.length) return undefined;
+	if (toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters as unknown as DocumentType },
-		},
-	}));
+	const bedrockTools: BedrockTool[] = tools.map((tool) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		return {
+			toolSpec: {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: { json: tool.parameters as unknown as DocumentType },
+				...(strict === true ? { strict: true } : {}),
+			},
+		};
+	});
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {
@@ -916,18 +943,18 @@ function convertToolConfig(
 	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
 }
 
-function mapStopReason(reason: string | undefined): StopReason {
+function mapStopReason(reason: string | undefined): { stopReason: StopReason; errorMessage?: string } {
 	switch (reason) {
 		case BedrockStopReason.END_TURN:
 		case BedrockStopReason.STOP_SEQUENCE:
-			return "stop";
+			return { stopReason: "stop" };
 		case BedrockStopReason.MAX_TOKENS:
 		case BedrockStopReason.MODEL_CONTEXT_WINDOW_EXCEEDED:
-			return "length";
+			return { stopReason: "length" };
 		case BedrockStopReason.TOOL_USE:
-			return "toolUse";
+			return { stopReason: "toolUse" };
 		default:
-			return "error";
+			return reason ? { stopReason: "error", errorMessage: reason } : { stopReason: "error" };
 	}
 }
 
@@ -1014,11 +1041,12 @@ function buildAdditionalModelRequestFields(
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
+						xhigh: 16384, // Budget-based Claude clamps extended levels to high
+						max: 16384,
 					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
+					// Custom budgets only cover token-based levels through high.
+					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
 					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
 					return {

@@ -78,7 +78,6 @@ describe("Anthropic auth token env", () => {
 	it("resolves ANTHROPIC_AUTH_TOKEN as a bearer Authorization header", async () => {
 		const provider = anthropicProvider();
 		const auth = await provider.auth.apiKey?.resolve({
-			model: anthropicModel,
 			ctx: {
 				env: async (name) =>
 					({
@@ -96,10 +95,9 @@ describe("Anthropic auth token env", () => {
 		});
 	});
 
-	it("resolves ANTHROPIC_OAUTH_TOKEN as a bearer Authorization header", async () => {
+	it("preserves ANTHROPIC_OAUTH_TOKEN as OAuth-shaped API auth", async () => {
 		const provider = anthropicProvider();
 		const auth = await provider.auth.apiKey?.resolve({
-			model: anthropicModel,
 			ctx: {
 				env: async (name) =>
 					({
@@ -111,7 +109,7 @@ describe("Anthropic auth token env", () => {
 		});
 
 		expect(auth).toEqual({
-			auth: { headers: { Authorization: "Bearer oauth-token" } },
+			auth: { apiKey: "oauth-token" },
 			source: ANTHROPIC_OAUTH_TOKEN_ENV,
 		});
 	});
@@ -149,10 +147,10 @@ describe("Anthropic auth token env", () => {
 		expect(mockState.createParams?.system).toEqual([expect.objectContaining({ text: "System prompt." })]);
 	});
 
-	it("threads authContext ANTHROPIC_OAUTH_TOKEN through request headers", async () => {
+	it("preserves OAuth request shaping for ANTHROPIC_OAUTH_TOKEN", async () => {
 		const models = createModels({
 			authContext: {
-				env: async (name) => (name === "ANTHROPIC_OAUTH_TOKEN" ? "ctx-oauth-token" : undefined),
+				env: async (name) => (name === "ANTHROPIC_OAUTH_TOKEN" ? "sk-ant-oat-test" : undefined),
 				fileExists: async () => false,
 			},
 		});
@@ -160,9 +158,10 @@ describe("Anthropic auth token env", () => {
 
 		await models.streamSimple(anthropicModel, context).result();
 
+		expect(mockState.constructorOpts?.apiKey).toBeNull();
+		expect(mockState.constructorOpts?.authToken).toBe("sk-ant-oat-test");
 		const headers = mockState.constructorOpts?.defaultHeaders as Record<string, string>;
-		expect(headers.Authorization).toBe("Bearer ctx-oauth-token");
-		expect(headers["anthropic-beta"] ?? "").not.toContain("oauth-2025-04-20");
+		expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
 	});
 
 	it("lets explicit request headers override ANTHROPIC_AUTH_TOKEN", async () => {

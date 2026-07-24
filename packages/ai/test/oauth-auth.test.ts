@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
+import { openRouterOAuth } from "../src/auth/oauth/openrouter.ts";
+import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import { createModels } from "../src/models.ts";
+import * as extensionOAuthCompatibility from "../src/oauth.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
-import { anthropicOAuth } from "../src/utils/oauth/anthropic.ts";
-import { githubCopilotOAuth } from "../src/utils/oauth/github-copilot.ts";
-import { openaiCodexOAuth } from "../src/utils/oauth/openai-codex.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
 describe.sequential("OAuthAuth adapters", () => {
+	it("keeps the extension OAuth barrel free of built-in flow implementations", () => {
+		expect(extensionOAuthCompatibility).not.toHaveProperty("loginAnthropic");
+		expect(extensionOAuthCompatibility).not.toHaveProperty("anthropicOAuth");
+	});
+
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
@@ -23,6 +31,17 @@ describe.sequential("OAuthAuth adapters", () => {
 
 	it("openai-codex toAuth derives the api key from the access token", async () => {
 		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
+		expect(auth).toEqual({ apiKey: "token" });
+	});
+
+	it("openrouter derives the api key and keeps the permanent credential on refresh", async () => {
+		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
+		expect(await openRouterOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
+		expect(await openRouterOAuth.refresh(credential)).toBe(credential);
+	});
+
+	it("xAI toAuth derives the api key from the access token", async () => {
+		const auth = await xaiOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 
@@ -104,7 +123,7 @@ describe("OAuth through Models.getAuth (lazy load chain)", () => {
 		models.setProvider(anthropicProvider());
 
 		const model = models.getModels("anthropic")[0];
-		const result = await models.getAuth(model);
+		const result = await models.getAuth(model.provider);
 		expect(result?.auth.apiKey).toBe("oauth-access-token");
 		expect(result?.source).toBe("OAuth");
 	});
@@ -122,7 +141,7 @@ describe("OAuth through Models.getAuth (lazy load chain)", () => {
 		models.setProvider(githubCopilotProvider());
 
 		const model = models.getModels("github-copilot")[0];
-		const result = await models.getAuth(model);
+		const result = await models.getAuth(model.provider);
 		expect(result?.auth.apiKey).toBe(access);
 		expect(result?.auth.baseUrl).toBe("https://api.business.githubcopilot.com");
 	});

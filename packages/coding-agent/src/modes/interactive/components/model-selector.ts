@@ -9,7 +9,7 @@ import {
 	Text,
 	type TUI,
 } from "@earendil-works/pi-tui";
-import type { ModelRegistry } from "../../../core/model-registry.ts";
+import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
@@ -52,21 +52,26 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
 	private settingsManager: SettingsManager;
-	private modelRegistry: ModelRegistry;
+	private modelRuntime: ModelRuntime;
 	private onSelectCallback: (model: Model<any>) => void;
 	private onCancelCallback: () => void;
 	private errorMessage?: string;
+	private refreshStatusMessage = "Refreshing model catalogs…";
+	private refreshStatusSuccess = false;
 	private tui: TUI;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
 	private scope: ModelScope = "all";
 	private scopeText?: Text;
 	private scopeHintText?: Text;
+	private readonly refreshAbortController = new AbortController();
+	private refreshTimeout?: ReturnType<typeof setTimeout>;
+	private closed = false;
 
 	constructor(
 		tui: TUI,
 		currentModel: Model<any> | undefined,
 		settingsManager: SettingsManager,
-		modelRegistry: ModelRegistry,
+		modelRuntime: ModelRuntime,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
 		onSelect: (model: Model<any>) => void,
 		onCancel: () => void,
@@ -77,7 +82,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.tui = tui;
 		this.currentModel = currentModel;
 		this.settingsManager = settingsManager;
-		this.modelRegistry = modelRegistry;
+		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.scope = scopedModels.length > 0 ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
@@ -123,50 +128,23 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		// Add bottom border
 		this.addChild(new DynamicBorder());
 
-		// Load models and do initial render
-		this.loadModels().then(() => {
-			if (initialSearchInput) {
-				this.filterModels(initialSearchInput);
-			} else {
-				this.updateList();
-			}
-			// Request re-render after models are loaded
-			this.tui.requestRender();
-		});
+		// Render the current snapshot immediately, then refresh in the background.
+		this.loadModelsFromSnapshot();
+		if (initialSearchInput) this.filterModels(initialSearchInput);
+		else this.updateList();
+		this.tui.requestRender();
+		void this.refreshModels();
 	}
 
-	private async loadModels(): Promise<void> {
-		let models: ModelItem[];
-
-		// Refresh to pick up any changes to models.json
-		this.modelRegistry.refresh();
-
-		// Check for models.json errors
-		const loadError = this.modelRegistry.getError();
-		if (loadError) {
-			this.errorMessage = loadError;
-		}
-
-		// Load available models (built-in models still work even if models.json failed)
-		try {
-			const availableModels = await this.modelRegistry.getAvailable();
-			models = availableModels.map((model: Model<any>) => ({
-				provider: model.provider,
-				id: model.id,
-				model,
-			}));
-		} catch (error) {
-			this.allModels = [];
-			this.scopedModelItems = [];
-			this.activeModels = [];
-			this.filteredModels = [];
-			this.errorMessage = error instanceof Error ? error.message : String(error);
-			return;
-		}
-
+	private loadModelsFromSnapshot(): void {
+		const models = this.modelRuntime.getAvailableSnapshot().map((model: Model<any>) => ({
+			provider: model.provider,
+			id: model.id,
+			model,
+		}));
 		this.allModels = this.sortModels(models);
 		this.scopedModels = this.scopedModels.map((scoped) => {
-			const refreshed = this.modelRegistry.find(scoped.model.provider, scoped.model.id);
+			const refreshed = this.modelRuntime.getModel(scoped.model.provider, scoped.model.id);
 			return refreshed ? { ...scoped, model: refreshed } : scoped;
 		});
 		this.scopedModelItems = this.scopedModels.map((scoped) => ({
@@ -179,6 +157,44 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
 			currentIndex >= 0 ? currentIndex : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
+	}
+
+	private async refreshModels(): Promise<void> {
+		const timeoutMs = 15_000;
+		let timedOut = false;
+		this.refreshTimeout = setTimeout(() => {
+			timedOut = true;
+			this.refreshAbortController.abort();
+		}, timeoutMs);
+		try {
+			const result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
+			if (this.closed) return;
+			this.refreshStatusMessage = "";
+			if (result.aborted && timedOut) {
+				this.errorMessage = "Model refresh timed out; showing cached models.";
+			} else if (result.errors.size === 1) {
+				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
+			} else if (result.errors.size > 1) {
+				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs; showing cached models.`;
+			} else {
+				this.errorMessage = this.modelRuntime.getError();
+				if (!this.errorMessage) {
+					this.refreshStatusMessage = "Model catalogs refreshed.";
+					this.refreshStatusSuccess = true;
+				}
+			}
+			this.loadModelsFromSnapshot();
+			this.filterModels(this.searchInput.getValue());
+			this.tui.requestRender();
+		} finally {
+			if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+		}
+	}
+
+	private close(): void {
+		this.closed = true;
+		if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+		this.refreshAbortController.abort();
 	}
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
@@ -281,6 +297,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(new Spacer(1));
 			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
 		}
+		if (this.refreshStatusMessage) {
+			this.listContainer.addChild(new Spacer(1));
+			this.listContainer.addChild(
+				new Text(theme.fg(this.refreshStatusSuccess ? "success" : "muted", `  ${this.refreshStatusMessage}`), 0, 0),
+			);
+		}
 	}
 
 	handleInput(keyData: string): void {
@@ -316,6 +338,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
+			this.close();
 			this.onCancelCallback();
 		}
 		// Pass everything else to search input
@@ -326,6 +349,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private handleSelect(model: Model<any>): void {
+		this.close();
 		// Save as new default
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 		this.onSelectCallback(model);

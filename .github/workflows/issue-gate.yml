@@ -12,16 +12,18 @@ jobs:
       issues: write
     steps:
       - name: Check issue author
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
             const issueAuthor = context.payload.issue.user.login;
             const defaultBranch = context.payload.repository.default_branch;
+            const isBotAuthor = issueAuthor.endsWith('[bot]');
 
-            if (issueAuthor.endsWith('[bot]') || issueAuthor === 'dependabot[bot]') {
-              console.log(`Skipping bot: ${issueAuthor}`);
+            if (TRUSTED_BOT_AUTHORS.has(issueAuthor)) {
+              console.log(`Skipping trusted bot: ${issueAuthor}`);
               return;
             }
 
@@ -80,7 +82,7 @@ jobs:
             }
 
             const permission = await getPermission(issueAuthor);
-            if (['admin', 'maintain', 'write'].includes(permission)) {
+            if (!isBotAuthor && ['admin', 'maintain', 'write'].includes(permission)) {
               console.log(`${issueAuthor} is a collaborator with ${permission} access`);
               return;
             }
@@ -89,7 +91,7 @@ jobs:
             const approvedUsers = parseApprovedUsers(approvedContent);
             const capability = approvedUsers.get(issueAuthor.toLowerCase());
 
-            if (capability === 'issue' || capability === 'pr') {
+            if (!isBotAuthor && (capability === 'issue' || capability === 'pr')) {
               console.log(`${issueAuthor} is approved for ${capability}`);
               return;
             }
@@ -99,7 +101,7 @@ jobs:
               '',
               `Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
               '',
-              'If a maintainer replies `lgtmi` on one of your issues, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open.',
+              'If a maintainer replies `lgtmi` on one of your issues, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open. The command must be at the start of the reply (optionally after one or more `@username` mentions) or at the end.',
               '',
               `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
             ].join('\n');

@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getModels } from "../src/compat.ts";
-import {
-	githubCopilotOAuthProvider,
-	loginGitHubCopilot,
-	refreshGitHubCopilotToken,
-} from "../src/utils/oauth/github-copilot.ts";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { createModels } from "../src/models.ts";
+import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -26,6 +24,33 @@ function getUrl(input: unknown): string {
 		return input.url;
 	}
 	throw new Error(`Unsupported fetch input: ${String(input)}`);
+}
+
+function loginGitHubCopilotForTest(options: {
+	onDeviceCode(info: {
+		userCode: string;
+		verificationUri: string;
+		intervalSeconds?: number;
+		expiresInSeconds?: number;
+	}): void;
+	onPrompt(prompt: { message: string; placeholder?: string; allowEmpty?: boolean }): Promise<string>;
+	onProgress?(message: string): void;
+	signal?: AbortSignal;
+}) {
+	return githubCopilotOAuth.login({
+		signal: options.signal,
+		prompt: (prompt) => {
+			if (prompt.type !== "text") throw new Error(`Unexpected prompt: ${prompt.type}`);
+			return options.onPrompt({ message: prompt.message, placeholder: prompt.placeholder, allowEmpty: true });
+		},
+		notify: (event) => {
+			if (event.type === "device_code") {
+				const { type: _, ...info } = event;
+				options.onDeviceCode(info);
+			}
+			if (event.type === "progress") options.onProgress?.(event.message);
+		},
+	});
 }
 
 describe("GitHub Copilot OAuth device flow", () => {
@@ -76,13 +101,19 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await refreshGitHubCopilotToken("ghu_refresh_token");
+		const credentials = await githubCopilotOAuth.refresh({
+			type: "oauth",
+			access: "old-access-token",
+			refresh: "ghu_refresh_token",
+			expires: 0,
+		});
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 
-		const modifiedModels = githubCopilotOAuthProvider.modifyModels?.(getModels("github-copilot"), credentials) ?? [];
-		expect(modifiedModels.filter((model) => model.provider === "github-copilot").map((model) => model.id)).toEqual([
-			"gpt-4.1",
-		]);
+		const store = new InMemoryCredentialStore();
+		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
@@ -127,7 +158,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const onDeviceCode = vi.fn();
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode,
 			onPrompt: async () => "",
 		});
@@ -166,7 +197,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		const onDeviceCode = vi.fn();
 		await expect(
-			loginGitHubCopilot({
+			loginGitHubCopilotForTest({
 				onDeviceCode,
 				onPrompt: async () => "",
 			}),
@@ -220,7 +251,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const onDeviceCode = vi.fn();
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode,
 			onPrompt: async () => "",
 		});
@@ -239,7 +270,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await loginPromise;
 	});
 
-	it("polls immediately and increases the interval after slow_down", async () => {
+	it("waits before polling and increases the interval after slow_down", async () => {
 		vi.useFakeTimers();
 		const startTime = new Date("2026-03-09T00:00:00Z");
 		vi.setSystemTime(startTime);
@@ -247,7 +278,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const accessTokenPollTimes: number[] = [];
 		const accessTokenResponses = [
 			jsonResponse({ error: "authorization_pending", error_description: "pending" }),
-			jsonResponse({ error: "slow_down", error_description: "slow down" }),
+			jsonResponse({ error: "slow_down", error_description: "slow down", interval: 7 }),
 			jsonResponse({ access_token: "ghu_refresh_token" }),
 		];
 
@@ -308,13 +339,19 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode: () => {},
 			onPrompt: async () => "",
 			onProgress: () => {},
 		});
 
 		await vi.advanceTimersByTimeAsync(0);
+		expect(accessTokenPollTimes).toHaveLength(0);
+
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(accessTokenPollTimes).toHaveLength(0);
+
+		await vi.advanceTimersByTimeAsync(1);
 		expect(accessTokenPollTimes).toHaveLength(1);
 
 		await vi.advanceTimersByTimeAsync(4999);
@@ -323,16 +360,17 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(accessTokenPollTimes).toHaveLength(2);
 
-		await vi.advanceTimersByTimeAsync(9999);
+		// slow_down carried a server-provided interval of 7 seconds.
+		await vi.advanceTimersByTimeAsync(6999);
 		expect(accessTokenPollTimes).toHaveLength(2);
 
 		await vi.advanceTimersByTimeAsync(1);
 		await loginPromise;
 
 		expect(accessTokenPollTimes).toEqual([
-			startTime.getTime(),
 			startTime.getTime() + 5000,
-			startTime.getTime() + 15000,
+			startTime.getTime() + 10000,
+			startTime.getTime() + 17000,
 		]);
 	});
 
@@ -375,7 +413,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginGitHubCopilot({
+		const loginPromise = loginGitHubCopilotForTest({
 			onDeviceCode: () => {},
 			onPrompt: async () => "",
 		});
@@ -383,18 +421,24 @@ describe("GitHub Copilot OAuth device flow", () => {
 			/Device flow timed out after one or more slow_down responses/,
 		);
 
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime()]);
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(accessTokenPollTimes).toEqual([]);
 
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
 
-		await vi.advanceTimersByTimeAsync(14999);
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		await vi.advanceTimersByTimeAsync(9999);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000]);
+
+		await vi.advanceTimersByTimeAsync(1);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
+
+		await vi.advanceTimersByTimeAsync(9999);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
 
 		await vi.advanceTimersByTimeAsync(1);
 		await rejection;
 
-		expect(accessTokenPollTimes).toEqual([startTime.getTime(), startTime.getTime() + 10000]);
+		expect(accessTokenPollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 15000]);
 	});
 });

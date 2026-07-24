@@ -31,7 +31,7 @@ export async function getLatestPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number } = {},
 ): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+	if (process.env.PI_OFFLINE) return undefined;
 
 	const response = await fetch(LATEST_VERSION_URL, {
 		headers: {
@@ -68,6 +68,8 @@ export async function getLatestPiVersion(
 }
 
 export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
+	if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
+
 	try {
 		const latestRelease = await getLatestPiRelease(currentVersion);
 		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {

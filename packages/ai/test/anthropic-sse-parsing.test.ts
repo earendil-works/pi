@@ -224,6 +224,34 @@ describe("Anthropic raw SSE parsing", () => {
 		expect(result.errorMessage).toBe(explanation);
 	});
 
+	it("treats message_delta without usage as a no-op for usage accumulation", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
+		};
+		const response = createSseResponse(
+			minimalAnthropicEvents.map((event) =>
+				event.event === "message_delta"
+					? {
+							event: "message_delta",
+							data: JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+						}
+					: event,
+			),
+		);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.content).toEqual([{ type: "text", text: "Hello" }]);
+		expect(result.usage.input).toBe(12);
+		expect(result.usage.totalTokens).toBe(12);
+	});
+
 	it("ignores unknown SSE events after message_stop", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const context: Context = {

@@ -1,4 +1,7 @@
 import assert from "node:assert";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
@@ -70,6 +73,28 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isItalic();
 }
+
+describe("TUI debug logging", () => {
+	it("writes redraw logs to the provided directory", async () => {
+		const logDir = mkdtempSync(join(tmpdir(), "pi-tui-log-"));
+		try {
+			await withEnv({ PI_DEBUG_REDRAW: "1" }, async () => {
+				const terminal = new VirtualTerminal(40, 10);
+				const tui = new TUI(terminal, undefined, logDir);
+				const component = new TestComponent();
+				tui.addChild(component);
+				component.lines = ["test"];
+				tui.start();
+				await terminal.waitForRender();
+
+				assert.match(readFileSync(join(logDir, "pi-debug.log"), "utf-8"), /fullRender: first render/);
+				tui.stop();
+			});
+		} finally {
+			rmSync(logDir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("TUI Kitty image cleanup", () => {
 	it("clears reserved Kitty image rows before drawing appended image placements", async () => {

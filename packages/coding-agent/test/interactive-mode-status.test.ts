@@ -6,6 +6,7 @@ import { type Component, Container, type Focusable, TUI } from "../../tui/src/tu
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
+import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -378,7 +379,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		type FakeInteractiveMode = {
 			session: {
 				scopedModels: Array<{ model: TestModel }>;
-				modelRegistry: { getAvailable: () => TestModel[] };
+				modelRuntime: { getAvailable: () => TestModel[] };
 				promptTemplates: [];
 				extensionRunner: { getRegisteredCommands: () => [] };
 				resourceLoader: { getSkills: () => { skills: [] } };
@@ -401,7 +402,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		const fakeThis: FakeInteractiveMode = {
 			session: {
 				scopedModels: [],
-				modelRegistry: { getAvailable: () => models },
+				modelRuntime: { getAvailable: () => models },
 				promptTemplates: [],
 				extensionRunner: { getRegisteredCommands: () => [] },
 				resourceLoader: { getSkills: () => ({ skills: [] }) },
@@ -423,8 +424,62 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			"github-copilot/gpt-5.2-codex",
 		]);
 	});
-});
 
+	test("matches login command arguments by provider id and name", async () => {
+		type FakeInteractiveMode = {
+			session: {
+				scopedModels: [];
+				modelRuntime: { getAvailable: () => [] };
+				promptTemplates: [];
+				extensionRunner: { getRegisteredCommands: () => [] };
+				resourceLoader: { getSkills: () => { skills: [] } };
+			};
+			settingsManager: { getEnableSkillCommands: () => boolean };
+			skillCommands: Map<string, string>;
+			sessionManager: { getCwd: () => string };
+			fdPath: null;
+			getLoginProviderOptions: () => AuthSelectorProvider[];
+		};
+
+		const createBaseAutocompleteProvider = (
+			InteractiveMode as unknown as {
+				prototype: { createBaseAutocompleteProvider(this: FakeInteractiveMode): AutocompleteProvider };
+			}
+		).prototype.createBaseAutocompleteProvider;
+		const fakeThis: FakeInteractiveMode = {
+			session: {
+				scopedModels: [],
+				modelRuntime: { getAvailable: () => [] },
+				promptTemplates: [],
+				extensionRunner: { getRegisteredCommands: () => [] },
+				resourceLoader: { getSkills: () => ({ skills: [] }) },
+			},
+			settingsManager: { getEnableSkillCommands: () => false },
+			skillCommands: new Map(),
+			sessionManager: { getCwd: () => "/tmp" },
+			fdPath: null,
+			getLoginProviderOptions: () => [
+				{ id: "anthropic", name: "Anthropic", authType: "oauth" },
+				{ id: "anthropic", name: "Anthropic", authType: "api_key" },
+				{ id: "openai", name: "OpenAI", authType: "api_key" },
+			],
+		};
+
+		const provider = createBaseAutocompleteProvider.call(fakeThis);
+		const line = "/login subscription anthrop";
+		const suggestions = await provider.getSuggestions([line], 0, line.length, {
+			signal: new AbortController().signal,
+		});
+
+		expect(suggestions?.items).toEqual([
+			{
+				value: "anthropic",
+				label: "anthropic",
+				description: "Anthropic · subscription/API key",
+			},
+		]);
+	});
+});
 describe("InteractiveMode.showLoadedResources", () => {
 	beforeAll(() => {
 		initTheme("dark");
@@ -964,6 +1019,84 @@ describe("InteractiveMode.showLoadedResources", () => {
 "[Extensions]
   pi-markdown-preview"`);
 	});
+
+	test("labels npm sibling extensions relative to the declaring package", () => {
+		const extensions: ExtensionFixture[] = [
+			{
+				path: "/tmp/project/.pi/npm/node_modules/primary-package/index.ts",
+				sourceInfo: createSourceInfo("/tmp/project/.pi/npm/node_modules/primary-package/index.ts", {
+					source: "npm:primary-package",
+					scope: "project",
+					origin: "package",
+					baseDir: "/tmp/project/.pi/npm/node_modules/primary-package",
+				}),
+			},
+			{
+				path: "/tmp/project/.pi/npm/node_modules/sibling-package/index.ts",
+				sourceInfo: createSourceInfo("/tmp/project/.pi/npm/node_modules/sibling-package/index.ts", {
+					source: "npm:primary-package",
+					scope: "project",
+					origin: "package",
+					baseDir: "/tmp/project/.pi/npm/node_modules/primary-package",
+				}),
+			},
+		];
+
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions,
+			useRealScopeGroups: true,
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+"[Extensions]
+  primary-package, primary-package:../sibling-package"`);
+	});
+
+	test("labels Windows npm sibling extensions relative to the declaring package", () => {
+		const primaryPath = "C:\\Users\\me\\.pi\\agent\\npm\\node_modules\\primary-package\\index.ts";
+		const siblingPath = "C:\\Users\\me\\.pi\\agent\\npm\\node_modules\\sibling-package\\index.ts";
+		const baseDir = "C:\\Users\\me\\.pi\\agent\\npm\\node_modules\\primary-package";
+		const extensions: ExtensionFixture[] = [
+			{
+				path: primaryPath,
+				sourceInfo: createSourceInfo(primaryPath, {
+					source: "npm:primary-package",
+					scope: "user",
+					origin: "package",
+					baseDir,
+				}),
+			},
+			{
+				path: siblingPath,
+				sourceInfo: createSourceInfo(siblingPath, {
+					source: "npm:primary-package",
+					scope: "user",
+					origin: "package",
+					baseDir,
+				}),
+			},
+		];
+
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions,
+			useRealScopeGroups: true,
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+"[Extensions]
+  primary-package, primary-package:../sibling-package"`);
+	});
+
 	test("captures mixed extension layouts in expanded output", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,

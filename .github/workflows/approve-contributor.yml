@@ -6,20 +6,20 @@ on:
 
 jobs:
   approve:
-    if: ${{ !github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
+      pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Update contributor approval
         id: update
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -30,16 +30,17 @@ jobs:
             const commenter = context.payload.comment.user.login;
             const commentBody = (context.payload.comment.body || '').trim();
 
-            let targetCapability;
-            if (/\blgtmi\b/i.test(commentBody)) {
-              targetCapability = 'issue';
-            } else if (/\blgtm\b/i.test(commentBody)) {
-              targetCapability = 'pr';
-            } else {
-              console.log('Comment does not match lgtm or lgtmi');
+            const approvalAtStartPattern = /^[\s.]*(?:@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\s*,\s*|[.:]\s*|\s+))*(lgtmi|lgtm)(?=$|[\s.])/i;
+            const approvalAtEndPattern = /(?:^|[\s.])(lgtmi|lgtm)[\s.]*$/i;
+            const approvalMatch = commentBody.match(approvalAtStartPattern) ?? commentBody.match(approvalAtEndPattern);
+
+            if (!approvalMatch) {
+              console.log('Comment does not start or end with lgtm or lgtmi');
               core.setOutput('status', 'skipped');
               return;
             }
+
+            const targetCapability = approvalMatch[1].toLowerCase() === 'lgtmi' ? 'issue' : 'pr';
 
             try {
               const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
@@ -57,6 +58,24 @@ jobs:
               console.log(`${commenter} does not have collaborator access`);
               core.setOutput('status', 'skipped');
               return;
+            }
+
+            function parseMentionedUsers(body) {
+              const users = [];
+              const seenUsers = new Set();
+              const mentionPattern = /(^|[^A-Za-z0-9_])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?![A-Za-z0-9-]|\/)/g;
+
+              for (const match of body.matchAll(mentionPattern)) {
+                const username = match[2];
+                const normalizedUser = username.toLowerCase();
+                if (seenUsers.has(normalizedUser)) {
+                  continue;
+                }
+                seenUsers.add(normalizedUser);
+                users.push(username);
+              }
+
+              return users;
             }
 
             function parseApprovedUsers(content) {
@@ -113,62 +132,87 @@ jobs:
 
             const content = fs.readFileSync(APPROVED_FILE, 'utf8');
             const { entries, users } = parseApprovedUsers(content);
-            const normalizedAuthor = issueAuthor.toLowerCase();
-            const existingEntry = users.get(normalizedAuthor);
-            const existingCapability = existingEntry?.capability ?? null;
+            const mentionedUsers = parseMentionedUsers(commentBody);
+            const approvalTargets = mentionedUsers.length > 0 ? mentionedUsers : [issueAuthor];
+            const changedTargets = [];
+            const alreadyTargets = [];
 
-            if (existingCapability === 'pr' || existingCapability === targetCapability) {
+            for (const username of approvalTargets) {
+              const normalizedUser = username.toLowerCase();
+              const existingEntry = users.get(normalizedUser);
+              const existingCapability = existingEntry?.capability ?? null;
+
+              if (existingCapability === 'pr' || existingCapability === targetCapability) {
+                alreadyTargets.push(existingEntry?.username ?? username);
+                console.log(`${username} is already approved for ${existingCapability}`);
+                continue;
+              }
+
+              if (existingEntry) {
+                existingEntry.capability = targetCapability;
+                changedTargets.push(existingEntry.username);
+              } else {
+                const entry = { type: 'user', username, normalizedUser, capability: targetCapability };
+                entries.push(entry);
+                users.set(normalizedUser, entry);
+                changedTargets.push(username);
+              }
+
+              console.log(`Set ${username} capability to ${targetCapability}`);
+            }
+
+            core.setOutput('capability', targetCapability);
+            core.setOutput('changed_targets', JSON.stringify(changedTargets));
+            core.setOutput('already_targets', JSON.stringify(alreadyTargets));
+
+            if (changedTargets.length === 0) {
               core.setOutput('status', 'already');
-              core.setOutput('capability', existingCapability);
-              console.log(`${issueAuthor} is already approved for ${existingCapability}`);
               return;
             }
 
-            if (existingEntry) {
-              existingEntry.capability = targetCapability;
-            } else {
-              entries.push({ type: 'user', username: issueAuthor, normalizedUser: normalizedAuthor, capability: targetCapability });
-            }
-
             fs.writeFileSync(APPROVED_FILE, stringifyApprovedUsers(entries));
-            core.setOutput('status', existingCapability ? 'updated' : 'added');
-            core.setOutput('capability', targetCapability);
-            console.log(`Set ${issueAuthor} capability to ${targetCapability}`);
+            core.setOutput('status', 'changed');
 
       - name: Commit and push
-        if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated'
+        if: steps.update.outputs.status == 'changed'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .github/APPROVED_CONTRIBUTORS
-          git diff --staged --quiet || git commit -m "chore: approve contributor ${{ github.event.issue.user.login }}"
+          git diff --staged --quiet || git commit -m "chore: approve contributors from issue #${{ github.event.issue.number }}"
           git push
 
       - name: Comment on issue
-        if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated' || steps.update.outputs.status == 'already'
-        uses: actions/github-script@v7
+        if: steps.update.outputs.status == 'changed' || steps.update.outputs.status == 'already'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CAPABILITY: ${{ steps.update.outputs.capability }}
+          CHANGED_TARGETS: ${{ steps.update.outputs.changed_targets }}
+          ALREADY_TARGETS: ${{ steps.update.outputs.already_targets }}
         with:
           script: |
-            const issueAuthor = context.payload.issue.user.login;
-            const capability = '${{ steps.update.outputs.capability }}';
+            const capability = process.env.CAPABILITY;
+            const changedTargets = JSON.parse(process.env.CHANGED_TARGETS || '[]');
+            const alreadyTargets = JSON.parse(process.env.ALREADY_TARGETS || '[]');
             const defaultBranch = context.payload.repository.default_branch;
-            let body;
+            const formatTargets = (targets) => targets.map((target) => `@${target}`).join(', ');
+            const bodyLines = [];
 
-            if ('${{ steps.update.outputs.status }}' === 'already') {
-              body = `@${issueAuthor} is already approved.`;
-            } else if (capability === 'issue') {
-              body = [
-                `@${issueAuthor} approved for issues. Your future issues will not be auto-closed. PRs still require \`lgtm\`.`,
-                '',
-                `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
-              ].join('\n');
-            } else {
-              body = [
-                `@${issueAuthor} approved for issues and PRs. Your future issues and PRs will not be auto-closed.`,
-                '',
-                `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
-              ].join('\n');
+            if (changedTargets.length > 0) {
+              if (capability === 'issue') {
+                bodyLines.push(`${formatTargets(changedTargets)} approved for issues. Future issues will not be auto-closed. PRs still require \`lgtm\` at the start of a maintainer reply (optionally after one or more \`@username\` mentions) or at the end.`);
+              } else {
+                bodyLines.push(`${formatTargets(changedTargets)} approved for issues and PRs. Future issues and PRs will not be auto-closed.`);
+              }
             }
+
+            if (alreadyTargets.length > 0) {
+              const verb = alreadyTargets.length === 1 ? 'is' : 'are';
+              bodyLines.push(`${formatTargets(alreadyTargets)} ${verb} already approved.`);
+            }
+
+            bodyLines.push('', `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`);
+            const body = bodyLines.join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,

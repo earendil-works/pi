@@ -13,10 +13,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
@@ -95,10 +95,10 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): {
+async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
-} {
+}> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -129,9 +129,9 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = await createModelRegistry(authStorage, tempDir);
 	if (options.withAuth) {
-		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 	}
 
 	const session = new AgentSession({
@@ -139,7 +139,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
+		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader: createTestResourceLoader(),
 	});
 
@@ -177,7 +177,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, cleanup } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 

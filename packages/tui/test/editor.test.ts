@@ -699,6 +699,31 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Scroll indicators", () => {
+		it("keeps truncated scroll indicators within width and preserves their color (issue #6962)", () => {
+			const width = 10;
+			const borderColor = (text: string) => `\x1b[35m${text}\x1b[39m`;
+			const editor = new Editor(createTestTUI(width), { ...defaultEditorTheme, borderColor });
+			editor.setText(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n"));
+
+			// Render once to initialize wrapping, then move the cursor so content remains above and below the viewport.
+			editor.render(width);
+			for (let index = 0; index < 10; index++) editor.handleInput("\x1b[A");
+
+			const lines = editor.render(width);
+			const topBorder = lines[0]!;
+			const bottomBorder = lines.at(-1)!;
+
+			assert.match(stripVTControlCharacters(topBorder), /^─── ↑/);
+			assert.match(stripVTControlCharacters(bottomBorder), /^─── ↓/);
+			assert.strictEqual(topBorder, borderColor(stripVTControlCharacters(topBorder)));
+			assert.strictEqual(bottomBorder, borderColor(stripVTControlCharacters(bottomBorder)));
+			for (const line of lines) {
+				assert.strictEqual(visibleWidth(line), width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+			}
+		});
+	});
+
 	describe("Grapheme-aware text wrapping", () => {
 		it("wraps lines correctly when text contains wide emojis", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
@@ -3553,6 +3578,11 @@ describe("Editor component", () => {
 			return editor.getText();
 		}
 
+		/** Helper: 12-line paste content with a distinguishing tag */
+		function bigPaste(tag: string): string {
+			return Array.from({ length: 12 }, (_, i) => `${tag}${i}`).join("\n");
+		}
+
 		it("creates a paste marker for large pastes", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const text = pasteWithMarker(editor);
@@ -3688,6 +3718,76 @@ describe("Editor component", () => {
 			// Undo
 			editor.handleInput("\x1b[45;5u");
 			assert.strictEqual(editor.getText(), textBefore);
+		});
+
+		it("undo after paste marker deletion restores the paste registry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput("\x7f"); // delete the marker
+			editor.handleInput("\x1b[45;5u"); // undo: restores marker text and registry
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
+		});
+
+		it("undo after deleting the first of two paste markers restores both registry entries", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const pasteA = bigPaste("alpha");
+			const pasteB = bigPaste("beta");
+			editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`); // #1 = A
+			editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`); // #2 = B, cursor at end
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput("\x1b[C"); // right over marker #1
+			editor.handleInput("\x7f"); // delete marker #1, renumbers #2 -> #1
+			editor.handleInput("\x1b[45;5u"); // undo
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, pasteA + pasteB);
+		});
+
+		it("renumbers the paste registry in ascending id order when markers are out of order in text", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const pasteA = bigPaste("alpha");
+			const pasteB = bigPaste("beta");
+			const pasteC = bigPaste("gamma");
+			editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`); // #1 = A
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`); // #2 = B, text: [#2][#1]
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput(`\x1b[200~${pasteC}\x1b[201~`); // #3 = C, text: [#3][#2][#1]
+			editor.handleInput("\x05"); // Ctrl+E
+			editor.handleInput("\x7f"); // delete marker #1, renumber #3 -> #2 and #2 -> #1
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, pasteC + pasteB);
+		});
+
+		it("undo after setText restores paste markers and registry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.setText("replacement");
+			editor.handleInput("\x1b[45;5u"); // undo
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
 		});
 
 		it("handles multiple paste markers in same line", () => {

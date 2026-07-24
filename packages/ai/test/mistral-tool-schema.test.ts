@@ -9,6 +9,7 @@ interface MistralToolPayload {
 		function: {
 			name: string;
 			parameters: Record<string, unknown>;
+			strict?: boolean;
 		};
 	}>;
 }
@@ -31,6 +32,7 @@ describe("Mistral tool schema serialization", () => {
 					name: "inspect_schema",
 					description: "Inspect the schema",
 					parameters,
+					constrainedSampling: { type: "json_schema", strict: "require" },
 				},
 			],
 		};
@@ -45,6 +47,7 @@ describe("Mistral tool schema serialization", () => {
 		});
 
 		expect(capturedPayload?.tools).toHaveLength(1);
+		expect(capturedPayload?.tools?.[0]?.function.strict).toBe(true);
 		const payloadParameters = capturedPayload?.tools?.[0]?.function.parameters;
 		expect(payloadParameters).toBeDefined();
 		expect(Object.getOwnPropertySymbols(payloadParameters ?? {})).toHaveLength(0);

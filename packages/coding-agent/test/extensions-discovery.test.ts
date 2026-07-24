@@ -51,6 +51,42 @@ describe("extensions discovery", () => {
 		expect(result.extensions.map((e) => path.basename(e.path)).sort()).toEqual(["bar.ts", "foo.ts"]);
 	});
 
+	it("loads the coding-agent entrypoint without rewriting pi-ai provider subpaths", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "coding-agent-import.ts"),
+			`
+				import { getAgentDir } from "@earendil-works/pi-coding-agent";
+				void getAgentDir;
+				export default function(pi) {
+					pi.registerCommand("test", { handler: async () => {} });
+				}
+			`,
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions).toHaveLength(1);
+	});
+
+	it("keeps the type-only pi-ai OAuth compatibility barrel resolvable", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "oauth-import.ts"),
+			`
+				import * as oauth from "@earendil-works/pi-ai/oauth";
+				void oauth;
+				export default function(pi) {
+					pi.registerCommand("test", { handler: async () => {} });
+				}
+			`,
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+	});
+
 	it("discovers direct .js files in extensions/", async () => {
 		fs.writeFileSync(path.join(extensionsDir, "foo.js"), extensionCode);
 
@@ -335,11 +371,14 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].tools.has("parse_duration")).toBe(true);
 	});
 
-	it("registers message renderers", async () => {
+	it("registers message and entry renderers", async () => {
 		const extCode = `
 			export default function(pi) {
 				pi.registerMessageRenderer("my-custom-type", (message, options, theme) => {
 					return null; // Use default rendering
+				});
+				pi.registerEntryRenderer("my-entry-type", (entry, options, theme) => {
+					return null;
 				});
 			}
 		`;
@@ -350,6 +389,7 @@ describe("extensions discovery", () => {
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
 		expect(result.extensions[0].messageRenderers.has("my-custom-type")).toBe(true);
+		expect(result.extensions[0].entryRenderers?.has("my-entry-type")).toBe(true);
 	});
 
 	it("reports error when extension throws during initialization", async () => {

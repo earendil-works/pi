@@ -1,17 +1,17 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.80.2",
+	"version": "0.82.0",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.80.2",
+			"version": "0.82.0",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.80.2",
-				"@earendil-works/pi-ai": "^0.80.2",
-				"@earendil-works/pi-tui": "^0.80.2",
+				"@earendil-works/pi-agent-core": "^0.82.0",
+				"@earendil-works/pi-ai": "^0.82.0",
+				"@earendil-works/pi-tui": "^0.82.0",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -474,11 +474,12 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "0.80.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.80.2.tgz",
+			"version": "0.82.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.82.0.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.80.2",
+				"@earendil-works/pi-ai": "^0.82.0",
+				"diff": "8.0.4",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -488,8 +489,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "0.80.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.80.2.tgz",
+			"version": "0.82.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.82.0.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -505,15 +506,15 @@
 				"typebox": "1.1.38"
 			},
 			"bin": {
-				"pi-ai": "./dist/cli.js"
+				"pi-ai": "dist/cli.js"
 			},
 			"engines": {
 				"node": ">=22.19.0"
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "0.80.2",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.80.2.tgz",
+			"version": "0.82.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.82.0.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
@@ -628,9 +629,6 @@
 			"cpu": [
 				"arm64"
 			],
-			"libc": [
-				"glibc"
-			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-arm64-musl": {
@@ -646,9 +644,6 @@
 			],
 			"cpu": [
 				"arm64"
-			],
-			"libc": [
-				"musl"
 			],
 			"optional": true
 		},
@@ -666,9 +661,6 @@
 			"cpu": [
 				"riscv64"
 			],
-			"libc": [
-				"glibc"
-			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-x64-gnu": {
@@ -685,9 +677,6 @@
 			"cpu": [
 				"x64"
 			],
-			"libc": [
-				"glibc"
-			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-x64-musl": {
@@ -703,9 +692,6 @@
 			],
 			"cpu": [
 				"x64"
-			],
-			"libc": [
-				"musl"
 			],
 			"optional": true
 		},
@@ -1037,9 +1023,9 @@
 			"license": "MIT"
 		},
 		"node_modules/brace-expansion": {
-			"version": "5.0.6",
-			"resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.6.tgz",
-			"integrity": "sha512-kLpxurY4Z4r9sgMsyG0Z9uzsBlgiU/EFKhj/h91/8yHu0edo7XuixOIH3VcJ8kkxs6/jPzoI6U9Vj3WqbMQ94g==",
+			"version": "5.0.7",
+			"resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+			"integrity": "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
 			"license": "MIT",
 			"dependencies": {
 				"balanced-match": "^4.0.2"
@@ -1607,9 +1593,9 @@
 			}
 		},
 		"node_modules/protobufjs": {
-			"version": "7.6.4",
-			"resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.4.tgz",
-			"integrity": "sha512-RJJPTTpvFfHcWLkIa2JFWK4XvtSzS0yEWDmunqHXli1h3JlkbcQZXDZdcWxv+JK3Xsl5/UFDPZ0iGm7DAengYw==",
+			"version": "7.6.5",
+			"resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.5.tgz",
+			"integrity": "sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==",
 			"license": "BSD-3-Clause",
 			"dependencies": {
 				"@protobufjs/aspromise": "^1.1.2",

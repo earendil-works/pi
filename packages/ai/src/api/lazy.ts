@@ -22,13 +22,20 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 	};
 }
 
-function forwardStream(target: AssistantMessageEventStream, source: AsyncIterable<AssistantMessageEvent>): void {
-	(async () => {
-		for await (const event of source) {
-			target.push(event);
-		}
-		target.end();
-	})();
+function hasResult(
+	source: AsyncIterable<AssistantMessageEvent>,
+): source is AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> } {
+	return typeof (source as { result?: unknown }).result === "function";
+}
+
+async function forwardStream(
+	target: AssistantMessageEventStream,
+	source: AsyncIterable<AssistantMessageEvent>,
+): Promise<void> {
+	for await (const event of source) {
+		target.push(event);
+	}
+	target.end(hasResult(source) ? await source.result() : undefined);
 }
 
 /**
@@ -43,9 +50,7 @@ export function lazyStream(
 	const outer = new AssistantMessageEventStream();
 
 	setup()
-		.then((inner) => {
-			forwardStream(outer, inner);
-		})
+		.then((inner) => forwardStream(outer, inner))
 		.catch((error) => {
 			const message = createSetupErrorMessage(model, error);
 			outer.push({ type: "error", reason: "error", error: message });

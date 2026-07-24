@@ -71,7 +71,15 @@ describe("SessionManager append and tree traversal", () => {
 
 			const id1 = session.appendMessage(userMsg("1"));
 			const id2 = session.appendMessage(assistantMsg("2"));
-			const compactionId = session.appendCompaction("summary", id1, 1000);
+			const usage = {
+				input: 10,
+				output: 20,
+				cacheRead: 30,
+				cacheWrite: 40,
+				totalTokens: 100,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			};
+			const compactionId = session.appendCompaction("summary", id1, 1000, undefined, false, usage);
 			const _id3 = session.appendMessage(userMsg("3"));
 
 			const entries = session.getEntries();
@@ -83,6 +91,7 @@ describe("SessionManager append and tree traversal", () => {
 				expect(compactionEntry.summary).toBe("summary");
 				expect(compactionEntry.firstKeptEntryId).toBe(id1);
 				expect(compactionEntry.tokensBefore).toBe(1000);
+				expect(compactionEntry.usage).toEqual(usage);
 			}
 
 			expect(entries[3].parentId).toBe(compactionId);
@@ -319,7 +328,15 @@ describe("SessionManager append and tree traversal", () => {
 			const _id2 = session.appendMessage(assistantMsg("2"));
 			const _id3 = session.appendMessage(userMsg("3"));
 
-			const summaryId = session.branchWithSummary(id1, "Summary of abandoned work");
+			const usage = {
+				input: 10,
+				output: 20,
+				cacheRead: 30,
+				cacheWrite: 40,
+				totalTokens: 100,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			};
+			const summaryId = session.branchWithSummary(id1, "Summary of abandoned work", undefined, false, usage);
 
 			expect(session.getLeafId()).toBe(summaryId);
 
@@ -329,6 +346,7 @@ describe("SessionManager append and tree traversal", () => {
 			expect(summaryEntry?.parentId).toBe(id1);
 			if (summaryEntry?.type === "branch_summary") {
 				expect(summaryEntry.summary).toBe("Summary of abandoned work");
+				expect(summaryEntry.usage).toEqual(usage);
 			}
 		});
 
@@ -500,6 +518,52 @@ describe("createBranchedSession", () => {
 				.map((r) => r.id)
 				.filter((id): id is string => typeof id === "string");
 			expect(new Set(entryIds).size).toBe(entryIds.length);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves tool and summary usage across a file-backed reload", () => {
+		const tempDir = join(tmpdir(), `session-usage-roundtrip-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+
+		try {
+			const session = SessionManager.create(tempDir, tempDir);
+			const rootId = session.appendMessage(userMsg("question"));
+			session.appendMessage(assistantMsg("answer"));
+			const usage = {
+				input: 10,
+				output: 20,
+				cacheRead: 30,
+				cacheWrite: 40,
+				totalTokens: 100,
+				cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+			};
+			session.appendMessage({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "nested-model",
+				content: [{ type: "text", text: "result" }],
+				isError: false,
+				usage,
+				timestamp: Date.now(),
+			});
+			session.appendCompaction("summary", rootId, 100, undefined, false, usage);
+			session.branchWithSummary(rootId, "branch summary", undefined, false, usage);
+
+			const file = session.getSessionFile();
+			expect(file).toBeDefined();
+			const reopened = SessionManager.open(file!, tempDir);
+			expect(reopened.getEntries()).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "compaction", usage }),
+					expect.objectContaining({ type: "branch_summary", usage }),
+					expect.objectContaining({
+						type: "message",
+						message: expect.objectContaining({ role: "toolResult", usage }),
+					}),
+				]),
+			);
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
 		}

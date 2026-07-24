@@ -44,7 +44,15 @@ describe("Together models", () => {
 
 	it("models Together reasoning controls from the Together API surface", () => {
 		const gptOss = getModel("together", "openai/gpt-oss-120b");
-		expect(gptOss.thinkingLevelMap).toEqual({ off: null, minimal: null });
+		expect(gptOss.thinkingLevelMap).toEqual({
+			off: null,
+			minimal: null,
+			low: "low",
+			medium: "medium",
+			high: "high",
+			max: null,
+			xhigh: null,
+		});
 		expect(gptOss.compat).toMatchObject({
 			supportsReasoningEffort: true,
 			thinkingFormat: "openai",

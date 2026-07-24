@@ -11,6 +11,7 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
+	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 
@@ -69,15 +70,18 @@ export interface BeforeToolCallResult {
  * - `content`: if provided, replaces the tool result content array in full
  * - `details`: if provided, replaces the tool result details value in full
  * - `isError`: if provided, replaces the tool result error flag
+ * - `usage`: if provided, replaces the tool result usage
  * - `terminate`: if provided, replaces the early-termination hint
  *
  * Omitted fields keep the original executed tool result values.
- * There is no deep merge for `content` or `details`.
+ * There is no deep merge for `content`, `details`, or `usage`.
  */
 export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
+	usage?: Usage;
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
@@ -273,6 +277,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * - `content` replaces the full content array
 	 * - `details` replaces the full details payload
 	 * - `isError` replaces the error flag
+	 * - `usage` replaces the tool result usage
 	 * - `terminate` replaces the early-termination hint
 	 *
 	 * Any omitted fields keep their original values. No deep merge is performed.
@@ -283,10 +288,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 /**
  * Thinking/reasoning level for models that support it.
- * Note: "xhigh" is only supported by selected model families. Use model thinking-level metadata
- * from @earendil-works/pi-ai to detect support for a concrete model.
+ * Note: "xhigh" and "max" are only supported by selected model families. Use model
+ * thinking-level metadata from @earendil-works/pi-ai to detect support for a concrete model.
  */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * Extensible interface for custom app messages.
@@ -352,6 +357,10 @@ export interface AgentToolResult<T> {
 	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
+	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
+	usage?: Usage;
+	/** Names of tools introduced by this result and available from this transcript point onward. */
+	addedToolNames?: string[];
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.

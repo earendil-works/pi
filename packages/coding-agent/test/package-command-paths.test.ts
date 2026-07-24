@@ -1,10 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
+import type { ResolvedPaths } from "../src/core/package-manager.ts";
+import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
+import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 
 describe("package commands", () => {
@@ -15,6 +19,7 @@ describe("package commands", () => {
 	let originalCwd: string;
 	let originalAgentDir: string | undefined;
 	let originalPiPackageDir: string | undefined;
+	let originalPath: string | undefined;
 	let originalExitCode: typeof process.exitCode;
 	let originalExecPath: string;
 
@@ -25,6 +30,24 @@ describe("package commands", () => {
 
 	async function runPackageCommandDirectly(args: string[]): Promise<void> {
 		expect(await handlePackageCommand(args)).toBe(true);
+	}
+
+	function extensionPaths(
+		packageRoot: string,
+		source: string,
+		scope: "user" | "project",
+		names: string[],
+	): ResolvedPaths {
+		return {
+			extensions: names.map((name) => ({
+				path: join(packageRoot, "extensions", name),
+				enabled: true,
+				metadata: { source, scope, origin: "package", baseDir: packageRoot },
+			})),
+			skills: [],
+			prompts: [],
+			themes: [],
+		};
 	}
 
 	beforeEach(() => {
@@ -39,6 +62,7 @@ describe("package commands", () => {
 		originalCwd = process.cwd();
 		originalAgentDir = process.env[ENV_AGENT_DIR];
 		originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+		originalPath = process.env.PATH;
 		originalExitCode = process.exitCode;
 		originalExecPath = process.execPath;
 		process.exitCode = undefined;
@@ -68,6 +92,11 @@ describe("package commands", () => {
 			delete process.env.PI_PACKAGE_DIR;
 		} else {
 			process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+		}
+		if (originalPath === undefined) {
+			delete process.env.PATH;
+		} else {
+			process.env.PATH = originalPath;
 		}
 		Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
 		rmSync(tempDir, { recursive: true, force: true });
@@ -343,6 +372,73 @@ describe("package commands", () => {
 		}
 	});
 
+	it("refreshes only model catalogs with update --models", async () => {
+		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
+		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		expect(create).toHaveBeenCalledWith({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			allowModelNetwork: false,
+		});
+		expect(refresh).toHaveBeenCalledWith({
+			allowNetwork: true,
+			force: true,
+			signal: expect.any(AbortSignal),
+		});
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("rejects update --models combined with another update target", async () => {
+		const create = vi.spyOn(ModelRuntime, "create");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models", "--self"])).resolves.toBeUndefined();
+
+		expect(create).not.toHaveBeenCalled();
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"--models cannot be combined with --self",
+		);
+		expect(process.exitCode).toBe(1);
+	});
+
+	it("cycles project package overrides in config local mode", async () => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ packages: ["npm:pi-tools"] }));
+		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
+		const resolvedPaths = extensionPaths(join(tempDir, "pkg"), "npm:pi-tools", "user", ["bar.ts"]);
+		const selector = new ConfigSelectorComponent(
+			{ global: resolvedPaths, project: resolvedPaths },
+			settingsManager,
+			projectDir,
+			agentDir,
+			() => {},
+			() => {},
+			() => {},
+			24,
+			"project",
+		);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([
+			{ source: "npm:pi-tools", autoload: false, extensions: ["-extensions/bar.ts"] },
+		]);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([
+			{ source: "npm:pi-tools", autoload: false, extensions: ["+extensions/bar.ts"] },
+		]);
+
+		selector.getResourceList().handleInput(" ");
+		expect(settingsManager.getProjectSettings().packages).toEqual([]);
+	});
+
 	it("shows a friendly error for unknown install options", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -371,6 +467,32 @@ describe("package commands", () => {
 			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
+		}
+	});
+
+	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
+		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+		process.env.PI_SKIP_VERSION_CHECK = "1";
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		vi.stubGlobal("fetch", fetchMock);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(fetchMock).toHaveBeenCalledOnce();
+			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				`pi is already up to date (v${VERSION})`,
+			);
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			if (previousSkipVersionCheck === undefined) {
+				delete process.env.PI_SKIP_VERSION_CHECK;
+			} else {
+				process.env.PI_SKIP_VERSION_CHECK = previousSkipVersionCheck;
+			}
 		}
 	});
 
@@ -518,6 +640,50 @@ else {
 				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
 				expect.arrayContaining(["install", "-g", `${activePackageName}@0.73.0`]),
 			]);
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("prints a pnpm metadata hint when self-update fails", async () => {
+		const globalRoot = join(tempDir, "pnpm", "global", "v11");
+		const selfPackageDir = join(globalRoot, "node_modules", "@earendil-works", "pi-coding-agent");
+		const fakeBinDir = join(tempDir, "bin");
+		const fakePnpmPath = join(fakeBinDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+		mkdirSync(selfPackageDir, { recursive: true });
+		mkdirSync(fakeBinDir, { recursive: true });
+		writeFileSync(join(selfPackageDir, "package.json"), JSON.stringify({ name: PACKAGE_NAME, version: VERSION }));
+		const fakePnpmScript =
+			process.platform === "win32"
+				? `@echo off\r\nif "%1"=="root" if "%2"=="-g" (echo ${globalRoot} & exit /b 0)\r\nexit /b 23\r\n`
+				: `#!/bin/sh\nif [ "$1" = "root" ] && [ "$2" = "-g" ]; then\n\tprintf '%s\\n' '${globalRoot.replaceAll("'", "'\\''")}'\n\texit 0\nfi\nexit 23\n`;
+		writeFileSync(fakePnpmPath, fakePnpmScript);
+		chmodSync(fakePnpmPath, 0o755);
+		process.env.PATH = `${fakeBinDir}${process.env.PATH ? `${delimiter}${process.env.PATH}` : ""}`;
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(tempDir, "pnpm", "bin", "node"),
+			configurable: true,
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
+		);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBe(1);
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).not.toContain("Updated pi");
+			expect(stderr).toContain("exited with code 23");
+			expect(stderr).toContain("If pnpm reports missing package versions");
+			expect(stderr).toContain("Run `pnpm store prune` and retry `pi update --self`.");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();

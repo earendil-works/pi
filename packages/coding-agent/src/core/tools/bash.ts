@@ -15,11 +15,27 @@ import {
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
+
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+
+function resolveTimeoutMs(timeout: number | undefined): number | undefined {
+	if (timeout === undefined) return undefined;
+	if (!Number.isFinite(timeout) || timeout <= 0) {
+		throw new Error("Invalid timeout: must be a finite number of seconds");
+	}
+
+	const timeoutMs = timeout * 1000;
+	if (timeoutMs > MAX_TIMEOUT_MS) {
+		throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`);
+	}
+	return timeoutMs;
+}
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -66,14 +82,15 @@ export interface BashOperations {
 export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+			const timeoutMs = resolveTimeoutMs(timeout);
+			if (signal?.aborted) {
+				throw new Error("aborted");
+			}
 			const shellConfig = getShellConfig(options?.shellPath);
 			try {
 				await fsAccess(cwd, constants.F_OK);
 			} catch {
 				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
-			}
-			if (signal?.aborted) {
-				throw new Error("aborted");
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
@@ -97,11 +114,11 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 
 			try {
 				// Set timeout if provided.
-				if (timeout !== undefined && timeout > 0) {
+				if (timeoutMs !== undefined) {
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
 						if (child.pid) killProcessTree(child.pid);
-					}, timeout * 1000);
+					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
 				child.stdout?.on("data", onData);
@@ -138,8 +155,31 @@ export interface BashSpawnContext {
 
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 
-function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawnHook): BashSpawnContext {
-	const baseContext: BashSpawnContext = { command, cwd, env: { ...getShellEnv() } };
+function resolveSpawnContext(
+	command: string,
+	cwd: string,
+	spawnHook: BashSpawnHook | undefined,
+	exposeSessionEnvironment: boolean,
+	ctx: ExtensionContext | undefined,
+): BashSpawnContext {
+	const env = { ...getShellEnv() };
+	delete env.PI_SESSION_ID;
+	delete env.PI_SESSION_FILE;
+	delete env.PI_PROVIDER;
+	delete env.PI_MODEL;
+	delete env.PI_REASONING_LEVEL;
+	if (exposeSessionEnvironment && ctx) {
+		const model = ctx.model;
+		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile) env.PI_SESSION_FILE = sessionFile;
+		if (model) {
+			env.PI_PROVIDER = model.provider;
+			env.PI_MODEL = model.id;
+		}
+		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
+	}
+	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
@@ -150,6 +190,8 @@ export interface BashToolOptions {
 	commandPrefix?: string;
 	/** Optional explicit shell path from settings */
 	shellPath?: string;
+	/** Expose current Pi session metadata as PI_* environment variables. Default: true */
+	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
 }
@@ -277,22 +319,26 @@ export function createBashToolDefinition(
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
 	const commandPrefix = options?.commandPrefix;
+	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	return {
 		name: "bash",
 		label: "bash",
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+		promptGuidelines: exposeSessionEnvironment
+			? ["Inspect PI_* environment variables for current model and session details."]
+			: undefined,
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
-			_ctx?,
+			ctx?,
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
-			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
@@ -449,5 +495,11 @@ export function createBashToolDefinition(
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	return wrapToolDefinition(createBashToolDefinition(cwd, options));
+	const definition = createBashToolDefinition(cwd, options);
+	const tool = wrapToolDefinition(definition);
+	Object.assign(tool, {
+		promptSnippet: definition.promptSnippet,
+		promptGuidelines: definition.promptGuidelines,
+	});
+	return tool;
 }

@@ -72,6 +72,15 @@ describe("truncate utilities", () => {
 		expect(result.totalBytes).toBe(9);
 	});
 
+	it("does not count a trailing newline as an extra line", () => {
+		const content = `${Array.from({ length: 3 }, () => "line").join("\n")}\n`;
+		const head = truncateHead(content, { maxBytes: 100, maxLines: 3 });
+		const tail = truncateTail(content, { maxBytes: 100, maxLines: 3 });
+
+		expect(head).toMatchObject({ truncated: false, totalLines: 3, outputLines: 3 });
+		expect(tail).toMatchObject({ truncated: false, totalLines: 3, outputLines: 3 });
+	});
+
 	it("truncates head on UTF-8 byte limits without partial lines", () => {
 		const content = "éé\nabc";
 		const result = truncateHead(content, { maxBytes: 4, maxLines: 10 });

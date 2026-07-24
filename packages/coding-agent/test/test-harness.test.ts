@@ -17,7 +17,7 @@ describe("test harness", () => {
 	});
 
 	it("simple text response", async () => {
-		harness = createHarness({ responses: ["hello world"] });
+		harness = await createHarness({ responses: ["hello world"] });
 
 		await harness.session.prompt("hi");
 
@@ -32,7 +32,7 @@ describe("test harness", () => {
 	});
 
 	it("response sequence", async () => {
-		harness = createHarness({ responses: ["first", "second", "third"] });
+		harness = await createHarness({ responses: ["first", "second", "third"] });
 
 		await harness.session.prompt("a");
 		await harness.session.prompt("b");
@@ -60,7 +60,7 @@ describe("test harness", () => {
 			},
 		};
 
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ toolCalls: [{ name: "echo", args: { text: "hi" } }] }, "done after tool"],
 			tools: [echoTool],
 			baseToolsOverride: { echo: echoTool },
@@ -76,7 +76,7 @@ describe("test harness", () => {
 	});
 
 	it("error response", async () => {
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ error: "something broke" }],
 		});
 
@@ -89,7 +89,7 @@ describe("test harness", () => {
 	});
 
 	it("retry on transient error", async () => {
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ error: "overloaded_error" }, "recovered"],
 			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
 		});
@@ -107,7 +107,7 @@ describe("test harness", () => {
 	});
 
 	it("custom usage numbers", async () => {
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ text: "big response", usage: { input: 100000, output: 5000 } }],
 		});
 
@@ -119,7 +119,7 @@ describe("test harness", () => {
 	});
 
 	it("event capture", async () => {
-		harness = createHarness({ responses: ["hello"] });
+		harness = await createHarness({ responses: ["hello"] });
 
 		await harness.session.prompt("hi");
 
@@ -134,7 +134,7 @@ describe("test harness", () => {
 	});
 
 	it("context capture", async () => {
-		harness = createHarness({ responses: ["reply"] });
+		harness = await createHarness({ responses: ["reply"] });
 
 		await harness.session.prompt("my question");
 
@@ -145,7 +145,7 @@ describe("test harness", () => {
 	});
 
 	it("wraps around when more calls than responses", async () => {
-		harness = createHarness({ responses: ["a", "b"] });
+		harness = await createHarness({ responses: ["a", "b"] });
 
 		await harness.session.prompt("1");
 		await harness.session.prompt("2");
@@ -161,7 +161,7 @@ describe("test harness", () => {
 	});
 
 	it("streams text deltas", async () => {
-		harness = createHarness({ responses: ["hello world"] });
+		harness = await createHarness({ responses: ["hello world"] });
 
 		await harness.session.prompt("hi");
 
@@ -175,7 +175,7 @@ describe("test harness", () => {
 	});
 
 	it("streams thinking deltas", async () => {
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ thinking: "let me think about this", text: "answer" }],
 		});
 
@@ -203,7 +203,7 @@ describe("test harness", () => {
 			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
 		};
 
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [{ toolCalls: [{ name: "echo", args: { text: "hi" } }] }, "done"],
 			tools: [echoTool],
 			baseToolsOverride: { echo: echoTool },
@@ -230,7 +230,7 @@ describe("test harness", () => {
 			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
 		};
 
-		harness = createHarness({
+		harness = await createHarness({
 			responses: [
 				{
 					thinking: "hmm",
@@ -310,7 +310,7 @@ describe("test harness", () => {
 	});
 
 	it("session persistence works", async () => {
-		harness = createHarness({ responses: ["persisted"] });
+		harness = await createHarness({ responses: ["persisted"] });
 
 		await harness.session.prompt("hi");
 

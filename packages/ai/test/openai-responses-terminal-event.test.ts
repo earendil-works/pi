@@ -118,10 +118,10 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
 				input_tokens: 20,
 				output_tokens: 7,
 				total_tokens: 27,
-				input_tokens_details: { cached_tokens: 2 },
+				input_tokens_details: { cached_tokens: 2, cache_write_tokens: 3 },
 			},
 		},
-	} as ResponseStreamEvent;
+	} as unknown as ResponseStreamEvent;
 }
 
 async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
@@ -195,10 +195,10 @@ describe("OpenAI Responses terminal event handling", () => {
 		expect(output.responseId).toBe("resp_completed");
 		expect(output.stopReason).toBe("stop");
 		expect(output.usage).toMatchObject({
-			input: 18,
+			input: 15,
 			output: 7,
 			cacheRead: 2,
-			cacheWrite: 0,
+			cacheWrite: 3,
 			totalTokens: 27,
 		});
 	});

@@ -8,6 +8,7 @@ import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createBashTool } from "../src/core/tools/bash.ts";
 
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
@@ -23,6 +24,76 @@ describe("AgentSession dynamic tool registration", () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	it("exposes session state before custom bash spawn hooks and supports opting out", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.create(tempDir, join(agentDir, "sessions"), { id: "bash-env-test" });
+		let sessionEnv: NodeJS.ProcessEnv | undefined;
+		let optedOutEnv: NodeJS.ProcessEnv | undefined;
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool(
+						createBashTool(tempDir, {
+							spawnHook: (ctx) => {
+								sessionEnv = ctx.env;
+								return ctx;
+							},
+						}),
+					);
+					pi.registerTool({
+						...createBashTool(tempDir, {
+							exposeSessionEnvironment: false,
+							spawnHook: (ctx) => {
+								optedOutEnv = ctx.env;
+								return ctx;
+							},
+						}),
+						name: "bash_without_session_env",
+						label: "bash without session env",
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model,
+			thinkingLevel: "high",
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
+		expect(session.systemPrompt).toContain(
+			"Inspect PI_* environment variables for current model and session details.",
+		);
+		await bashTool.execute("bash-env", { command: "printf ok" });
+		expect(sessionEnv).toMatchObject({
+			PI_SESSION_ID: session.sessionId,
+			PI_SESSION_FILE: session.sessionFile,
+			PI_PROVIDER: model.provider,
+			PI_MODEL: model.id,
+			PI_REASONING_LEVEL: session.thinkingLevel,
+		});
+
+		const optedOutBashTool = session.agent.state.tools.find((tool) => tool.name === "bash_without_session_env")!;
+		await optedOutBashTool.execute("bash-no-env", { command: "printf ok" });
+		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_ID");
+		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_FILE");
+		expect(optedOutEnv).not.toHaveProperty("PI_PROVIDER");
+		expect(optedOutEnv).not.toHaveProperty("PI_MODEL");
+		expect(optedOutEnv).not.toHaveProperty("PI_REASONING_LEVEL");
+
+		session.dispose();
 	});
 
 	it("refreshes tool registry when tools are registered after initialization", async () => {

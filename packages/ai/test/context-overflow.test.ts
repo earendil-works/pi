@@ -262,8 +262,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.XAI_API_KEY)("xAI", () => {
-		it("grok-3-fast - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xai", "grok-3-fast");
+		it("grok-4.3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xai", "grok-4.3");
 			const result = await testContextOverflow(model, process.env.XAI_API_KEY!);
 			logResult(result);
 
@@ -466,13 +466,37 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_API_KEY)("Qwen Token Plan", () => {
+		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("qwen-token-plan", "qwen3.7-max");
+			const result = await testContextOverflow(model, process.env.QWEN_TOKEN_PLAN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!process.env.QWEN_TOKEN_PLAN_CN_API_KEY)("Qwen Token Plan (CN)", () => {
+		it("qwen3.7-max - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("qwen-token-plan-cn", "qwen3.7-max");
+			const result = await testContextOverflow(model, process.env.QWEN_TOKEN_PLAN_CN_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/input length/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	// =============================================================================
 	// Kimi For Coding
 	// =============================================================================
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding", () => {
-		it("kimi-k2-thinking - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("kimi-coding", "kimi-k2-thinking");
+		it("kimi-for-coding - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("kimi-coding", "kimi-for-coding");
 			const result = await testContextOverflow(model, process.env.KIMI_API_KEY!);
 			logResult(result);
 

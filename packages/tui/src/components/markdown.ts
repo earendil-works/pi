@@ -98,6 +98,8 @@ export interface MarkdownTheme {
 export interface MarkdownOptions {
 	/** Preserve source list markers instead of normalizing them. */
 	preserveOrderedListMarkers?: boolean;
+	/** Preserve source backslash escapes instead of normalizing escaped punctuation. */
+	preserveBackslashEscapes?: boolean;
 }
 
 interface InlineStyleContext {
@@ -498,6 +500,10 @@ export class Markdown implements Component {
 
 		for (const token of tokens) {
 			switch (token.type) {
+				case "escape":
+					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
+					break;
+
 				case "text":
 					// Text tokens in list items can have nested tokens for inline formatting
 					if (token.tokens && token.tokens.length > 0) {
