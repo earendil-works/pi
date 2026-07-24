@@ -63,9 +63,11 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let authorizeUrl: URL | undefined;
 		let callbackResponse: Promise<Response> | undefined;
+		let manualSignal: AbortSignal | undefined;
 		const credential = await openRouterOAuth.login({
-			prompt: async () => {
-				throw new Error("OpenRouter login must not prompt for a code");
+			prompt: (prompt) => {
+				manualSignal = prompt.signal;
+				return new Promise<string>(() => {});
 			},
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -83,6 +85,7 @@ describe.sequential("OpenRouter OAuth", () => {
 			expires: Number.MAX_SAFE_INTEGER,
 		});
 		expect((await callbackResponse)?.status).toBe(200);
+		expect(manualSignal?.aborted).toBe(true);
 		expect(authorizeUrl?.origin).toBe("https://openrouter.ai");
 		expect(authorizeUrl?.pathname).toBe("/auth");
 		expect(authorizeUrl?.searchParams.get("code_challenge_method")).toBe("S256");
@@ -110,7 +113,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let callbackResponse: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
-			prompt: async () => "",
+			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
 				const callbackUrl = new URL(new URL(event.url).searchParams.get("callback_url") ?? "");
@@ -138,7 +141,7 @@ describe.sequential("OpenRouter OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let firstCallback: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
-			prompt: async () => "",
+			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
 				callbackUrl = new URL(new URL(event.url).searchParams.get("callback_url") ?? "");
@@ -165,7 +168,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let callbackResponse: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
-			prompt: async () => "",
+			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
 				const callbackUrl = new URL(new URL(event.url).searchParams.get("callback_url") ?? "");
@@ -178,12 +181,91 @@ describe.sequential("OpenRouter OAuth", () => {
 		expect((await callbackResponse)?.status).toBe(502);
 	});
 
+	it("mints a key from a pasted redirect URL when the loopback callback never arrives", async () => {
+		let exchangeBody: Record<string, unknown> | undefined;
+		const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = input instanceof Request ? input.url : String(input);
+			if (url !== TOKEN_URL) return nativeFetch(input, init);
+			exchangeBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			return jsonResponse({ key: "sk-or-manual" });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		let callbackUrl: string | undefined;
+		const credential = await openRouterOAuth.login({
+			prompt: async (prompt) => {
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+				return `${callbackUrl}?code=manual-code`;
+			},
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				callbackUrl = new URL(event.url).searchParams.get("callback_url") ?? undefined;
+			},
+		});
+
+		expect(credential).toEqual({
+			type: "oauth",
+			access: "sk-or-manual",
+			refresh: "",
+			expires: Number.MAX_SAFE_INTEGER,
+		});
+		expect(exchangeBody).toMatchObject({ code: "manual-code", code_challenge_method: "S256" });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("accepts a bare authorization code from the manual prompt", async () => {
+		let exchangeBody: Record<string, unknown> | undefined;
+		const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = input instanceof Request ? input.url : String(input);
+			if (url !== TOKEN_URL) return nativeFetch(input, init);
+			exchangeBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			return jsonResponse({ key: "sk-or-manual" });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credential = await openRouterOAuth.login({
+			prompt: async () => "  manual-code  ",
+			notify: () => {},
+		});
+
+		expect(credential).toMatchObject({ access: "sk-or-manual" });
+		expect(exchangeBody).toMatchObject({ code: "manual-code" });
+	});
+
+	it("fails login when the manual prompt is cancelled", async () => {
+		const fetchMock = vi.fn(async () => jsonResponse({ key: "sk-or-unexpected" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			openRouterOAuth.login({
+				prompt: async () => {
+					throw new Error("Login cancelled");
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow("Login cancelled");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects empty manual input without exchanging a code", async () => {
+		const fetchMock = vi.fn(async () => jsonResponse({ key: "sk-or-unexpected" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			openRouterOAuth.login({
+				prompt: async () => "   ",
+				notify: () => {},
+			}),
+		).rejects.toThrow("Missing authorization code");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("closes the pending callback when login is cancelled", async () => {
 		const controller = new AbortController();
 		let callbackUrl: URL | undefined;
 		const login = openRouterOAuth.login({
 			signal: controller.signal,
-			prompt: async () => "",
+			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
 				callbackUrl = new URL(new URL(event.url).searchParams.get("callback_url") ?? "");
@@ -217,7 +299,7 @@ describe.sequential("OpenRouter OAuth", () => {
 		let callbackUrl: URL | undefined;
 		const login = openRouterOAuth.login({
 			signal: controller.signal,
-			prompt: async () => "",
+			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
 				callbackUrl = new URL(new URL(event.url).searchParams.get("callback_url") ?? "");
