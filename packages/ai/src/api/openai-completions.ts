@@ -471,14 +471,26 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						choice.delta.content !== undefined &&
 						choice.delta.content.length > 0
 					) {
-						const block = ensureTextBlock();
-						block.text += choice.delta.content;
-						stream.push({
-							type: "text_delta",
-							contentIndex: getContentIndex(block),
-							delta: choice.delta.content,
-							partial: output,
-						});
+						// Some providers (e.g. Databricks Qwen3, gpt-oss) return content as a
+						// typed array [{type:'reasoning',...},{type:'text',text:'...'}] when tools
+						// are present. Extract only the text blocks; ignore reasoning blocks.
+						const rawContent = choice.delta.content;
+						const textContent = Array.isArray(rawContent)
+							? (rawContent as Array<{ type?: string; text?: string }>)
+									.filter((b) => b?.type === "text")
+									.map((b) => b?.text ?? "")
+									.join("")
+							: rawContent;
+						if (textContent.length > 0) {
+							const block = ensureTextBlock();
+							block.text += textContent;
+							stream.push({
+								type: "text_delta",
+								contentIndex: getContentIndex(block),
+								delta: textContent,
+								partial: output,
+							});
+						}
 					}
 
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
@@ -574,7 +586,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (output.stopReason === "error") {
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
-			if (!hasFinishReason) {
+			if (!hasFinishReason && compat.supportsFinishReason !== false) {
 				throw new Error("Stream ended without finish_reason");
 			}
 
