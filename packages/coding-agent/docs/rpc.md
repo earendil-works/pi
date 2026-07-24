@@ -528,6 +528,32 @@ Response:
 
 ### Session
 
+#### get_sessions
+
+Get saved sessions for the current working directory or configured session storage.
+
+```json
+{"type": "get_sessions", "scope": "cwd"}
+```
+
+Scopes:
+- `"cwd"`: List sessions for the current working directory
+- `"all"`: List all sessions in the configured session storage
+
+Both scopes respect `--session-dir`.
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_sessions",
+  "success": true,
+  "data": {"sessions": []}
+}
+```
+
+Session objects match `SessionInfo`; `created` and `modified` are ISO 8601 strings.
+
 #### get_session_stats
 
 Get token usage, cost statistics, and current context window usage.

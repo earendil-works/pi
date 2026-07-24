@@ -25,6 +25,7 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import { SessionManager } from "../../core/session-manager.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -571,6 +572,20 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 			// Session
 			// =================================================================
+
+			case "get_sessions": {
+				const sessionManager = session.sessionManager;
+				if (command.scope === "all") {
+					if (!sessionManager.usesDefaultSessionDir()) {
+						const sessions = await SessionManager.listAll(sessionManager.getSessionDir());
+						return success(id, "get_sessions", { sessions });
+					}
+					const sessions = await SessionManager.listAll();
+					return success(id, "get_sessions", { sessions });
+				}
+				const sessions = await SessionManager.list(sessionManager.getCwd(), sessionManager.getSessionDir());
+				return success(id, "get_sessions", { sessions });
+			}
 
 			case "get_session_stats": {
 				const stats = session.getSessionStats();

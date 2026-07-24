@@ -10,7 +10,7 @@ import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { SessionEntry, SessionInfo, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 
 // ============================================================================
@@ -55,6 +55,7 @@ export type RpcCommand =
 	| { id?: string; type: "abort_bash" }
 
 	// Session
+	| { id?: string; type: "get_sessions"; scope: "cwd" | "all" }
 	| { id?: string; type: "get_session_stats" }
 	| { id?: string; type: "export_html"; outputPath?: string }
 	| { id?: string; type: "switch_session"; sessionPath: string }
@@ -106,6 +107,11 @@ export interface RpcSessionState {
 	messageCount: number;
 	pendingMessageCount: number;
 }
+
+export type RpcSessionInfo = Omit<SessionInfo, "created" | "modified"> & {
+	created: string;
+	modified: string;
+};
 
 // ============================================================================
 // RPC Responses (stdout)
@@ -180,6 +186,7 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "abort_bash"; success: true }
 
 	// Session
+	| { id?: string; type: "response"; command: "get_sessions"; success: true; data: { sessions: RpcSessionInfo[] } }
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }

@@ -172,6 +172,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	sessionManager: SessionManager;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,7 +182,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, sessionManager: runtimeHost.session.sessionManager, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -282,6 +283,47 @@ describe("RPC prompt response semantics", () => {
 
 			await sleep(150);
 		} finally {
+			await cleanup();
+		}
+	});
+});
+
+describe("RPC get_sessions", () => {
+	afterEach(() => {
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+	});
+
+	it("uses the configured session storage for each scope", async () => {
+		const { lineHandler, sessionManager, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		const cwd = "/current/project";
+		const sessionDir = "/custom/sessions";
+		const data = { sessions: [] };
+		vi.spyOn(sessionManager, "getCwd").mockReturnValue(cwd);
+		vi.spyOn(sessionManager, "getSessionDir").mockReturnValue(sessionDir);
+		vi.spyOn(sessionManager, "usesDefaultSessionDir").mockReturnValueOnce(false).mockReturnValueOnce(true);
+		const list = vi.spyOn(SessionManager, "list").mockResolvedValue([]);
+		const listAll = vi.spyOn(SessionManager, "listAll").mockResolvedValue([]);
+
+		try {
+			lineHandler(JSON.stringify({ id: "cwd", type: "get_sessions", scope: "cwd" }));
+			lineHandler(JSON.stringify({ id: "all-custom", type: "get_sessions", scope: "all" }));
+			lineHandler(JSON.stringify({ id: "all-default", type: "get_sessions", scope: "all" }));
+
+			await vi.waitFor(() => {
+				const responses = parseOutputLines(rpcIo.outputLines).filter(
+					(record) => record.type === "response" && record.command === "get_sessions",
+				);
+				expect(responses).toHaveLength(3);
+				for (const id of ["cwd", "all-custom", "all-default"]) {
+					expect(responses).toContainEqual({ id, type: "response", command: "get_sessions", success: true, data });
+				}
+			});
+			expect(list).toHaveBeenCalledOnce();
+			expect(list).toHaveBeenCalledWith(cwd, sessionDir);
+			expect(listAll.mock.calls).toEqual([[sessionDir], []]);
+		} finally {
+			vi.restoreAllMocks();
 			await cleanup();
 		}
 	});

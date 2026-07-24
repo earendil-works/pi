@@ -12,7 +12,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcResponse, RpcSessionInfo, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -344,6 +344,14 @@ export class RpcClient {
 	 */
 	async abortBash(): Promise<void> {
 		await this.send({ type: "abort_bash" });
+	}
+
+	/**
+	 * Get sessions for the current working directory or configured session storage.
+	 */
+	async getSessions(scope: "cwd" | "all"): Promise<RpcSessionInfo[]> {
+		const response = await this.send({ type: "get_sessions", scope });
+		return this.getData<{ sessions: RpcSessionInfo[] }>(response).sessions;
 	}
 
 	/**
