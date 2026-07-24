@@ -5,11 +5,17 @@ const trustedRequestCacheBreakpointAdapters = new WeakSet<ProviderStreams>();
 
 /**
  * Brand the repository-owned lazy API wrappers that implement the exhaustive
- * KnownApi marker contract. Open-ended ProviderStreams remain fail-closed.
+ * KnownApi marker contract. The returned identity snapshots and freezes the
+ * repository-owned methods so public callers cannot reuse the brand with
+ * replacement implementations. Open-ended ProviderStreams remain fail-closed.
  */
 export function trustRequestCacheBreakpointAdapter(streams: ProviderStreams): ProviderStreams {
-	trustedRequestCacheBreakpointAdapters.add(streams);
-	return streams;
+	const trustedStreams = Object.freeze({
+		stream: streams.stream,
+		streamSimple: streams.streamSimple,
+	});
+	trustedRequestCacheBreakpointAdapters.add(trustedStreams);
+	return trustedStreams;
 }
 
 export function isTrustedRequestCacheBreakpointAdapter(streams: ProviderStreams): boolean {

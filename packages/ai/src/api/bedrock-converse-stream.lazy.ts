@@ -1,3 +1,7 @@
+import {
+	stripRequestCacheBreakpoints,
+	trustRequestCacheBreakpointAdapter,
+} from "../request-cache-breakpoint-dispatch.ts";
 import type { ProviderStreams } from "../types.ts";
 import { lazyApi } from "./lazy.ts";
 
@@ -20,11 +24,18 @@ let bedrockModuleOverride: ProviderStreams | undefined;
  * build registers a statically imported module instead.
  */
 export function setBedrockProviderModule(module: ProviderStreams): void {
-	bedrockModuleOverride = module;
+	const stream = module.stream;
+	const streamSimple = module.streamSimple;
+	bedrockModuleOverride = {
+		stream: (model, context, options) => stream(model, stripRequestCacheBreakpoints(context), options),
+		streamSimple: (model, context, options) => streamSimple(model, stripRequestCacheBreakpoints(context), options),
+	};
 }
 
 export const bedrockConverseStreamApi = (): ProviderStreams =>
-	lazyApi(
-		async () =>
-			bedrockModuleOverride ?? ((await importNodeOnlyApi("./bedrock-converse-stream.ts")) as ProviderStreams),
+	trustRequestCacheBreakpointAdapter(
+		lazyApi(
+			async () =>
+				bedrockModuleOverride ?? ((await importNodeOnlyApi("./bedrock-converse-stream.ts")) as ProviderStreams),
+		),
 	);

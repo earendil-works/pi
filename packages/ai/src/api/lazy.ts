@@ -1,4 +1,3 @@
-import { trustRequestCacheBreakpointAdapter } from "../request-cache-breakpoint-dispatch.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 
@@ -64,13 +63,15 @@ export function lazyStream(
 /**
  * Wraps a dynamically imported API implementation module as `ProviderStreams`.
  * The module loads on first stream call; the host's import cache deduplicates
- * loads. Load failures terminate the returned stream with an error event.
+ * loads. Load failures terminate the returned stream with an error event. This
+ * generic public wrapper remains untrusted; repository-owned adapter factories
+ * opt into request-cache metadata through a private dispatch seam.
  */
 export function lazyApi(load: () => Promise<ProviderStreams>): ProviderStreams {
-	return trustRequestCacheBreakpointAdapter({
+	return {
 		stream: (model, context, options) =>
 			lazyStream(model, async () => (await load()).stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			lazyStream(model, async () => (await load()).streamSimple(model, context, options)),
-	});
+	};
 }

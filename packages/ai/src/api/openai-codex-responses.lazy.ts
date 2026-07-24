@@ -1,4 +1,6 @@
+import { trustRequestCacheBreakpointAdapter } from "../request-cache-breakpoint-dispatch.ts";
 import type { ProviderStreams } from "../types.ts";
 import { lazyApi } from "./lazy.ts";
 
-export const openAICodexResponsesApi = (): ProviderStreams => lazyApi(() => import("./openai-codex-responses.ts"));
+export const openAICodexResponsesApi = (): ProviderStreams =>
+	trustRequestCacheBreakpointAdapter(lazyApi(() => import("./openai-codex-responses.ts")));

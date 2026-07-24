@@ -1,31 +1,45 @@
 import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it } from "vitest";
+import { anthropicMessagesApi } from "../src/api/anthropic-messages.lazy.ts";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+import { azureOpenAIResponsesApi } from "../src/api/azure-openai-responses.lazy.ts";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
+import { bedrockConverseStreamApi, setBedrockProviderModule } from "../src/api/bedrock-converse-stream.lazy.ts";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { googleGenerativeAIApi } from "../src/api/google-generative-ai.lazy.ts";
 import { stream as streamGoogleGenerativeAI } from "../src/api/google-generative-ai.ts";
+import { googleVertexApi } from "../src/api/google-vertex.lazy.ts";
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
+import { mistralConversationsApi } from "../src/api/mistral-conversations.lazy.ts";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
+import { openAICodexResponsesApi } from "../src/api/openai-codex-responses.lazy.ts";
 import { stream as streamOpenAICodexResponses } from "../src/api/openai-codex-responses.ts";
+import { openAICompletionsApi } from "../src/api/openai-completions.lazy.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { openAIResponsesApi } from "../src/api/openai-responses.lazy.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import { piMessagesApi } from "../src/api/pi-messages.lazy.ts";
 import { stream as streamPiMessages } from "../src/api/pi-messages.ts";
 import { complete as completeCompat, registerApiProvider, resetApiProviders } from "../src/compat.ts";
 import {
+	type Api,
 	type Context,
 	CUSTOM_API_REQUEST_CACHE_BREAKPOINT_BEHAVIOR,
 	createModels,
 	createProvider,
 	hasRequestCacheBreakpoint,
 	type KnownApi,
+	lazyApi,
 	type Model,
 	markRequestCacheBreakpoint,
+	type ProviderStreams,
 	REQUEST_CACHE_BREAKPOINT,
 	REQUEST_CACHE_BREAKPOINT_BEHAVIOR_BY_API,
 	type StreamOptions,
 	selectRequestCacheBreakpoint,
 	type TextContent,
 } from "../src/index.ts";
+import { isTrustedRequestCacheBreakpointAdapter } from "../src/request-cache-breakpoint-dispatch.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
 const STOP_AFTER_PAYLOAD = new Error("payload captured");
@@ -42,6 +56,19 @@ const KNOWN_APIS = [
 	"google-vertex",
 	"pi-messages",
 ] as const satisfies readonly KnownApi[];
+
+const BUILTIN_LAZY_APIS = {
+	"openai-completions": openAICompletionsApi,
+	"mistral-conversations": mistralConversationsApi,
+	"openai-responses": openAIResponsesApi,
+	"azure-openai-responses": azureOpenAIResponsesApi,
+	"openai-codex-responses": openAICodexResponsesApi,
+	"anthropic-messages": anthropicMessagesApi,
+	"bedrock-converse-stream": bedrockConverseStreamApi,
+	"google-generative-ai": googleGenerativeAIApi,
+	"google-vertex": googleVertexApi,
+	"pi-messages": piMessagesApi,
+} satisfies Record<KnownApi, () => ProviderStreams>;
 
 const customModel: Model<"openai-responses"> = {
 	id: "custom-cache-contract",
@@ -66,6 +93,16 @@ function markedContext(): Context {
 			},
 		],
 	};
+}
+
+function firstUserContentBlock(context: Context): TextContent {
+	const message = context.messages[0];
+	if (message?.role !== "user" || !Array.isArray(message.content)) {
+		throw new Error("Expected first message to contain user content blocks");
+	}
+	const block = message.content[0];
+	if (block?.type !== "text") throw new Error("Expected first user content block to be text");
+	return block;
 }
 
 function contextHasRequestCacheBreakpoint(context: Context): boolean {
@@ -141,7 +178,7 @@ async function captureAdapterPayload(
 	return { payload, captures };
 }
 
-function completedStream(model: Model<"openai-responses">): AssistantMessageEventStream {
+function completedStream<TApi extends Api>(model: Model<TApi>): AssistantMessageEventStream {
 	const stream = new AssistantMessageEventStream();
 	const message = {
 		role: "assistant" as const,
@@ -173,6 +210,7 @@ describe("request cache breakpoint contract", () => {
 
 	it("keeps the KnownApi lowering policy exhaustive and fail-closed", () => {
 		expect(Object.keys(REQUEST_CACHE_BREAKPOINT_BEHAVIOR_BY_API)).toEqual(KNOWN_APIS);
+		expect(Object.keys(BUILTIN_LAZY_APIS)).toEqual(KNOWN_APIS);
 		expect(REQUEST_CACHE_BREAKPOINT_BEHAVIOR_BY_API).toEqual({
 			"openai-completions": "capability-gated",
 			"mistral-conversations": "strip",
@@ -186,6 +224,15 @@ describe("request cache breakpoint contract", () => {
 			"pi-messages": "strip",
 		});
 		expect(CUSTOM_API_REQUEST_CACHE_BREAKPOINT_BEHAVIOR).toBe("strip");
+	});
+
+	it("grants marker trust only through the fixed built-in lazy adapter factories", () => {
+		for (const createApi of Object.values(BUILTIN_LAZY_APIS)) {
+			const streams = createApi();
+			expect(isTrustedRequestCacheBreakpointAdapter(streams)).toBe(true);
+			expect(Object.isFrozen(streams)).toBe(true);
+		}
+		expect(isTrustedRequestCacheBreakpointAdapter(lazyApi(async () => piMessagesApi()))).toBe(false);
 	});
 
 	it("uses a symbol marker that cannot be forged through model-visible JSON", () => {
@@ -286,6 +333,71 @@ describe("request cache breakpoint contract", () => {
 
 		expect(receivedContext).toBeDefined();
 		expect(contextHasRequestCacheBreakpoint(receivedContext!)).toBe(false);
+		expect(contextHasRequestCacheBreakpoint(context)).toBe(true);
+	});
+
+	it("keeps public lazyApi wrappers untrusted for both Models dispatch paths", async () => {
+		const receivedContexts: Context[] = [];
+		const streams = lazyApi(async () => ({
+			stream: (model: Model<"openai-responses">, context: Context) => {
+				receivedContexts.push(context);
+				return completedStream(model);
+			},
+			streamSimple: (model: Model<"openai-responses">, context: Context) => {
+				receivedContexts.push(context);
+				return completedStream(model);
+			},
+		}));
+		const provider = createProvider({
+			id: customModel.provider,
+			auth: {
+				apiKey: {
+					name: "Test",
+					resolve: async () => ({ auth: { apiKey: "test" } }),
+				},
+			},
+			models: [customModel],
+			api: streams,
+		});
+		const models = createModels();
+		models.setProvider(provider);
+		const context = markedContext();
+
+		await models.complete(customModel, context, { apiKey: "test" });
+		await models.completeSimple(customModel, context, { apiKey: "test" });
+
+		expect(receivedContexts).toHaveLength(2);
+		for (const receivedContext of receivedContexts) {
+			expect(contextHasRequestCacheBreakpoint(receivedContext)).toBe(false);
+			expect(Reflect.ownKeys(firstUserContentBlock(receivedContext))).not.toContain(REQUEST_CACHE_BREAKPOINT);
+		}
+		expect(contextHasRequestCacheBreakpoint(context)).toBe(true);
+		expect(Reflect.ownKeys(firstUserContentBlock(context))).toContain(REQUEST_CACHE_BREAKPOINT);
+	});
+
+	it("strips markers before a public Bedrock module override receives context", async () => {
+		const receivedContexts: Context[] = [];
+		setBedrockProviderModule({
+			stream: (model, context) => {
+				receivedContexts.push(context);
+				return completedStream(model);
+			},
+			streamSimple: (model, context) => {
+				receivedContexts.push(context);
+				return completedStream(model);
+			},
+		});
+		const streams = bedrockConverseStreamApi();
+		const model = createSerializationModel("bedrock-converse-stream");
+		const context = markedContext();
+
+		await streams.stream(model, context).result();
+		await streams.streamSimple(model, context).result();
+
+		expect(receivedContexts).toHaveLength(2);
+		for (const receivedContext of receivedContexts) {
+			expect(contextHasRequestCacheBreakpoint(receivedContext)).toBe(false);
+		}
 		expect(contextHasRequestCacheBreakpoint(context)).toBe(true);
 	});
 

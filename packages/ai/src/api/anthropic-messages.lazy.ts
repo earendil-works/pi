@@ -1,4 +1,6 @@
+import { trustRequestCacheBreakpointAdapter } from "../request-cache-breakpoint-dispatch.ts";
 import type { ProviderStreams } from "../types.ts";
 import { lazyApi } from "./lazy.ts";
 
-export const anthropicMessagesApi = (): ProviderStreams => lazyApi(() => import("./anthropic-messages.ts"));
+export const anthropicMessagesApi = (): ProviderStreams =>
+	trustRequestCacheBreakpointAdapter(lazyApi(() => import("./anthropic-messages.ts")));
