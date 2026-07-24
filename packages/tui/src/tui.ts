@@ -1290,7 +1290,12 @@ export class TUI extends Container {
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
-				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
+				buffer += "\x1b[2J\x1b[H"; // Clear screen + home
+				// Only clear scrollback if PI_NO_SCROLLBACK_CLEAR is not set
+				// Setting PI_NO_SCROLLBACK_CLEAR=1 preserves terminal scrollback during full redraws
+				if (process.env.PI_NO_SCROLLBACK_CLEAR !== "1") {
+					buffer += "\x1b[3J"; // Clear scrollback
+				}
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
