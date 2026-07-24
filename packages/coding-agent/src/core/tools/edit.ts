@@ -102,7 +102,17 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	if (typeof args.edits === "string") {
 		try {
 			const parsed = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
+			if (Array.isArray(parsed)) {
+				// Validate each element has required oldText and newText as strings
+				const valid = parsed.every(
+					(item) =>
+						item &&
+						typeof item === "object" &&
+						typeof (item as Record<string, unknown>).oldText === "string" &&
+						typeof (item as Record<string, unknown>).newText === "string",
+				);
+				if (valid) args.edits = parsed;
+			}
 		} catch {}
 	}
 

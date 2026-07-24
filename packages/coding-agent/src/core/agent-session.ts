@@ -2638,6 +2638,11 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+
+		// Don't retry tool validation errors - they indicate the LLM sent malformed tool arguments
+		// which won't be fixed by retrying the same provider call.
+		if (message.errorMessage?.includes("Validation failed for tool")) return false;
+
 		return isRetryableAssistantError(message);
 	}
 
