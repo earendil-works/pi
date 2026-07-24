@@ -42,6 +42,11 @@ export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
+export {
+	isProviderOutcomeUncertainDiagnostic,
+	PROVIDER_OUTCOME_UNCERTAIN_DIAGNOSTIC_TYPE,
+	type ProviderOutcomeUncertainDiagnostic,
+} from "./utils/provider-outcome.ts";
 export * from "./utils/retry.ts";
 export { contentText } from "./utils/text.ts";
 export * from "./utils/typebox-helpers.ts";

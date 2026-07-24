@@ -36,7 +36,7 @@ function createModel(): Model<"openai-codex-responses"> {
 }
 
 describe("OpenAI Codex owner-turn continuation settlement", () => {
-	it("clears continuation payload state without closing the reusable websocket", async () => {
+	it("clears continuation payload state without closing a healthy socket and drops it on disposal", async () => {
 		const sentBodies: Array<{
 			input: unknown[];
 			previous_response_id?: string;
@@ -136,7 +136,7 @@ describe("OpenAI Codex owner-turn continuation settlement", () => {
 
 		clearOpenAICodexWebSocketContinuation(sessionId);
 
-		await streamOpenAICodexResponses(model, continuedContext, {
+		const afterSettlement = await streamOpenAICodexResponses(model, continuedContext, {
 			apiKey: token,
 			sessionId,
 			transport: "websocket-cached",
@@ -149,5 +149,28 @@ describe("OpenAI Codex owner-turn continuation settlement", () => {
 			{ role: "user", content: [{ type: "input_text", text: "owner" }] },
 			{ role: "user", content: [{ type: "input_text", text: "same-turn observation" }] },
 		]);
+
+		closeOpenAICodexWebSocketSessions(sessionId);
+		const afterDisposalContext: Context = {
+			...continuedContext,
+			messages: [
+				...continuedContext.messages,
+				afterSettlement,
+				{ role: "user", content: "after disposal", timestamp: 3 },
+			],
+		};
+		await streamOpenAICodexResponses(model, afterDisposalContext, {
+			apiKey: token,
+			sessionId,
+			transport: "websocket-cached",
+		}).result();
+
+		expect(connections).toBe(2);
+		expect(sentBodies).toHaveLength(4);
+		expect(sentBodies[3]?.previous_response_id).toBeUndefined();
+		expect(sentBodies[3]?.input.at(-1)).toEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "after disposal" }],
+		});
 	});
 });

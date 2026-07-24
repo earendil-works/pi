@@ -11,7 +11,8 @@ import {
 	stream as streamOpenAICodexResponses,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import { isProviderOutcomeUncertainDiagnostic } from "../src/index.ts";
+import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
@@ -34,6 +35,60 @@ function mockToken(): string {
 		"utf8",
 	).toString("base64");
 	return `aaa.${payload}.bbb`;
+}
+
+function expectUncertainOutcomeDiagnostic(
+	result: AssistantMessage,
+	transport: "websocket" | "sse",
+	phase: "dispatched" | "stream_started",
+): void {
+	expect(result.errorMessage).toBe(
+		"Provider dispatch may have started remote work; this request was not retried or replayed.",
+	);
+	expect(result.diagnostics).toEqual([
+		{
+			type: "provider_outcome_uncertain",
+			timestamp: expect.any(Number),
+			error: {
+				message: "Provider dispatch may have started remote work; this request was not retried or replayed.",
+			},
+			details: {
+				outcome: "uncertain",
+				transport,
+				phase,
+				replayed: false,
+			},
+		},
+	]);
+	expect(isProviderOutcomeUncertainDiagnostic(result.diagnostics?.[0])).toBe(true);
+}
+
+function expectSerializedMessageExcludes(result: AssistantMessage, ...canaries: string[]): void {
+	const serialized = JSON.stringify(result);
+	for (const canary of canaries) {
+		expect(serialized).not.toContain(canary);
+	}
+}
+
+function expectPreDispatchFallbackDiagnostic(
+	result: AssistantMessage,
+	configuredTransport: "auto" | "websocket" | "websocket-cached",
+): void {
+	expect(result.diagnostics).toEqual([
+		{
+			type: "provider_transport_fallback",
+			timestamp: expect.any(Number),
+			error: {
+				message: "WebSocket setup failed before provider dispatch; this request continued once using SSE.",
+			},
+			details: {
+				outcome: "not_dispatched",
+				configuredTransport,
+				fallbackTransport: "sse",
+				phase: "pre_dispatch",
+			},
+		},
+	]);
 }
 
 function decodeCodexRequestBody(body: RequestInit["body"] | undefined): Record<string, unknown> | null {
@@ -94,6 +149,31 @@ function buildSSEPayload({
 }
 
 describe("openai-codex streaming", () => {
+	it("accepts only the exact bounded uncertain-outcome diagnostic shape", () => {
+		const diagnostic = {
+			type: "provider_outcome_uncertain",
+			timestamp: 1,
+			error: {
+				message: "Provider dispatch may have started remote work; this request was not retried or replayed.",
+			},
+			details: {
+				outcome: "uncertain",
+				transport: "websocket",
+				phase: "dispatched",
+				replayed: false,
+			},
+		};
+		const symbolBearing = { ...diagnostic };
+		Object.defineProperty(symbolBearing, Symbol("raw-provider-detail"), {
+			value: "SECRET_CANARY",
+			enumerable: false,
+		});
+
+		expect(isProviderOutcomeUncertainDiagnostic(diagnostic)).toBe(true);
+		expect(isProviderOutcomeUncertainDiagnostic({ ...diagnostic, unexpected: "SECRET_CANARY" })).toBe(false);
+		expect(isProviderOutcomeUncertainDiagnostic(symbolBearing)).toBe(false);
+	});
+
 	it("streams SSE responses into AssistantMessageEventStream", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
@@ -374,11 +454,13 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			transport: "sse",
 			timeoutMs: 10,
+			maxRetries: 3,
 		}).result();
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toBe("Codex SSE response headers timed out after 10ms");
+		expectUncertainOutcomeDiagnostic(result, "sse", "dispatched");
+		expectSerializedMessageExcludes(result, "response headers timed out");
 	});
 
 	it("aborts SSE body reads after response headers arrive", async () => {
@@ -482,8 +564,9 @@ describe("openai-codex streaming", () => {
 		}
 
 		const result = await resultStream.result();
-		expect(result.stopReason).toBe("aborted");
-		expect(result.errorMessage).toBe("Request was aborted");
+		expect(result.stopReason).toBe("error");
+		expectUncertainOutcomeDiagnostic(result, "sse", "stream_started");
+		expectSerializedMessageExcludes(result, "Request was aborted");
 		expect(events).toContain("text_delta:one");
 		expect(events).not.toContain("text_delta:two");
 		expect(cancelled).toBe(true);
@@ -1219,6 +1302,7 @@ describe("openai-codex streaming", () => {
 		const token = mockToken();
 		const encoder = new TextEncoder();
 		const sse = buildSSEPayload({ status: "completed" });
+		let connections = 0;
 
 		const fetchMock = vi.fn(async (input: string | URL) => {
 			const url = typeof input === "string" ? input : input.toString();
@@ -1240,6 +1324,10 @@ describe("openai-codex streaming", () => {
 
 		class MockWebSocket {
 			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor() {
+				connections++;
+			}
 
 			addEventListener(type: string, listener: (event: unknown) => void): void {
 				let listeners = this.listeners.get(type);
@@ -1286,47 +1374,109 @@ describe("openai-codex streaming", () => {
 			transport: "auto",
 			timeoutMs: 300_000,
 			websocketConnectTimeoutMs: 50,
+			maxRetries: 3,
 		}).result();
 
 		await vi.advanceTimersByTimeAsync(50);
 
 		const result = await resultPromise;
 		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
+		expectPreDispatchFallbackDiagnostic(result, "auto");
+		expectSerializedMessageExcludes(result, "connect timeout");
+		expect(connections).toBe(1);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(getOpenAICodexWebSocketDebugStats("ws-connect-timeout")).toMatchObject({
 			websocketFailures: 1,
 			sseFallbacks: 1,
 			websocketFallbackActive: true,
-			lastWebSocketError: "WebSocket connect timeout after 50ms",
+			lastWebSocketError: "WebSocket setup failed before provider dispatch; this request continued once using SSE.",
 		});
 	});
 
-	it("reconnects once when the websocket connection limit is reached before output starts", async () => {
+	it("does not fall back when websocket send fails before dispatch is confirmed", async () => {
+		const token = mockToken();
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		let connections = 0;
+		let sendAttempts = 0;
+
+		class MockWebSocket extends EventTarget {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+
+			constructor() {
+				super();
+				connections++;
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(): void {
+				sendAttempts++;
+				throw new Error("raw send canary BODY_CANARY STACK_CANARY SECRET_CANARY");
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+
+		const result = await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+			},
+			{ apiKey: token, transport: "auto", maxRetries: 3 },
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("WebSocket request could not be dispatched; it was not retried or replayed.");
+		expect(result.diagnostics).toBeUndefined();
+		expectSerializedMessageExcludes(result, "raw send canary", "BODY_CANARY", "STACK_CANARY", "SECRET_CANARY");
+		expect(connections).toBe(1);
+		expect(sendAttempts).toBe(1);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("does not reconnect when the websocket reports a connection limit after dispatch", async () => {
 		const token = mockToken();
 		let connections = 0;
+		let requests = 0;
 
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
 		class MockWebSocket extends EventTarget {
-			private readonly limitReached = connections++ === 0;
-
 			constructor() {
 				super();
+				connections++;
 				queueMicrotask(() => this.dispatchEvent(new Event("open")));
 			}
 
 			send(): void {
-				const event = this.limitReached
-					? { type: "error", error: { code: "websocket_connection_limit_reached" } }
-					: {
-							type: "response.completed",
-							response: {
-								id: "resp_1",
-								status: "completed",
-								usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-							},
-						};
+				requests++;
+				const event = {
+					type: "error",
+					error: {
+						code: "websocket_connection_limit_reached",
+						message: "raw connection-limit canary BODY_CANARY STACK_CANARY SECRET_CANARY",
+					},
+				};
 				queueMicrotask(() => {
 					this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify(event) }));
 				});
@@ -1355,15 +1505,25 @@ describe("openai-codex streaming", () => {
 			{ systemPrompt: "", messages: [] },
 			{
 				apiKey: token,
+				maxRetries: 3,
 			},
 		).result();
 
-		expect(result.stopReason).toBe("stop");
-		expect(connections).toBe(2);
+		expect(result.stopReason).toBe("error");
+		expectUncertainOutcomeDiagnostic(result, "websocket", "stream_started");
+		expectSerializedMessageExcludes(
+			result,
+			"raw connection-limit canary",
+			"BODY_CANARY",
+			"STACK_CANARY",
+			"SECRET_CANARY",
+		);
+		expect(connections).toBe(1);
+		expect(requests).toBe(1);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("falls back to SSE when a websocket is idle before the first event", async () => {
+	it("does not fall back when a websocket is idle after send but before the first event", async () => {
 		vi.useFakeTimers();
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
@@ -1449,6 +1609,7 @@ describe("openai-codex streaming", () => {
 			sessionId: "ws-idle-before-start",
 			transport: "auto",
 			timeoutMs: 50,
+			maxRetries: 3,
 		}).result();
 
 		await vi.advanceTimersByTimeAsync(0);
@@ -1456,14 +1617,115 @@ describe("openai-codex streaming", () => {
 		await vi.advanceTimersByTimeAsync(50);
 
 		const result = await resultPromise;
-		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(result.stopReason).toBe("error");
+		expectUncertainOutcomeDiagnostic(result, "websocket", "dispatched");
+		expectSerializedMessageExcludes(result, "WebSocket idle timeout after 50ms");
+		expect(sentBodies).toHaveLength(1);
+		expect(fetchMock).not.toHaveBeenCalled();
 		expect(getOpenAICodexWebSocketDebugStats("ws-idle-before-start")).toMatchObject({
-			websocketFailures: 1,
-			sseFallbacks: 1,
-			websocketFallbackActive: true,
+			requests: 1,
+			websocketFailures: 0,
+			sseFallbacks: 0,
 		});
 	});
+
+	it.each(["cancel", "close", "network", "protocol"] as const)(
+		"does not replay a websocket %s after dispatch",
+		async (failureMode) => {
+			const token = mockToken();
+			const controller = new AbortController();
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
+			let connections = 0;
+			let requests = 0;
+
+			class MockWebSocket extends EventTarget {
+				static OPEN = 1;
+				readyState = MockWebSocket.OPEN;
+
+				constructor() {
+					super();
+					connections++;
+					queueMicrotask(() => this.dispatchEvent(new Event("open")));
+				}
+
+				send(): void {
+					requests++;
+					queueMicrotask(() => {
+						switch (failureMode) {
+							case "cancel":
+								controller.abort();
+								break;
+							case "close":
+								this.readyState = 3;
+								this.dispatchEvent(
+									Object.assign(new Event("close"), {
+										code: 1011,
+										reason: "raw close canary BODY_CANARY STACK_CANARY SECRET_CANARY",
+										wasClean: false,
+									}),
+								);
+								break;
+							case "network":
+								this.dispatchEvent(
+									Object.assign(new Event("error"), {
+										message: "raw network canary BODY_CANARY STACK_CANARY SECRET_CANARY",
+									}),
+								);
+								break;
+							case "protocol":
+								this.dispatchEvent(
+									Object.assign(new Event("message"), {
+										data: "{raw websocket protocol canary BODY_CANARY STACK_CANARY SECRET_CANARY}",
+									}),
+								);
+								break;
+						}
+					});
+				}
+
+				close(): void {
+					this.readyState = 3;
+				}
+			}
+
+			vi.stubGlobal("WebSocket", MockWebSocket);
+
+			const model: Model<"openai-codex-responses"> = {
+				id: "gpt-5.1-codex",
+				name: "GPT-5.1 Codex",
+				api: "openai-codex-responses",
+				provider: "openai-codex",
+				baseUrl: "https://chatgpt.com/backend-api",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 400000,
+				maxTokens: 128000,
+			};
+
+			const result = await streamOpenAICodexResponses(
+				model,
+				{
+					systemPrompt: "You are a helpful assistant.",
+					messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+				},
+				{
+					apiKey: token,
+					transport: "auto",
+					signal: controller.signal,
+					maxRetries: 3,
+				},
+			).result();
+
+			expect(result.stopReason).toBe("error");
+			expectUncertainOutcomeDiagnostic(result, "websocket", "dispatched");
+			expectSerializedMessageExcludes(result, "canary", "BODY_CANARY", "STACK_CANARY", "SECRET_CANARY");
+			expect(connections).toBe(1);
+			expect(requests).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
 
 	it("errors when a websocket is idle after the stream started", async () => {
 		vi.useFakeTimers();
@@ -1539,6 +1801,7 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			transport: "auto",
 			timeoutMs: 50,
+			maxRetries: 3,
 		}).result();
 
 		await vi.advanceTimersByTimeAsync(0);
@@ -1546,7 +1809,8 @@ describe("openai-codex streaming", () => {
 
 		const result = await resultPromise;
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toBe("WebSocket idle timeout after 50ms");
+		expectUncertainOutcomeDiagnostic(result, "websocket", "stream_started");
+		expectSerializedMessageExcludes(result, "WebSocket idle timeout after 50ms");
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
@@ -1802,152 +2066,53 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
-	it.each(["websocket", "sse"] as const)(
-		"recovers a missing cached websocket continuation via %s",
-		async (recoveryTransport) => {
+	it.each([0, 2])(
+		"does not replay previous_response_not_found after websocket dispatch with maxRetries=%i",
+		async (maxRetries) => {
 			const token = mockToken();
-			const sessionId = `missing-continuation-${recoveryTransport}`;
-			const encoder = new TextEncoder();
-			const fetchMock = vi.fn(
-				async () =>
-					new Response(
-						new ReadableStream<Uint8Array>({
-							start(controller) {
-								controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
-								controller.close();
-							},
-						}),
-						{ status: 200, headers: { "content-type": "text/event-stream" } },
-					),
-			);
+			const fetchMock = vi.fn();
 			vi.stubGlobal("fetch", fetchMock);
-			const sentBodies: Array<{
-				connectionId: number;
-				input: unknown[];
-				previous_response_id?: string;
-			}> = [];
 			let connections = 0;
+			let requests = 0;
 
-			class MockWebSocket {
+			class MockWebSocket extends EventTarget {
 				static OPEN = 1;
-				static CLOSED = 3;
 				readyState = MockWebSocket.OPEN;
-				private readonly connectionId = ++connections;
-				private listeners = new Map<string, Set<(event: unknown) => void>>();
 
-				constructor(_url: string, _protocols?: string | string[] | { headers?: Record<string, string> }) {
-					queueMicrotask(() => this.dispatch("open", {}));
+				constructor() {
+					super();
+					connections++;
+					queueMicrotask(() => this.dispatchEvent(new Event("open")));
 				}
 
-				addEventListener(type: string, listener: (event: unknown) => void): void {
-					let listeners = this.listeners.get(type);
-					if (!listeners) {
-						listeners = new Set();
-						this.listeners.set(type, listeners);
-					}
-					listeners.add(listener);
-				}
-
-				removeEventListener(type: string, listener: (event: unknown) => void): void {
-					this.listeners.get(type)?.delete(listener);
-				}
-
-				send(data: string): void {
-					const body = JSON.parse(data) as { input: unknown[]; previous_response_id?: string };
-					sentBodies.push({ ...body, connectionId: this.connectionId });
-					if (sentBodies.length === 2) {
-						this.dispatchEvents([
-							{
-								type: "codex.rate_limits",
-								plan_type: "plus",
-								rate_limits: {
-									allowed: true,
-									limit_reached: false,
-									primary: {
-										used_percent: 7,
-										window_minutes: 10080,
-										reset_after_seconds: 556112,
-										reset_at: 1785269351,
+				send(): void {
+					requests++;
+					const event =
+						requests === 1
+							? {
+									type: "error",
+									status: 400,
+									error: {
+										code: "previous_response_not_found",
+										message: "raw previous-response body BODY_CANARY STACK_CANARY SECRET_CANARY",
+										param: "previous_response_id",
 									},
-									secondary: null,
-								},
-								code_review_rate_limits: null,
-								additional_rate_limits: null,
-								credits: { has_credits: false, unlimited: false, balance: "0" },
-								promo: null,
-							},
-							{
-								type: "error",
-								status: 400,
-								error: {
-									code: "previous_response_not_found",
-									message: "Previous response with id 'resp_1' not found.",
-									param: "previous_response_id",
-								},
-							},
-						]);
-						return;
-					}
-					if (sentBodies.length === 3 && recoveryTransport === "sse") {
-						queueMicrotask(() => this.dispatch("error", { message: "retry websocket failed" }));
-						return;
-					}
-
-					const response =
-						sentBodies.length === 1
-							? { responseId: "resp_1", messageId: "msg_1", text: "Hello" }
-							: { responseId: "resp_2", messageId: "msg_2", text: "Recovered" };
-					this.dispatchEvents([
-						{ type: "response.created", response: { id: response.responseId } },
-						{
-							type: "response.output_item.added",
-							output_index: 0,
-							item: {
-								type: "message",
-								id: response.messageId,
-								role: "assistant",
-								status: "in_progress",
-								content: [],
-							},
-						},
-						{
-							type: "response.output_item.done",
-							output_index: 0,
-							item: {
-								type: "message",
-								id: response.messageId,
-								role: "assistant",
-								status: "completed",
-								content: [{ type: "output_text", text: response.text }],
-							},
-						},
-						{
-							type: "response.completed",
-							response: {
-								id: response.responseId,
-								status: "completed",
-								usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-							},
-						},
-					]);
-				}
-
-				close(): void {
-					this.readyState = MockWebSocket.CLOSED;
-				}
-
-				private dispatchEvents(events: unknown[]): void {
+								}
+							: {
+									type: "response.completed",
+									response: {
+										id: "resp_replayed",
+										status: "completed",
+										usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+									},
+								};
 					queueMicrotask(() => {
-						for (const event of events) {
-							this.dispatch("message", { data: JSON.stringify(event) });
-						}
+						this.dispatchEvent(Object.assign(new Event("message"), { data: JSON.stringify(event) }));
 					});
 				}
 
-				private dispatch(type: string, event: unknown): void {
-					for (const listener of this.listeners.get(type) ?? []) {
-						listener(event);
-					}
+				close(): void {
+					this.readyState = 3;
 				}
 			}
 
@@ -1965,144 +2130,108 @@ describe("openai-codex streaming", () => {
 				contextWindow: 400000,
 				maxTokens: 128000,
 			};
-			const firstContext: Context = {
-				systemPrompt: "You are a helpful assistant.",
-				messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
-			};
 
-			const first = await streamOpenAICodexResponses(model, firstContext, {
-				apiKey: token,
-				sessionId,
-				transport: "websocket-cached",
-			}).result();
-			const secondContext: Context = {
-				systemPrompt: "You are a helpful assistant.",
-				messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
-			};
-			const eventTypes: string[] = [];
-			const secondStream = streamOpenAICodexResponses(model, secondContext, {
-				apiKey: token,
-				sessionId,
-				transport: "websocket-cached",
-			});
-			for await (const event of secondStream) {
-				eventTypes.push(event.type);
-			}
-			const second = await secondStream.result();
+			const result = await streamOpenAICodexResponses(
+				model,
+				{
+					systemPrompt: "You are a helpful assistant.",
+					messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+				},
+				{
+					apiKey: token,
+					sessionId: `missing-continuation-no-replay-${maxRetries}`,
+					transport: "websocket-cached",
+					maxRetries,
+				},
+			).result();
 
-			expect(second.stopReason).toBe("stop");
-			expect(second.content.find((content) => content.type === "text")?.text).toBe(
-				recoveryTransport === "sse" ? "Hello" : "Recovered",
+			expect(result.stopReason).toBe("error");
+			expectUncertainOutcomeDiagnostic(result, "websocket", "stream_started");
+			expectSerializedMessageExcludes(
+				result,
+				"raw previous-response body",
+				"BODY_CANARY",
+				"STACK_CANARY",
+				"SECRET_CANARY",
 			);
-			expect(eventTypes.filter((type) => type === "start")).toHaveLength(1);
-			expect(eventTypes).not.toContain("error");
-			expect(connections).toBe(2);
-			expect(sentBodies).toHaveLength(3);
-			expect(sentBodies.map((body) => body.connectionId)).toEqual([1, 1, 2]);
-			expect(sentBodies[1].previous_response_id).toBe("resp_1");
-			expect(sentBodies[1].input).toEqual([{ role: "user", content: [{ type: "input_text", text: "Now finish" }] }]);
-			expect(sentBodies[2].previous_response_id).toBeUndefined();
-			expect(sentBodies[2].input).toHaveLength(3);
-			expect(sentBodies[2].input.at(-1)).toEqual({
-				role: "user",
-				content: [{ type: "input_text", text: "Now finish" }],
-			});
-			expect(fetchMock).toHaveBeenCalledTimes(recoveryTransport === "sse" ? 1 : 0);
-			expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
-				requests: 3,
-				connectionsCreated: 2,
-				connectionsReused: 1,
-				fullContextRequests: 2,
-				deltaRequests: 1,
-				websocketFailures: recoveryTransport === "sse" ? 1 : 0,
-				sseFallbacks: recoveryTransport === "sse" ? 1 : 0,
-			});
+			expect(connections).toBe(1);
+			expect(requests).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
 		},
 	);
 
-	it.each([
-		["retry-after-ms", () => ({ "content-type": "application/json", "retry-after-ms": "1500" }), 1500],
-		["retry-after seconds", () => ({ "content-type": "application/json", "retry-after": "60" }), 60_000],
-		[
-			"retry-after HTTP date",
-			() => ({ "content-type": "application/json", "retry-after": new Date(Date.now() + 45_000).toUTCString() }),
-			45_000,
-		],
-	] as const)("uses %s for SSE retries", async (_name, makeHeaders, expectedDelay) => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-05-13T00:00:00Z"));
-		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-		const token = mockToken();
-		const encoder = new TextEncoder();
-		const sse = buildSSEPayload({ status: "completed" });
-		let codexRequests = 0;
-
-		const fetchMock = vi.fn(async (input: string | URL) => {
-			const url = typeof input === "string" ? input : input.toString();
-			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
-				throw new Error(`Unexpected URL: ${url}`);
-			}
-
-			codexRequests++;
-			if (codexRequests === 1) {
-				return new Response(JSON.stringify({ error: { code: "rate_limit_exceeded", message: "rate limited" } }), {
-					status: 429,
-					headers: makeHeaders(),
-				});
-			}
-
-			return new Response(
-				new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(sse));
-						controller.close();
+	it.each([0, 3])(
+		"does not retry an SSE HTTP rejection after fetch invocation with maxRetries=%i",
+		async (maxRetries) => {
+			const token = mockToken();
+			let responseBodyCancelled = 0;
+			const fetchMock = vi.fn(async (input: string | URL) => {
+				const url = typeof input === "string" ? input : input.toString();
+				if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+					throw new Error(`Unexpected URL: ${url}`);
+				}
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode(
+									JSON.stringify({
+										error: {
+											code: "rate_limit_exceeded",
+											message: "raw HTTP canary BODY_CANARY STACK_CANARY SECRET_CANARY",
+										},
+									}),
+								),
+							);
+						},
+						cancel() {
+							responseBodyCancelled += 1;
+						},
+					}),
+					{
+						status: 429,
+						headers: { "content-type": "application/json", "retry-after": "0" },
 					},
-				}),
-				{ status: 200, headers: { "content-type": "text/event-stream" } },
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
+				);
+			});
+			vi.stubGlobal("fetch", fetchMock);
 
-		const model: Model<"openai-codex-responses"> = {
-			id: "gpt-5.1-codex",
-			name: "GPT-5.1 Codex",
-			api: "openai-codex-responses",
-			provider: "openai-codex",
-			baseUrl: "https://chatgpt.com/backend-api",
-			reasoning: true,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 400000,
-			maxTokens: 128000,
-		};
-		const context: Context = {
-			systemPrompt: "You are a helpful assistant.",
-			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
-		};
+			const model: Model<"openai-codex-responses"> = {
+				id: "gpt-5.1-codex",
+				name: "GPT-5.1 Codex",
+				api: "openai-codex-responses",
+				provider: "openai-codex",
+				baseUrl: "https://chatgpt.com/backend-api",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 400000,
+				maxTokens: 128000,
+			};
+			const context: Context = {
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+			};
 
-		const resultPromise = streamOpenAICodexResponses(model, context, {
-			apiKey: token,
-			transport: "sse",
-			maxRetries: 1,
-		}).result();
-		await vi.advanceTimersByTimeAsync(0);
-		expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expectedDelay);
+			const result = await streamOpenAICodexResponses(model, context, {
+				apiKey: token,
+				transport: "sse",
+				maxRetries,
+			}).result();
 
-		await vi.advanceTimersToNextTimerAsync();
-		const result = await resultPromise;
-		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
-		expect(codexRequests).toBe(2);
-	});
+			expect(result.stopReason).toBe("error");
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(responseBodyCancelled).toBe(1);
+			expectUncertainOutcomeDiagnostic(result, "sse", "dispatched");
+			expectSerializedMessageExcludes(result, "raw HTTP canary", "BODY_CANARY", "STACK_CANARY", "SECRET_CANARY");
+		},
+	);
 
-	it.each([429, 503])("fails immediately when a %i retry delay exceeds the limit", async (status) => {
+	it("does not retry an SSE network failure after fetch invocation", async () => {
 		const token = mockToken();
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(JSON.stringify({ error: { code: "temporarily_unavailable", message: "retry later" } }), {
-					status,
-					headers: { "content-type": "application/json", "retry-after": "2" },
-				}),
-		);
+		const fetchMock = vi.fn(async () => {
+			throw new Error("raw network canary BODY_CANARY STACK_CANARY SECRET_CANARY");
+		});
 		vi.stubGlobal("fetch", fetchMock);
 
 		const model: Model<"openai-codex-responses"> = {
@@ -2126,12 +2255,12 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 3,
-			maxRetryDelayMs: 1000,
 		}).result();
 
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toBe("Server requested 2s retry delay (max: 1s)");
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expectUncertainOutcomeDiagnostic(result, "sse", "dispatched");
+		expectSerializedMessageExcludes(result, "raw network canary", "BODY_CANARY", "STACK_CANARY", "SECRET_CANARY");
 	});
 
 	it("zstd-compresses SSE request bodies", async () => {
@@ -2207,33 +2336,21 @@ describe("openai-codex streaming", () => {
 		expect(capturedBody).toBeInstanceOf(Uint8Array);
 	});
 
-	it("uses exponential backoff across repeated SSE retries without retry headers", async () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-05-13T00:00:00Z"));
-		const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+	it("does not retry an SSE protocol failure after fetch invocation", async () => {
 		const token = mockToken();
 		const encoder = new TextEncoder();
-		const sse = buildSSEPayload({ status: "completed" });
-		let codexRequests = 0;
 
 		const fetchMock = vi.fn(async (input: string | URL) => {
 			const url = typeof input === "string" ? input : input.toString();
 			if (url !== "https://chatgpt.com/backend-api/codex/responses") {
 				throw new Error(`Unexpected URL: ${url}`);
 			}
-
-			codexRequests++;
-			if (codexRequests <= 3) {
-				return new Response(JSON.stringify({ error: { code: "rate_limit_exceeded", message: "rate limited" } }), {
-					status: 429,
-					headers: { "content-type": "application/json" },
-				});
-			}
-
 			return new Response(
 				new ReadableStream<Uint8Array>({
 					start(controller) {
-						controller.enqueue(encoder.encode(sse));
+						controller.enqueue(
+							encoder.encode("data: {raw protocol canary BODY_CANARY STACK_CANARY SECRET_CANARY}\n\n"),
+						);
 						controller.close();
 					},
 				}),
@@ -2259,28 +2376,15 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
 		};
 
-		const retryTimeoutDelays = () =>
-			setTimeoutSpy.mock.calls
-				.map((call) => call[1])
-				.filter((delay): delay is number => delay === 1000 || delay === 2000 || delay === 4000);
-
-		const resultPromise = streamOpenAICodexResponses(model, context, {
+		const result = await streamOpenAICodexResponses(model, context, {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 3,
 		}).result();
-		await vi.advanceTimersByTimeAsync(0);
-		expect(retryTimeoutDelays()).toEqual([1000]);
 
-		await vi.advanceTimersToNextTimerAsync();
-		expect(retryTimeoutDelays()).toEqual([1000, 2000]);
-
-		await vi.advanceTimersToNextTimerAsync();
-		expect(retryTimeoutDelays()).toEqual([1000, 2000, 4000]);
-
-		await vi.advanceTimersToNextTimerAsync();
-		const result = await resultPromise;
-		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
-		expect(codexRequests).toBe(4);
+		expect(result.stopReason).toBe("error");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expectUncertainOutcomeDiagnostic(result, "sse", "dispatched");
+		expectSerializedMessageExcludes(result, "raw protocol canary", "BODY_CANARY", "STACK_CANARY", "SECRET_CANARY");
 	});
 });

@@ -149,6 +149,54 @@ describe("AgentHarness committed owner identity", () => {
 		});
 	});
 
+	it.each([
+		[
+			"provider error",
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed" }),
+			"error",
+		],
+		[
+			"provider cancellation",
+			() => fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "request aborted" }),
+			"aborted",
+		],
+		[
+			"provider timeout",
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider timed out" }),
+			"error",
+		],
+		[
+			"provider spawn failure",
+			() => {
+				throw new Error("provider spawn failed");
+			},
+			"error",
+		],
+	] as const)("emits one committed-owner settlement cleanup seam after %s", async (_label, response, stopReason) => {
+		const registration = newFaux();
+		registration.setResponses([response]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			session,
+			model: registration.getModel(),
+		});
+		const settledOwners: OwnerIdentity[] = [];
+		harness.subscribe((event) => {
+			if (event.type === "settled") settledOwners.push(event.owner);
+		});
+
+		const result = await harness.prompt("owner");
+
+		expect(result.stopReason).toBe(stopReason);
+		expect(settledOwners).toHaveLength(1);
+		const ownerEntry = (await session.getEntries()).find((entry) => entry.id === settledOwners[0]?.entryId);
+		expect(ownerEntry).toMatchObject({
+			type: "message",
+			message: { role: "user" },
+		});
+	});
+
 	it("binds the exact host owner and projects its index ahead of an identical injected user", async () => {
 		const registration = newFaux();
 		registration.setResponses([() => fauxAssistantMessage("done")]);

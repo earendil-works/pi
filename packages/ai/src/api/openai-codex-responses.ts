@@ -37,15 +37,19 @@ import type {
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
-import {
-	appendAssistantMessageDiagnostic,
-	createAssistantMessageDiagnostic,
-	formatThrownValue,
-} from "../utils/diagnostics.ts";
+import { formatThrownValue } from "../utils/diagnostics.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import {
+	appendProviderOutcomeUncertainDiagnostic,
+	appendProviderTransportFallbackDiagnostic,
+	PROVIDER_OUTCOME_UNCERTAIN_REASON,
+	PROVIDER_TRANSPORT_FALLBACK_REASON,
+	type ProviderDispatchPhase,
+	type ProviderDispatchTransport,
+} from "../utils/provider-outcome.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -57,17 +61,14 @@ import { buildBaseOptions } from "./simple-options.ts";
 
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth" as const;
-const DEFAULT_MAX_RETRIES = 0;
-const BASE_DELAY_MS = 1000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
+const WEBSOCKET_SEND_FAILURE_REASON =
+	"WebSocket request could not be dispatched; it was not retried or replayed." as const;
 // The Codex backend accepts zstd-compressed request bodies on the SSE responses
 // endpoint (the same endpoint the official Codex client compresses against).
 const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
-const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
-const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -109,79 +110,6 @@ interface RequestBody {
 	include?: string[];
 	prompt_cache_key?: string;
 	[key: string]: unknown;
-}
-
-// ============================================================================
-// Retry Helpers
-// ============================================================================
-
-function isTerminalRateLimitError(errorText: string): boolean {
-	return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
-		errorText,
-	);
-}
-
-function isRetryableError(status: number, errorText: string): boolean {
-	if (status === 429 && isTerminalRateLimitError(errorText)) {
-		return false;
-	}
-	if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
-		return true;
-	}
-	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
-}
-
-function getRetryAfterDelayMs(headers: Headers): number | undefined {
-	const retryAfterMs = headers.get("retry-after-ms");
-	if (retryAfterMs !== null) {
-		const millis = Number(retryAfterMs);
-		if (Number.isFinite(millis)) {
-			return Math.max(0, millis);
-		}
-	}
-
-	const retryAfter = headers.get("retry-after");
-	if (!retryAfter) {
-		return undefined;
-	}
-
-	const seconds = Number(retryAfter);
-	if (Number.isFinite(seconds)) {
-		return Math.max(0, seconds * 1000);
-	}
-
-	const date = Date.parse(retryAfter);
-	if (!Number.isNaN(date)) {
-		return Math.max(0, date - Date.now());
-	}
-
-	return undefined;
-}
-
-class RetryDelayExceededError extends Error {}
-
-function validateRetryDelayMs(delayMs: number, options?: StreamOptions): number {
-	const maxRetryDelayMs = options?.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
-	if (maxRetryDelayMs > 0 && delayMs > maxRetryDelayMs) {
-		throw new RetryDelayExceededError(
-			`Server requested ${Math.ceil(delayMs / 1000)}s retry delay (max: ${Math.ceil(maxRetryDelayMs / 1000)}s)`,
-		);
-	}
-	return delayMs;
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
-			reject(new Error("Request was aborted"));
-			return;
-		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener("abort", () => {
-			clearTimeout(timeout);
-			reject(new Error("Request was aborted"));
-		});
-	});
 }
 
 function normalizeTimeoutMs(value: number | undefined): number | undefined {
@@ -254,6 +182,24 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
+		let providerDispatch:
+			| {
+					transport: ProviderDispatchTransport;
+					phase: ProviderDispatchPhase;
+			  }
+			| undefined;
+		const markProviderDispatched = (transport: ProviderDispatchTransport) => {
+			if (providerDispatch) {
+				throw new Error("Provider request dispatch attempted more than once");
+			}
+			providerDispatch = { transport, phase: "dispatched" };
+		};
+		const markProviderStreamStarted = (transport: ProviderDispatchTransport) => {
+			if (!providerDispatch || providerDispatch.transport !== transport) {
+				throw new Error("Provider stream started before its request dispatch");
+			}
+			providerDispatch.phase = "stream_started";
+		};
 
 		try {
 			const apiKey = options?.apiKey;
@@ -288,73 +234,49 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 
 			if (transport !== "sse" && !websocketDisabledForSession) {
-				let websocketStarted = false;
-				let retriedWebSocketConnectionLimit = false;
-				let retriedMissingWebSocketContinuation = false;
-				while (true) {
-					websocketStarted = false;
-					try {
-						await processWebSocketStream(
-							resolveCodexWebSocketUrl(model.baseUrl),
-							body,
-							websocketHeaders,
-							output,
-							stream,
-							model,
-							() => {
-								websocketStarted = true;
-								if (!startEmitted) {
-									startEmitted = true;
-									stream.push({ type: "start", partial: output });
-								}
-							},
-							httpTimeoutMs,
-							websocketConnectTimeoutMs,
-							options,
-						);
+				try {
+					await processWebSocketStream(
+						resolveCodexWebSocketUrl(model.baseUrl),
+						body,
+						websocketHeaders,
+						output,
+						stream,
+						model,
+						() => markProviderDispatched("websocket"),
+						() => {
+							markProviderStreamStarted("websocket");
+							if (!startEmitted) {
+								startEmitted = true;
+								stream.push({ type: "start", partial: output });
+							}
+						},
+						httpTimeoutMs,
+						websocketConnectTimeoutMs,
+						options,
+					);
 
-						if (options?.signal?.aborted) {
-							throw new Error("Request was aborted");
-						}
-						stream.push({
-							type: "done",
-							reason: output.stopReason as "stop" | "length" | "toolUse",
-							message: output,
-						});
-						stream.end();
-						return;
-					} catch (error) {
-						const aborted = options?.signal?.aborted;
-						const connectionLimitBeforeStart = !websocketStarted && isWebSocketConnectionLimitReachedError(error);
-						const previousResponseNotFound = isPreviousResponseNotFoundError(error);
-						if (!aborted && previousResponseNotFound && !retriedMissingWebSocketContinuation) {
-							retriedMissingWebSocketContinuation = true;
-							continue;
-						}
-						if (!aborted && connectionLimitBeforeStart && !retriedWebSocketConnectionLimit) {
-							retriedWebSocketConnectionLimit = true;
-							continue;
-						}
-						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
-							throw error;
-						}
-						appendAssistantMessageDiagnostic(
-							output,
-							createAssistantMessageDiagnostic("provider_transport_failure", error, {
-								configuredTransport: transport,
-								fallbackTransport: websocketStarted ? undefined : "sse",
-								eventsEmitted: websocketStarted,
-								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
-								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
-							}),
-						);
-						recordWebSocketFailure(options?.sessionId, error);
-						if (websocketStarted) {
-							throw error;
-						}
-						recordWebSocketSseFallback(options?.sessionId);
-						break;
+					if (options?.signal?.aborted) {
+						throw new Error("Request was aborted");
 					}
+					stream.push({
+						type: "done",
+						reason: output.stopReason as "stop" | "length" | "toolUse",
+						message: output,
+					});
+					stream.end();
+					return;
+				} catch (error) {
+					if (
+						providerDispatch ||
+						options?.signal?.aborted ||
+						error instanceof WebSocketSendError ||
+						isCodexNonTransportError(error)
+					) {
+						throw error;
+					}
+					appendProviderTransportFallbackDiagnostic(output, transport);
+					recordWebSocketFailure(options?.sessionId);
+					recordWebSocketSseFallback(options?.sessionId);
 				}
 			}
 
@@ -366,87 +288,38 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				sseHeaders.set("content-encoding", "zstd");
 			}
 			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
-
-			// Fetch with retry logic for rate limits and transient errors
-			let response: Response | undefined;
-			let lastError: Error | undefined;
-			const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
-
-			for (let attempt = 0; attempt <= maxRetries; attempt++) {
-				if (options?.signal?.aborted) {
+			if (options?.signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+			const headerTimeoutSignal =
+				httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
+			const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
+			let response: Response;
+			try {
+				markProviderDispatched("sse");
+				response = await fetch(resolveCodexUrl(model.baseUrl), {
+					method: "POST",
+					headers: sseHeaders,
+					body: sseBody,
+					signal: combinedSignal.signal,
+				});
+			} catch (error) {
+				if (headerTimeoutSignal?.aborted && !options?.signal?.aborted) {
+					throw new Error(`Codex SSE response headers timed out after ${httpTimeoutMs}ms`);
+				}
+				if (error instanceof Error && (error.name === "AbortError" || error.message === "Request was aborted")) {
 					throw new Error("Request was aborted");
 				}
-
-				try {
-					const headerTimeoutSignal =
-						httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
-					const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
-					try {
-						response = await fetch(resolveCodexUrl(model.baseUrl), {
-							method: "POST",
-							headers: sseHeaders,
-							body: sseBody,
-							signal: combinedSignal.signal,
-						});
-					} catch (error) {
-						if (headerTimeoutSignal?.aborted && !options?.signal?.aborted) {
-							throw new Error(`Codex SSE response headers timed out after ${httpTimeoutMs}ms`);
-						}
-						throw error;
-					} finally {
-						combinedSignal.cleanup();
-					}
-					await options?.onResponse?.(
-						{ status: response.status, headers: headersToRecord(response.headers) },
-						model,
-					);
-
-					if (response.ok) {
-						break;
-					}
-
-					const errorText = await response.text();
-					if (attempt < maxRetries && isRetryableError(response.status, errorText)) {
-						const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
-						const delayMs =
-							retryAfterDelayMs === undefined
-								? BASE_DELAY_MS * 2 ** attempt
-								: validateRetryDelayMs(retryAfterDelayMs, options);
-
-						await sleep(delayMs, options?.signal);
-						continue;
-					}
-
-					// Parse error for friendly message on final attempt or non-retryable error
-					const fakeResponse = new Response(errorText, {
-						status: response.status,
-						statusText: response.statusText,
-					});
-					const info = await parseErrorResponse(fakeResponse);
-					throw new Error(info.friendlyMessage || info.message);
-				} catch (error) {
-					if (error instanceof Error) {
-						if (error.name === "AbortError" || error.message === "Request was aborted") {
-							throw new Error("Request was aborted");
-						}
-					}
-					lastError = error instanceof Error ? error : new Error(String(error));
-					// Network errors are retryable
-					if (
-						attempt < maxRetries &&
-						!(lastError instanceof RetryDelayExceededError) &&
-						!lastError.message.includes("usage limit")
-					) {
-						const delayMs = BASE_DELAY_MS * 2 ** attempt;
-						await sleep(delayMs, options?.signal);
-						continue;
-					}
-					throw lastError;
-				}
+				throw error;
+			} finally {
+				combinedSignal.cleanup();
 			}
-
-			if (!response?.ok) {
-				throw lastError ?? new Error("Failed after retries");
+			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			if (!response.ok) {
+				try {
+					await response.body?.cancel();
+				} catch {}
+				throw new Error(`Codex SSE returned HTTP ${response.status}`);
 			}
 
 			if (!response.body) {
@@ -457,7 +330,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, options);
+			await processStream(response, output, stream, model, () => markProviderStreamStarted("sse"), options);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -470,8 +343,15 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as { partialJson?: string }).partialJson;
 			}
-			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			if (providerDispatch) {
+				appendProviderOutcomeUncertainDiagnostic(output, providerDispatch.transport, providerDispatch.phase);
+			}
+			output.stopReason = providerDispatch ? "error" : options?.signal?.aborted ? "aborted" : "error";
+			output.errorMessage = providerDispatch
+				? PROVIDER_OUTCOME_UNCERTAIN_REASON
+				: error instanceof WebSocketSendError
+					? WEBSOCKET_SEND_FAILURE_REASON
+					: formatProviderError(normalizeProviderError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -619,13 +499,20 @@ async function processStream(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
+	onStart: () => void,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	await processResponsesStream(
+		mapCodexEvents(startProviderStreamOnFirstEvent(parseSSE(response, options?.signal), onStart)),
+		output,
+		stream,
+		model,
+		{
+			serviceTier: options?.serviceTier,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		},
+	);
 }
 
 class CodexApiError extends Error {
@@ -654,14 +541,6 @@ class CodexProtocolError extends Error {
 
 function isCodexNonTransportError(error: unknown): boolean {
 	return error instanceof CodexApiError || error instanceof CodexProtocolError;
-}
-
-function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
-	return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
-}
-
-function isPreviousResponseNotFoundError(error: unknown): boolean {
-	return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
 }
 
 function extractCodexEventError(event: Record<string, unknown>): { code?: string; message?: string } {
@@ -907,13 +786,13 @@ function recordWebSocketSseFallback(sessionId: string | undefined): void {
 	stats.websocketFallbackActive = isWebSocketSseFallbackActive(sessionId);
 }
 
-function recordWebSocketFailure(sessionId: string | undefined, error: unknown): void {
+function recordWebSocketFailure(sessionId: string | undefined): void {
 	if (!sessionId) return;
 	websocketSseFallbackSessions.add(sessionId);
 
 	const stats = getOrCreateWebSocketDebugStats(sessionId);
 	stats.websocketFailures++;
-	stats.lastWebSocketError = formatThrownValue(error);
+	stats.lastWebSocketError = PROVIDER_TRANSPORT_FALLBACK_REASON;
 	stats.websocketFallbackActive = true;
 }
 
@@ -967,6 +846,13 @@ class WebSocketCloseError extends Error {
 		this.code = options?.code;
 		this.reason = options?.reason;
 		this.wasClean = options?.wasClean;
+	}
+}
+
+class WebSocketSendError extends Error {
+	constructor() {
+		super(WEBSOCKET_SEND_FAILURE_REASON);
+		this.name = "WebSocketSendError";
 	}
 }
 
@@ -1395,10 +1281,7 @@ function buildCachedWebSocketRequestBody(entry: CachedWebSocketConnection, body:
 	};
 }
 
-async function* startWebSocketOutputOnFirstEvent(
-	events: AsyncIterable<ResponseStreamEvent>,
-	onStart: () => void,
-): AsyncGenerator<ResponseStreamEvent> {
+async function* startProviderStreamOnFirstEvent<T>(events: AsyncIterable<T>, onStart: () => void): AsyncGenerator<T> {
 	let started = false;
 	for await (const event of events) {
 		if (!started) {
@@ -1416,6 +1299,7 @@ async function processWebSocketStream(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
+	onDispatch: () => void,
 	onStart: () => void,
 	idleTimeoutMs: number | undefined,
 	websocketConnectTimeoutMs: number | undefined,
@@ -1454,11 +1338,15 @@ async function processWebSocketStream(
 		}
 	}
 	try {
-		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+		try {
+			socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+		} catch {
+			throw new WebSocketSendError();
+		}
+		onDispatch();
 		await processResponsesStream(
-			startWebSocketOutputOnFirstEvent(
-				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)),
-				onStart,
+			mapCodexEvents(
+				startProviderStreamOnFirstEvent(parseWebSocket(socket, options?.signal, idleTimeoutMs), onStart),
 			),
 			output,
 			stream,
@@ -1490,37 +1378,6 @@ async function processWebSocketStream(
 	} finally {
 		release({ keep: keepConnection });
 	}
-}
-
-// ============================================================================
-// Error Handling
-// ============================================================================
-
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
-	const raw = await response.text();
-	let message = raw || response.statusText || "Request failed";
-	let friendlyMessage: string | undefined;
-
-	try {
-		const parsed = JSON.parse(raw) as {
-			error?: { code?: string; type?: string; message?: string; plan_type?: string; resets_at?: number };
-		};
-		const err = parsed?.error;
-		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
-				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
-				const mins = err.resets_at
-					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
-					: undefined;
-				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
-				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
-			}
-			message = err.message || friendlyMessage || message;
-		}
-	} catch {}
-
-	return { message, friendlyMessage };
 }
 
 // ============================================================================
