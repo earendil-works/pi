@@ -167,7 +167,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.refreshAbortController.abort();
 		}, timeoutMs);
 		try {
-			const result = await this.modelRuntime.reloadConfig({ signal: this.refreshAbortController.signal });
+			const result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			if (result.aborted && timedOut) {

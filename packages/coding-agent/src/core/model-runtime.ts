@@ -74,11 +74,6 @@ export interface ModelRuntimeAuthOverrides {
 	env?: Record<string, string>;
 }
 
-export interface ReloadConfigOptions {
-	/** Abort the model catalog refresh performed after reloading configuration. */
-	signal?: AbortSignal;
-}
-
 function mergeHeaders(
 	base: ProviderHeaders | undefined,
 	override: ProviderHeaders | undefined,
@@ -518,17 +513,10 @@ export class ModelRuntime implements Models {
 		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
 	}
 
-	reloadConfig(): Promise<void>;
-	reloadConfig(options: ReloadConfigOptions): Promise<ModelsRefreshResult>;
-	async reloadConfig(options?: ReloadConfigOptions): Promise<unknown> {
+	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
 		this.configureRadiusProviders();
 		this.rebuildProviders();
-		const result = await this.refresh({ allowNetwork: this.modelNetworkEnabled, signal: options?.signal });
-		if (options) return result;
-	}
-
-	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const refreshOptions = {
 			...options,
 			allowNetwork: options.allowNetwork ?? this.modelNetworkEnabled,

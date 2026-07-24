@@ -179,7 +179,6 @@ export {
 	type CreateModelRuntimeOptions,
 	ModelRuntime,
 	type ModelRuntimeAuthOverrides,
-	type ReloadConfigOptions,
 } from "./core/model-runtime.ts";
 export type {
 	PackageManager,
