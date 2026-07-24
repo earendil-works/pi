@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { RADIUS_PROVIDER_ID } from "../src/core/radius.ts";
+import { allowNetwork } from "./test-env.ts";
 
 function radiusOAuthCredential(gatewayBaseUrl: string) {
 	return {
@@ -34,7 +35,6 @@ function radiusConfig(baseUrl: string) {
 	};
 }
 
-const originalOffline = process.env.PI_OFFLINE;
 let tempDir: string;
 
 beforeEach(() => {
@@ -44,11 +44,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
-	if (originalOffline === undefined) {
-		delete process.env.PI_OFFLINE;
-	} else {
-		process.env.PI_OFFLINE = originalOffline;
-	}
 	if (tempDir && existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 });
 
@@ -70,7 +65,7 @@ describe("Radius provider", () => {
 	});
 
 	it("fetches and stores the catalog for configured Radius auth", async () => {
-		delete process.env.PI_OFFLINE;
+		allowNetwork();
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response(JSON.stringify(radiusConfig("https://radius.example.com/v1")), {
 				status: 200,
@@ -113,7 +108,7 @@ describe("Radius provider", () => {
 	});
 
 	it("does not fetch or expose Radius models without configured auth", async () => {
-		delete process.env.PI_OFFLINE;
+		allowNetwork();
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),
@@ -127,7 +122,7 @@ describe("Radius provider", () => {
 	});
 
 	it("supports custom Radius gateways from models.json", async () => {
-		delete process.env.PI_OFFLINE;
+		allowNetwork();
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response(JSON.stringify(radiusConfig("http://localhost:8788/v1")), { status: 200 }),
 		);

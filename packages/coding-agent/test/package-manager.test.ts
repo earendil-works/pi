@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { allowNetwork } from "./test-env.ts";
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -71,11 +72,9 @@ describe("DefaultPackageManager", () => {
 	let agentDir: string;
 	let settingsManager: SettingsManager;
 	let packageManager: DefaultPackageManager;
-	let previousOfflineEnv: string | undefined;
 
 	beforeEach(() => {
-		previousOfflineEnv = process.env.PI_OFFLINE;
-		delete process.env.PI_OFFLINE;
+		allowNetwork();
 		tempDir = join(tmpdir(), `pm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		agentDir = join(tempDir, "agent");
@@ -90,11 +89,6 @@ describe("DefaultPackageManager", () => {
 	});
 
 	afterEach(() => {
-		if (previousOfflineEnv === undefined) {
-			delete process.env.PI_OFFLINE;
-		} else {
-			process.env.PI_OFFLINE = previousOfflineEnv;
-		}
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		rmSync(tempDir, { recursive: true, force: true });

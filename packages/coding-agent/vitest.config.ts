@@ -14,6 +14,7 @@ export default defineConfig({
 		environment: "node",
 		testTimeout: 30000,
 		env: { PI_OFFLINE: "1" },
+		unstubEnvs: true,
 		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 		silent: "passed-only",
 		server: {
