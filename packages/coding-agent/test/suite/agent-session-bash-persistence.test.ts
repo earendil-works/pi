@@ -10,6 +10,24 @@ function getEntryTypes(harness: Harness): string[] {
 	return harness.sessionManager.getEntries().map((entry) => entry.type);
 }
 
+interface ControlledBashInvocation {
+	signal: AbortSignal | undefined;
+	finish: () => void;
+}
+
+function createControlledBashOperations(invocations: ControlledBashInvocation[]): BashOperations {
+	return {
+		exec: async (_command, _cwd, options) => {
+			return await new Promise<{ exitCode: number | null }>((resolve) => {
+				invocations.push({
+					signal: options.signal,
+					finish: () => resolve({ exitCode: 0 }),
+				});
+			});
+		},
+	};
+}
+
 describe("AgentSession bash and persistence characterization", () => {
 	const harnesses: Harness[] = [];
 
@@ -129,6 +147,52 @@ describe("AgentSession bash and persistence characterization", () => {
 
 		const result = await bashPromise;
 		expect(result.cancelled).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("keeps newer bash execution tracked when an older execution finishes", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		invocations[0].finish();
+		const firstResult = await firstBash;
+		const runningAfterFirstSettles = harness.session.isBashRunning;
+
+		harness.session.abortBash();
+		const secondWasAborted = invocations[1].signal?.aborted;
+		invocations[1].finish();
+		const secondResult = await secondBash;
+
+		expect(firstResult.cancelled).toBe(false);
+		expect(runningAfterFirstSettles).toBe(true);
+		expect(secondWasAborted).toBe(true);
+		expect(secondResult.cancelled).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("aborts all active bash executions", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const invocations: ControlledBashInvocation[] = [];
+		const operations = createControlledBashOperations(invocations);
+
+		const firstBash = harness.session.executeBash("first", undefined, { operations });
+		const secondBash = harness.session.executeBash("second", undefined, { operations });
+
+		harness.session.abortBash();
+		const abortedSignals = invocations.map((invocation) => invocation.signal?.aborted);
+		for (const invocation of invocations) {
+			invocation.finish();
+		}
+		const results = await Promise.all([firstBash, secondBash]);
+
+		expect(abortedSignals).toEqual([true, true]);
+		expect(results.map((result) => result.cancelled)).toEqual([true, true]);
 		expect(harness.session.isBashRunning).toBe(false);
 	});
 
