@@ -320,7 +320,7 @@ export class Editor implements Component, Focusable {
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
-	private lastAction: "kill" | "yank" | "type-word" | null = null;
+	private lastAction: "kill" | "yank" | "type-word" | "history-restore" | null = null;
 
 	// Character jump mode
 	private jumpMode: "forward" | "backward" | null = null;
@@ -434,7 +434,9 @@ export class Editor implements Component, Focusable {
 		// Capture state when first entering history browsing mode
 		if (this.historyIndex === -1 && newIndex >= 0) {
 			this.pushUndoSnapshot();
-			this.historyDraft = structuredClone(this.state);
+			const snap = { lines: [...this.state.lines], cursorLine: this.state.cursorLine, cursorCol: this.state.cursorCol };
+			this.historyDraft = snap as any;
+			console.error("[draft] saving:", JSON.stringify({lines: snap.lines, cursorCol: snap.cursorCol}));
 		}
 
 		this.historyIndex = newIndex;
@@ -443,11 +445,13 @@ export class Editor implements Component, Focusable {
 			const draft = this.historyDraft;
 			this.historyDraft = null;
 			if (draft) {
-				this.state = draft;
+				Object.assign(this.state, draft);
+				console.error("[draft] restoring:", JSON.stringify({lines: draft.lines, cursorCol: draft.cursorCol}));
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
 				if (this.onChange) this.onChange(this.getText());
+				this.lastAction = "history-restore";
 			} else {
 				this.setTextInternal("");
 			}
@@ -819,9 +823,11 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
+			// Single-line editor: browse history directly regardless of cursor position
+			const isSingleLine = this.state.lines.length <= 1;
 			if (
 				this.isOnFirstVisualLine() &&
-				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
+				(isSingleLine || this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
 			) {
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
@@ -836,8 +842,11 @@ export class Editor implements Component, Focusable {
 			if (this.historyIndex > -1 && this.isOnLastVisualLine()) {
 				this.navigateHistory(1);
 			} else if (this.isOnLastVisualLine()) {
-				// At bottom with history but no active navigation — clear editor
-				if (this.history.length > 0 && this.getText().length > 0) {
+				// At bottom — clear editor only if not just returned from history
+				if (this.lastAction === "history-restore") {
+					this.lastAction = null; // consume the flag
+					this.moveToLineEnd();
+				} else if (this.history.length > 0 && this.getText().length > 0) {
 					this.setTextInternal("");
 				} else {
 					this.moveToLineEnd();
