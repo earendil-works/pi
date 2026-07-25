@@ -910,8 +910,8 @@ export async function main(args: string[], options?: MainOptions) {
 						return toolBudget.getStageFailureReason() !== undefined;
 					};
 					return createAnsteelRawTurnSession({
-						prompt: async (text) => {
-							toolBudget.reset();
+						prompt: async (text, promptOptions) => {
+							toolBudget.reset({ toolsEnabled: promptOptions?.formatRepair !== true });
 							await created.session.prompt(text);
 							const policyFailure = toolBudget.getStageFailureReason();
 							if (policyFailure) throw new Error(policyFailure);

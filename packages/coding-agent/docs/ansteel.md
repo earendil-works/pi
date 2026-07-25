@@ -37,9 +37,19 @@ There is no fallback to the current Pi model. Before naming each role model, mak
 
 `start` creates or resumes a dedicated Pi session for Tech Lead, Staff Engineer, and QA Engineer using the role models in `.pi/ansteel.json`. A new team first performs three independent investigations, then a public cross-examination round. `ask` continues the work with each role's private session history plus the same public collaboration ledger. Role responses are shown in the host Pi timeline as public updates; hidden reasoning and raw provider payloads are not shared.
 
-Project state lives under `.pi/ansteel-team/`: `team.json` records the team and role-session locations, and `events.jsonl` is an append-only public ledger. `stop` disposes live role sessions but retains these files so a later `start` can resume the team. Starting a different topic requires removing or archiving the existing team state first.
+Project state lives under `.pi/ansteel-team/`: `team.json` records the team, role-session locations, task ownership, evidence packages, and peer verdicts; `events.jsonl` is an append-only public ledger. `stop` disposes live role sessions but retains these files so a later `start` can resume the team. Starting a different topic requires removing or archiving the existing team state first.
 
-This first interactive-team increment is intentionally read-oriented: it grants only the tools declared for each role in `.pi/ansteel.json`, which currently excludes `edit` and `write`. The next execution increment adds task ownership, controlled write access, and peer review against the resulting diff and test evidence. Do not interpret this team mode as approval to make unreviewed changes.
+## Interactive change gate
+
+Interactive roles use ordinary project tools, but code changes are governed by three task tools:
+
+1. The intended owner calls `ansteel_claim_task` with a unique `TASK-...` ID, exact project-relative file paths, a description, and acceptance criteria.
+2. Only that owner can use `edit` or `write` on those exact files. All other paths, all other roles, and a submitted task are blocked. Direct `bash` is inspection-only; it cannot be used to bypass the file gate.
+3. The owner calls `ansteel_submit_change` with one supported test/check command. Pi runs it, records the actual stdout/stderr and exit result, captures the Git diff for exactly the claimed files, and freezes that evidence package.
+4. Tech Lead and QA, or the two roles other than the owner, receive the same frozen test output and diff concurrently. Their current review replies are not shown to each other. Each must call `ansteel_review_task` with `approve` or `reject`; a rejection requires a concrete issue.
+5. Both peer approvals mark the task `approved`. Any peer rejection returns it to `revision-required`; the owner must change it, run a new test, and submit a new diff. QA has the same immediate return authority and cannot be bypassed.
+
+An interactive submission requires a Git worktree and a nonempty diff for the claimed files. This gate proves task ownership, recorded tool evidence, and review sequence; it does not make a passing test or a model conclusion inherently correct.
 
 ## Review flow
 
@@ -113,6 +123,7 @@ Create `.pi/ansteel.json` in the project being reviewed. The `model` field is re
     "tech-lead": {
       "model": "<provider-a>/<model-id-a>",
       "tools": ["read", "grep", "find", "ls", "bash"],
+	  "teamTools": ["read", "grep", "find", "ls", "bash", "edit", "write"],
       "memoryFile": ".pi/ansteel-memory/tech-lead.md",
       "skillPaths": [".pi/ansteel-skills/tech-lead"]
     },
@@ -143,7 +154,9 @@ Set `allowSingleModel` to `true` only for an intentional same-model discussion. 
 
 Keep API credentials out of `.pi/ansteel.json`. Configure authentication through Pi's existing provider settings or environment variables, and use separate provider aliases in each role's `provider/model` value when the roles need distinct API keys or endpoints.
 
-The only allowed role tools are `read`, `grep`, `find`, `ls`, and `bash`. By default every role receives all five so each can independently inspect source, run bounded evidence commands, and verify peer claims. `bash` remains limited by the per-stage tool budget and an explicit timeout of at most 20 seconds. No review role can receive `edit`, `write`, extension tools, or SDK custom tools through this configuration.
+`tools` configures only the non-interactive `--ansteel` review. Its only allowed values are `read`, `grep`, `find`, `ls`, and `bash`; review `bash` remains limited by the per-stage budget and explicit timeout. No batch-review role can receive `edit`, `write`, or SDK custom tools through this field.
+
+`teamTools` configures interactive team sessions independently. It is optional and defaults to `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. The task tools are always present in interactive team mode. Even when `edit`, `write`, or `bash` are listed, task ownership remains enforced: `edit` and `write` require an active exact-file claim, `bash` is limited to read-only inspection, and the only test execution path is `ansteel_submit_change`.
 
 `reportDirectory` is resolved from the project directory and must remain inside it. Omit it to use the default `.pi/ansteel-reports` location.
 

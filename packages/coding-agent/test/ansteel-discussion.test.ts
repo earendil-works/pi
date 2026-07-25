@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	ANSTEEL_ROLES,
 	type AnsteelConfig,
 	type AnsteelDiscussionStage,
 	AnsteelGovernanceSetupError,
 	type AnsteelRole,
+	createAnsteelEvidencePackage,
 	createAnsteelRawTurnSession,
 	createAnsteelSetupFailureMarkdown,
 	createAnsteelToolBudget,
@@ -646,6 +648,59 @@ describe("runAnsteelDiscussion", () => {
 		budget.reset();
 		expect(budget.getStageFailureReason()).toBeUndefined();
 		expect(budget.beforeToolCall("bash", { command: "npm test", timeout: 20 })).toBeUndefined();
+	});
+
+	it("blocks all tool execution during the one permitted format repair", () => {
+		const budget = createAnsteelToolBudget(4);
+
+		budget.reset({ toolsEnabled: false });
+
+		expect(budget.beforeToolCall("read", { path: "src/main.ts" })).toEqual({
+			block: true,
+			reason: "Ansteel format repair permits no tool executions. Correct only the required response markers.",
+		});
+		expect(budget.getStageFailureReason()).toBeUndefined();
+	});
+
+	it("rejects a QA challenge that uses the Staff Engineer issue namespace", async () => {
+		const result = await runAnsteelDiscussion({
+			topic: "Review role-specific challenge namespaces",
+			runRole: async ({ stage }) =>
+				stage === "qa-cross-examination"
+					? "ISSUE: STAFF-1 | TARGET: tech-lead\nNO ISSUES | TARGET: staff-engineer"
+					: responseForMutualReviewStage(stage),
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-challenge-ledger");
+		expect(result.transcript.at(-1)?.stage).toBe("qa-cross-examination");
+		expect(result.markdown).toContain("qa-engineer challenge STAFF-1 must use issue IDs beginning with QA-");
+	});
+
+	it("permits exactly one no-tool format repair for a namespace-invalid QA challenge", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; formatRepair?: true }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Repair a namespace-invalid QA challenge",
+			runRole: async ({ role, stage, formatRepair }) => {
+				calls.push({ role, stage, formatRepair });
+				if (role === "qa-engineer" && stage === "qa-cross-examination") {
+					return formatRepair
+						? "ISSUE: QA-CROSS | TARGET: tech-lead\nNO ISSUES | TARGET: staff-engineer"
+						: "ISSUE: STAFF-CROSS | TARGET: tech-lead\nNO ISSUES | TARGET: staff-engineer";
+				}
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(calls.filter((call) => call.role === "qa-engineer" && call.stage === "qa-cross-examination")).toEqual([
+			{ role: "qa-engineer", stage: "qa-cross-examination" },
+			{ role: "qa-engineer", stage: "qa-cross-examination", formatRepair: true },
+		]);
+		expect(result.transcript.filter((entry) => entry.formatRepair)).toEqual([
+			expect.objectContaining({ role: "qa-engineer", stage: "qa-cross-examination", formatRepair: true }),
+		]);
 	});
 
 	it("reads only the raw assistant text created by the current prompt", async () => {
@@ -1509,6 +1564,70 @@ describe("runAnsteelDiscussion", () => {
 		expect(result.markdown).toContain("## Tech Lead Consensus\n\n[L2] Consensus \n");
 	});
 
+	it("gives consensus and final sign-offs the same coordinator-generated ledger summary", async () => {
+		const prompts = new Map<AnsteelDiscussionStage, string>();
+
+		const result = await runAnsteelDiscussion({
+			topic: "Review immutable ledger summary delivery",
+			runRole: async ({ stage, prompt }) => {
+				prompts.set(stage, prompt);
+				return responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(result.immutableLedgerSummary).toContain("- Total recorded challenges: 3");
+		expect(result.immutableLedgerSummary).toContain("- Resolved challenges: 3");
+		expect(result.immutableLedgerSummary).toContain("- Open challenges: 0");
+		for (const stage of ["consensus", "staff-sign-off", "qa-sign-off"] as const) {
+			const prompt = prompts.get(stage) ?? "";
+			expect(prompt).toContain("## Immutable Challenge Ledger Summary");
+			expect(prompt).toContain("- Total recorded challenges: 3");
+			expect(prompt).toContain("Do not state a numeric ledger-entry or ledger-challenge total yourself.");
+		}
+		expect(result.markdown).toContain("## Immutable Challenge Ledger Summary");
+	});
+
+	it("rejects a consensus that writes an inconsistent ledger count", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Reject a hallucinated consensus ledger count",
+			runRole: async ({ role, stage }) => {
+				calls.push({ role, stage });
+				return stage === "consensus"
+					? "[L1] Consensus\nAll 2 ledger entries are resolved."
+					: responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("invalid-ledger-summary");
+		expect(result.consensus).toBeUndefined();
+		expect(result.markdown).toContain("- Total recorded challenges: 3");
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("staff-engineer:staff-sign-off");
+	});
+
+	it("rejects a final sign-off that writes a ledger count instead of citing the immutable summary", async () => {
+		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage }> = [];
+
+		const result = await runAnsteelDiscussion({
+			topic: "Reject a hallucinated final sign-off ledger count",
+			runRole: async ({ role, stage }) => {
+				calls.push({ role, stage });
+				return stage === "staff-sign-off"
+					? "All 2 ledger challenges are resolved.\nVERDICT: APPROVE"
+					: responseForMutualReviewStage(stage);
+			},
+		});
+
+		expect(result.verdict).toBe("rejected");
+		expect(result.terminationReason).toBe("final-sign-off-rejected");
+		expect(result.consensus).toBe("[L1] Immutable consensus");
+		expect(result.markdown).toContain("- Total recorded challenges: 3");
+		expect(calls.map(({ role, stage }) => `${role}:${stage}`)).not.toContain("qa-engineer:qa-sign-off");
+	});
+
 	it("requires Staff and QA final sign-off on the immutable Tech Lead consensus", async () => {
 		const calls: Array<{ role: AnsteelRole; stage: AnsteelDiscussionStage; prompt: string }> = [];
 
@@ -2091,6 +2210,7 @@ describe("runAnsteelDiscussion", () => {
 		expect(config.roles["staff-engineer"].thinkingLevel).toBe("high");
 		expect(config.roles["qa-engineer"].model).toBe("deepseek/deepseek-chat");
 		expect(config.roles["qa-engineer"].tools).toEqual(["read", "grep", "find", "ls", "bash"]);
+		expect(config.roles["qa-engineer"].teamTools).toEqual(["read", "grep", "find", "ls", "bash", "edit", "write"]);
 		expect(config.stageTimeoutMs).toBe(120_000);
 		expect(config.maxToolCallsPerStage).toBe(4);
 	});
@@ -2411,6 +2531,59 @@ describe("runAnsteelDiscussion", () => {
 		]);
 		expect(calls.map(({ role }) => role)).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
 		expect(disposed).toEqual(["tech-lead", "staff-engineer", "qa-engineer"]);
+	});
+
+	it("gives every project-review role the same bounded evidence package without historical reports", async () => {
+		type TestModel = { provider: string; id: string };
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ansteel-evidence-"));
+		temporaryDirectories.push(cwd);
+		mkdirSync(join(cwd, "src"));
+		mkdirSync(join(cwd, "test"));
+		mkdirSync(join(cwd, ".pi", "ansteel-reports"), { recursive: true });
+		mkdirSync(join(cwd, ".pi", "ansteel-team"), { recursive: true });
+		mkdirSync(join(cwd, ".pi", "ansteel-memory"), { recursive: true });
+		writeFileSync(join(cwd, "src", "solver.ts"), "export const answer = 42;\n");
+		writeFileSync(join(cwd, "test", "solver.test.ts"), "expect(answer).toBe(42);\n");
+		writeFileSync(join(cwd, ".pi", "ansteel-reports", "stale.md"), "historical model output");
+		writeFileSync(join(cwd, ".pi", "ansteel-team", "events.jsonl"), "role session artifact");
+		writeFileSync(join(cwd, ".pi", "ansteel-memory", "qa.md"), "QA private role memory");
+		const evidencePackage = createAnsteelEvidencePackage(cwd);
+		const prompts: Array<{ role: AnsteelRole; prompt: string }> = [];
+
+		const result = await runAnsteelProjectReview<TestModel>({
+			topic: "Review shared project evidence",
+			cwd,
+			config: {
+				roles: {
+					"tech-lead": { model: "tech/lead", tools: ["read"] },
+					"staff-engineer": { model: "staff/engineer", tools: ["read"] },
+					"qa-engineer": { model: "qa/engineer", tools: ["read"] },
+				},
+				reportDirectory: "unused",
+			},
+			resolveModel: (provider, id) => ({ provider, id }),
+			createRoleSession: async ({ role }) => ({
+				prompt: async (prompt) => {
+					prompts.push({ role, prompt });
+					return responseForMutualReviewStage(getStageFromPrompt(prompt));
+				},
+				dispose: () => {},
+			}),
+		});
+
+		expect(result.verdict).toBe("approved");
+		expect(evidencePackage).toContain("src/solver.ts");
+		expect(evidencePackage).toContain("sha256=");
+		expect(evidencePackage).toContain("1 | export const answer = 42;");
+		expect(evidencePackage).not.toContain("stale.md");
+		expect(evidencePackage).not.toContain("historical model output");
+		expect(evidencePackage).not.toContain("role session artifact");
+		expect(evidencePackage).not.toContain("QA private role memory");
+		for (const role of ANSTEEL_ROLES) {
+			const rolePrompts = prompts.filter((entry) => entry.role === role);
+			expect(rolePrompts.length).toBeGreaterThan(0);
+			for (const { prompt } of rolePrompts) expect(prompt).toContain(evidencePackage);
+		}
 	});
 
 	it("preserves a trailing-space QA verdict from a role session and rejects it", async () => {

@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
 import {
 	ANSTEEL_ROLES,
+	ANSTEEL_TEAM_TOOLS,
 	type AnsteelConfig,
 	type AnsteelRole,
 	type AnsteelRoleConfig,
@@ -11,19 +13,41 @@ import {
 } from "../../core/ansteel-discussion.ts";
 import {
 	type AnsteelTeamState,
+	type AnsteelTeamTask,
+	type AnsteelTeamTaskReview,
+	type AnsteelTeamTaskSubmission,
 	appendAnsteelTeamEvent,
+	claimAnsteelTeamTask,
 	createAnsteelTeamState,
+	getAnsteelTeamWriteBlockReason,
+	isAnsteelTeamGovernancePath,
 	listAnsteelTeamEvents,
 	loadAnsteelTeamState,
+	reviewAnsteelTeamTask,
+	runAnsteelTeamTaskTest,
 	saveAnsteelTeamState,
+	submitAnsteelTeamTask,
 } from "../../core/ansteel-team.ts";
-import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
+import {
+	defineTool,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ToolDefinition,
+} from "../../core/extensions/types.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { createAgentSession } from "../../core/sdk.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 
 const MAX_LEDGER_EVENTS_IN_PROMPT = 24;
+const ANSTEEL_TEAM_TASK_TOOL_NAMES = ["ansteel_claim_task", "ansteel_submit_change", "ansteel_review_task"] as const;
+
+export interface AnsteelTeamTaskOperations {
+	state: AnsteelTeamState;
+	claimTask: (input: Omit<Parameters<typeof claimAnsteelTeamTask>[2], "owner">) => Promise<AnsteelTeamTask>;
+	submitTask: (taskId: string, testCommand: string) => Promise<AnsteelTeamTaskSubmission>;
+	reviewTask: (taskId: string, input: Parameters<typeof reviewAnsteelTeamTask>[4]) => Promise<AnsteelTeamTaskReview>;
+}
 
 export interface AnsteelTeamRoleSession {
 	prompt: (text: string) => Promise<string>;
@@ -41,6 +65,7 @@ export interface CreateAnsteelTeamRoleSessionOptions {
 	cwd: string;
 	sessionFile: string;
 	resolvedRole: AnsteelTeamResolvedRole;
+	taskOperations: AnsteelTeamTaskOperations;
 }
 
 export interface AnsteelTeamExtensionDependencies {
@@ -107,6 +132,99 @@ function buildRoleSystemPrompt(role: AnsteelRole, memory: string | undefined): s
 	].join("\n\n");
 }
 
+function createTeamTaskTools(taskOperations: AnsteelTeamTaskOperations): ToolDefinition[] {
+	return [
+		defineTool({
+			name: "ansteel_claim_task",
+			label: "claim task",
+			description:
+				"Claim exact project-relative files before editing. A task must include a unique TASK-<UPPERCASE-ID>, description, and acceptance criteria.",
+			promptSnippet: "Claim exact files before using edit or write.",
+			parameters: Type.Object({
+				id: Type.String(),
+				files: Type.Array(Type.String(), { minItems: 1 }),
+				description: Type.String(),
+				acceptanceCriteria: Type.String(),
+			}),
+			async execute(_toolCallId, input) {
+				const task = await taskOperations.claimTask(input);
+				return {
+					content: [{ type: "text", text: `Claimed ${task.id}: ${task.files.join(", ")}` }],
+					details: { taskId: task.id },
+				};
+			},
+		}),
+		defineTool({
+			name: "ansteel_submit_change",
+			label: "submit change",
+			description:
+				"Run one allowed test command, capture the real task-scoped Git diff, freeze that evidence package, and request independent peer review.",
+			promptSnippet: "Submit a claimed change with a real test command and immutable diff evidence.",
+			parameters: Type.Object({
+				taskId: Type.String(),
+				testCommand: Type.String(),
+			}),
+			async execute(_toolCallId, input) {
+				const submission = await taskOperations.submitTask(input.taskId, input.testCommand);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Submitted ${input.taskId} revision ${submission.revision}; peer reviews have been requested.`,
+						},
+					],
+					details: { revision: submission.revision, taskId: input.taskId },
+				};
+			},
+		}),
+		defineTool({
+			name: "ansteel_review_task",
+			label: "review change",
+			description:
+				"Record this reviewer's independent APPROVE or REJECT for the submitted immutable evidence package. REJECT requires a concrete issue.",
+			promptSnippet: "Record an independent approve or reject for a submitted teammate change.",
+			parameters: Type.Object({
+				taskId: Type.String(),
+				verdict: Type.Union([Type.Literal("approve"), Type.Literal("reject")]),
+				issue: Type.Optional(Type.String()),
+			}),
+			async execute(_toolCallId, input) {
+				const review = await taskOperations.reviewTask(input.taskId, {
+					verdict: input.verdict,
+					...(input.issue === undefined ? {} : { issue: input.issue }),
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${review.reviewer} recorded ${review.verdict.toUpperCase()} for ${input.taskId} revision ${review.revision}.`,
+						},
+					],
+					details: { revision: review.revision, taskId: input.taskId, verdict: review.verdict },
+				};
+			},
+		}),
+	];
+}
+
+function getReadOnlyBashBlockReason(args: unknown): string | undefined {
+	if (typeof args !== "object" || args === null || typeof (args as { command?: unknown }).command !== "string") {
+		return "Ansteel team bash requires a command string";
+	}
+	const command = (args as { command: string }).command.trim();
+	if (command.length === 0 || /[\r\n;&|><`$()]/.test(command)) {
+		return "Ansteel team bash accepts only one read-only inspection command; run tests with ansteel_submit_change";
+	}
+	if (
+		!/^(?:git (?:diff|status|log|show|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd$|cat\b|head\b|tail\b|sed -n\b)/.test(
+			command,
+		)
+	) {
+		return "Ansteel team bash is limited to read-only inspection; use edit/write after claiming a task and ansteel_submit_change for tests";
+	}
+	return undefined;
+}
+
 async function createDefaultRoleSession(options: CreateAnsteelTeamRoleSessionOptions): Promise<AnsteelTeamRoleSession> {
 	const { aiModel, roleConfig } = options.resolvedRole;
 	if (!aiModel) throw new Error(`Ansteel team role ${options.role} is missing its resolved model`);
@@ -134,8 +252,33 @@ async function createDefaultRoleSession(options: CreateAnsteelTeamRoleSessionOpt
 		resourceLoader,
 		sessionManager: SessionManager.open(options.sessionFile, undefined, options.cwd),
 		settingsManager,
-		tools: [...roleConfig.tools],
+		tools: [...(roleConfig.teamTools ?? ANSTEEL_TEAM_TOOLS), ...ANSTEEL_TEAM_TASK_TOOL_NAMES],
+		customTools: createTeamTaskTools(options.taskOperations),
 	});
+	const previousBeforeToolCall = created.session.agent.beforeToolCall;
+	created.session.agent.toolExecution = "sequential";
+	created.session.agent.beforeToolCall = async (context, signal) => {
+		const previousResult = await previousBeforeToolCall?.(context, signal);
+		if (previousResult?.block) return previousResult;
+		if (context.toolCall.name === "edit" || context.toolCall.name === "write") {
+			const path =
+				typeof context.args === "object" && context.args !== null
+					? (context.args as { path?: unknown }).path
+					: undefined;
+			const reason = getAnsteelTeamWriteBlockReason(
+				options.cwd,
+				options.taskOperations.state,
+				options.role,
+				typeof path === "string" ? path : "",
+			);
+			return reason === undefined ? undefined : { block: true, reason };
+		}
+		if (context.toolCall.name === "bash") {
+			const reason = getReadOnlyBashBlockReason(context.args);
+			return reason === undefined ? undefined : { block: true, reason };
+		}
+		return undefined;
+	};
 	const rawTurnSession = createAnsteelRawTurnSession({
 		prompt: (text) => created.session.prompt(text),
 		subscribeToAssistantMessageEnd: (listener) =>
@@ -157,6 +300,32 @@ function formatPublicLedger(cwd: string): string {
 			return `[${event.sequence}] ${event.role}${target} ${event.type}${challenge}\n${event.content}`;
 		})
 		.join("\n\n");
+}
+
+function buildTaskReviewPrompt(
+	role: AnsteelRole,
+	task: AnsteelTeamTask,
+	submission: AnsteelTeamTaskSubmission,
+): string {
+	return [
+		`You are the independent ${role} reviewer for ${task.id} revision ${submission.revision}.`,
+		"Review the immutable evidence package below. Inspect the current project with read-only tools when needed. You cannot edit this task.",
+		"Do not rely on another reviewer's response. When ready, call ansteel_review_task exactly once. A rejection must state a concrete issue.",
+		`Task owner: ${task.owner}`,
+		`Files: ${task.files.join(", ")}`,
+		`Description: ${task.description}`,
+		`Acceptance criteria: ${task.acceptanceCriteria}`,
+		`Executed test command: ${submission.test.command}`,
+		"Test output:",
+		"```text",
+		submission.test.output || "(no test output)",
+		"```",
+		"Captured Git diff:",
+		"```diff",
+		submission.diff,
+		"```",
+		"Return a concise public review update after recording the verdict with the tool.",
+	].join("\n\n");
 }
 
 function buildRolePrompt(
@@ -214,6 +383,147 @@ export function createAnsteelTeamExtension(dependencies: AnsteelTeamExtensionDep
 	const activeTeams = new Map<string, ActiveAnsteelTeam>();
 
 	return (pi: ExtensionAPI) => {
+		pi.on("tool_call", (event, ctx) => {
+			const path = event.toolName === "edit" || event.toolName === "write" ? event.input.path : undefined;
+			if (isAnsteelTeamGovernancePath(ctx.cwd, path)) {
+				return {
+					block: true,
+					reason: "Ansteel team ledger is reserved for the coordinator and cannot be modified by the host session",
+				};
+			}
+
+			let state: AnsteelTeamState | undefined;
+			try {
+				state = loadAnsteelTeamState(ctx.cwd);
+			} catch (error) {
+				return {
+					block: true,
+					reason: `Ansteel team state cannot be verified; host tool execution is blocked: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				};
+			}
+			if (state?.status !== "active") return undefined;
+			if (
+				event.toolName === "read" ||
+				event.toolName === "grep" ||
+				event.toolName === "find" ||
+				event.toolName === "ls"
+			) {
+				return undefined;
+			}
+			if (event.toolName === "bash") {
+				return {
+					block: true,
+					reason: "Ansteel team is active; the host session cannot invoke bash outside a claimed role task",
+				};
+			}
+			return {
+				block: true,
+				reason:
+					"Ansteel team is active; the host session cannot modify project files or invoke non-read-only tools outside a claimed role task",
+			};
+		});
+
+		const publishTaskEvent = (
+			ctx: ExtensionCommandContext,
+			state: AnsteelTeamState,
+			type: "task-claimed" | "task-submitted" | "task-review",
+			role: AnsteelRole,
+			content: string,
+		): void => {
+			const event = appendAnsteelTeamEvent(ctx.cwd, state, { type, role, content });
+			emitTimelineMessage(pi, `## ${type} [${event.sequence}]\n\n${content}`);
+		};
+
+		const requestPeerReviews = async (
+			activeTeam: ActiveAnsteelTeam,
+			ctx: ExtensionCommandContext,
+			task: AnsteelTeamTask,
+			submission: AnsteelTeamTaskSubmission,
+		): Promise<void> => {
+			const reviewers = ANSTEEL_ROLES.filter((role) => role !== task.owner);
+			await Promise.all(
+				reviewers.map(async (reviewer) => {
+					const session = activeTeam.sessions.get(reviewer);
+					if (!session) throw new Error(`Ansteel team ${reviewer} session is not active`);
+					activeTeam.state.roles[reviewer].status = "working";
+					saveAnsteelTeamState(ctx.cwd, activeTeam.state);
+					try {
+						const response = await session.prompt(buildTaskReviewPrompt(reviewer, task, submission));
+						activeTeam.state.roles[reviewer].status = "idle";
+						saveAnsteelTeamState(ctx.cwd, activeTeam.state);
+						const event = appendAnsteelTeamEvent(ctx.cwd, activeTeam.state, {
+							type: "role-report",
+							role: reviewer,
+							content: response.trim() || "The reviewer returned no public update.",
+						});
+						emitTimelineMessage(pi, `## ${reviewer} task review [${event.sequence}]\n\n${event.content}`);
+					} catch (error) {
+						activeTeam.state.roles[reviewer].status = "failed";
+						saveAnsteelTeamState(ctx.cwd, activeTeam.state);
+						const content = error instanceof Error ? error.message : String(error);
+						const event = appendAnsteelTeamEvent(ctx.cwd, activeTeam.state, {
+							type: "role-failure",
+							role: reviewer,
+							content,
+						});
+						emitTimelineMessage(pi, `## ${reviewer} task review failure [${event.sequence}]\n\n${content}`);
+					}
+				}),
+			);
+		};
+
+		const createTaskOperations = (
+			activeTeam: ActiveAnsteelTeam,
+			ctx: ExtensionCommandContext,
+			role: AnsteelRole,
+		): AnsteelTeamTaskOperations => ({
+			state: activeTeam.state,
+			claimTask: async (input) => {
+				const task = claimAnsteelTeamTask(ctx.cwd, activeTeam.state, { ...input, owner: role });
+				publishTaskEvent(
+					ctx,
+					activeTeam.state,
+					"task-claimed",
+					role,
+					`${task.id} claimed by ${role}\n\nFiles: ${task.files.join(", ")}\n\nAcceptance: ${task.acceptanceCriteria}`,
+				);
+				return task;
+			},
+			submitTask: async (taskId, testCommand) => {
+				const test = runAnsteelTeamTaskTest(ctx.cwd, activeTeam.state, role, taskId, testCommand);
+				if (test.isError) {
+					throw new Error(`Ansteel team task ${taskId} test command failed: ${testCommand}`);
+				}
+				const submission = submitAnsteelTeamTask(ctx.cwd, activeTeam.state, role, taskId, test.command);
+				const task = activeTeam.state.tasks.find((item) => item.id === taskId);
+				if (!task) throw new Error(`Ansteel team task ${taskId} disappeared after submission`);
+				publishTaskEvent(
+					ctx,
+					activeTeam.state,
+					"task-submitted",
+					role,
+					`${task.id} revision ${submission.revision} submitted by ${role}\n\nTest: ${submission.test.command}\n\nDiff bytes: ${submission.diff.length}`,
+				);
+				await requestPeerReviews(activeTeam, ctx, task, submission);
+				return submission;
+			},
+			reviewTask: async (taskId, input) => {
+				const review = reviewAnsteelTeamTask(ctx.cwd, activeTeam.state, role, taskId, input);
+				publishTaskEvent(
+					ctx,
+					activeTeam.state,
+					"task-review",
+					role,
+					`${taskId} revision ${review.revision}: ${review.verdict.toUpperCase()}${
+						review.issue === undefined ? "" : `\n\nISSUE: ${review.issue}`
+					}`,
+				);
+				return review;
+			},
+		});
+
 		const runRound = async (
 			activeTeam: ActiveAnsteelTeam,
 			ctx: ExtensionCommandContext,
@@ -290,6 +600,7 @@ export function createAnsteelTeamExtension(dependencies: AnsteelTeamExtensionDep
 			state.status = "active";
 			saveAnsteelTeamState(ctx.cwd, state);
 			const sessions = new Map<AnsteelRole, AnsteelTeamRoleSession>();
+			const activeTeam: ActiveAnsteelTeam = { state, sessions };
 			try {
 				for (const role of ANSTEEL_ROLES) {
 					sessions.set(
@@ -299,6 +610,7 @@ export function createAnsteelTeamExtension(dependencies: AnsteelTeamExtensionDep
 							cwd: ctx.cwd,
 							sessionFile: state.roles[role].sessionFile,
 							resolvedRole: resolvedRoles[role],
+							taskOperations: createTaskOperations(activeTeam, ctx, role),
 						}),
 					);
 				}
@@ -308,7 +620,6 @@ export function createAnsteelTeamExtension(dependencies: AnsteelTeamExtensionDep
 				saveAnsteelTeamState(ctx.cwd, state);
 				throw error;
 			}
-			const activeTeam = { state, sessions };
 			activeTeams.set(ctx.cwd, activeTeam);
 			emitTimelineMessage(pi, `Ansteel team started.\n\n${formatStatus(state)}`);
 			if (!existing) {
