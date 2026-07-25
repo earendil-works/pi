@@ -175,6 +175,41 @@ describe("AgentSession compaction characterization", () => {
 		expect(getStreamCallCount()).toBe(1);
 	});
 
+	it("manually compacts with provider-resolved bearer auth", async () => {
+		const harness = await createHarness({ withConfiguredAuth: false });
+		harnesses.push(harness);
+		const model = harness.getModel();
+		harness.session.modelRuntime.registerNativeProvider({
+			id: model.provider,
+			name: "Faux bearer provider",
+			auth: {
+				apiKey: {
+					name: "Faux bearer token",
+					resolve: async () => ({
+						auth: { headers: { Authorization: "Bearer ambient-token" } },
+						source: "ambient bearer token",
+					}),
+				},
+			},
+			getModels: () => harness.models,
+			stream: () => createAssistantMessageEventStream(),
+			streamSimple: () => createAssistantMessageEventStream(),
+		});
+		seedCompactableSession(harness);
+		harness.setResponses([
+			(_context, options) => {
+				expect(options?.apiKey).toBeUndefined();
+				expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
+				return fauxAssistantMessage("summary with bearer auth");
+			},
+		]);
+
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("summary with bearer auth");
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
 	it("persists usage from pi-generated manual compaction", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);

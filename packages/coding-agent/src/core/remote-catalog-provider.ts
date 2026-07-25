@@ -67,21 +67,38 @@ export function withRemoteCatalog(
 						return;
 					}
 
+					// Only revalidate when a cached body backs the validator, so a 304 can never
+					// leave the overlay empty.
+					const validator = stored?.models.length ? stored.etag : undefined;
 					const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
 					const response = await fetch(url, {
 						headers: {
 							accept: "application/json",
 							"User-Agent": getPiUserAgent(VERSION),
+							...(validator ? { "if-none-match": validator } : {}),
 						},
 						signal: context.signal,
 					});
 					if (context.signal?.aborted) return;
 					const checkedAt = Date.now();
+					// Unchanged: dynamicModels already holds the stored overlay, so only the
+					// freshness window moves.
+					if (response.status === 304 && stored) {
+						await context.store.write({ ...stored, checkedAt });
+						return;
+					}
 					if (response.status === 404 || response.status === 501) {
-						await context.store.write({ ...(stored ?? { models: [] }), checkedAt, lastModified: 0 });
+						await context.store.write({
+							...(stored ?? { models: [] }),
+							checkedAt,
+							lastModified: 0,
+							etag: undefined,
+						});
 						return;
 					}
 					if (!response.ok) {
+						// Transient failure: the cached body and its validator stay valid, so keep the
+						// etag and let the next refresh revalidate instead of downloading the catalog.
 						await context.store.write({ ...(stored ?? { models: [] }), checkedAt });
 						throw new Error(`Model catalog request failed for ${provider.id}: ${response.status}`);
 					}
@@ -92,6 +109,7 @@ export function withRemoteCatalog(
 						models: refreshed,
 						checkedAt,
 						lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
+						etag: response.headers.get("etag") ?? undefined,
 					};
 					dynamicModels = remoteModels(entry, localGeneratedAt);
 					await context.store.write(entry);

@@ -69,9 +69,9 @@ function extractStatus(error: SdkErrorShape): number | undefined {
 /**
  * Probe the raw body reason, first usable hit wins, in SDK-field order:
  * `body` string (Mistral) → `error` parsed JSON body object (`openai` SDK's
- * `this.error`) → `$response.body` (Bedrock). Empty objects are treated as no
- * body so an empty parsed body does not surface as `"{}"`. The chosen body is
- * truncated to the cap.
+ * `this.error`) → `$response.body` (Bedrock). Empty objects and unread response
+ * streams are treated as no body so they do not surface as `"{}"` or serialized
+ * stream internals. The chosen body is truncated to the cap.
  */
 function extractBody(error: SdkErrorShape): string | undefined {
 	const bodyText = pickBodyText(error);
@@ -86,8 +86,13 @@ function pickBodyText(error: SdkErrorShape): string | undefined {
 	if (isNonEmptyObject(error.error)) return safeJsonStringify(error.error);
 	const responseBody = error.$response?.body;
 	if (typeof responseBody === "string") return responseBody;
+	if (isReadableStreamLike(responseBody)) return undefined;
 	if (isNonEmptyObject(responseBody)) return safeJsonStringify(responseBody);
 	return undefined;
+}
+
+function isReadableStreamLike(value: unknown): boolean {
+	return typeof value === "object" && value !== null && "pipe" in value && typeof value.pipe === "function";
 }
 
 function isNonEmptyObject(value: unknown): boolean {

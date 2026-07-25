@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.82.1] - 2026-07-25
+
+## [0.82.0] - 2026-07-24
+
 ### Breaking Changes
 
 - Replaced `AgentHarness`'s `ExecutionEnv` dependency and context-free `AgentTool` inputs with application-defined `toolContext` values and context-aware `AgentHarnessTool` definitions.
@@ -13,6 +17,10 @@
 ### Changed
 
 - Aligned harness tool path handling, edit serialization, shell output capture, explicit non-inherited environments, and cross-platform process cleanup with coding-agent behavior.
+
+### Fixed
+
+- Fixed compaction and branch-summary requests to use fresh routing session IDs with prompt caching disabled where supported ([#6618](https://github.com/earendil-works/pi/pull/6618) by [@tmustier](https://github.com/tmustier)).
 
 ## [0.81.1] - 2026-07-21
 

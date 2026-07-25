@@ -4,14 +4,15 @@
 # Mirrors .github/workflows/build-binaries.yml
 #
 # Usage:
-#   ./scripts/build-binaries.sh [--skip-install] [--skip-deps] [--skip-build] [--platform <platform>] [--out <dir>]
+#   ./scripts/build-binaries.sh [--skip-install] [--skip-deps] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
 #
 # Options:
-#   --skip-install      Skip npm ci
-#   --skip-deps         Skip installing cross-platform dependencies
-#   --skip-build        Skip npm run build
-#   --platform <name>   Build only for specified platform (darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64, windows-arm64)
-#   --out <dir>         Output directory (default: packages/coding-agent/binaries)
+#   --skip-install       Skip npm ci
+#   --skip-deps          Skip installing cross-platform dependencies
+#   --skip-build         Skip the package build
+#   --offline-model-data Build with bundled model data instead of refreshing it
+#   --platform <name>    Build only for specified platform (darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64, windows-arm64)
+#   --out <dir>          Output directory (default: packages/coding-agent/binaries)
 #
 # Output:
 #   packages/coding-agent/binaries/
@@ -29,6 +30,7 @@ cd "$(dirname "$0")/.."
 SKIP_INSTALL=false
 SKIP_DEPS=false
 SKIP_BUILD=false
+OFFLINE_MODEL_DATA=false
 PLATFORM=""
 OUTPUT_DIR=""
 
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-build)
             SKIP_BUILD=true
+            shift
+            ;;
+        --offline-model-data)
+            OFFLINE_MODEL_DATA=true
             shift
             ;;
         --platform)
@@ -108,8 +114,13 @@ else
 fi
 
 if [[ "$SKIP_BUILD" == "false" ]]; then
-    echo "==> Building all packages..."
-    npm run build
+    if [[ "$OFFLINE_MODEL_DATA" == "true" ]]; then
+        echo "==> Building all packages with bundled model data..."
+        npm run build:offline
+    else
+        echo "==> Building all packages..."
+        npm run build
+    fi
 else
     echo "==> Skipping package build (--skip-build)"
 fi

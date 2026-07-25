@@ -31,7 +31,7 @@ Approval happens through maintainer replies on issues:
 - `lgtmi`: your future issues will not be auto-closed
 - `lgtm`: your future issues and PRs will not be auto-closed
 
-`lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
+The command must be at the start of the reply (optionally after one or more `@username` mentions) or at the end. `lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
 
 ## Quality Bar For Issues
 
@@ -45,7 +45,7 @@ If you open an issue, keep it short, concrete, and worth reading.
 - Explain why it matters.
 - If you want to implement the change yourself, say so.
 
-If the issue is real and written well, a maintainer may reopen it, reply `lgtmi`, or reply `lgtm`.
+If the issue is real and written well, a maintainer may reopen it or reply with `lgtmi` or `lgtm` in the command position described above.
 
 ## Blocking
 
@@ -55,7 +55,7 @@ If you send a large volume of issues through automation, your GitHub account wil
 
 ## Before Submitting a PR
 
-Do not open a PR unless you have already been approved with `lgtm`.
+Do not open a PR unless you have already been approved by a maintainer using `lgtm` in the command position described above.
 
 Before submitting a PR:
 

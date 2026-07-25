@@ -64,6 +64,27 @@ describe("normalizeProviderError", () => {
 		expect(norm.messageCarriesBody).toBe(false);
 	});
 
+	it("ignores a Bedrock response stream instead of serializing its internals", () => {
+		const error = Object.assign(
+			new Error("Invocation of model ID anthropic.claude-opus-5 with on-demand throughput isn't supported."),
+			{
+				name: "ValidationException",
+				$metadata: { httpStatusCode: 400 },
+				$response: {
+					statusCode: 400,
+					body: { pipe: () => undefined, _events: { close: [null, null] } },
+				},
+			},
+		);
+
+		const norm = normalizeProviderError(error);
+
+		expect(norm.status).toBe(400);
+		expect(norm.body).toBeUndefined();
+		expect(norm.message).toContain("on-demand throughput isn't supported");
+		expect(norm.messageCarriesBody).toBe(true);
+	});
+
 	it("JSON-stringifies a non-Error thrown value", () => {
 		const norm = normalizeProviderError({ reason: "boom" });
 

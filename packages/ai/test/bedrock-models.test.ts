@@ -29,6 +29,11 @@ describe("Amazon Bedrock Models", () => {
 		console.log(`Found ${models.length} Bedrock models`);
 	});
 
+	it("exposes Claude Opus 5 through an inference profile only", () => {
+		expect(models.some((model) => model.id === "global.anthropic.claude-opus-5")).toBe(true);
+		expect(models.some((model) => model.id === "anthropic.claude-opus-5")).toBe(false);
+	});
+
 	if (hasBedrockCredentials() && process.env.BEDROCK_EXTENSIVE_MODEL_TEST) {
 		for (const model of models) {
 			it(`should make a simple request with ${model.id}`, { timeout: 10_000 }, async () => {

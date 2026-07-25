@@ -567,6 +567,28 @@ describe("Models runtime", () => {
 		await expect(oauthModels.getAuth("p1")).rejects.toMatchObject({ code: "auth" });
 	});
 
+	it("keeps the underlying reason in wrapped oauth refresh errors", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("p1", async () => ({ type: "oauth", access: "old", refresh: "r", expires: 0 }));
+		const models = createModels({ credentials });
+		models.setProvider(
+			testProvider({
+				id: "p1",
+				auth: {
+					oauth: testOAuth({
+						refresh: async () => {
+							throw new Error("token refresh failed (400): invalid_grant");
+						},
+					}),
+				},
+			}),
+		);
+
+		await expect(models.getAuth("p1")).rejects.toThrow(
+			"OAuth refresh failed for p1: token refresh failed (400): invalid_grant",
+		);
+	});
+
 	it("wraps api-key auth failures in ModelsError", async () => {
 		const failing: ApiKeyAuth = {
 			name: "Failing",
