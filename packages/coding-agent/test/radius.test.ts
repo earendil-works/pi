@@ -95,7 +95,7 @@ describe("Radius provider", () => {
 
 	it("does not refresh catalogs over the network by default", async () => {
 		allowNetwork();
-		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected catalog fetch"));
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
 				[RADIUS_PROVIDER_ID]: radiusOAuthCredential("https://radius.example.com/v1"),

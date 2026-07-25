@@ -2419,8 +2419,8 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			settingsManager.setProjectPackages(["npm:example@1.0.0", "git:github.com/example/repo@v1"]);
 
-			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture");
-			const gitUpdateSpy = vi.spyOn(packageManager as any, "gitHasAvailableUpdate");
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"2.0.0"');
+			const gitUpdateSpy = vi.spyOn(packageManager as any, "gitHasAvailableUpdate").mockResolvedValue(true);
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([]);
