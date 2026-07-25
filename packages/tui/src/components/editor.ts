@@ -836,8 +836,12 @@ export class Editor implements Component, Focusable {
 			if (this.historyIndex > -1 && this.isOnLastVisualLine()) {
 				this.navigateHistory(1);
 			} else if (this.isOnLastVisualLine()) {
-				// Already at bottom - jump to end of line
-				this.moveToLineEnd();
+				// At bottom with history but no active navigation — clear editor
+				if (this.history.length > 0 && this.getText().length > 0) {
+					this.setTextInternal("");
+				} else {
+					this.moveToLineEnd();
+				}
 			} else {
 				this.moveCursor(1, 0);
 			}
