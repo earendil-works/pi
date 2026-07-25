@@ -80,6 +80,7 @@ describe("version checks", () => {
 	});
 
 	it("skips automatic api calls when version checks are disabled", async () => {
+		allowNetwork();
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);

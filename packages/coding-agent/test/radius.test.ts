@@ -94,6 +94,7 @@ describe("Radius provider", () => {
 	});
 
 	it("does not refresh catalogs over the network by default", async () => {
+		allowNetwork();
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
