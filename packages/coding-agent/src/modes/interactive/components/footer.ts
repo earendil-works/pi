@@ -235,9 +235,16 @@ export class FooterComponent implements Component {
 			const sortedStatuses = Array.from(extensionStatuses.entries())
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([, text]) => sanitizeStatusText(text));
-			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			// If any status starts with ~, put it on a separate line
+			const primary = sortedStatuses.filter(s => !s.startsWith("~"));
+			const secondary = sortedStatuses.filter(s => s.startsWith("~")).map(s => s.slice(1));
+			if (primary.length > 0) {
+				const statusLine = primary.join(" ");
+				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			}
+			for (const sec of secondary) {
+				lines.push(truncateToWidth(sec, width, theme.fg("dim", "...")));
+			}
 		}
 
 		return lines;
