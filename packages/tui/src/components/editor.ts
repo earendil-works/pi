@@ -436,7 +436,6 @@ export class Editor implements Component, Focusable {
 			this.pushUndoSnapshot();
 			const snap = { lines: [...this.state.lines], cursorLine: this.state.cursorLine, cursorCol: this.state.cursorCol };
 			this.historyDraft = snap as any;
-			console.error("[draft] saving:", JSON.stringify({lines: snap.lines, cursorCol: snap.cursorCol}));
 		}
 
 		this.historyIndex = newIndex;
@@ -446,7 +445,6 @@ export class Editor implements Component, Focusable {
 			this.historyDraft = null;
 			if (draft) {
 				Object.assign(this.state, draft);
-				console.error("[draft] restoring:", JSON.stringify({lines: draft.lines, cursorCol: draft.cursorCol}));
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
