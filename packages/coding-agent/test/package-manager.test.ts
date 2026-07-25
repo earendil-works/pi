@@ -74,7 +74,6 @@ describe("DefaultPackageManager", () => {
 	let packageManager: DefaultPackageManager;
 
 	beforeEach(() => {
-		allowNetwork();
 		tempDir = join(tmpdir(), `pm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		agentDir = join(tempDir, "agent");
@@ -856,6 +855,7 @@ Content`,
 		});
 
 		it("should update git package dependencies with --omit=dev", async () => {
+			allowNetwork();
 			const source = "git:github.com/user/repo";
 			const targetDir = join(tempDir, ".pi", "git", "github.com", "user", "repo");
 			mkdirSync(targetDir, { recursive: true });
@@ -883,6 +883,7 @@ Content`,
 		});
 
 		it("should use plain install through npmCommand argv when updating git package dependencies", async () => {
+			allowNetwork();
 			settingsManager = SettingsManager.inMemory({
 				npmCommand: ["mise", "exec", "node@20", "--", "pnpm"],
 			});
@@ -960,6 +961,7 @@ Content`,
 		});
 
 		it("should install user npm packages into the pi-managed npm root", async () => {
+			allowNetwork();
 			settingsManager = SettingsManager.inMemory({
 				npmCommand: ["pnpm"],
 				packages: ["npm:pnpm-pkg"],
@@ -1095,42 +1097,29 @@ Content`,
 		it("should emit progress events on install attempt", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
+			vi.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand").mockRejectedValue(
+				new Error("simulated npm install failure"),
+			);
 
-			// Use public install method which emits progress events
-			try {
-				await packageManager.install("npm:nonexistent-package@1.0.0");
-			} catch {
-				// Expected to fail - package doesn't exist
-			}
+			await expect(packageManager.install("npm:nonexistent-package@1.0.0")).rejects.toThrow(
+				"simulated npm install failure",
+			);
 
-			// Should have emitted start event before failure
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
-			// Should have emitted error event
 			expect(events.some((e) => e.type === "error")).toBe(true);
 		});
 
 		it("should recognize github URLs without git: prefix", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
-			const previousGitTerminalPrompt = process.env.GIT_TERMINAL_PROMPT;
-			process.env.GIT_TERMINAL_PROMPT = "0";
+			const runCommand = vi
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
+				.mockRejectedValue(new Error("simulated git clone failure"));
+			const source = "https://github.com/nonexistent/repo";
 
-			try {
-				// This should be parsed as a git source, not throw "unsupported"
-				try {
-					await packageManager.install("https://github.com/nonexistent/repo");
-				} catch {
-					// Expected to fail - repo doesn't exist
-				}
-			} finally {
-				if (previousGitTerminalPrompt === undefined) {
-					delete process.env.GIT_TERMINAL_PROMPT;
-				} else {
-					process.env.GIT_TERMINAL_PROMPT = previousGitTerminalPrompt;
-				}
-			}
+			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
 
-			// Should have attempted clone, not thrown unsupported error
+			expect(runCommand).toHaveBeenCalledWith("git", ["clone", source, expect.any(String)]);
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
 		});
 
@@ -2112,6 +2101,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 	describe("offline mode and network timeouts", () => {
 		it("should update npm range packages using the configured spec", async () => {
+			allowNetwork();
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
@@ -2137,6 +2127,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should skip project npm update when installed version matches latest", async () => {
+			allowNetwork();
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.3.1" }));
@@ -2158,6 +2149,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should migrate legacy user npm installs into the managed npm root during update", async () => {
+			allowNetwork();
 			const legacyRoot = join(tempDir, "legacy-global", "node_modules");
 			const legacyPath = join(legacyRoot, "legacy-pkg");
 			const managedPath = join(agentDir, "npm", "node_modules", "legacy-pkg");
@@ -2196,6 +2188,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should batch npm updates per scope and run git updates in parallel while skipping pinned npm and current packages", async () => {
+			allowNetwork();
 			const userOldPath = join(agentDir, "npm", "node_modules", "user-old");
 			const userCurrentPath = join(agentDir, "npm", "node_modules", "user-current");
 			const userUnknownPath = join(agentDir, "npm", "node_modules", "user-unknown");
@@ -2376,6 +2369,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should reinstall pinned npm packages when installed version does not match", async () => {
+			allowNetwork();
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
@@ -2399,6 +2393,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 		});
 
 		it("should report updates for installed unpinned npm packages", async () => {
+			allowNetwork();
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(installedPath, { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
