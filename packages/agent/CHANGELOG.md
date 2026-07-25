@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-07-24
+
 ### Breaking Changes
 
 - Replaced `AgentHarness`'s `ExecutionEnv` dependency and context-free `AgentTool` inputs with application-defined `toolContext` values and context-aware `AgentHarnessTool` definitions.

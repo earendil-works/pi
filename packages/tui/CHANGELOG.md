@@ -2,9 +2,12 @@
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-07-24
+
 ### Fixed
 
-- Fixed narrow terminals crashing when the editor's bottom scroll indicator exceeded the terminal width ([#6962](https://github.com/earendil-works/pi/issues/6962)).
+- Fixed debug and crash logs to use the configured TUI log directory, including `PI_CODING_AGENT_DIR`, instead of always writing under `~/.pi/agent` ([#6958](https://github.com/earendil-works/pi/pull/6958) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed narrow terminals crashing when the editor's bottom scroll indicator exceeded the terminal width ([#7015](https://github.com/earendil-works/pi/pull/7015) by [@christianklotz](https://github.com/christianklotz)).
 
 ## [0.81.1] - 2026-07-21
 

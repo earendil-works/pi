@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-server",
-	"version": "0.81.1",
+	"version": "0.82.0",
 	"description": "experimental server package for pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -40,7 +40,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "^0.81.1"
+		"@earendil-works/pi-coding-agent": "^0.82.0"
 	},
 	"devDependencies": {
 		"shx": "0.4.0"

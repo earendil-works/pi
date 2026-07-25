@@ -79,14 +79,29 @@ describe("builtin providers", () => {
 		}
 	});
 
-	it("resolves anthropic auth from env with OAuth token precedence", async () => {
+	it("resolves Anthropic bearer auth from env with auth token precedence", async () => {
+		const models = createModels({
+			authContext: fakeAuthContext({
+				ANTHROPIC_AUTH_TOKEN: "auth-token",
+				ANTHROPIC_OAUTH_TOKEN: "oauth-token",
+				ANTHROPIC_API_KEY: "api-key",
+			}),
+		});
+		models.setProvider(anthropicProvider());
+
+		expect(await models.getAuth("anthropic")).toEqual({
+			auth: { headers: { Authorization: "Bearer auth-token" } },
+			source: "ANTHROPIC_AUTH_TOKEN",
+		});
+	});
+
+	it("preserves Anthropic OAuth token precedence over the API key", async () => {
 		const models = createModels({
 			authContext: fakeAuthContext({ ANTHROPIC_API_KEY: "key", ANTHROPIC_OAUTH_TOKEN: "oauth-token" }),
 		});
 		models.setProvider(anthropicProvider());
-		const model = models.getModel("anthropic", "claude-haiku-4-5")!;
 
-		const result = await models.getAuth(model.provider);
+		const result = await models.getAuth("anthropic");
 		expect(result?.auth.apiKey).toBe("oauth-token");
 		expect(result?.source).toBe("ANTHROPIC_OAUTH_TOKEN");
 	});

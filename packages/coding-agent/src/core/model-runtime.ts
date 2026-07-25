@@ -513,14 +513,10 @@ export class ModelRuntime implements Models {
 		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
 	}
 
-	async reloadConfig(): Promise<void> {
+	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
 		this.configureRadiusProviders();
 		this.rebuildProviders();
-		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
-	}
-
-	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const refreshOptions = {
 			...options,
 			allowNetwork: options.allowNetwork ?? this.modelNetworkEnabled,

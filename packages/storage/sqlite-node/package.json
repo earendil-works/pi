@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-storage-sqlite-node",
-	"version": "0.81.1",
+	"version": "0.82.0",
 	"description": "Node sqlite storage backend for @earendil-works/pi-agent-core sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -32,7 +32,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.81.1",
-		"@earendil-works/pi-agent-core": "^0.81.1"
+		"@earendil-works/pi-ai": "^0.82.0",
+		"@earendil-works/pi-agent-core": "^0.82.0"
 	}
 }
