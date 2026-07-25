@@ -376,6 +376,19 @@ export class Agent {
 		await this.runContinuation();
 	}
 
+	/**
+	 * Append an externally resolved message without creating a user prompt.
+	 *
+	 * This is intended for durable tool calls whose final result is supplied by a
+	 * session host after the original agent turn has settled.
+	 */
+	async appendExternalMessage(message: AgentMessage): Promise<void> {
+		await this.runWithLifecycle(async () => {
+			await this.processEvents({ type: "message_start", message });
+			await this.processEvents({ type: "message_end", message });
+		});
+	}
+
 	private normalizePromptInput(
 		input: string | AgentMessage | AgentMessage[],
 		images?: ImageContent[],

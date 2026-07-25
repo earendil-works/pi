@@ -17,11 +17,14 @@ export {
 	type AgentSessionConfig,
 	type AgentSessionEvent,
 	type AgentSessionEventListener,
+	type ExternalToolResultInput,
 	type ModelCycleResult,
 	type ParsedSkillBlock,
+	type PendingExternalToolCall,
 	type PromptOptions,
 	parseSkillBlock,
 	type SessionStats,
+	type SubmitExternalToolResultOutcome,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
 // Compaction

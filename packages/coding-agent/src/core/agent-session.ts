@@ -32,6 +32,7 @@ import type {
 	Model,
 	ProviderHeaders,
 	TextContent,
+	ToolResultMessage,
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import {
@@ -119,6 +120,29 @@ export interface ParsedSkillBlock {
 	content: string;
 	userMessage: string | undefined;
 }
+
+/** A tool call whose final result must be supplied by the session host later. */
+export interface PendingExternalToolCall {
+	toolCallId: string;
+	toolName: string;
+	args: unknown;
+	pendingEntryId: string;
+}
+
+/** Native result supplied by a host for a previously deferred tool call. */
+export interface ExternalToolResultInput {
+	toolCallId: string;
+	content: (TextContent | ImageContent)[];
+	details: unknown;
+	isError?: boolean;
+	usage?: Usage;
+	addedToolNames?: string[];
+}
+
+export type SubmitExternalToolResultOutcome =
+	| { status: "resumed" }
+	| { status: "pending_external_results"; remaining: number }
+	| { status: "already_resolved" };
 
 /**
  * Parse a skill block from message text.
@@ -593,6 +617,14 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "tool_execution_deferred") {
+			this.sessionManager.appendCustomEntry("pi.pending_external_tool", {
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				args: event.args,
+			});
+		}
+
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -1072,6 +1104,13 @@ export class AgentSession {
 		}
 	}
 
+	private async _continueAgentRun(): Promise<void> {
+		await this.agent.continue();
+		while (await this._handlePostAgentRun()) {
+			await this.agent.continue();
+		}
+	}
+
 	private async _handlePostAgentRun(): Promise<boolean> {
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
@@ -1100,6 +1139,104 @@ export class AgentSession {
 		// The agent loop drains both queues before emitting agent_end. Any messages
 		// here were queued by agent_end extension handlers and need a continuation.
 		return this.agent.hasQueuedMessages();
+	}
+
+	/** Return unresolved tool calls whose final result must be supplied by an external host. */
+	listPendingExternalToolCalls(): PendingExternalToolCall[] {
+		const resolvedToolCallIds = new Set<string>();
+		const pending = new Map<string, PendingExternalToolCall>();
+
+		for (const entry of this.sessionManager.getBranch()) {
+			if (entry.type === "message" && entry.message.role === "toolResult") {
+				resolvedToolCallIds.add(entry.message.toolCallId);
+				continue;
+			}
+			if (entry.type !== "custom" || entry.customType !== "pi.pending_external_tool") {
+				continue;
+			}
+			const data = entry.data as Partial<PendingExternalToolCall> | undefined;
+			if (typeof data?.toolCallId !== "string" || typeof data.toolName !== "string") {
+				continue;
+			}
+			pending.set(data.toolCallId, {
+				toolCallId: data.toolCallId,
+				toolName: data.toolName,
+				args: data.args,
+				pendingEntryId: entry.id,
+			});
+		}
+
+		return [...pending.values()].filter((call) => !resolvedToolCallIds.has(call.toolCallId));
+	}
+
+	/**
+	 * Persist the native result for a deferred tool call and continue using Pi's normal agent loop.
+	 * The original tool is never executed again.
+	 */
+	async submitExternalToolResult(input: ExternalToolResultInput): Promise<SubmitExternalToolResultOutcome> {
+		if (this.isStreaming) {
+			throw new Error(
+				"Agent is already processing. Wait for the session to become idle before resolving an external tool call.",
+			);
+		}
+
+		const pendingCall = this.listPendingExternalToolCalls().find((call) => call.toolCallId === input.toolCallId);
+		if (!pendingCall) {
+			const hasResolvedResult = this.sessionManager
+				.getBranch()
+				.some(
+					(entry) =>
+						entry.type === "message" &&
+						entry.message.role === "toolResult" &&
+						entry.message.toolCallId === input.toolCallId,
+				);
+			if (hasResolvedResult) {
+				return { status: "already_resolved" };
+			}
+			throw new Error(`No pending external tool call found for id: ${input.toolCallId}`);
+		}
+		const hasMatchingToolCall = this.sessionManager.getBranch().some((entry) => {
+			if (entry.type !== "message" || entry.message.role !== "assistant") {
+				return false;
+			}
+			return entry.message.content.some(
+				(block) =>
+					block.type === "toolCall" && block.id === pendingCall.toolCallId && block.name === pendingCall.toolName,
+			);
+		});
+		if (!hasMatchingToolCall) {
+			throw new Error(
+				`The pending external tool call ${input.toolCallId} has no matching assistant tool call in this branch.`,
+			);
+		}
+
+		const result: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: pendingCall.toolCallId,
+			toolName: pendingCall.toolName,
+			content: input.content,
+			details: input.details,
+			usage: input.usage,
+			...(input.addedToolNames?.length ? { addedToolNames: input.addedToolNames } : {}),
+			isError: input.isError ?? false,
+			timestamp: Date.now(),
+		};
+
+		this._isAgentRunActive = true;
+		try {
+			await this.agent.appendExternalMessage(result);
+			this.sessionManager.appendCustomEntry("pi.external_tool_result", { toolCallId: input.toolCallId });
+			const remaining = this.listPendingExternalToolCalls().length;
+			if (remaining > 0) {
+				return { status: "pending_external_results", remaining };
+			}
+			await this._continueAgentRun();
+			return { status: "resumed" };
+		} finally {
+			this._systemPromptOverride = undefined;
+			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
+		}
 	}
 
 	/**

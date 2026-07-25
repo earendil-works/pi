@@ -470,6 +470,11 @@ async function executeToolCallsSequential(
 		}
 
 		await emitToolExecutionEnd(finalized, emit);
+		if (finalized.result.defer) {
+			await emitToolExecutionDeferred(finalized, emit);
+			finalizedCalls.push(finalized);
+			break;
+		}
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
 		finalizedCalls.push(finalized);
@@ -482,7 +487,9 @@ async function executeToolCallsSequential(
 
 	return {
 		messages,
-		terminate: shouldTerminateToolBatch(finalizedCalls),
+		terminate:
+			shouldTerminateToolBatch(finalizedCalls) ||
+			finalizedCalls.some((finalized) => finalized.result.defer === true),
 	};
 }
 
@@ -542,6 +549,10 @@ async function executeToolCallsParallel(
 	);
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
+		if (finalized.result.defer) {
+			await emitToolExecutionDeferred(finalized, emit);
+			continue;
+		}
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
 		messages.push(toolResultMessage);
@@ -549,7 +560,9 @@ async function executeToolCallsParallel(
 
 	return {
 		messages,
-		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+		terminate:
+			shouldTerminateToolBatch(orderedFinalizedCalls) ||
+			orderedFinalizedCalls.some((finalized) => finalized.result.defer === true),
 	};
 }
 
@@ -737,6 +750,7 @@ async function finalizeExecutedToolCall(
 					details: afterResult.details ?? result.details,
 					usage: afterResult.usage ?? result.usage,
 					terminate: afterResult.terminate ?? result.terminate,
+					defer: afterResult.defer ?? result.defer,
 				};
 				isError = afterResult.isError ?? isError;
 			}
@@ -765,6 +779,17 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
 		type: "tool_execution_end",
 		toolCallId: finalized.toolCall.id,
 		toolName: finalized.toolCall.name,
+		result: finalized.result,
+		isError: finalized.isError,
+	});
+}
+
+async function emitToolExecutionDeferred(finalized: FinalizedToolCallOutcome, emit: AgentEventSink): Promise<void> {
+	await emit({
+		type: "tool_execution_deferred",
+		toolCallId: finalized.toolCall.id,
+		toolName: finalized.toolCall.name,
+		args: finalized.toolCall.arguments,
 		result: finalized.result,
 		isError: finalized.isError,
 	});

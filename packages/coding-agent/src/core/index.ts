@@ -7,9 +7,12 @@ export {
 	type AgentSessionConfig,
 	type AgentSessionEvent,
 	type AgentSessionEventListener,
+	type ExternalToolResultInput,
 	type ModelCycleResult,
+	type PendingExternalToolCall,
 	type PromptOptions,
 	type SessionStats,
+	type SubmitExternalToolResultOutcome,
 } from "./agent-session.ts";
 export {
 	AgentSessionRuntime,

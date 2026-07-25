@@ -368,6 +368,61 @@ describe("agentLoop with AgentMessage", () => {
 		expect(toolResult?.role === "toolResult" ? toolResult.usage : undefined).toEqual(patchedToolUsage);
 	});
 
+	it("defers an external tool result without adding a synthetic tool result message", async () => {
+		const toolSchema = Type.Object({ question: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { question: string }> = {
+			name: "ask_external",
+			label: "Ask external host",
+			description: "Wait for an answer from an external host",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: params.question }],
+					details: { question: params.question },
+					defer: true,
+				};
+			},
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("ask for approval")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			{ model: createModel(), convertToLlm: identityConverter, toolExecution: "sequential" },
+			undefined,
+			() => {
+				const response = new MockAssistantStream();
+				queueMicrotask(() => {
+					response.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[
+								{
+									type: "toolCall",
+									id: "external-1",
+									name: "ask_external",
+									arguments: { question: "Continue?" },
+								},
+							],
+							"toolUse",
+						),
+					});
+				});
+				return response;
+			},
+		);
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+		const messages = await stream.result();
+
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(events.some((event) => event.type === "tool_execution_deferred")).toBe(true);
+		expect(events.some((event) => event.type === "message_end" && event.message.role === "toolResult")).toBe(false);
+	});
+
 	it("should not execute tool calls from a length-truncated assistant message", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];

@@ -87,6 +87,14 @@ export interface AfterToolCallResult {
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+	/**
+	 * Suspend this tool call until an external host submits its final tool result.
+	 *
+	 * A deferred result is emitted to observers, but no `toolResult` message is added to
+	 * the transcript. The session host must later provide a native result for the same
+	 * tool-call id before continuing the agent.
+	 */
+	defer?: boolean;
 }
 
 /** Context passed to `beforeToolCall`. */
@@ -366,6 +374,14 @@ export interface AgentToolResult<T> {
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+	/**
+	 * Suspend this tool call until an external host submits its final tool result.
+	 *
+	 * A deferred result is emitted to observers, but no `toolResult` message is added to
+	 * the transcript. The session host must later provide a native result for the same
+	 * tool-call id before continuing the agent.
+	 */
+	defer?: boolean;
 }
 
 /**
@@ -434,4 +450,12 @@ export type AgentEvent =
 	// Tool execution lifecycle
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }
-	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };
+	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean }
+	| {
+			type: "tool_execution_deferred";
+			toolCallId: string;
+			toolName: string;
+			args: any;
+			result: any;
+			isError: boolean;
+	  };
