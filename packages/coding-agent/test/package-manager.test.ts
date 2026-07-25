@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { allowNetwork } from "./test-env.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");

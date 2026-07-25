@@ -6,7 +6,7 @@ import {
 	getLatestPiVersion,
 	isNewerPackageVersion,
 } from "../src/utils/version-check.ts";
-import { allowNetwork } from "./test-env.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 
