@@ -101,6 +101,10 @@ function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 }
 
 describe("formatCwdForFooter", () => {
+	it("returns the cwd unchanged when home is undefined", () => {
+		expect(formatCwdForFooter("/some/path", undefined)).toBe("/some/path");
+	});
+
 	it("does not abbreviate sibling paths that share the home prefix", () => {
 		expect(formatCwdForFooter("/home/user2", "/home/user")).toBe("/home/user2");
 	});
@@ -108,6 +112,18 @@ describe("formatCwdForFooter", () => {
 	it("abbreviates the home directory and descendants", () => {
 		expect(formatCwdForFooter("/home/user", "/home/user")).toBe("~");
 		expect(formatCwdForFooter("/home/user/project", "/home/user")).toBe("~/project");
+	});
+
+	it("normalizes path separators for home-relative paths on Windows-style paths", () => {
+		// regression: on Windows path.sep is \\, which caused output like ~\\project
+		expect(formatCwdForFooter("C:\\Users\\user\\project", "C:\\Users\\user")).toBe("~/project");
+	});
+
+	it("normalizes nested subdirectory paths to forward slashes", () => {
+		// regression: path.relative() on Windows returns \\ separators for subdirectories
+		expect(formatCwdForFooter("C:\\Users\\user\\project\\sub\\dir", "C:\\Users\\user")).toBe(
+			"~/project/sub/dir",
+		);
 	});
 });
 
