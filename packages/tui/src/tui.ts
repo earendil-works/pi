@@ -1286,7 +1286,7 @@ export class TUI extends Container {
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
-			// PI_NO_FULL_CLEAR=1: skip clear, always do incremental render
+			// PI_NO_FULL_CLEAR=1: skip screen clear, but still home cursor for correct positioning
 			const actualClear = clear && process.env.PI_NO_FULL_CLEAR !== "1";
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
@@ -1298,6 +1298,9 @@ export class TUI extends Container {
 				if (process.env.PI_NO_SCROLLBACK_CLEAR !== "1") {
 					buffer += "\x1b[3J"; // Clear scrollback
 				}
+			} else if (clear) {
+				// PI_NO_FULL_CLEAR mode: home cursor without clearing screen
+				buffer += "\x1b[H"; // Cursor home only
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
