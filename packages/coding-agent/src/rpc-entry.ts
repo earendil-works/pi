@@ -5,6 +5,7 @@ import { main } from "./main.ts";
 
 process.title = `${APP_NAME}-rpc`;
 process.env.PI_CODING_AGENT = "true";
+process.env.AI_AGENT = "pi";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 configureHttpDispatcher();
