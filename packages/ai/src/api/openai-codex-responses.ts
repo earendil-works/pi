@@ -112,6 +112,17 @@ interface RequestBody {
 	[key: string]: unknown;
 }
 
+type SuccessfulAssistantMessage = AssistantMessage & { stopReason: "stop" | "length" | "toolUse" };
+
+function assertSuccessfulOutput(output: AssistantMessage): asserts output is SuccessfulAssistantMessage {
+	if (output.stopReason === "pending") {
+		throw new Error("Codex stream ended without a stop reason");
+	}
+	if (output.stopReason === "error" || output.stopReason === "aborted") {
+		throw new Error(output.errorMessage || "An unknown error occurred");
+	}
+}
+
 // ============================================================================
 // Retry Helpers
 // ============================================================================
@@ -252,7 +263,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
@@ -324,9 +335,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						if (options?.signal?.aborted) {
 							throw new Error("Request was aborted");
 						}
+						assertSuccessfulOutput(output);
 						stream.push({
 							type: "done",
-							reason: output.stopReason as "stop" | "length" | "toolUse",
+							reason: output.stopReason,
 							message: output,
 						});
 						stream.end();
@@ -471,7 +483,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error("Request was aborted");
 			}
 
-			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+			assertSuccessfulOutput(output);
+			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {

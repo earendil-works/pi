@@ -181,7 +181,7 @@ function createEventConverter(model: Model<"pi-messages">) {
 		provider: model.provider,
 		model: model.id,
 		usage: createEmptyUsage(),
-		stopReason: "stop",
+		stopReason: "pending",
 		timestamp: Date.now(),
 	};
 	const toolJson = new Map<number, string>();

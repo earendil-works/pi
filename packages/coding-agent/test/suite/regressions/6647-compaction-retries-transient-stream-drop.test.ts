@@ -59,18 +59,18 @@ describe("#6647 compaction retries transient summarization failures", () => {
 			callCount++;
 			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
-				if (message.stopReason === "error" || message.stopReason === "aborted") {
-					stream.push({
-						type: "error",
-						reason: message.stopReason,
-						error: { ...message, api: model.api, provider: model.provider, model: model.id },
-					});
+				const response = { ...message, api: model.api, provider: model.provider, model: model.id };
+				if (response.stopReason === "pending") {
+					const error: AssistantMessage = {
+						...response,
+						stopReason: "error",
+						errorMessage: "Scripted response ended without a stop reason",
+					};
+					stream.push({ type: "error", reason: "error", error });
+				} else if (response.stopReason === "error" || response.stopReason === "aborted") {
+					stream.push({ type: "error", reason: response.stopReason, error: response });
 				} else {
-					stream.push({
-						type: "done",
-						reason: message.stopReason,
-						message: { ...message, api: model.api, provider: model.provider, model: model.id },
-					});
+					stream.push({ type: "done", reason: response.stopReason, message: response });
 				}
 			});
 			return stream;

@@ -215,7 +215,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
@@ -574,7 +574,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (output.stopReason === "error") {
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
-			if (!hasFinishReason) {
+			if (!hasFinishReason || output.stopReason === "pending") {
 				throw new Error("Stream ended without finish_reason");
 			}
 

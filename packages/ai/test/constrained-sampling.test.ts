@@ -44,7 +44,7 @@ function makeOutput(): AssistantMessage {
 		provider: "openai",
 		model: "gpt-test",
 		usage: makeUsage(),
-		stopReason: "stop",
+		stopReason: "pending",
 		timestamp: Date.now(),
 	};
 }

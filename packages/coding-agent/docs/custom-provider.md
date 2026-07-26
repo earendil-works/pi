@@ -442,7 +442,7 @@ function streamMyProvider(
         totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: "stop",
+      stopReason: "pending",
       timestamp: Date.now(),
     };
 
@@ -451,12 +451,18 @@ function streamMyProvider(
       stream.push({ type: "start", partial: output });
 
       // Make API request and process response...
-      // Push content events as they arrive...
+      // Push content events as they arrive and set stopReason from the terminal event.
+      if (output.stopReason === "pending") {
+        throw new Error("Provider stream ended without a stop reason");
+      }
+      if (output.stopReason === "error" || output.stopReason === "aborted") {
+        throw new Error(output.errorMessage || "An unknown error occurred");
+      }
 
       // Push done event
       stream.push({
         type: "done",
-        reason: output.stopReason as "stop" | "length" | "toolUse",
+        reason: output.stopReason,
         message: output
       });
       stream.end();

@@ -870,13 +870,16 @@ for await (const event of s) {
 
 ## Stop Reasons
 
-Every `AssistantMessage` includes a `stopReason` field that indicates how the generation ended:
+Every `AssistantMessage` includes a `stopReason` field. Partial messages expose the current streaming state; terminal messages expose how generation ended:
 
-- `"stop"` - Normal completion, the model finished its response
+- `"pending"` - Generation is still in progress
+- `"stop"` - Normal completion, or a Responses API provider has started a `phase: "final_answer"` message
 - `"length"` - Output hit the maximum token limit
 - `"toolUse"` - Model is calling tools and expects tool results
 - `"error"` - An error occurred during generation
 - `"aborted"` - Request was cancelled via abort signal
+
+Responses API providers switch a partial message from `"pending"` to `"stop"` when `phase: "final_answer"` is observed, allowing clients to detect the final response while it streams. The terminal provider stop reason still replaces this provisional value. Providers without phase support remain `"pending"` until termination.
 
 `AssistantMessage` may also include `responseId`, a provider-specific upstream response or message identifier when the underlying API exposes one. Do not assume it is always present across providers.
 

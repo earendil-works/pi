@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PiMessagesOptions, stream, streamSimple } from "../src/api/pi-messages.ts";
-import type { Api, AssistantMessageEvent, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessageEvent, Context, Model, StopReason } from "../src/types.ts";
 
 type RecordedRequest = {
 	url: string;
@@ -116,6 +116,7 @@ describe("pi-messages", () => {
 		const model = createModel(baseUrl);
 
 		const events: AssistantMessageEvent[] = [];
+		const partialStopReasons: StopReason[] = [];
 		const eventStream = stream(model, context, {
 			apiKey: "test-key",
 			sessionId: "session-1",
@@ -124,10 +125,14 @@ describe("pi-messages", () => {
 			headers: { "x-custom": "1" },
 		});
 		for await (const event of eventStream) {
+			if ("partial" in event) {
+				partialStopReasons.push(event.partial.stopReason);
+			}
 			events.push(event);
 		}
 		const message = await eventStream.result();
 
+		expect(partialStopReasons[0]).toBe("pending");
 		expect(message.stopReason).toBe("toolUse");
 		expect(message.usage).toEqual(usage);
 		expect(message.responseId).toBe("resp_1");
