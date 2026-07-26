@@ -156,6 +156,35 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		]);
 	});
 
+	it("clears the active session without compacting", async () => {
+		const sessionEvents: Array<{ previousSessionFile: string | undefined; sessionFile: string | undefined }> = [];
+		let compacted = false;
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_compact", () => {
+				compacted = true;
+			});
+		});
+		runtimeHost.session.subscribe((event) => {
+			if (event.type === "session_cleared") {
+				sessionEvents.push({ previousSessionFile: event.previousSessionFile, sessionFile: event.sessionFile });
+			}
+		});
+
+		await runtimeHost.session.prompt("hello");
+		const previousSessionFile = runtimeHost.session.sessionFile;
+		expect(previousSessionFile).toBeTruthy();
+
+		const result = await runtimeHost.clear();
+		expect("summary" in result).toBe(false);
+		expect(result.estimatedTokensAfter).toBe(0);
+
+		expect(compacted).toBe(false);
+		expect(runtimeHost.session.sessionFile).not.toBe(previousSessionFile);
+		expect(runtimeHost.session.messages).toEqual([]);
+		expect(runtimeHost.session.sessionManager.getHeader()?.parentSession).toBe(previousSessionFile);
+		expect(sessionEvents).toEqual([{ previousSessionFile, sessionFile: runtimeHost.session.sessionFile }]);
+	});
+
 	it("honors session_before_switch cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		const { runtimeHost } = await createRuntimeHost((pi) => {

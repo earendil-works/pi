@@ -1634,6 +1634,18 @@ export class InteractiveMode {
 		await this.session.bindExtensions({
 			uiContext,
 			mode: "tui",
+			clearHandler: (options) => {
+				void (async () => {
+					try {
+						this.clearStatusIndicator();
+						const result = await this.runtimeHost.clear();
+						options?.onComplete?.(result);
+					} catch (error) {
+						const err = error instanceof Error ? error : new Error(String(error));
+						options?.onError?.(err);
+					}
+				})();
+			},
 			abortHandler: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			},
@@ -1804,6 +1816,17 @@ export class InteractiveMode {
 				void (async () => {
 					try {
 						const result = await this.session.compact(options?.customInstructions);
+						options?.onComplete?.(result);
+					} catch (error) {
+						const err = error instanceof Error ? error : new Error(String(error));
+						options?.onError?.(err);
+					}
+				})();
+			},
+			clear: (options) => {
+				void (async () => {
+					try {
+						const result = await this.runtimeHost.clear();
 						options?.onComplete?.(result);
 					} catch (error) {
 						const err = error instanceof Error ? error : new Error(String(error));
@@ -2884,6 +2907,13 @@ export class InteractiveMode {
 			case "session_info_changed":
 				this.updateTerminalTitle();
 				this.footer.invalidate();
+				this.ui.requestRender();
+				break;
+
+			case "session_cleared":
+				this.renderCurrentSessionState();
+				this.updateTerminalTitle();
+				this.showStatus("Context cleared");
 				this.ui.requestRender();
 				break;
 

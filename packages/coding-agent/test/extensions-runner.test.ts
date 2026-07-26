@@ -98,6 +98,7 @@ describe("ExtensionRunner", () => {
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},
+		clear: () => {},
 		getSystemPrompt: () => "",
 	};
 
@@ -522,6 +523,21 @@ describe("ExtensionRunner", () => {
 
 			const ctx = runner.createContext();
 			expect(ctx.isProjectTrusted()).toBe(false);
+		});
+
+		it("routes ExtensionContext clear requests through the bound clear action", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const clear = vi.fn();
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				clear,
+			});
+
+			const options = { onComplete: vi.fn(), onError: vi.fn() };
+			runner.createContext().clear(options);
+
+			expect(clear).toHaveBeenCalledWith(options);
 		});
 
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {

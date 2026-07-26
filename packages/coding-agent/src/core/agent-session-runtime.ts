@@ -4,6 +4,7 @@ import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type {
+	ClearResult,
 	ProjectTrustContext,
 	ReplacedSessionContext,
 	SessionShutdownEvent,
@@ -218,6 +219,10 @@ export class AgentSessionRuntime {
 		);
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
+	}
+
+	async clear(): Promise<ClearResult> {
+		return this.session.clear();
 	}
 
 	async newSession(options?: {

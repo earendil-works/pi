@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `ctx.clear()` to extension contexts so extensions can clear the active session without generating a compaction summary.
+
 ## [0.82.1] - 2026-07-25
 
 ### New Features

@@ -298,6 +298,16 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+export interface ClearResult {
+	tokensBefore?: number;
+	estimatedTokensAfter: number;
+}
+
+export interface ClearOptions {
+	onComplete?: (result: ClearResult) => void;
+	onError?: (error: Error) => void;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -336,6 +346,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/** Clear the active session without generating a summary and without awaiting completion. */
+	clear(options?: ClearOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -1623,6 +1635,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	clear: (options?: ClearOptions) => void;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }

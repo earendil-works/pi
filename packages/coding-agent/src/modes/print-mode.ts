@@ -72,6 +72,17 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		session = runtimeHost.session;
 		await session.bindExtensions({
 			mode: mode === "json" ? "json" : "print",
+			clearHandler: (options) => {
+				void (async () => {
+					try {
+						const result = await runtimeHost.clear();
+						options?.onComplete?.(result);
+					} catch (error) {
+						const err = error instanceof Error ? error : new Error(String(error));
+						options?.onError?.(err);
+					}
+				})();
+			},
 			commandContextActions: {
 				waitForIdle: () => session.waitForIdle(),
 				newSession: async (newSessionOptions) => runtimeHost.newSession(newSessionOptions),

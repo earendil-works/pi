@@ -16,6 +16,7 @@ import type {
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
+	ClearOptions,
 	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
@@ -281,6 +282,7 @@ export class ExtensionRunner {
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
+	private clearFn: (options?: ClearOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
@@ -343,6 +345,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.clearFn = contextActions.clear;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
@@ -729,6 +732,10 @@ export class ExtensionRunner {
 			compact: (options) => {
 				runner.assertActive();
 				runner.compactFn(options);
+			},
+			clear: (options) => {
+				runner.assertActive();
+				runner.clearFn(options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();

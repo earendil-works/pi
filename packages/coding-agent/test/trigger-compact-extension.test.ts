@@ -19,6 +19,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		shutdown: vi.fn(),
 		getContextUsage: () => ({ tokens, contextWindow: 200_000, percent: tokens === null ? null : tokens / 2000 }),
 		compact,
+		clear: vi.fn(),
 		getSystemPrompt: () => "",
 	};
 }

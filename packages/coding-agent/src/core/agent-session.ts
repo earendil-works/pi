@@ -66,6 +66,8 @@ import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
+	type ClearOptions,
+	type ClearResult,
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
@@ -152,6 +154,7 @@ export type AgentSessionEvent =
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
+	| { type: "session_cleared"; previousSessionFile: string | undefined; sessionFile: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
 			type: "compaction_end";
@@ -229,6 +232,7 @@ export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
+	clearHandler?: (options?: ClearOptions) => void;
 	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
@@ -354,6 +358,7 @@ export class AgentSession {
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
+	private _extensionClearHandler?: (options?: ClearOptions) => void;
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
@@ -1925,6 +1930,24 @@ export class AgentSession {
 	}
 
 	/**
+	 * Clear the session context without generating a summary.
+	 */
+	async clear(): Promise<ClearResult> {
+		const usage = this.getContextUsage();
+		const previousSessionFile = this.sessionFile;
+		this.sessionManager.newSession({ parentSession: previousSessionFile });
+		this.agent.reset();
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		this.clearQueue();
+		this._emit({
+			type: "session_cleared",
+			previousSessionFile,
+			sessionFile: this.sessionFile,
+		});
+		return { tokensBefore: usage?.tokens ?? undefined, estimatedTokensAfter: 0 };
+	}
+
+	/**
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
@@ -2236,6 +2259,9 @@ export class AgentSession {
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
 		}
+		if (bindings.clearHandler !== undefined) {
+			this._extensionClearHandler = bindings.clearHandler;
+		}
 		if (bindings.abortHandler !== undefined) {
 			this._extensionAbortHandler = bindings.abortHandler;
 		}
@@ -2430,6 +2456,13 @@ export class AgentSession {
 							options?.onError?.(err);
 						}
 					})();
+				},
+				clear: (options) => {
+					if (this._extensionClearHandler) {
+						this._extensionClearHandler(options);
+						return;
+					}
+					options?.onError?.(new Error("Clear is unavailable in this context"));
 				},
 				getSystemPrompt: () => this.systemPrompt,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,

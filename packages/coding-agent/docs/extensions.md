@@ -1060,6 +1060,21 @@ ctx.compact({
 });
 ```
 
+### ctx.clear()
+
+Clear the active session without generating a compaction summary. Use `onComplete` and `onError` for follow-up actions.
+
+```typescript
+ctx.clear({
+  onComplete: () => {
+    ctx.ui.notify("Context cleared", "info");
+  },
+  onError: (error) => {
+    ctx.ui.notify(`Clear failed: ${error.message}`, "error");
+  },
+});
+```
+
 ### ctx.getSystemPrompt()
 
 Returns Pi's current system prompt string.
