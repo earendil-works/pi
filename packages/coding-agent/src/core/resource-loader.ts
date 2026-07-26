@@ -205,7 +205,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private themeDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
+	private systemPromptPath?: string;
 	private appendSystemPrompt: string[];
+	private appendSystemPromptPaths: string[];
 	private lastSkillPaths: string[];
 	private extensionSkillSourceInfos: Map<string, SourceInfo>;
 	private extensionPromptSourceInfos: Map<string, SourceInfo>;
@@ -252,7 +254,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.themes = [];
 		this.themeDiagnostics = [];
 		this.agentsFiles = [];
+		this.systemPromptPath = undefined;
 		this.appendSystemPrompt = [];
+		this.appendSystemPromptPaths = [];
 		this.lastSkillPaths = [];
 		this.extensionSkillSourceInfos = new Map();
 		this.extensionPromptSourceInfos = new Map();
@@ -280,6 +284,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
 		return { agentsFiles: this.agentsFiles };
+	}
+
+	getSystemPromptPath(): string | undefined {
+		return this.systemPromptPath;
+	}
+
+	getAppendSystemPromptPaths(): string[] {
+		return this.appendSystemPromptPaths;
 	}
 
 	getSystemPrompt(): string | undefined {
@@ -474,21 +486,38 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 
-		const baseSystemPrompt = resolvePromptInput(
-			this.systemPromptSource ?? this.discoverSystemPromptFile(),
-			"system prompt",
-		);
+		// Track SYSTEM.md / APPEND_SYSTEM.md file paths for context banner visibility (#7096)
+		this.systemPromptPath =
+			this.systemPromptSource !== undefined ? undefined : (this.discoverSystemPromptFile() ?? undefined);
+		this.appendSystemPromptPaths =
+			this.appendSystemPromptSource !== undefined
+				? []
+				: this.discoverAppendSystemPromptFile()
+					? [this.discoverAppendSystemPromptFile()!]
+					: [];
+
+		const baseSystemPrompt = resolvePromptInput(this.systemPromptSource ?? this.systemPromptPath, "system prompt");
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 
 		const appendSources =
-			this.appendSystemPromptSource ??
-			(this.discoverAppendSystemPromptFile() ? [this.discoverAppendSystemPromptFile()!] : []);
+			this.appendSystemPromptSource ?? (this.appendSystemPromptPaths.length > 0 ? this.appendSystemPromptPaths : []);
 		const baseAppend = appendSources
 			.map((s) => resolvePromptInput(s, "append system prompt"))
 			.filter((s): s is string => s !== undefined);
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
+
+		// Append SYSTEM.md / APPEND_SYSTEM.md entries for startup [Context] banner visibility.
+		// Content is intentionally empty so they are not double-injected into the system prompt
+		// (they are already applied as customPrompt / appendSystemPrompt).
+		if (this.systemPromptPath) {
+			this.agentsFiles.push({ path: this.systemPromptPath, content: "" });
+		}
+		for (const p of this.appendSystemPromptPaths) {
+			this.agentsFiles.push({ path: p, content: "" });
+		}
+
 		this.loaded = true;
 	}
 
