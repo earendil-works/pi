@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
@@ -9,6 +9,10 @@ import {
 import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+
+beforeEach(() => {
+	allowNetwork();
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -30,7 +34,6 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		allowNetwork();
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -39,7 +42,6 @@ describe("version checks", () => {
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
-		allowNetwork();
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -56,7 +58,6 @@ describe("version checks", () => {
 	});
 
 	it("returns the active package metadata from the version check api", async () => {
-		allowNetwork();
 		const fetchMock = vi.fn(async () =>
 			Response.json({
 				packageName: "@new-scope/pi",
@@ -72,7 +73,6 @@ describe("version checks", () => {
 	});
 
 	it("returns update notes from the version check api", async () => {
-		allowNetwork();
 		const fetchMock = vi.fn(async () => Response.json({ note: " **Read this** ", version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -89,7 +89,6 @@ describe("version checks", () => {
 	});
 
 	it("allows direct api calls when automatic version checks are disabled", async () => {
-		allowNetwork();
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);

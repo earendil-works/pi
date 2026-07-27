@@ -52,6 +52,7 @@ describe("package commands", () => {
 	}
 
 	beforeEach(() => {
+		allowNetwork();
 		tempDir = join(tmpdir(), `pi-package-commands-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		projectDir = join(tempDir, "project");
@@ -247,7 +248,6 @@ describe("package commands", () => {
 	});
 
 	it("does not prompt or ask extensions for project trust during update", async () => {
-		allowNetwork();
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
 		const fakeNpmPath = join(tempDir, "fake-project-npm.cjs");
@@ -286,7 +286,6 @@ describe("package commands", () => {
 	});
 
 	it("uses saved project trust during update", async () => {
-		allowNetwork();
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
 		const recordPath = join(tempDir, "trusted-project-update.json");
@@ -376,7 +375,6 @@ describe("package commands", () => {
 	});
 
 	it("refreshes only model catalogs with update --models", async () => {
-		allowNetwork();
 		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
 		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -475,7 +473,6 @@ describe("package commands", () => {
 	});
 
 	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
-		allowNetwork();
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
@@ -502,7 +499,6 @@ describe("package commands", () => {
 	});
 
 	it("uses the update check version for forced self updates even when current", async () => {
-		allowNetwork();
 		const globalPrefix = join(tempDir, "global-prefix");
 		const projectPrefix = join(tempDir, "project-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
@@ -556,7 +552,6 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("uses the current package name when the update check omits packageName", async () => {
-		allowNetwork();
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -603,7 +598,6 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 	});
 
 	it("installs the active package name from the update check during self-update", async () => {
-		allowNetwork();
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -655,7 +649,6 @@ else {
 	});
 
 	it("prints a pnpm metadata hint when self-update fails", async () => {
-		allowNetwork();
 		const globalRoot = join(tempDir, "pnpm", "global", "v11");
 		const selfPackageDir = join(globalRoot, "node_modules", "@earendil-works", "pi-coding-agent");
 		const fakeBinDir = join(tempDir, "bin");
@@ -700,7 +693,6 @@ else {
 	});
 
 	it("fails self-update when renamed npm package installation fails", async () => {
-		allowNetwork();
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");

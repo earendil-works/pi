@@ -2,12 +2,17 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+	allowNetwork();
+});
 
 afterEach(() => {
 	for (const dir of tempDirs.splice(0)) {
@@ -21,10 +26,7 @@ function createTempDir(): string {
 	return dir;
 }
 
-async function runCli(
-	args: string[],
-	options: { allowNetwork?: boolean } = {},
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
+async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
 	const tempRoot = createTempDir();
 	const agentDir = join(tempRoot, "agent");
 	const projectDir = join(tempRoot, "project");
@@ -56,17 +58,14 @@ async function runCli(
 		"utf-8",
 	);
 
-	const env = {
-		...process.env,
-		[ENV_AGENT_DIR]: agentDir,
-		TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
-	};
-	if (options.allowNetwork) delete env.PI_OFFLINE;
-
 	return await new Promise((resolvePromise, reject) => {
 		const child = spawn(process.execPath, [cliPath, ...args], {
 			cwd: projectDir,
-			env,
+			env: {
+				...process.env,
+				[ENV_AGENT_DIR]: agentDir,
+				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
+			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
@@ -103,7 +102,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 	});
 
 	it("keeps stdout empty for --mode json --help while routing trusted startup chatter to stderr", async () => {
-		const result = await runCli(["--mode", "json", "--help", "--approve"], { allowNetwork: true });
+		const result = await runCli(["--mode", "json", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toBe("");
@@ -113,7 +112,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 	});
 
 	it("keeps stdout empty for -p --help while routing trusted startup chatter to stderr", async () => {
-		const result = await runCli(["-p", "--help", "--approve"], { allowNetwork: true });
+		const result = await runCli(["-p", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toBe("");

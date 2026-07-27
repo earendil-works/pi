@@ -38,6 +38,7 @@ function radiusConfig(baseUrl: string) {
 let tempDir: string;
 
 beforeEach(() => {
+	allowNetwork();
 	tempDir = join(tmpdir(), `pi-test-radius-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 });
@@ -65,7 +66,6 @@ describe("Radius provider", () => {
 	});
 
 	it("fetches and stores the catalog for configured Radius auth", async () => {
-		allowNetwork();
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response(JSON.stringify(radiusConfig("https://radius.example.com/v1")), {
 				status: 200,
@@ -94,7 +94,6 @@ describe("Radius provider", () => {
 	});
 
 	it("does not refresh catalogs over the network by default", async () => {
-		allowNetwork();
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected catalog fetch"));
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
@@ -109,7 +108,6 @@ describe("Radius provider", () => {
 	});
 
 	it("does not fetch or expose Radius models without configured auth", async () => {
-		allowNetwork();
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory(),
@@ -123,7 +121,6 @@ describe("Radius provider", () => {
 	});
 
 	it("supports custom Radius gateways from models.json", async () => {
-		allowNetwork();
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			new Response(JSON.stringify(radiusConfig("http://localhost:8788/v1")), { status: 200 }),
 		);
