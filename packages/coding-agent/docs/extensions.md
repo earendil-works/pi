@@ -982,9 +982,11 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
-### ctx.modelRegistry / ctx.model / ctx.thinkingLevel
+### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
 Access to models, providers, and resolved authentication. `ctx.modelRegistry.getProvider(id)` returns the effective pi-ai provider, while `getProviderAuth(id)` resolves its current API key, headers, base URL, and provider-scoped environment without requiring a loaded model. `ctx.model` is the active model, and `ctx.thinkingLevel` is its current effective thinking level.
+
+`ctx.scopedModels` is the read-only list of models scoped to the current session — the same set the `/scoped-models` command shows. It is resolved at session start from the `--models` CLI flag and the `enabledModels` setting (matched against the available catalogue with minimatch on `provider/modelId` or a bare `modelId`). It is empty when no scoping is configured, meaning every available model is usable. Each entry is `{ model, thinkingLevel? }`, where `thinkingLevel` is set only when a pattern pinned it (e.g. `anthropic/*:high`). Use it to populate a model picker that mirrors the built-in one instead of enumerating the whole catalogue via `ctx.modelRegistry.getAvailable()`.
 
 ### ctx.signal
 
