@@ -94,11 +94,13 @@ export function loadProjectContextFiles(options: {
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
+	const seenContent = new Set<string>();
 
 	const globalContext = loadContextFileFromDir(resolvedAgentDir);
-	if (globalContext) {
+	if (globalContext && !seenContent.has(globalContext.content)) {
 		contextFiles.push(globalContext);
 		seenPaths.add(globalContext.path);
+		seenContent.add(globalContext.content);
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
@@ -107,9 +109,10 @@ export function loadProjectContextFiles(options: {
 
 	while (true) {
 		const contextFile = loadContextFileFromDir(currentDir);
-		if (contextFile && !seenPaths.has(contextFile.path)) {
+		if (contextFile && !seenPaths.has(contextFile.path) && !seenContent.has(contextFile.content)) {
 			ancestorContextFiles.unshift(contextFile);
 			seenPaths.add(contextFile.path);
+			seenContent.add(contextFile.content);
 		}
 
 		const parentDir = dirname(currentDir);

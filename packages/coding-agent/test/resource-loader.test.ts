@@ -345,6 +345,42 @@ Content`,
 			expect(themes.some((t) => t.sourcePath?.endsWith("skip.json"))).toBe(false);
 		});
 
+		it("should skip byte-identical context files discovered at multiple paths", async () => {
+			// cwd is nested under a parent that holds an identical AGENTS.md, which
+			// happens when a worktree lives inside the repo root. Both files have the
+			// same content; only the closest-to-cwd copy should be loaded.
+			const parentDir = join(tempDir, "parent");
+			const nestedCwd = join(parentDir, "worktree");
+			mkdirSync(nestedCwd, { recursive: true });
+
+			const sharedContent = "# Shared Guidelines\n\nBe concise.";
+			writeFileSync(join(parentDir, "AGENTS.md"), sharedContent);
+			writeFileSync(join(nestedCwd, "AGENTS.md"), sharedContent);
+
+			const loader = new DefaultResourceLoader({ cwd: nestedCwd, agentDir });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			const agentsMdFiles = agentsFiles.filter((f) => f.path.endsWith("AGENTS.md"));
+			expect(agentsMdFiles).toHaveLength(1);
+			expect(agentsMdFiles[0]?.path).toBe(join(nestedCwd, "AGENTS.md"));
+		});
+
+		it("should keep distinct context files with different content", async () => {
+			const parentDir = join(tempDir, "parent-distinct");
+			const nestedCwd = join(parentDir, "worktree");
+			mkdirSync(nestedCwd, { recursive: true });
+
+			writeFileSync(join(parentDir, "AGENTS.md"), "# Parent Guidelines");
+			writeFileSync(join(nestedCwd, "AGENTS.md"), "# Nested Guidelines");
+
+			const loader = new DefaultResourceLoader({ cwd: nestedCwd, agentDir });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles.filter((f) => f.path.endsWith("AGENTS.md"))).toHaveLength(2);
+		});
+
 		it("should discover AGENTS.md context files", async () => {
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 
