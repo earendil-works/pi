@@ -4655,15 +4655,8 @@ export class InteractiveMode {
 						}
 					}
 
+					// The user committed to navigating: stop the active response first.
 					if (this.session.isStreaming) {
-						const interruptChoice = await this.showExtensionSelector(
-							"Stop the current response to navigate the session tree?",
-							["Stop and navigate", "Cancel"],
-						);
-						if (interruptChoice !== "Stop and navigate") {
-							this.showTreeSelector(entryId);
-							return;
-						}
 						this.restoreQueuedMessagesToEditor();
 						await this.session.abort();
 					}
