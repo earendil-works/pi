@@ -3807,6 +3807,7 @@ export class InteractiveMode {
 
 	private toggleToolOutputExpansion(): void {
 		this.setToolsExpanded(!this.toolOutputExpanded);
+		this.showStatus(`Tool output: ${this.toolOutputExpanded ? "expanded" : "collapsed"}`);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
