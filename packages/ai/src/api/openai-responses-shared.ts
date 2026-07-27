@@ -54,6 +54,7 @@ function stripMediaMarkers(text: string): string {
 		.replace(/<\|\s*video\s*\|>/g, "[video]")
 		.replace(/\|\s*video\s*\|/g, "[video]");
 }
+
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -110,7 +111,9 @@ function convertToolResultOutput<TApi extends Api>(
 		// Strip media markers to prevent tokenizer crashes.
 		// Markers like `|image|` may appear in tool output (e.g., chat templates
 		// from llama.cpp /props) but without actual image data, causing crashes.
-		return stripMediaMarkers(sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)"));
+		return stripMediaMarkers(
+			sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)"),
+		);
 	}
 
 	const output: ToolResultOutputContent = [];
