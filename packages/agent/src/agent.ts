@@ -254,6 +254,16 @@ export class Agent {
 		return this._state;
 	}
 
+	/** @internal Whether a model has been selected for future turns. */
+	get hasModel(): boolean {
+		return this._state.model !== DEFAULT_MODEL;
+	}
+
+	/** @internal Clear the selected model while retaining the agent's internal sentinel. */
+	clearModel(): void {
+		this._state.model = DEFAULT_MODEL;
+	}
+
 	/** Controls how queued steering messages are drained. */
 	set steeringMode(mode: QueueMode) {
 		this.steeringQueue.mode = mode;

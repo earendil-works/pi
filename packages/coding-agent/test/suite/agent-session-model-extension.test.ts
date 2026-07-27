@@ -2,7 +2,8 @@ import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionFactory, ResourceLoader } from "../../src/index.ts";
+import { createTestExtensionsResult } from "../utilities.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
 describe("AgentSession model and extension characterization", () => {
@@ -393,5 +394,71 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.reload();
 
 		expect(lifecycleEvents).toEqual(["start:startup", "shutdown:reload", "start:reload"]);
+	});
+
+	it("invalidates the old runtime after host cleanup and removes disabled extension resources", async () => {
+		let enabled = true;
+		const phases: string[] = [];
+		const factory: ExtensionFactory = (pi) => {
+			if (!enabled) return;
+			pi.on("session_shutdown", () => {
+				phases.push("shutdown");
+			});
+			pi.on("input", () => ({ action: "continue" }));
+			pi.registerCommand("removed-command", { handler: async () => {} });
+			pi.registerShortcut("ctrl+shift+y", { handler: () => {} });
+			pi.registerMessageRenderer("removed-message", () => undefined);
+			pi.registerEntryRenderer("removed-entry", () => undefined);
+			pi.registerTool({
+				name: "removed_tool",
+				label: "Removed Tool",
+				description: "Removed on reload",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+		};
+		let extensionsResult = await createTestExtensionsResult([factory]);
+		const resourceLoader: ResourceLoader = {
+			getExtensions: () => extensionsResult,
+			getSkills: () => ({ skills: [], diagnostics: [] }),
+			getPrompts: () => ({ prompts: [], diagnostics: [] }),
+			getThemes: () => ({ themes: [], diagnostics: [] }),
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSystemPrompt: () => undefined,
+			getAppendSystemPrompt: () => [],
+			extendResources: () => {},
+			reload: async () => {
+				extensionsResult = await createTestExtensionsResult([factory]);
+			},
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+		const oldRunner = harness.session.extensionRunner;
+		const oldContext = oldRunner.createContext();
+
+		expect(oldRunner.getCommand("removed-command")).toBeDefined();
+		expect(harness.session.getAllTools().map((tool) => tool.name)).toContain("removed_tool");
+		expect(oldRunner.hasHandlers("input")).toBe(true);
+		expect(oldRunner.getMessageRenderer("removed-message")).toBeDefined();
+		expect(oldRunner.getEntryRenderer("removed-entry")).toBeDefined();
+
+		enabled = false;
+		await harness.session.reload({
+			beforeExtensionInvalidate: () => {
+				phases.push("host-ui-cleanup");
+				expect(oldContext.cwd).toBe(harness.tempDir);
+			},
+		});
+
+		expect(phases).toEqual(["shutdown", "host-ui-cleanup"]);
+		expect(() => oldContext.cwd).toThrow("stale after session replacement or reload");
+		expect(harness.session.extensionRunner.getCommand("removed-command")).toBeUndefined();
+		expect(harness.session.getAllTools().map((tool) => tool.name)).not.toContain("removed_tool");
+		expect(harness.session.getActiveToolNames()).not.toContain("removed_tool");
+		expect(harness.session.extensionRunner.hasHandlers("input")).toBe(false);
+		expect(harness.session.extensionRunner.getShortcuts({}).size).toBe(0);
+		expect(harness.session.extensionRunner.getMessageRenderer("removed-message")).toBeUndefined();
+		expect(harness.session.extensionRunner.getEntryRenderer("removed-entry")).toBeUndefined();
 	});
 });

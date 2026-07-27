@@ -41,6 +41,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/loadout` | Stage session-only extensions, skills, prompts, and themes, then reload |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -95,6 +96,12 @@ Useful session commands:
 
 See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
 
+### Session Loadouts
+
+`/loadout` changes the current session's effective extensions, skills, prompt templates, and themes without writing global or project settings. Changes are staged: Space toggles, Enter applies and reloads once, and Escape discards. Ordinary `/reload` keeps the active session overrides.
+
+Pi saves only deliberate loadout changes as non-context session metadata. A non-empty loadout is offered for restoration when that existing session is opened interactively; declining leaves normal settings active and may prompt again on a future resume. Missing resources are skipped with warnings, and saved data cannot install packages or bypass project trust. Print, JSON, and RPC modes ignore saved loadouts.
+
 ## Context Files
 
 Pi loads `AGENTS.md` or `CLAUDE.md` at startup from:
@@ -124,7 +131,7 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`pi loadout` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
@@ -156,10 +163,10 @@ pi update --models           # Refresh model catalogs only
 pi update --self             # Update pi only
 pi update --extension <src>  # Update one package
 pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+pi loadout                   # Persistently enable/disable package resources
 ```
 
-These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pi config` remains accepted as an alias for `pi loadout`. `pi loadout` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
 
 See [Pi Packages](packages.md) for package sources and security notes.
 

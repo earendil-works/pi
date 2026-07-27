@@ -24,10 +24,10 @@ import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 type ResourceType = "extensions" | "skills" | "prompts" | "themes";
-type ConfigWriteScope = "global" | "project";
+type LoadoutWriteScope = "global" | "project";
 type SettingsScope = "user" | "project";
 type ProjectOverrideState = "inherit" | "load" | "unload";
-export type ScopedResolvedPaths = Record<ConfigWriteScope, ResolvedPaths>;
+export type ScopedResolvedPaths = Record<LoadoutWriteScope, ResolvedPaths>;
 
 const RESOURCE_TYPES = ["extensions", "skills", "prompts", "themes"] as const satisfies readonly ResourceType[];
 
@@ -38,7 +38,7 @@ const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
 	themes: "Themes",
 };
 
-interface ResourceItem {
+export interface LoadoutResourceItem {
 	path: string;
 	enabled: boolean;
 	metadata: PathMetadata;
@@ -48,19 +48,19 @@ interface ResourceItem {
 	subgroupKey: string;
 }
 
-interface ResourceSubgroup {
+export interface LoadoutResourceSubgroup {
 	type: ResourceType;
 	label: string;
-	items: ResourceItem[];
+	items: LoadoutResourceItem[];
 }
 
-interface ResourceGroup {
+export interface LoadoutResourceGroup {
 	key: string;
 	label: string;
 	scope: "user" | "project" | "temporary";
 	origin: "package" | "top-level";
 	source: string;
-	subgroups: ResourceSubgroup[];
+	subgroups: LoadoutResourceSubgroup[];
 }
 
 function formatBaseDir(baseDir: string): string {
@@ -96,8 +96,8 @@ function getGroupLabel(metadata: PathMetadata, agentDir: string): string {
 	return metadata.scope === "user" ? "User settings" : "Project settings";
 }
 
-function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[] {
-	const groupMap = new Map<string, ResourceGroup>();
+export function buildLoadoutResourceGroups(resolved: ResolvedPaths, agentDir: string): LoadoutResourceGroup[] {
+	const groupMap = new Map<string, LoadoutResourceGroup>();
 
 	const addToGroup = (resources: ResolvedResource[], resourceType: ResourceType) => {
 		for (const res of resources) {
@@ -180,20 +180,20 @@ function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[]
 }
 
 type FlatEntry =
-	| { type: "group"; group: ResourceGroup }
-	| { type: "subgroup"; subgroup: ResourceSubgroup; group: ResourceGroup }
-	| { type: "item"; item: ResourceItem };
+	| { type: "group"; group: LoadoutResourceGroup }
+	| { type: "subgroup"; subgroup: LoadoutResourceSubgroup; group: LoadoutResourceGroup }
+	| { type: "item"; item: LoadoutResourceItem };
 
-class ConfigSelectorHeader implements Component {
-	private writeScope: ConfigWriteScope;
+class LoadoutSelectorHeader implements Component {
+	private writeScope: LoadoutWriteScope;
 	private projectModeAvailable: boolean;
 
-	constructor(writeScope: ConfigWriteScope, projectModeAvailable: boolean) {
+	constructor(writeScope: LoadoutWriteScope, projectModeAvailable: boolean) {
 		this.writeScope = writeScope;
 		this.projectModeAvailable = projectModeAvailable;
 	}
 
-	setWriteScope(writeScope: ConfigWriteScope): void {
+	setWriteScope(writeScope: LoadoutWriteScope): void {
 		this.writeScope = writeScope;
 	}
 
@@ -220,7 +220,7 @@ class ConfigSelectorHeader implements Component {
 }
 
 class ResourceList implements Component, Focusable {
-	private groupsByScope: Record<ConfigWriteScope, ResourceGroup[]>;
+	private groupsByScope: Record<LoadoutWriteScope, LoadoutResourceGroup[]>;
 	private flatItems: FlatEntry[] = [];
 	private filteredItems: FlatEntry[] = [];
 	private selectedIndex = 0;
@@ -229,12 +229,12 @@ class ResourceList implements Component, Focusable {
 	private settingsManager: SettingsManager;
 	private cwd: string;
 	private agentDir: string;
-	private writeScope: ConfigWriteScope;
+	private writeScope: LoadoutWriteScope;
 	private inheritedEnabledByKey: Map<string, boolean>;
 
 	public onCancel?: () => void;
 	public onExit?: () => void;
-	public onToggle?: (item: ResourceItem, newEnabled: boolean) => void;
+	public onToggle?: (item: LoadoutResourceItem, newEnabled: boolean) => void;
 	public onSwitchMode?: () => void;
 
 	private _focused = false;
@@ -247,12 +247,12 @@ class ResourceList implements Component, Focusable {
 	}
 
 	constructor(
-		groupsByScope: Record<ConfigWriteScope, ResourceGroup[]>,
+		groupsByScope: Record<LoadoutWriteScope, LoadoutResourceGroup[]>,
 		settingsManager: SettingsManager,
 		cwd: string,
 		agentDir: string,
 		terminalHeight?: number,
-		writeScope: ConfigWriteScope = "global",
+		writeScope: LoadoutWriteScope = "global",
 	) {
 		this.groupsByScope = groupsByScope;
 		this.settingsManager = settingsManager;
@@ -268,17 +268,17 @@ class ResourceList implements Component, Focusable {
 		this.filteredItems = [...this.flatItems];
 	}
 
-	setWriteScope(writeScope: ConfigWriteScope): void {
+	setWriteScope(writeScope: LoadoutWriteScope): void {
 		this.writeScope = writeScope;
 		this.buildFlatList();
 		this.filterItems(this.searchInput.getValue());
 	}
 
-	private get groups(): ResourceGroup[] {
+	private get groups(): LoadoutResourceGroup[] {
 		return this.groupsByScope[this.writeScope];
 	}
 
-	private buildInheritedEnabledMap(groups: ResourceGroup[]): Map<string, boolean> {
+	private buildInheritedEnabledMap(groups: LoadoutResourceGroup[]): Map<string, boolean> {
 		const result = new Map<string, boolean>();
 		for (const group of groups) {
 			for (const subgroup of group.subgroups) {
@@ -325,9 +325,9 @@ class ResourceList implements Component, Focusable {
 		}
 
 		const lowerQuery = query.toLowerCase();
-		const matchingItems = new Set<ResourceItem>();
-		const matchingSubgroups = new Set<ResourceSubgroup>();
-		const matchingGroups = new Set<ResourceGroup>();
+		const matchingItems = new Set<LoadoutResourceItem>();
+		const matchingSubgroups = new Set<LoadoutResourceSubgroup>();
+		const matchingGroups = new Set<LoadoutResourceGroup>();
 
 		for (const entry of this.flatItems) {
 			if (entry.type === "item") {
@@ -373,7 +373,7 @@ class ResourceList implements Component, Focusable {
 		this.selectedIndex = firstItemIndex >= 0 ? firstItemIndex : 0;
 	}
 
-	updateItem(item: ResourceItem, enabled: boolean): void {
+	updateItem(item: LoadoutResourceItem, enabled: boolean): void {
 		item.enabled = enabled;
 		// Update in groups too
 		for (const group of this.groups) {
@@ -513,7 +513,7 @@ class ResourceList implements Component, Focusable {
 		this.filterItems(this.searchInput.getValue());
 	}
 
-	private toggleResource(item: ResourceItem): boolean | undefined {
+	private toggleResource(item: LoadoutResourceItem): boolean | undefined {
 		if (this.writeScope === "project") {
 			const state = this.getNextOverrideState(item);
 			if (!this.setProjectResourceOverride(item, state)) return undefined;
@@ -529,7 +529,7 @@ class ResourceList implements Component, Focusable {
 		return enabled;
 	}
 
-	private toggleTopLevelResource(item: ResourceItem, enabled: boolean): void {
+	private toggleTopLevelResource(item: LoadoutResourceItem, enabled: boolean): void {
 		const scope = item.metadata.scope as "user" | "project";
 		const settings =
 			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
@@ -577,7 +577,7 @@ class ResourceList implements Component, Focusable {
 		}
 	}
 
-	private togglePackageResource(item: ResourceItem, enabled: boolean): void {
+	private togglePackageResource(item: LoadoutResourceItem, enabled: boolean): void {
 		const scope = item.metadata.scope as "user" | "project";
 		const settings =
 			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
@@ -636,7 +636,7 @@ class ResourceList implements Component, Focusable {
 		}
 	}
 
-	private renderCheckbox(item: ResourceItem): string {
+	private renderCheckbox(item: LoadoutResourceItem): string {
 		if (this.writeScope === "project") {
 			const state = this.getProjectOverrideState(item);
 			if (state === "load") return theme.fg("success", "[+]");
@@ -646,7 +646,7 @@ class ResourceList implements Component, Focusable {
 		return item.enabled ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
 	}
 
-	private getItemSuffix(item: ResourceItem): string {
+	private getItemSuffix(item: LoadoutResourceItem): string {
 		if (this.writeScope !== "project") return "";
 		const state = this.getProjectOverrideState(item);
 		if (state === "load") return theme.fg("muted", "  project load");
@@ -654,7 +654,7 @@ class ResourceList implements Component, Focusable {
 		return this.isInheritedGlobalItem(item) ? theme.fg("dim", "  inherited global") : "";
 	}
 
-	private isDimmedItem(item: ResourceItem): boolean {
+	private isDimmedItem(item: LoadoutResourceItem): boolean {
 		return (
 			this.writeScope === "project" &&
 			this.isInheritedGlobalItem(item) &&
@@ -662,13 +662,13 @@ class ResourceList implements Component, Focusable {
 		);
 	}
 
-	private setProjectResourceOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
+	private setProjectResourceOverride(item: LoadoutResourceItem, state: ProjectOverrideState): boolean {
 		return item.metadata.origin === "top-level"
 			? this.setProjectTopLevelOverride(item, state)
 			: this.setProjectPackageOverride(item, state);
 	}
 
-	private setProjectTopLevelOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
+	private setProjectTopLevelOverride(item: LoadoutResourceItem, state: ProjectOverrideState): boolean {
 		const current = (this.settingsManager.getProjectSettings()[item.resourceType] ?? []) as string[];
 		const pattern = this.isInheritedGlobalItem(item) ? item.path : this.getResourcePatternForScope(item, "project");
 		const patterns = this.getTopLevelOverridePatterns(item, "project");
@@ -693,7 +693,7 @@ class ResourceList implements Component, Focusable {
 		else this.settingsManager.setProjectThemePaths(paths);
 	}
 
-	private setProjectPackageOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
+	private setProjectPackageOverride(item: LoadoutResourceItem, state: ProjectOverrideState): boolean {
 		const packages = [...(this.settingsManager.getProjectSettings().packages ?? [])] as PackageSource[];
 		let pkgIndex = packages.findIndex((pkg) =>
 			this.packageSourceStringMatches(
@@ -728,7 +728,7 @@ class ResourceList implements Component, Focusable {
 		return true;
 	}
 
-	private getNextOverrideState(item: ResourceItem): ProjectOverrideState {
+	private getNextOverrideState(item: LoadoutResourceItem): ProjectOverrideState {
 		const state = this.getProjectOverrideState(item);
 		const inheritedEnabled = this.getInheritedEnabled(item);
 		if (state === "inherit") return inheritedEnabled ? "unload" : "load";
@@ -736,7 +736,7 @@ class ResourceList implements Component, Focusable {
 		return inheritedEnabled ? "inherit" : "unload";
 	}
 
-	private getProjectOverrideState(item: ResourceItem): ProjectOverrideState {
+	private getProjectOverrideState(item: LoadoutResourceItem): ProjectOverrideState {
 		if (this.writeScope !== "project") return "inherit";
 		if (item.metadata.origin === "top-level") {
 			return this.getOverrideStateFromEntries(
@@ -771,18 +771,18 @@ class ResourceList implements Component, Focusable {
 		return state;
 	}
 
-	private getInheritedEnabled(item: ResourceItem): boolean {
+	private getInheritedEnabled(item: LoadoutResourceItem): boolean {
 		return (
 			this.inheritedEnabledByKey.get(this.getResourceItemKey(item)) ??
 			(this.getItemScope(item) === "user" ? item.enabled : true)
 		);
 	}
 
-	private isInheritedGlobalItem(item: ResourceItem): boolean {
+	private isInheritedGlobalItem(item: LoadoutResourceItem): boolean {
 		return this.getItemScope(item) === "user" || this.inheritedEnabledByKey.has(this.getResourceItemKey(item));
 	}
 
-	private getTopLevelOverridePatterns(item: ResourceItem, scope: SettingsScope): Set<string> {
+	private getTopLevelOverridePatterns(item: LoadoutResourceItem, scope: SettingsScope): Set<string> {
 		const baseDir = this.getTopLevelBaseDir(scope);
 		const patterns = new Set<string>([
 			this.getResourcePatternForScope(item, scope),
@@ -793,14 +793,14 @@ class ResourceList implements Component, Focusable {
 		return patterns;
 	}
 
-	private getResourcePatternForScope(item: ResourceItem, scope: SettingsScope): string {
+	private getResourcePatternForScope(item: LoadoutResourceItem, scope: SettingsScope): string {
 		const sourceScope = this.getItemScope(item);
 		if (scope !== sourceScope) return item.path;
 		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(sourceScope);
 		return relative(baseDir, item.path);
 	}
 
-	private createPackageOverrideSource(item: ResourceItem): PackageSource {
+	private createPackageOverrideSource(item: LoadoutResourceItem): PackageSource {
 		const source = item.metadata.source;
 		if (!isLocalPath(source)) return { source, autoload: false };
 		const sourcePath = resolvePath(source, this.getTopLevelBaseDir(this.getItemScope(item)), { trim: true });
@@ -820,7 +820,7 @@ class ResourceList implements Component, Focusable {
 		return left === right;
 	}
 
-	private findMatchingPackageSource(item: ResourceItem, targetScope: SettingsScope): PackageSource | undefined {
+	private findMatchingPackageSource(item: LoadoutResourceItem, targetScope: SettingsScope): PackageSource | undefined {
 		const settings =
 			targetScope === "project"
 				? this.settingsManager.getProjectSettings()
@@ -839,11 +839,11 @@ class ResourceList implements Component, Focusable {
 		return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
 	}
 
-	private getResourceItemKey(item: ResourceItem): string {
+	private getResourceItemKey(item: LoadoutResourceItem): string {
 		return `${item.resourceType}:${canonicalizePath(item.path)}`;
 	}
 
-	private getItemScope(item: ResourceItem): SettingsScope {
+	private getItemScope(item: LoadoutResourceItem): SettingsScope {
 		return item.metadata.scope === "project" ? "project" : "user";
 	}
 
@@ -851,22 +851,22 @@ class ResourceList implements Component, Focusable {
 		return scope === "project" ? join(this.cwd, CONFIG_DIR_NAME) : this.agentDir;
 	}
 
-	private getResourcePattern(item: ResourceItem): string {
+	private getResourcePattern(item: LoadoutResourceItem): string {
 		const scope = item.metadata.scope as "user" | "project";
 		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(scope);
 		return relative(baseDir, item.path);
 	}
 
-	private getPackageResourcePattern(item: ResourceItem): string {
+	private getPackageResourcePattern(item: LoadoutResourceItem): string {
 		const baseDir = item.metadata.baseDir ?? dirname(item.path);
 		return relative(baseDir, item.path);
 	}
 }
 
-export class ConfigSelectorComponent extends Container implements Focusable {
-	private header: ConfigSelectorHeader;
+export class LoadoutSelectorComponent extends Container implements Focusable {
+	private header: LoadoutSelectorHeader;
 	private resourceList: ResourceList;
-	private writeScope: ConfigWriteScope;
+	private writeScope: LoadoutWriteScope;
 
 	private _focused = false;
 	get focused(): boolean {
@@ -886,22 +886,22 @@ export class ConfigSelectorComponent extends Container implements Focusable {
 		onExit: () => void,
 		requestRender: () => void,
 		terminalHeight?: number,
-		writeScope: ConfigWriteScope = "global",
+		writeScope: LoadoutWriteScope = "global",
 		projectModeAvailable = true,
 	) {
 		super();
 
 		this.writeScope = writeScope;
 		const groupsByScope = {
-			global: buildGroups(resolvedPaths.global, agentDir),
-			project: buildGroups(resolvedPaths.project, agentDir),
+			global: buildLoadoutResourceGroups(resolvedPaths.global, agentDir),
+			project: buildLoadoutResourceGroups(resolvedPaths.project, agentDir),
 		};
 
 		// Add header
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.header = new ConfigSelectorHeader(this.writeScope, projectModeAvailable);
+		this.header = new LoadoutSelectorHeader(this.writeScope, projectModeAvailable);
 		this.addChild(this.header);
 		this.addChild(new Spacer(1));
 

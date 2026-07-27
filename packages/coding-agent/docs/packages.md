@@ -36,6 +36,7 @@ pi update --self            # update pi only
 pi update --self --force    # reinstall pi even if current
 pi update npm:@foo/bar      # update one package
 pi update --extension npm:@foo/bar
+pi loadout                  # persistently enable or disable resources
 ```
 
 These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall).
@@ -217,7 +218,9 @@ Filter what a package loads using the object form in settings:
 
 ## Enable and Disable Resources
 
-Use `pi config` to enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. `pi config` starts in global settings (`~/.pi/agent/settings.json`); press Tab to switch between global and project-local modes. Use `pi config -l` to start in project overrides (`.pi/settings.json`) with inherited global resources dimmed.
+Use `pi loadout` to persistently enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. It starts in global settings (`~/.pi/agent/settings.json`); press Tab to switch between global and project-local modes. Use `pi loadout -l` to start in project overrides (`.pi/settings.json`) with inherited global resources dimmed. `pi config` remains accepted as a backwards-compatible alias.
+
+Inside interactive mode, `/loadout` instead stages overrides for the current session. It never writes either settings file. Enter applies the staged set and reloads resources once; Escape discards it. Ordinary `/reload` preserves active session overrides. Deliberate non-empty overrides are stored in the session, and interactive resume asks before restoring them. Restoration matches only currently discovered resources, so it cannot install packages, introduce paths from session data, or bypass project trust; unavailable resources are skipped with warnings.
 
 ## Scope and Deduplication
 

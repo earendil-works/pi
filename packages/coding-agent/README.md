@@ -180,6 +180,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/loadout` | Stage session-only extensions, skills, prompts, and themes, then reload |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -268,6 +269,12 @@ Use `/session` in interactive mode to see the current session ID before reusing 
 
 **`--fork <path|id>`** - Fork an existing session file or partial session UUID directly from the CLI. This copies the full source session into a new session file in the current project.
 
+### Session Loadouts
+
+Use `/loadout` to stage session-only overrides for extensions, skills, prompt templates, and themes. Space toggles a resource, Enter applies the staged set with one reload, and Escape discards it. These overrides do not change global or project settings, and ordinary `/reload` preserves them.
+
+A deliberate non-empty loadout is saved as session metadata. Clearing a previously saved loadout writes a reset marker; opening the selector or reloading does not create duplicate entries. When an existing session has a saved non-empty loadout, interactive mode asks before restoring it. Missing or no-longer-trusted resources are skipped with warnings. Print, JSON, and RPC modes do not restore or prompt for saved loadouts.
+
 ### Compaction
 
 Long sessions can exhaust context windows. Compaction summarizes older messages while keeping recent ones.
@@ -301,7 +308,7 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`pi loadout` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
@@ -428,7 +435,7 @@ pi update --models                      # refresh model catalogs only
 pi update --self                        # update pi only
 pi update --self --force                # reinstall pi even if current
 pi update npm:@foo/pi-tools             # update one package
-pi config                               # enable/disable extensions, skills, prompts, themes
+pi loadout                              # persistently enable/disable extensions, skills, prompts, themes
 ```
 
 Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
@@ -528,10 +535,10 @@ pi update --self             # Update pi only
 pi update --self --force     # Reinstall pi even if current
 pi update --extension <src>  # Update one package
 pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+pi loadout                   # Persistently enable/disable package resources
 ```
 
-`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+`pi config` remains accepted as a backwards-compatible alias for `pi loadout`. `pi loadout` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
 
 ### Modes
 

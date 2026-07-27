@@ -19,6 +19,7 @@ type ImportCommandContext = {
 	renderCurrentSessionState: () => void;
 	handleFatalRuntimeError: (prefix: string, error: unknown) => Promise<never>;
 	promptForMissingSessionCwd: (error: unknown) => Promise<string | undefined>;
+	maybeRestoreSavedLoadout: () => Promise<void>;
 	getPathCommandArgument: (text: string, command: PathCommand) => string | undefined;
 };
 
@@ -55,6 +56,7 @@ describe("InteractiveMode /import parsing", () => {
 		const showExtensionConfirm = vi.fn(async () => true);
 		const showStatus = vi.fn();
 		const showError = vi.fn();
+		const maybeRestoreSavedLoadout = vi.fn(async () => {});
 
 		const context: ImportCommandContext = {
 			clearStatusIndicator: vi.fn(),
@@ -68,6 +70,7 @@ describe("InteractiveMode /import parsing", () => {
 				throw new Error("unexpected fatal error");
 			}),
 			promptForMissingSessionCwd: vi.fn(async () => undefined),
+			maybeRestoreSavedLoadout,
 			getPathCommandArgument: interactiveModePrototype.getPathCommandArgument,
 		};
 
@@ -78,6 +81,7 @@ describe("InteractiveMode /import parsing", () => {
 			"Replace current session with path/to/session.jsonl?",
 		);
 		expect(importFromJsonl).toHaveBeenCalledWith("path/to/session.jsonl");
+		expect(maybeRestoreSavedLoadout).toHaveBeenCalledOnce();
 		expect(showError).not.toHaveBeenCalled();
 		expect(showStatus).toHaveBeenCalledWith("Session imported from: path/to/session.jsonl");
 	});
@@ -87,6 +91,7 @@ describe("InteractiveMode /import parsing", () => {
 		const showExtensionConfirm = vi.fn(async () => true);
 		const showStatus = vi.fn();
 		const showError = vi.fn();
+		const maybeRestoreSavedLoadout = vi.fn(async () => {});
 
 		const context: ImportCommandContext = {
 			clearStatusIndicator: vi.fn(),
@@ -100,12 +105,14 @@ describe("InteractiveMode /import parsing", () => {
 				throw new Error("unexpected fatal error");
 			}),
 			promptForMissingSessionCwd: vi.fn(async () => undefined),
+			maybeRestoreSavedLoadout,
 			getPathCommandArgument: interactiveModePrototype.getPathCommandArgument,
 		};
 
 		await interactiveModePrototype.handleImportCommand.call(context, "/import john's/session.jsonl");
 
 		expect(importFromJsonl).toHaveBeenCalledWith("john's/session.jsonl");
+		expect(maybeRestoreSavedLoadout).toHaveBeenCalledOnce();
 		expect(showError).not.toHaveBeenCalled();
 		expect(showStatus).toHaveBeenCalledWith("Session imported from: john's/session.jsonl");
 	});
@@ -131,6 +138,7 @@ describe("InteractiveMode /import parsing", () => {
 			renderCurrentSessionState: vi.fn(),
 			handleFatalRuntimeError,
 			promptForMissingSessionCwd: vi.fn(async () => undefined),
+			maybeRestoreSavedLoadout: vi.fn(async () => {}),
 			getPathCommandArgument: interactiveModePrototype.getPathCommandArgument,
 		};
 

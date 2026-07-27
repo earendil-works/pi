@@ -75,6 +75,7 @@ import type {
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
+import { appendSessionLoadout, getSessionLoadout, loadoutOverridesEqual } from "../../core/loadout.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
@@ -126,6 +127,10 @@ import {
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
+import {
+	type SessionLoadoutSelection,
+	SessionLoadoutSelectorComponent,
+} from "./components/session-loadout-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
@@ -318,6 +323,8 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Whether an existing initial session may offer to restore its saved loadout. */
+	promptForSavedLoadout?: boolean;
 }
 
 export class InteractiveMode {
@@ -356,6 +363,7 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
+	private loadoutRestoreDecisions = new Set<string>();
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -795,6 +803,10 @@ export class InteractiveMode {
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+
+		if (this.options.promptForSavedLoadout !== false) {
+			await this.maybeRestoreSavedLoadout();
+		}
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -2368,10 +2380,10 @@ export class InteractiveMode {
 	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
 		this.editorComponentFactory = factory;
 
-		// Save text from current editor before switching
-		const currentText = this.editor.getText();
-
-		this.editorContainer.clear();
+		const previousEditor = this.editor;
+		const editorIsDisplayed =
+			this.editorContainer.children.length === 1 && this.editorContainer.children[0] === previousEditor;
+		const currentText = previousEditor.getText();
 
 		if (factory) {
 			// Create the custom editor with tui, theme, and keybindings
@@ -2426,8 +2438,11 @@ export class InteractiveMode {
 			this.editor = this.defaultEditor;
 		}
 
-		this.editorContainer.addChild(this.editor as Component);
-		this.ui.setFocus(this.editor as Component);
+		if (editorIsDisplayed) {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor as Component);
+			this.ui.setFocus(this.editor as Component);
+		}
 		this.ui.requestRender();
 	}
 
@@ -2650,6 +2665,11 @@ export class InteractiveMode {
 			if (text === "/settings") {
 				this.showSettingsSelector();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/loadout") {
+				this.editor.setText("");
+				this.showLoadoutSelector();
 				return;
 			}
 			if (text === "/scoped-models") {
@@ -4122,6 +4142,109 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private loadoutActionBlocked(action: "opening" | "applying"): boolean {
+		if (this.session.isStreaming) {
+			this.showWarning(`Wait for the current response to finish before ${action} a session loadout.`);
+			return true;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning(`Wait for compaction to finish before ${action} a session loadout.`);
+			return true;
+		}
+		if (this.session.isBashRunning) {
+			this.showWarning(`Wait for the bash command to finish before ${action} a session loadout.`);
+			return true;
+		}
+		return false;
+	}
+
+	private getLoadoutLoader():
+		| {
+				getLoadoutSnapshot: NonNullable<AgentSession["resourceLoader"]["getLoadoutSnapshot"]>;
+				setLoadoutOverrides: NonNullable<AgentSession["resourceLoader"]["setLoadoutOverrides"]>;
+		  }
+		| undefined {
+		const loader = this.session.resourceLoader;
+		if (!loader.getLoadoutSnapshot || !loader.setLoadoutOverrides) return undefined;
+		return {
+			getLoadoutSnapshot: loader.getLoadoutSnapshot.bind(loader),
+			setLoadoutOverrides: loader.setLoadoutOverrides.bind(loader),
+		};
+	}
+
+	private showLoadoutDiagnostics(): void {
+		const loader = this.getLoadoutLoader();
+		if (!loader) return;
+		for (const diagnostic of loader.getLoadoutSnapshot().diagnostics) {
+			this.showWarning(diagnostic.message);
+		}
+	}
+
+	private async applySessionLoadout(selection: SessionLoadoutSelection, persist: boolean): Promise<void> {
+		if (this.loadoutActionBlocked("applying")) return;
+		const loader = this.getLoadoutLoader();
+		if (!loader) {
+			this.showWarning("Session loadouts are unavailable with the configured resource loader.");
+			return;
+		}
+		const previousOverrides = loader.getLoadoutSnapshot().overrides;
+		loader.setLoadoutOverrides(selection.overrides);
+		if (!(await this.handleReloadCommand())) {
+			loader.setLoadoutOverrides(previousOverrides);
+			return;
+		}
+		if (persist && (selection.explicitReset || !loadoutOverridesEqual(previousOverrides, selection.overrides))) {
+			appendSessionLoadout(this.sessionManager, selection.overrides);
+		}
+		this.showLoadoutDiagnostics();
+	}
+
+	private showLoadoutSelector(): void {
+		if (this.loadoutActionBlocked("opening")) return;
+		const loader = this.getLoadoutLoader();
+		if (!loader) {
+			this.showWarning("Session loadouts are unavailable with the configured resource loader.");
+			return;
+		}
+		this.showSelector((done) => {
+			const selector = new SessionLoadoutSelectorComponent({
+				snapshot: loader.getLoadoutSnapshot(),
+				agentDir: this.runtimeHost.services.agentDir,
+				terminalHeight: this.ui.terminal.rows,
+				onApply: (selection) => {
+					if (this.loadoutActionBlocked("applying")) return;
+					done();
+					void this.applySessionLoadout(selection, true);
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+				requestRender: () => this.ui.requestRender(),
+			});
+			return { component: selector, focus: selector.getResourceList() };
+		});
+	}
+
+	private getLoadoutRestoreDecisionKey(): string {
+		return this.sessionManager.getSessionFile() ?? this.sessionManager.getSessionId();
+	}
+
+	private async maybeRestoreSavedLoadout(): Promise<void> {
+		const key = this.getLoadoutRestoreDecisionKey();
+		if (this.loadoutRestoreDecisions.has(key)) return;
+		const saved = getSessionLoadout(this.sessionManager);
+		if (!saved || saved.overrides.length === 0) return;
+		this.loadoutRestoreDecisions.add(key);
+
+		const accepted = await this.showExtensionConfirm(
+			"Restore session loadout?",
+			"Continue with the last session's extensions, skills, prompts, and themes? Missing resources will be skipped.",
+		);
+		if (!accepted) return;
+		await this.applySessionLoadout({ overrides: saved.overrides, explicitReset: false }, false);
+	}
+
 	private showSettingsSelector(): void {
 		this.showSelector((done) => {
 			const selector = new SettingsSelectorComponent(
@@ -4808,6 +4931,7 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
+			await this.maybeRestoreSavedLoadout();
 			this.showStatus("Resumed session");
 			return result;
 		} catch (error: unknown) {
@@ -4825,6 +4949,7 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
+				await this.maybeRestoreSavedLoadout();
 				this.showStatus("Resumed session in current cwd");
 				return result;
 			}
@@ -5082,7 +5207,7 @@ export class InteractiveMode {
 
 		let selectedModel: Model<any> | undefined;
 		let selectionError: string | undefined;
-		if (isUnknownModel(previousModel)) {
+		if (!previousModel || isUnknownModel(previousModel)) {
 			const availableModels = await this.session.modelRuntime.getAvailable();
 			const providerModels = availableModels.filter((model) => model.provider === providerId);
 			if (!hasDefaultModelProvider(providerId)) {
@@ -5305,17 +5430,19 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private async handleReloadCommand(): Promise<boolean> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
-			return;
+			return false;
 		}
 		if (this.session.isCompacting) {
 			this.showWarning("Wait for compaction to finish before reloading.");
-			return;
+			return false;
 		}
-
-		this.resetExtensionUI();
+		if (this.session.isBashRunning) {
+			this.showWarning("Wait for the bash command to finish before reloading.");
+			return false;
+		}
 
 		const reloadBox = new Container();
 		const borderColor = (s: string) => theme.fg("border", s);
@@ -5331,7 +5458,6 @@ export class InteractiveMode {
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(new DynamicBorder(borderColor));
 
-		const previousEditor = this.editor;
 		this.editorContainer.clear();
 		this.editorContainer.addChild(reloadBox);
 		this.ui.setFocus(reloadBox);
@@ -5358,7 +5484,16 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			const reloadResult = await this.session.reload({
+				beforeExtensionInvalidate: () => {
+					this.resetExtensionUI();
+					this.editorContainer.clear();
+					this.editorContainer.addChild(reloadBox);
+					this.ui.setFocus(reloadBox);
+					this.ui.requestRender();
+				},
+				beforeSessionStart: restoreChatBeforeSessionStart,
+			});
 			restoreChatBeforeSessionStart();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();
@@ -5394,6 +5529,9 @@ export class InteractiveMode {
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
+			if (reloadResult.modelFallbackMessage) {
+				this.showWarning(reloadResult.modelFallbackMessage);
+			}
 			this.showStatus(
 				savedImplicitProjectTrust
 					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
@@ -5401,11 +5539,13 @@ export class InteractiveMode {
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;
+			return true;
 		} catch (error) {
 			if (!reloadBoxDismissed) {
-				dismissReloadBox(previousEditor as Component);
+				dismissReloadBox(this.editor as Component);
 			}
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
 		}
 	}
 
@@ -5474,6 +5614,7 @@ export class InteractiveMode {
 				this.showStatus("Import cancelled");
 				return;
 			}
+			await this.maybeRestoreSavedLoadout();
 			this.showStatus(`Session imported from: ${inputPath}`);
 		} catch (error: unknown) {
 			if (error instanceof MissingSessionCwdError) {
@@ -5487,6 +5628,7 @@ export class InteractiveMode {
 					this.showStatus("Import cancelled");
 					return;
 				}
+				await this.maybeRestoreSavedLoadout();
 				this.showStatus(`Session imported from: ${inputPath}`);
 				return;
 			}

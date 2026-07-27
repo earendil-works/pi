@@ -8,7 +8,7 @@ import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
-import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
+import { LoadoutSelectorComponent } from "../src/modes/interactive/components/loadout-selector.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
@@ -374,6 +374,40 @@ describe("package commands", () => {
 		}
 	});
 
+	it("shows canonical loadout command help", async () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(main(["loadout", "--help"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("pi loadout [-l]");
+		expect(stdout).toContain("Alias: pi config");
+		expect(stdout).not.toContain("pi config [-l]");
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("keeps config as a silent alias for loadout", async () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(main(["config", "--help"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("pi loadout [-l]");
+		expect(stdout).toContain("Alias: pi config");
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("uses canonical loadout terminology in command errors", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(main(["config", "--unknown"])).resolves.toBeUndefined();
+
+		const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stderr).toContain('Unknown option --unknown for "loadout".');
+		expect(stderr).toContain("pi loadout [-l] [--approve|--no-approve]");
+		expect(process.exitCode).toBe(1);
+	});
+
 	it("refreshes only model catalogs with update --models", async () => {
 		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
 		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
@@ -410,12 +444,12 @@ describe("package commands", () => {
 		expect(process.exitCode).toBe(1);
 	});
 
-	it("cycles project package overrides in config local mode", async () => {
+	it("cycles project package overrides in loadout local mode", async () => {
 		const storage = new InMemorySettingsStorage();
 		storage.withLock("global", () => JSON.stringify({ packages: ["npm:pi-tools"] }));
 		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
 		const resolvedPaths = extensionPaths(join(tempDir, "pkg"), "npm:pi-tools", "user", ["bar.ts"]);
-		const selector = new ConfigSelectorComponent(
+		const selector = new LoadoutSelectorComponent(
 			{ global: resolvedPaths, project: resolvedPaths },
 			settingsManager,
 			projectDir,

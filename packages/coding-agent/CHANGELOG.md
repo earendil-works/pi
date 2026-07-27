@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added persistent resource management through `pi loadout` (`pi config` remains an alias) and interactive `/loadout` session overrides with staged reloads, append-only session persistence, best-effort resume restoration, and safe extension unloading.
+
 ## [0.82.1] - 2026-07-25
 
 ### New Features

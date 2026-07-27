@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { selectConfig } from "./cli/config-selector.ts";
+import { selectLoadout } from "./cli/loadout-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
 	APP_NAME,
@@ -89,13 +89,14 @@ function getPackageCommandUsage(command: PackageCommand): string {
 	}
 }
 
-const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
+const LOADOUT_COMMAND_USAGE = `${APP_NAME} loadout [-l] [--approve|--no-approve]`;
 
-function printConfigCommandHelp(): void {
+function printLoadoutCommandHelp(): void {
 	console.log(`${chalk.bold("Usage:")}
-  ${CONFIG_COMMAND_USAGE}
+  ${LOADOUT_COMMAND_USAGE}
 
-Open the resource configuration TUI to enable or disable package resources.
+Open the resource loadout TUI to enable or disable package resources.
+Alias: ${APP_NAME} config
 Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
 Press Tab in the TUI to switch between global and project-local modes.
 
@@ -600,17 +601,17 @@ async function createCommandSettingsManager(options: {
 	return { settingsManager, projectTrustWarnings };
 }
 
-export async function handleConfigCommand(
+export async function handleLoadoutCommand(
 	args: string[],
 	runtimeOptions: PackageCommandRuntimeOptions = {},
 ): Promise<boolean> {
 	const [command, ...rest] = args;
-	if (command !== "config") {
+	if (command !== "loadout" && command !== "config") {
 		return false;
 	}
 
 	if (rest.includes("-h") || rest.includes("--help")) {
-		printConfigCommandHelp();
+		printLoadoutCommandHelp();
 		return true;
 	}
 
@@ -624,13 +625,13 @@ export async function handleConfigCommand(
 		} else if (arg === "-na" || arg === "--no-approve") {
 			projectTrustOverride = false;
 		} else if (arg.startsWith("-")) {
-			console.error(chalk.red(`Unknown option ${arg} for "config".`));
-			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${CONFIG_COMMAND_USAGE}".`));
+			console.error(chalk.red(`Unknown option ${arg} for "loadout".`));
+			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${LOADOUT_COMMAND_USAGE}".`));
 			process.exitCode = 1;
 			return true;
 		} else {
 			console.error(chalk.red(`Unexpected argument ${arg}.`));
-			console.error(chalk.dim(`Usage: ${CONFIG_COMMAND_USAGE}`));
+			console.error(chalk.dim(`Usage: ${LOADOUT_COMMAND_USAGE}`));
 			process.exitCode = 1;
 			return true;
 		}
@@ -646,11 +647,11 @@ export async function handleConfigCommand(
 	});
 	reportProjectTrustWarnings(projectTrustWarnings);
 	if (local && !settingsManager.isProjectTrusted()) {
-		console.error(chalk.red("Project is not trusted. Use --approve to modify local resource config."));
+		console.error(chalk.red("Project is not trusted. Use --approve to modify the local resource loadout."));
 		process.exitCode = 1;
 		return true;
 	}
-	reportSettingsErrors(settingsManager, "config command");
+	reportSettingsErrors(settingsManager, "loadout command");
 	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	const globalResolvedPaths = await new DefaultPackageManager({
 		cwd,
@@ -661,7 +662,7 @@ export async function handleConfigCommand(
 		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
 		: globalResolvedPaths;
 
-	await selectConfig({
+	await selectLoadout({
 		resolvedPaths: { global: globalResolvedPaths, project: projectResolvedPaths },
 		settingsManager,
 		cwd,

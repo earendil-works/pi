@@ -256,6 +256,11 @@ export interface ModelCycleResult {
 	isScoped: boolean;
 }
 
+export interface ReloadResult {
+	/** User-facing diagnostic when reload removed the active model. */
+	modelFallbackMessage?: string;
+}
+
 /** Session statistics for /session command */
 export interface SessionStats {
 	sessionFile: string | undefined;
@@ -864,7 +869,7 @@ export class AgentSession {
 
 	/** Current model (may be undefined if not yet selected) */
 	get model(): Model<any> | undefined {
-		return this.agent.state.model;
+		return this.agent.hasModel ? this.agent.state.model : undefined;
 	}
 
 	/** Current thinking level */
@@ -2316,16 +2321,34 @@ export class AgentSession {
 
 	private _refreshCurrentModelFromRegistry(): void {
 		const currentModel = this.model;
-		if (!currentModel) {
-			return;
-		}
-
+		if (!currentModel) return;
 		const refreshedModel = this._modelRuntime.getModel(currentModel.provider, currentModel.id);
-		if (!refreshedModel || refreshedModel === currentModel) {
-			return;
+		if (refreshedModel && refreshedModel !== currentModel) this.agent.state.model = refreshedModel;
+	}
+
+	private _reconcileModelAfterReload(previousModel: Model<any> | undefined): string | undefined {
+		this._scopedModels = this._scopedModels.flatMap((scoped) => {
+			const model = this._modelRuntime.getModel(scoped.model.provider, scoped.model.id);
+			return model ? [{ ...scoped, model }] : [];
+		});
+		if (!previousModel) return undefined;
+
+		const refreshedModel = this._modelRuntime.getModel(previousModel.provider, previousModel.id);
+		if (refreshedModel) {
+			this.agent.state.model = refreshedModel;
+			return undefined;
 		}
 
-		this.agent.state.model = refreshedModel;
+		const fallback = this._modelRuntime.getAvailableSnapshot()[0];
+		if (fallback) {
+			this.agent.state.model = fallback;
+			this.agent.state.thinkingLevel = clampThinkingLevel(fallback, this.thinkingLevel) as ThinkingLevel;
+			return `Active model "${previousModel.provider}/${previousModel.id}" is no longer available after reload. Switched to "${fallback.provider}/${fallback.id}".`;
+		}
+
+		this.agent.clearModel();
+		this.agent.state.thinkingLevel = "off";
+		return `Active model "${previousModel.provider}/${previousModel.id}" is no longer available after reload. No configured model is available; use /model or /login to select one.`;
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
@@ -2436,15 +2459,15 @@ export class AgentSession {
 			},
 			{
 				registerProvider: (name, config) => {
-					this._modelRuntime.registerProvider(name, config);
+					this._modelRuntime.registerSessionExtensionProvider(name, config);
 					this._refreshCurrentModelFromRegistry();
 				},
 				registerNativeProvider: (provider) => {
-					this._modelRuntime.registerNativeProvider(provider);
+					this._modelRuntime.registerSessionNativeExtensionProvider(provider);
 					this._refreshCurrentModelFromRegistry();
 				},
 				unregisterProvider: (name) => {
-					this._modelRuntime.unregisterProvider(name);
+					this._modelRuntime.unregisterSessionExtensionProvider(name);
 					this._refreshCurrentModelFromRegistry();
 				},
 			},
@@ -2598,15 +2621,28 @@ export class AgentSession {
 		});
 	}
 
-	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
-		const previousFlagValues = this._extensionRunner.getFlagValues();
-		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
+	async reload(options?: {
+		beforeExtensionInvalidate?: () => void;
+		beforeSessionStart?: () => void | Promise<void>;
+	}): Promise<ReloadResult> {
+		const oldRunner = this._extensionRunner;
+		const previousFlagValues = oldRunner.getFlagValues();
+		const previousActiveToolNames = this.getActiveToolNames();
+		const previousModel = this.model;
+		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+		try {
+			options?.beforeExtensionInvalidate?.();
+		} finally {
+			oldRunner.invalidate();
+		}
+
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
+		this._modelRuntime.resetSessionExtensionProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
+			activeToolNames: previousActiveToolNames,
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});
@@ -2621,6 +2657,8 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
+		await this._modelRuntime.refresh({ allowNetwork: false });
+		return { modelFallbackMessage: this._reconcileModelAfterReload(previousModel) };
 	}
 
 	// =========================================================================

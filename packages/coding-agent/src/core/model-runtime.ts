@@ -98,6 +98,10 @@ export class ModelRuntime implements Models {
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
+	private readonly sessionExtensionProviders = new Map<
+		string,
+		{ nativeProvider?: Provider; config?: ProviderConfigInput }
+	>();
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
@@ -194,12 +198,26 @@ export class ModelRuntime implements Models {
 			...this.nativeExtensionProviders.keys(),
 			...this.config.getProviderIds(),
 			...this.extensionProviders.keys(),
+			...this.sessionExtensionProviders.keys(),
 		]);
 	}
 
+	private getEffectiveRegisteredProvider(providerId: string): {
+		nativeProvider?: Provider;
+		config?: ProviderConfigInput;
+	} {
+		const sessionProvider = this.sessionExtensionProviders.get(providerId);
+		if (sessionProvider) return sessionProvider;
+		return {
+			nativeProvider: this.nativeExtensionProviders.get(providerId),
+			config: this.extensionProviders.get(providerId),
+		};
+	}
+
 	private recomposeProvider(providerId: string): void {
-		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
-		const extension = this.extensionProviders.get(providerId);
+		const registered = this.getEffectiveRegisteredProvider(providerId);
+		const base = registered.nativeProvider ?? this.builtins.get(providerId);
+		const extension = registered.config;
 		if (!base && !this.config.getProvider(providerId) && !extension) {
 			this.models.deleteProvider(providerId);
 			this.compositionErrors.delete(providerId);
@@ -343,15 +361,18 @@ export class ModelRuntime implements Models {
 	}
 
 	getRegisteredProviderConfig(providerId: string): ProviderConfigInput | undefined {
-		return this.extensionProviders.get(providerId);
+		return this.getEffectiveRegisteredProvider(providerId).config;
 	}
 
 	getRegisteredProviderIds(): readonly string[] {
-		return [...new Set([...this.extensionProviders.keys(), ...this.nativeExtensionProviders.keys()])];
+		return [...this.providerIds()].filter((providerId) => {
+			const registered = this.getEffectiveRegisteredProvider(providerId);
+			return registered.config !== undefined || registered.nativeProvider !== undefined;
+		});
 	}
 
 	getRegisteredNativeProvider(providerId: string): Provider | undefined {
-		return this.nativeExtensionProviders.get(providerId);
+		return this.getEffectiveRegisteredProvider(providerId).nativeProvider;
 	}
 
 	/** @internal Compatibility fallback for ModelRegistry when provider auth is unconfigured. */
@@ -359,7 +380,7 @@ export class ModelRuntime implements Models {
 		return resolveCompatibilityRequestConfig(
 			model,
 			this.config.getProvider(model.provider),
-			this.extensionProviders.get(model.provider),
+			this.getEffectiveRegisteredProvider(model.provider).config,
 		);
 	}
 
@@ -383,7 +404,7 @@ export class ModelRuntime implements Models {
 		const configuredHeaders = resolveConfiguredModelHeaders(
 			providerOrModel,
 			this.config.getProvider(providerOrModel.provider),
-			this.extensionProviders.get(providerOrModel.provider),
+			this.getEffectiveRegisteredProvider(providerOrModel.provider).config,
 			{ ...(resolution.env ?? {}), ...(overrides.env ?? {}) },
 		);
 		return {
@@ -428,7 +449,7 @@ export class ModelRuntime implements Models {
 		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),
-			this.extensionProviders.get(providerId),
+			this.getEffectiveRegisteredProvider(providerId).config,
 		);
 		if (configured) return configured;
 		const check = this.snapshot.auth.get(providerId);
@@ -586,6 +607,50 @@ export class ModelRuntime implements Models {
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
 		this.nativeExtensionProviders.delete(providerId);
+		this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/** Clear provider registrations owned by the current extension runtime. */
+	resetSessionExtensionProviders(): void {
+		const providerIds = [...this.sessionExtensionProviders.keys()];
+		this.sessionExtensionProviders.clear();
+		for (const providerId of providerIds) this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+	}
+
+	/** Register a provider in the current extension-runtime layer. */
+	registerSessionExtensionProvider(providerId: string, config: ProviderConfigInput): void {
+		const previous = this.getEffectiveRegisteredProvider(providerId).config;
+		validateExtensionProvider(
+			providerId,
+			this.getEffectiveRegisteredProvider(providerId).nativeProvider ?? this.builtins.get(providerId),
+			this.config.getProvider(providerId),
+			config,
+		);
+		const effective: ProviderConfigInput = { ...previous };
+		for (const [key, value] of Object.entries(config)) {
+			if (value !== undefined) (effective as Record<string, unknown>)[key] = value;
+		}
+		this.sessionExtensionProviders.set(providerId, { config: effective });
+		this.recomposeProvider(providerId);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/** Register a native provider in the current extension-runtime layer. */
+	registerSessionNativeExtensionProvider(provider: Provider): void {
+		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		this.sessionExtensionProviders.set(provider.id, { nativeProvider: provider });
+		this.recomposeProvider(provider.id);
+		this.updateModelSnapshot();
+		void this.refresh({ allowNetwork: false });
+	}
+
+	/** Unregister a provider from the current extension-runtime layer. */
+	unregisterSessionExtensionProvider(providerId: string): void {
+		this.sessionExtensionProviders.set(providerId, {});
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });

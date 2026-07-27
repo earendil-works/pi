@@ -223,6 +223,8 @@ Extension factories may run in invocations that never start a session. Do not st
 
 Defer background resource startup until `session_start` or the command/tool/event that needs the resource. Register an idempotent `session_shutdown` handler to close any session-scoped resources you start.
 
+`/reload` and interactive `/loadout` can unload an extension. Pi emits `session_shutdown` before removing the old runtime, then invalidates captured `pi` and context APIs; using them after reload throws. Event-bus subscriptions made through `pi.events.on()` are removed with that runtime. Pi cannot clean up arbitrary timers, processes, sockets, or file watchers, so extensions remain responsible for releasing those in `session_shutdown`. Commands, tools, hooks, shortcuts, renderers, UI, and provider registrations owned by an unloaded extension are removed.
+
 ### Extension Styles
 
 **Single file** - simplest, for small extensions:
@@ -1286,7 +1288,7 @@ pi.registerCommand("reload-runtime", {
 
 Important behavior:
 - `await ctx.reload()` emits `session_shutdown` for the current extension runtime
-- It then reloads resources and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
+- It then invalidates that runtime, removes runtime-owned UI and event-bus subscriptions, reloads resources, and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
 - The currently running command handler still continues in the old call frame
 - Code after `await ctx.reload()` still runs from the pre-reload version
 - Code after `await ctx.reload()` must not assume old in-memory extension state is still valid

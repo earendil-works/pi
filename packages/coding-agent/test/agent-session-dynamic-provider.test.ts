@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
@@ -174,6 +174,129 @@ describe("AgentSession dynamic provider registration", () => {
 		expect(session.model?.baseUrl).toBe("http://localhost:8080/native-command");
 		expect(await capturePromptBaseUrl(session)).toBe("http://localhost:8080/native-command");
 
+		session.dispose();
+	});
+
+	it("replays duplicate provider registrations from a clean extension layer", async () => {
+		let generation = 1;
+		const session = await createSession([
+			(pi) => {
+				pi.registerProvider("reload-provider", {
+					baseUrl: `https://generation-${generation}.test`,
+					apiKey: "test-key",
+					api: "openai-completions",
+					...(generation === 1 ? { headers: { "x-stale": "yes" } } : {}),
+					models: [
+						{
+							id: `model-${generation}`,
+							name: `Model ${generation}`,
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				});
+			},
+			(pi) => {
+				pi.registerProvider("reload-provider", { name: `Winner ${generation}` });
+			},
+		]);
+		await session.modelRuntime.refresh({ allowNetwork: false });
+
+		expect(session.modelRuntime.getRegisteredProviderConfig("reload-provider")).toMatchObject({
+			name: "Winner 1",
+			headers: { "x-stale": "yes" },
+		});
+		expect(session.modelRuntime.getModel("reload-provider", "model-1")).toBeDefined();
+
+		generation = 2;
+		await session.reload();
+
+		expect(session.modelRuntime.getRegisteredProviderConfig("reload-provider")).toMatchObject({
+			name: "Winner 2",
+			baseUrl: "https://generation-2.test",
+		});
+		expect(session.modelRuntime.getRegisteredProviderConfig("reload-provider")?.headers).toBeUndefined();
+		expect(session.modelRuntime.getModel("reload-provider", "model-1")).toBeUndefined();
+		expect(session.modelRuntime.getModel("reload-provider", "model-2")).toBeDefined();
+		session.dispose();
+	});
+
+	it("removes disabled providers and falls back when their model was active", async () => {
+		let enabled = true;
+		const session = await createSession([
+			(pi) => {
+				if (!enabled) return;
+				pi.registerProvider("temporary-provider", {
+					baseUrl: "https://temporary.test",
+					apiKey: "test-key",
+					api: "openai-completions",
+					models: [
+						{
+							id: "temporary-model",
+							name: "Temporary Model",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				});
+			},
+		]);
+		await session.modelRuntime.refresh({ allowNetwork: false });
+		const temporaryModel = session.modelRuntime.getModel("temporary-provider", "temporary-model")!;
+		await session.setModel(temporaryModel);
+
+		enabled = false;
+		const result = await session.reload();
+
+		expect(session.modelRuntime.getProvider("temporary-provider")).toBeUndefined();
+		expect(session.modelRuntime.getModel("temporary-provider", "temporary-model")).toBeUndefined();
+		expect(session.model).toBeDefined();
+		expect(session.model?.provider).not.toBe("temporary-provider");
+		expect(result.modelFallbackMessage).toContain(
+			'Active model "temporary-provider/temporary-model" is no longer available after reload.',
+		);
+		session.dispose();
+	});
+
+	it("clears a removed active model when reload has no fallback", async () => {
+		let enabled = true;
+		const session = await createSession([
+			(pi) => {
+				if (!enabled) return;
+				pi.registerProvider("temporary-provider", {
+					baseUrl: "https://temporary.test",
+					apiKey: "test-key",
+					api: "openai-completions",
+					models: [
+						{
+							id: "temporary-model",
+							name: "Temporary Model",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 128000,
+							maxTokens: 4096,
+						},
+					],
+				});
+			},
+		]);
+		await session.modelRuntime.refresh({ allowNetwork: false });
+		await session.setModel(session.modelRuntime.getModel("temporary-provider", "temporary-model")!);
+		vi.spyOn(session.modelRuntime, "getAvailableSnapshot").mockReturnValue([]);
+
+		enabled = false;
+		const result = await session.reload();
+
+		expect(session.model).toBeUndefined();
+		expect(session.thinkingLevel).toBe("off");
+		expect(result.modelFallbackMessage).toContain("No configured model is available");
 		session.dispose();
 	});
 });

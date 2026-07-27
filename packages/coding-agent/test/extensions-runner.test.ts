@@ -8,7 +8,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createExtensionRuntime, discoverAndLoadExtensions, loadExtensions } from "../src/core/extensions/loader.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
+import {
+	createExtensionRuntime,
+	discoverAndLoadExtensions,
+	loadExtensionFromFactory,
+	loadExtensions,
+} from "../src/core/extensions/loader.ts";
 import { ExtensionRunner, emitProjectTrustEvent } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
@@ -814,6 +820,60 @@ describe("ExtensionRunner", () => {
 				details: { source: "ext1" },
 				isError: true,
 			});
+		});
+	});
+
+	describe("shared event bus", () => {
+		it("removes listeners owned by an invalidated runtime without breaking replacement communication", async () => {
+			const eventBus = createEventBus();
+			const oldRuntime = createExtensionRuntime();
+			let oldApi: Parameters<Parameters<typeof loadExtensionFromFactory>[0]>[0] | undefined;
+			let peerApi: Parameters<Parameters<typeof loadExtensionFromFactory>[0]>[0] | undefined;
+			let oldCalls = 0;
+			const oldExtension = await loadExtensionFromFactory(
+				(pi) => {
+					oldApi = pi;
+					pi.events.on("reload:test", () => oldCalls++);
+				},
+				tempDir,
+				eventBus,
+				oldRuntime,
+				"<old>",
+			);
+			await loadExtensionFromFactory(
+				(pi) => {
+					peerApi = pi;
+				},
+				tempDir,
+				eventBus,
+				oldRuntime,
+				"<peer>",
+			);
+			const oldRunner = new ExtensionRunner([oldExtension], oldRuntime, tempDir, sessionManager, modelRegistry);
+
+			peerApi!.events.emit("reload:test", undefined);
+			expect(oldCalls).toBe(1);
+			oldRunner.invalidate();
+			expect(() => oldApi!.events.emit("reload:test", undefined)).toThrow(
+				"stale after session replacement or reload",
+			);
+
+			const newRuntime = createExtensionRuntime();
+			let newApi: typeof oldApi;
+			let newCalls = 0;
+			await loadExtensionFromFactory(
+				(pi) => {
+					newApi = pi;
+					pi.events.on("reload:test", () => newCalls++);
+				},
+				tempDir,
+				eventBus,
+				newRuntime,
+				"<new>",
+			);
+			newApi!.events.emit("reload:test", undefined);
+			expect(oldCalls).toBe(1);
+			expect(newCalls).toBe(1);
 		});
 	});
 

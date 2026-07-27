@@ -165,6 +165,32 @@ export {
 } from "./core/extensions/index.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
+export {
+	appendSessionLoadout,
+	cloneLoadoutOverrides,
+	cloneLoadoutSnapshot,
+	createLoadoutResourceReference,
+	getLatestLoadoutEntry,
+	getLoadoutResourceReferenceKey,
+	getSessionLoadout,
+	LOADOUT_CUSTOM_TYPE,
+	LOADOUT_ENTRY_VERSION,
+	type LoadoutEntryPayload,
+	type LoadoutOverride,
+	type LoadoutResourceLoader,
+	type LoadoutResourceReference,
+	type LoadoutResourceScope,
+	type LoadoutResourceType,
+	type LoadoutSnapshot,
+	loadoutOverridesEqual,
+	type PackageLoadoutResourceReference,
+	parseLoadoutEntryPayload,
+	type ResolvedLoadoutOverlay,
+	type ResolveLoadoutOverlayOptions,
+	resolveLoadoutOverlay,
+	type SelectableLoadoutResource,
+	type TopLevelLoadoutResourceReference,
+} from "./core/loadout.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
 export {

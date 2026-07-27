@@ -134,7 +134,7 @@ interface BashExecutionMessage {
 
 interface CustomMessage {
   role: "custom";
-  customType: string;            // Extension identifier
+  customType: string;            // Extension or built-in identifier
   content: string | (TextContent | ImageContent)[];
   display: boolean;              // Show in TUI
   details?: any;                 // Extension-specific metadata
@@ -267,6 +267,14 @@ Extension state persistence. Does NOT participate in LLM context.
 ```
 
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
+
+Pi also uses namespaced custom entries for built-in session metadata. Session loadouts use `customType: "pi.loadout"` with a versioned payload:
+
+```json
+{"type":"custom","id":"l8i9j0k1","parentId":"h8i9j0k1","timestamp":"2024-12-03T14:22:00.000Z","customType":"pi.loadout","data":{"version":1,"overrides":[{"reference":{"type":"skill","origin":"top-level","scope":"user","relativePath":"skills/review/SKILL.md"},"enabled":false}]}}
+```
+
+Loadout entries are session-wide metadata, not conversation context. Pi reads the latest valid entry in physical file order rather than following the current `/tree` branch. Non-empty entries represent deliberate `/loadout` changes; an empty `overrides` array is a reset marker written only when clearing an earlier saved loadout. Forked or extracted session files retain only loadout entries copied into their retained path.
 
 ### CustomMessageEntry
 

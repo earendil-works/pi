@@ -1,13 +1,16 @@
 /**
- * TUI config selector for `pi config` command
+ * TUI loadout selector for `pi loadout` command
  */
 
 import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { ConfigSelectorComponent, type ScopedResolvedPaths } from "../modes/interactive/components/config-selector.ts";
+import {
+	LoadoutSelectorComponent,
+	type ScopedResolvedPaths,
+} from "../modes/interactive/components/loadout-selector.ts";
 import { initTheme, stopThemeWatcher } from "../modes/interactive/theme/theme.ts";
 
-export interface ConfigSelectorOptions {
+export interface LoadoutSelectorOptions {
 	resolvedPaths: ScopedResolvedPaths;
 	settingsManager: SettingsManager;
 	cwd: string;
@@ -16,8 +19,8 @@ export interface ConfigSelectorOptions {
 	projectModeAvailable: boolean;
 }
 
-/** Show TUI config selector and return when closed */
-export async function selectConfig(options: ConfigSelectorOptions): Promise<void> {
+/** Show TUI loadout selector and return when closed */
+export async function selectLoadout(options: LoadoutSelectorOptions): Promise<void> {
 	// Initialize theme before showing TUI
 	initTheme(options.settingsManager.getTheme(), true);
 
@@ -25,7 +28,7 @@ export async function selectConfig(options: ConfigSelectorOptions): Promise<void
 		const ui = new TUI(new ProcessTerminal(), undefined, options.agentDir);
 		let resolved = false;
 
-		const selector = new ConfigSelectorComponent(
+		const selector = new LoadoutSelectorComponent(
 			options.resolvedPaths,
 			options.settingsManager,
 			options.cwd,
