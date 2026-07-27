@@ -97,6 +97,7 @@ describe("DefaultPackageManager", () => {
 		}
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -1715,31 +1716,21 @@ Content`,
 		});
 
 		it("should resolve autoload-disabled package entries as positive-only without a global package", async () => {
-			const previousHome = process.env.HOME;
-			process.env.HOME = tempDir;
+			vi.stubEnv("HOME", tempDir);
+			const pkgDir = join(tempDir, "positive-only-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });
+			writeFileSync(join(pkgDir, "extensions", "foo.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "extensions", "bar.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "skills", "foo", "SKILL.md"), "# Foo\n");
+			settingsManager.setProjectPackages([
+				{ source: relative(join(tempDir, ".pi"), pkgDir), autoload: false, extensions: ["+extensions/foo.ts"] },
+			]);
 
-			try {
-				const pkgDir = join(tempDir, "positive-only-pkg");
-				mkdirSync(join(pkgDir, "extensions"), { recursive: true });
-				mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });
-				writeFileSync(join(pkgDir, "extensions", "foo.ts"), "export default function() {}");
-				writeFileSync(join(pkgDir, "extensions", "bar.ts"), "export default function() {}");
-				writeFileSync(join(pkgDir, "skills", "foo", "SKILL.md"), "# Foo\n");
-				settingsManager.setProjectPackages([
-					{ source: relative(join(tempDir, ".pi"), pkgDir), autoload: false, extensions: ["+extensions/foo.ts"] },
-				]);
+			const result = await packageManager.resolve();
 
-				const result = await packageManager.resolve();
-
-				expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
-				expect(result.skills).toEqual([]);
-			} finally {
-				if (previousHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = previousHome;
-				}
-			}
+			expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
+			expect(result.skills).toEqual([]);
 		});
 	});
 
