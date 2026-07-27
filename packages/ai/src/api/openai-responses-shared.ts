@@ -32,6 +32,28 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+
+/**
+ * Strip multimodal media markers from text content to prevent tokenizer crashes.
+ *
+ * When tool results contain media markers like `|image|` or `<|image|>` but no actual
+ * image data is attached, the model's multimodal tokenizer can crash with errors like
+ * "number of media markers in text (N) exceeds number of bitmaps (0)". This happens
+ * when tool output includes chat templates (e.g., from llama.cpp's /props endpoint)
+ * that contain these markers as template strings.
+ *
+ * This function replaces such markers with safe placeholders before sending to the model.
+ */
+function stripMediaMarkers(text: string): string {
+	// Match both `|image|` and `<|image|>` patterns (order matters: <|...|> first)
+	return text
+		.replace(/<\|\s*image\s*\|>/g, "[image]")
+		.replace(/\|\s*image\s*\|/g, "[image]")
+		.replace(/<\|\s*img\s*\|>/g, "[img]")
+		.replace(/\|\s*img\s*\|/g, "[img]")
+		.replace(/<\|\s*video\s*\|>/g, "[video]")
+		.replace(/\|\s*video\s*\|/g, "[video]");
+}
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -85,12 +107,15 @@ function convertToolResultOutput<TApi extends Api>(
 	const hasText = textResult.length > 0;
 
 	if (images.length === 0 || !model.input.includes("image")) {
-		return sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)");
+		// Strip media markers to prevent tokenizer crashes.
+		// Markers like `|image|` may appear in tool output (e.g., chat templates
+		// from llama.cpp /props) but without actual image data, causing crashes.
+		return stripMediaMarkers(sanitizeSurrogates(hasText ? textResult : images.length > 0 ? "(see attached image)" : "(no tool output)"));
 	}
 
 	const output: ToolResultOutputContent = [];
 	if (hasText) {
-		output.push({ type: "input_text", text: sanitizeSurrogates(textResult) });
+		output.push({ type: "input_text", text: stripMediaMarkers(sanitizeSurrogates(textResult)) });
 	}
 	for (const image of images) {
 		output.push({

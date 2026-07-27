@@ -124,6 +124,28 @@ function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
 }
 
+/**
+ * Strip multimodal media markers from text content to prevent tokenizer crashes.
+ *
+ * When tool results contain media markers like `|image|` or `<|image|>` but no actual
+ * image data is attached, the model's multimodal tokenizer can crash with errors like
+ * "number of media markers in text (N) exceeds number of bitmaps (0)". This happens
+ * when tool output includes chat templates (e.g., from llama.cpp's /props endpoint)
+ * that contain these markers as template strings.
+ *
+ * This function replaces such markers with safe placeholders before sending to the model.
+ */
+function stripMediaMarkers(text: string): string {
+	// Match both `|image|` and `<|image|>` patterns (order matters: <|...|> first)
+	return text
+		.replace(/<\|\s*image\s*\|>/g, "[image]")
+		.replace(/\|\s*image\s*\|/g, "[image]")
+		.replace(/<\|\s*img\s*\|>/g, "[img]")
+		.replace(/\|\s*img\s*\|/g, "[img]")
+		.replace(/<\|\s*video\s*\|>/g, "[video]")
+		.replace(/\|\s*video\s*\|/g, "[video]");
+}
+
 function isEncryptedReasoningDetail(detail: unknown): detail is OpenAIEncryptedReasoningDetail {
 	if (typeof detail !== "object" || detail === null) {
 		return false;
@@ -1199,10 +1221,14 @@ export function convertMessages(
 				// Always send tool result with text (or placeholder if only images)
 				const hasText = textResult.length > 0;
 				const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
+				// Strip media markers from tool results to prevent tokenizer crashes.
+				// Markers like `|image|` may appear in tool output (e.g., chat templates
+				// from llama.cpp /props) but without actual image data, causing crashes.
+				const sanitizedToolResult = stripMediaMarkers(sanitizeSurrogates(toolResultText));
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(toolResultText),
+					content: sanitizedToolResult,
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
