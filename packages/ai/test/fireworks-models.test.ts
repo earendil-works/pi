@@ -208,25 +208,28 @@ describe("Fireworks Anthropic session affinity and tool compat", () => {
 			sessionId: "fireworks-session-1",
 		});
 
+		expect(request.headers["x-client-request-id"]).toBe("fireworks-session-1");
 		expect(request.headers["x-session-affinity"]).toBe("fireworks-session-1");
 	});
 
-	it("omits x-session-affinity header for native Anthropic models", async () => {
+	it("sends x-client-request-id but omits x-session-affinity for native Anthropic models", async () => {
 		const model = createAnthropicModel();
 		const request = await captureAnthropicRequest(model, createContext(), {
 			sessionId: "anthropic-session-1",
 		});
 
+		expect(request.headers["x-client-request-id"]).toBe("anthropic-session-1");
 		expect(request.headers["x-session-affinity"]).toBeUndefined();
 	});
 
-	it("omits x-session-affinity header when cacheRetention is none", async () => {
+	it("omits session-affinity headers when cacheRetention is none", async () => {
 		const model = createFireworksModel();
 		const request = await captureAnthropicRequest(model, createContext(), {
 			sessionId: "fireworks-session-2",
 			cacheRetention: "none",
 		});
 
+		expect(request.headers["x-client-request-id"]).toBeUndefined();
 		expect(request.headers["x-session-affinity"]).toBeUndefined();
 	});
 

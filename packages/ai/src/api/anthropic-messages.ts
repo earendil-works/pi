@@ -907,8 +907,16 @@ function createClient(
 	}
 
 	// API key or header-owned auth.
-	const sessionAffinityHeaders: ProviderHeaders =
-		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
+	// Always send x-client-request-id when sessionId is present (matches openai-responses /
+	// openai-completions / openai-codex-responses) so gateways can key session affinity.
+	// x-session-affinity remains behind the Fireworks-style compat flag.
+	const sessionAffinityHeaders: ProviderHeaders = {};
+	if (sessionId) {
+		sessionAffinityHeaders["x-client-request-id"] = sessionId;
+		if (getAnthropicCompat(model).sendSessionAffinityHeaders) {
+			sessionAffinityHeaders["x-session-affinity"] = sessionId;
+		}
+	}
 	const defaultHeaders = mergeHeaders(
 		{
 			accept: "application/json",
