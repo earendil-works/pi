@@ -28,6 +28,7 @@ describe("builtin providers", () => {
 		const providers = models.getProviders();
 		expect(providers.length).toBe(builtinProviders().length);
 		expect(providers.map((p) => p.id)).toContain("anthropic");
+		expect(providers.find((p) => p.id === "opencode-go")?.name).toBe("OpenCode Go");
 
 		const anthropic = models.getModel("anthropic", "claude-haiku-4-5");
 		expect(anthropic?.api).toBe("anthropic-messages");
