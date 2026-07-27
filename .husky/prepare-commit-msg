@@ -1,0 +1,9 @@
+#!/bin/sh
+# Auto-append Co-Authored-By for Punch commits
+CO_AUTHOR="Co-Authored-By: Punch <punch@orb.gay>"
+
+# Only add if not already present
+if ! grep -q "$CO_AUTHOR" "$1"; then
+    echo "" >> "$1"
+    echo "$CO_AUTHOR" >> "$1"
+fi
