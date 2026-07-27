@@ -653,6 +653,55 @@ describe("openai-completions tool_choice", () => {
 		expect(response.errorMessage).toBe("Stream ended without finish_reason");
 	});
 
+	it("ignores empty custom objects on function tool call deltas", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-empty-custom",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call_1",
+									type: "function",
+									function: { name: "read", arguments: '{"path":"README.md"}' },
+									custom: {},
+								},
+							],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tool: Tool = {
+			name: "read",
+			description: "Read a file",
+			parameters: Type.Object({ path: Type.String() }),
+		};
+		const response = await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Read README.md", timestamp: Date.now() }],
+				tools: [tool],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.content).toEqual([
+			{
+				type: "toolCall",
+				id: "call_1",
+				name: "read",
+				arguments: { path: "README.md" },
+			},
+		]);
+	});
+
 	it("coalesces tool call deltas by stable index when provider mutates ids mid-stream", async () => {
 		mockState.chunks = [
 			{
