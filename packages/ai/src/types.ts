@@ -639,6 +639,15 @@ export interface AnthropicMessagesCompat {
 export interface BedrockCompat {
 	/** Whether the model supports Bedrock strict tool schemas. Default: false. */
 	supportsStrictMode?: boolean;
+	/**
+	 * Whether to request eager toolUse input streaming for Anthropic models
+	 * (the `fine-grained-tool-streaming-2025-05-14` beta, passed through
+	 * `additionalModelRequestFields.anthropic_beta`). Without it, Anthropic
+	 * buffers the entire toolUse input block server-side and flushes it only on
+	 * completion — a large tool call means minutes of zero stream events.
+	 * Default: true.
+	 */
+	supportsEagerToolInputStreaming?: boolean;
 }
 
 /**

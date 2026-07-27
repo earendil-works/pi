@@ -221,6 +221,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			const cacheRetention = resolveCacheRetention(options.cacheRetention, options.env);
 			const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
+			const toolConfig = convertToolConfig(
+				context.tools,
+				options.toolChoice,
+				model.compat?.supportsStrictMode ?? false,
+			);
 			let commandInput = {
 				modelId: model.id,
 				messages: convertMessages(context, model, cacheRetention, options.env),
@@ -229,8 +234,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
-				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
+				toolConfig,
+				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options, toolConfig !== undefined),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
 			const nextCommandInput = await options?.onPayload?.(commandInput, model);
@@ -1027,54 +1032,73 @@ function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, option
 	return modelId.startsWith("us-gov.") || modelId.startsWith("arn:aws-us-gov:");
 }
 
+/**
+ * Anthropic buffers the entire toolUse input block server-side by default and
+ * flushes it only when the block completes — a large tool call (tens of
+ * thousands of tokens) then produces minutes of zero stream events followed by
+ * one burst, which downstream idle watchdogs read as a dead stream. This beta
+ * streams tool input as it is generated, matching the eager input streaming
+ * the Anthropic Messages provider already requests. The tradeoff (input JSON
+ * may arrive incomplete on early termination, since server-side validation is
+ * skipped) is already handled: tool arguments go through the tolerant
+ * `parseStreamingJson` on every delta and at block stop.
+ */
+const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
+
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
+	hasTools: boolean,
 ): Record<string, any> | undefined {
-	if (!options.reasoning || !model.reasoning) {
+	if (!isAnthropicClaudeModel(model)) {
 		return undefined;
 	}
 
-	if (isAnthropicClaudeModel(model)) {
+	const result: Record<string, any> = {};
+	const betas: string[] = [];
+
+	if (options.reasoning && model.reasoning) {
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
-			? {
-					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
-					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
-				}
-			: (() => {
-					const defaultBudgets: Record<ThinkingLevel, number> = {
-						minimal: 1024,
-						low: 2048,
-						medium: 8192,
-						high: 16384,
-						xhigh: 16384, // Budget-based Claude clamps extended levels to high
-						max: 16384,
-					};
+		if (supportsAdaptiveThinking(model.id, model.name)) {
+			result.thinking = { type: "adaptive", ...(display !== undefined ? { display } : {}) };
+			result.output_config = { effort: mapThinkingLevelToEffort(model, options.reasoning) };
+		} else {
+			const defaultBudgets: Record<ThinkingLevel, number> = {
+				minimal: 1024,
+				low: 2048,
+				medium: 8192,
+				high: 16384,
+				xhigh: 16384, // Budget-based Claude clamps extended levels to high
+				max: 16384,
+			};
 
-					// Custom budgets only cover token-based levels through high.
-					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
-					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
+			// Custom budgets only cover token-based levels through high.
+			const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
+			const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
-					return {
-						thinking: {
-							type: "enabled",
-							budget_tokens: budget,
-							...(display !== undefined ? { display } : {}),
-						},
-					};
-				})();
+			result.thinking = {
+				type: "enabled",
+				budget_tokens: budget,
+				...(display !== undefined ? { display } : {}),
+			};
 
-		if (!supportsAdaptiveThinking(model.id, model.name) && (options.interleavedThinking ?? true)) {
-			result.anthropic_beta = ["interleaved-thinking-2025-05-14"];
+			if (options.interleavedThinking ?? true) {
+				betas.push("interleaved-thinking-2025-05-14");
+			}
 		}
-
-		return result;
 	}
 
-	return undefined;
+	if (hasTools && (model.compat?.supportsEagerToolInputStreaming ?? true)) {
+		betas.push(FINE_GRAINED_TOOL_STREAMING_BETA);
+	}
+
+	if (betas.length > 0) {
+		result.anthropic_beta = betas;
+	}
+
+	return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function createImageBlock(mimeType: string, data: string) {
