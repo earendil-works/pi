@@ -115,6 +115,77 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ---
 
+## Session 3 — 2026-07-28
+
+**Range:** 3fcae75e → f6148924 (commits 301–800)
+**Branch:** adr-archaeology/phase-1
+**Resume at:** `3fcae75e`
+
+### Flagged commits
+
+| Hash | One-liner |
+|---|---|
+| `dca3e1cc` | Hierarchical context file loading for monorepos (AGENTS.md walk) |
+| `b1c2c32e` | Move context files from user messages to system prompt |
+| `79ee33c3` | Rename package to @mariozechner/pi-coding-agent |
+| `0c5cbd00` | Custom models/providers via models.json |
+| `587d7c39` | OAuth authentication for Claude Pro/Max |
+| `cc880951` | Theming system with /theme command (36 color tokens, dark/light) |
+| `c4a65ad8` | Standalone binary with Bun compilation |
+| `5daef11b` | Compaction research and implementation plan |
+| `c89b1ec3` | Context compaction: /compact, /autocompact, auto-trigger |
+| `a38e6190` | New compaction system with overflow recovery |
+| `5a9d844f` | Simplify compaction: remove proactive abort, use Agent.continue() |
+| `3d7edfa6` | Windows Git Bash support for bash tool |
+| `bd0d0676` | Bash mode (! prefix for shell commands) |
+| `8bec289d` | Remove provider-level tool validation, add validateToolCall helper |
+| `99b4b1ac` | Mistral AI provider with compat flags |
+| `3f305502`→`dcf81a6a` | AgentSession refactor (17 WP commits) |
+| `3559a43b` | RPC mode rewrite with typed protocol and RpcClient |
+| `04d59f31` | Hooks system with pi.send() and mode-specific UI context |
+| `aa9e0582` | mom Slack bot package with abort support and streaming |
+| `29900ce6` | Make bash tool timeout optional and configurable |
+| `8ae236f9` | /branch command for conversation branching |
+| `b8e5f8db` | Fuzzy file search with @ prefix |
+| `a84a97e1` | Switch web-ui back to tsc from tsgo for decorator support |
+| `e467a80b` | /export command for session HTML export |
+
+### Connections to track
+
+- ADR-016 (AgentSession) is the hub — ADR-015 (bash mode), ADR-017 (RPC), and ADR-018 (hooks) all build on it. The mom package (aa9e0582) also uses AgentSession
+- ADR-014 (compaction) was researched (5daef11b) before implementation, then simplified post-release (5a9d844f): removed proactive abort, used Agent.continue() instead
+- ADR-022 (Mistral) extends the compat flag pattern from ADR-007 (TypeBox validation) — most flags of any provider, shows how wide the gap is between "OpenAI-compatible" and actual behavior
+- ADR-012 (b1c2c32e): context files moved from user messages to system prompt after ADR-012's initial implementation — changes how the LLM prioritizes them
+- `8bec289d` (tool validation removal) relates to ADR-007: after switching to TypeBox/AJV, provider-level validation was redundant; consolidated into a shared helper
+- `79ee33c3` (package rename) and ADR-019 (binary): the rename to @mariozechner/pi-coding-agent happened ~2 weeks before binary distribution
+- `8ae236f9` (/branch) relates to ADR-014 (compaction): branching is the alternative to compaction — preserve full history vs compress
+- `a84a97e1` (web-ui back to tsc): a reversal of the earlier tsgo decision for the web-ui package only
+
+### TDRs written
+
+| ID | Title | Source |
+|---|---|---|
+| TDR-001 | Tool call streaming reports argument deltas, not partial JSON | `98a876f3` |
+| TDR-002 | GPT-5 reasoning mode cannot be fully disabled | `f55985f6` |
+
+### ADRs written
+
+| # | Title | Source |
+|---|---|---|
+| 012 | Hierarchical context file loading for monorepos | `dca3e1cc` |
+| 013 | Custom providers via models.json | `0c5cbd00` |
+| 014 | Context compaction system | `c89b1ec3` |
+| 015 | Bash mode for shell command execution | `bd0d0676` |
+| 016 | Coding agent refactor into AgentSession architecture | `3f305502`→`dcf81a6a` |
+| 017 | RPC mode with typed protocol | `3559a43b` |
+| 018 | Hooks system for extensibility | `04d59f31` |
+| 019 | Standalone binary distribution with Bun | `c4a65ad8` |
+| 020 | OAuth authentication for Claude Pro/Max | `587d7c39` |
+| 021 | Theming system with user-defined themes | `cc880951` |
+| 022 | Mistral AI provider with extended compat flags | `99b4b1ac` |
+
+---
+
 ## Session 4 — 2026-07-28
 
 **Range:** 5095b4eb → 0f27eae7 (commits ~801–1800)
@@ -177,46 +248,66 @@ Each session logs every commit that was flagged as significant, with a one-liner
 | 030 | Hook API expansion — plan mode, widgets, context events | `4cee51e4` / `51d396b3` / `57bba4e3` / `77fe3f1a` |
 | 031 | Event bus for extension communication | `9c9e6822` |
 
+---
+
+## Session 5 — 2026-07-28
+
+**Range:** acec56c6 → a363b668 (commits ~1801–3800)
 **Branch:** adr-archaeology/phase-1
-**Resume at:** next commit after `f6148924`
+**Resume at:** `a363b668`
 
-### Flagged commits
+### Triage notes
 
-| Hash | One-liner |
-|---|---|
-| `dca3e1cc` | Hierarchical context file loading for monorepos (AGENTS.md walk) |
-| `b1c2c32e` | Move context files from user messages to system prompt |
-| `79ee33c3` | Rename package to @mariozechner/pi-coding-agent |
-| `0c5cbd00` | Custom models/providers via models.json |
-| `587d7c39` | OAuth authentication for Claude Pro/Max |
-| `cc880951` | Theming system with /theme command (36 color tokens, dark/light) |
-| `c4a65ad8` | Standalone binary with Bun compilation |
-| `5daef11b` | Compaction research and implementation plan |
-| `c89b1ec3` | Context compaction: /compact, /autocompact, auto-trigger |
-| `a38e6190` | New compaction system with overflow recovery |
-| `5a9d844f` | Simplify compaction: remove proactive abort, use Agent.continue() |
-| `3d7edfa6` | Windows Git Bash support for bash tool |
-| `bd0d0676` | Bash mode (! prefix for shell commands) |
-| `8bec289d` | Remove provider-level tool validation, add validateToolCall helper |
-| `99b4b1ac` | Mistral AI provider with compat flags |
-| `3f305502`→`dcf81a6a` | AgentSession refactor (17 WP commits) |
-| `3559a43b` | RPC mode rewrite with typed protocol and RpcClient |
-| `04d59f31` | Hooks system with pi.send() and mode-specific UI context |
-| `aa9e0582` | mom Slack bot package with abort support and streaming |
-| `29900ce6` | Make bash tool timeout optional and configurable |
-| `8ae236f9` | /branch command for conversation branching |
-| `b8e5f8db` | Fuzzy file search with @ prefix |
-| `a84a97e1` | Switch web-ui back to tsc from tsgo for decorator support |
-| `e467a80b` | /export command for session HTML export |
+2000-commit batch. Read in chunks due to truncation. First pass caught the major ADRs. Re-read of middle sections caught two more (ADR-039, ADR-040). Several commits follow established patterns and are logged below for reference.
+
+### ADRs written this session
+
+| # | Title | Source |
+|---|---|---|
+| 033 | Extension package management with ResourceLoader | `b846a4bf` |
+| 034 | Amazon Bedrock provider | `fd268479` |
+| 035 | Azure OpenAI Responses provider | `85601229` |
+| 036 | Rename /branch to /fork | `df3f5f41` |
+| 037 | Per-tool execution mode override | `bfa11a50` |
+| 038 | TUI overlay compositing | `f9064c2f` / `a4ccff38` |
+| 039 | Custom provider support via extensions | `177c6944` / `3256d3c0` |
+| 040 | HTTP proxy support via environment variables | `1e718e63` |
+
+### TDRs written this session
+
+| ID | Title | Source |
+|---|---|---|
+| TDR-006 | Image processing library churn | `e45fc5f9` / `6bf073f1` |
+
+### Missed in first pass (caught on re-read)
+
+- Custom provider extension API (177c6944, 3256d3c0) → ADR-039
+- HTTP proxy support (1e718e63) → ADR-040
 
 ### Connections to track
 
-- ADR-016 (AgentSession) is the hub — ADR-015 (bash mode), ADR-017 (RPC), and ADR-018 (hooks) all build on it. The mom package (aa9e0582) also uses AgentSession
-- ADR-014 (compaction) was researched (5daef11b) before implementation, then simplified post-release (5a9d844f): removed proactive abort, used Agent.continue() instead
-- ADR-022 (Mistral) extends the compat flag pattern from ADR-007 (TypeBox validation) — most flags of any provider, shows how wide the gap is between "OpenAI-compatible" and actual behavior
-- ADR-012 (b1c2c32e): context files moved from user messages to system prompt after ADR-012's initial implementation — changes how the LLM prioritizes them
-- `8bec289d` (tool validation removal) relates to ADR-007: after switching to TypeBox/AJV, provider-level validation was redundant; consolidated into a shared helper
-- `79ee33c3` (package rename) and ADR-019 (binary): the rename to @mariozechner/pi-coding-agent happened ~2 weeks before binary distribution
-- `8ae236f9` (/branch) relates to ADR-014 (compaction): branching is the alternative to compaction — preserve full history vs compress
-- `a84a97e1` (web-ui back to tsc): a reversal of the earlier tsgo decision for the web-ui package only
+- ADR-039 (custom provider API) and ADR-040 (HTTP proxy) both extend the provider system infrastructure from ADR-003 and ADR-013
+- ADR-033 (package management) builds on ADR-025 (extensions) — extensions now installable from git URLs
+- ADR-036 (fork rename) relates to ADR-023 (session tree) — fork is the user-facing operation on the tree
+- ADR-037 (tool execution mode) adds a capability orthogonal to ADR-025's extension tools
+- ADR-038 (overlay compositing) extends the TUI from ADR-011 and the extension UI context from ADR-030
+- ADR-034 (Bedrock) and ADR-035 (Azure) follow the provider patterns established in ADR-003 and ADR-022
+- TDR-006 (image processing churn) relates to TDR-003 (image resizing) — both deal with the image handling pipeline
 
+### Other notable commits in this range
+
+| Hash | One-liner | Notes |
+|---|---|---|
+| `dac7474d` | OpenRouter provider routing | Covered by ADR-013 |
+| `c808de60` | Hugging Face provider | Follows ADR-003 provider pattern |
+| `87ab5c5c` | Kimi For Coding provider | Follows ADR-003 provider pattern |
+| `993c45a0` | Qwen CLI OAuth provider | Extension provider via ADR-039 |
+| `3e6d8dc7` | GitLab Duo provider extension | Extension provider via ADR-039 |
+| `cb850676` | Android/Termux support | Platform port |
+| `86b43c8e` | Bash spawn hook | Extension hook via ADR-025/030 |
+| `bd646eec` | Per-model overrides in models.json | Covered by ADR-013 |
+| `c35be660` | Merge custom models with built-ins by id | Covered by ADR-013/039 |
+| `30fd99bd` | Terminal input hook for extensions | Extension hook via ADR-030 |
+| `ff5148e7` | Forward message/tool events to extensions | Extension event via ADR-025/031 |
+| `757d36a4` | Offline startup mode | Minor |
+| `a26a9cfa` | Configurable transport and codex websocket caching | Provider detail |

@@ -36,11 +36,22 @@
 | 030 | [Hook API expansion — plan mode, widgets, context events](adr/030-hook-api-expansion.md) |
 | 031 | [Event bus for extension communication](adr/031-event-bus-for-extensions.md) |
 | 032 | [OpenAI Codex OAuth provider](adr/032-openai-codex-provider.md) |
+| 033 | [Extension package management with ResourceLoader](adr/033-extension-package-management.md) |
+| 034 | [Amazon Bedrock provider](adr/034-amazon-bedrock-provider.md) |
+| 035 | [Azure OpenAI Responses provider](adr/035-azure-openai-responses-provider.md) |
+| 036 | [Rename /branch to /fork](adr/036-rename-branch-to-fork.md) |
+| 037 | [Per-tool execution mode override](adr/037-per-tool-execution-mode.md) |
+| 038 | [TUI overlay compositing](adr/038-tui-overlay-compositing.md) |
+| 039 | [Custom provider support via extensions](adr/039-custom-provider-extension-api.md) |
+| 040 | [HTTP proxy support via environment variables](adr/040-http-proxy-support.md) |
 
 ## TDRs
 
 | ID | Title |
+|---|---|
 | TDR-001 | [Tool call streaming reports argument deltas, not partial JSON](tdr/TDR-001-tool-call-streaming-deltas.md) |
 | TDR-002 | [GPT-5 reasoning mode cannot be fully disabled](tdr/TDR-002-gpt5-no-reasoning-off-switch.md) |
 | TDR-003 | [Image resizing heuristics for provider size limits](tdr/TDR-003-image-resizing-heuristics.md) |
 | TDR-004 | [Session tree migration without rollback](tdr/TDR-004-session-tree-migration-risks.md) |
+| TDR-005 | [Truecolor assumed for all terminals](tdr/TDR-005-truecolor-assumption.md) |
+| TDR-006 | [Image processing library churn](tdr/TDR-006-image-processing-churn.md) |

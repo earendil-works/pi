@@ -32,4 +32,12 @@
 | 029 | [Settings command with unified settings UI](029-settings-command.md) |
 | 030 | [Hook API expansion — plan mode, widgets, context events](030-hook-api-expansion.md) |
 | 031 | [Event bus for extension communication](031-event-bus-for-extensions.md) |
-| 032 | [OpenAI Codex OAuth provider](032-openai-codex-provider.md) |---|---|
+| 032 | [OpenAI Codex OAuth provider](032-openai-codex-provider.md) |
+| 033 | [Extension package management with ResourceLoader](033-extension-package-management.md) |
+| 034 | [Amazon Bedrock provider](034-amazon-bedrock-provider.md) |
+| 035 | [Azure OpenAI Responses provider](035-azure-openai-responses-provider.md) |
+| 036 | [Rename /branch to /fork](036-rename-branch-to-fork.md) |
+| 037 | [Per-tool execution mode override](037-per-tool-execution-mode.md) |
+| 038 | [TUI overlay compositing](038-tui-overlay-compositing.md) |
+| 039 | [Custom provider support via extensions](039-custom-provider-extension-api.md) |
+| 040 | [HTTP proxy support via environment variables](040-http-proxy-support.md) |---|---|
