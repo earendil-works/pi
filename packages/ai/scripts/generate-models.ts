@@ -2114,6 +2114,22 @@ async function generateModels() {
 			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
 			candidate.compat = { supportsStore: false, supportsDeveloperRole: false };
 		}
+		// Kimi K3 on Fireworks uses the OpenAI-compatible API with the same
+		// reasoning_content interleaving and deferred-tools behavior as Moonshot K3.
+		// The Anthropic-compatible Fireworks endpoint does not expose K3's effort/
+		// budget reasoning controls, so route it through openai-completions.
+		if (candidate.provider === "fireworks" && candidate.id.includes("kimi-k3")) {
+			candidate.api = "openai-completions";
+			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
+			candidate.compat = {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: true,
+				requiresReasoningContentOnAssistantMessages: true,
+				deferredToolsMode: "kimi",
+				thinkingFormat: "openai",
+			};
+		}
 	}
 
 

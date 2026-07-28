@@ -58,6 +58,44 @@ describe("Fireworks models", () => {
 		expect(fast.thinkingLevelMap).toEqual(base.thinkingLevelMap);
 	});
 
+	it("routes Kimi K3 through the OpenAI-compatible API with kimi deferred-tools compat", () => {
+		const base = getModel("fireworks", "accounts/fireworks/models/kimi-k3");
+		const fast = getModel("fireworks", "accounts/fireworks/routers/kimi-k3-fast");
+
+		expect(base).toBeDefined();
+		expect(base.api).toBe("openai-completions");
+		expect(base.baseUrl).toBe("https://api.fireworks.ai/inference/v1");
+		expect(base.provider).toBe("fireworks");
+		expect(base.reasoning).toBe(true);
+		expect(base.input).toEqual(["text", "image"]);
+		expect(base.contextWindow).toBe(1048576);
+		expect(base.maxTokens).toBe(131072);
+		expect(base.cost).toEqual({ input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 });
+		expect(base.compat).toEqual({
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: true,
+			requiresReasoningContentOnAssistantMessages: true,
+			deferredToolsMode: "kimi",
+			thinkingFormat: "openai",
+		});
+		expect(base.thinkingLevelMap).toEqual({
+			off: null,
+			minimal: null,
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: null,
+			max: "max",
+		});
+
+		expect(fast.api).toBe(base.api);
+		expect(fast.baseUrl).toBe(base.baseUrl);
+		expect(fast.compat).toEqual(base.compat);
+		expect(fast.thinkingLevelMap).toEqual(base.thinkingLevelMap);
+		expect(fast.cost).toEqual({ input: 4.5, output: 22.5, cacheRead: 0.45, cacheWrite: 0 });
+	});
+
 	it("resolves FIREWORKS_API_KEY from the environment", () => {
 		process.env.FIREWORKS_API_KEY = "test-fireworks-key";
 
