@@ -44,6 +44,13 @@
 | 038 | [TUI overlay compositing](adr/038-tui-overlay-compositing.md) |
 | 039 | [Custom provider support via extensions](adr/039-custom-provider-extension-api.md) |
 | 040 | [HTTP proxy support via environment variables](adr/040-http-proxy-support.md) |
+| 041 | [Models runtime with provider-owned auth](adr/041-models-runtime.md) |
+| 042 | [Image output generation](adr/042-image-output-generation.md) |
+| 043 | [AgentHarness testing architecture](adr/043-agent-harness.md) |
+| 044 | [Provider and package pruning](adr/044-provider-and-package-pruning.md) |
+| 045 | [Per-request fetch injection](adr/045-per-request-fetch-injection.md) |
+| 046 | [Constrained sampling for structured output](adr/046-constrained-sampling.md) |
+| 047 | [SQLite session storage backend](adr/047-sqlite-session-storage.md) |
 
 ## TDRs
 

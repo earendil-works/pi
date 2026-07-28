@@ -40,4 +40,11 @@
 | 037 | [Per-tool execution mode override](037-per-tool-execution-mode.md) |
 | 038 | [TUI overlay compositing](038-tui-overlay-compositing.md) |
 | 039 | [Custom provider support via extensions](039-custom-provider-extension-api.md) |
-| 040 | [HTTP proxy support via environment variables](040-http-proxy-support.md) |---|---|
+| 040 | [HTTP proxy support via environment variables](040-http-proxy-support.md) |
+| 041 | [Models runtime with provider-owned auth](041-models-runtime.md) |
+| 042 | [Image output generation](042-image-output-generation.md) |
+| 043 | [AgentHarness testing architecture](043-agent-harness.md) |
+| 044 | [Provider and package pruning](044-provider-and-package-pruning.md) |
+| 045 | [Per-request fetch injection](045-per-request-fetch-injection.md) |
+| 046 | [Constrained sampling for structured output](046-constrained-sampling.md) |
+| 047 | [SQLite session storage backend](047-sqlite-session-storage.md) |

@@ -311,3 +311,36 @@ Each session logs every commit that was flagged as significant, with a one-liner
 | `ff5148e7` | Forward message/tool events to extensions | Extension event via ADR-025/031 |
 | `757d36a4` | Offline startup mode | Minor |
 | `a26a9cfa` | Configurable transport and codex websocket caching | Provider detail |
+
+---
+
+## Session 6 — 2026-07-28
+
+**Range:** a363b668 → 027a5847 (commits ~3801–5162)
+**Branch:** adr-archaeology/phase-1
+**Resume at:** HEAD — all commits processed
+
+### ADRs written this session
+
+| # | Title | Source |
+|---|---|---|
+| 041 | Models runtime with provider-owned auth | `f63095cf` — `10a575b7` (8 phases) |
+| 042 | Image output generation | `e3d066da` / `62d91326` / `e9b0af0a` |
+| 043 | AgentHarness testing architecture | `a5b27367` / `c0f416aa` |
+| 044 | Provider and package pruning | `fe66edd9` / `0ed0d434` / `b141e1fa` |
+| 045 | Per-request fetch injection | `027a5847` |
+| 046 | Constrained sampling for structured output | `24bace27` |
+
+### TDRs written this session
+
+None.
+
+### Connections to track
+
+- ADR-041 (Models runtime) is the most significant architectural change in this batch — it restructures how providers, auth, and model resolution work, building on ADR-003 (provider abstraction), ADR-004 (model registry), and ADR-039 (custom provider API)
+- ADR-042 (image output) adds a new capability orthogonal to the existing image processing pipeline (TDR-003, TDR-006)
+- ADR-043 (AgentHarness) provides the testing infrastructure that the AgentSession (ADR-016) and extensions (ADR-025) systems needed
+- ADR-044 (pruning) reverses earlier decisions to add Google providers (ADR-003 extensions), the mom package, and the web-ui package — acknowledging that not all experiments become permanent
+- ADR-045 (fetch injection) gives extensions a per-request hook into the provider HTTP layer, complementing ADR-040 (HTTP proxy)
+- ADR-046 (constrained sampling) adds structured output enforcement to the provider interface from ADR-003
+- The Models refactoring (ADR-041) is the capstone to the provider evolution that started with ADR-003 and went through ADR-013, ADR-022, ADR-032, ADR-034, ADR-035, ADR-039, ADR-040, ADR-045, and ADR-046
