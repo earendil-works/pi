@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
+
 ### Fixed
 
 - Added a status line when the tool output expansion is toggled ([#7180](https://github.com/earendil-works/pi/issues/7180)).

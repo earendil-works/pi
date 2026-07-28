@@ -5,6 +5,7 @@
 ### Added
 
 - Exported the bundled `Marked` parser and token types.
+- Added width-aware source transforms to the `Markdown` component.
 
 ## [0.82.1] - 2026-07-25
 

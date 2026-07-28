@@ -1562,6 +1562,27 @@ mode and would not execute if sent via `prompt`.
 
 Register a custom TUI renderer for custom messages with your `customType`. Custom messages are created with `pi.sendMessage()` and participate in LLM context. See [Custom UI](#custom-ui).
 
+### pi.registerMarkdownTransformer(transformer)
+
+Register a transformer for the Markdown in normal user text, assistant text, and thinking blocks. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+
+The transformer receives the Markdown string and a context with:
+
+- `messageType` — `"user"`, `"assistant"`, or `"assistant-thinking"`
+- `isStreaming` — `true` for partial assistant updates; `false` for user, finalized assistant, and restored messages
+- `availableWidth` — exact terminal columns available for the transformed Markdown content
+
+Return the transformed Markdown:
+
+```typescript
+pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
+  if (isStreaming || messageType === "assistant-thinking") return markdown;
+  return markdown.replaceAll("-->", "→");
+});
+```
+
+If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+
 ### pi.registerEntryRenderer(customType, renderer)
 
 Register a custom TUI renderer for custom entries with your `customType`. Custom entries are created with `pi.appendEntry()` and do not participate in LLM context.
