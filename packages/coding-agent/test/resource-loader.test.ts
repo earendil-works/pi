@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
+import { DefaultResourceLoader, loadProjectContextFiles } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
@@ -851,6 +851,168 @@ export default function(pi: ExtensionAPI) {
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
 			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
 			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+		});
+	});
+
+	describe("loadProjectContextFiles - nested worktree dedup", () => {
+		// Builds a linked-worktree skeleton (no git binary needed): the main repo's
+		// `.git/worktrees/<name>/` holds `HEAD` plus a `commondir` pointing back at the
+		// main `.git`, and the worktree's working tree carries a `.git` *file* whose
+		// `gitdir:` resolves to it.
+		const linkWorktree = (mainDir: string, worktreeDir: string, name: string) => {
+			const gitDir = join(mainDir, ".git", "worktrees", name);
+			mkdirSync(gitDir, { recursive: true });
+			// The main repo's own `.git` is a real git dir with a HEAD, as git writes it.
+			writeFileSync(join(mainDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/feat\n");
+			// commondir is relative to the worktree gitdir and points at the main .git.
+			writeFileSync(join(gitDir, "commondir"), "../..");
+			writeFileSync(join(worktreeDir, ".git"), `gitdir: ${gitDir}\n`);
+		};
+
+		// Main repo at <tempDir>/outer/main with a linked worktree at main/worktrees/feat.
+		// Each case writes only the AGENTS.md files it needs.
+		const setupNestedWorktree = () => {
+			const outer = join(tempDir, "outer");
+			const main = join(outer, "main");
+			const worktree = join(main, "worktrees", "feat");
+			const worktreeSrc = join(worktree, "src");
+			mkdirSync(worktreeSrc, { recursive: true });
+			linkWorktree(main, worktree, "feat");
+			return { outer, main, worktree, worktreeSrc };
+		};
+
+		it("should skip the main repo's duplicate when the worktree root has its own context", () => {
+			const { main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "AGENTS.md"), "main repo instructions");
+			writeFileSync(join(worktree, "AGENTS.md"), "worktree instructions");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["worktree instructions"]);
+		});
+
+		it("should still inherit the main repo's context when the worktree root has none", () => {
+			const { main, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "AGENTS.md"), "main repo instructions");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["main repo instructions"]);
+		});
+
+		it("should only skip the same filename, not a differently named context file", () => {
+			// The repo tracks CLAUDE.md; the worktree adds an AGENTS.md, which
+			// loadContextFileFromDir prefers. The main repo's CLAUDE.md is nobody's
+			// duplicate, so dropping it would lose its content entirely.
+			const { main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "CLAUDE.md"), "main repo instructions");
+			writeFileSync(join(worktree, "AGENTS.md"), "worktree instructions");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["main repo instructions", "worktree instructions"]);
+		});
+
+		it("should NOT skip the container's context in a bare layout (proj/.bare + proj/main)", () => {
+			// `git clone --bare proj/.bare` + `git worktree add ../main` makes commondir
+			// `../..`, so dirname(commonGitDir) is `proj` - a plain directory that tracks
+			// nothing. Its AGENTS.md is not a duplicate of the worktree's. Layout below
+			// matches what real git writes for this setup.
+			const proj = join(tempDir, "proj");
+			const bare = join(proj, ".bare");
+			const worktree = join(proj, "main");
+			const worktreeGitDir = join(bare, "worktrees", "main");
+			mkdirSync(worktreeGitDir, { recursive: true });
+			mkdirSync(worktree, { recursive: true });
+			writeFileSync(join(bare, "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(worktreeGitDir, "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(worktreeGitDir, "commondir"), "../..");
+			writeFileSync(join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+			writeFileSync(join(proj, "AGENTS.md"), "container instructions");
+			writeFileSync(join(worktree, "AGENTS.md"), "worktree instructions");
+
+			const files = loadProjectContextFiles({ cwd: worktree, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["container instructions", "worktree instructions"]);
+		});
+
+		it("should keep loading ancestors above the main repo", () => {
+			const { outer, main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(outer, "AGENTS.md"), "outer instructions");
+			writeFileSync(join(main, "AGENTS.md"), "main repo instructions");
+			writeFileSync(join(worktree, "AGENTS.md"), "worktree instructions");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			// Only the main repo root's duplicate is dropped; the unrelated dir above it stays.
+			expect(files.map((f) => f.content)).toEqual(["outer instructions", "worktree instructions"]);
+		});
+
+		it("should NOT skip anything for a sibling worktree (main repo is not an ancestor)", () => {
+			// git worktree add ../feat puts the worktree beside the main repo, so no
+			// duplicate is ever encountered and ancestors above it are unrelated.
+			const outer = join(tempDir, "outer");
+			const main = join(outer, "main");
+			const sib = join(outer, "sib-feat");
+			const sibSrc = join(sib, "src");
+			mkdirSync(sibSrc, { recursive: true });
+			mkdirSync(main, { recursive: true });
+			writeFileSync(join(outer, "AGENTS.md"), "outer instructions");
+			writeFileSync(join(sib, "AGENTS.md"), "sibling worktree instructions");
+			linkWorktree(main, sib, "sib");
+
+			const files = loadProjectContextFiles({ cwd: sibSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["outer instructions", "sibling worktree instructions"]);
+		});
+
+		it("should NOT skip the superproject's context from inside a submodule", () => {
+			// A submodule's `.git` file is also `gitdir:`-style, but its gitdir has no
+			// commondir, so it resolves under `.git/modules` - never an ancestor of cwd.
+			const sup = join(tempDir, "super");
+			const sub = join(sup, "vendor", "lib");
+			const subSrc = join(sub, "src");
+			mkdirSync(subSrc, { recursive: true });
+			writeFileSync(join(sup, "AGENTS.md"), "superproject instructions");
+			writeFileSync(join(sub, "AGENTS.md"), "submodule instructions");
+			const subGitDir = join(sup, ".git", "modules", "vendor", "lib");
+			mkdirSync(subGitDir, { recursive: true });
+			writeFileSync(join(subGitDir, "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(sub, ".git"), `gitdir: ${subGitDir}\n`);
+
+			const files = loadProjectContextFiles({ cwd: subSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["superproject instructions", "submodule instructions"]);
+		});
+
+		it("should keep climbing past an ordinary repo root", () => {
+			const outer = join(tempDir, "outer");
+			const repo = join(outer, "repo");
+			const leaf = join(repo, "src");
+			mkdirSync(leaf, { recursive: true });
+			mkdirSync(join(repo, ".git"), { recursive: true });
+			writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(outer, "AGENTS.md"), "outer instructions");
+			writeFileSync(join(repo, "AGENTS.md"), "repo instructions");
+			writeFileSync(join(leaf, "AGENTS.md"), "leaf instructions");
+
+			const files = loadProjectContextFiles({ cwd: leaf, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["outer instructions", "repo instructions", "leaf instructions"]);
+		});
+
+		it("should climb normally when the gitdir: target does not exist", () => {
+			const repo = join(tempDir, "corrupt");
+			const src = join(repo, "src");
+			mkdirSync(src, { recursive: true });
+			writeFileSync(join(repo, ".git"), "gitdir: /nonexistent/path/worktrees/feat\n");
+			writeFileSync(join(repo, "AGENTS.md"), "repo instructions");
+			writeFileSync(join(src, "AGENTS.md"), "src instructions");
+
+			const files = loadProjectContextFiles({ cwd: src, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["repo instructions", "src instructions"]);
 		});
 	});
 });
