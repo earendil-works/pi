@@ -115,9 +115,68 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ---
 
-## Session 3 — 2026-07-28
+## Session 4 — 2026-07-28
 
-**Range:** 3fcae75e → f6148924 (commits 301–800)
+**Range:** 5095b4eb → 0f27eae7 (commits ~801–1800)
+**Branch:** adr-archaeology/phase-1
+**Resume at:** `acec56c6`
+
+### Flagged commits
+
+| Hash | One-liner |
+|---|---|
+| `5482bf3e` | SDK for programmatic AgentSession usage (createAgentSession factory) |
+| `c58d5f20` | Session tree structure with id/parentId linking |
+| `2846c7d1` | Unified extensions system (hooks + custom-tools merge) |
+| `8f268257` | Configurable keybindings via keybindings.json |
+| `d0a4c370` | Split queue into steer() and followUp() APIs |
+| `42d7d9d9` | Before/after session events with cancellation |
+| `c53b22db` | /settings command with unified settings menu |
+| `f8d3b0e3` | Auto-load SYSTEM.md as custom system prompt |
+| `746ec9eb` | Shell commands without context contribution (!! prefix) |
+| `dde5f251` | Word wrapping in Editor component |
+| `6467e709` | Vertex AI provider with ADC support |
+| `1650041a` | OpenAI Codex OAuth + responses provider |
+| `256fa575` | Export-html rewrite with tree sidebar, client-side rendering |
+| `9c9e6822` | Event bus for tool/hook communication |
+| `4cee51e4` | Plan-mode hook (todo tracking, progress, widget, context events) |
+| `77fe3f1a` | Context event for pre-LLC message modification |
+| `51d396b3` | setWidget/setWidgetComponent API for hooks |
+| `57bba4e3` | Hook API for tool control, CLI flags, shortcuts |
+| `93498737` | steer()/followUp() migration completed (PR #403) |
+| `f8b3d0e3` | Auto-load SYSTEM.md |
+| `1f3f8511` | Session tree merge (branching, compaction, hook API) |
+
+### Connections to track
+
+- ADR-025 (extensions) merges ADR-018 (hooks) and the earlier custom-tools system into one API
+- ADR-027 (steer/followUp) refines the queue mechanism originally added alongside ADR-016 (AgentSession)
+- ADR-023 (session tree) is a fundamental change to session storage — ADR-014 (compaction) and ADR-008 (session persistence) both needed updates
+- ADR-030 (hook expansion) builds directly on ADR-018 (hooks) — adds widget, context event, text_delta, tool registration
+- ADR-024 (SDK) exposes ADR-016 (AgentSession) as a documented public API
+- TDR-004 relates to ADR-023: the one-way migration without rollback was a known risk from the start
+
+### TDRs written
+
+| ID | Title | Source |
+|---|---|---|
+| TDR-003 | Image resizing heuristics for provider size limits | `69dc6b07` |
+| TDR-004 | Session tree migration without rollback | `cb6310e1` |
+
+### ADRs written
+
+| # | Title | Source |
+|---|---|---|
+| 023 | Session tree structure with id/parentId branching | `c58d5f20` |
+| 024 | SDK for programmatic AgentSession usage | `5482bf3e` |
+| 025 | Unified extensions system | `2846c7d1` / `cf1c4c31` |
+| 026 | Configurable keybinding system | `8f268257` |
+| 027 | Steer and followUp API split | `d0a4c370` / `93498737` |
+| 028 | Shell commands without context contribution | `746ec9eb` |
+| 029 | Settings command with unified settings UI | `c53b22db` |
+| 030 | Hook API expansion — plan mode, widgets, context events | `4cee51e4` / `51d396b3` / `57bba4e3` / `77fe3f1a` |
+| 031 | Event bus for extension communication | `9c9e6822` |
+
 **Branch:** adr-archaeology/phase-1
 **Resume at:** next commit after `f6148924`
 

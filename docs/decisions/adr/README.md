@@ -22,4 +22,14 @@
 | 019 | [Standalone binary distribution with Bun](019-standalone-binary-distribution.md) |
 | 020 | [OAuth authentication for Claude Pro/Max](020-oauth-authentication.md) |
 | 021 | [Theming system with user-defined themes](021-theming-system.md) |
-| 022 | [Mistral AI provider with extended compat flags](022-mistral-provider-with-compat-flags.md) |---|---|
+| 022 | [Mistral AI provider with extended compat flags](022-mistral-provider-with-compat-flags.md) |
+| 023 | [Session tree structure with id/parentId branching](023-session-tree-structure.md) |
+| 024 | [SDK for programmatic AgentSession usage](024-sdk-for-programmatic-usage.md) |
+| 025 | [Unified extensions system](025-unified-extensions-system.md) |
+| 026 | [Configurable keybinding system](026-configurable-keybindings.md) |
+| 027 | [Steer and followUp API split](027-steer-and-followup-api.md) |
+| 028 | [Shell commands without context contribution](028-shell-commands-without-context.md) |
+| 029 | [Settings command with unified settings UI](029-settings-command.md) |
+| 030 | [Hook API expansion — plan mode, widgets, context events](030-hook-api-expansion.md) |
+| 031 | [Event bus for extension communication](031-event-bus-for-extensions.md) |
+| 032 | [OpenAI Codex OAuth provider](032-openai-codex-provider.md) |---|---|
