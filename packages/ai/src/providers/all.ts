@@ -5,6 +5,7 @@ import type { Api, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
+import { apiarioProvider } from "./apiario.ts";
 import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
 import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
@@ -88,6 +89,7 @@ export function builtinProviders(): Provider[] {
 	return [
 		amazonBedrockProvider(),
 		antLingProvider(),
+		apiarioProvider(),
 		anthropicProvider(),
 		azureOpenAIResponsesProvider(),
 		cerebrasProvider(),
