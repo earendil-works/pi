@@ -139,11 +139,13 @@ export class AgentSessionRuntime {
 			return { cancelled: false };
 		}
 
-		const result = await runner.emit({
-			type: "session_before_switch",
-			reason,
-			targetSessionFile,
-		});
+		const result = await this.session.withReloadDeferred(() =>
+			runner.emit({
+				type: "session_before_switch",
+				reason,
+				targetSessionFile,
+			}),
+		);
 		return { cancelled: result?.cancel === true };
 	}
 
@@ -156,20 +158,26 @@ export class AgentSessionRuntime {
 			return { cancelled: false };
 		}
 
-		const result = await runner.emit({
-			type: "session_before_fork",
-			entryId,
-			...options,
-		});
+		const result = await this.session.withReloadDeferred(() =>
+			runner.emit({
+				type: "session_before_fork",
+				entryId,
+				...options,
+			}),
+		);
 		return { cancelled: result?.cancel === true };
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason,
-			targetSessionFile,
-		});
+		await this.session.withReloadDeferred(
+			() =>
+				emitSessionShutdownEvent(this.session.extensionRunner, {
+					type: "session_shutdown",
+					reason,
+					targetSessionFile,
+				}),
+			{ flush: false },
+		);
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
 	}
@@ -393,12 +401,7 @@ export class AgentSessionRuntime {
 	}
 
 	async dispose(): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason: "quit",
-		});
-		this.beforeSessionInvalidate?.();
-		this.session.dispose();
+		await this.teardownCurrent("quit");
 	}
 }
 

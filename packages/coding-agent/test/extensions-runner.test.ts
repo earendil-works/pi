@@ -929,6 +929,18 @@ describe("ExtensionRunner", () => {
 			await commandContext.fork("entry-2", { position: "at" });
 			expect(fork).toHaveBeenLastCalledWith("entry-2", { position: "at" });
 		});
+
+		it("keeps reload awaitable on command contexts", async () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const reload = vi.fn(async () => {});
+
+			runner.bindCore(extensionActions, { ...extensionContextActions, reload });
+
+			const commandContext = runner.createCommandContext();
+			await commandContext.reload();
+			expect(reload).toHaveBeenCalledOnce();
+		});
 	});
 
 	describe("hasHandlers", () => {

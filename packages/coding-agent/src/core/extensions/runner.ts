@@ -290,6 +290,7 @@ export class ExtensionRunner {
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
+	private commandReloadHandler: ReloadHandler | undefined;
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -346,6 +347,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.reloadHandler = contextActions.reload ?? (async () => {});
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
@@ -417,7 +419,7 @@ export class ExtensionRunner {
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
-			this.reloadHandler = actions.reload;
+			this.commandReloadHandler = actions.reload;
 			return;
 		}
 
@@ -426,7 +428,7 @@ export class ExtensionRunner {
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
-		this.reloadHandler = async () => {};
+		this.commandReloadHandler = undefined;
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
@@ -738,6 +740,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.compactFn(options);
 			},
+			reload: () => {
+				runner.assertActive();
+				return runner.reloadHandler();
+			},
 			getSystemPrompt: () => {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
@@ -779,7 +785,7 @@ export class ExtensionRunner {
 		};
 		context.reload = () => {
 			this.assertActive();
-			return this.reloadHandler();
+			return (this.commandReloadHandler ?? this.reloadHandler)();
 		};
 		return context;
 	}

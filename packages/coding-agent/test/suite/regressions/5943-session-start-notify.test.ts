@@ -86,13 +86,16 @@ type RebindContext = {
 
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
+	outputPad: 0 | 1;
+	activeStatusIndicator?: unknown;
+	statusContainer: { clear: () => void };
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
 		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -133,6 +136,7 @@ type InteractiveModePrototype = {
 		options?: { extensions?: Array<{ path: string }>; force?: boolean; showDiagnosticsWhenQuiet?: boolean },
 	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
+	performReload(this: ReloadCommandContext, reloadCore: ReloadCommandContext["session"]["reload"]): Promise<void>;
 	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
 };
 
@@ -155,6 +159,9 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
+		outputPad: overrides.outputPad ?? 1,
+		activeStatusIndicator: overrides.activeStatusIndicator,
+		statusContainer: overrides.statusContainer ?? { clear: () => {} },
 		session: {
 			isStreaming: false,
 			isCompacting: false,
@@ -163,7 +170,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 			},
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
+			modelRuntime: { getError: () => undefined },
 			...overrides.session,
 		},
 		settingsManager: {
@@ -462,7 +469,7 @@ describe("regression #5943: session_start transient UI", () => {
 			},
 		});
 
-		await interactiveModePrototype.handleReloadCommand.call(context);
+		await interactiveModePrototype.performReload.call(context, context.session.reload);
 
 		expect(context.hideThinkingBlock).toBe(true);
 		expect(events).toEqual(["reload", "rebuild:true", "start:true"]);
@@ -501,7 +508,7 @@ describe("regression #5943: session_start transient UI", () => {
 			},
 		});
 
-		const reloadPromise = interactiveModePrototype.handleReloadCommand.call(context);
+		const reloadPromise = interactiveModePrototype.performReload.call(context, context.session.reload);
 		await reloadWaiting;
 
 		expect(chatRestored).toBe(true);

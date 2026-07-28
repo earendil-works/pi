@@ -51,7 +51,12 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSession,
+	type AgentSessionEvent,
+	parseSkillBlock,
+	type RuntimeReloadCore,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import {
 	CACHE_TTL_MS,
@@ -1682,10 +1687,8 @@ export class InteractiveMode {
 				switchSession: async (sessionPath, options) => {
 					return this.handleResumeSession(sessionPath, options);
 				},
-				reload: async () => {
-					await this.handleReloadCommand();
-				},
 			},
+			reloadHandler: (reloadCore) => this.performReload(reloadCore),
 			shutdownHandler: () => {
 				this.shutdownRequested = true;
 				if (this.session.isIdle) {
@@ -1822,6 +1825,7 @@ export class InteractiveMode {
 					}
 				})();
 			},
+			reload: () => this.session.requestReload(),
 			getSystemPrompt: () => this.session.systemPrompt,
 		});
 
@@ -5316,16 +5320,7 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
-		if (this.session.isStreaming) {
-			this.showWarning("Wait for the current response to finish before reloading.");
-			return;
-		}
-		if (this.session.isCompacting) {
-			this.showWarning("Wait for compaction to finish before reloading.");
-			return;
-		}
-
+	private async performReload(reloadCore: RuntimeReloadCore): Promise<void> {
 		this.resetExtensionUI();
 
 		const reloadBox = new Container();
@@ -5369,7 +5364,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			await reloadCore({ beforeSessionStart: restoreChatBeforeSessionStart });
 			restoreChatBeforeSessionStart();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();
@@ -5416,6 +5411,23 @@ export class InteractiveMode {
 			if (!reloadBoxDismissed) {
 				dismissReloadBox(previousEditor as Component);
 			}
+			throw error;
+		}
+	}
+
+	private async handleReloadCommand(): Promise<void> {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before reloading.");
+			return;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before reloading.");
+			return;
+		}
+
+		try {
+			await this.session.reload();
+		} catch (error) {
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
@@ -5930,10 +5942,8 @@ export class InteractiveMode {
 	}
 
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
-		const extensionRunner = this.session.extensionRunner;
-
 		// Emit user_bash event to let extensions intercept
-		const eventResult = await extensionRunner.emitUserBash({
+		const eventResult = await this.session.emitUserBash({
 			type: "user_bash",
 			command,
 			excludeFromContext,

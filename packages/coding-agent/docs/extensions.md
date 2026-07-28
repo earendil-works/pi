@@ -1062,6 +1062,48 @@ ctx.compact({
 });
 ```
 
+### ctx.reload()
+
+Request the same runtime reload flow as `/reload`. This is available in `ExtensionContext`, so tools, event handlers, shortcuts, and command handlers can call it.
+
+`ctx.reload()` records a reload request and returns a promise that resolves once the request is accepted. The reload runs when the session reaches a safe boundary. In command handlers this may happen immediately; in tools and event handlers it is deferred so reload does not re-enter while hook results are still being applied.
+
+Reload behavior:
+- Reload emits `session_shutdown` for the current extension runtime
+- It then reloads resources and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
+- The currently running handler continues in the old call frame
+- Code after `await ctx.reload()` must not assume old in-memory extension state will remain valid
+- After the handler returns and reload completes, future commands/events/tool calls use the new extension version
+- A reload request made while a reload is already running queues one follow-up reload when the session is idle
+
+For predictable command behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
+
+Example tool the LLM can call to request reload:
+
+```typescript
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "reload_runtime",
+    label: "Reload Runtime",
+    description: "Reload extensions, skills, prompts, themes, and context files",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      await ctx.reload();
+      return {
+        content: [{ type: "text", text: "Reload requested. It will run after this turn finishes." }],
+        details: {},
+        terminate: true,
+      };
+    },
+  });
+}
+```
+
+Return `terminate: true` when reload should happen as soon as the current tool batch finishes; otherwise the agent may continue with another LLM turn before it becomes idle.
+
 ### ctx.getSystemPrompt()
 
 Returns Pi's current system prompt string.
@@ -1270,62 +1312,6 @@ pi.registerCommand("handoff", {
     });
   },
 });
-```
-
-### ctx.reload()
-
-Run the same reload flow as `/reload`.
-
-```typescript
-pi.registerCommand("reload-runtime", {
-  description: "Reload extensions, skills, prompts, themes, and context files",
-  handler: async (_args, ctx) => {
-    await ctx.reload();
-    return;
-  },
-});
-```
-
-Important behavior:
-- `await ctx.reload()` emits `session_shutdown` for the current extension runtime
-- It then reloads resources and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
-- The currently running command handler still continues in the old call frame
-- Code after `await ctx.reload()` still runs from the pre-reload version
-- Code after `await ctx.reload()` must not assume old in-memory extension state is still valid
-- After the handler returns, future commands/events/tool calls use the new extension version
-
-For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
-
-Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that queues that command as a follow-up user message.
-
-Example tool the LLM can call to trigger reload:
-
-```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-
-export default function (pi: ExtensionAPI) {
-  pi.registerCommand("reload-runtime", {
-    description: "Reload extensions, skills, prompts, themes, and context files",
-    handler: async (_args, ctx) => {
-      await ctx.reload();
-      return;
-    },
-  });
-
-  pi.registerTool({
-    name: "reload_runtime",
-    label: "Reload Runtime",
-    description: "Reload extensions, skills, prompts, themes, and context files",
-    parameters: Type.Object({}),
-    async execute() {
-      pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
-      return {
-        content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
-      };
-    },
-  });
-}
 ```
 
 ## ExtensionAPI Methods
@@ -2897,7 +2883,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `handoff.ts` | Cross-provider model handoff | `registerCommand`, `ui.editor`, `ui.custom` |
 | `qna.ts` | Q&A with custom UI | `registerCommand`, `ui.custom`, `setEditorText` |
 | `send-user-message.ts` | Inject user messages | `registerCommand`, `sendUserMessage` |
-| `reload-runtime.ts` | Reload command and LLM tool handoff | `registerCommand`, `ctx.reload()`, `sendUserMessage` |
+| `reload-runtime.ts` | LLM tool reload request | `registerTool`, `ctx.reload()` |
 | `shutdown-command.ts` | Graceful shutdown command | `registerCommand`, `shutdown()` |
 | **Events & Gates** |||
 | `permission-gate.ts` | Block dangerous commands | `on("tool_call")`, `ui.confirm` |
