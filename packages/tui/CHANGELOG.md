@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exported the bundled `Marked` parser and token types.
+
 ## [0.82.1] - 2026-07-25
 
 ## [0.82.0] - 2026-07-24

@@ -1,5 +1,6 @@
 // Core TUI interfaces and classes
 
+export { Marked, type Token, type Tokens } from "marked";
 // Autocomplete support
 export {
 	type AutocompleteItem,
