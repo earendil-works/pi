@@ -113,3 +113,51 @@ Each session logs every commit that was flagged as significant, with a one-liner
 | 010 | Runtime bridge for sandboxed execution | `c2793d80` |
 | 011 | TUI rewrite with three-strategy differential rendering | `97c730c8` |
 
+---
+
+## Session 3 — 2026-07-28
+
+**Range:** 3fcae75e → f6148924 (commits 301–800)
+**Branch:** adr-archaeology/phase-1
+**Resume at:** next commit after `f6148924`
+
+### Flagged commits
+
+| Hash | One-liner |
+|---|---|
+| `dca3e1cc` | Hierarchical context file loading for monorepos (AGENTS.md walk) |
+| `b1c2c32e` | Move context files from user messages to system prompt |
+| `79ee33c3` | Rename package to @mariozechner/pi-coding-agent |
+| `0c5cbd00` | Custom models/providers via models.json |
+| `587d7c39` | OAuth authentication for Claude Pro/Max |
+| `cc880951` | Theming system with /theme command (36 color tokens, dark/light) |
+| `c4a65ad8` | Standalone binary with Bun compilation |
+| `5daef11b` | Compaction research and implementation plan |
+| `c89b1ec3` | Context compaction: /compact, /autocompact, auto-trigger |
+| `a38e6190` | New compaction system with overflow recovery |
+| `5a9d844f` | Simplify compaction: remove proactive abort, use Agent.continue() |
+| `3d7edfa6` | Windows Git Bash support for bash tool |
+| `bd0d0676` | Bash mode (! prefix for shell commands) |
+| `8bec289d` | Remove provider-level tool validation, add validateToolCall helper |
+| `99b4b1ac` | Mistral AI provider with compat flags |
+| `3f305502`→`dcf81a6a` | AgentSession refactor (17 WP commits) |
+| `3559a43b` | RPC mode rewrite with typed protocol and RpcClient |
+| `04d59f31` | Hooks system with pi.send() and mode-specific UI context |
+| `aa9e0582` | mom Slack bot package with abort support and streaming |
+| `29900ce6` | Make bash tool timeout optional and configurable |
+| `8ae236f9` | /branch command for conversation branching |
+| `b8e5f8db` | Fuzzy file search with @ prefix |
+| `a84a97e1` | Switch web-ui back to tsc from tsgo for decorator support |
+| `e467a80b` | /export command for session HTML export |
+
+### Connections to track
+
+- ADR-016 (AgentSession) is the hub — ADR-015 (bash mode), ADR-017 (RPC), and ADR-018 (hooks) all build on it. The mom package (aa9e0582) also uses AgentSession
+- ADR-014 (compaction) was researched (5daef11b) before implementation, then simplified post-release (5a9d844f): removed proactive abort, used Agent.continue() instead
+- ADR-022 (Mistral) extends the compat flag pattern from ADR-007 (TypeBox validation) — most flags of any provider, shows how wide the gap is between "OpenAI-compatible" and actual behavior
+- ADR-012 (b1c2c32e): context files moved from user messages to system prompt after ADR-012's initial implementation — changes how the LLM prioritizes them
+- `8bec289d` (tool validation removal) relates to ADR-007: after switching to TypeBox/AJV, provider-level validation was redundant; consolidated into a shared helper
+- `79ee33c3` (package rename) and ADR-019 (binary): the rename to @mariozechner/pi-coding-agent happened ~2 weeks before binary distribution
+- `8ae236f9` (/branch) relates to ADR-014 (compaction): branching is the alternative to compaction — preserve full history vs compress
+- `a84a97e1` (web-ui back to tsc): a reversal of the earlier tsgo decision for the web-ui package only
+

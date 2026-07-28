@@ -15,6 +15,17 @@
 | 009 | [Pluggable storage architecture and Anthropic prompt caching](adr/009-pluggable-storage-and-anthropic-prompt-caching.md) |
 | 010 | [Runtime bridge for sandboxed execution](adr/010-runtime-bridge-for-sandboxed-execution.md) |
 | 011 | [TUI rewrite with three-strategy differential rendering](adr/011-tui-rewrite-with-three-strategy-differential-rendering.md) |
+| 012 | [Hierarchical context file loading for monorepos](adr/012-hierarchical-context-file-loading.md) |
+| 013 | [Custom providers via models.json](adr/013-custom-providers-via-models-json.md) |
+| 014 | [Context compaction system](adr/014-context-compaction-system.md) |
+| 015 | [Bash mode for shell command execution](adr/015-bash-mode-for-shell-execution.md) |
+| 016 | [Coding agent refactor into AgentSession architecture](adr/016-agent-session-architecture-refactor.md) |
+| 017 | [RPC mode with typed protocol](adr/017-rpc-mode-with-typed-protocol.md) |
+| 018 | [Hooks system for extensibility](adr/018-hooks-system.md) |
+| 019 | [Standalone binary distribution with Bun](adr/019-standalone-binary-distribution.md) |
+| 020 | [OAuth authentication for Claude Pro/Max](adr/020-oauth-authentication.md) |
+| 021 | [Theming system with user-defined themes](adr/021-theming-system.md) |
+| 022 | [Mistral AI provider with extended compat flags](adr/022-mistral-provider-with-compat-flags.md) |
 
 ## TDRs
 
