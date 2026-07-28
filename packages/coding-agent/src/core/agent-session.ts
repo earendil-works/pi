@@ -94,6 +94,11 @@ import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import {
+	normalizeProgressSummarySettings,
+	ProgressSummaryController,
+	type ProgressSummaryUpdateEvent,
+} from "./progress-summary.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -135,6 +140,7 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
+	| ProgressSummaryUpdateEvent
 	| Exclude<AgentEvent, { type: "agent_end" }>
 	| {
 			type: "agent_end";
@@ -353,6 +359,7 @@ export class AgentSession {
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
+	private _progressSummaryController: ProgressSummaryController;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -369,6 +376,13 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._progressSummaryController = new ProgressSummaryController({
+			settings: () => normalizeProgressSummarySettings(this.settingsManager.getProgressSummarySettings()),
+			modelRuntime: this._modelRuntime,
+			getActiveModel: () => this.model,
+			sessionId: this.sessionId,
+			emit: (event) => this._emitRaw(event),
+		});
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -526,6 +540,11 @@ export class AgentSession {
 
 	/** Emit an event to all listeners */
 	private _emit(event: AgentSessionEvent): void {
+		this._progressSummaryController.observe(event);
+		this._emitRaw(event);
+	}
+
+	private _emitRaw(event: AgentSessionEvent): void {
 		for (const l of this._eventListeners) {
 			l(event);
 		}
@@ -561,8 +580,11 @@ export class AgentSession {
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
 		try {
-			await this._extensionRunner.emit({ type: "agent_settled" });
-			this._emit({ type: "agent_settled" });
+			const event: AgentSessionEvent = { type: "agent_settled" };
+			await this._extensionRunner.emit(event);
+			this._progressSummaryController.observe(event);
+			await this._progressSummaryController.settle();
+			this._emitRaw(event);
 		} finally {
 			this._resolveIdleWaitIfIdle();
 		}
@@ -834,6 +856,7 @@ export class AgentSession {
 			// Dispose must succeed even if an abort hook throws.
 		}
 
+		this._progressSummaryController.dispose();
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);

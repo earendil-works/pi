@@ -815,6 +815,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `message_start` | Message begins |
 | `message_update` | Streaming update (text/finalAnswer/thinking/toolcall deltas) |
 | `message_end` | Message completes |
+| `progress_summary_update` | Optional live progress state; clients replace locked milestones and current line atomically |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
@@ -877,6 +878,24 @@ Emitted when a message begins and completes. The `message` field contains an `Ag
 {"type": "message_start", "message": {...}}
 {"type": "message_end", "message": {...}}
 ```
+
+### progress_summary_update
+
+Emitted when `progressSummary.enabled` is true and Pi's sidecar summariser has a new live progress state. The event contains locked completed milestones plus one current-progress sentence; clients should replace their displayed progress state atomically.
+
+```json
+{
+  "type": "progress_summary_update",
+  "sequence": 1,
+  "milestones": [
+    "Identified the relevant files",
+    "Updated RPC stream handling"
+  ],
+  "current": "Running validation checks."
+}
+```
+
+Progress summaries are transient observability events. They are not part of the assistant's final answer and should not be treated as conversation history.
 
 ### message_update (Streaming)
 

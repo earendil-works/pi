@@ -72,6 +72,8 @@ Agent/session/UI surfaces:
   - Appends invariant model guidance to use final-answer markers once per completed user request for both default prompts and custom `SYSTEM.md` prompts.
 - `packages/coding-agent/src/core/agent-session.ts`
   - Makes copy-last-assistant prefer `finalAnswer` when present.
+- `packages/coding-agent/src/modes/print-mode.ts`
+  - Makes text print mode prefer final answers over scratch text when final-answer content is present.
 - `packages/coding-agent/src/core/session-manager.ts`
   - Includes `finalAnswer` in session listing/search text extraction.
 - `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`
@@ -152,9 +154,15 @@ After changes:
 ```bash
 cd packages/ai && ./node_modules/.bin/vitest --run test/faux-provider.test.ts test/pi-messages.test.ts
 cd ../agent && ./node_modules/.bin/vitest --run test/agent-loop.test.ts
-cd ../coding-agent && ./node_modules/.bin/vitest --run test/system-prompt.test.ts test/assistant-message.test.ts test/export-html-final-answer.test.ts test/session-manager/file-operations.test.ts
+cd ../coding-agent && ./node_modules/.bin/vitest --run test/system-prompt.test.ts test/assistant-message.test.ts test/export-html-final-answer.test.ts test/session-manager/file-operations.test.ts test/live-final-answer.test.ts
 cd ../..
 npm run check
+```
+
+Optional live CLI smoke test, using the real configured Pi model/auth and consuming real provider tokens. This script builds local workspace packages before running the live smoke:
+
+```bash
+npm run test:live-final-answer
 ```
 
 The repo rule still applies: do not run the full vitest suite directly; use focused tests or `./test.sh` when broader non-e2e coverage is needed.

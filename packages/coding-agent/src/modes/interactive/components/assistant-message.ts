@@ -15,6 +15,8 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
+	private finalAnswerFocused: boolean;
+	private showTrace: boolean;
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 
@@ -24,6 +26,8 @@ export class AssistantMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
+		finalAnswerFocused = false,
+		showTrace = true,
 	) {
 		super();
 
@@ -31,6 +35,8 @@ export class AssistantMessageComponent extends Container {
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
+		this.finalAnswerFocused = finalAnswerFocused;
+		this.showTrace = showTrace;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -69,6 +75,20 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setFinalAnswerFocused(focused: boolean): void {
+		this.finalAnswerFocused = focused;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	setExpanded(expanded: boolean): void {
+		this.showTrace = expanded;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (this.hasToolCalls || lines.length === 0) {
@@ -97,10 +117,14 @@ export class AssistantMessageComponent extends Container {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
+		const hasFinalAnswer = message.content.some((content) => content.type === "finalAnswer" && content.text.trim());
+		const hasToolCalls = message.content.some((content) => content.type === "toolCall");
+		const hideTraceText = this.finalAnswerFocused && !this.showTrace && (hasFinalAnswer || hasToolCalls);
+
 		// Render content in order
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
-			if (content.type === "text" && content.text.trim()) {
+			if (content.type === "text" && content.text.trim() && !hideTraceText) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme));
@@ -163,7 +187,6 @@ export class AssistantMessageComponent extends Container {
 		// Check if incomplete/failed - show after partial content.
 		// For aborted/error tool calls, tool execution components show the error.
 		// Length stops can happen before a tool call is complete, so surface them here too.
-		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
 		if (message.stopReason === "length") {
 			this.contentContainer.addChild(new Spacer(1));

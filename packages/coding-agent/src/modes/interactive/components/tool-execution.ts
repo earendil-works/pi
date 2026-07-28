@@ -8,6 +8,7 @@ import { theme } from "../theme/theme.ts";
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	hideWhenCollapsed?: boolean;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -23,6 +24,7 @@ export class ToolExecutionComponent extends Container {
 	private toolCallId: string;
 	private args: any;
 	private expanded = false;
+	private hideWhenCollapsed: boolean;
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private isPartial = true;
@@ -57,6 +59,7 @@ export class ToolExecutionComponent extends Container {
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
+		this.hideWhenCollapsed = options.hideWhenCollapsed ?? false;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -219,7 +222,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		if (this.hideComponent) {
+		if (this.hideComponent || (this.hideWhenCollapsed && !this.expanded)) {
 			return [];
 		}
 

@@ -76,6 +76,51 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("ship it");
 	});
 
+	test("hides scratch text in focused final-answer presentation", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "scratch" },
+				{ type: "finalAnswer", text: "ship it" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			true,
+			false,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).not.toContain("scratch");
+		expect(rendered).toContain("Final answer");
+		expect(rendered).toContain("ship it");
+	});
+
+	test("reveals focused scratch text when expanded", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "scratch" },
+				{ type: "finalAnswer", text: "ship it" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			true,
+			false,
+		);
+		component.setExpanded(true);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).toContain("scratch");
+		expect(rendered).toContain("Final answer");
+		expect(rendered).toContain("ship it");
+	});
+
 	test("renders length stops as visible errors", () => {
 		initTheme("dark");
 

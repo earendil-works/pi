@@ -32,6 +32,16 @@ export interface RetrySettings {
 	provider?: ProviderRetrySettings;
 }
 
+export interface ProgressSummarySettings {
+	enabled?: boolean; // default: false
+	intervalMs?: number; // default: 5000
+	model?: string; // optional model pattern; defaults to the active agent model
+	style?: "default" | "technical" | "exec" | "debug"; // default: "default"
+	customStylePrompt?: string; // overrides style text, not safety/protocol rules
+	maxBullets?: number; // default: 6, capped at 6
+	presentation?: "focused" | "trace"; // default: "focused" when progress summaries are enabled
+}
+
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
@@ -92,6 +102,7 @@ export interface Settings {
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
+	progressSummary?: ProgressSummarySettings;
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
@@ -837,6 +848,10 @@ export class SettingsManager {
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	getProgressSummarySettings(): ProgressSummarySettings | undefined {
+		return this.settings.progressSummary;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {

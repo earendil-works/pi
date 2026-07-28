@@ -1917,6 +1917,30 @@ export class InteractiveMode {
 		this.renderWidgets();
 	}
 
+	private updateProgressSummaryDisplay(milestones: string[], current: string): void {
+		if (milestones.length === 0 && !current) {
+			this.clearProgressSummaryDisplay();
+			return;
+		}
+		const lines = [theme.bold(theme.fg("accent", "Progress"))];
+		for (const milestone of milestones) {
+			lines.push(`✓ ${milestone}`);
+		}
+		if (current) {
+			lines.push(`… ${current}`);
+		}
+		this.setExtensionWidget("pi:progress-summary", lines, { placement: "aboveEditor" });
+	}
+
+	private clearProgressSummaryDisplay(): void {
+		this.setExtensionWidget("pi:progress-summary", undefined);
+	}
+
+	private isFinalAnswerFocusedMode(): boolean {
+		const settings = this.settingsManager.getProgressSummarySettings();
+		return settings?.enabled === true && settings.presentation !== "trace";
+	}
+
 	private clearExtensionWidgets(): void {
 		for (const widget of this.extensionWidgetsAbove.values()) {
 			widget.dispose?.();
@@ -2866,6 +2890,10 @@ export class InteractiveMode {
 				this.updateEditorBorderColor();
 				break;
 
+			case "progress_summary_update":
+				this.updateProgressSummaryDisplay(event.milestones, event.current);
+				break;
+
 			case "message_start":
 				if (event.message.role === "custom") {
 					this.addMessageToChat(event.message);
@@ -2881,6 +2909,8 @@ export class InteractiveMode {
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
 						this.outputPad,
+						this.isFinalAnswerFocusedMode(),
+						this.toolOutputExpanded,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -2904,6 +2934,7 @@ export class InteractiveMode {
 									{
 										showImages: this.settingsManager.getShowImages(),
 										imageWidthCells: this.settingsManager.getImageWidthCells(),
+										hideWhenCollapsed: this.isFinalAnswerFocusedMode(),
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -2974,6 +3005,7 @@ export class InteractiveMode {
 						{
 							showImages: this.settingsManager.getShowImages(),
 							imageWidthCells: this.settingsManager.getImageWidthCells(),
+							hideWhenCollapsed: this.isFinalAnswerFocusedMode(),
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -3023,6 +3055,7 @@ export class InteractiveMode {
 				break;
 
 			case "agent_settled":
+				this.clearProgressSummaryDisplay();
 				await this.checkShutdownRequested();
 				break;
 
@@ -3252,6 +3285,8 @@ export class InteractiveMode {
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
 					this.outputPad,
+					this.isFinalAnswerFocusedMode(),
+					this.toolOutputExpanded,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -3303,6 +3338,7 @@ export class InteractiveMode {
 							{
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),
+								hideWhenCollapsed: this.isFinalAnswerFocusedMode(),
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,

@@ -5,6 +5,11 @@
 ### Added
 
 - Added first-class final-answer streaming in prompts, RPC documentation, TUI rendering, JSONL history, and HTML export.
+- Added optional live progress summaries with typed stream events, TUI display, configurable style, and configurable summariser model.
+
+### Changed
+
+- Changed progress-summary TUI presentation to hide raw trace/tool panels until expanded, leaving progress/thinking updates and the final answer as the primary transcript.
 
 ## [0.80.10] - 2026-07-16
 

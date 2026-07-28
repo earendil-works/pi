@@ -136,10 +136,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
 				} else {
-					for (const content of assistantMsg.content) {
-						if (content.type === "text") {
-							writeRawStdout(`${content.text}\n`);
-						}
+					const finalAnswers = assistantMsg.content.filter((content) => content.type === "finalAnswer");
+					const outputBlocks =
+						finalAnswers.length > 0
+							? finalAnswers
+							: assistantMsg.content.filter((content) => content.type === "text");
+					for (const content of outputBlocks) {
+						writeRawStdout(`${content.text}\n`);
 					}
 				}
 			}

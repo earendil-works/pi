@@ -161,6 +161,33 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 }
 ```
 
+### Progress Summary
+
+Progress summaries are optional live UX events that summarize observable run activity as locked completed milestones plus one current-progress sentence. They are emitted as `progress_summary_update` events in JSON/RPC/SDK streams and shown as a transient Progress panel in the TUI.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `progressSummary.enabled` | boolean | `false` | Enable live progress summaries |
+| `progressSummary.intervalMs` | number | `5000` | Minimum summary interval; Pi also gates on meaningful event changes |
+| `progressSummary.model` | string | active agent model | Optional model pattern for the summariser sidecar |
+| `progressSummary.style` | string | `"default"` | Built-in style: `"default"`, `"technical"`, `"exec"`, or `"debug"` |
+| `progressSummary.customStylePrompt` | string | - | Style override; safety and schema rules still apply |
+| `progressSummary.maxBullets` | number | `6` | Maximum locked milestones, capped at 6 |
+| `progressSummary.presentation` | string | `"focused"` | TUI presentation when summaries are enabled: `"focused"` hides raw trace/tool panels until expanded with Ctrl+O, `"trace"` keeps the traditional trace-first transcript |
+
+```json
+{
+  "progressSummary": {
+    "enabled": true,
+    "intervalMs": 5000,
+    "model": "openai-codex/gpt-5.4-mini",
+    "style": "technical",
+    "maxBullets": 6,
+    "presentation": "focused"
+  }
+}
+```
+
 ### Message Delivery
 
 | Setting | Type | Default | Description |

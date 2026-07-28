@@ -311,7 +311,11 @@ session.subscribe((event) => {
       // event.toolResults: tool results from this turn
       break;
     
-    // Session events (queue, compaction, retry)
+    // Session events (progress summary, queue, compaction, retry)
+    case "progress_summary_update":
+      // Replace your displayed locked milestones and current progress line.
+      console.log(event.milestones, event.current);
+      break;
     case "queue_update":
       console.log(event.steering, event.followUp);
       break;

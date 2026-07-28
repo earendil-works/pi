@@ -519,6 +519,18 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			// =================================================================
+			// Progress summaries
+			// =================================================================
+
+			case "set_progress_summary_style": {
+				if (!["default", "technical", "exec", "debug"].includes(command.style)) {
+					return error(id, "set_progress_summary_style", `Invalid progress summary style: ${command.style}`);
+				}
+				session.settingsManager.applyOverrides({ progressSummary: { style: command.style } });
+				return success(id, "set_progress_summary_style");
+			}
+
+			// =================================================================
 			// Compaction
 			// =================================================================
 

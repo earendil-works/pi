@@ -41,6 +41,9 @@ export type RpcCommand =
 	| { id?: string; type: "set_steering_mode"; mode: "all" | "one-at-a-time" }
 	| { id?: string; type: "set_follow_up_mode"; mode: "all" | "one-at-a-time" }
 
+	// Progress summaries
+	| { id?: string; type: "set_progress_summary_style"; style: "default" | "technical" | "exec" | "debug" }
+
 	// Compaction
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
@@ -158,6 +161,9 @@ export type RpcResponse =
 	// Queue modes
 	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
+
+	// Progress summaries
+	| { id?: string; type: "response"; command: "set_progress_summary_style"; success: true }
 
 	// Compaction
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
