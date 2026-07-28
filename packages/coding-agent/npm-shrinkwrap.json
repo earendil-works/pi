@@ -25,7 +25,7 @@
 				"proper-lockfile": "4.1.2",
 				"semver": "7.8.0",
 				"typebox": "1.1.38",
-				"undici": "8.5.0",
+				"undici": "8.8.0",
 				"yaml": "2.9.0"
 			},
 			"optionalDependencies": {
@@ -1714,9 +1714,9 @@
 			"license": "MIT"
 		},
 		"node_modules/undici": {
-			"version": "8.5.0",
-			"resolved": "https://registry.npmjs.org/undici/-/undici-8.5.0.tgz",
-			"integrity": "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
+			"version": "8.8.0",
+			"resolved": "https://registry.npmjs.org/undici/-/undici-8.8.0.tgz",
+			"integrity": "sha512-ubshXMXwF3MQIMF1y/WxZdNBnjEKeSg2wF5mcGUtU55YTw34tnVVpKRlLf7ruDXZ5344KokPVX4RBx1wJm64Bw==",
 			"license": "MIT",
 			"engines": {
 				"node": ">=22.19.0"
