@@ -58,6 +58,18 @@ function extractKittyImageRows(line: string): number {
 	return parseKittyImageHeader(line)?.rows ?? 1;
 }
 
+// A sixel image block is emitted as blank rows followed by a final line holding
+// an optional cursor-up jump and the DCS payload (see components/image.ts), so
+// the sequence sits at the *end* of the rows it covers.
+const SIXEL_BLOCK_PATTERN = /^\x1b7(?:\x1b\[(\d+)A)?\x1bP[0-9;]*q/;
+
+/** Rows covered by a sixel image whose sequence terminates on this line, if any. */
+export function extractSixelImageRows(line: string): number | undefined {
+	const match = SIXEL_BLOCK_PATTERN.exec(line);
+	if (!match) return undefined;
+	return match[1] ? Number(match[1]) + 1 : 1;
+}
+
 /**
  * Component interface - all components must implement this
  */
@@ -1139,15 +1151,29 @@ export class TUI extends Container {
 		return reservedRows;
 	}
 
-	private expandChangedRangeForKittyImages(
+	private expandChangedRangeForImages(
 		firstChanged: number,
 		lastChanged: number,
 		newLines: string[],
 	): { firstChanged: number; lastChanged: number } {
 		let expandedFirstChanged = firstChanged;
 		let expandedLastChanged = lastChanged;
+		const expand = (blockStart: number, blockEnd: number): void => {
+			if (blockStart > lastChanged || blockEnd < firstChanged) return;
+			expandedFirstChanged = Math.min(expandedFirstChanged, blockStart);
+			expandedLastChanged = Math.max(expandedLastChanged, blockEnd);
+		};
 		const expandForLines = (lines: string[]): void => {
 			for (let i = 0; i < lines.length; i++) {
+				// tmux frees a sixel image as soon as any row it covers is written
+				// to, and will not redraw it for us. Whenever any part of the block
+				// is repainted we must therefore repaint the sequence itself,
+				// which lives on the block's last row.
+				const sixelRows = extractSixelImageRows(lines[i]);
+				if (sixelRows !== undefined) {
+					expand(i - sixelRows + 1, i);
+					continue;
+				}
 				if (extractKittyImageIds(lines[i]).length === 0) continue;
 				const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
 				if (i >= firstChanged || (i <= lastChanged && blockEnd >= firstChanged)) {
@@ -1392,7 +1418,7 @@ export class TUI extends Container {
 			lastChanged = newLines.length - 1;
 		}
 		if (firstChanged !== -1) {
-			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
+			const expandedRange = this.expandChangedRangeForImages(firstChanged, lastChanged, newLines);
 			firstChanged = expandedRange.firstChanged;
 			lastChanged = expandedRange.lastChanged;
 		}

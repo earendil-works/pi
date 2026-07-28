@@ -87,7 +87,21 @@ export class Image implements Component {
 					this.imageId = result.imageId;
 				}
 
-				if (caps.images === "kitty") {
+				if (caps.images === "sixel") {
+					// tmux draws sixel downward from the cursor and leaves the
+					// cursor on the row below the image, and it frees the image
+					// as soon as anything writes to a row it covers. So: emit the
+					// blank rows of the block first, then move up and paint the
+					// image last, wrapped in DECSC/DECRC so the TUI's cursor
+					// accounting is untouched.
+					lines = [];
+					for (let i = 0; i < result.rows - 1; i++) {
+						lines.push("");
+					}
+					const rowOffset = result.rows - 1;
+					const moveUp = rowOffset > 0 ? `\x1b[${rowOffset}A` : "";
+					lines.push(`\x1b7${moveUp}${result.sequence}\x1b8`);
+				} else if (caps.images === "kitty") {
 					// For Kitty: C=1 prevents cursor movement.
 					// Don't need the cursor movement.
 					lines = [result.sequence];

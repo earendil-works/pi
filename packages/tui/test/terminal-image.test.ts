@@ -211,7 +211,10 @@ describe("detectCapabilities", () => {
 
 	it("enables hyperlinks under tmux when the client forwards them", () => {
 		withEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM_PROGRAM: "ghostty" }, () => {
-			const caps = detectCapabilities(() => true);
+			const caps = detectCapabilities(
+				() => true,
+				() => false,
+			);
 			assert.strictEqual(caps.hyperlinks, true);
 			assert.strictEqual(caps.images, null);
 		});
@@ -219,19 +222,50 @@ describe("detectCapabilities", () => {
 
 	it("disables hyperlinks under tmux when the client does not forward them", () => {
 		withEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM_PROGRAM: "ghostty" }, () => {
-			const caps = detectCapabilities(() => false);
+			const caps = detectCapabilities(
+				() => false,
+				() => false,
+			);
 			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("enables sixel images under tmux when the client supports sixel", () => {
+		withEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM_PROGRAM: "iterm.app" }, () => {
+			const caps = detectCapabilities(
+				() => true,
+				() => true,
+			);
+			assert.strictEqual(caps.images, "sixel");
+		});
+	});
+
+	it("keeps images disabled under tmux without sixel support", () => {
+		// The kitty/iTerm2 protocols must never be used under tmux: tmux does not
+		// understand them, so the image ends up in a layer the TUI cannot erase.
+		withEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM_PROGRAM: "iterm.app" }, () => {
+			const caps = detectCapabilities(
+				() => true,
+				() => false,
+			);
 			assert.strictEqual(caps.images, null);
 		});
 	});
 
 	it("checks tmux capability when TERM starts with 'tmux'", () => {
 		withEnv({ TERM: "tmux-256color", TERM_PROGRAM: "iterm.app" }, () => {
-			const caps = detectCapabilities(() => true);
+			const caps = detectCapabilities(
+				() => true,
+				() => false,
+			);
 			assert.strictEqual(caps.hyperlinks, true);
 			assert.strictEqual(caps.images, null);
 
-			const caps2 = detectCapabilities(() => false);
+			const caps2 = detectCapabilities(
+				() => false,
+				() => false,
+			);
 			assert.strictEqual(caps2.hyperlinks, false);
 		});
 	});
