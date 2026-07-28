@@ -491,6 +491,141 @@ describe("AgentSession compaction characterization", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
+	it("compacts and rebuilds exact Grok 4.5 requests at the 180K pre-dispatch trigger", async () => {
+		const harness = await createHarness({
+			provider: "opencode",
+			models: [{ id: "grok-4.5", contextWindow: 200_000, maxTokens: 8_192 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "Grok ceiling summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const now = Date.now();
+		const priorUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "history" }],
+			timestamp: now - 2,
+		};
+		const priorAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 180_000, timestamp: now - 1 });
+		harness.sessionManager.appendMessage(priorUser);
+		harness.sessionManager.appendMessage(priorAssistant);
+		harness.session.agent.state.messages = [priorUser, priorAssistant];
+		harness.setResponses([
+			(context) => {
+				expect(
+					context.messages.some(
+						(message) =>
+							message.role === "user" &&
+							Array.isArray(message.content) &&
+							message.content.some((part) => part.type === "text" && part.text.includes("Grok ceiling summary")),
+					),
+				).toBe(true);
+				return fauxAssistantMessage("provider request after ceiling compaction");
+			},
+		]);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
+			type: "compaction_start",
+			reason: "context_ceiling",
+		});
+	});
+
+	it("fails closed without a provider call when Grok remains at the 200K ceiling", async () => {
+		const harness = await createHarness({
+			provider: "opencode",
+			models: [{ id: "grok-4.5", contextWindow: 200_000, maxTokens: 8_192 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			extensionFactories: [(pi) => pi.on("session_before_compact", async () => ({ cancel: true }))],
+		});
+		harnesses.push(harness);
+		const now = Date.now();
+		const priorUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "history" }],
+			timestamp: now - 2,
+		};
+		const priorAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 200_000, timestamp: now - 1 });
+		harness.sessionManager.appendMessage(priorUser);
+		harness.sessionManager.appendMessage(priorAssistant);
+		harness.session.agent.state.messages = [priorUser, priorAssistant];
+		harness.setResponses([fauxAssistantMessage("must not be sent")]);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.agent.state.errorMessage).toContain("Grok 4.5 context ceiling");
+	});
+
+	it("blocks an oversized Grok compaction summary before it reaches the provider", async () => {
+		const harness = await createHarness({
+			provider: "opencode",
+			models: [{ id: "grok-4.5", contextWindow: 200_000, maxTokens: 8_192 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+		});
+		harnesses.push(harness);
+		const now = Date.now();
+		const oversizedHistory = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "history".repeat(150_000) }],
+			timestamp: now - 3,
+		};
+		const priorAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 1, timestamp: now - 2 });
+		const latestUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "recent" }],
+			timestamp: now - 1,
+		};
+		const latestAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 200_000, timestamp: now });
+		for (const message of [oversizedHistory, priorAssistant, latestUser, latestAssistant]) {
+			harness.sessionManager.appendMessage(message);
+		}
+		harness.session.agent.state.messages = [oversizedHistory, priorAssistant, latestUser, latestAssistant];
+		harness.setResponses([fauxAssistantMessage("must not be sent")]);
+
+		await expect(harness.session.compact()).rejects.toThrow("Grok 4.5 context ceiling");
+		expect(harness.faux.state.callCount).toBe(0);
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.agent.state.errorMessage).toContain("Grok 4.5 context ceiling");
+	});
+
+	it("does not apply the Grok pre-dispatch gate to another model at the same token count", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 500_000, maxTokens: 8_192 }],
+			settings: { compaction: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const now = Date.now();
+		const priorUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "history" }],
+			timestamp: now - 2,
+		};
+		const priorAssistant = createAssistant(harness, { stopReason: "stop", totalTokens: 200_000, timestamp: now - 1 });
+		harness.sessionManager.appendMessage(priorUser);
+		harness.sessionManager.appendMessage(priorAssistant);
+		harness.session.agent.state.messages = [priorUser, priorAssistant];
+		harness.setResponses([fauxAssistantMessage("allowed non-Grok request")]);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
 	it("does not trigger threshold compaction below the threshold or when disabled", async () => {
 		const belowThresholdHarness = await createHarness({
 			settings: { compaction: { enabled: true, reserveTokens: 1000 } },

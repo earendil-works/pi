@@ -559,6 +559,8 @@ function createSummarizationOptions(
  * the whole compaction on the first attempt. Deterministic errors and aborts return
  * immediately (see {@link retryAssistantCall}).
  */
+export type SummarizationRequestGuard = (context: Context) => void;
+
 export async function completeSummarization(
 	model: Model<any>,
 	context: Context,
@@ -566,6 +568,7 @@ export async function completeSummarization(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	guard?: SummarizationRequestGuard,
 ): Promise<AssistantMessage> {
 	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
 	const requestOptions: SimpleStreamOptions = {
@@ -573,10 +576,12 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: uuidv7(),
 	};
-	const produce = async (): Promise<AssistantMessage> =>
-		streamFn
+	const produce = async (): Promise<AssistantMessage> => {
+		guard?.(context);
+		return streamFn
 			? (await streamFn(model, context, requestOptions)).result()
 			: completeSimple(model, context, requestOptions);
+	};
 	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
 }
 
@@ -633,6 +638,7 @@ export async function generateSummaryWithUsage(
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	guard?: SummarizationRequestGuard,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -674,6 +680,7 @@ export async function generateSummaryWithUsage(
 		streamFn,
 		retry,
 		callbacks,
+		guard,
 	);
 
 	if (response.stopReason === "error") {
@@ -826,6 +833,7 @@ export async function compact(
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	guard?: SummarizationRequestGuard,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -860,6 +868,7 @@ export async function compact(
 				env,
 				retry,
 				callbacks,
+				guard,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -876,6 +885,7 @@ export async function compact(
 			streamFn,
 			retry,
 			callbacks,
+			guard,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -896,6 +906,7 @@ export async function compact(
 			env,
 			retry,
 			callbacks,
+			guard,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -933,6 +944,7 @@ async function generateTurnPrefixSummary(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	guard?: SummarizationRequestGuard,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -956,6 +968,7 @@ async function generateTurnPrefixSummary(
 		streamFn,
 		retry,
 		callbacks,
+		guard,
 	);
 
 	if (response.stopReason === "error") {

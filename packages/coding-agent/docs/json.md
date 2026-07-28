@@ -14,13 +14,13 @@ Events are defined in [`AgentSessionEvent`](https://github.com/earendil-works/pi
 type AgentSessionEvent =
   | AgentEvent
   | { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
-  | { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
-  | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; errorMessage?: string }
+  | { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" | "context_ceiling" }
+  | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow" | "context_ceiling"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; errorMessage?: string }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
   | { type: "summarization_retry_scheduled"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   | { type: "summarization_retry_attempt_start"; source: "branchSummary" }
-  | { type: "summarization_retry_attempt_start"; source: "compaction"; reason: "manual" | "threshold" | "overflow" }
+  | { type: "summarization_retry_attempt_start"; source: "compaction"; reason: "manual" | "threshold" | "overflow" | "context_ceiling" }
   | { type: "summarization_retry_finished" };
 ```
 

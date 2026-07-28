@@ -24,7 +24,7 @@ import type {
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText } from "@earendil-works/pi-ai";
+import { type Context, contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -135,6 +135,21 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
+const GROK_CONTEXT_CEILING_PROVIDER = "opencode";
+const GROK_CONTEXT_CEILING_MODEL_ID = "grok-4.5";
+const GROK_COMPACTION_TRIGGER_TOKENS = 180_000;
+const GROK_CONTEXT_CEILING_TOKENS = 200_000;
+const GROK_OUTPUT_RESERVATION_TOKENS = 16_384;
+
+function estimateGrokProviderRequestTokens(context: Context): number {
+	return (
+		estimateContextTokens(context.messages as AgentMessage[]).tokens +
+		Math.ceil((context.systemPrompt ?? "").length / 4) +
+		(context.tools?.length ? Math.ceil(JSON.stringify(context.tools).length / 4) : 0) +
+		GROK_OUTPUT_RESERVATION_TOKENS
+	);
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
@@ -149,13 +164,13 @@ export type AgentSessionEvent =
 			steering: readonly string[];
 			followUp: readonly string[];
 	  }
-	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
+	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" | "context_ceiling" }
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
 			type: "compaction_end";
-			reason: "manual" | "threshold" | "overflow";
+			reason: "manual" | "threshold" | "overflow" | "context_ceiling";
 			result: CompactionResult | undefined;
 			aborted: boolean;
 			willRetry: boolean;
@@ -174,7 +189,7 @@ export type AgentSessionEvent =
 	| {
 			type: "summarization_retry_attempt_start";
 			source: "compaction";
-			reason: "manual" | "threshold" | "overflow";
+			reason: "manual" | "threshold" | "overflow" | "context_ceiling";
 	  }
 	| { type: "summarization_retry_finished" }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
@@ -393,6 +408,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installGrokContextCeilingGate();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -402,6 +418,53 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
+	}
+
+	private _grokSummarizationGuard(model: Model<any>): ((context: Context) => void) | undefined {
+		if (model.provider !== GROK_CONTEXT_CEILING_PROVIDER || model.id !== GROK_CONTEXT_CEILING_MODEL_ID) {
+			return undefined;
+		}
+		return (context) => {
+			const estimatedTokens = estimateGrokProviderRequestTokens(context);
+			if (estimatedTokens >= GROK_CONTEXT_CEILING_TOKENS) {
+				throw new Error(
+					`Grok 4.5 context ceiling reached (${estimatedTokens.toLocaleString()} tokens). Pi cannot summarize this request below ${GROK_CONTEXT_CEILING_TOKENS.toLocaleString()} tokens; start a new session or compact manually before retrying.`,
+				);
+			}
+		};
+	}
+
+	private _installGrokContextCeilingGate(): void {
+		this.agent.beforeProviderRequest = async ({ model, context }) => {
+			if (model.provider !== GROK_CONTEXT_CEILING_PROVIDER || model.id !== GROK_CONTEXT_CEILING_MODEL_ID) {
+				return undefined;
+			}
+
+			let providerContext = context;
+			let estimatedTokens = estimateGrokProviderRequestTokens(providerContext);
+			if (estimatedTokens < GROK_COMPACTION_TRIGGER_TOKENS) {
+				return undefined;
+			}
+
+			if (await this._runAutoCompaction("context_ceiling", true)) {
+				const transformedMessages = this.agent.transformContext
+					? await this.agent.transformContext(this.agent.state.messages)
+					: this.agent.state.messages;
+				providerContext = {
+					...context,
+					messages: await this.agent.convertToLlm(transformedMessages),
+				};
+				estimatedTokens = estimateGrokProviderRequestTokens(providerContext);
+			}
+
+			if (estimatedTokens >= GROK_CONTEXT_CEILING_TOKENS) {
+				throw new Error(
+					`Grok 4.5 context ceiling reached (${estimatedTokens.toLocaleString()} tokens). Pi could not compact the provider request below ${GROK_CONTEXT_CEILING_TOKENS.toLocaleString()} tokens; start a new session or compact manually before retrying.`,
+				);
+			}
+
+			return providerContext;
+		};
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -1857,6 +1920,7 @@ export class AgentSession {
 					env,
 					this.settingsManager.getRetrySettings(),
 					this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
+					this._grokSummarizationGuard(this.model),
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2044,7 +2108,10 @@ export class AgentSession {
 	/**
 	 * Internal: Run auto-compaction with events.
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold" | "context_ceiling",
+		willRetry: boolean,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
 
@@ -2118,7 +2185,8 @@ export class AgentSession {
 				usage = extensionCompaction.usage;
 				details = extensionCompaction.details;
 			} else {
-				// Generate compaction result
+				// Generate compaction result. A Grok compaction summary is itself a provider request,
+				// so it must obey the same hard ceiling as the interrupted turn.
 				const compactResult = await compact(
 					preparation,
 					this.model,
@@ -2131,6 +2199,7 @@ export class AgentSession {
 					env,
 					this.settingsManager.getRetrySettings(),
 					this._summarizationRetryCallbacks({ source: "compaction", reason }),
+					this._grokSummarizationGuard(this.model),
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2205,7 +2274,9 @@ export class AgentSession {
 					errorMessage:
 						reason === "overflow"
 							? `Context overflow recovery failed: ${errorMessage}`
-							: `Auto-compaction failed: ${errorMessage}`,
+							: reason === "context_ceiling"
+								? `Grok 4.5 context-ceiling recovery failed: ${errorMessage}`
+								: `Auto-compaction failed: ${errorMessage}`,
 				});
 			}
 			return false;
@@ -2644,7 +2715,9 @@ export class AgentSession {
 	 * the TUI needs to render the retry and recreate the underlying indicator.
 	 */
 	private _summarizationRetryCallbacks(
-		source: { source: "branchSummary" } | { source: "compaction"; reason: "manual" | "threshold" | "overflow" },
+		source:
+			| { source: "branchSummary" }
+			| { source: "compaction"; reason: "manual" | "threshold" | "overflow" | "context_ceiling" },
 	): RetryCallbacks {
 		return {
 			onRetryScheduled: (attempt, maxAttempts, delayMs, errorMessage) => {

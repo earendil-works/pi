@@ -295,11 +295,19 @@ async function streamAssistantResponse(
 	const llmMessages = await config.convertToLlm(messages);
 
 	// Build LLM context
-	const llmContext: Context = {
+	let llmContext: Context = {
 		systemPrompt: context.systemPrompt,
 		messages: llmMessages,
 		tools: context.tools,
 	};
+
+	const replacementContext = await config.beforeProviderRequest?.(
+		{ model: config.model, context: llmContext, messages },
+		signal,
+	);
+	if (replacementContext) {
+		llmContext = replacementContext;
+	}
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =

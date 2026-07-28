@@ -139,6 +139,13 @@ export interface AgentLoopTurnUpdate {
 	thinkingLevel?: ThinkingLevel;
 }
 
+/** Provider input after context transformation and conversion, before dispatch. */
+export interface BeforeProviderRequestContext {
+	model: Model<any>;
+	context: Context;
+	messages: AgentMessage[];
+}
+
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
@@ -193,6 +200,16 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * ```
 	 */
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+
+	/**
+	 * Runs after context transformation and conversion, immediately before each provider request.
+	 * Return a replacement provider context to alter the request, or undefined to preserve it.
+	 * Throw to fail closed without dispatching the provider request.
+	 */
+	beforeProviderRequest?: (
+		context: BeforeProviderRequestContext,
+		signal?: AbortSignal,
+	) => Context | undefined | Promise<Context | undefined>;
 
 	/**
 	 * Resolves an API key dynamically for each LLM call.
