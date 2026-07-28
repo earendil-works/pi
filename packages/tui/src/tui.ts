@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import { parseMouseInput, type TuiMouseEvent } from "./mouse.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	isOsc11BackgroundColorResponse,
@@ -73,6 +74,9 @@ export interface Component {
 	 * Optional handler for keyboard input when component has focus
 	 */
 	handleInput?(data: string): void;
+
+	/** Optional handler for mouse input using coordinates local to the component. */
+	handleMouse?(event: TuiMouseEvent): boolean;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -255,20 +259,24 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private childLayouts: Array<{ component: Component; startRow: number; height: number }> = [];
 
 	addChild(component: Component): void {
 		this.children.push(component);
+		this.childLayouts = [];
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
 			this.children.splice(index, 1);
+			this.childLayouts = [];
 		}
 	}
 
 	clear(): void {
 		this.children = [];
+		this.childLayouts = [];
 	}
 
 	invalidate(): void {
@@ -279,13 +287,24 @@ export class Container implements Component {
 
 	render(width: number): string[] {
 		const lines: string[] = [];
+		this.childLayouts = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			this.childLayouts.push({ component: child, startRow: lines.length, height: childLines.length });
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
 		return lines;
+	}
+
+	handleMouse(event: TuiMouseEvent): boolean {
+		for (let index = this.childLayouts.length - 1; index >= 0; index--) {
+			const layout = this.childLayouts[index]!;
+			if (event.y < layout.startRow || event.y >= layout.startRow + layout.height) continue;
+			return layout.component.handleMouse?.({ ...event, y: event.y - layout.startRow }) ?? false;
+		}
+		return false;
 	}
 }
 
@@ -310,6 +329,7 @@ export class TUI extends Container {
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
+	private mouseTracking = false;
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
@@ -350,6 +370,12 @@ export class TUI extends Container {
 			this.terminal.hideCursor();
 		}
 		this.requestRender();
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTracking === enabled) return;
+		this.mouseTracking = enabled;
+		this.terminal.setMouseTracking?.(enabled);
 	}
 
 	getClearOnShrink(): boolean {
@@ -789,6 +815,16 @@ export class TUI extends Container {
 
 		// Consume terminal cell size responses without blocking unrelated input.
 		if (this.consumeCellSizeResponse(data)) {
+			return;
+		}
+
+		const mouseEvent = parseMouseInput(data);
+		if (mouseEvent) {
+			// Existing overlays are keyboard-driven. Consume mouse input while one is visible
+			// so a click cannot mutate the editor underneath it.
+			if (!this.hasOverlay() && super.handleMouse(mouseEvent)) {
+				this.requestRender();
+			}
 			return;
 		}
 

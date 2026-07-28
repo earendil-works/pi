@@ -36,6 +36,7 @@ import {
 	Text,
 	TruncatedText,
 	TUI,
+	Viewport,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -334,6 +335,9 @@ export class InteractiveMode {
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
 	private editorContainer: Container;
+	private historyContainer: Container;
+	private fixedContainer: Container;
+	private viewport: Viewport;
 	private footer: FooterComponent;
 	private footerDataProvider: FooterDataProvider;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
@@ -479,6 +483,13 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.historyContainer = new Container();
+		this.fixedContainer = new Container();
+		this.viewport = new Viewport({
+			content: this.historyContainer,
+			fixed: this.fixedContainer,
+			getHeight: () => this.ui.terminal.rows,
+		});
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -704,19 +715,23 @@ export class InteractiveMode {
 			console.log(theme.fg("dim", `Model scope: ${modelList}${cycleHint}`));
 		}
 
-		// Add header container as first child. Populate it after applying theme settings.
-		// Keep loaded resources before chat so restored session messages never precede them.
-		this.ui.addChild(this.headerContainer);
-		this.ui.addChild(this.loadedResourcesContainer);
+		// Keep startup and chat content scrollable while the composer stays pinned.
+		this.historyContainer.clear();
+		this.historyContainer.addChild(this.headerContainer);
+		this.historyContainer.addChild(this.loadedResourcesContainer);
+		this.historyContainer.addChild(this.chatContainer);
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
 		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
+		this.fixedContainer.clear();
+		this.fixedContainer.addChild(this.pendingMessagesContainer);
+		this.fixedContainer.addChild(this.statusContainer);
+		this.fixedContainer.addChild(this.widgetContainerAbove);
+		this.fixedContainer.addChild(this.editorContainer);
+		this.fixedContainer.addChild(this.widgetContainerBelow);
+		this.fixedContainer.addChild(this.customFooter ?? this.footer);
+
+		this.ui.addChild(this.viewport);
+		this.ui.setMouseTracking(true);
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -2048,21 +2063,21 @@ export class InteractiveMode {
 			this.customFooter.dispose();
 		}
 
-		// Remove current footer from UI
+		// Remove current footer from the pinned region.
 		if (this.customFooter) {
-			this.ui.removeChild(this.customFooter);
+			this.fixedContainer.removeChild(this.customFooter);
 		} else {
-			this.ui.removeChild(this.footer);
+			this.fixedContainer.removeChild(this.footer);
 		}
 
 		if (factory) {
 			// Create and add custom footer, passing the data provider
 			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
-			this.ui.addChild(this.customFooter);
+			this.fixedContainer.addChild(this.customFooter);
 		} else {
 			// Restore built-in footer
 			this.customFooter = undefined;
-			this.ui.addChild(this.footer);
+			this.fixedContainer.addChild(this.footer);
 		}
 
 		this.ui.requestRender();

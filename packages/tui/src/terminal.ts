@@ -15,6 +15,8 @@ const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
+const MOUSE_TRACKING_ENABLE_SEQUENCE = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_TRACKING_DISABLE_SEQUENCE = "\x1b[?1000l\x1b[?1006l";
 
 export type KeyboardProtocolNegotiationSequence =
 	| { type: "kitty-flags"; flags: number }
@@ -77,6 +79,9 @@ export interface Terminal {
 	// Cursor positioning (relative to current position)
 	moveBy(lines: number): void; // Move cursor up (negative) or down (positive) by N lines
 
+	// Mouse input (optional for custom terminal implementations)
+	setMouseTracking?(enabled: boolean): void;
+
 	// Cursor visibility
 	hideCursor(): void; // Hide the cursor
 	showCursor(): void; // Show the cursor
@@ -108,6 +113,8 @@ export class ProcessTerminal implements Terminal {
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
+	private started = false;
+	private mouseTracking = false;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
 		if (!env) return "";
@@ -134,6 +141,7 @@ export class ProcessTerminal implements Terminal {
 	start(onInput: (data: string) => void, onResize: () => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
+		this.started = true;
 
 		// Save previous state and enable raw mode
 		this.wasRaw = process.stdin.isRaw || false;
@@ -145,6 +153,9 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+		if (this.mouseTracking) {
+			process.stdout.write(MOUSE_TRACKING_ENABLE_SEQUENCE);
+		}
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -404,6 +415,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
+		if (this.mouseTracking && this.started) {
+			process.stdout.write(MOUSE_TRACKING_DISABLE_SEQUENCE);
+		}
+		this.started = false;
+
 		if (this.clearProgressInterval()) {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
@@ -449,6 +465,13 @@ export class ProcessTerminal implements Terminal {
 		if (process.stdin.setRawMode) {
 			process.stdin.setRawMode(this.wasRaw);
 		}
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTracking === enabled) return;
+		this.mouseTracking = enabled;
+		if (!this.started) return;
+		process.stdout.write(enabled ? MOUSE_TRACKING_ENABLE_SEQUENCE : MOUSE_TRACKING_DISABLE_SEQUENCE);
 	}
 
 	write(data: string): void {

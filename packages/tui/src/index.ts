@@ -27,6 +27,7 @@ export { type SettingItem, SettingsList, type SettingsListTheme } from "./compon
 export { Spacer } from "./components/spacer.ts";
 export { Text } from "./components/text.ts";
 export { TruncatedText } from "./components/truncated-text.ts";
+export { Viewport, type ViewportOptions } from "./components/viewport.ts";
 // Editor component interface (for custom editors)
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
@@ -57,6 +58,8 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+// Mouse input handling
+export { type MouseButton, parseMouseInput, type TuiMouseEvent } from "./mouse.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations

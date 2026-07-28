@@ -14,6 +14,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  handleMouse?(event: TuiMouseEvent): boolean;
   wantsKeyRelease?: boolean;
   invalidate(): void;
 }
@@ -23,6 +24,7 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Return array of strings (one per line). Each line **must not exceed `width`**. |
 | `handleInput?(data)` | Receive keyboard input when component has focus. |
+| `handleMouse?(event)` | Receive mouse input with coordinates local to the component. Return `true` when handled. |
 | `wantsKeyRelease?` | If true, component receives key release events (Kitty protocol). Default: false. |
 | `invalidate()` | Clear cached render state. Called on theme changes. |
 
@@ -204,7 +206,7 @@ See [overlay-qa-tests.ts](../examples/extensions/overlay-qa-tests.ts) for compre
 Import from `@earendil-works/pi-tui`:
 
 ```typescript
-import { Text, Box, Container, Spacer, Markdown } from "@earendil-works/pi-tui";
+import { Text, Box, Container, Spacer, Markdown, Viewport } from "@earendil-works/pi-tui";
 ```
 
 ### Text
@@ -245,6 +247,24 @@ container.addChild(component1);
 container.addChild(component2);
 container.removeChild(component1);
 ```
+
+### Viewport
+
+Keeps one region pinned at the bottom while the preceding content scrolls independently.
+
+```typescript
+const viewport = new Viewport({
+  content: historyContainer,
+  fixed: composerContainer,
+  getHeight: () => tui.terminal.rows,
+  scrollStep: 3, // optional; defaults to 3 lines per wheel event
+});
+
+tui.addChild(viewport);
+tui.setMouseTracking(true);
+```
+
+`Viewport` follows new content while it is at the bottom. After the user scrolls up, incoming content does not change the reviewed position. Scrolling back to the bottom resumes following new content.
 
 ### Spacer
 
@@ -306,6 +326,27 @@ handleInput(data: string) {
 - Arrow keys: `Key.up`, `Key.down`, `Key.left`, `Key.right`
 - With modifiers: `Key.ctrl("c")`, `Key.shift("tab")`, `Key.alt("left")`, `Key.ctrlShift("p")`
 - String format also works: `"enter"`, `"ctrl+c"`, `"shift+tab"`, `"ctrl+shift+p"`
+
+## Mouse Input
+
+Enable SGR mouse tracking on the TUI, then implement `handleMouse()` on components that need it:
+
+```typescript
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
+
+tui.setMouseTracking(true);
+
+class ClickableComponent implements Component {
+  handleMouse(event: TuiMouseEvent): boolean {
+    if (event.type !== "press" || event.button !== "left") return false;
+    // event.x and event.y are zero-based and local to this component.
+    this.selectAt(event.x, event.y);
+    return true;
+  }
+}
+```
+
+Mouse tracking sends press, release, and wheel events to the TUI instead of the terminal's native mouse handling. Hold `Shift` while dragging when you need to select terminal text. `Container` and `Viewport` translate coordinates before forwarding events to their children.
 
 ## Line Width
 

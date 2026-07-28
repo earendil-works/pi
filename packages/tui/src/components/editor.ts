@@ -2,6 +2,7 @@ import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocompl
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
+import type { TuiMouseEvent } from "../mouse.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
@@ -281,8 +282,9 @@ export class Editor implements Component, Focusable {
 	private theme: EditorTheme;
 	private paddingX: number = 0;
 
-	// Store last render width for cursor navigation
+	// Store last render dimensions for cursor navigation and mouse positioning
 	private lastWidth: number = 80;
+	private lastPaddingX: number = 0;
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
@@ -488,8 +490,9 @@ export class Editor implements Component, Focusable {
 		// without padding we reserve 1 column for the cursor.
 		const layoutWidth = Math.max(1, contentWidth - (paddingX ? 0 : 1));
 
-		// Store for cursor navigation (must match wrapping width)
+		// Store for cursor navigation and mouse positioning (must match wrapping width)
 		this.lastWidth = layoutWidth;
+		this.lastPaddingX = paddingX;
 
 		const horizontal = this.borderColor("─");
 
@@ -598,6 +601,49 @@ export class Editor implements Component, Focusable {
 		}
 
 		return result;
+	}
+
+	handleMouse(event: TuiMouseEvent): boolean {
+		if (event.type !== "press" || event.button !== "left") return false;
+
+		const localVisualRow = event.y - 1; // Top border occupies row zero.
+		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visibleLineCount = Math.min(
+			Math.max(5, Math.floor(this.tui.terminal.rows * 0.3)),
+			visualLines.length - this.scrollOffset,
+		);
+		if (localVisualRow < 0 || localVisualRow >= visibleLineCount) return false;
+
+		const visualLineIndex = this.scrollOffset + localVisualRow;
+		const visualLine = visualLines[visualLineIndex];
+		if (!visualLine) return false;
+
+		const logicalText = this.state.lines[visualLine.logicalLine] ?? "";
+		const visualText = logicalText.slice(visualLine.startCol, visualLine.startCol + visualLine.length);
+		const clickedColumn = Math.max(0, event.x - this.lastPaddingX);
+		let visualWidth = 0;
+		let offset = 0;
+		const segments = [...this.segment(visualText, "grapheme")];
+		for (const segment of segments) {
+			if (visualWidth >= clickedColumn) break;
+			visualWidth += visibleWidth(segment.segment);
+			offset = segment.index + segment.segment.length;
+		}
+
+		const isLastVisualLine =
+			visualLineIndex === visualLines.length - 1 ||
+			visualLines[visualLineIndex + 1]?.logicalLine !== visualLine.logicalLine;
+		if (!isLastVisualLine && offset >= visualLine.length) {
+			offset = segments[segments.length - 1]?.index ?? 0;
+		}
+
+		this.lastAction = null;
+		this.exitHistoryBrowsing();
+		this.state.cursorLine = visualLine.logicalLine;
+		this.setCursorCol(Math.min(logicalText.length, visualLine.startCol + offset));
+		this.tui.setFocus(this);
+		if (this.autocompleteState) this.updateAutocomplete();
+		return true;
 	}
 
 	handleInput(data: string): void {

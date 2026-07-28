@@ -14,6 +14,8 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
+	private started = false;
+	private mouseTracking = false;
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -32,8 +34,10 @@ export class VirtualTerminal implements Terminal {
 	start(onInput: (data: string) => void, onResize: () => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
+		this.started = true;
 		// Enable bracketed paste mode for consistency with ProcessTerminal
 		this.xterm.write("\x1b[?2004h");
+		if (this.mouseTracking) this.xterm.write("\x1b[?1000h\x1b[?1006h");
 	}
 
 	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {
@@ -41,6 +45,8 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	stop(): void {
+		if (this.mouseTracking && this.started) this.xterm.write("\x1b[?1000l\x1b[?1006l");
+		this.started = false;
 		// Disable bracketed paste mode
 		this.xterm.write("\x1b[?2004l");
 		this.inputHandler = undefined;
@@ -73,6 +79,13 @@ export class VirtualTerminal implements Terminal {
 			this.xterm.write(`\x1b[${-lines}A`);
 		}
 		// lines === 0: no movement
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTracking === enabled) return;
+		this.mouseTracking = enabled;
+		if (!this.started) return;
+		this.xterm.write(enabled ? "\x1b[?1000h\x1b[?1006h" : "\x1b[?1000l\x1b[?1006l");
 	}
 
 	hideCursor(): void {
