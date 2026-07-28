@@ -1390,10 +1390,10 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for Z.AI completions models", async () => {
-		// Z.AI resolves maxTokensField via detectCompat (isZai), not per-model compat like OpenCode.
 		const cases = [getModel("zai", "glm-5.1")!, getModel("zai", "glm-5.2")!] as const;
 
 		for (const model of cases) {
+			expect(model.compat?.maxTokensField).toBe("max_tokens");
 			let payload: unknown;
 
 			await streamSimple(
