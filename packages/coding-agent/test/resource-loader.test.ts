@@ -554,6 +554,107 @@ Extra content`,
 			expect(loadedSkill?.filePath).toBe(skillPath);
 			expect(loadedSkill?.sourceInfo?.source).toBe("extension:file-url");
 		});
+
+		// Regression: extension discovery used to drop package scope/source, collapsing every
+		// autocomplete source tag to [t]. See issue #6968.
+		it("should keep package metadata for skills, prompts, and themes", async () => {
+			const packageRoot = join(agentDir, "npm", "node_modules", "metadata-pkg");
+			const packageSkillDir = join(packageRoot, "skills", "package-skill");
+			const packagePromptsDir = join(packageRoot, "prompts");
+			const packageThemesDir = join(packageRoot, "themes");
+			mkdirSync(packageSkillDir, { recursive: true });
+			mkdirSync(packagePromptsDir, { recursive: true });
+			mkdirSync(packageThemesDir, { recursive: true });
+			writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "metadata-pkg", version: "1.0.0" }));
+			writeFileSync(
+				join(packageSkillDir, "SKILL.md"),
+				`---
+name: package-skill
+description: Package skill
+---
+Package skill content`,
+			);
+			writeFileSync(
+				join(packagePromptsDir, "package-prompt.md"),
+				`---
+description: Package prompt
+---
+Package prompt content`,
+			);
+			const baseTheme = JSON.parse(
+				readFileSync(join(process.cwd(), "src", "modes", "interactive", "theme", "dark.json"), "utf-8"),
+			) as { name: string };
+			writeFileSync(
+				join(packageThemesDir, "package-theme.json"),
+				JSON.stringify({ ...baseTheme, name: "package-theme" }),
+			);
+
+			const extensionResourceDir = join(tempDir, "extension-resources");
+			const extensionSkillDir = join(extensionResourceDir, "extension-skill");
+			const extensionPromptsDir = join(extensionResourceDir, "prompts");
+			const extensionThemesDir = join(extensionResourceDir, "themes");
+			mkdirSync(extensionSkillDir, { recursive: true });
+			mkdirSync(extensionPromptsDir, { recursive: true });
+			mkdirSync(extensionThemesDir, { recursive: true });
+			writeFileSync(
+				join(extensionSkillDir, "SKILL.md"),
+				`---
+name: extension-skill
+description: Extension skill
+---
+Extension skill content`,
+			);
+			writeFileSync(
+				join(extensionPromptsDir, "extension-prompt.md"),
+				`---
+description: Extension prompt
+---
+Extension prompt content`,
+			);
+			writeFileSync(
+				join(extensionThemesDir, "extension.json"),
+				JSON.stringify({ ...baseTheme, name: "extension-theme" }),
+			);
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: ["npm:metadata-pkg"] }),
+			});
+			await loader.reload();
+
+			const extensionMetadata = {
+				source: "extension:discovery",
+				scope: "temporary",
+				origin: "top-level",
+			} as const;
+			loader.extendResources({
+				skillPaths: [{ path: extensionSkillDir, metadata: extensionMetadata }],
+				promptPaths: [{ path: extensionPromptsDir, metadata: extensionMetadata }],
+				themePaths: [{ path: extensionThemesDir, metadata: extensionMetadata }],
+			});
+
+			const packageSourceInfo = { source: "npm:metadata-pkg", scope: "user", origin: "package" };
+			expect(loader.getSkills().skills.find((skill) => skill.name === "package-skill")?.sourceInfo).toMatchObject(
+				packageSourceInfo,
+			);
+			expect(
+				loader.getPrompts().prompts.find((prompt) => prompt.name === "package-prompt")?.sourceInfo,
+			).toMatchObject(packageSourceInfo);
+			expect(loader.getThemes().themes.find((theme) => theme.name === "package-theme")?.sourceInfo).toMatchObject(
+				packageSourceInfo,
+			);
+
+			expect(loader.getSkills().skills.find((skill) => skill.name === "extension-skill")?.sourceInfo).toMatchObject(
+				extensionMetadata,
+			);
+			expect(
+				loader.getPrompts().prompts.find((prompt) => prompt.name === "extension-prompt")?.sourceInfo,
+			).toMatchObject(extensionMetadata);
+			expect(loader.getThemes().themes.find((theme) => theme.name === "extension-theme")?.sourceInfo).toMatchObject(
+				extensionMetadata,
+			);
+		});
 	});
 
 	describe("noSkills option", () => {
