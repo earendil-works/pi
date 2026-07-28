@@ -9,6 +9,9 @@
 # Shell scripts should keep LF
 *.sh text eol=lf
 
+# Exclude decision records from release tarballs
+docs/decisions/** export-ignore
+
 # Common binary assets
 *.png binary
 *.jpg binary
