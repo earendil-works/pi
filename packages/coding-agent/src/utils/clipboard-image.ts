@@ -268,8 +268,11 @@ export async function readClipboardImage(options?: {
 		const wsl = isWSL(env);
 		const wayland = isWaylandSession(env);
 
-		if (wayland || wsl) {
+		if (wsl) {
 			image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
+		} else if (wayland) {
+			// wl-paste is authoritative on Wayland; the X11 clipboard may be stale.
+			image = readClipboardImageViaWlPaste();
 		}
 
 		if (!image && wsl) {

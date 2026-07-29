@@ -1,4 +1,4 @@
-import { execSync, spawn } from "child_process";
+import { type ExecSyncOptionsWithStringEncoding, execSync, spawn } from "child_process";
 import { platform } from "os";
 import { isWaylandSession } from "./clipboard-image.ts";
 import { clipboard } from "./clipboard-native.ts";
@@ -32,8 +32,45 @@ function emitOsc52(text: string): boolean {
 	return true;
 }
 
-/** Read plain text from the system clipboard, if native clipboard access is available. */
+const READ_CLIPBOARD_CLI_OPTIONS: ExecSyncOptionsWithStringEncoding = {
+	encoding: "utf8",
+	timeout: 5000,
+	maxBuffer: 50 * 1024 * 1024,
+};
+
+function readClipboardTextViaCli(command: string): string | null {
+	try {
+		return execSync(command, READ_CLIPBOARD_CLI_OPTIONS) || null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Read plain text from the system clipboard.
+ *
+ * On Linux the native addon is X11-only, so prefer CLI tools there, mirroring
+ * the copy path which also bypasses the native addon on Linux.
+ */
 export async function readClipboardText(): Promise<string | null> {
+	if (platform() === "linux") {
+		const wayland = isWaylandSession() && Boolean(process.env.WAYLAND_DISPLAY);
+		if (wayland) {
+			// wl-paste is authoritative on Wayland; the X11 clipboard may be stale.
+			const text = readClipboardTextViaCli("wl-paste --no-newline --type text");
+			if (text) {
+				return text;
+			}
+		} else if (process.env.DISPLAY) {
+			const text =
+				readClipboardTextViaCli("xclip -selection clipboard -o") ??
+				readClipboardTextViaCli("xsel --clipboard --output");
+			if (text) {
+				return text;
+			}
+		}
+	}
+
 	if (!clipboard) {
 		return null;
 	}
