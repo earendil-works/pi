@@ -75,6 +75,25 @@ chars = "\u001b[13;3u"
 
 Restart Alacritty after changing the config.
 
+## Zed (Integrated Terminal)
+
+Current Zed versions work out of the box. Zed sends a linefeed for `Shift+Enter`, which pi handles through its default `Ctrl+J` newline alias.
+
+If your Zed keymap has a legacy mapping that sends `\u001b\r`, remove it or replace it with an unambiguous CSI-u sequence:
+
+```json
+[
+  {
+    "context": "Terminal",
+    "bindings": {
+      "shift-enter": ["terminal::SendText", "\u001b[13;2u"]
+    }
+  }
+]
+```
+
+On macOS, pi also uses the local modifier state to distinguish the legacy `\u001b\r` mapping from a real `Alt+Enter`. As with the Apple Terminal fallback, native modifier detection does not work over remote SSH.
+
 ## VS Code (Integrated Terminal)
 
 VS Code 1.109.5 and newer enable Kitty keyboard protocol in the integrated terminal by default, so `Shift+Enter` should work out of the box.

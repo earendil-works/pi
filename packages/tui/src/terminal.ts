@@ -11,7 +11,7 @@ const cjsRequire = createRequire(import.meta.url);
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0;\x07";
-const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+const CSI_U_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
@@ -37,12 +37,24 @@ function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean 
 	return sequence === "\x1b[" || /^\x1b\[\?[\d;]*$/.test(sequence);
 }
 
-export function isAppleTerminalSession(): boolean {
-	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+export function shouldUseNativeShiftEnterFallback(
+	data: string,
+	platform: NodeJS.Platform = process.platform,
+	termProgram: string | undefined = process.env.TERM_PROGRAM,
+): boolean {
+	if (platform !== "darwin") return false;
+	return (termProgram === "Apple_Terminal" && data === "\r") || (termProgram === "zed" && data === "\x1b\r");
 }
 
-export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
-	if (isAppleTerminal && data === "\r" && isShiftPressed) return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE;
+export function normalizeNativeShiftEnterInput(
+	data: string,
+	isShiftPressed: boolean,
+	platform: NodeJS.Platform = process.platform,
+	termProgram: string | undefined = process.env.TERM_PROGRAM,
+): string {
+	if (isShiftPressed && shouldUseNativeShiftEnterFallback(data, platform, termProgram)) {
+		return CSI_U_SHIFT_ENTER_SEQUENCE;
+	}
 	return data;
 }
 
@@ -308,11 +320,10 @@ export class ProcessTerminal implements Terminal {
 
 	private forwardInputSequence(sequence: string): void {
 		if (!this.inputHandler) return;
-		const isAppleTerminal = sequence === "\r" && isAppleTerminalSession();
-		const input = normalizeAppleTerminalInput(
+		const shouldCheckNativeModifiers = shouldUseNativeShiftEnterFallback(sequence);
+		const input = normalizeNativeShiftEnterInput(
 			sequence,
-			isAppleTerminal,
-			isAppleTerminal && isNativeModifierPressed("shift"),
+			shouldCheckNativeModifiers && isNativeModifierPressed("shift"),
 		);
 		this.inputHandler(input);
 	}

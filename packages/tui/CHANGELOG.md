@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `Shift+Enter` in Zed's macOS integrated terminal when a legacy keymap sends `ESC` + `Return`, while preserving real `Alt+Enter` input.
+
 ## [0.82.1] - 2026-07-25
 
 ## [0.82.0] - 2026-07-24

@@ -1,24 +1,36 @@
 import assert from "node:assert";
 import { describe, it, mock } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
-import { normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+import { normalizeNativeShiftEnterInput, ProcessTerminal, shouldUseNativeShiftEnterFallback } from "../src/terminal.ts";
 
-describe("normalizeAppleTerminalInput", () => {
-	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {
-		assert.equal(normalizeAppleTerminalInput("\r", true, true), "\x1b[13;2u");
+describe("native Shift+Enter fallback", () => {
+	it("recognizes ambiguous input from supported local macOS terminals", () => {
+		assert.equal(shouldUseNativeShiftEnterFallback("\r", "darwin", "Apple_Terminal"), true);
+		assert.equal(shouldUseNativeShiftEnterFallback("\x1b\r", "darwin", "zed"), true);
 	});
 
-	it("leaves Apple Terminal Return unchanged when Shift is not pressed", () => {
-		assert.equal(normalizeAppleTerminalInput("\r", true, false), "\r");
+	it("ignores other sequences, terminals, and platforms", () => {
+		assert.equal(shouldUseNativeShiftEnterFallback("\x1b\r", "darwin", "Apple_Terminal"), false);
+		assert.equal(shouldUseNativeShiftEnterFallback("\r", "darwin", "zed"), false);
+		assert.equal(shouldUseNativeShiftEnterFallback("\x1b\r", "linux", "zed"), false);
+		assert.equal(shouldUseNativeShiftEnterFallback("\x1b\r", "darwin", "iTerm.app"), false);
 	});
 
-	it("leaves non-Apple Terminal Return unchanged when Shift is pressed", () => {
-		assert.equal(normalizeAppleTerminalInput("\r", false, true), "\r");
+	it("rewrites Apple Terminal Return when Shift is pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, "darwin", "Apple_Terminal"), "\x1b[13;2u");
 	});
 
-	it("leaves non-Return input unchanged", () => {
-		assert.equal(normalizeAppleTerminalInput("\x1b[13;2u", true, true), "\x1b[13;2u");
-		assert.equal(normalizeAppleTerminalInput("a", true, true), "a");
+	it("rewrites Zed's legacy ESC+Return mapping when Shift is pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", true, "darwin", "zed"), "\x1b[13;2u");
+	});
+
+	it("preserves real Alt+Enter in Zed when Shift is not pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b\r", false, "darwin", "zed"), "\x1b\r");
+	});
+
+	it("leaves unrelated input unchanged", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b[13;2u", true, "darwin", "zed"), "\x1b[13;2u");
+		assert.equal(normalizeNativeShiftEnterInput("a", true, "darwin", "zed"), "a");
 	});
 });
 
