@@ -1581,6 +1581,8 @@ export interface ExtensionRuntimeState {
 	pendingNativeProviderRegistrations: Array<{ provider: Provider; extensionPath: string }>;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
+	/** Tracks an event-bus subscription so runtime invalidation can remove it. */
+	trackEventBusSubscription: (unsubscribe: () => void) => () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
 	invalidate: (message?: string) => void;
 	/**

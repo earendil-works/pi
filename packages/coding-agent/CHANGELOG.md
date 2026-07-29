@@ -5,6 +5,7 @@
 ### Fixed
 
 - Added a status line when the tool output expansion is toggled ([#7180](https://github.com/earendil-works/pi/issues/7180)).
+- Removed extension event-bus listeners when their session reloads or is disposed ([#7193](https://github.com/earendil-works/pi/issues/7193)).
 
 ## [0.82.1] - 2026-07-25
 
