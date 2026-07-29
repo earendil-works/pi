@@ -43,7 +43,7 @@ function toPiModel(model: LlamaModelInfo, serverUrl: string): Model<"openai-comp
 			supportsStore: false,
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,
-			supportsUsageInStreaming: false,
+			supportsUsageInStreaming: true,
 			supportsStrictMode: false,
 			maxTokensField: "max_tokens",
 		},
