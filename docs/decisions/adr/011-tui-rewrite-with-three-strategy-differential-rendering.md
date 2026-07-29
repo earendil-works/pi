@@ -19,7 +19,7 @@ Rewrite the TUI with a three-path differential rendering engine. Path 1 (first r
 - RGB background colors in markdown renderer give richer code block styling
 - The rewrite happened ~3 months after the original TUI (ADR-002). The original architecture was sound enough that the component interface stayed compatible, but the rendering engine was completely replaced.
 - Rewrites are expensive. A slower evolution of the original engine might have reached the same result with less churn.
-- The component interface defined here later hosted the theming system (ADR-021), which replaced hardcoded ANSI codes with semantic color tokens across all TUI components.
+- The component interface defined here later hosted the theming system (ADR-015), which replaced hardcoded ANSI codes with semantic color tokens across all TUI components.
 
 ## Confidence
 

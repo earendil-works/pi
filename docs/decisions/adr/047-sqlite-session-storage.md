@@ -5,7 +5,7 @@
 
 ## Context
 
-Session storage used JSONL files on disk — one file per session, with entries appended as newline-delimited JSON. This worked for single-user local usage but had limitations: reading a session required scanning the entire file, branching required tree traversal, and there was no indexing for quick lookups (session list, search, stats). The AgentHarness (ADR-043) abstracted session storage behind a `SessionStorage` interface, which made it possible to add alternative backends without changing the session logic.
+Session storage used JSONL files on disk — one file per session, with entries appended as newline-delimited JSON. This worked for single-user local usage but had limitations: reading a session required scanning the entire file, branching required tree traversal, and there was no indexing for quick lookups (session list, search, stats). The AgentHarness (ADR-041) abstracted session storage behind a `SessionStorage` interface, which made it possible to add alternative backends without changing the session logic.
 
 ## Decision
 
@@ -17,7 +17,7 @@ Add a SQLite session storage backend in a new `packages/session-backend-sqlite` 
 - The migration system allows the schema to evolve without breaking existing sessions.
 - The JSONL format remains the default for backward compatibility. SQLite is opt-in through the AgentHarness configuration.
 - Adding a SQLite dependency increases the binary size and adds build complexity (native bindings for `better-sqlite3` or similar).
-- The schema design (sequences table) preserves the append-only semantics that the session tree (ADR-023) depends on.
+- The schema design (sequences table) preserves the append-only semantics that the session tree (ADR-024) depends on.
 
 ## Confidence
 

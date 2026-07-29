@@ -88,9 +88,9 @@ Each session logs every commit that was flagged as significant, with a one-liner
 ### Connections to track
 
 - ADR-007 (e8370436) reverses the Zod decision (35fe8f21) — no ADR was written for Zod since it was replaced within ~3 commits
-- ADR-009 (04966513, multi-backend) → ADR-009 (bbbc232c, single backend): two-pass evolution, multi-backend approach lasted ~3 days before consolidation
+- ADR-008 (04966513, multi-backend) → ADR-008 (bbbc232c, single backend): two-pass evolution, multi-backend approach lasted ~3 days before consolidation
 - ADR-011 (97c730c8) replaces ADR-002 (afa807b2): complete TUI engine rewrite, same component interface
-- ADR-008 (e5cf25a2) builds on ADR-009's storage architecture: session persistence used the IndexedDB backend set up the day before
+- ADR-009 (e5cf25a2) builds on ADR-008's storage architecture: session persistence used the IndexedDB backend set up the day before
 - TDR-001 (98a876f3) relates to ADR-006: tool call streaming is part of the streaming API defined in ADR-006
 - TDR-002 (f55985f6) relates to ADR-003: GPT-5 is a provider under the unified abstraction from ADR-003
 - `aa005d06` (browser extension extraction) flips `b67c10df` (browser extension creation) — born and extracted within the same month
@@ -108,8 +108,8 @@ Each session logs every commit that was flagged as significant, with a one-liner
 |---|---|---|
 | 006 | AsyncIterable streaming generate API | `004de3c9` / `4cee070b` |
 | 007 | TypeBox over Zod for schema validation | `e8370436` |
-| 008 | Agent architecture refactor with session persistence | `e5cf25a2` |
-| 009 | Pluggable storage architecture and Anthropic prompt caching | `04966513` / `bbbc232c` |
+| 009 | Agent architecture refactor with session persistence | `e5cf25a2` |
+| 008 | Pluggable storage architecture and Anthropic prompt caching | `04966513` / `bbbc232c` |
 | 010 | Runtime bridge for sandboxed execution | `c2793d80` |
 | 011 | TUI rewrite with three-strategy differential rendering | `97c730c8` |
 
@@ -152,21 +152,14 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ### Connections to track
 
-- ADR-016 (AgentSession) is the hub — ADR-015 (bash mode), ADR-017 (RPC), and ADR-018 (hooks) all build on it. The mom package (aa9e0582) also uses AgentSession
-- ADR-014 (compaction) was researched (5daef11b) before implementation, then simplified post-release (5a9d844f): removed proactive abort, used Agent.continue() instead
+- ADR-019 (AgentSession) is the hub — ADR-018 (bash mode), ADR-020 (RPC), and ADR-021 (hooks) all build on it. The mom package (aa9e0582) also uses AgentSession
+- ADR-017 (compaction) was researched (5daef11b) before implementation, then simplified post-release (5a9d844f): removed proactive abort, used Agent.continue() instead
 - ADR-022 (Mistral) extends the compat flag pattern from ADR-007 (TypeBox validation) — most flags of any provider, shows how wide the gap is between "OpenAI-compatible" and actual behavior
 - ADR-012 (b1c2c32e): context files moved from user messages to system prompt after ADR-012's initial implementation — changes how the LLM prioritizes them
 - `8bec289d` (tool validation removal) relates to ADR-007: after switching to TypeBox/AJV, provider-level validation was redundant; consolidated into a shared helper
-- `79ee33c3` (package rename) and ADR-019 (binary): the rename to @mariozechner/pi-coding-agent happened ~2 weeks before binary distribution
-- `8ae236f9` (/branch) relates to ADR-014 (compaction): branching is the alternative to compaction — preserve full history vs compress
+- `79ee33c3` (package rename) and ADR-016 (binary): the rename to @mariozechner/pi-coding-agent happened ~2 weeks before binary distribution
+- `8ae236f9` (/branch) relates to ADR-017 (compaction): branching is the alternative to compaction — preserve full history vs compress
 - `a84a97e1` (web-ui back to tsc): a reversal of the earlier tsgo decision for the web-ui package only
-
-### TDRs written
-
-| ID | Title | Source |
-|---|---|---|
-| TDR-001 | Tool call streaming reports argument deltas, not partial JSON | `98a876f3` |
-| TDR-002 | GPT-5 reasoning mode cannot be fully disabled | `f55985f6` |
 
 ### ADRs written
 
@@ -174,14 +167,14 @@ Each session logs every commit that was flagged as significant, with a one-liner
 |---|---|---|
 | 012 | Hierarchical context file loading for monorepos | `dca3e1cc` |
 | 013 | Custom providers via models.json | `0c5cbd00` |
-| 014 | Context compaction system | `c89b1ec3` |
-| 015 | Bash mode for shell command execution | `bd0d0676` |
-| 016 | Coding agent refactor into AgentSession architecture | `3f305502`→`dcf81a6a` |
-| 017 | RPC mode with typed protocol | `3559a43b` |
-| 018 | Hooks system for extensibility | `04d59f31` |
-| 019 | Standalone binary distribution with Bun | `c4a65ad8` |
-| 020 | OAuth authentication for Claude Pro/Max | `587d7c39` |
-| 021 | Theming system with user-defined themes | `cc880951` |
+| 014 | OAuth authentication for Claude Pro/Max | `587d7c39` |
+| 015 | Theming system with user-defined themes | `cc880951` |
+| 016 | Standalone binary distribution with Bun | `c4a65ad8` |
+| 017 | Context compaction system | `c89b1ec3` |
+| 018 | Bash mode for shell command execution | `bd0d0676` |
+| 019 | Coding agent refactor into AgentSession architecture | `3f305502`→`dcf81a6a` |
+| 020 | RPC mode with typed protocol | `3559a43b` |
+| 021 | Hooks system for extensibility | `04d59f31` |
 | 022 | Mistral AI provider with extended compat flags | `99b4b1ac` |
 
 ---
@@ -220,12 +213,12 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ### Connections to track
 
-- ADR-025 (extensions) merges ADR-018 (hooks) and the earlier custom-tools system into one API
-- ADR-027 (steer/followUp) refines the queue mechanism originally added alongside ADR-016 (AgentSession)
-- ADR-023 (session tree) is a fundamental change to session storage — ADR-014 (compaction) and ADR-008 (session persistence) both needed updates
-- ADR-030 (hook expansion) builds directly on ADR-018 (hooks) — adds widget, context event, text_delta, tool registration
-- ADR-024 (SDK) exposes ADR-016 (AgentSession) as a documented public API
-- TDR-004 relates to ADR-023: the one-way migration without rollback was a known risk from the start
+- ADR-026 (extensions) merges ADR-021 (hooks) and the earlier custom-tools system into one API
+- ADR-029 (steer/followUp) refines the queue mechanism originally added alongside ADR-019 (AgentSession)
+- ADR-024 (session tree) is a fundamental change to session storage — ADR-017 (compaction) and ADR-009 (session persistence) both needed updates
+- ADR-030 (hook expansion) builds directly on ADR-021 (hooks) — adds widget, context event, text_delta, tool registration
+- ADR-023 (SDK) exposes ADR-019 (AgentSession) as a documented public API
+- TDR-004 relates to ADR-024: the one-way migration without rollback was a known risk from the start
 
 ### TDRs written
 
@@ -233,20 +226,23 @@ Each session logs every commit that was flagged as significant, with a one-liner
 |---|---|---|
 | TDR-003 | Image resizing heuristics for provider size limits | `69dc6b07` |
 | TDR-004 | Session tree migration without rollback | `cb6310e1` |
+| TDR-005 | Truecolor assumed for all terminals | `b4fb6770` |
 
 ### ADRs written
 
 | # | Title | Source |
 |---|---|---|
-| 023 | Session tree structure with id/parentId branching | `c58d5f20` |
-| 024 | SDK for programmatic AgentSession usage | `5482bf3e` |
-| 025 | Unified extensions system | `2846c7d1` / `cf1c4c31` |
-| 026 | Configurable keybinding system | `8f268257` |
-| 027 | Steer and followUp API split | `d0a4c370` / `93498737` |
+| 024 | Session tree structure with id/parentId branching | `c58d5f20` |
+| 023 | SDK for programmatic AgentSession usage | `5482bf3e` |
+| 026 | Unified extensions system | `2846c7d1` / `cf1c4c31` |
+| 027 | Configurable keybinding system | `8f268257` |
+| 029 | Steer and followUp API split | `d0a4c370` / `93498737` |
 | 028 | Shell commands without context contribution | `746ec9eb` |
-| 029 | Settings command with unified settings UI | `c53b22db` |
+| 025 | Settings command with unified settings UI | `c53b22db` |
 | 030 | Hook API expansion — plan mode, widgets, context events | `4cee51e4` / `51d396b3` / `57bba4e3` / `77fe3f1a` |
-| 031 | Event bus for extension communication | `9c9e6822` |
+| 031 | OpenAI Codex OAuth provider | `1650041a` |
+| 032 | Rename /branch to /fork | `df3f5f41` |
+| 033 | Event bus for extension communication | `9c9e6822` |
 
 ---
 
@@ -258,20 +254,20 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ### Triage notes
 
-2000-commit batch. Read in chunks due to truncation. First pass caught the major ADRs. Re-read of middle sections caught two more (ADR-039, ADR-040). Several commits follow established patterns and are logged below for reference.
+2000-commit batch. Read in chunks due to truncation. First pass caught the major ADRs. Re-read of middle sections caught two more (ADR-037, ADR-036). Several commits follow established patterns and are logged below for reference.
 
 ### ADRs written this session
 
 | # | Title | Source |
 |---|---|---|
-| 033 | Extension package management with ResourceLoader | `b846a4bf` |
-| 034 | Amazon Bedrock provider | `fd268479` |
-| 035 | Azure OpenAI Responses provider | `85601229` |
-| 036 | Rename /branch to /fork | `df3f5f41` |
-| 037 | Per-tool execution mode override | `bfa11a50` |
-| 038 | TUI overlay compositing | `f9064c2f` / `a4ccff38` |
-| 039 | Custom provider support via extensions | `177c6944` / `3256d3c0` |
-| 040 | HTTP proxy support via environment variables | `1e718e63` |
+| 038 | Extension package management with ResourceLoader | `b846a4bf` |
+| 035 | Amazon Bedrock provider | `fd268479` |
+| 039 | Azure OpenAI Responses provider | `85601229` |
+| 032 | Rename /branch to /fork | `df3f5f41` |
+| 040 | Per-tool execution mode override | `bfa11a50` |
+| 034 | TUI overlay compositing | `f9064c2f` / `a4ccff38` |
+| 037 | Custom provider support via extensions | `177c6944` / `3256d3c0` |
+| 036 | HTTP proxy support via environment variables | `1e718e63` |
 
 ### TDRs written this session
 
@@ -281,17 +277,17 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 ### Missed in first pass (caught on re-read)
 
-- Custom provider extension API (177c6944, 3256d3c0) → ADR-039
-- HTTP proxy support (1e718e63) → ADR-040
+- Custom provider extension API (177c6944, 3256d3c0) → ADR-037
+- HTTP proxy support (1e718e63) → ADR-036
 
 ### Connections to track
 
-- ADR-039 (custom provider API) and ADR-040 (HTTP proxy) both extend the provider system infrastructure from ADR-003 and ADR-013
-- ADR-033 (package management) builds on ADR-025 (extensions) — extensions now installable from git URLs
-- ADR-036 (fork rename) relates to ADR-023 (session tree) — fork is the user-facing operation on the tree
-- ADR-037 (tool execution mode) adds a capability orthogonal to ADR-025's extension tools
-- ADR-038 (overlay compositing) extends the TUI from ADR-011 and the extension UI context from ADR-030
-- ADR-034 (Bedrock) and ADR-035 (Azure) follow the provider patterns established in ADR-003 and ADR-022
+- ADR-037 (custom provider API) and ADR-036 (HTTP proxy) both extend the provider system infrastructure from ADR-003 and ADR-013
+- ADR-038 (package management) builds on ADR-026 (extensions) — extensions now installable from git URLs
+- ADR-032 (fork rename) relates to ADR-024 (session tree) — fork is the user-facing operation on the tree
+- ADR-040 (tool execution mode) adds a capability orthogonal to ADR-026's extension tools
+- ADR-034 (overlay compositing) extends the TUI from ADR-011 and the extension UI context from ADR-030
+- ADR-035 (Bedrock) and ADR-039 (Azure) follow the provider patterns established in ADR-003 and ADR-022
 - TDR-006 (image processing churn) relates to TDR-003 (image resizing) — both deal with the image handling pipeline
 
 ### Other notable commits in this range
@@ -301,14 +297,14 @@ Each session logs every commit that was flagged as significant, with a one-liner
 | `dac7474d` | OpenRouter provider routing | Covered by ADR-013 |
 | `c808de60` | Hugging Face provider | Follows ADR-003 provider pattern |
 | `87ab5c5c` | Kimi For Coding provider | Follows ADR-003 provider pattern |
-| `993c45a0` | Qwen CLI OAuth provider | Extension provider via ADR-039 |
-| `3e6d8dc7` | GitLab Duo provider extension | Extension provider via ADR-039 |
+| `993c45a0` | Qwen CLI OAuth provider | Extension provider via ADR-037 |
+| `3e6d8dc7` | GitLab Duo provider extension | Extension provider via ADR-037 |
 | `cb850676` | Android/Termux support | Platform port |
-| `86b43c8e` | Bash spawn hook | Extension hook via ADR-025/030 |
+| `86b43c8e` | Bash spawn hook | Extension hook via ADR-026/030 |
 | `bd646eec` | Per-model overrides in models.json | Covered by ADR-013 |
 | `c35be660` | Merge custom models with built-ins by id | Covered by ADR-013/039 |
 | `30fd99bd` | Terminal input hook for extensions | Extension hook via ADR-030 |
-| `ff5148e7` | Forward message/tool events to extensions | Extension event via ADR-025/031 |
+| `ff5148e7` | Forward message/tool events to extensions | Extension event via ADR-026/031 |
 | `757d36a4` | Offline startup mode | Minor |
 | `a26a9cfa` | Configurable transport and codex websocket caching | Provider detail |
 
@@ -324,12 +320,13 @@ Each session logs every commit that was flagged as significant, with a one-liner
 
 | # | Title | Source |
 |---|---|---|
-| 041 | Models runtime with provider-owned auth | `f63095cf` — `10a575b7` (8 phases) |
-| 042 | Image output generation | `e3d066da` / `62d91326` / `e9b0af0a` |
-| 043 | AgentHarness testing architecture | `a5b27367` / `c0f416aa` |
-| 044 | Provider and package pruning | `fe66edd9` / `0ed0d434` / `b141e1fa` |
-| 045 | Per-request fetch injection | `027a5847` |
-| 046 | Constrained sampling for structured output | `24bace27` |
+| 041 | AgentHarness testing architecture | `a5b27367` / `c0f416aa` |
+| 042 | Provider and package pruning | `fe66edd9` / `0ed0d434` / `b141e1fa` |
+| 043 | Image output generation | `e3d066da` / `62d91326` / `e9b0af0a` |
+| 044 | Constrained sampling for structured output | `24bace27` |
+| 045 | Models runtime with provider-owned auth | `f63095cf` — `10a575b7` (8 phases) |
+| 046 | Per-request fetch injection | `027a5847` |
+| 047 | SQLite session storage backend | `9e7582aa` |
 
 ### TDRs written this session
 
@@ -337,10 +334,10 @@ None.
 
 ### Connections to track
 
-- ADR-041 (Models runtime) is the most significant architectural change in this batch — it restructures how providers, auth, and model resolution work, building on ADR-003 (provider abstraction), ADR-004 (model registry), and ADR-039 (custom provider API)
-- ADR-042 (image output) adds a new capability orthogonal to the existing image processing pipeline (TDR-003, TDR-006)
-- ADR-043 (AgentHarness) provides the testing infrastructure that the AgentSession (ADR-016) and extensions (ADR-025) systems needed
-- ADR-044 (pruning) reverses earlier decisions to add Google providers (ADR-003 extensions), the mom package, and the web-ui package — acknowledging that not all experiments become permanent
-- ADR-045 (fetch injection) gives extensions a per-request hook into the provider HTTP layer, complementing ADR-040 (HTTP proxy)
-- ADR-046 (constrained sampling) adds structured output enforcement to the provider interface from ADR-003
-- The Models refactoring (ADR-041) is the capstone to the provider evolution that started with ADR-003 and went through ADR-013, ADR-022, ADR-032, ADR-034, ADR-035, ADR-039, ADR-040, ADR-045, and ADR-046
+- ADR-045 (Models runtime) is the most significant architectural change in this batch — it restructures how providers, auth, and model resolution work, building on ADR-003 (provider abstraction), ADR-004 (model registry), and ADR-037 (custom provider API)
+- ADR-043 (image output) adds a new capability orthogonal to the existing image processing pipeline (TDR-003, TDR-006)
+- ADR-041 (AgentHarness) provides the testing infrastructure that the AgentSession (ADR-019) and extensions (ADR-026) systems needed
+- ADR-042 (pruning) reverses earlier decisions to add Google providers (ADR-003 extensions), the mom package, and the web-ui package — acknowledging that not all experiments become permanent
+- ADR-046 (fetch injection) gives extensions a per-request hook into the provider HTTP layer, complementing ADR-036 (HTTP proxy)
+- ADR-044 (constrained sampling) adds structured output enforcement to the provider interface from ADR-003
+- The Models refactoring (ADR-045) is the capstone to the provider evolution that started with ADR-003 and went through ADR-013, ADR-022, ADR-031, ADR-035, ADR-039, ADR-037, ADR-036, ADR-046, and ADR-044

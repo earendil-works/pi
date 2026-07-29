@@ -5,7 +5,7 @@
 
 ## Context
 
-The initial hooks system (ADR-018) provided lifecycle events (`before_agent_start`, `before_tool`, etc.) and message injection via `pi.sendMessage()`. But hooks couldn't display persistent UI (status widgets), intercept or modify messages before the LLM call, enable or disable tools at runtime, or be packaged as reusable features. The plan-mode extension (a todo-tracking hook that guided the agent through task lists) surfaced all of these gaps at once.
+The initial hooks system (ADR-021) provided lifecycle events (`before_agent_start`, `before_tool`, etc.) and message injection via `pi.sendMessage()`. But hooks couldn't display persistent UI (status widgets), intercept or modify messages before the LLM call, enable or disable tools at runtime, or be packaged as reusable features. The plan-mode extension (a todo-tracking hook that guided the agent through task lists) surfaced all of these gaps at once.
 
 ## Decision
 
@@ -19,7 +19,7 @@ Expand the hooks API with: `setWidget()` for multi-line status displays that per
 - `registerTool()` in hooks replaces the need for separate custom-tools configuration.
 - The plan-mode hook validates all these APIs together. It uses widgets for todo lists, context events for stale instruction filtering, text_delta for completion tracking, and tool registration for execution.
 - The expanded API surface increases complexity. Each new event type means the extension runner must handle more call sites and error cases.
-- These APIs were later absorbed into the unified extensions system (ADR-025), which merged hooks and custom-tools under one API.
+- These APIs were later absorbed into the unified extensions system (ADR-026), which merged hooks and custom-tools under one API.
 
 ## Confidence
 

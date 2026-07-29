@@ -4,53 +4,53 @@
 
 | # | Title |
 |---|---|
-| 001 | [Monorepo with npm workspaces and lockstep versioning](adr/001-monorepo-with-npm-workspaces.md) |
-| 002 | [Custom TUI engine with differential rendering](adr/002-custom-tui-engine-with-differential-rendering.md) — *replaced by 011* |
-| 003 | [Unified AI provider abstraction with streaming-first API](adr/003-unified-ai-provider-abstraction.md) |
-| 004 | [Auto-generated model registry with type-safe factory](adr/004-auto-generated-model-registry.md) |
-| 005 | [Cross-provider message handoff protocol](adr/005-cross-provider-message-handoff.md) |
-| 006 | [AsyncIterable streaming generate API](adr/006-asynciterable-streaming-api.md) |
-| 007 | [TypeBox over Zod for schema validation](adr/007-typebox-over-zod-for-schema-validation.md) |
-| 008 | [Agent architecture refactor with session persistence](adr/008-agent-architecture-refactor-and-session-persistence.md) |
-| 009 | [Pluggable storage architecture and Anthropic prompt caching](adr/009-pluggable-storage-and-anthropic-prompt-caching.md) |
-| 010 | [Runtime bridge for sandboxed execution](adr/010-runtime-bridge-for-sandboxed-execution.md) |
-| 011 | [TUI rewrite with three-strategy differential rendering](adr/011-tui-rewrite-with-three-strategy-differential-rendering.md) |
-| 012 | [Hierarchical context file loading for monorepos](adr/012-hierarchical-context-file-loading.md) |
-| 013 | [Custom providers via models.json](adr/013-custom-providers-via-models-json.md) |
-| 014 | [Context compaction system](adr/014-context-compaction-system.md) |
-| 015 | [Bash mode for shell command execution](adr/015-bash-mode-for-shell-execution.md) |
-| 016 | [Coding agent refactor into AgentSession architecture](adr/016-agent-session-architecture-refactor.md) |
-| 017 | [RPC mode with typed protocol](adr/017-rpc-mode-with-typed-protocol.md) |
-| 018 | [Hooks system for extensibility](adr/018-hooks-system.md) |
-| 019 | [Standalone binary distribution with Bun](adr/019-standalone-binary-distribution.md) |
-| 020 | [OAuth authentication for Claude Pro/Max](adr/020-oauth-authentication.md) |
-| 021 | [Theming system with user-defined themes](adr/021-theming-system.md) |
-| 022 | [Mistral AI provider with extended compat flags](adr/022-mistral-provider-with-compat-flags.md) |
-| 023 | [Session tree structure with id/parentId branching](adr/023-session-tree-structure.md) |
-| 024 | [SDK for programmatic AgentSession usage](adr/024-sdk-for-programmatic-usage.md) |
-| 025 | [Unified extensions system](adr/025-unified-extensions-system.md) |
-| 026 | [Configurable keybinding system](adr/026-configurable-keybindings.md) |
-| 027 | [Steer and followUp API split](adr/027-steer-and-followup-api.md) |
-| 028 | [Shell commands without context contribution](adr/028-shell-commands-without-context.md) |
-| 029 | [Settings command with unified settings UI](adr/029-settings-command.md) |
-| 030 | [Hook API expansion — plan mode, widgets, context events](adr/030-hook-api-expansion.md) |
-| 031 | [Event bus for extension communication](adr/031-event-bus-for-extensions.md) |
-| 032 | [OpenAI Codex OAuth provider](adr/032-openai-codex-provider.md) |
-| 033 | [Extension package management with ResourceLoader](adr/033-extension-package-management.md) |
-| 034 | [Amazon Bedrock provider](adr/034-amazon-bedrock-provider.md) |
-| 035 | [Azure OpenAI Responses provider](adr/035-azure-openai-responses-provider.md) |
-| 036 | [Rename /branch to /fork](adr/036-rename-branch-to-fork.md) |
-| 037 | [Per-tool execution mode override](adr/037-per-tool-execution-mode.md) |
-| 038 | [TUI overlay compositing](adr/038-tui-overlay-compositing.md) |
-| 039 | [Custom provider support via extensions](adr/039-custom-provider-extension-api.md) |
-| 040 | [HTTP proxy support via environment variables](adr/040-http-proxy-support.md) |
-| 041 | [Models runtime with provider-owned auth](adr/041-models-runtime.md) |
-| 042 | [Image output generation](adr/042-image-output-generation.md) |
-| 043 | [AgentHarness testing architecture](adr/043-agent-harness.md) |
-| 044 | [Provider and package pruning](adr/044-provider-and-package-pruning.md) |
-| 045 | [Per-request fetch injection](adr/045-per-request-fetch-injection.md) |
-| 046 | [Constrained sampling for structured output](adr/046-constrained-sampling.md) |
-| 047 | [SQLite session storage backend](adr/047-sqlite-session-storage.md) |
+| 001 | [Monorepo with npm Workspaces and Lockstep Versioning](adr/001-monorepo-with-npm-workspaces.md) |
+| 002 | [Custom TUI Engine with Differential Rendering](adr/002-custom-tui-engine-with-differential-rendering.md) — *replaced by 011* |
+| 003 | [Unified AI Provider Abstraction with Streaming-First API](adr/003-unified-ai-provider-abstraction.md) |
+| 004 | [Auto-Generated Model Registry with Type-Safe Factory](adr/004-auto-generated-model-registry.md) |
+| 005 | [Cross-Provider Message Handoff Protocol](adr/005-cross-provider-message-handoff.md) |
+| 006 | [AsyncIterable Streaming Generate API](adr/006-asynciterable-streaming-api.md) |
+| 007 | [TypeBox Over Zod for Schema Validation](adr/007-typebox-over-zod-for-schema-validation.md) |
+| 008 | [Pluggable Storage Architecture and Anthropic Prompt Caching](adr/008-pluggable-storage-and-anthropic-prompt-caching.md) |
+| 009 | [Agent Architecture Refactor with Session Persistence](adr/009-agent-architecture-refactor-and-session-persistence.md) |
+| 010 | [Runtime Bridge for Sandboxed Provider Execution](adr/010-runtime-bridge-for-sandboxed-execution.md) |
+| 011 | [TUI Rewrite with Three-Strategy Differential Rendering](adr/011-tui-rewrite-with-three-strategy-differential-rendering.md) |
+| 012 | [Hierarchical Context File Loading for Monorepos](adr/012-hierarchical-context-file-loading.md) |
+| 013 | [Custom Providers via models.json](adr/013-custom-providers-via-models-json.md) |
+| 014 | [OAuth Authentication for Claude Pro/Max](adr/014-oauth-authentication.md) |
+| 015 | [Theming System with User-Defined Themes](adr/015-theming-system.md) |
+| 016 | [Standalone Binary Distribution with Bun](adr/016-standalone-binary-distribution.md) |
+| 017 | [Context Compaction System](adr/017-context-compaction-system.md) |
+| 018 | [Bash Mode for Shell Command Execution](adr/018-bash-mode-for-shell-execution.md) |
+| 019 | [Coding Agent Refactor into AgentSession Architecture](adr/019-agent-session-architecture-refactor.md) |
+| 020 | [RPC Mode with Typed Protocol](adr/020-rpc-mode-with-typed-protocol.md) |
+| 021 | [Hooks System for Extensibility](adr/021-hooks-system.md) |
+| 022 | [Mistral AI Provider with Extended Compat Flags](adr/022-mistral-provider-with-compat-flags.md) |
+| 023 | [SDK for Programmatic AgentSession Usage](adr/023-sdk-for-programmatic-usage.md) |
+| 024 | [Session Tree Structure with id/parentId Branching](adr/024-session-tree-structure.md) |
+| 025 | [Settings Command with Unified Settings UI](adr/025-settings-command.md) |
+| 026 | [Unified Extensions System](adr/026-unified-extensions-system.md) |
+| 027 | [Configurable Keybinding System](adr/027-configurable-keybindings.md) |
+| 028 | [Shell Commands Without Context Contribution](adr/028-shell-commands-without-context.md) |
+| 029 | [Steer and FollowUp API Split](adr/029-steer-and-followup-api.md) |
+| 030 | [Hook API Expansion — Plan Mode, Widgets, Context Events](adr/030-hook-api-expansion.md) |
+| 031 | [OpenAI Codex OAuth Provider](adr/031-openai-codex-provider.md) |
+| 032 | [Rename /branch to /fork](adr/032-rename-branch-to-fork.md) |
+| 033 | [Event Bus for Extension Communication](adr/033-event-bus-for-extensions.md) |
+| 034 | [TUI Overlay Compositing](adr/034-tui-overlay-compositing.md) |
+| 035 | [Amazon Bedrock Provider](adr/035-amazon-bedrock-provider.md) |
+| 036 | [HTTP Proxy Support via Environment Variables](adr/036-http-proxy-support.md) |
+| 037 | [Custom Provider Support via Extensions](adr/037-custom-provider-extension-api.md) |
+| 038 | [Extension Package Management with ResourceLoader](adr/038-extension-package-management.md) |
+| 039 | [Azure OpenAI Responses Provider](adr/039-azure-openai-responses-provider.md) |
+| 040 | [Per-Tool Execution Mode Override](adr/040-per-tool-execution-mode.md) |
+| 041 | [AgentHarness Testing Architecture](adr/041-agent-harness.md) |
+| 042 | [Provider and Package Pruning](adr/042-provider-and-package-pruning.md) |
+| 043 | [Image Output Generation](adr/043-image-output-generation.md) |
+| 044 | [Constrained Sampling for Structured Output](adr/044-constrained-sampling.md) |
+| 045 | [Models Runtime with Provider-Owned Auth](adr/045-models-runtime.md) |
+| 046 | [Per-Request Fetch Injection](adr/046-per-request-fetch-injection.md) |
+| 047 | [SQLite Session Storage Backend](adr/047-sqlite-session-storage.md) |
 
 ## TDRs
 
