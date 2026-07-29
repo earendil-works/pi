@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SessionManager } from "../../src/core/session-manager.ts";
+import { loadEntriesFromFile, SessionManager } from "../../src/core/session-manager.ts";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -80,6 +80,41 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(sessionFile).toContain("created-session-id");
 		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_created-session-id\.jsonl$/);
 		expect(existsSync(sessionFile)).toBe(false);
+	});
+
+	it("flushes initial runtime state before an assistant response and remains appendable", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		const session = SessionManager.create(tempDir, tempDir, { id: "resumable-idle-session" });
+		const sessionFile = session.getSessionFile()!;
+
+		session.appendModelChange("test-provider", "profile-model");
+		session.appendThinkingLevelChange("high");
+		expect(existsSync(sessionFile)).toBe(false);
+
+		expect(session.flush()).toBe(true);
+		expect(existsSync(sessionFile)).toBe(true);
+		expect(loadEntriesFromFile(sessionFile).map((entry) => entry.type)).toEqual([
+			"session",
+			"model_change",
+			"thinking_level_change",
+		]);
+
+		const flushedContents = readFileSync(sessionFile, "utf8");
+		expect(session.flush()).toBe(true);
+		expect(readFileSync(sessionFile, "utf8")).toBe(flushedContents);
+
+		session.appendModelChange("test-provider", "last-used-model");
+		const entries = loadEntriesFromFile(sessionFile);
+		expect(entries.at(-1)).toMatchObject({
+			type: "model_change",
+			provider: "test-provider",
+			modelId: "last-used-model",
+		});
+	});
+
+	it("returns false when flushing an in-memory session", () => {
+		const session = SessionManager.inMemory();
+		expect(session.flush()).toBe(false);
 	});
 
 	it("generates a UUIDv7 id when creating a branched session", () => {

@@ -1012,6 +1012,27 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	/**
+	 * Flush all in-memory session entries to disk immediately.
+	 *
+	 * New sessions normally defer creating their file until the first assistant
+	 * response, avoiding empty sessions in history. Integrations that advertise a
+	 * session path for external resume (for example, terminal workspace managers)
+	 * can opt in here so the initial model and thinking state is resumable before
+	 * any response exists. Once flushed, later entries append normally.
+	 *
+	 * Returns true when the session is persisted and has a backing file; false for
+	 * in-memory sessions.
+	 */
+	flush(): boolean {
+		if (!this.persist || !this.sessionFile) return false;
+		if (!this.flushed) {
+			this._rewriteFile();
+			this.flushed = true;
+		}
+		return true;
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
