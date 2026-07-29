@@ -4,8 +4,7 @@ type SendResult = { kind: "reject"; error: unknown } | { kind: "resolve"; respon
 
 const bedrockMock = vi.hoisted(() => ({
 	send: undefined as SendResult | undefined,
-	// Exposed so tests can build errors that are real instances of the mocked
-	// base class, which is what the provider's `instanceof` check sees.
+	// Exposed so tests can build errors that are real instances of the mocked base class.
 	ServiceException: undefined as unknown as new (message?: string) => Error,
 }));
 
@@ -66,10 +65,7 @@ function getModelFixture(): Model<"bedrock-converse-stream"> {
 	return getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
 }
 
-/**
- * A `BedrockRuntimeServiceException`, which is what the SDK's `handleError` path
- * throws for a non-2xx HTTP response. `name` carries the modeled AWS error code.
- */
+/** What the SDK's `handleError` path throws for a non-2xx response; `name` is the modeled AWS error code. */
 function makeServiceException(name: string, extra: Record<string, unknown> = {}): Error {
 	const error = new bedrockMock.ServiceException(VALIDATION_MESSAGE) as Error & Record<string, unknown>;
 	error.name = name;
@@ -77,11 +73,7 @@ function makeServiceException(name: string, extra: Record<string, unknown> = {})
 	return error;
 }
 
-/**
- * Resolve `send()` with a stream that fails after `messageStart`. `thrown` is
- * raised from inside the async iterator, which is where `@smithy/core`'s
- * `getMessageUnmarshaller` raises stream exceptions.
- */
+/** Fails after `messageStart`, throwing from inside the iterator like `getMessageUnmarshaller` does. */
 function respondWithFailingStream(thrown: unknown): SendResult {
 	return {
 		kind: "resolve",
@@ -121,7 +113,6 @@ describe("bedrock failure diagnostics", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(diagnostic?.details).toEqual({ status: 400, errorCode: "ValidationException", requestId: REQUEST_ID });
-		// Details only: no `error` block, so no stack trace is persisted with the session.
 		expect(diagnostic?.error).toBeUndefined();
 		expect(Object.keys(diagnostic ?? {}).sort()).toEqual(["details", "timestamp", "type"]);
 	});
@@ -135,16 +126,11 @@ describe("bedrock failure diagnostics", () => {
 			}),
 		};
 
-		// `isRetryableAssistantError` matches patterns against this exact string.
 		expect((await runBedrock()).errorMessage).toBe(`Validation error: ${VALIDATION_MESSAGE}`);
 	});
 
 	it("reports only the request id for a modeled mid-stream exception", async () => {
-		// This is the shape the installed SDK actually delivers. `@smithy/core`
-		// `getMessageUnmarshaller` throws `deserializedException[code]`, and the JSON
-		// shape deserializer built that value as a bare object literal: no prototype,
-		// no `$metadata`, no `name`. The AWS error code is destroyed by the SDK before
-		// it reaches us, so reporting one here would be a fabrication.
+		// The SDK throws a bare object literal here, so the code is genuinely unavailable.
 		bedrockMock.send = respondWithFailingStream({ message: "Too many requests, please wait." });
 
 		const message = await runBedrock();
@@ -154,10 +140,7 @@ describe("bedrock failure diagnostics", () => {
 	});
 
 	it("captures the error code for an unmodeled mid-stream error", async () => {
-		// The other unmarshaller branch (a `:message-type` of `error`, or an exception
-		// type missing from the union) throws a real `Error` whose `name` is the
-		// frame's `:error-code`. That code is recoverable, and the request id still
-		// comes from the initial response.
+		// This branch throws a real `Error` named after the frame's `:error-code`.
 		const unmodeled = new Error("Model stream terminated unexpectedly.");
 		unmodeled.name = "ModelStreamErrorException";
 		bedrockMock.send = respondWithFailingStream(unmodeled);
@@ -169,9 +152,7 @@ describe("bedrock failure diagnostics", () => {
 	});
 
 	it("does not report a transport failure name as a provider error code", async () => {
-		// `@smithy/node-http-handler` throws `TimeoutError`, `@smithy/core` throws
-		// `CredentialsProviderError`. Both are real `Error`s with informative names, but
-		// neither is an AWS error code, and every modeled Bedrock error ends in "Exception".
+		// Real `Error`s with informative names, but not AWS codes; modeled ones end in "Exception".
 		const timeout = new Error("Connection timed out after 1000 ms");
 		timeout.name = "TimeoutError";
 		bedrockMock.send = respondWithFailingStream(timeout);
@@ -213,15 +194,11 @@ describe("bedrock failure diagnostics", () => {
 			}),
 		};
 
-		// A truncated request id is not a request id, so both are omitted and only
-		// the trustworthy field survives.
 		expect(findDiagnostic(await runBedrock())?.details).toEqual({ status: 400 });
 	});
 
 	it("omits the SDK's Unknown placeholder instead of reporting it as a code", async () => {
-		// `loadRestJsonErrorCode` falls back to "Unknown" when the response carried no
-		// `x-amzn-errortype`, e.g. a gateway 403 with an opaque body. It does not end in
-		// "Exception", so it is omitted rather than reported as a provider code.
+		// The SDK's fallback when the response carried no `x-amzn-errortype`.
 		bedrockMock.send = {
 			kind: "reject",
 			error: makeServiceException("Unknown", { $metadata: { httpStatusCode: 403, requestId: REQUEST_ID } }),

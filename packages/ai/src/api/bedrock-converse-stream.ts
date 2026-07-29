@@ -372,10 +372,9 @@ function formatBedrockError(error: unknown): string {
 	return `${core}${dataRetentionHint}`;
 }
 
-/** Subset of the SDK error shape this module probes, mirroring `SdkErrorShape` in error-body.ts. */
 type SdkErrorMetadata = { $metadata?: { httpStatusCode?: unknown; requestId?: unknown } };
 
-/** Header-derived values are dropped, not truncated, above this length: a truncated request id is not a request id. */
+/** Over-long header values are dropped rather than truncated: a truncated request id is not a request id. */
 const MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200;
 
 function normalizeDiagnosticValue(value: unknown): string | undefined {
@@ -386,13 +385,9 @@ function normalizeDiagnosticValue(value: unknown): string | undefined {
 }
 
 /**
- * Provider error code, e.g. `ValidationException`. The SDK puts it on `error.name`
- * for both paths that expose one: service exceptions from `client.send()`, and the
- * plain `Error` the event-stream unmarshaller throws for an unmodeled stream error
- * (named after the frame's `:error-code`), so do not gate on `instanceof
- * BedrockRuntimeServiceException`. Every modeled Bedrock error ends in `Exception`,
- * which excludes transport failures like `TimeoutError` and the SDK's `Unknown`
- * placeholder without enumerating them.
+ * The SDK puts the modeled code on `error.name` for service exceptions and unmodeled stream errors alike, so
+ * do not narrow to `BedrockRuntimeServiceException`. Modeled Bedrock errors all end in `Exception`, unlike
+ * transport names such as `TimeoutError`.
  */
 function extractBedrockErrorCode(error: unknown): string | undefined {
 	if (!(error instanceof Error) || !error.name.endsWith("Exception")) return undefined;
@@ -400,18 +395,9 @@ function extractBedrockErrorCode(error: unknown): string | undefined {
 }
 
 /**
- * Structured provider metadata for a failed turn, additive alongside `errorMessage`,
- * which must stay byte-identical because `isRetryableAssistantError` classifies
- * retries by matching it. Unknown fields are omitted, never guessed.
- *
- * Carries `details` only, no `error` block, as `pi_messages_rewrite` does: the thrown
- * value is not always an `Error`, so `extractDiagnosticError` would record
- * `"[object Object]"` plus a stack trace pointing into the SDK.
- *
- * A modeled mid-stream exception yields only `requestId`. `@smithy/core`'s
- * `getMessageUnmarshaller` throws a bare object literal, so neither a code nor a
- * status survives, and `fallbackRequestId` from the initial response is all that is
- * left to correlate on.
+ * Structured metadata alongside `errorMessage`, which stays byte-identical because `isRetryableAssistantError`
+ * matches against it. Unknown fields are omitted, never guessed: a modeled mid-stream exception reaches us as
+ * a bare object literal, leaving only `fallbackRequestId`. `details` only, as the throw is not always `Error`.
  */
 function appendBedrockFailureDiagnostic(
 	output: AssistantMessage,
