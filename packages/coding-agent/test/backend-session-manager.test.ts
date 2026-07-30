@@ -72,6 +72,11 @@ for (const [name, create] of [
 	describe(`BackendSessionManager (${name})`, () => {
 		it("keeps synchronous reads aligned after durable mutations", async () => {
 			const manager = await create();
+			expect(manager.getHeader()).toMatchObject({
+				type: "session",
+				version: 3,
+				id: "session-1",
+			});
 			const rootId = await manager.appendMessage(user("one"));
 			await manager.appendMessage(assistant("two"));
 			await manager.appendModelChange("test", "model");

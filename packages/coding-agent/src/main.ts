@@ -307,6 +307,23 @@ function validateForkFlags(parsed: Args): void {
 	}
 }
 
+function validateParentSessionFlags(parsed: Args): void {
+	if (!parsed.parentSession) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.fork ? "--fork" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --parent-session cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+}
+
 function validateSessionIdFlags(parsed: Args): void {
 	if (parsed.sessionId === undefined) return;
 
@@ -371,6 +388,14 @@ export async function createSessionManager(
 		let sqliteSession: Awaited<ReturnType<typeof repository.create>>;
 		if (parsed.fork) {
 			sqliteSession = await repository.fork(parsed.fork, { cwd, id: parsed.sessionId });
+		} else if (parsed.parentSession) {
+			const parent = await repository.openById(parsed.parentSession);
+			await parent.close();
+			sqliteSession = await repository.create({
+				cwd,
+				id: parsed.sessionId,
+				parentSessionId: parsed.parentSession,
+			});
 		} else if (parsed.session) {
 			sqliteSession = await repository.openById(parsed.session);
 		} else if (parsed.continue || parsed.resume) {
@@ -454,6 +479,25 @@ export async function createSessionManager(
 
 	if (parsed.continue) {
 		return SessionManager.continueRecent(cwd, sessionDir);
+	}
+
+	if (parsed.parentSession) {
+		const resolvedParent = await resolveSessionPath(parsed.parentSession, cwd, sessionDir);
+		if (resolvedParent.type === "not_found") {
+			console.error(chalk.red(`No parent session found matching '${resolvedParent.arg}'`));
+			process.exit(1);
+		}
+		if (parsed.sessionId) {
+			const existingTarget = await findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
+			if (existingTarget) {
+				console.error(chalk.red(`Session already exists with id '${parsed.sessionId}'`));
+				process.exit(1);
+			}
+		}
+		return SessionManager.create(cwd, sessionDir, {
+			id: parsed.sessionId,
+			parentSession: resolvedParent.path,
+		});
 	}
 
 	if (parsed.sessionId) {
@@ -671,6 +715,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	validateForkFlags(parsed);
+	validateParentSessionFlags(parsed);
 	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
