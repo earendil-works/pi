@@ -153,6 +153,22 @@ describe("generated model data validation", () => {
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow("generation timestamp");
 	});
 
+	it("accepts video as a supported input modality", () => {
+		const fixture = createFixture();
+		const model = fixture.values["model-a"] as Record<string, unknown>;
+		model.input = ["text", "image", "video"];
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).not.toThrow();
+	});
+
+	it("rejects an unsupported input modality", () => {
+		const fixture = createFixture();
+		const model = fixture.values["model-a"] as Record<string, unknown>;
+		model.input = ["text", "audio"];
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow("invalid input modalities");
+	});
+
 	it("rejects missing provider shards imported by the aggregator", () => {
 		const { packageRoot } = createFixture();
 		writeFileSync(
