@@ -10,6 +10,7 @@ function createRuntime(options: { dispose: () => Promise<void>; emit?: () => Pro
 	};
 	const session = {
 		extensionRunner,
+		abort: async () => undefined,
 		dispose: options.dispose,
 	} as unknown as AgentSession;
 	const services = { cwd: "/tmp", agentDir: "/tmp" } as AgentSessionServices;
