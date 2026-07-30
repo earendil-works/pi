@@ -1,11 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-
-- Added opt-in replay-safe classification to `retryAssistantCall()` for isolated internal requests without weakening visible assistant-turn replay protection.
-
 ## [0.82.1] - 2026-07-25
 
 ### Added
