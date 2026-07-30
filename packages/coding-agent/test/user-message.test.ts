@@ -22,4 +22,23 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
+
+	test("renders image blocks in user message content", () => {
+		initTheme("dark");
+
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ax6nssAAAAASUVORK5CYII=";
+		const component = new UserMessageComponent(
+			[
+				{ type: "text", text: "see this" },
+				{ type: "image", data: png, mimeType: "image/png" },
+			],
+			undefined,
+			1,
+			{ showImages: false },
+		);
+		const lines = component.render(80);
+
+		expect(lines.join("\n")).toContain("see this");
+		expect(lines.join("\n")).toContain("[Image: [image/png]");
+	});
 });
