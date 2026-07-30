@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemorySessionStorage, JsonlSessionStorage, Session } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { SqliteSessionRepo } from "@earendil-works/pi-agent-core/sqlite";
-import { SqliteNodeExecutionEnv } from "@earendil-works/pi-agent-core/sqlite/env/node";
+import { createNodeSqliteFactory, SqliteSessionRepo } from "@earendil-works/pi-storage-sqlite-node";
 import { afterEach, describe, expect, it } from "vitest";
 import { BackendSessionManager } from "../src/core/backend-session-manager.ts";
 
@@ -58,7 +57,8 @@ async function jsonlManager(): Promise<BackendSessionManager> {
 async function sqliteManager(): Promise<BackendSessionManager> {
 	const root = tempDir();
 	const repository = new SqliteSessionRepo({
-		env: new SqliteNodeExecutionEnv({ cwd: root }),
+		env: new NodeExecutionEnv({ cwd: root }),
+		sqlite: createNodeSqliteFactory(),
 		databasePath: join(root, "sessions.sqlite"),
 	});
 	return BackendSessionManager.hydrate(await repository.create({ cwd: root, id: "session-1" }), "sqlite");

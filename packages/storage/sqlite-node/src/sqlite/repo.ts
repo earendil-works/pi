@@ -145,6 +145,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		try {
 			await db.transaction(async () => {
 				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_search_fts WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run(metadata.id);

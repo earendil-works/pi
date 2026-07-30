@@ -21,6 +21,7 @@ import {
 	serializeSummary,
 	sessionStatsFromMaterializedState,
 } from "./session-materialized.ts";
+import { sessionSearchParts } from "./session-search.ts";
 import { advanceSequence, getNextSequence } from "./session-sequences.ts";
 import { rowToMetadata, type SessionRow } from "./sessions.ts";
 import { generateEntryId, invalidSession, leafIdAfterEntry } from "./shared.ts";
@@ -329,6 +330,12 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 						"INSERT INTO session_entries (session_id, id, entry_seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
 					)
 					.run(this.metadata.id, entry.id, nextSeq, entry.parentId, entry.type, entry.timestamp, encoded.payload);
+				const insertSearchPart = this.db.prepare(
+					"INSERT INTO session_search_fts(session_id, entry_id, role, kind, timestamp, text) VALUES (?, ?, ?, ?, ?, ?)",
+				);
+				for (const part of sessionSearchParts(entry)) {
+					await insertSearchPart.run(this.metadata.id, entry.id, part.role, part.kind, entry.timestamp, part.text);
+				}
 				await advanceSequence(this.db, this.metadata.id, nextSeq);
 				await this.db
 					.prepare("UPDATE session_materialized SET payload = ? WHERE session_id = ?")

@@ -1,12 +1,13 @@
 import { dirname, resolve } from "node:path";
 import type { Session } from "@earendil-works/pi-agent-core";
 import { SessionError } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
+	createNodeSqliteFactory,
 	type SqliteSessionCreateOptions,
 	type SqliteSessionMetadata,
 	SqliteSessionRepo,
-} from "@earendil-works/pi-agent-core/sqlite";
-import { SqliteNodeExecutionEnv } from "@earendil-works/pi-agent-core/sqlite/env/node";
+} from "@earendil-works/pi-storage-sqlite-node";
 import type { SessionInfo, SessionReference } from "./session-manager.ts";
 
 export const SQLITE_SESSIONS_DATABASE = "sessions.sqlite";
@@ -18,8 +19,8 @@ export class CodingAgentSqliteSessionRepository {
 
 	constructor(databasePath: string) {
 		this.databasePath = resolve(databasePath);
-		const env = new SqliteNodeExecutionEnv({ cwd: dirname(this.databasePath) });
-		this.repo = new SqliteSessionRepo({ env, databasePath: this.databasePath });
+		const env = new NodeExecutionEnv({ cwd: dirname(this.databasePath) });
+		this.repo = new SqliteSessionRepo({ env, sqlite: createNodeSqliteFactory(), databasePath: this.databasePath });
 	}
 
 	toReference(metadata: SqliteSessionMetadata): SessionReference {

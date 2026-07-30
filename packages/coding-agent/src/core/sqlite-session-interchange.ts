@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Session, SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import type { SqliteSessionMetadata } from "@earendil-works/pi-agent-core/sqlite";
+import type { SqliteSessionMetadata } from "@earendil-works/pi-storage-sqlite-node";
 import {
 	CURRENT_SESSION_VERSION,
 	migrateSessionEntries,

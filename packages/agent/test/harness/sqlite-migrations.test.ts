@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
 	applyMigrations,
 	createNodeSqliteFactory,
+	loadMigrations,
 	type SqliteDatabase,
 	type SqliteDatabaseFactory,
 	type SqliteRunResult,
@@ -70,12 +71,18 @@ describe("SQLite migrations", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
-		await repo.create({ cwd: root, id: "session-1" });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		await session.appendMessage(createUserMessage("searchable migration text"));
 
 		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_session_discovery.sql"]);
+			expect(rows.map((row) => row.id)).toEqual([
+				"001_initial.sql",
+				"002_session_discovery.sql",
+				"003_usage_analytics_index.sql",
+				"004_session_search_fts.sql",
+			]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();
@@ -94,6 +101,28 @@ describe("SQLite migrations", () => {
 			expect(sessionColumns.map((column) => column.name)).toEqual(
 				expect.arrayContaining(["active_leaf_id", "updated_at", "first_message", "all_messages_text"]),
 			);
+			const usageIndex = await db
+				.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+				.get<{ sql: string }>("idx_session_entries_message_timestamp");
+			expect(usageIndex?.sql).toContain("ON session_entries(timestamp)");
+			expect(usageIndex?.sql).toContain("WHERE type = 'message'");
+			const usagePlan = await db
+				.prepare(
+					"EXPLAIN QUERY PLAN SELECT session_id, id, timestamp, payload FROM session_entries WHERE type = 'message' AND timestamp >= ? ORDER BY timestamp",
+				)
+				.all<{ detail: string }>("2026-01-01T00:00:00.000Z");
+			expect(usagePlan.some((step) => step.detail.includes("idx_session_entries_message_timestamp"))).toBe(true);
+			const searchRows = await db
+				.prepare("SELECT session_id, entry_id, role, kind, text FROM session_search_fts WHERE text MATCH ?")
+				.all<{ session_id: string; entry_id: string; role: string; kind: string; text: string }>("habl");
+			expect(searchRows).toEqual([
+				expect.objectContaining({
+					session_id: "session-1",
+					role: "user",
+					kind: "text",
+					text: "searchable migration text",
+				}),
+			]);
 			for (const tableName of [
 				"sessions",
 				"session_sequences",
@@ -104,6 +133,53 @@ describe("SQLite migrations", () => {
 				const table = tables.find((row) => row.name === tableName);
 				expect(table?.sql).toContain("WITHOUT ROWID");
 			}
+		} finally {
+			await db.close();
+		}
+	});
+
+	it("backfills existing entries when adding full-text search", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const setup = await sqlite.open(databasePath);
+		try {
+			await setup.exec("CREATE TABLE migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
+			for (const migration of (await loadMigrations()).slice(0, 3)) {
+				await setup.exec(migration.sql);
+				await setup
+					.prepare("INSERT INTO migrations(id, applied_at) VALUES (?, ?)")
+					.run(migration.id, String(migration.order));
+			}
+			await setup
+				.prepare("INSERT INTO sessions(id, created_at, cwd) VALUES (?, ?, ?)")
+				.run("existing", "2026-01-01", root);
+			const insertEntry = setup.prepare(
+				"INSERT INTO session_entries(session_id, id, entry_seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			);
+			await insertEntry.run(
+				"existing",
+				"message-1",
+				1,
+				null,
+				"message",
+				"2026-01-01",
+				JSON.stringify({ message: { role: "assistant", content: "historical searchable text" } }),
+			);
+			await insertEntry.run("existing", "malformed", 2, "message-1", "message", "2026-01-02", "not-json");
+		} finally {
+			await setup.close();
+		}
+
+		const repo = new SqliteSessionRepo({ env, sqlite, databasePath });
+		await repo.list();
+		const db = await sqlite.open(databasePath);
+		try {
+			const rows = await db
+				.prepare("SELECT session_id, entry_id FROM session_search_fts WHERE text MATCH ?")
+				.all<{ session_id: string; entry_id: string }>("stori");
+			expect(rows).toEqual([{ session_id: "existing", entry_id: "message-1" }]);
 		} finally {
 			await db.close();
 		}
