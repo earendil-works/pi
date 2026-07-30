@@ -150,6 +150,7 @@ export function buildSessionContext(
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
 	private contextBuildOptions: SessionContextBuildOptions;
+	private closePromise: Promise<void> | undefined;
 
 	constructor(storage: SessionStorage<TMetadata>, contextBuildOptions: SessionContextBuildOptions = {}) {
 		this.storage = storage;
@@ -162,6 +163,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 
 	getStorage(): SessionStorage<TMetadata> {
 		return this.storage;
+	}
+
+	/** Release resources owned by the session storage. Safe to call repeatedly. */
+	close(): Promise<void> {
+		this.closePromise ??= this.storage.close?.() ?? Promise.resolve();
+		return this.closePromise;
 	}
 
 	getLeafId(): Promise<string | null> {

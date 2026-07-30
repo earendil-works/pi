@@ -4,8 +4,8 @@ import type {
 	SessionTreeEntry as CoreSessionTreeEntry,
 	SessionMetadata,
 } from "@earendil-works/pi-agent-core";
-import type { SqliteSessionMetadata } from "@earendil-works/pi-storage-sqlite-node";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { SqliteSessionMetadata } from "@earendil-works/pi-storage-sqlite-node";
 import {
 	type BranchSummaryEntry,
 	buildContextEntries,
