@@ -89,6 +89,244 @@ describe("AgentSession queue characterization", () => {
 		expect(harness.session.messages).toEqual([]);
 	});
 
+	it("runs an explicitly queued extension command after settling without a model-visible user message", async () => {
+		const commandRuns: string[] = [];
+		let streamingAtCommand = true;
+		let unknownCommandError = "";
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("testcmd", {
+						description: "Test command",
+						handler: async (args) => {
+							streamingAtCommand = harness.session.isStreaming;
+							commandRuns.push(args);
+						},
+					});
+					pi.registerCommand("failcmd", {
+						description: "Failing test command",
+						handler: async () => {
+							throw new Error("queued failure exactly");
+						},
+					});
+					pi.registerTool({
+						name: "queue_testcmd",
+						label: "Queue Test Command",
+						description: "Queue the test command",
+						parameters: Type.Object({}),
+						execute: async () => {
+							try {
+								pi.queueCommand("missing");
+							} catch (error) {
+								unknownCommandError = String(error);
+							}
+							pi.queueCommand("failcmd");
+							pi.queueCommand("testcmd", "queued exactly");
+							return {
+								content: [{ type: "text", text: "queued" }],
+								details: {},
+								terminate: true,
+							};
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const commandErrors: string[] = [];
+		harness.session.extensionRunner.onError((error) => commandErrors.push(`${error.event}:${error.error}`));
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("queue_testcmd", {}), { stopReason: "toolUse" })]);
+
+		await harness.session.prompt("start");
+
+		expect(commandRuns).toEqual(["queued exactly"]);
+		expect(streamingAtCommand).toBe(false);
+		expect(unknownCommandError).toContain("Unknown extension command: /missing");
+		expect(commandErrors).toEqual(["command:queued failure exactly"]);
+		expect(getUserTexts(harness)).toEqual(["start"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("rejects extension command scheduling while idle", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.registerCommand("testcmd", { handler: async () => {} });
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		expect(() => extensionApi?.queueCommand("testcmd")).toThrow(
+			"Extension commands can only be queued during an active agent operation.",
+		);
+	});
+
+	it("discards commands queued by an aborted agent run", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let commandRuns = 0;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.registerCommand("testcmd", {
+						handler: async () => {
+							commandRuns += 1;
+						},
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+
+		await waitForToolStart;
+		extensionApi?.queueCommand("testcmd");
+		const abortPromise = harness.session.abort();
+		releaseToolExecution();
+		await Promise.all([promptPromise, abortPromise]);
+
+		expect(commandRuns).toBe(0);
+	});
+
+	it("drains control commands before a settled handler can start another agent run", async () => {
+		const order: string[] = [];
+		let sentNested = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("testcmd", {
+						handler: async () => {
+							order.push(`command:${harness.session.isStreaming}`);
+						},
+					});
+					pi.registerTool({
+						name: "queue_testcmd",
+						label: "Queue Test Command",
+						description: "Queue the test command",
+						parameters: Type.Object({}),
+						execute: async () => {
+							pi.queueCommand("testcmd");
+							return { content: [{ type: "text", text: "queued" }], details: {}, terminate: true };
+						},
+					});
+					pi.on("agent_settled", async () => {
+						if (sentNested) return;
+						sentNested = true;
+						order.push("settled");
+						pi.sendUserMessage("nested run");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("queue_testcmd", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("nested complete"),
+		]);
+
+		await harness.session.prompt("start");
+		await harness.session.waitForIdle();
+
+		expect(order.slice(0, 2)).toEqual(["command:false", "settled"]);
+		expect(getUserTexts(harness)).toEqual(["start", "nested run"]);
+	});
+
+	it("isolates nested-run commands and discards stale commands from the outer generation", async () => {
+		let oldCommandRuns = 0;
+		let nestedCommandRuns = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("start_nested", {
+						handler: async () => {
+							await harness.session.prompt("nested run");
+						},
+					});
+					pi.registerCommand("old_after", {
+						handler: async () => {
+							oldCommandRuns += 1;
+						},
+					});
+					pi.registerCommand("nested", {
+						handler: async () => {
+							nestedCommandRuns += 1;
+						},
+					});
+					pi.registerTool({
+						name: "queue_outer",
+						label: "Queue Outer Commands",
+						description: "Queue outer-generation commands",
+						parameters: Type.Object({}),
+						execute: async () => {
+							pi.queueCommand("start_nested");
+							pi.queueCommand("old_after");
+							return { content: [{ type: "text", text: "queued" }], details: {}, terminate: true };
+						},
+					});
+					pi.registerTool({
+						name: "queue_nested",
+						label: "Queue Nested Command",
+						description: "Queue a nested-generation command",
+						parameters: Type.Object({}),
+						execute: async () => {
+							pi.queueCommand("nested");
+							return { content: [{ type: "text", text: "queued" }], details: {}, terminate: true };
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("queue_outer", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("queue_nested", {}), { stopReason: "toolUse" }),
+		]);
+
+		await harness.session.prompt("start");
+
+		expect(oldCommandRuns).toBe(0);
+		expect(nestedCommandRuns).toBe(1);
+		expect(getUserTexts(harness)).toEqual(["start", "nested run"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("discards remaining commands when the session is disposed", async () => {
+		let secondCommandRuns = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("dispose", { handler: async () => harness.session.dispose() });
+					pi.registerCommand("second", {
+						handler: async () => {
+							secondCommandRuns += 1;
+						},
+					});
+					pi.registerTool({
+						name: "queue_dispose",
+						label: "Queue Dispose",
+						description: "Queue session disposal",
+						parameters: Type.Object({}),
+						execute: async () => {
+							pi.queueCommand("dispose");
+							pi.queueCommand("second");
+							return { content: [{ type: "text", text: "queued" }], details: {}, terminate: true };
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("queue_dispose", {}), { stopReason: "toolUse" })]);
+
+		await harness.session.prompt("start");
+
+		expect(secondCommandRuns).toBe(0);
+	});
+
 	it("delivers extension-origin steering messages before the next LLM call", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const waiting = await createWaitingHarness({

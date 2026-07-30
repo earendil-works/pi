@@ -75,6 +75,7 @@ describe("ExtensionRunner", () => {
 	const extensionActions: ExtensionActions = {
 		sendMessage: () => {},
 		sendUserMessage: () => {},
+		queueCommand: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},
 		getSessionName: () => undefined,

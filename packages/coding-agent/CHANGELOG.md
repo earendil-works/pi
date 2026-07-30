@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Extensions can explicitly schedule a registered extension command at the current agent operation's settled boundary with `pi.queueCommand()`.
+
+### Fixed
+
+- The LLM-callable reload example now uses the native control queue instead of sending model-visible slash-prefixed user text.
+
 ## [0.83.0] - 2026-07-29
 
 ### New Features

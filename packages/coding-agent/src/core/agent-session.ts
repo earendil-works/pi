@@ -77,6 +77,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type ResolvedCommand,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
@@ -311,6 +312,9 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _agentRunGeneration = 0;
+	private _abortedAgentRuns = new Set<number>();
+	private _disposed = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -320,6 +324,13 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Extension commands queued explicitly for the current agent operation's settled boundary. */
+	private _pendingExtensionCommands: Array<{
+		command: ResolvedCommand;
+		args: string;
+		runner: ExtensionRunner;
+		generation: number;
+	}> = [];
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -578,12 +589,17 @@ export class AgentSession {
 		resolve();
 	}
 
-	private async _emitAgentSettled(): Promise<void> {
+	private async _emitAgentSettled(generation: number): Promise<void> {
+		if (generation !== this._agentRunGeneration) return;
 		this._isAgentRunActive = false;
 		try {
+			await this._drainExtensionCommands(generation);
+			if (this._disposed || generation !== this._agentRunGeneration) return;
 			await this._extensionRunner.emit({ type: "agent_settled" });
+			if (this._disposed || generation !== this._agentRunGeneration) return;
 			this._emit({ type: "agent_settled" });
 		} finally {
+			this._abortedAgentRuns.delete(generation);
 			this._resolveIdleWaitIfIdle();
 		}
 	}
@@ -835,6 +851,9 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
+		this._abortedAgentRuns.add(this._agentRunGeneration);
+		this._pendingExtensionCommands = [];
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -1060,6 +1079,7 @@ export class AgentSession {
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
+		const generation = ++this._agentRunGeneration;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
@@ -1068,7 +1088,7 @@ export class AgentSession {
 		} finally {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
-			await this._emitAgentSettled();
+			await this._emitAgentSettled(generation);
 		}
 	}
 
@@ -1078,6 +1098,7 @@ export class AgentSession {
 		if (!msg) {
 			return false;
 		}
+		if (msg.stopReason === "aborted") this._abortedAgentRuns.add(this._agentRunGeneration);
 
 		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
 			return true;
@@ -1267,30 +1288,54 @@ export class AgentSession {
 	/**
 	 * Try to execute an extension command. Returns true if command was found and executed.
 	 */
-	private async _tryExecuteExtensionCommand(text: string): Promise<boolean> {
-		// Parse command name and args
-		const spaceIndex = text.indexOf(" ");
-		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
-		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
+	private _queueExtensionCommand(runner: ExtensionRunner, name: string, args = ""): void {
+		if (!this._isAgentRunActive) {
+			throw new Error("Extension commands can only be queued during an active agent operation.");
+		}
+		const command = runner.getCommand(name);
+		if (!command) throw new Error(`Unknown extension command: /${name}`);
+		this._pendingExtensionCommands.push({ command, args, runner, generation: this._agentRunGeneration });
+	}
 
-		const command = this._extensionRunner.getCommand(commandName);
-		if (!command) return false;
+	private async _drainExtensionCommands(generation: number): Promise<void> {
+		while (!this._disposed && generation === this._agentRunGeneration) {
+			const index = this._pendingExtensionCommands.findIndex((queued) => queued.generation === generation);
+			if (index === -1) return;
+			const [queued] = this._pendingExtensionCommands.splice(index, 1);
+			if (this._abortedAgentRuns.has(generation) || queued.runner !== this._extensionRunner) continue;
+			await this._executeExtensionCommand(queued.command, queued.args, queued.runner);
+		}
+		this._pendingExtensionCommands = this._pendingExtensionCommands.filter(
+			(queued) => queued.generation !== generation,
+		);
+	}
 
-		// Get command context from extension runner (includes session control methods)
-		const ctx = this._extensionRunner.createCommandContext();
-
+	private async _executeExtensionCommand(
+		command: ResolvedCommand,
+		args: string,
+		runner: ExtensionRunner,
+	): Promise<void> {
+		const ctx = runner.createCommandContext();
 		try {
 			await command.handler(args, ctx);
-			return true;
 		} catch (err) {
-			// Emit error via extension runner
-			this._extensionRunner.emitError({
-				extensionPath: `command:${commandName}`,
+			(this._disposed ? runner : this._extensionRunner).emitError({
+				extensionPath: `command:${command.invocationName}`,
 				event: "command",
 				error: err instanceof Error ? err.message : String(err),
 			});
-			return true;
 		}
+	}
+
+	private async _tryExecuteExtensionCommand(text: string): Promise<boolean> {
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
+		const runner = this._extensionRunner;
+		const command = runner.getCommand(commandName);
+		if (!command) return false;
+		await this._executeExtensionCommand(command, args, runner);
+		return true;
 	}
 
 	/**
@@ -1540,6 +1585,7 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		if (this._isAgentRunActive) this._abortedAgentRuns.add(this._agentRunGeneration);
 		this.abortRetry();
 		this.agent.abort();
 		await this.waitForIdle();
@@ -1928,6 +1974,9 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
+		if (this._isAgentRunActive && (this._compactionAbortController || this._autoCompactionAbortController)) {
+			this._abortedAgentRuns.add(this._agentRunGeneration);
+		}
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
 	}
@@ -2374,6 +2423,7 @@ export class AgentSession {
 						});
 					});
 				},
+				queueCommand: (name, args) => this._queueExtensionCommand(runner, name, args),
 				appendEntry: (customType, data) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data);
 					const entry = this.sessionManager.getEntry(entryId);
@@ -2729,6 +2779,9 @@ export class AgentSession {
 	 * Cancel in-progress retry.
 	 */
 	abortRetry(): void {
+		if (this._isAgentRunActive && this._retryAbortController) {
+			this._abortedAgentRuns.add(this._agentRunGeneration);
+		}
 		this._retryAbortController?.abort();
 	}
 

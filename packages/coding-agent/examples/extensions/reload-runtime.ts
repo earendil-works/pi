@@ -20,17 +20,18 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// LLM-callable tool. Tools get ExtensionContext, so they cannot call ctx.reload() directly.
-	// Instead, queue a follow-up user command that executes the command above.
+	// Instead, queue the registered command for the current agent operation's settled boundary.
 	pi.registerTool({
 		name: "reload_runtime",
 		label: "Reload Runtime",
 		description: "Reload extensions, skills, prompts, themes, and context files",
 		parameters: Type.Object({}),
 		async execute() {
-			pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
+			pi.queueCommand("reload-runtime");
 			return {
-				content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
+				content: [{ type: "text", text: "Queued native runtime reload." }],
 				details: {},
+				terminate: true,
 			};
 		},
 	});

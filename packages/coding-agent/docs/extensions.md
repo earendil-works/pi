@@ -1296,7 +1296,7 @@ Important behavior:
 
 For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
 
-Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that queues that command as a follow-up user message.
+Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that explicitly queues that registered command for the current agent operation's settled boundary. `pi.queueCommand()` does not create a user message or reinterpret extension-origin text as a command.
 
 Example tool the LLM can call to trigger reload:
 
@@ -1319,9 +1319,10 @@ export default function (pi: ExtensionAPI) {
     description: "Reload extensions, skills, prompts, themes, and context files",
     parameters: Type.Object({}),
     async execute() {
-      pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
+      pi.queueCommand("reload-runtime");
       return {
-        content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
+        content: [{ type: "text", text: "Queued native runtime reload." }],
+        terminate: true,
       };
     },
   });
@@ -1434,7 +1435,18 @@ pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
 
-See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
+See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example. Slash-prefixed text sent through `sendUserMessage()` remains model-visible user data; it never invokes an extension command.
+
+### pi.queueCommand(name, args?)
+
+Queue an exact registered extension command to run after the current agent operation settles. This explicit control queue is separate from model-visible steering/follow-up messages: it appends no user message, starts no provider turn, and does not parse slash-prefixed text. The name is the command's invocation name without `/`; arguments are passed verbatim. Calls made while idle or for an unknown command throw synchronously.
+
+```typescript
+pi.queueCommand("reload-runtime");
+pi.queueCommand("handoff", "optional args");
+```
+
+Queued commands run FIFO once streaming stops, before `agent_settled` is emitted and before the originating prompt resolves. Commands from an aborted run or replaced extension runtime are discarded. Handler failures use normal extension-command error reporting and do not create a model turn. A tool that must prevent an automatic provider continuation should also return `terminate: true`; in a parallel tool batch every result must terminate.
 
 ### pi.appendEntry(customType, data?)
 
@@ -2897,7 +2909,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `handoff.ts` | Cross-provider model handoff | `registerCommand`, `ui.editor`, `ui.custom` |
 | `qna.ts` | Q&A with custom UI | `registerCommand`, `ui.custom`, `setEditorText` |
 | `send-user-message.ts` | Inject user messages | `registerCommand`, `sendUserMessage` |
-| `reload-runtime.ts` | Reload command and LLM tool handoff | `registerCommand`, `ctx.reload()`, `sendUserMessage` |
+| `reload-runtime.ts` | Reload command and LLM tool handoff | `registerCommand`, `ctx.reload()`, `pi.queueCommand()` |
 | `shutdown-command.ts` | Graceful shutdown command | `registerCommand`, `shutdown()` |
 | **Events & Gates** |||
 | `permission-gate.ts` | Block dangerous commands | `on("tool_call")`, `ui.confirm` |
