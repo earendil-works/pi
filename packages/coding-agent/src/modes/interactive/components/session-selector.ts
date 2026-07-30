@@ -206,20 +206,37 @@ interface FlatSessionNode {
  * Build a tree structure from sessions based on parentSessionPath.
  * Returns root nodes sorted by modified date (descending).
  */
+function sessionReferenceKey(session: SessionInfo): string {
+	if (session.reference.backend === "jsonl") {
+		return `jsonl:${canonicalizePath(session.reference.storagePath ?? session.path) ?? session.path}`;
+	}
+	return `${session.reference.backend}:${session.reference.storagePath ?? ""}#${session.reference.id}`;
+}
+
+function parentReferenceKey(session: SessionInfo): string | undefined {
+	if (session.parentReference) {
+		if (session.parentReference.backend === "jsonl") {
+			const path = session.parentReference.storagePath ?? session.parentSessionPath;
+			return path ? `jsonl:${canonicalizePath(path) ?? path}` : undefined;
+		}
+		return `${session.parentReference.backend}:${session.parentReference.storagePath ?? ""}#${session.parentReference.id}`;
+	}
+	const path = canonicalizePath(session.parentSessionPath);
+	return path ? `jsonl:${path}` : undefined;
+}
+
 function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 	const byPath = new Map<string, SessionTreeNode>();
 
 	for (const session of sessions) {
-		const sessionPath = canonicalizePath(session.path) ?? session.path;
-		byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
+		byPath.set(sessionReferenceKey(session), { session, children: [], latestActivity: session.modified.getTime() });
 	}
 
 	const roots: SessionTreeNode[] = [];
 
 	for (const session of sessions) {
-		const sessionPath = canonicalizePath(session.path) ?? session.path;
-		const node = byPath.get(sessionPath)!;
-		const parentPath = canonicalizePath(session.parentSessionPath);
+		const node = byPath.get(sessionReferenceKey(session))!;
+		const parentPath = parentReferenceKey(session);
 
 		if (parentPath && byPath.has(parentPath)) {
 			byPath.get(parentPath)!.children.push(node);

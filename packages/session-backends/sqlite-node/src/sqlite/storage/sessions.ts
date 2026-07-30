@@ -10,6 +10,10 @@ export interface SessionRow {
 	parent_session_id: string | null;
 	has_session_name: number;
 	session_name: string | null;
+	updated_at: number | null;
+	first_message: string | null;
+	all_messages_text: string | null;
+	message_count: number | null;
 }
 
 export interface NewSessionRow {
@@ -52,17 +56,20 @@ function serializeMetadata(metadata: Record<string, unknown> | undefined): strin
 }
 
 export function insertSessionRow(db: SqliteDatabase, session: NewSessionRow) {
-	sql`INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id)
-		VALUES (${session.id}, ${session.createdAt}, ${serializeMetadata(session.metadata)}, ${session.cwd}, ${session.parentSessionId ?? null})`.run(
+	sql`INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id, updated_at)
+		VALUES (${session.id}, ${session.createdAt}, ${serializeMetadata(session.metadata)}, ${session.cwd}, ${session.parentSessionId ?? null}, ${session.createdAt})`.run(
 		db,
 	);
 }
 
 export function readSessionRow(db: SqliteDatabase, sessionId: string) {
 	return sql`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+			s.updated_at, s.first_message, s.all_messages_text,
 			name_fact.seq IS NOT NULL AS has_session_name,
-			name_fact.value AS session_name
+			name_fact.value AS session_name,
+			stats.message_count
 		FROM sessions AS s
+		LEFT JOIN session_stats AS stats ON stats.session_id = s.id
 		LEFT JOIN facts AS name_fact
 			ON name_fact.session_id = s.id
 			AND name_fact.kind = 'name'
@@ -78,9 +85,12 @@ export function readSessionRow(db: SqliteDatabase, sessionId: string) {
 export function readSessionRows(db: SqliteDatabase, options: { cwd?: string } = {}) {
 	const where = options.cwd === undefined ? sql`` : sql`WHERE s.cwd = ${options.cwd}`;
 	return sql`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+			s.updated_at, s.first_message, s.all_messages_text,
 			name_fact.seq IS NOT NULL AS has_session_name,
-			name_fact.value AS session_name
+			name_fact.value AS session_name,
+			stats.message_count
 		FROM sessions AS s
+		LEFT JOIN session_stats AS stats ON stats.session_id = s.id
 		LEFT JOIN facts AS name_fact
 			ON name_fact.session_id = s.id
 			AND name_fact.kind = 'name'
@@ -91,7 +101,7 @@ export function readSessionRows(db: SqliteDatabase, options: { cwd?: string } = 
 				WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
 			)
 		${where}
-		ORDER BY s.created_at DESC`.all<SessionRow>(db);
+		ORDER BY COALESCE(s.updated_at, s.created_at) DESC`.all<SessionRow>(db);
 }
 
 export function deleteSessionRow(db: SqliteDatabase, sessionId: string) {
@@ -127,5 +137,9 @@ export function decodeSessionMetadata(row: SessionRow, path: string): SqliteSess
 		path,
 		parentSessionId: row.parent_session_id ?? undefined,
 		metadata,
+		updatedAt: row.updated_at ?? undefined,
+		messageCount: row.message_count ?? undefined,
+		firstMessage: row.first_message ?? undefined,
+		allMessagesText: row.all_messages_text ?? undefined,
 	};
 }

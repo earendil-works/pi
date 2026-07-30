@@ -1,4 +1,7 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,26 +11,112 @@ import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function selectMockResponse(requestBody: string): string {
+	const uniqueValue = requestBody.match(/unique-\d+/)?.[0];
+	if (uniqueValue && requestBody.includes("exact output")) return uniqueValue;
+	if (requestBody.includes("test123")) return "test123";
+	if (requestBody.includes("summar")) return "Deterministic mock summary.";
+	if (requestBody.includes("just 'ok'")) return "ok";
+	return "hello";
+}
+
+async function startMockLlm(): Promise<{ server: Server; baseUrl: string }> {
+	const server = createServer(async (request, response) => {
+		if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+			response.writeHead(404).end();
+			return;
+		}
+
+		let requestBody = "";
+		for await (const chunk of request) requestBody += chunk.toString();
+		const content = selectMockResponse(requestBody);
+		response.writeHead(200, {
+			"content-type": "text/event-stream",
+			"cache-control": "no-cache",
+			connection: "keep-alive",
+		});
+		response.write(
+			`data: ${JSON.stringify({
+				id: "chatcmpl-mock",
+				object: "chat.completion.chunk",
+				created: 0,
+				model: "mock-model",
+				choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
+			})}\n\n`,
+		);
+		response.write(
+			`data: ${JSON.stringify({
+				id: "chatcmpl-mock",
+				object: "chat.completion.chunk",
+				created: 0,
+				model: "mock-model",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+				usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+			})}\n\n`,
+		);
+		response.end("data: [DONE]\n\n");
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const { port } = server.address() as AddressInfo;
+	return { server, baseUrl: `http://127.0.0.1:${port}/v1` };
+}
+
 /**
- * RPC mode tests.
+ * RPC mode tests using a local OpenAI-compatible mock server.
  */
-describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_TOKEN)("RPC mode", () => {
+describe("RPC mode", () => {
 	let client: RpcClient;
 	let sessionDir: string;
+	let mockServer: Server;
 
-	beforeEach(() => {
-		sessionDir = join(tmpdir(), `pi-rpc-test-${Date.now()}`);
-		client = new RpcClient({
+	function createRpcClient(args?: string[], env?: Record<string, string>): RpcClient {
+		return new RpcClient({
 			cliPath: join(__dirname, "..", "dist", "cli.js"),
 			cwd: join(__dirname, ".."),
-			env: { PI_CODING_AGENT_DIR: sessionDir },
-			provider: "anthropic",
-			model: "claude-sonnet-4-5",
+			env: { PI_CODING_AGENT_DIR: sessionDir, ...env },
+			provider: "mock",
+			model: "mock-model",
+			args,
 		});
+	}
+
+	beforeEach(async () => {
+		sessionDir = mkdtempSync(join(tmpdir(), "pi-rpc-test-"));
+		const mock = await startMockLlm();
+		mockServer = mock.server;
+		writeFileSync(join(sessionDir, "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 1 } }));
+		writeFileSync(
+			join(sessionDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					mock: {
+						baseUrl: mock.baseUrl,
+						api: "openai-completions",
+						apiKey: "test-key",
+						compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+						models: [
+							{
+								id: "mock-model",
+								name: "Mock Model",
+								reasoning: true,
+								input: ["text"],
+								contextWindow: 128000,
+								maxTokens: 16000,
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							},
+						],
+					},
+				},
+			}),
+		);
+		client = createRpcClient();
 	});
 
 	afterEach(async () => {
 		await client.stop();
+		mockServer.close();
+		await once(mockServer, "close");
 		if (sessionDir && existsSync(sessionDir)) {
 			rmSync(sessionDir, { recursive: true });
 		}
@@ -38,8 +127,8 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		const state = await client.getState();
 
 		expect(state.model).toBeDefined();
-		expect(state.model?.provider).toBe("anthropic");
-		expect(state.model?.id).toBe("claude-sonnet-4-5");
+		expect(state.model?.provider).toBe("mock");
+		expect(state.model?.id).toBe("mock-model");
 		expect(state.isStreaming).toBe(false);
 		expect(state.messageCount).toBe(0);
 	}, 30000);
@@ -85,6 +174,51 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		expect(roles).toContain("user");
 		expect(roles).toContain("assistant");
 	}, 90000);
+
+	test("should restore a persisted session in a new RPC process", async () => {
+		await client.start();
+		await client.promptAndWait("Reply with just the word 'hello'");
+
+		const beforeState = await client.getState();
+		const beforeStats = await client.getSessionStats();
+		const beforeEntries = await client.getEntries();
+		expect(beforeEntries.entries.length).toBeGreaterThanOrEqual(2);
+		expect(await client.getLastAssistantText()).toBe("hello");
+
+		await client.stop();
+		client = createRpcClient(["--continue"]);
+		await client.start();
+
+		const restoredState = await client.getState();
+		const restoredStats = await client.getSessionStats();
+		const restoredEntries = await client.getEntries();
+		expect(restoredState.messageCount).toBe(beforeState.messageCount);
+		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
+		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
+		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
+		expect(await client.getLastAssistantText()).toBe("hello");
+	}, 30000);
+
+	test("should restore a SQLite session in a new RPC process", async () => {
+		client = createRpcClient(undefined, { PERSISTENT_STORE: "sqlite" });
+		await client.start();
+		await client.promptAndWait("Reply with just the word 'hello'");
+		const beforeStats = await client.getSessionStats();
+		const beforeEntries = await client.getEntries();
+		await client.stop();
+
+		expect(existsSync(join(sessionDir, "sessions.sqlite"))).toBe(true);
+		expect(existsSync(join(sessionDir, "sessions"))).toBe(false);
+
+		client = createRpcClient(["--continue"], { PERSISTENT_STORE: "sqlite" });
+		await client.start();
+		const restoredStats = await client.getSessionStats();
+		const restoredEntries = await client.getEntries();
+		expect(restoredStats.sessionId).toBe(beforeStats.sessionId);
+		expect(restoredEntries.entries.map((entry) => entry.id)).toEqual(beforeEntries.entries.map((entry) => entry.id));
+		expect(restoredEntries.leafId).toBe(beforeEntries.leafId);
+		expect(await client.getLastAssistantText()).toBe("hello");
+	}, 30000);
 
 	test("should handle manual compaction", async () => {
 		await client.start();
