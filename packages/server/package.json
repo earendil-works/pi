@@ -23,6 +23,7 @@
 		"clean": "shx rm -rf dist",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
@@ -43,6 +44,7 @@
 		"@earendil-works/pi-coding-agent": "^0.82.1"
 	},
 	"devDependencies": {
-		"shx": "0.4.0"
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
 	}
 }

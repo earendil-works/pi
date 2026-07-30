@@ -22,6 +22,25 @@ function toError(error: unknown): Error {
 	return error instanceof Error ? error : new Error(String(error));
 }
 
+/**
+ * Parse a single RPC stdout line. Returns undefined when the line is not valid JSON
+ * so callers can skip malformed input instead of crashing the stdout handler.
+ */
+export function parseRpcLine(line: string): unknown {
+	try {
+		return JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Cap on the diagnostic stderr buffer. Malformed stdout lines are recorded there
+ * so exit errors carry context, but a chatty child could otherwise grow it
+ * without bound over a long-running server.
+ */
+const MAX_STDERR_BUFFER = 64 * 1024;
+
 export class RpcProcessInstance {
 	readonly process: ChildProcess;
 
@@ -47,7 +66,8 @@ export class RpcProcessInstance {
 		this.attachListeners();
 	}
 
-	private getSpawnCommand(): { command: string; args: string[] } {
+	/** Protected so tests can subclass and inject a controlled spawn target. */
+	protected getSpawnCommand(): { command: string; args: string[] } {
 		if (isBunBinary) {
 			return {
 				command: join(dirname(process.execPath), process.platform === "win32" ? "pi.exe" : "pi"),
@@ -99,29 +119,39 @@ export class RpcProcessInstance {
 	}
 
 	private handleLine(line: string): void {
-		const parsed = JSON.parse(line) as { type?: string; id?: string };
-		switch (parsed.type) {
+		const parsed = parseRpcLine(line);
+		if (!parsed || typeof parsed !== "object") {
+			// Malformed line (non-JSON log, node warning, truncated write). Preserve for
+			// diagnostics via stderrBuffer instead of crashing the stdout stream handler.
+			// Cap the buffer so a chatty child cannot grow it without bound.
+			if (this.stderrBuffer.length < MAX_STDERR_BUFFER) {
+				this.stderrBuffer += `[rpc-process] discarded malformed stdout line: ${line}\n`;
+			}
+			return;
+		}
+		const message = parsed as { type?: string; id?: string };
+		switch (message.type) {
 			case "response": {
-				if (!parsed.id) {
+				if (!message.id) {
 					return;
 				}
-				const pending = this.pendingRequests.get(parsed.id);
+				const pending = this.pendingRequests.get(message.id);
 				if (!pending) {
 					return;
 				}
-				this.pendingRequests.delete(parsed.id);
-				pending.resolve(parsed as RpcResponse);
+				this.pendingRequests.delete(message.id);
+				pending.resolve(message as RpcResponse);
 				return;
 			}
 
 			case "extension_ui_request": {
-				this.uiRequestHandler?.(parsed as RpcExtensionUIRequest);
+				this.uiRequestHandler?.(message as RpcExtensionUIRequest);
 				return;
 			}
 
 			default: {
 				for (const listener of this.eventListeners) {
-					listener(parsed as AgentSessionEvent);
+					listener(message as AgentSessionEvent);
 				}
 			}
 		}
