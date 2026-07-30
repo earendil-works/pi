@@ -19,6 +19,13 @@ export interface AuthResolutionOverrides {
 	env?: ProviderEnv;
 	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
 	minOAuthValidityMs?: number;
+	/**
+	 * Force an OAuth credential reload under the store lock (and refresh when the
+	 * on-disk access token is unchanged). Used after a coding-API 401 so a
+	 * multi-process rotation or early server-side invalidation can recover
+	 * without widening the global HTTP 401 retry classifiers.
+	 */
+	forceOAuthRefresh?: boolean;
 }
 
 export class ModelsError extends Error {
@@ -70,6 +77,7 @@ export async function resolveProviderAuth(
 				provider.auth.oauth,
 				stored,
 				overrides?.minOAuthValidityMs,
+				overrides?.forceOAuthRefresh,
 			);
 		}
 		if (stored.type === "api_key" && provider.auth.apiKey) {
@@ -98,6 +106,10 @@ const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
  * OAuth resolution with double-checked locking: tokens with less than five
  * minutes remaining lock, re-check expiry under the lock, refresh once
  * globally, and persist the rotated credential before release.
+ *
+ * `forceOAuthRefresh` always enters the lock (used after a coding-API 401):
+ * if another process already rotated the access token on disk, that credential
+ * is adopted without a second refresh; otherwise `oauth.refresh` runs once.
  */
 async function resolveStoredOAuth(
 	credentials: CredentialStore,
@@ -105,18 +117,23 @@ async function resolveStoredOAuth(
 	oauth: OAuthAuth,
 	stored: OAuthCredential,
 	minOAuthValidityMs?: number,
+	forceOAuthRefresh?: boolean,
 ): Promise<AuthResult | undefined> {
 	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
 	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
 	let credential = stored;
 
-	if (expiresSoon(credential)) {
-		// Optimistic check said expired; the authoritative check runs under the lock.
+	if (forceOAuthRefresh || expiresSoon(credential)) {
+		// Optimistic check said expired (or caller forced); authoritative work runs under the lock.
 		let post: Credential | undefined;
 		try {
 			post = await credentials.modify(providerId, async (current) => {
 				if (current?.type !== "oauth") return undefined; // logged out meanwhile
-				if (!expiresSoon(current)) return undefined; // another process/request refreshed
+				// Cross-process recovery: disk already has a newer access token.
+				if (forceOAuthRefresh && current.access !== stored.access) {
+					return undefined; // leave entry unchanged; modify returns on-disk current
+				}
+				if (!forceOAuthRefresh && !expiresSoon(current)) return undefined; // another request refreshed
 				try {
 					return await oauth.refresh(current);
 				} catch (error) {
@@ -131,8 +148,9 @@ async function resolveStoredOAuth(
 		credential = post;
 		// The normal five-minute window triggers a refresh but does not impose a
 		// provider contract. Explicit callers (such as bearer-token export) do
-		// require the requested minimum after the refresh.
-		if (minOAuthValidityMs !== undefined && expiresSoon(credential)) {
+		// require the requested minimum after the refresh. forceOAuthRefresh skips
+		// this check — a short-lived token (e.g. Kimi ~15m) is still usable.
+		if (minOAuthValidityMs !== undefined && !forceOAuthRefresh && expiresSoon(credential)) {
 			throw new ModelsError("oauth", `OAuth refresh returned a token that expires too soon for ${providerId}`);
 		}
 	}

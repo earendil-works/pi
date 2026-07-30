@@ -748,4 +748,236 @@ describe("Models runtime", () => {
 		const message = await stream.result();
 		expect(message.stopReason).toBe("stop");
 	});
+
+	it("forceOAuthRefresh refreshes a still-valid oauth token under the lock", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "rotated-token",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh }) } }));
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "old-token",
+			refresh: "r",
+			expires: Date.now() + 60 * 60_000, // well outside the five-minute window
+		}));
+
+		expect((await models.getAuth("p1"))?.auth.apiKey).toBe("old-token");
+		expect(refresh).not.toHaveBeenCalled();
+
+		expect((await models.getAuth("p1", { forceOAuthRefresh: true }))?.auth.apiKey).toBe("rotated-token");
+		expect(refresh).toHaveBeenCalledOnce();
+		expect(await credentials.read("p1")).toMatchObject({ access: "rotated-token" });
+	});
+
+	it("forceOAuthRefresh adopts a cross-process rotated access token without a second refresh", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "should-not-run",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh }) } }));
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "stale-in-memory",
+			refresh: "r",
+			expires: Date.now() + 60 * 60_000,
+		}));
+
+		// Simulate another process writing a newer access token before force refresh.
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "from-other-process",
+			refresh: "r2",
+			expires: Date.now() + 60 * 60_000,
+		}));
+
+		// Pass the stale credential snapshot via force path: getAuth reads current store,
+		// so seed a Models instance that saw the old token by using a store that returns
+		// stale on first read then file-current under modify — InMemory always consistent.
+		// Instead assert: force refresh when disk already matches read sees no refresh when
+		// access changed between the resolve's initial read and modify (hand-tested via custom store).
+		const base = new InMemoryCredentialStore();
+		await base.modify("p1", async () => ({
+			type: "oauth",
+			access: "stale",
+			refresh: "r",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		let readCount = 0;
+		const splitStore: CredentialStore = {
+			read: async (id) => {
+				readCount++;
+				if (readCount === 1) {
+					return { type: "oauth", access: "stale", refresh: "r", expires: Date.now() + 60 * 60_000 };
+				}
+				return base.read(id);
+			},
+			list: () => base.list(),
+			modify: async (id, fn) => {
+				// Disk already rotated by another process.
+				await base.modify(id, async () => ({
+					type: "oauth",
+					access: "from-other-process",
+					refresh: "r2",
+					expires: Date.now() + 60 * 60_000,
+				}));
+				return base.modify(id, fn);
+			},
+			delete: (id) => base.delete(id),
+		};
+		const refresh2 = vi.fn(async (credential) => ({
+			...credential,
+			access: "should-not-run",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models2 = createModels({ credentials: splitStore });
+		models2.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh: refresh2 }) } }));
+
+		expect((await models2.getAuth("p1", { forceOAuthRefresh: true }))?.auth.apiKey).toBe("from-other-process");
+		expect(refresh2).not.toHaveBeenCalled();
+	});
+
+	it("oauth stream 401 triggers one force-refresh retry then succeeds", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "fresh-token",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const seenKeys: Array<string | undefined> = [];
+		let attempts = 0;
+
+		const kimi401 =
+			'401 {"error":{"type":"authentication_error","message":"The API Key appears to be invalid or may have expired. Please verify your credentials and try again."},"type":"error"}';
+
+		const provider: Provider = {
+			id: "p1",
+			name: "p1",
+			auth: { oauth: testOAuth({ refresh }) },
+			getModels: () => [testModel("p1", "model-a")],
+			stream: (model, _context, options) => {
+				seenKeys.push(options?.apiKey);
+				attempts++;
+				const stream = new AssistantMessageEventStream();
+				if (attempts === 1) {
+					const err: AssistantMessage = {
+						...doneMessage(model, ""),
+						content: [],
+						stopReason: "error",
+						errorMessage: kimi401,
+					};
+					stream.push({ type: "error", reason: "error", error: err });
+					stream.end(err);
+					return stream;
+				}
+				const ok = doneMessage(model, "recovered");
+				stream.push({ type: "start", partial: ok });
+				stream.push({ type: "done", reason: "stop", message: ok });
+				stream.end(ok);
+				return stream;
+			},
+			streamSimple: (model, context, options) => provider.stream(model, context, options),
+		};
+
+		const models = createModels({ credentials });
+		models.setProvider(provider);
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "stale-token",
+			refresh: "r",
+			expires: Date.now() + 60 * 60_000,
+		}));
+
+		const result = await models.completeSimple(testModel("p1", "model-a"), context);
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
+		expect(attempts).toBe(2);
+		expect(seenKeys).toEqual(["stale-token", "fresh-token"]);
+		expect(refresh).toHaveBeenCalledOnce();
+	});
+
+	it("static api_key 401 is not retried", async () => {
+		const credentials = new InMemoryCredentialStore();
+		let attempts = 0;
+		const provider: Provider = {
+			id: "p1",
+			name: "p1",
+			auth: { apiKey: envKeyAuth(undefined) },
+			getModels: () => [testModel("p1", "model-a")],
+			stream: (model, _context, _options) => {
+				attempts++;
+				const stream = new AssistantMessageEventStream();
+				const err: AssistantMessage = {
+					...doneMessage(model, ""),
+					content: [],
+					stopReason: "error",
+					errorMessage: "401 unauthorized",
+				};
+				stream.push({ type: "error", reason: "error", error: err });
+				stream.end(err);
+				return stream;
+			},
+			streamSimple: (model, context, options) => provider.stream(model, context, options),
+		};
+
+		const models = createModels({ credentials });
+		models.setProvider(provider);
+		await credentials.modify("p1", async () => ({ type: "api_key", key: "sk-bad" }));
+
+		const result = await models.completeSimple(testModel("p1", "model-a"), context);
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("401");
+		expect(attempts).toBe(1);
+	});
+
+	it("oauth 401 after stream start is not retried", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "fresh",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		let attempts = 0;
+		const provider: Provider = {
+			id: "p1",
+			name: "p1",
+			auth: { oauth: testOAuth({ refresh }) },
+			getModels: () => [testModel("p1", "model-a")],
+			stream: (model, _context, _options) => {
+				attempts++;
+				const stream = new AssistantMessageEventStream();
+				const partial = doneMessage(model, "partial");
+				const err: AssistantMessage = {
+					...partial,
+					stopReason: "error",
+					errorMessage: "401 after start",
+				};
+				stream.push({ type: "start", partial });
+				stream.push({ type: "error", reason: "error", error: err });
+				stream.end(err);
+				return stream;
+			},
+			streamSimple: (model, context, options) => provider.stream(model, context, options),
+		};
+
+		const models = createModels({ credentials });
+		models.setProvider(provider);
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "tok",
+			refresh: "r",
+			expires: Date.now() + 60 * 60_000,
+		}));
+
+		const result = await models.completeSimple(testModel("p1", "model-a"), context);
+		expect(result.stopReason).toBe("error");
+		expect(attempts).toBe(1);
+		expect(refresh).not.toHaveBeenCalled();
+	});
 });

@@ -17,6 +17,7 @@ import type {
 	Api,
 	ApiStreamOptions,
 	AssistantMessage,
+	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
 	Model,
@@ -463,11 +464,13 @@ class ModelsImpl implements MutableModels {
 	private async applyAuth<TOptions extends StreamOptions & ModelsStreamTransforms>(
 		model: Model<Api>,
 		options: TOptions | undefined,
+		authOverrides?: Pick<AuthResolutionOverrides, "forceOAuthRefresh">,
 	): Promise<{ requestModel: Model<Api>; requestOptions: StreamOptions | undefined }> {
 		this.requireProvider(model);
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
 			env: options?.env,
+			forceOAuthRefresh: authOverrides?.forceOAuthRefresh,
 		});
 		if (!resolution) {
 			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
@@ -486,19 +489,52 @@ class ModelsImpl implements MutableModels {
 		return { requestModel, requestOptions };
 	}
 
+	/**
+	 * For oauth-backed providers, if the first request fails with HTTP 401 before any
+	 * stream content, force a credential reload/refresh and retry the stream once.
+	 * Static api_key credentials and mid-stream errors are not retried here.
+	 */
+	private streamWithOAuth401Retry(
+		model: Model<Api>,
+		context: Context,
+		options: (StreamOptions & ModelsStreamTransforms) | undefined,
+		kind: "stream" | "streamSimple",
+	): AssistantMessageEventStream {
+		return lazyStream(model, async () => {
+			const provider = this.requireProvider(model);
+			const stored = await this.credentials.read(model.provider);
+			// Explicit apiKey override is treated as a static credential path — no oauth retry.
+			const oauthEligible = stored?.type === "oauth" && options?.apiKey === undefined;
+
+			const runOnce = async (forceOAuthRefresh: boolean) => {
+				const { requestModel, requestOptions } = await this.applyAuth(model, options, {
+					forceOAuthRefresh: forceOAuthRefresh || undefined,
+				});
+				if (kind === "stream") {
+					return provider.stream(requestModel as Model<Api>, context, requestOptions as ApiStreamOptions<Api>);
+				}
+				return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
+			};
+
+			if (!oauthEligible) {
+				return runOnce(false);
+			}
+
+			return oauth401RetryIterable(await runOnce(false), () => runOnce(true));
+		});
+	}
+
 	stream<TApi extends Api>(
 		model: Model<TApi>,
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
-		return lazyStream(model, async () => {
-			const provider = this.requireProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(
-				model,
-				options as ModelsApiStreamOptions<Api> | undefined,
-			);
-			return provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>);
-		});
+		return this.streamWithOAuth401Retry(
+			model,
+			context,
+			options as (StreamOptions & ModelsStreamTransforms) | undefined,
+			"stream",
+		);
 	}
 
 	async complete<TApi extends Api>(
@@ -510,11 +546,7 @@ class ModelsImpl implements MutableModels {
 	}
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
-		return lazyStream(model, async () => {
-			const provider = this.requireProvider(model);
-			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
-		});
+		return this.streamWithOAuth401Retry(model, context, options, "streamSimple");
 	}
 
 	async completeSimple(
@@ -523,6 +555,53 @@ class ModelsImpl implements MutableModels {
 		options?: ModelsSimpleStreamOptions,
 	): Promise<AssistantMessage> {
 		return this.streamSimple(model, context, options).result();
+	}
+}
+
+/** True when an assistant error looks like an HTTP 401 / authentication_error from a provider. */
+export function isProviderUnauthorizedError(message: AssistantMessage): boolean {
+	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	const text = message.errorMessage;
+	if (/^\s*401\b/.test(text)) return true;
+	if (/\bstatus(?:\s*code)?\s*[:=]?\s*401\b/i.test(text)) return true;
+	if (/authentication_error/i.test(text)) return true;
+	return false;
+}
+
+/**
+ * Proxy a first stream attempt; on a pre-content 401, run `retry` once and forward that stream.
+ * Mid-stream errors and non-401 failures are forwarded unchanged.
+ */
+async function* oauth401RetryIterable(
+	first: AsyncIterable<AssistantMessageEvent>,
+	retry: () => Promise<AsyncIterable<AssistantMessageEvent>>,
+): AsyncIterable<AssistantMessageEvent> {
+	let sawContent = false;
+	let unauthorized: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
+
+	for await (const event of first) {
+		if (event.type === "error" && !sawContent && isProviderUnauthorizedError(event.error)) {
+			unauthorized = event;
+			break;
+		}
+		if (event.type !== "error") {
+			sawContent = true;
+		}
+		yield event;
+	}
+
+	if (!unauthorized) return;
+
+	let second: AsyncIterable<AssistantMessageEvent>;
+	try {
+		second = await retry();
+	} catch {
+		// Refresh/auth failure on retry: surface the original 401.
+		yield unauthorized;
+		return;
+	}
+	for await (const event of second) {
+		yield event;
 	}
 }
 
