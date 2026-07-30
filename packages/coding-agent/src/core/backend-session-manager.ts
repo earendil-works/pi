@@ -17,6 +17,7 @@ import {
 	type ModelChangeEntry,
 	type SessionContext,
 	type SessionEntry,
+	type SessionHeader,
 	type SessionInfoEntry,
 	type SessionMessageEntry,
 	type SessionReference,
@@ -90,6 +91,16 @@ export class BackendSessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.backend === "jsonl" ? this.metadata.path : undefined;
+	}
+
+	getHeader(): SessionHeader {
+		return {
+			type: "session",
+			version: 3,
+			id: this.metadata.id,
+			timestamp: this.metadata.createdAt,
+			cwd: this.getCwd(),
+		};
 	}
 
 	getSessionDir(): string {

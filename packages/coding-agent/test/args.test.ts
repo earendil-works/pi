@@ -135,6 +135,12 @@ describe("parseArgs", () => {
 			expect(result.sessionId).toBe("orchestrated-session");
 		});
 
+		test("parses --parent-session", () => {
+			const result = parseArgs(["--parent-session", "launching-session"]);
+			expect(result.parentSession).toBe("launching-session");
+			expect(result.messages).toEqual([]);
+		});
+
 		test("parses --fork", () => {
 			const result = parseArgs(["--fork", "1234abcd"]);
 			expect(result.fork).toBe("1234abcd");
