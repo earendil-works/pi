@@ -22,6 +22,13 @@ Pi has two summarization mechanisms:
 
 Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use fresh routing session IDs and, where supported by the provider, disable prompt-cache writes because these one-off prompts are unlikely to be reused.
 
+Set `summaryCheckpoints.enabled` to `false` when an extension owns lossless context projection. Pi still
+emits automatic compaction events—even when no native checkpoint cut can be prepared—and an extension
+may handle pressure checkpoint-free or cancel it,
+but Pi refuses native and extension-provided `CompactionEntry` or `BranchSummaryEntry` summaries.
+Manual `/compact` and summarized `/tree` navigation then fail explicitly; unsummarized navigation is
+unchanged.
+
 ## Compaction
 
 ### When It Triggers
@@ -294,7 +301,13 @@ pi.on("session_before_compact", async (event, ctx) => {
   // signal - AbortSignal (pass to LLM calls)
 
   // Cancel:
-  return { cancel: true };
+  return { action: "cancel", errorMessage: "Optional reason" };
+  // Legacy `{ cancel: true }` remains supported.
+
+  // Or handle automatic pressure with an extension-owned context projection and
+  // no compaction checkpoint. For a retrying overflow only, `retry: true` tells
+  // Pi to continue the same interrupted operation through its existing loop.
+  return { action: "handled", retry: reason === "overflow" && willRetry };
 
   // Custom summary:
   return {
@@ -308,6 +321,8 @@ pi.on("session_before_compact", async (event, ctx) => {
   };
 });
 ```
+
+For automatic compaction, the hook runs before Pi resolves summarization credentials. A handled or cancelled event therefore does not require summary-model authentication. `action: "handled"` is terminal for the event: later extensions are not run, no `CompactionEntry` or `session_compact` event is created, and `retry: true` is rejected outside an interrupted overflow recovery.
 
 #### Converting Messages to Text
 

@@ -148,6 +148,26 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
 	});
 
+	it("runs a terminal manual compaction handler before summary auth", async () => {
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({
+						action: "cancel",
+						errorMessage: "Native summaries are disabled; use the reversible context projection",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		await expect(harness.session.compact()).rejects.toThrow("Native summaries are disabled");
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+	});
+
 	it("throws when compacting without a model", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -156,9 +176,10 @@ describe("AgentSession compaction characterization", () => {
 		await expect(harness.session.compact()).rejects.toThrow("No model selected");
 	});
 
-	it("throws when compacting without configured auth", async () => {
+	it("throws when compacting compactable context without configured auth", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
+		seedCompactableSession(harness);
 
 		await expect(harness.session.compact()).rejects.toThrow(`No API key found for ${harness.getModel().provider}.`);
 	});
@@ -242,6 +263,98 @@ describe("AgentSession compaction characterization", () => {
 		expect(getStreamCallCount()).toBe(1);
 	});
 
+	it("disables every native or extension-provided compaction checkpoint while preserving handled pressure", async () => {
+		const nativeHarness = await createHarness({
+			withConfiguredAuth: false,
+			settings: {
+				compaction: { keepRecentTokens: 1 },
+				summaryCheckpoints: { enabled: false },
+			},
+		});
+		harnesses.push(nativeHarness);
+		seedCompactableSession(nativeHarness);
+		const nativeInternals = nativeHarness.session as unknown as SessionWithCompactionInternals;
+		await expect(nativeInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		await expect(nativeHarness.session.compact()).rejects.toThrow("Summary checkpoints are disabled");
+		expect(nativeHarness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+
+		const extensionHarness = await createHarness({
+			withConfiguredAuth: false,
+			settings: {
+				compaction: { keepRecentTokens: 1 },
+				summaryCheckpoints: { enabled: false },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "forbidden extension checkpoint",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(extensionHarness);
+		seedCompactableSession(extensionHarness);
+		const extensionInternals = extensionHarness.session as unknown as SessionWithCompactionInternals;
+		await expect(extensionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		expect(extensionHarness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(
+			0,
+		);
+
+		const handledHarness = await createHarness({
+			withConfiguredAuth: false,
+			settings: {
+				compaction: { keepRecentTokens: 1 },
+				summaryCheckpoints: { enabled: false },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({ action: "handled", retry: false }));
+				},
+			],
+		});
+		harnesses.push(handledHarness);
+		seedCompactableSession(handledHarness);
+		const handledInternals = handledHarness.session as unknown as SessionWithCompactionInternals;
+		await expect(handledInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		expect(handledHarness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			handledByExtension: true,
+			aborted: false,
+		});
+	});
+
+	it("emits automatic pressure to extensions even when no native checkpoint cut exists", async () => {
+		let observed: { available: boolean; firstKeptEntryId: string; tokensBefore: number } | undefined;
+		const harness = await createHarness({
+			settings: { summaryCheckpoints: { enabled: false } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						observed = {
+							available: event.preparationAvailable,
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.tokensBefore,
+						};
+						return { action: "cancel", errorMessage: "No safe lossless projection" };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(false);
+		expect(observed).toEqual({ available: false, firstKeptEntryId: "", tokensBefore: 0 });
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "overflow",
+			errorMessage: "No safe lossless projection",
+			willRetry: false,
+		});
+	});
+
 	it("cancels in-progress manual compaction when abortCompaction is called", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { keepRecentTokens: 1 } },
@@ -302,6 +415,223 @@ describe("AgentSession compaction characterization", () => {
 		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(true);
 	});
 
+	it("lets an extension handle overflow and retry without a compaction checkpoint or summary auth", async () => {
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) =>
+						event.reason === "overflow" && event.willRetry ? { action: "handled", retry: true } : undefined,
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(true);
+
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "overflow",
+			aborted: false,
+			willRetry: true,
+			handledByExtension: true,
+			result: undefined,
+		});
+	});
+
+	it("handles a completed over-window response without retry or checkpoint", async () => {
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) =>
+						event.reason === "overflow" && !event.willRetry ? { action: "handled", retry: false } : undefined,
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("overflow", false)).resolves.toBe(false);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "overflow",
+			aborted: false,
+			willRetry: false,
+			handledByExtension: true,
+		});
+	});
+
+	it("treats handled compaction as terminal across extension handlers", async () => {
+		let laterCalls = 0;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({ action: "handled", retry: true }));
+				},
+				(pi) => {
+					pi.on("session_before_compact", async () => {
+						laterCalls++;
+						return undefined;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(true);
+		expect(laterCalls).toBe(0);
+	});
+
+	it("does not dispatch mutable globals or action coercion at the extension result boundary", async () => {
+		let result: object;
+		let descriptorCalls = 0;
+		let arrayCalls = 0;
+		let coercions = 0;
+		const unknownAction = {
+			toString: () => {
+				coercions++;
+				return "handled";
+			},
+		};
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => {
+						result = { action: unknownAction };
+						return result as never;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const originalDescriptor = Object.getOwnPropertyDescriptor;
+		const originalArray = Array.isArray;
+		Object.getOwnPropertyDescriptor = ((value: object, key: PropertyKey) => {
+			if (value === result) descriptorCalls++;
+			return originalDescriptor(value, key);
+		}) as typeof Object.getOwnPropertyDescriptor;
+		Array.isArray = ((value: unknown) => {
+			if (value === result) arrayCalls++;
+			return originalArray(value);
+		}) as typeof Array.isArray;
+		try {
+			await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		} finally {
+			Object.getOwnPropertyDescriptor = originalDescriptor;
+			Array.isArray = originalArray;
+		}
+		expect({ descriptorCalls, arrayCalls, coercions }).toEqual({
+			descriptorCalls: 0,
+			arrayCalls: 0,
+			coercions: 0,
+		});
+	});
+
+	it("aborts an in-flight handled overflow before it can retry or checkpoint", async () => {
+		let entered!: () => void;
+		const started = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						entered();
+						await new Promise<void>((resolve) =>
+							event.signal.addEventListener("abort", () => resolve(), { once: true }),
+						);
+						return { action: "handled", retry: true };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		const recovery = sessionInternals._runAutoCompaction("overflow", true);
+		await started;
+		await harness.session.abort();
+		await expect(recovery).resolves.toBe(false);
+
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ aborted: true, willRetry: false });
+	});
+
+	it("continues the same agent operation after extension-handled overflow", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) =>
+						event.reason === "overflow" && event.willRetry ? { action: "handled", retry: true } : undefined,
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		const rejected = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now(),
+		});
+		harness.setResponses([fauxAssistantMessage("seed"), rejected, fauxAssistantMessage("recovered")]);
+		let settled = 0;
+		harness.session.subscribe((event) => {
+			if (event.type === "agent_settled") settled++;
+		});
+
+		await harness.session.prompt("seed turn");
+		settled = 0;
+		await harness.session.prompt("overflow turn");
+
+		expect(harness.faux.state.callCount).toBe(3);
+		expect(settled).toBe(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "message" && entry.message.role === "user"),
+		).toHaveLength(2);
+		expect(harness.session.messages.some((message) => message === rejected)).toBe(false);
+	});
+
+	it("rejects handled retry outside interrupted overflow without falling through to native compaction", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({ action: "handled", retry: true }));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toContain(
+			"retry only an interrupted overflow recovery",
+		);
+	});
+
 	it("does not retry overflow recovery more than once", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -311,6 +641,7 @@ describe("AgentSession compaction characterization", () => {
 			errorMessage: "prompt is too long",
 			timestamp: Date.now(),
 		});
+		harness.session.agent.state.messages = [overflowMessage];
 		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 		const compactionErrors: string[] = [];
 		harness.session.subscribe((event) => {
@@ -326,6 +657,24 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionErrors).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
+	});
+
+	it("stops overflow recovery when the rejected response is not the exact live tail", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const overflowMessage = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: Date.now(),
+		});
+		harness.session.agent.state.messages = [{ ...overflowMessage }];
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction");
+
+		await expect(sessionInternals._checkCompaction(overflowMessage)).resolves.toBe(false);
+
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toContain("not the live context tail");
 	});
 
 	it("compacts successful overflow responses without retrying", async () => {

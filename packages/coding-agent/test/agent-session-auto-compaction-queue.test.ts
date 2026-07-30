@@ -169,6 +169,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 			}
 		});
 
+		session.agent.state.messages.push(overflowMessage);
 		const checkCompaction = (
 			session as unknown as {
 				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;

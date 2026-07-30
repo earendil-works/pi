@@ -12,6 +12,34 @@ describe("Branch summary extensions", () => {
 		}
 	});
 
+	it("rejects native and extension branch summaries when summary checkpoints are disabled", async () => {
+		let extensionCalls = 0;
+		const harness = await createHarness({
+			settings: { summaryCheckpoints: { enabled: false } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_tree", () => {
+						extensionCalls++;
+						return { summary: { summary: "forbidden branch checkpoint" } };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const targetId = harness.sessionManager.appendMessage(userMsg("first branch"));
+		harness.sessionManager.appendMessage(assistantMsg("first reply"));
+		harness.sessionManager.appendMessage(userMsg("abandoned branch work"));
+		const leafBefore = harness.sessionManager.appendMessage(assistantMsg("abandoned reply"));
+
+		await expect(harness.session.navigateTree(targetId, { summarize: true })).rejects.toThrow(
+			"Summary checkpoints are disabled",
+		);
+		expect(extensionCalls).toBe(0);
+		expect(harness.sessionManager.getLeafId()).toBe(leafBefore);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "branch_summary")).toHaveLength(0);
+	});
+
 	it("persists extension-provided summary usage in session totals", async () => {
 		const usage: Usage = {
 			input: 10,

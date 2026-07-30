@@ -47,7 +47,7 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
-import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
+import type { CompactionPreparation, CompactionResult, CompactionSettings } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -591,7 +591,13 @@ export interface SessionBeforeForkEvent {
 /** Fired before context compaction (can be cancelled or customized) */
 export interface SessionBeforeCompactEvent {
 	type: "session_before_compact";
+	/** Native summary preparation. Fields are empty sentinels when preparationAvailable is false. */
 	preparation: CompactionPreparation;
+	/** False when no valid native summary cut exists; terminal extension outcomes may still handle pressure. */
+	preparationAvailable: boolean;
+	/** Native accounting is available even when summary preparation is not. */
+	tokensBefore: number;
+	settings: CompactionSettings;
 	branchEntries: SessionEntry[];
 	customInstructions?: string;
 	/** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
@@ -1109,10 +1115,32 @@ export interface SessionBeforeForkResult {
 	skipConversationRestore?: boolean;
 }
 
-export interface SessionBeforeCompactResult {
-	cancel?: boolean;
-	compaction?: CompactionResult;
-}
+export type SessionBeforeCompactResult =
+	| {
+			/** The extension fully handled automatic context pressure without creating a compaction checkpoint. */
+			action: "handled";
+			/** Continue the interrupted agent operation. Valid only for retrying overflow recovery. */
+			retry?: boolean;
+			cancel?: never;
+			compaction?: never;
+			errorMessage?: never;
+	  }
+	| {
+			/** Cancel compaction without claiming that the context pressure was handled. */
+			action: "cancel";
+			errorMessage?: string;
+			retry?: never;
+			cancel?: never;
+			compaction?: never;
+	  }
+	| {
+			/** Backward-compatible cancellation or custom checkpoint result. */
+			action?: never;
+			cancel?: boolean;
+			compaction?: CompactionResult;
+			retry?: never;
+			errorMessage?: never;
+	  };
 
 export interface SessionBeforeTreeResult {
 	cancel?: boolean;

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a terminal `session_before_compact` handled result so extensions can replace automatic context pressure without appending a compaction checkpoint, including same-operation retry after interrupted overflow recovery.
+- Added `summaryCheckpoints.enabled` so lossless context extensions can disable native and extension-provided compaction and branch-summary checkpoints while retaining pressure events and unsummarized tree navigation.
+
+### Fixed
+
+- Run automatic compaction handlers before summary credential resolution and make ordinary session abort cancel in-flight compaction handlers.
+
 ## [0.83.0] - 2026-07-29
 
 ### New Features

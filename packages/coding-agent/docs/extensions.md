@@ -454,13 +454,24 @@ Fired on compaction. See [compaction.md](compaction.md) for details.
 
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
-  const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
+  const {
+    preparation, preparationAvailable, tokensBefore, settings,
+    branchEntries, customInstructions, reason, willRetry, signal,
+  } = event;
 
   // reason - "manual" (/compact), "threshold", or "overflow"
   // willRetry - whether the aborted turn is retried after compaction (overflow recovery)
+  // preparationAvailable - false when native summary cutting is impossible; accounting and
+  // terminal handled/cancel outcomes remain available. Do not return `compaction` in that case.
 
   // Cancel:
-  return { cancel: true };
+  return { action: "cancel", errorMessage: "Optional reason" };
+  // Legacy `{ cancel: true }` remains supported.
+
+  // Handle automatic context pressure without appending a compaction checkpoint.
+  // `retry: true` is valid only for reason="overflow", willRetry=true; Pi then
+  // continues the same interrupted agent operation without adding a user message.
+  return { action: "handled", retry: reason === "overflow" && willRetry };
 
   // Custom summary:
   return {
@@ -480,6 +491,8 @@ pi.on("session_compact", async (event, ctx) => {
   // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
 });
 ```
+
+`action: "handled"` and `action: "cancel"` are terminal: later handlers do not overwrite them. A handled event appends no `CompactionEntry` and emits no `session_compact`; automatic handling also runs before Pi resolves summarization credentials. With `summaryCheckpoints.enabled: false`, Pi rejects both native and extension-provided compaction summaries while still permitting these terminal checkpoint-free outcomes.
 
 #### session_before_tree / session_tree
 

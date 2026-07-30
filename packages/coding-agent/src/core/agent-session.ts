@@ -56,6 +56,7 @@ import {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	createFileOps,
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
@@ -135,6 +136,15 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
+const isArrayIntrinsic = Array.isArray;
+const getOwnPropertyDescriptorIntrinsic = Object.getOwnPropertyDescriptor;
+
+function ownDataProperty(value: unknown, key: string): unknown {
+	if (!value || typeof value !== "object" || isArrayIntrinsic(value)) return undefined;
+	const descriptor = getOwnPropertyDescriptorIntrinsic(value, key);
+	return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
@@ -160,6 +170,7 @@ export type AgentSessionEvent =
 			aborted: boolean;
 			willRetry: boolean;
 			errorMessage?: string;
+			handledByExtension?: boolean;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
@@ -1541,6 +1552,7 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		this.abortCompaction();
 		this.agent.abort();
 		await this.waitForIdle();
 	}
@@ -1791,8 +1803,6 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const { apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
-
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
 
@@ -1813,6 +1823,9 @@ export class AgentSession {
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
+					preparationAvailable: true,
+					tokensBefore: preparation.tokensBefore,
+					settings,
 					branchEntries: pathEntries,
 					customInstructions,
 					reason: "manual",
@@ -1820,15 +1833,36 @@ export class AgentSession {
 					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
-				if (result?.cancel) {
-					throw new Error("Compaction cancelled");
+				const action = ownDataProperty(result, "action");
+				if (action === "handled") {
+					throw new Error(
+						"Extensions may handle automatic context pressure only; manual compaction was not performed",
+					);
 				}
+				if (action === "cancel" || ownDataProperty(result, "cancel") === true) {
+					const message = ownDataProperty(result, "errorMessage");
+					throw new Error(typeof message === "string" && message ? message : "Compaction cancelled");
+				}
+				if (action !== undefined) throw new Error("Unknown session_before_compact action");
 
-				if (result?.compaction) {
-					extensionCompaction = result.compaction;
+				const compaction = ownDataProperty(result, "compaction");
+				if (compaction) {
+					extensionCompaction = compaction as CompactionResult;
 					fromExtension = true;
 				}
 			}
+
+			if (!this.settingsManager.getSummaryCheckpointsEnabled()) {
+				throw new Error("Summary checkpoints are disabled; use extension-owned lossless context management");
+			}
+			if (this._compactionAbortController.signal.aborted) throw new Error("Compaction cancelled");
+			let apiKey: string | undefined;
+			let headers: Record<string, string> | undefined;
+			let env: Record<string, string> | undefined;
+			if (!extensionCompaction) {
+				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
+			}
+			if (this._compactionAbortController.signal.aborted) throw new Error("Compaction cancelled");
 
 			let summary: string;
 			let firstKeptEntryId: string;
@@ -2001,12 +2035,22 @@ export class AgentSession {
 			}
 
 			this._overflowRecoveryAttempted = true;
-			// Remove the error message from agent state (it IS saved to session for history,
-			// but we don't want it in context for the retry)
+			// Remove only the exact rejected response from live retry context. It remains
+			// persisted in the append-only session history for diagnostics.
 			const messages = this.agent.state.messages;
-			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-				this.agent.state.messages = messages.slice(0, -1);
+			if (messages[messages.length - 1] !== assistantMessage) {
+				this._emit({
+					type: "compaction_end",
+					reason: "overflow",
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+					errorMessage:
+						"Context overflow recovery stopped because the rejected response was not the live context tail.",
+				});
+				return false;
 			}
+			this.agent.state.messages = messages.slice(0, -1);
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
 
@@ -2053,21 +2097,19 @@ export class AgentSession {
 				return false;
 			}
 
-			let apiKey: string | undefined;
-			let headers: Record<string, string> | undefined;
-			let env: Record<string, string> | undefined;
-			if (this.agent.streamFunction === streamSimple) {
-				({ apiKey, headers, env } = await this._getRequiredRequestAuth(this.model));
-			} else {
-				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
-			}
-
 			const pathEntries = this.sessionManager.getBranch();
-
-			const preparation = prepareCompaction(pathEntries, settings);
-			if (!preparation) {
-				return false;
-			}
+			const nativePreparation = prepareCompaction(pathEntries, settings);
+			const estimatedTokensBefore =
+				nativePreparation?.tokensBefore ?? estimateMessagesTokens(this.agent.state.messages);
+			const preparation = nativePreparation ?? {
+				firstKeptEntryId: "",
+				messagesToSummarize: [],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: estimatedTokensBefore,
+				fileOps: createFileOps(),
+				settings,
+			};
 
 			this._emit({ type: "compaction_start", reason });
 			this._autoCompactionAbortController = new AbortController();
@@ -2080,6 +2122,9 @@ export class AgentSession {
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
+					preparationAvailable: nativePreparation !== undefined,
+					tokensBefore: estimatedTokensBefore,
+					settings,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
 					reason,
@@ -2087,21 +2132,69 @@ export class AgentSession {
 					signal: this._autoCompactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
-				if (extensionResult?.cancel) {
+				if (this._autoCompactionAbortController.signal.aborted) {
+					this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+					return false;
+				}
+
+				const action = ownDataProperty(extensionResult, "action");
+				if (action === "handled") {
+					const retry = ownDataProperty(extensionResult, "retry") === true;
+					if (retry && (reason !== "overflow" || !willRetry)) {
+						throw new Error("An extension may retry only an interrupted overflow recovery");
+					}
 					this._emit({
 						type: "compaction_end",
 						reason,
 						result: undefined,
-						aborted: true,
+						aborted: false,
+						willRetry: retry,
+						handledByExtension: true,
+					});
+					return retry;
+				}
+				if (action === "cancel" || ownDataProperty(extensionResult, "cancel") === true) {
+					const message = ownDataProperty(extensionResult, "errorMessage");
+					this._emit({
+						type: "compaction_end",
+						reason,
+						result: undefined,
+						aborted: typeof message !== "string" || !message,
 						willRetry: false,
+						...(typeof message === "string" && message ? { errorMessage: message } : {}),
 					});
 					return false;
 				}
+				if (action !== undefined) throw new Error("Unknown session_before_compact action");
 
-				if (extensionResult?.compaction) {
-					extensionCompaction = extensionResult.compaction;
+				const compaction = ownDataProperty(extensionResult, "compaction");
+				if (compaction) {
+					extensionCompaction = compaction as CompactionResult;
 					fromExtension = true;
 				}
+			}
+
+			if (!nativePreparation) {
+				throw new Error(
+					"Native compaction cannot select a safe checkpoint cut; an extension must handle or cancel",
+				);
+			}
+			if (!this.settingsManager.getSummaryCheckpointsEnabled()) {
+				throw new Error("Summary checkpoints are disabled; extension did not handle context pressure");
+			}
+			let apiKey: string | undefined;
+			let headers: Record<string, string> | undefined;
+			let env: Record<string, string> | undefined;
+			if (!extensionCompaction) {
+				if (this.agent.streamFunction === streamSimple) {
+					({ apiKey, headers, env } = await this._getRequiredRequestAuth(this.model));
+				} else {
+					({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
+				}
+			}
+			if (this._autoCompactionAbortController.signal.aborted) {
+				this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+				return false;
 			}
 
 			let summary: string;
@@ -2898,6 +2991,9 @@ export class AgentSession {
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
+		}
+		if (options.summarize && !this.settingsManager.getSummaryCheckpointsEnabled()) {
+			throw new Error("Summary checkpoints are disabled; navigate without summarizing the abandoned branch");
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();

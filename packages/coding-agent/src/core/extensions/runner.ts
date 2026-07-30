@@ -157,6 +157,15 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				? SessionBeforeTreeResult | undefined
 				: undefined;
 
+const isArrayIntrinsic = Array.isArray;
+const getOwnPropertyDescriptorIntrinsic = Object.getOwnPropertyDescriptor;
+
+function ownDataProperty(value: unknown, key: string): unknown {
+	if (!value || typeof value !== "object" || isArrayIntrinsic(value)) return undefined;
+	const descriptor = getOwnPropertyDescriptorIntrinsic(value, key);
+	return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
 export type NewSessionHandler = (options?: {
@@ -807,7 +816,11 @@ export class ExtensionRunner {
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
-						if (result.cancel) {
+						const action = ownDataProperty(result, "action");
+						if (
+							ownDataProperty(result, "cancel") === true ||
+							(event.type === "session_before_compact" && (action === "handled" || action === "cancel"))
+						) {
 							return result as RunnerEmitResult<TEvent>;
 						}
 					}

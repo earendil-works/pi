@@ -106,6 +106,17 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 }
 ```
 
+### Summary Checkpoints
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `summaryCheckpoints.enabled` | boolean | `true` | Permit compaction and branch-summary checkpoint entries |
+
+Set this to `false` when an extension owns lossless context projection. Automatic compaction events
+still fire so an extension can return `{ action: "handled" }` or `{ action: "cancel" }`, but Pi will
+not generate or accept a compaction summary. `/compact` and `/tree` navigation with summarization fail
+explicitly; tree navigation without summarization remains available.
+
 ### Compaction
 
 | Setting | Type | Default | Description |
