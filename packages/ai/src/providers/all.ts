@@ -35,6 +35,8 @@ import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
 import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
+import { volcengineArkAgentProvider } from "./volcengine-ark-agent.ts";
+import { volcengineArkCodingProvider } from "./volcengine-ark-coding.ts";
 import { xaiProvider } from "./xai.ts";
 import { xiaomiProvider } from "./xiaomi.ts";
 import { xiaomiTokenPlanAmsProvider } from "./xiaomi-token-plan-ams.ts";
@@ -117,6 +119,8 @@ export function builtinProviders(): Provider[] {
 		radiusProvider(),
 		togetherProvider(),
 		vercelAIGatewayProvider(),
+		volcengineArkAgentProvider(),
+		volcengineArkCodingProvider(),
 		xaiProvider(),
 		xiaomiProvider(),
 		xiaomiTokenPlanAmsProvider(),

@@ -31,6 +31,8 @@ import { QWEN_TOKEN_PLAN_MODELS } from "./providers/qwen-token-plan.models.ts";
 import { QWEN_TOKEN_PLAN_CN_MODELS } from "./providers/qwen-token-plan-cn.models.ts";
 import { TOGETHER_MODELS } from "./providers/together.models.ts";
 import { VERCEL_AI_GATEWAY_MODELS } from "./providers/vercel-ai-gateway.models.ts";
+import { VOLCENGINE_ARK_AGENT_MODELS } from "./providers/volcengine-ark-agent.models.ts";
+import { VOLCENGINE_ARK_CODING_MODELS } from "./providers/volcengine-ark-coding.models.ts";
 import { XAI_MODELS } from "./providers/xai.models.ts";
 import { XIAOMI_MODELS } from "./providers/xiaomi.models.ts";
 import { XIAOMI_TOKEN_PLAN_AMS_MODELS } from "./providers/xiaomi-token-plan-ams.models.ts";
@@ -70,6 +72,8 @@ export const MODELS: {
 	readonly "qwen-token-plan-cn": typeof QWEN_TOKEN_PLAN_CN_MODELS;
 	readonly "together": typeof TOGETHER_MODELS;
 	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_MODELS;
+	readonly "volcengine-ark-agent": typeof VOLCENGINE_ARK_AGENT_MODELS;
+	readonly "volcengine-ark-coding": typeof VOLCENGINE_ARK_CODING_MODELS;
 	readonly "xai": typeof XAI_MODELS;
 	readonly "xiaomi": typeof XIAOMI_MODELS;
 	readonly "xiaomi-token-plan-ams": typeof XIAOMI_TOKEN_PLAN_AMS_MODELS;
@@ -108,6 +112,8 @@ export const MODELS: {
 	"qwen-token-plan-cn": QWEN_TOKEN_PLAN_CN_MODELS,
 	"together": TOGETHER_MODELS,
 	"vercel-ai-gateway": VERCEL_AI_GATEWAY_MODELS,
+	"volcengine-ark-agent": VOLCENGINE_ARK_AGENT_MODELS,
+	"volcengine-ark-coding": VOLCENGINE_ARK_CODING_MODELS,
 	"xai": XAI_MODELS,
 	"xiaomi": XIAOMI_MODELS,
 	"xiaomi-token-plan-ams": XIAOMI_TOKEN_PLAN_AMS_MODELS,

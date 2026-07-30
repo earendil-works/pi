@@ -50,6 +50,8 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"xiaomi-token-plan-cn": "mimo-v2.5-pro",
 	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
 	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+	"volcengine-ark-agent": "doubao-seed-evolving",
+	"volcengine-ark-coding": "doubao-seed-code",
 };
 
 export interface ScopedModel {
