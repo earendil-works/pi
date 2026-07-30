@@ -189,6 +189,14 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+export {
+	ENV_PERSISTENT_STORE,
+	type PersistentStore,
+	parsePersistentStore,
+	resolvePersistentStore,
+	resolveSessionStore,
+	type SessionStore,
+} from "./core/persistent-store.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
@@ -233,6 +241,7 @@ export {
 	migrateSessionEntries,
 	type NewSessionOptions,
 	parseSessionEntries,
+	type SessionBackendKind,
 	type SessionContext,
 	type SessionEntry,
 	type SessionEntryBase,
@@ -241,6 +250,7 @@ export {
 	type SessionInfoEntry,
 	SessionManager,
 	type SessionMessageEntry,
+	type SessionReference,
 	type SessionTreeNode,
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,

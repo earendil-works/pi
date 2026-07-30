@@ -511,6 +511,8 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	getSessionStats(): Promise<SessionStats>;
 	getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]>;
+	/** Release resources owned by this storage. Implementations must tolerate repeated calls. */
+	close?(): Promise<void>;
 }
 
 export type { Session } from "./session/session.ts";

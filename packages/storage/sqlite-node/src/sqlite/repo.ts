@@ -124,17 +124,16 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		}
 		const db = await this.openDatabase();
 		try {
+			const select = `SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, s.active_leaf_id,
+				s.updated_at, s.first_message, s.all_messages_text,
+				json_extract(sm.payload, '$.name') AS session_name,
+				json_extract(sm.payload, '$.messageCount') AS message_count
+				FROM sessions s LEFT JOIN session_materialized sm ON sm.session_id = s.id`;
 			const rows = options.cwd
 				? await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
-						)
+						.prepare(`${select} WHERE s.cwd = ? ORDER BY COALESCE(s.updated_at, s.created_at) DESC`)
 						.all<SessionRow>(options.cwd)
-				: await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions ORDER BY created_at DESC",
-						)
-						.all<SessionRow>();
+				: await db.prepare(`${select} ORDER BY COALESCE(s.updated_at, s.created_at) DESC`).all<SessionRow>();
 			return rows.map((row) => rowToMetadata(row, path));
 		} finally {
 			await db.close();
@@ -146,6 +145,7 @@ export class SqliteSessionRepo implements SqliteSessionRepoApi {
 		try {
 			await db.transaction(async () => {
 				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_search_fts WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run(metadata.id);
 				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run(metadata.id);
