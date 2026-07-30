@@ -88,6 +88,17 @@ describe("test harness", () => {
 		expect(assistantMessages[0].errorMessage).toBe("something broke");
 	});
 
+	it("turns a pending terminal response into an error", async () => {
+		harness = await createHarness({ responses: [{ text: "partial", stopReason: "pending" }] });
+
+		await harness.session.prompt("hi");
+
+		const assistantMessages = harness.session.messages.filter((m): m is AssistantMessage => m.role === "assistant");
+		expect(assistantMessages).toHaveLength(1);
+		expect(assistantMessages[0].stopReason).toBe("error");
+		expect(assistantMessages[0].errorMessage).toBe("Faux response ended without a stop reason");
+	});
+
 	it("retry on transient error", async () => {
 		harness = await createHarness({
 			responses: [{ error: "overloaded_error" }, "recovered"],

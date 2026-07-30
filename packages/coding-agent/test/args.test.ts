@@ -329,6 +329,14 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--alt flag", () => {
+		test("parses --alt flag", () => {
+			const result = parseArgs(["--alt"]);
+			expect(result.alt).toBe(true);
+			expect(result.unknownFlags.has("alt")).toBe(false);
+		});
+	});
+
 	describe("tool flags", () => {
 		test("parses --no-tools flag", () => {
 			const result = parseArgs(["--no-tools"]);

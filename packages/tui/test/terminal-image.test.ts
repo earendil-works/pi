@@ -3,20 +3,26 @@
  */
 
 import assert from "node:assert";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { Image } from "../src/components/image.ts";
 import {
+	cropKittyImageLine,
 	deleteAllKittyImages,
 	deleteKittyImage,
 	detectCapabilities,
 	encodeKitty,
+	getKittyImageMetadata,
 	hyperlink,
+	imageFallback,
 	isImageLine,
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
+import { visibleWidth } from "../src/utils.ts";
 
 const ENV_KEYS = [
 	"TERM",
@@ -405,6 +411,30 @@ describe("Kitty image cursor movement", () => {
 		}
 	});
 
+	it("registers metadata and crops a partially visible placement", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const result = renderImage(
+				"AAAA",
+				{ widthPx: 100, heightPx: 100 },
+				{ maxWidthCells: 3, imageId: 42, moveCursor: false },
+			);
+			assert.ok(result);
+			assert.deepStrictEqual(getKittyImageMetadata(result.sequence), {
+				imageId: 42,
+				columns: 3,
+				rows: 3,
+				widthPx: 100,
+				heightPx: 100,
+			});
+			assert.ok(cropKittyImageLine(result.sequence, 2, 1).includes("y=66,h=34,r=1"));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
 	it("honors maxHeightCells by reducing rendered width", () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 10, heightPx: 10 });
@@ -461,6 +491,86 @@ describe("Kitty image cursor movement", () => {
 		} finally {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("truncates long image fallback lines to render width", () => {
+		setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+		try {
+			const longPath = join(
+				homedir(),
+				"images",
+				`${"generated-image-with-a-very-long-absolute-path".repeat(4)}.png`,
+			);
+			const width = 40;
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => `\x1b[33m${value}\x1b[0m` },
+				{ filename: longPath },
+				{ widthPx: 1280, heightPx: 720 },
+			);
+			const lines = image.render(width);
+			assert.strictEqual(lines.length, 1);
+			assert.ok(
+				visibleWidth(lines[0]) <= width,
+				`fallback line wider than ${width}: visible=${visibleWidth(lines[0])} raw=${JSON.stringify(lines[0])}`,
+			);
+			assert.ok(lines[0].includes("..."), "expected ellipsis when truncating long fallback path");
+			assert.ok(lines[0].includes("~"), "expected home-shortened path in fallback");
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+});
+
+describe("imageFallback", () => {
+	it("shortens home-prefixed absolute paths without hyperlinks", () => {
+		setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+		try {
+			const abs = join(homedir(), ".pi", "agent", "shot.png");
+			const result = imageFallback("image/png", { widthPx: 1280, heightPx: 720 }, abs);
+			assert.strictEqual(result, "[Image: ~/.pi/agent/shot.png [image/png] 1280x720]");
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("wraps shortened absolute paths in OSC 8 file links when hyperlinks are enabled", () => {
+		setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+		try {
+			const abs = join(homedir(), ".pi", "agent", "shot.png");
+			const result = imageFallback("image/png", { widthPx: 10, heightPx: 10 }, abs);
+			assert.ok(result.includes("\x1b]8;;file://"), "expected OSC 8 file link");
+			assert.ok(
+				result.includes(abs.replaceAll("\\", "/")) || result.includes(abs),
+				"file URL should target absolute path",
+			);
+			// Visible text must use ~/... not the expanded home path.
+			const visible = result.replace(/\x1b\]8;;.*?\x1b\\/g, "");
+			assert.strictEqual(visible, "[Image: ~/.pi/agent/shot.png [image/png] 10x10]");
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("leaves bare basenames unchanged and does not hyperlink them", () => {
+		setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+		try {
+			const result = imageFallback("image/png", { widthPx: 1, heightPx: 1 }, "clankolas.png");
+			assert.strictEqual(result, "[Image: clankolas.png [image/png] 1x1]");
+			assert.ok(!result.includes("\x1b]8;"), "basename must not be hyperlinked");
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("omits filename segment when not provided", () => {
+		setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+		try {
+			assert.strictEqual(imageFallback("image/png", { widthPx: 8, heightPx: 6 }), "[Image: [image/png] 8x6]");
+		} finally {
+			resetCapabilitiesCache();
 		}
 	});
 });

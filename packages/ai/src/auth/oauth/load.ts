@@ -47,7 +47,7 @@ export const loadOpenRouterOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.openrouter();
 	return ((await importOAuthModule("./openrouter.ts")) as { openRouterOAuth: OAuthAuth }).openRouterOAuth;
 };
- 
+
 export const loadKimiCodingOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.kimiCoding();
 	return ((await importOAuthModule("./kimi-coding.ts")) as { kimiCodingOAuth: OAuthAuth }).kimiCodingOAuth;

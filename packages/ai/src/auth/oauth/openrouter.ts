@@ -3,7 +3,9 @@
  *
  * OpenRouter exchanges an authorization code for a permanent, user-controlled
  * API key rather than an expiring access/refresh token pair. The callback is
- * handled by a one-shot loopback server on an ephemeral port.
+ * handled by a one-shot loopback server on an ephemeral port, raced against a
+ * manual prompt so remote/headless sessions can paste the redirect URL when
+ * the browser cannot reach the loopback server.
  *
  * NOTE: This module uses Node.js http.createServer for the OAuth callback server.
  * It is only intended for CLI use, not browser environments.
@@ -28,8 +30,16 @@ type JsonObject = Record<string, unknown>;
 
 type OpenRouterCallbackServer = {
 	callbackUrl: string;
-	credential: Promise<OAuthCredential>;
-	close(): void;
+	/** Stop listening and release timers without settling `waitForCredential`. */
+	close: () => void;
+	/** Hand the login over to manual code entry unless a callback already claimed the exchange. */
+	cancelWait: () => void;
+	/**
+	 * Resolves with the credential once a browser callback completes the key
+	 * exchange, or with null once `cancelWait` hands the login over to manual
+	 * code entry. Rejects on timeout, cancellation, or a failed exchange.
+	 */
+	waitForCredential: () => Promise<OAuthCredential | null>;
 };
 
 function sendHtml(response: ServerResponse, status: number, html: string): void {
@@ -37,6 +47,23 @@ function sendHtml(response: ServerResponse, status: number, html: string): void 
 	response.setHeader("content-type", "text/html; charset=utf-8");
 	response.setHeader("cache-control", "no-store");
 	response.end(html);
+}
+
+function parseAuthorizationInput(input: string): string | undefined {
+	const value = input.trim();
+	if (!value) return undefined;
+
+	try {
+		return new URL(value).searchParams.get("code") ?? undefined;
+	} catch {
+		// not a URL
+	}
+
+	if (value.includes("code=")) {
+		return new URLSearchParams(value).get("code") ?? undefined;
+	}
+
+	return value;
 }
 
 function errorDetail(body: JsonObject): string | undefined {
@@ -112,9 +139,9 @@ async function startCallbackServer(
 ): Promise<OpenRouterCallbackServer> {
 	if (signal?.aborted) throw new Error("Login cancelled");
 	const callbackHost = getCallbackHost();
-	let resolveCredential: (credential: OAuthCredential) => void = () => {};
+	let resolveCredential: (credential: OAuthCredential | null) => void = () => {};
 	let rejectCredential: (error: Error) => void = () => {};
-	const credential = new Promise<OAuthCredential>((resolve, reject) => {
+	const credential = new Promise<OAuthCredential | null>((resolve, reject) => {
 		resolveCredential = resolve;
 		rejectCredential = reject;
 	});
@@ -125,12 +152,16 @@ async function startCallbackServer(
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	let onAbort: (() => void) | undefined;
 
-	const finish = (result: { credential: OAuthCredential } | { error: Error }): void => {
-		if (settled) return;
-		settled = true;
+	const close = (): void => {
 		if (timeout) clearTimeout(timeout);
 		if (onAbort) signal?.removeEventListener("abort", onAbort);
 		server.close();
+	};
+
+	const finish = (result: { credential: OAuthCredential | null } | { error: Error }): void => {
+		if (settled) return;
+		settled = true;
+		close();
 		if ("credential" in result) resolveCredential(result.credential);
 		else rejectCredential(result.error);
 	};
@@ -186,22 +217,25 @@ async function startCallbackServer(
 	onAbort = () => finish({ error: new Error("Login cancelled") });
 	signal?.addEventListener("abort", onAbort, { once: true });
 	if (signal?.aborted) {
-		signal.removeEventListener("abort", onAbort);
-		server.close();
+		close();
 		throw new Error("Login cancelled");
 	}
 	timeout = setTimeout(() => finish({ error: new Error("OpenRouter OAuth login timed out") }), LOGIN_TIMEOUT_MS);
 
 	const address = server.address();
 	if (!address || typeof address === "string") {
-		finish({ error: new Error("Could not determine the OpenRouter OAuth callback port") });
+		close();
 		throw new Error("Could not determine the OpenRouter OAuth callback port");
 	}
 
 	return {
 		callbackUrl: `http://${callbackHost}:${address.port}${callbackPath}`,
-		credential,
-		close: () => finish({ error: new Error("Login cancelled") }),
+		close,
+		// A claimed callback is already exchanging its code; let that exchange settle the login.
+		cancelWait: () => {
+			if (!claimed) finish({ credential: null });
+		},
+		waitForCredential: () => credential,
 	};
 }
 
@@ -209,26 +243,57 @@ async function loginOpenRouter(interaction: AuthInteraction): Promise<OAuthCrede
 	const { verifier, challenge } = await generatePKCE();
 	const callbackPath = `/oauth/callback/${crypto.randomUUID()}`;
 	const callback = await startCallbackServer(callbackPath, verifier, interaction.signal);
-	const authorizeUrl = new URL(AUTHORIZE_URL);
-	authorizeUrl.search = new URLSearchParams({
-		callback_url: callback.callbackUrl,
-		code_challenge: challenge,
-		code_challenge_method: "S256",
-	}).toString();
-
-	interaction.notify({
-		type: "progress",
-		message: `Listening for OpenRouter OAuth callback on ${callback.callbackUrl}`,
-	});
-	interaction.notify({
-		type: "auth_url",
-		url: authorizeUrl.toString(),
-		instructions: "Complete sign-in in your browser.",
-	});
+	const manualAbort = new AbortController();
+	let manualInput: string | undefined;
+	let manualError: Error | undefined;
 
 	try {
-		return await callback.credential;
+		const authorizeUrl = new URL(AUTHORIZE_URL);
+		authorizeUrl.search = new URLSearchParams({
+			callback_url: callback.callbackUrl,
+			code_challenge: challenge,
+			code_challenge_method: "S256",
+		}).toString();
+
+		interaction.notify({
+			type: "progress",
+			message: `Listening for OpenRouter OAuth callback on ${callback.callbackUrl}`,
+		});
+		interaction.notify({
+			type: "auth_url",
+			url: authorizeUrl.toString(),
+			instructions:
+				"Complete sign-in in your browser. If the browser is on another machine, paste the final redirect URL here.",
+		});
+
+		const manualPromise = interaction
+			.prompt({
+				type: "manual_code",
+				message: "Complete sign-in in your browser, or paste the authorization code / redirect URL here:",
+				placeholder: callback.callbackUrl,
+				signal: manualAbort.signal,
+			})
+			.then((input) => {
+				manualInput = input;
+				callback.cancelWait();
+			})
+			.catch((error) => {
+				manualError = error instanceof Error ? error : new Error(String(error));
+				callback.cancelWait();
+			});
+
+		const credential = await callback.waitForCredential();
+		if (manualError) throw manualError;
+		if (credential) return credential;
+
+		await manualPromise;
+		if (manualError) throw manualError;
+		const code = manualInput ? parseAuthorizationInput(manualInput) : undefined;
+		if (!code) throw new Error("Missing authorization code");
+		interaction.notify({ type: "progress", message: "Exchanging authorization code for an API key..." });
+		return await exchangeAuthorizationCode(code, verifier, interaction.signal);
 	} finally {
+		manualAbort.abort();
 		callback.close();
 	}
 }

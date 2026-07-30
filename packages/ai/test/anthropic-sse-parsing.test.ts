@@ -221,7 +221,58 @@ describe("Anthropic raw SSE parsing", () => {
 		const result = await stream.result();
 
 		expect(result.stopReason).toBe("error");
+		expect(result.rawStopReason).toBe("refusal");
 		expect(result.errorMessage).toBe(explanation);
+	});
+
+	it("preserves sensitive stop reasons with a descriptive error message", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
+		};
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_sensitive",
+						usage: {
+							input_tokens: 12,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					},
+				}),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "sensitive" },
+					usage: {
+						input_tokens: 12,
+						output_tokens: 0,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{
+				event: "message_stop",
+				data: JSON.stringify({ type: "message_stop" }),
+			},
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.rawStopReason).toBe("sensitive");
+		expect(result.errorMessage).toBe("Provider stopped with: sensitive");
 	});
 
 	it("treats message_delta without usage as a no-op for usage accumulation", async () => {

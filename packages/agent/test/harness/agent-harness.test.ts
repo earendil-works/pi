@@ -89,6 +89,25 @@ function createAssistantMessage(text: string): AgentMessage {
 	};
 }
 
+class BlockingSessionStorage extends InMemorySessionStorage {
+	readonly allWritesStarted = deferred();
+	readonly releaseWrites = deferred();
+	private readonly expectedWrites: number;
+	private writesStarted = 0;
+
+	constructor(expectedWrites: number) {
+		super();
+		this.expectedWrites = expectedWrites;
+	}
+
+	override async appendEntry(entry: Parameters<InMemorySessionStorage["appendEntry"]>[0]): Promise<void> {
+		this.writesStarted++;
+		if (this.writesStarted === this.expectedWrites) this.allWritesStarted.resolve();
+		await this.releaseWrites.promise;
+		await super.appendEntry(entry);
+	}
+}
+
 describe("AgentHarness", () => {
 	it("constructs directly and exposes queue modes", () => {
 		const session = new Session(new InMemorySessionStorage());
@@ -110,6 +129,224 @@ describe("AgentHarness", () => {
 		harness.setFollowUpMode("one-at-a-time");
 		expect(harness.getSteeringMode()).toBe("one-at-a-time");
 		expect(harness.getFollowUpMode()).toBe("one-at-a-time");
+	});
+
+	it("shuts down active work permanently and idempotently", async () => {
+		const registration = newFaux();
+		const entered = deferred();
+		const release = deferred();
+		let signal: AbortSignal | undefined;
+		registration.setResponses([
+			async (_context, options) => {
+				signal = options?.signal;
+				entered.resolve();
+				await release.promise;
+				return fauxAssistantMessage("finished after shutdown");
+			},
+		]);
+		const harness = new AgentHarness({
+			models,
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		const prompt = harness.prompt("hello");
+		await entered.promise;
+		await harness.steer("queued steer");
+		await harness.followUp("queued follow-up");
+		await harness.nextTurn("queued next turn");
+
+		let firstShutdownSettled = false;
+		const firstShutdown = harness.shutdown().then(() => {
+			firstShutdownSettled = true;
+		});
+		const secondShutdown = harness.shutdown();
+		await Promise.resolve();
+
+		expect(signal?.aborted).toBe(true);
+		expect(firstShutdownSettled).toBe(false);
+		release.resolve();
+		await expect(prompt).resolves.toMatchObject({ role: "assistant" });
+		await expect(Promise.all([firstShutdown, secondShutdown])).resolves.toEqual([undefined, undefined]);
+		await expect(harness.prompt("again")).rejects.toMatchObject({
+			code: "invalid_state",
+			message: "AgentHarness has been shut down",
+		});
+		await expect(harness.nextTurn("again")).rejects.toMatchObject({ code: "invalid_state" });
+		await expect(harness.appendMessage(createUserMessage("again"))).rejects.toMatchObject({
+			code: "invalid_state",
+		});
+	});
+
+	it("does not start a provider request when shutdown occurs during before_agent_start", async () => {
+		const registration = newFaux();
+		const entered = deferred();
+		const release = deferred();
+		let providerCalls = 0;
+		registration.setResponses([
+			() => {
+				providerCalls++;
+				return fauxAssistantMessage("must not run");
+			},
+		]);
+		const harness = new AgentHarness({
+			models,
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+		});
+		harness.on("before_agent_start", async () => {
+			entered.resolve();
+			await release.promise;
+			return undefined;
+		});
+		const prompt = harness.prompt("hello");
+		await entered.promise;
+
+		let shutdownSettled = false;
+		const shutdown = harness.shutdown().then(() => {
+			shutdownSettled = true;
+		});
+		await Promise.resolve();
+
+		expect(shutdownSettled).toBe(false);
+		release.resolve();
+		await expect(prompt).rejects.toMatchObject({ code: "invalid_state" });
+		await shutdown;
+		expect(providerCalls).toBe(0);
+	});
+
+	it("aborts and awaits active compaction without persisting its result", async () => {
+		const registration = newFaux();
+		const entered = deferred();
+		const release = deferred();
+		let signal: AbortSignal | undefined;
+		registration.setResponses([
+			async (_context, options) => {
+				signal = options?.signal;
+				entered.resolve();
+				await release.promise;
+				return fauxAssistantMessage("summary produced after shutdown");
+			},
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		await session.appendMessage(createUserMessage("one"));
+		await session.appendMessage(createAssistantMessage("two"));
+		const harness = new AgentHarness({ models, session, model: registration.getModel() });
+		const compaction = harness.compact();
+		await entered.promise;
+
+		let shutdownSettled = false;
+		const shutdown = harness.shutdown().then(() => {
+			shutdownSettled = true;
+		});
+		await Promise.resolve();
+
+		expect(signal?.aborted).toBe(true);
+		expect(shutdownSettled).toBe(false);
+		release.resolve();
+		await expect(compaction).rejects.toMatchObject({ code: "compaction" });
+		await shutdown;
+		expect((await session.getEntries()).some((entry) => entry.type === "compaction")).toBe(false);
+	});
+
+	it("aborts and awaits active tree navigation without moving the session leaf", async () => {
+		const registration = newFaux();
+		const entered = deferred();
+		const release = deferred();
+		let signal: AbortSignal | undefined;
+		registration.setResponses([
+			async (_context, options) => {
+				signal = options?.signal;
+				entered.resolve();
+				await release.promise;
+				return fauxAssistantMessage("summary produced after shutdown");
+			},
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		const targetId = await session.appendMessage(createUserMessage("first branch"));
+		await session.appendMessage(createAssistantMessage("first reply"));
+		await session.appendMessage(createUserMessage("abandoned work"));
+		const originalLeafId = await session.appendMessage(createAssistantMessage("abandoned reply"));
+		const harness = new AgentHarness({ models, session, model: registration.getModel() });
+		const navigation = harness.navigateTree(targetId, { summarize: true });
+		await entered.promise;
+
+		let shutdownSettled = false;
+		const shutdown = harness.shutdown().then(() => {
+			shutdownSettled = true;
+		});
+		await Promise.resolve();
+
+		expect(signal?.aborted).toBe(true);
+		expect(shutdownSettled).toBe(false);
+		release.resolve();
+		await expect(navigation).resolves.toEqual({ cancelled: true });
+		await shutdown;
+		expect(await session.getLeafId()).toBe(originalLeafId);
+	});
+
+	it("does not treat concurrent mutations as active operations", async () => {
+		const storage = new BlockingSessionStorage(1);
+		const harness = new AgentHarness({
+			models,
+			session: new Session(storage),
+			model: getModel("anthropic", "claude-sonnet-4-5"),
+		});
+		const mutation = harness.appendMessage(createUserMessage("concurrent"));
+		await storage.allWritesStarted.promise;
+
+		const firstSettlement = await Promise.race([
+			harness.waitForIdle().then(() => "idle" as const),
+			new Promise<"mutation-pending">((resolve) => setImmediate(() => resolve("mutation-pending"))),
+		]);
+
+		expect(firstSettlement).toBe("idle");
+		storage.releaseWrites.resolve();
+		await mutation;
+	});
+
+	it("awaits concurrent idle session mutations before shutdown resolves", async () => {
+		const storage = new BlockingSessionStorage(3);
+		const harness = new AgentHarness({
+			models,
+			session: new Session(storage),
+			model: getModel("anthropic", "claude-sonnet-4-5"),
+		});
+		const nextModel = getModel("anthropic", "claude-haiku-4-5");
+		const mutations = [
+			harness.appendMessage(createUserMessage("concurrent")),
+			harness.setModel(nextModel),
+			harness.setThinkingLevel("high"),
+		];
+		await storage.allWritesStarted.promise;
+
+		const shutdown = harness.shutdown();
+		const firstSettlement = await Promise.race([
+			shutdown.then(() => "shutdown" as const),
+			new Promise<"writes-pending">((resolve) => setImmediate(() => resolve("writes-pending"))),
+		]);
+
+		expect(firstSettlement).toBe("writes-pending");
+		storage.releaseWrites.resolve();
+		await Promise.all([...mutations, shutdown]);
+		expect(await storage.getEntries()).toHaveLength(3);
+	});
+
+	it("shuts down an idle harness without modifying its durable session", async () => {
+		const session = new Session(new InMemorySessionStorage());
+		await session.appendMessage(createUserMessage("existing"));
+		const harness = new AgentHarness({
+			models,
+			session,
+			model: getModel("anthropic", "claude-sonnet-4-5"),
+		});
+
+		await harness.shutdown();
+
+		const messages = (await session.getEntries()).flatMap((entry) =>
+			entry.type === "message" ? [entry.message] : [],
+		);
+		expect(messages).toEqual([expect.objectContaining({ role: "user" })]);
+		await expect(harness.compact()).rejects.toMatchObject({ code: "invalid_state" });
 	});
 
 	it("drains one queued steering message at a time and emits queue updates", async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import type { ApiKeyAuth, CredentialStore, OAuthAuth, ProviderAuth } from "../src/auth/types.ts";
 import { calculateCost, createModels, createProvider, hasApi, type Provider } from "../src/models.ts";
@@ -382,7 +382,7 @@ describe("Models runtime", () => {
 			type: "oauth",
 			access: "oauth-token",
 			refresh: "r",
-			expires: Date.now() + 100000,
+			expires: Date.now() + 10 * 60_000,
 		}));
 		const resolution = await models.getAuth(model.provider);
 		expect(resolution?.auth.apiKey).toBe("oauth-token");
@@ -460,7 +460,7 @@ describe("Models runtime", () => {
 	it("refreshes expired oauth credentials and persists the rotated credential", async () => {
 		const credentials = new InMemoryCredentialStore();
 		const oauth = testOAuth({
-			refresh: async (credential) => ({ ...credential, access: "new-token", expires: Date.now() + 60_000 }),
+			refresh: async (credential) => ({ ...credential, access: "new-token", expires: Date.now() + 60 * 60_000 }),
 		});
 		const models = createModels({ credentials });
 		models.setProvider(testProvider({ id: "p1", auth: { oauth } }));
@@ -474,6 +474,46 @@ describe("Models runtime", () => {
 		const resolution = await models.getAuth("p1");
 		expect(resolution?.auth.apiKey).toBe("new-token");
 		expect(((await credentials.read("p1")) as { access: string }).access).toBe("new-token");
+	});
+
+	it("refreshes oauth credentials with less than five minutes remaining", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "new-token",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh }) } }));
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "old-token",
+			refresh: "r",
+			expires: Date.now() + 60_000,
+		}));
+
+		expect((await models.getAuth("p1"))?.auth.apiKey).toBe("new-token");
+		expect(refresh).toHaveBeenCalledOnce();
+	});
+
+	it("honors a caller's longer OAuth minimum validity", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "new-token",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh }) } }));
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "old-token",
+			refresh: "r",
+			expires: Date.now() + 10 * 60_000,
+		}));
+
+		expect((await models.getAuth("p1", { minOAuthValidityMs: 30 * 60_000 }))?.auth.apiKey).toBe("new-token");
+		expect(refresh).toHaveBeenCalledOnce();
 	});
 
 	it("rejects with code oauth when refresh fails, preserving the stored credential", async () => {
@@ -501,7 +541,7 @@ describe("Models runtime", () => {
 			refresh: async () => {
 				refreshes++;
 				await new Promise((resolve) => setTimeout(resolve, 10));
-				return { type: "oauth", access: `new-${refreshes}`, refresh: "r2", expires: Date.now() + 60_000 };
+				return { type: "oauth", access: `new-${refreshes}`, refresh: "r2", expires: Date.now() + 60 * 60_000 };
 			},
 		});
 		const models = createModels({ credentials });
@@ -530,7 +570,7 @@ describe("Models runtime", () => {
 			type: "oauth",
 			access: "valid",
 			refresh: "r",
-			expires: Date.now() + 60_000,
+			expires: Date.now() + 10 * 60_000,
 		}));
 		const models = createModels({ credentials });
 		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth() } }));
@@ -565,6 +605,28 @@ describe("Models runtime", () => {
 		const oauthModels = createModels({ credentials: modifyFailing });
 		oauthModels.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth() } }));
 		await expect(oauthModels.getAuth("p1")).rejects.toMatchObject({ code: "auth" });
+	});
+
+	it("keeps the underlying reason in wrapped oauth refresh errors", async () => {
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("p1", async () => ({ type: "oauth", access: "old", refresh: "r", expires: 0 }));
+		const models = createModels({ credentials });
+		models.setProvider(
+			testProvider({
+				id: "p1",
+				auth: {
+					oauth: testOAuth({
+						refresh: async () => {
+							throw new Error("token refresh failed (400): invalid_grant");
+						},
+					}),
+				},
+			}),
+		);
+
+		await expect(models.getAuth("p1")).rejects.toThrow(
+			"OAuth refresh failed for p1: token refresh failed (400): invalid_grant",
+		);
 	});
 
 	it("wraps api-key auth failures in ModelsError", async () => {

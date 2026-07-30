@@ -1,8 +1,9 @@
 /**
  * Radius gateway OAuth flow.
  *
- * Radius is a pi-messages gateway. OAuth endpoints are discovered from the
- * gateway (`/v1/oauth`); model catalog loading is owned by the Radius provider.
+ * Radius is a pi-messages gateway. OAuth client APIs live on the configured
+ * gateway; only the interactive browser authorization endpoint is discovered.
+ * Model catalog loading is owned by the Radius provider.
  *
  * NOTE: This module uses node:http for the OAuth callback server.
  * It is only intended for CLI use, not browser environments.
@@ -29,29 +30,23 @@ const REDIRECT_URI = `http://${CALLBACK_HOST}:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const LOGIN_METHOD_BROWSER = "browser";
 const LOGIN_METHOD_DEVICE_CODE = "device-code";
+const OAUTH_CLIENT_ID = "pi-gateway";
+const OAUTH_SCOPE = "gateway offline_access";
+const OAUTH_DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
-type RadiusOAuthConfig = {
-	issuer: string;
+type RadiusOAuthDiscovery = {
 	authorizationEndpoint: string;
-	tokenEndpoint: string;
-	deviceAuthorizationEndpoint: string;
-	deviceAuthorizationEventsEndpoint: string;
-	verificationEndpoint: string;
-	clientId: string;
-	scope: string;
-	deviceCodeGrantType: string;
 };
 
 type DeviceAuthorizationResponse = {
 	device_code: string;
 	user_code: string;
-	verification_uri?: string;
-	verification_uri_complete?: string;
+	verification_uri: string;
 	expires_in: number;
 	interval?: number;
 };
 
-async function loadRadiusOAuthConfig(gateway: string): Promise<RadiusOAuthConfig> {
+async function loadRadiusOAuthDiscovery(gateway: string): Promise<RadiusOAuthDiscovery> {
 	const response = await fetch(new URL("/v1/oauth", gateway), {
 		headers: { accept: "application/json" },
 	});
@@ -62,7 +57,11 @@ async function loadRadiusOAuthConfig(gateway: string): Promise<RadiusOAuthConfig
 		);
 	}
 
-	return (await response.json()) as RadiusOAuthConfig;
+	const discovery = (await response.json()) as Partial<RadiusOAuthDiscovery>;
+	if (typeof discovery.authorizationEndpoint !== "string") {
+		throw new Error(`Invalid Radius OAuth config from ${gateway}`);
+	}
+	return { authorizationEndpoint: discovery.authorizationEndpoint };
 }
 
 class OAuthResponseError extends Error {
@@ -100,13 +99,13 @@ async function readOAuthResponseError(response: Response, message: string): Prom
 }
 
 async function requestOAuthToken(
-	oauth: RadiusOAuthConfig,
+	gateway: string,
 	body: URLSearchParams,
 	signal?: AbortSignal,
 ): Promise<OAuthCredential> {
 	let response: Response;
 	try {
-		response = await fetch(oauth.tokenEndpoint, {
+		response = await fetch(new URL("/v1/oauth/token", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
 			body,
@@ -220,15 +219,19 @@ function startOAuthCallbackServer(
 	});
 }
 
-async function loginWithBrowser(oauth: RadiusOAuthConfig, interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginWithBrowser(
+	gateway: string,
+	authorizationEndpoint: string,
+	interaction: AuthInteraction,
+): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = crypto.randomUUID();
-	const authorizeUrl = new URL(oauth.authorizationEndpoint);
+	const authorizeUrl = new URL(authorizationEndpoint);
 	authorizeUrl.search = new URLSearchParams({
 		response_type: "code",
-		client_id: oauth.clientId,
+		client_id: OAUTH_CLIENT_ID,
 		redirect_uri: REDIRECT_URI,
-		scope: oauth.scope,
+		scope: OAUTH_SCOPE,
 		code_challenge: challenge,
 		code_challenge_method: "S256",
 		handoff: "url",
@@ -252,10 +255,10 @@ async function loginWithBrowser(oauth: RadiusOAuthConfig, interaction: AuthInter
 			throw new Error("OAuth callback did not complete.");
 		}
 		return await requestOAuthToken(
-			oauth,
+			gateway,
 			new URLSearchParams({
 				grant_type: "authorization_code",
-				client_id: oauth.clientId,
+				client_id: OAUTH_CLIENT_ID,
 				redirect_uri: REDIRECT_URI,
 				code,
 				code_verifier: verifier,
@@ -268,15 +271,15 @@ async function loginWithBrowser(oauth: RadiusOAuthConfig, interaction: AuthInter
 }
 
 async function requestDeviceAuthorization(
-	oauth: RadiusOAuthConfig,
+	gateway: string,
 	signal: AbortSignal | undefined,
 ): Promise<DeviceAuthorizationResponse> {
 	let response: Response;
 	try {
-		response = await fetch(oauth.deviceAuthorizationEndpoint, {
+		response = await fetch(new URL("/v1/oauth/device", gateway), {
 			method: "POST",
 			headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-			body: new URLSearchParams({ client_id: oauth.clientId, scope: oauth.scope }),
+			body: new URLSearchParams({ client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE }),
 			signal,
 		});
 	} catch (error) {
@@ -291,7 +294,7 @@ async function requestDeviceAuthorization(
 	}
 
 	const data = (await response.json()) as Partial<DeviceAuthorizationResponse>;
-	if (!data.device_code || !data.user_code || !data.expires_in) {
+	if (!data.device_code || !data.user_code || !data.verification_uri || !data.expires_in) {
 		throw new Error("Radius OAuth device authorization response is missing required fields");
 	}
 
@@ -299,18 +302,17 @@ async function requestDeviceAuthorization(
 		device_code: data.device_code,
 		user_code: data.user_code,
 		verification_uri: data.verification_uri,
-		verification_uri_complete: data.verification_uri_complete,
 		expires_in: data.expires_in,
 		interval: data.interval,
 	};
 }
 
-async function loginWithDeviceCode(oauth: RadiusOAuthConfig, interaction: AuthInteraction): Promise<OAuthCredential> {
-	const device = await requestDeviceAuthorization(oauth, interaction.signal);
+async function loginWithDeviceCode(gateway: string, interaction: AuthInteraction): Promise<OAuthCredential> {
+	const device = await requestDeviceAuthorization(gateway, interaction.signal);
 	interaction.notify({
 		type: "device_code",
 		userCode: device.user_code,
-		verificationUri: device.verification_uri || oauth.verificationEndpoint,
+		verificationUri: device.verification_uri,
 		intervalSeconds: device.interval,
 		expiresInSeconds: device.expires_in,
 	});
@@ -322,10 +324,10 @@ async function loginWithDeviceCode(oauth: RadiusOAuthConfig, interaction: AuthIn
 		poll: async () => {
 			try {
 				const credentials = await requestOAuthToken(
-					oauth,
+					gateway,
 					new URLSearchParams({
-						grant_type: oauth.deviceCodeGrantType,
-						client_id: oauth.clientId,
+						grant_type: OAUTH_DEVICE_CODE_GRANT_TYPE,
+						client_id: OAUTH_CLIENT_ID,
 						device_code: device.device_code,
 					}),
 					interaction.signal,
@@ -364,7 +366,6 @@ export function createRadiusOAuth(options: RadiusOAuthOptions): OAuthAuth {
 		name: options.name,
 
 		async login(interaction): Promise<OAuthCredential> {
-			const oauth = await loadRadiusOAuthConfig(gateway);
 			const loginMethod = await interaction.prompt({
 				type: "select",
 				message: `Sign in to ${options.name}:`,
@@ -377,25 +378,22 @@ export function createRadiusOAuth(options: RadiusOAuthOptions): OAuthAuth {
 				],
 			});
 
-			let credential: OAuthCredential;
 			if (loginMethod === LOGIN_METHOD_DEVICE_CODE) {
-				credential = await loginWithDeviceCode(oauth, interaction);
-			} else if (loginMethod === LOGIN_METHOD_BROWSER) {
-				credential = await loginWithBrowser(oauth, interaction);
-			} else {
-				throw new Error(`Unknown ${options.name} sign-in method: ${loginMethod}`);
+				return loginWithDeviceCode(gateway, interaction);
 			}
-
-			return credential;
+			if (loginMethod === LOGIN_METHOD_BROWSER) {
+				const discovery = await loadRadiusOAuthDiscovery(gateway);
+				return loginWithBrowser(gateway, discovery.authorizationEndpoint, interaction);
+			}
+			throw new Error(`Unknown ${options.name} sign-in method: ${loginMethod}`);
 		},
 
 		async refresh(credential, signal): Promise<OAuthCredential> {
-			const oauth = await loadRadiusOAuthConfig(gateway);
 			const refreshed = await requestOAuthToken(
-				oauth,
+				gateway,
 				new URLSearchParams({
 					grant_type: "refresh_token",
-					client_id: oauth.clientId,
+					client_id: OAUTH_CLIENT_ID,
 					refresh_token: credential.refresh,
 				}),
 				signal,

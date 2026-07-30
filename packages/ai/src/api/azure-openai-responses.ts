@@ -14,6 +14,8 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -88,7 +90,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
@@ -99,7 +101,11 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const client = createClient(model, apiKey, options);
-			let params = buildParams(model, context, options, deploymentName);
+			const grammarToolInputProperties = createGrammarToolInputProperties(
+				context.tools,
+				model.compat?.supportsOpenAIGrammarTools ?? false,
+			);
+			let params = buildParams(model, context, options, deploymentName, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -107,18 +113,28 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-				maxRetries: options?.maxRetries ?? 0,
+				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
+			const { data: openaiStream, response } = await retryProviderRequest(
+				() => client.responses.create(params, requestOptions).withResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			await processResponsesStream(openaiStream, output, stream, model);
+			await processResponsesStream(openaiStream, output, stream, model, { grammarToolInputProperties });
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
 
+			if (output.stopReason === "pending") {
+				throw new Error("Azure OpenAI Responses stream ended without a stop reason");
+			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error("An unknown error occurred");
 			}
@@ -128,8 +144,9 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
+				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatAzureOpenAIError(error);
@@ -244,6 +261,7 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 		apiKey,
 		apiVersion,
 		dangerouslyAllowBrowser: true,
+		fetch: options?.fetch,
 		defaultHeaders: headers,
 		baseURL: baseUrl,
 	});
@@ -254,8 +272,14 @@ function buildParams(
 	context: Context,
 	options: AzureOpenAIResponsesOptions | undefined,
 	deploymentName: string,
+	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
+		context.tools,
+		model.compat?.supportsOpenAIGrammarTools ?? false,
+	),
 ) {
-	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS);
+	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
+		grammarToolInputProperties,
+	});
 
 	const params: ResponseCreateParamsStreaming = {
 		model: deploymentName,
@@ -274,7 +298,10 @@ function buildParams(
 	}
 
 	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+		params.tools = convertResponsesTools(context.tools, {
+			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		});
 	}
 
 	if (model.reasoning) {

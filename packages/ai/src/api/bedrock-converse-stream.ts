@@ -54,6 +54,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -124,14 +125,20 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
 		const blocks = output.content as Block[];
 
+		// A profile explicitly configured through pi's auth flow (the `profile`
+		// option or scoped `AWS_PROFILE` on the stored credential's env) must win
+		// over ambient AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. The SDK default
+		// chain already prefers a configured profile over env keys, but only when
+		// `credentials` is not set on the client config. See #6957.
+		const optionsProfile = options.profile || options.env?.AWS_PROFILE;
 		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
+			profile: optionsProfile || getProviderEnvValue("AWS_PROFILE", options.env),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
@@ -183,7 +190,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			const credentials = getConfiguredBedrockCredentials(options.env);
-			if (!skipAuth && credentials) {
+			if (!skipAuth && credentials && !optionsProfile) {
 				config.credentials = credentials;
 			}
 
@@ -228,7 +235,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -260,6 +267,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.contentBlockStop) {
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
+					output.rawStopReason = item.messageStop.stopReason;
 					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
 					output.stopReason = stopReason;
 					if (errorMessage) {
@@ -284,6 +292,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error("Request was aborted");
 			}
 
+			if (output.stopReason === "pending") {
+				throw new Error("Bedrock stream ended without a stop reason");
+			}
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
@@ -581,6 +592,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-4-6") ||
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
 			s.includes("sonnet-4-6") ||
 			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
@@ -590,7 +602,12 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some(
-		(s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-5") || s.includes("fable-5"),
+		(s) =>
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
+			s.includes("sonnet-5") ||
+			s.includes("fable-5"),
 	);
 }
 
@@ -669,8 +686,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
 		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
-	// Claude 5 models (fable-5, sonnet-5)
-	if (candidates.some((s) => s.includes("fable-5") || s.includes("sonnet-5"))) return true;
+	// Claude 5 models (fable-5, opus-5, sonnet-5)
+	if (candidates.some((s) => s.includes("fable-5") || s.includes("opus-5") || s.includes("sonnet-5"))) return true;
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (candidates.some((s) => s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
@@ -908,16 +925,22 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
-	if (!tools?.length || toolChoice === "none") return undefined;
+	if (!tools?.length) return undefined;
+	if (toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters as unknown as DocumentType },
-		},
-	}));
+	const bedrockTools: BedrockTool[] = tools.map((tool) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		return {
+			toolSpec: {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: { json: tool.parameters as unknown as DocumentType },
+				...(strict === true ? { strict: true } : {}),
+			},
+		};
+	});
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {
@@ -947,7 +970,9 @@ function mapStopReason(reason: string | undefined): { stopReason: StopReason; er
 		case BedrockStopReason.TOOL_USE:
 			return { stopReason: "toolUse" };
 		default:
-			return reason ? { stopReason: "error", errorMessage: reason } : { stopReason: "error" };
+			return reason
+				? { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` }
+				: { stopReason: "error" };
 	}
 }
 

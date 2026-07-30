@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-export const MODEL_DATA_SCHEMA_VERSION = 2;
+export const MODEL_DATA_SCHEMA_VERSION = 3;
 export const MODEL_DATA_MANIFEST_FILE = ".manifest.json";
 
 export type ModelDataStructure = Record<string, Record<string, string>>;
 
 export interface ModelDataManifest {
 	schemaVersion: number;
+	generatedAt: string;
 	structureHash: string;
 	files: Record<string, string>;
 }
@@ -119,9 +120,11 @@ export function modelDataStructureHash(structure: ModelDataStructure): string {
 export function createModelDataManifest(
 	structure: ModelDataStructure,
 	fileContents: Readonly<Record<string, string>>,
+	generatedAt: string,
 ): ModelDataManifest {
 	return {
 		schemaVersion: MODEL_DATA_SCHEMA_VERSION,
+		generatedAt,
 		structureHash: modelDataStructureHash(structure),
 		files: sortedRecord(Object.entries(fileContents).map(([file, content]) => [file, sha256(content)] as const)),
 	};
@@ -202,6 +205,9 @@ export function validateModelDataDirectory(structure: ModelDataStructure, dataDi
 		errors.push(
 			`model data schema is ${JSON.stringify(manifest?.schemaVersion)}, expected ${MODEL_DATA_SCHEMA_VERSION}`,
 		);
+	}
+	if (typeof manifest?.generatedAt !== "string" || Number.isNaN(Date.parse(manifest.generatedAt))) {
+		errors.push("model data manifest has an invalid generation timestamp");
 	}
 	const expectedStructureHash = modelDataStructureHash(structure);
 	if (manifest?.structureHash !== expectedStructureHash) {

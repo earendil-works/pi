@@ -49,6 +49,9 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Hydrate release model data
+        run: npm run hydrate:model-data
+
       - name: Create source archive
         run: |
           set -euo pipefail
@@ -69,6 +72,7 @@ jobs:
           trap 'rm -rf "${build_root}"' EXIT
           tar -xzf "release-assets/pi-${VERSION}-source.tar.gz" -C "${build_root}"
           "${build_root}/pi-${VERSION}/scripts/build-binaries.sh" \
+            --offline-model-data \
             --out "${GITHUB_WORKSPACE}/packages/coding-agent/binaries"
 
       - name: Prepare GitHub release payload

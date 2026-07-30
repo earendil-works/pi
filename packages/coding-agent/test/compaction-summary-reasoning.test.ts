@@ -90,6 +90,18 @@ describe("generateSummary reasoning options", () => {
 		);
 	});
 
+	it("uses fresh routing sessions without prompt caching", async () => {
+		await generateSummary(messages, createModel(false), 2000, "test-key");
+		await generateSummary(messages, createModel(false), 2000, "test-key");
+
+		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
+		expect(requestOptions).toHaveLength(2);
+		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
+
+		const sessionIds = requestOptions.map((options) => options?.sessionId);
+		expect(sessionIds[0]).not.toBe(sessionIds[1]);
+	});
+
 	it("does not set reasoning when thinking is off", async () => {
 		await generateSummary(
 			messages,

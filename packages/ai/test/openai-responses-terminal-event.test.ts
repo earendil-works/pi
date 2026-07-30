@@ -80,7 +80,7 @@ function createOutput(model: Model<"openai-responses">): AssistantMessage {
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-		stopReason: "stop",
+		stopReason: "pending",
 		timestamp: Date.now(),
 	};
 }
@@ -153,6 +153,51 @@ async function* createFailedEvents(): AsyncIterable<ResponseStreamEvent> {
 	} as ResponseStreamEvent;
 }
 
+async function* createPhasedMessageEvents(
+	phases: readonly ["commentary" | "final_answer", "commentary" | "final_answer"],
+	terminalStatus: "completed" | "incomplete" = "completed",
+): AsyncIterable<ResponseStreamEvent> {
+	yield {
+		type: "response.output_item.added",
+		sequence_number: 0,
+		output_index: 0,
+		item: {
+			type: "message",
+			id: "msg_phase",
+			role: "assistant",
+			status: "in_progress",
+			content: [],
+			phase: phases[0],
+		},
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.output_item.done",
+		sequence_number: 1,
+		output_index: 0,
+		item: {
+			type: "message",
+			id: "msg_phase",
+			role: "assistant",
+			status: "completed",
+			content: [{ type: "output_text", text: "answer", annotations: [] }],
+			phase: phases[1],
+		},
+	} as ResponseStreamEvent;
+	if (terminalStatus === "incomplete") {
+		yield {
+			type: "response.incomplete",
+			sequence_number: 2,
+			response: { id: "resp_phase", status: "incomplete" },
+		} as ResponseStreamEvent;
+		return;
+	}
+	yield {
+		type: "response.completed",
+		sequence_number: 2,
+		response: { id: "resp_phase", status: "completed" },
+	} as ResponseStreamEvent;
+}
+
 describe("OpenAI Responses terminal event handling", () => {
 	it("rejects streams that end before a terminal response event", async () => {
 		const model = createModel();
@@ -173,16 +218,62 @@ describe("OpenAI Responses terminal event handling", () => {
 		};
 		const stream = streamOpenAIResponses(model, context, { apiKey: "test" });
 		const events: AssistantMessageEvent[] = [];
+		let initialStopReason: AssistantMessage["stopReason"] | undefined;
 
 		for await (const event of stream) {
+			if (event.type === "start") initialStopReason = event.partial.stopReason;
 			events.push(event);
 		}
 
 		const result = await stream.result();
 		const lastEvent = events.at(-1);
+		expect(initialStopReason).toBe("pending");
 		expect(lastEvent?.type).toBe("error");
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBe("OpenAI Responses stream ended before a terminal response event");
+	});
+
+	it.each([
+		{ phases: ["commentary", "commentary"], expected: ["pending", "pending"] },
+		{ phases: ["final_answer", "final_answer"], expected: ["stop", "stop"] },
+		{ phases: ["commentary", "final_answer"], expected: ["pending", "stop"] },
+	] as const)("tracks message phases $phases", async ({ phases, expected }) => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+		const observedStopReasons: AssistantMessage["stopReason"][] = [];
+		const push = stream.push.bind(stream);
+		stream.push = (event) => {
+			if ("partial" in event) observedStopReasons.push(event.partial.stopReason);
+			push(event);
+		};
+
+		await processResponsesStream(createPhasedMessageEvents(phases), output, stream, model);
+
+		expect(observedStopReasons).toEqual(expected);
+		expect(output.stopReason).toBe("stop");
+	});
+
+	it("replaces a provisional final-answer stop with an incomplete terminal reason", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+		const observedStopReasons: AssistantMessage["stopReason"][] = [];
+		const push = stream.push.bind(stream);
+		stream.push = (event) => {
+			if ("partial" in event) observedStopReasons.push(event.partial.stopReason);
+			push(event);
+		};
+
+		await processResponsesStream(
+			createPhasedMessageEvents(["final_answer", "final_answer"], "incomplete"),
+			output,
+			stream,
+			model,
+		);
+
+		expect(observedStopReasons).toEqual(["stop", "stop"]);
+		expect(output.stopReason).toBe("length");
 	});
 
 	it("finalizes completed terminal events as stop", async () => {
@@ -194,6 +285,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_completed");
 		expect(output.stopReason).toBe("stop");
+		expect(output.rawStopReason).toBe("completed");
 		expect(output.usage).toMatchObject({
 			input: 15,
 			output: 7,
@@ -212,6 +304,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_incomplete");
 		expect(output.stopReason).toBe("length");
+		expect(output.rawStopReason).toBe("incomplete");
 		expect(output.usage).toMatchObject({
 			input: 25,
 			output: 12,
@@ -229,5 +322,6 @@ describe("OpenAI Responses terminal event handling", () => {
 		await expect(processResponsesStream(createFailedEvents(), output, stream, model)).rejects.toThrow(
 			"server_error: boom",
 		);
+		expect(output.rawStopReason).toBe("failed");
 	});
 });

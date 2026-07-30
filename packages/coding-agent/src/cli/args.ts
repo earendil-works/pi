@@ -45,6 +45,7 @@ export interface Args {
 	noContextFiles?: boolean;
 	listModels?: string | true;
 	offline?: boolean;
+	alt?: boolean;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
 	messages: string[];
@@ -175,6 +176,8 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.listModels = true;
 			}
+		} else if (arg === "--alt") {
+			result.alt = true;
 		} else if (arg === "--verbose") {
 			result.verbose = true;
 		} else if (arg === "--approve" || arg === "-a") {
@@ -232,7 +235,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} update [source|self|pi]   Update pi, extensions, or model catalogs
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config
+  ${APP_NAME} auth <command>            Print credentials for external clients
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -271,6 +275,7 @@ ${chalk.bold("Options:")}
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
+  --alt                          Use the alternate-screen TUI in interactive mode
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
@@ -280,6 +285,12 @@ ${chalk.bold("Options:")}
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
+  # Print a provider API key for an external client
+  ${APP_NAME} auth print-api-key --provider openai --model gpt-5.5
+
+  # Print an OAuth bearer token for an external client (refreshes if expired)
+  ${APP_NAME} auth print-bearer-token --provider openai-codex --model gpt-5.5
+
   # Interactive mode
   ${APP_NAME}
 
@@ -333,6 +344,7 @@ ${chalk.bold("Examples:")}
   ${APP_NAME} --export session.jsonl output.html
 
 ${chalk.bold("Environment Variables:")}
+  ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
   ANT_LING_API_KEY                 - Ant Ling API key

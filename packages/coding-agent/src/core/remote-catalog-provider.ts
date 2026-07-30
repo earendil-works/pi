@@ -1,4 +1,3 @@
-import { stat } from "node:fs/promises";
 import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
 import { VERSION } from "../config.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -32,13 +31,10 @@ function parseCatalog(providerId: string, value: unknown): Model<Api>[] {
 
 function remoteModels(
 	entry: ModelsStoreEntry | undefined,
-	localLastModified: number | undefined,
+	localGeneratedAt: number | undefined,
 ): readonly Model<Api>[] {
 	if (!entry) return [];
-	if (
-		localLastModified !== undefined &&
-		(entry.lastModified === undefined || entry.lastModified <= localLastModified)
-	) {
+	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
 		return [];
 	}
 	return entry.models;
@@ -48,7 +44,7 @@ function remoteModels(
 export function withRemoteCatalog(
 	provider: Provider,
 	catalogBaseUrl: string = DEFAULT_CATALOG_BASE_URL,
-	localCatalogUrl?: URL,
+	localGeneratedAt?: number,
 ): Provider {
 	let dynamicModels: readonly Model<Api>[] = [];
 	let inflightRefresh: Promise<void> | undefined;
@@ -59,16 +55,8 @@ export function withRemoteCatalog(
 		refreshModels: (context) => {
 			inflightRefresh ??= (async () => {
 				try {
-					const localLastModified = localCatalogUrl
-						? await stat(localCatalogUrl).then(
-								(value) => value.mtimeMs,
-								() => undefined,
-							)
-						: undefined;
 					const stored = await context.store.read();
-					dynamicModels = remoteModels(stored, localLastModified).filter(
-						(model) => model.provider === provider.id,
-					);
+					dynamicModels = remoteModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
 					if (!context.allowNetwork || context.signal?.aborted) return;
 					if (
 						!context.force &&
@@ -79,21 +67,38 @@ export function withRemoteCatalog(
 						return;
 					}
 
+					// Only revalidate when a cached body backs the validator, so a 304 can never
+					// leave the overlay empty.
+					const validator = stored?.models.length ? stored.etag : undefined;
 					const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
 					const response = await fetch(url, {
 						headers: {
 							accept: "application/json",
 							"User-Agent": getPiUserAgent(VERSION),
+							...(validator ? { "if-none-match": validator } : {}),
 						},
 						signal: context.signal,
 					});
 					if (context.signal?.aborted) return;
 					const checkedAt = Date.now();
+					// Unchanged: dynamicModels already holds the stored overlay, so only the
+					// freshness window moves.
+					if (response.status === 304 && stored) {
+						await context.store.write({ ...stored, checkedAt });
+						return;
+					}
 					if (response.status === 404 || response.status === 501) {
-						await context.store.write({ ...(stored ?? { models: [] }), checkedAt, lastModified: 0 });
+						await context.store.write({
+							...(stored ?? { models: [] }),
+							checkedAt,
+							lastModified: 0,
+							etag: undefined,
+						});
 						return;
 					}
 					if (!response.ok) {
+						// Transient failure: the cached body and its validator stay valid, so keep the
+						// etag and let the next refresh revalidate instead of downloading the catalog.
 						await context.store.write({ ...(stored ?? { models: [] }), checkedAt });
 						throw new Error(`Model catalog request failed for ${provider.id}: ${response.status}`);
 					}
@@ -104,8 +109,9 @@ export function withRemoteCatalog(
 						models: refreshed,
 						checkedAt,
 						lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
+						etag: response.headers.get("etag") ?? undefined,
 					};
-					dynamicModels = remoteModels(entry, localLastModified);
+					dynamicModels = remoteModels(entry, localGeneratedAt);
 					await context.store.write(entry);
 				} finally {
 					inflightRefresh = undefined;

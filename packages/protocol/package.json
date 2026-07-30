@@ -1,0 +1,32 @@
+{
+	"name": "@earendil-works/pi-protocol",
+	"version": "0.83.0",
+	"description": "Transport-neutral CBOR protocol for remote pi sessions",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "README.md"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": ["pi", "protocol", "cbor", "binary", "framing"],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/protocol"
+	},
+	"engines": { "node": ">=22.19.0" },
+	"dependencies": { "typebox": "1.3.7" },
+	"devDependencies": { "shx": "0.4.0", "vitest": "4.1.9" }
+}

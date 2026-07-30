@@ -181,7 +181,7 @@ function createEventConverter(model: Model<"pi-messages">) {
 		provider: model.provider,
 		model: model.id,
 		usage: createEmptyUsage(),
-		stopReason: "stop",
+		stopReason: "pending",
 		timestamp: Date.now(),
 	};
 	const toolJson = new Map<number, string>();
@@ -379,7 +379,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 				payload = nextPayload;
 			}
 
-			const response = await fetch(url, {
+			const response = await (options?.fetch ?? globalThis.fetch)(url, {
 				method: "POST",
 				headers: {
 					authorization: `Bearer ${apiKey}`,

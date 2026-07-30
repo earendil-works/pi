@@ -11,6 +11,7 @@ import {
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
+const GENERATED_AT = "2026-07-23T10:00:00.000Z";
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
@@ -70,7 +71,7 @@ function writeFixtureData(
 	const filename = "test-provider.json";
 	const content = `${JSON.stringify({ [apiGroup]: values })}\n`;
 	writeFileSync(join(dataDir, filename), content);
-	const manifest = createModelDataManifest(structure, { [filename]: content });
+	const manifest = createModelDataManifest(structure, { [filename]: content }, GENERATED_AT);
 	manifest.schemaVersion = manifestSchemaVersion;
 	writeFileSync(join(dataDir, MODEL_DATA_MANIFEST_FILE), `${JSON.stringify(manifest)}\n`);
 }
@@ -120,7 +121,7 @@ describe("generated model data validation", () => {
 			"anthropic-messages": fixture.values,
 		})}\n`;
 		writeFileSync(join(fixture.dataDir, filename), content);
-		const manifest = createModelDataManifest(fixture.structure, { [filename]: content });
+		const manifest = createModelDataManifest(fixture.structure, { [filename]: content }, GENERATED_AT);
 		writeFileSync(join(fixture.dataDir, MODEL_DATA_MANIFEST_FILE), `${JSON.stringify(manifest)}\n`);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow("more than one API group");
 	});
@@ -141,6 +142,15 @@ describe("generated model data validation", () => {
 		manifest.structureHash = "stale";
 		writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow("generation stamp");
+	});
+
+	it("rejects an invalid generation timestamp", () => {
+		const fixture = createFixture();
+		const manifestPath = join(fixture.dataDir, MODEL_DATA_MANIFEST_FILE);
+		const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+		manifest.generatedAt = "invalid";
+		writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow("generation timestamp");
 	});
 
 	it("rejects missing provider shards imported by the aggregator", () => {

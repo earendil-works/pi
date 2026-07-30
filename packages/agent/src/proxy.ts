@@ -120,7 +120,7 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 		// Initialize the partial message that we'll build up from events
 		const partial: AssistantMessage = {
 			role: "assistant",
-			stopReason: "stop",
+			stopReason: "pending",
 			content: [],
 			api: model.api,
 			provider: model.provider,

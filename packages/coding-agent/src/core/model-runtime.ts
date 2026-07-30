@@ -72,6 +72,8 @@ export interface CreateModelRuntimeOptions {
 export interface ModelRuntimeAuthOverrides {
 	apiKey?: string;
 	env?: Record<string, string>;
+	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
+	minOAuthValidityMs?: number;
 }
 
 function mergeHeaders(
@@ -140,18 +142,13 @@ export class ModelRuntime implements Models {
 			(modelsPath
 				? new FileModelsStore(options.modelsStorePath ?? join(dirname(modelsPath), "models-store.json"))
 				: new InMemoryCodingAgentModelsStore());
+		const builtinModelDataGeneratedAt = builtinProviderCatalog.getBuiltinModelDataGeneratedAt();
 		const providers = builtinProviderCatalog
 			.builtinProviders()
 			.map((provider) =>
 				provider.id === "radius"
 					? provider
-					: withRemoteCatalog(
-							provider,
-							options.catalogBaseUrl,
-							builtinProviderCatalog.getBuiltinModelDataUrl(
-								provider.id as builtinProviderCatalog.BuiltinProvider,
-							),
-						),
+					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
 			);
 		const runtime = new ModelRuntime(
 			credentials,
@@ -518,14 +515,10 @@ export class ModelRuntime implements Models {
 		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
 	}
 
-	async reloadConfig(): Promise<void> {
+	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
 		this.configureRadiusProviders();
 		this.rebuildProviders();
-		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
-	}
-
-	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const refreshOptions = {
 			...options,
 			allowNetwork: options.allowNetwork ?? this.modelNetworkEnabled,

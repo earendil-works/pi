@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { RADIUS_PROVIDER_ID } from "../src/core/radius.ts";
+import { allowNetwork } from "./test-network-env.ts";
 
 function radiusOAuthCredential(gatewayBaseUrl: string) {
 	return {
@@ -37,6 +38,7 @@ function radiusConfig(baseUrl: string) {
 let tempDir: string;
 
 beforeEach(() => {
+	allowNetwork();
 	tempDir = join(tmpdir(), `pi-test-radius-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 });
@@ -92,7 +94,7 @@ describe("Radius provider", () => {
 	});
 
 	it("does not refresh catalogs over the network by default", async () => {
-		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected catalog fetch"));
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
 				[RADIUS_PROVIDER_ID]: radiusOAuthCredential("https://radius.example.com/v1"),

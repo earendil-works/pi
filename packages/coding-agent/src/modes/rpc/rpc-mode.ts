@@ -556,8 +556,24 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 
 			case "bash": {
+				const eventResult = await session.extensionRunner.emitUserBash({
+					type: "user_bash",
+					command: command.command,
+					excludeFromContext: command.excludeFromContext ?? false,
+					cwd: session.sessionManager.getCwd(),
+				});
+
+				if (eventResult?.result) {
+					session.recordBashResult(command.command, eventResult.result, {
+						excludeFromContext: command.excludeFromContext,
+					});
+					return success(id, "bash", eventResult.result);
+				}
+
 				const result = await session.executeBash(command.command, undefined, {
 					excludeFromContext: command.excludeFromContext,
+					id,
+					operations: eventResult?.operations,
 				});
 				return success(id, "bash", result);
 			}

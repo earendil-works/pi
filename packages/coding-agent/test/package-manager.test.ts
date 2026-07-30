@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -774,6 +774,42 @@ Content`,
 			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
 		});
 
+		it("should remove a newly created checkout when git clone fails", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async (...callArgs: unknown[]) => {
+				const [command, args] = callArgs as [string, string[]];
+				if (command === "git" && args[0] === "clone") {
+					mkdirSync(targetDir, { recursive: true });
+					throw new Error("simulated git clone failure");
+				}
+			});
+
+			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
+
+			expect(existsSync(targetDir)).toBe(false);
+		});
+
+		it("should remove a newly cloned checkout when dependency installation fails", async () => {
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			vi.spyOn(packageManager as any, "runCommand").mockImplementation(async (...callArgs: unknown[]) => {
+				const [command, args] = callArgs as [string, string[]];
+				if (command === "git" && args[0] === "clone") {
+					mkdirSync(targetDir, { recursive: true });
+					writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
+					return;
+				}
+				if (command === "npm") {
+					throw new Error("simulated dependency install failure");
+				}
+			});
+
+			await expect(packageManager.install(source)).rejects.toThrow("simulated dependency install failure");
+
+			expect(existsSync(targetDir)).toBe(false);
+		});
+
 		it("should reconcile an existing git checkout to a pinned ref during install", async () => {
 			const source = "git:github.com/user/repo@v2";
 			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
@@ -1101,42 +1137,29 @@ Content`,
 		it("should emit progress events on install attempt", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
+			vi.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand").mockRejectedValue(
+				new Error("simulated npm install failure"),
+			);
 
-			// Use public install method which emits progress events
-			try {
-				await packageManager.install("npm:nonexistent-package@1.0.0");
-			} catch {
-				// Expected to fail - package doesn't exist
-			}
+			await expect(packageManager.install("npm:nonexistent-package@1.0.0")).rejects.toThrow(
+				"simulated npm install failure",
+			);
 
-			// Should have emitted start event before failure
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
-			// Should have emitted error event
 			expect(events.some((e) => e.type === "error")).toBe(true);
 		});
 
 		it("should recognize github URLs without git: prefix", async () => {
 			const events: ProgressEvent[] = [];
 			packageManager.setProgressCallback((event) => events.push(event));
-			const previousGitTerminalPrompt = process.env.GIT_TERMINAL_PROMPT;
-			process.env.GIT_TERMINAL_PROMPT = "0";
+			const runCommand = vi
+				.spyOn(packageManager as unknown as PackageManagerInternals, "runCommand")
+				.mockRejectedValue(new Error("simulated git clone failure"));
+			const source = "https://github.com/nonexistent/repo";
 
-			try {
-				// This should be parsed as a git source, not throw "unsupported"
-				try {
-					await packageManager.install("https://github.com/nonexistent/repo");
-				} catch {
-					// Expected to fail - repo doesn't exist
-				}
-			} finally {
-				if (previousGitTerminalPrompt === undefined) {
-					delete process.env.GIT_TERMINAL_PROMPT;
-				} else {
-					process.env.GIT_TERMINAL_PROMPT = previousGitTerminalPrompt;
-				}
-			}
+			await expect(packageManager.install(source)).rejects.toThrow("simulated git clone failure");
 
-			// Should have attempted clone, not thrown unsupported error
+			expect(runCommand).toHaveBeenCalledWith("git", ["clone", source, expect.any(String)]);
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
 		});
 
@@ -1715,6 +1738,7 @@ Content`,
 		});
 
 		it("should resolve autoload-disabled package entries as positive-only without a global package", async () => {
+			vi.stubEnv("HOME", tempDir);
 			const pkgDir = join(tempDir, "positive-only-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
 			mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });

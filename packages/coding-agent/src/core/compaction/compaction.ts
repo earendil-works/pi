@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai";
+import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -567,9 +567,17 @@ export async function completeSummarization(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 ): Promise<AssistantMessage> {
+	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
+	const requestOptions: SimpleStreamOptions = {
+		...options,
+		cacheRetention: "none",
+		sessionId: uuidv7(),
+	};
 	const produce = async (): Promise<AssistantMessage> =>
-		streamFn ? (await streamFn(model, context, options)).result() : completeSimple(model, context, options);
-	return retryAssistantCall(produce, retry, options.signal, callbacks);
+		streamFn
+			? (await streamFn(model, context, requestOptions)).result()
+			: completeSimple(model, context, requestOptions);
+	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
 }
 
 /**

@@ -184,10 +184,8 @@ function chunkString(text: string): string[] {
  * intermediate delta events for each content block.
  */
 function streamWithDeltas(stream: AssistantMessageEventStream, message: AssistantMessage): void {
-	const isError = message.stopReason === "error" || message.stopReason === "aborted";
-
 	// Build partial progressively as we stream content blocks
-	const partial: AssistantMessage = { ...message, content: [] };
+	const partial: AssistantMessage = { ...message, content: [], stopReason: "pending" };
 	stream.push({ type: "start", partial: { ...partial } });
 
 	for (let i = 0; i < message.content.length; i++) {
@@ -243,11 +241,20 @@ function streamWithDeltas(stream: AssistantMessageEventStream, message: Assistan
 		}
 	}
 
-	if (isError) {
-		stream.push({ type: "error", reason: message.stopReason as "error" | "aborted", error: message });
-	} else {
-		stream.push({ type: "done", reason: message.stopReason as "stop" | "length" | "toolUse", message });
+	if (message.stopReason === "pending") {
+		const error: AssistantMessage = {
+			...message,
+			stopReason: "error",
+			errorMessage: "Faux response ended without a stop reason",
+		};
+		stream.push({ type: "error", reason: "error", error });
+		return;
 	}
+	if (message.stopReason === "error" || message.stopReason === "aborted") {
+		stream.push({ type: "error", reason: message.stopReason, error: message });
+		return;
+	}
+	stream.push({ type: "done", reason: message.stopReason, message });
 }
 
 function makeEvent(

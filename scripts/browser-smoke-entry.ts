@@ -17,6 +17,7 @@ import {
 	toError,
 	truncateHead,
 } from "@earendil-works/pi-agent-core";
+import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 
 // Keep this entry browser-safe. It is bundled by scripts/check-browser-smoke.mjs
 // to catch accidental Node-only runtime imports in browser-facing package exports.
@@ -58,4 +59,6 @@ console.log(
 	new FileError("not_found", "missing").code,
 	toError("boom").message,
 	typeof streamProxy,
+	PROTOCOL_VERSION,
+	decodeCbor(encodeCbor({ browser: true })),
 );

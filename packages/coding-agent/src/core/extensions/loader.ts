@@ -73,8 +73,10 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 
 const require = createRequire(import.meta.url);
 
+const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
+
 /**
- * Get aliases for jiti (used in Node.js/development mode).
+ * Get aliases for jiti (used in built Node.js mode).
  * In Bun binary mode, virtualModules is used instead.
  */
 let _aliases: Record<string, string> | null = null;
@@ -410,10 +412,13 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		// Bun uses modules embedded in the executable. Source TypeScript reuses the
+		// host-resolved modules and root tsconfig paths. Built Node uses dist aliases.
+		...(isBunBinary
+			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
+			: isTypeScriptSourceRuntime
+				? { virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }
+				: { alias: getAliases() }),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });

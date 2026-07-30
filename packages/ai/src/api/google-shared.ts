@@ -5,6 +5,7 @@
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -287,9 +288,13 @@ export function convertTools(
 	];
 }
 
-/**
- * Map tool choice string to Gemini FunctionCallingConfigMode.
- */
+/** Gemini 3+ enforces required function parameters in validated tool-calling modes. */
+export function supportsGoogleStrictToolSampling(modelId: string): boolean {
+	const majorVersion = getGeminiMajorVersion(modelId);
+	return majorVersion !== undefined && majorVersion >= 3;
+}
+
+/** Map tool choice string to Gemini FunctionCallingConfigMode. */
 export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 	switch (choice) {
 		case "auto":
@@ -301,6 +306,21 @@ export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 		default:
 			return FunctionCallingConfigMode.AUTO;
 	}
+}
+
+export function resolveGoogleFunctionCallingMode(
+	tools: Tool[],
+	toolChoice: string | undefined,
+	supportsStrictMode: boolean,
+): FunctionCallingConfigMode | undefined {
+	const useStrictMode = tools.some((tool) => resolveJsonSchemaStrictSampling(tool, supportsStrictMode) === true);
+	if (toolChoice === "none" || toolChoice === "any") {
+		return mapToolChoice(toolChoice);
+	}
+	if (useStrictMode) {
+		return FunctionCallingConfigMode.VALIDATED;
+	}
+	return toolChoice ? mapToolChoice(toolChoice) : undefined;
 }
 
 /**

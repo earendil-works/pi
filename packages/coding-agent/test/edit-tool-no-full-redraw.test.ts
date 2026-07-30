@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Container, type Terminal, Text, TUI } from "@earendil-works/pi-tui";
+import { Container, type Terminal, Text, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.ts";
@@ -94,7 +94,7 @@ describe("edit tool TUI rendering", () => {
 		}
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const root = new Container();
 		for (let i = 0; i < 200; i++) {
 			root.addChild(new Text(`history ${i}`, 0, 0));
@@ -168,7 +168,7 @@ describe("edit tool TUI rendering", () => {
 		await rm(filePath, { force: true });
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new ToolExecutionComponent(
 			"edit",
 			"tool-call-replay",
@@ -205,7 +205,7 @@ describe("edit tool TUI rendering", () => {
 		await writeFile(filePath, "line 0\nline 1\n", "utf8");
 
 		const terminal = new FakeTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new ToolExecutionComponent(
 			"edit",
 			"tool-call-2",

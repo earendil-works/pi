@@ -30,8 +30,9 @@ import {
 	convertTools,
 	isThinkingPart,
 	mapStopReason,
-	mapToolChoice,
+	resolveGoogleFunctionCallingMode,
 	retainThoughtSignature,
+	supportsGoogleStrictToolSampling,
 } from "./google-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -69,11 +70,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
 		try {
+			if (options?.fetch && options.fetch !== globalThis.fetch) {
+				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
+			}
 			const apiKey = options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
@@ -208,6 +212,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				}
 
 				if (candidate?.finishReason) {
+					output.rawStopReason = candidate.finishReason;
 					output.stopReason = mapStopReason(candidate.finishReason);
 					if (output.content.some((b) => b.type === "toolCall")) {
 						output.stopReason = "toolUse";
@@ -258,8 +263,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				throw new Error("Request was aborted");
 			}
 
+			if (output.stopReason === "pending") {
+				throw new Error("Google stream ended without a finish reason");
+			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+				const errorMessage = output.rawStopReason
+					? `Provider stopped with: ${output.rawStopReason}`
+					: "An unknown error occurred";
+				throw new Error(errorMessage);
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -355,21 +366,17 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const functionCallingMode = context.tools?.length
+		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsGoogleStrictToolSampling(model.id))
+		: undefined;
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
 		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(functionCallingMode !== undefined && {
+			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
+		}),
 	};
-
-	if (context.tools && context.tools.length > 0 && options.toolChoice) {
-		config.toolConfig = {
-			functionCallingConfig: {
-				mode: mapToolChoice(options.toolChoice),
-			},
-		};
-	} else {
-		config.toolConfig = undefined;
-	}
 
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };
