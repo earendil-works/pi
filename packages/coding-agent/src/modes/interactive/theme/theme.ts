@@ -1239,7 +1239,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
 		hr: (text: string) => theme.fg("mdHr", text),
 		listBullet: (text: string) => theme.fg("mdListBullet", text),
-		bold: (text: string) => theme.bold(text),
+		bold: (text: string) => theme.fg("text", theme.bold(text)),
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
