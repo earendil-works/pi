@@ -383,9 +383,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				if (!block) {
 					// Note: the "input" fallback here should/must not be taken.  in case the LLM makes up
 					// a tool we don't knwo about, we at least have a place to stash our stuff.
-					const customInputProperty = toolCall.custom
-						? (grammarToolInputProperties.get(name) ?? "input")
-						: undefined;
+					const customInputProperty =
+						toolCall.custom && !toolCall.function ? (grammarToolInputProperties.get(name) ?? "input") : undefined;
 					const hasCustomInput = customInputProperty !== undefined;
 					block = {
 						type: "toolCall",
@@ -421,7 +420,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				if (!block.name && name) {
 					block.name = name;
 				}
-				if (toolCall.custom && !block.customInput) {
+				if (toolCall.custom && !toolCall.function && !block.customInput) {
 					const customInputProperty = grammarToolInputProperties.get(block.name) ?? "input";
 					block.arguments = { [customInputProperty]: "" };
 					block.customInput = {
@@ -457,6 +456,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.finish_reason) {
+					output.rawStopReason = choice.finish_reason;
 					const finishReasonResult = mapStopReason(choice.finish_reason);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
@@ -571,10 +571,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (output.stopReason === "aborted") {
 				throw new Error("Request was aborted");
 			}
+			if (!hasFinishReason && !compat.supportsFinishReason) {
+				output.stopReason = output.content.some((block) => block.type === "toolCall") ? "toolUse" : "stop";
+			}
 			if (output.stopReason === "error") {
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
-			if (!hasFinishReason || output.stopReason === "pending") {
+			if ((compat.supportsFinishReason && !hasFinishReason) || output.stopReason === "pending") {
 				throw new Error("Stream ended without finish_reason");
 			}
 
@@ -1445,6 +1448,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
+		supportsFinishReason: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
@@ -1494,6 +1498,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
 		supportsUsageInStreaming: model.compat.supportsUsageInStreaming ?? detected.supportsUsageInStreaming,
+		supportsFinishReason: model.compat.supportsFinishReason ?? detected.supportsFinishReason,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,
 		requiresAssistantAfterToolResult:

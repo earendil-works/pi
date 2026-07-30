@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, hyperlink, Text } from "@earendil-works/pi-tui";
 
 const PR_PROMPT_PATTERN = /^\s*You are given one or more GitHub PR URLs:\s*(\S+)/im;
 const ISSUE_PROMPT_PATTERN = /^\s*Analyze GitHub issue\(s\):\s*(\S+)/im;
@@ -175,10 +175,10 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 			const displayTarget = metadata?.displayUrl ?? match.target;
 			const titleText = metadata?.title
 				? thm.fg("accent", metadata.title)
-				: thm.fg("accent", displayTarget);
+				: hyperlink(thm.fg("accent", displayTarget), displayTarget);
 			const detailText = metadata?.detail ?? formatAuthor(metadata?.author);
 			const detailLine = detailText ? thm.fg("muted", detailText) : undefined;
-			const urlLine = thm.fg("dim", displayTarget);
+			const urlLine = hyperlink(thm.fg("dim", displayTarget), displayTarget);
 
 			const lines = [titleText];
 			if (detailLine) lines.push(detailLine);

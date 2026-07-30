@@ -229,6 +229,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (candidate?.finishReason) {
+					output.rawStopReason = candidate.finishReason;
 					output.stopReason = mapStopReason(candidate.finishReason);
 					if (output.content.some((b) => b.type === "toolCall")) {
 						output.stopReason = "toolUse";
@@ -283,7 +284,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				throw new Error("Google Vertex stream ended without a finish reason");
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+				const errorMessage = output.rawStopReason
+					? `Provider stopped with: ${output.rawStopReason}`
+					: "An unknown error occurred";
+				throw new Error(errorMessage);
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });

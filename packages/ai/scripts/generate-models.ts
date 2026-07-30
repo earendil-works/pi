@@ -354,14 +354,22 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 		tiers: [
 			{
 				inputTokensAbove: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
-				input: cost.input * 2,
-				output: cost.output * 1.5,
-				cacheRead: cost.cacheRead * 2,
-				cacheWrite: cost.cacheWrite * 2,
+				input: roundCost(cost.input * 2),
+				output: roundCost(cost.output * 1.5),
+				cacheRead: roundCost(cost.cacheRead * 2),
+				cacheWrite: roundCost(cost.cacheWrite * 2),
 			},
 		],
 	};
 }
+
+// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
+// authoritative values until models.dev and passthrough catalogs catch up.
+// https://developers.openai.com/api/docs/pricing
+const OPENAI_GPT_56_STANDARD_COSTS: Record<string, ModelCost> = {
+	"gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+	"gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+};
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
@@ -543,6 +551,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
 	supportsUsageInStreaming: true,
+	supportsFinishReason: true,
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
@@ -622,6 +631,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
+		supportsFinishReason: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
@@ -2115,7 +2125,13 @@ async function generateModels() {
 			candidate.maxTokens = 128000;
 		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
-			candidate.cost = withOpenAiLongContextPricing(candidate.cost);
+			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
+			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
+		}
+		// Cloudflare AI Gateway passes OpenAI usage through at OpenAI list prices.
+		if (candidate.provider === "cloudflare-ai-gateway") {
+			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
+			if (standardCost) candidate.cost = withOpenAiLongContextPricing(standardCost);
 		}
 		// models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit);
 		// the actual max output is 128000. Also propagates to the derived Azure clone.
@@ -2178,7 +2194,7 @@ async function generateModels() {
 			provider: "openai",
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
 			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 			maxTokens: 128000,
 		},
@@ -2190,7 +2206,7 @@ async function generateModels() {
 			provider: "openai",
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
 			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 			maxTokens: 128000,
 		},
@@ -2409,7 +2425,7 @@ async function generateModels() {
 			baseUrl: CODEX_BASE_URL,
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
@@ -2433,7 +2449,7 @@ async function generateModels() {
 			baseUrl: CODEX_BASE_URL,
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},

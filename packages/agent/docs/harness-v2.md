@@ -924,7 +924,7 @@ const off = harness.hooks.on("before_tool", async (event) => {
 
 Semantics, uniform across all hooks:
 
-- Registration is harness-global. Every hook event carries `lane` (omitted below); a handler scopes itself. Per-lane registration is an open question (section 17).
+- Registration is harness-global. Every hook event carries `lane` (omitted below); a handler scopes itself. Per-lane registration is an open question (section 19).
 - Handlers run sequentially in registration order. Each transformation handler sees the output of the previous one.
 - A throwing handler does not fail the run: it is skipped, reported via `handler_error`, and the remaining handlers run. One exception: `before_tool` fails closed — a throwing handler blocks the tool. A skipped policy handler must not allow a tool it might have blocked.
 - Hook results that feed durable state are persisted before execution proceeds: `before_run` output lands in the `operation_started` record, `before_tool` effective arguments in the `tool_started` record.
@@ -1311,9 +1311,113 @@ Stale branches (no lane resolves through them) are kept, matching the current en
 
 Every restore query is an index seek plus a bounded scan: a lane's open operation via `(lane, type, seq)`, its last run-kind start via `(lane, type, op_kind, seq)`, its records above the operation via the same index, its own entries via the read plan from its leaf. No query touches another lane's traffic.
 
-## 14. Harness internals
+## 14. Agent-loop building blocks
 
-The code below is the specification of harness behavior. Live calls and resume run the same procedures: `prompt()` runs `runProcedure()` after appending `operation_started`; `resume()` runs it with the operation already recorded. Everything is lane-scoped; procedures of different lanes run concurrently and meet only at the storage append path.
+`agent-loop.ts` is split into building blocks. Blocks own no durable state and know nothing about sessions, records, or lanes. The harness composes them and inserts its durability writes between their phases. The existing `agentLoop` / `runAgentLoop` API stays in the file as a thin composition of the same blocks, with its current signature and behavior — existing consumers do not change.
+
+### Streaming one assistant response
+
+```ts
+export interface StreamAssistantConfig {
+  model: Model;
+  systemPrompt?: string;
+  tools?: AgentTool[];
+  /** AgentMessage[] → AgentMessage[]. Pruning, injection. */
+  transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+  /** AgentMessage[] → provider messages. */
+  toProviderMessages: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+  /** Dispatch. models.streamSimple resolves auth per request (credential
+      store, expiring tokens, header merge, env, baseUrl) — no auth surface
+      on this config. streamFn overrides dispatch for tests. */
+  models: Models;
+  streamFn?: StreamFn;
+  /** SimpleStreamOptions carries apiKey/headers/env overrides, transport,
+      timeouts, metadata, deferred — and onPayload/onResponse, the mounting
+      points for the before_payload and after_response hooks. */
+  streamOptions?: SimpleStreamOptions;
+  signal?: AbortSignal;
+}
+
+/** One provider request. Emits message_start / message_update / message_end
+    to the sink; returns the final assistant message. Provider errors are
+    in-band: stopReason "error" | "aborted" | "deferred". Does not mutate
+    its inputs — persistence is the caller's job. */
+export function streamAssistant(
+  messages: AgentMessage[],
+  config: StreamAssistantConfig,
+  emit: AgentEventSink,
+): Promise<AssistantMessage>;
+```
+
+### Tool execution
+
+Three phases per call, exposed separately because the harness needs to write between them and recovery needs phase 2 and 3 without phase 1:
+
+```ts
+type PreparedToolCall  = { kind: "prepared"; toolCall: AgentToolCall; tool: AgentTool; args: unknown };
+type ImmediateOutcome  = { kind: "immediate"; result: AgentToolResult; isError: true };
+                         // unknown tool, invalid args, blocked, aborted
+type FinalizedToolCall = { toolCall: AgentToolCall; result: AgentToolResult; isError: boolean };
+
+/** Phase 1 — clearance. Tool lookup, prepareArguments, schema validation,
+    beforeToolCall (may block), abort checks. No effect starts here. */
+export function prepareToolCall(
+  toolCall: AgentToolCall, tools: AgentTool[], callbacks: ToolCallbacks, signal?: AbortSignal,
+): Promise<PreparedToolCall | ImmediateOutcome>;
+
+/** Phase 2 — the effect. Streams tool_execution_update via the sink and
+    drains pending update events before resolving. Never throws; failures
+    become error results. */
+export function executeToolCall(
+  prepared: PreparedToolCall, emit: AgentEventSink, signal?: AbortSignal,
+): Promise<{ result: AgentToolResult; isError: boolean }>;
+
+/** Phase 3 — afterToolCall patch, field by field; a throwing callback
+    becomes an error result. */
+export function finalizeToolCall(
+  prepared: PreparedToolCall, executed: { result; isError }, callbacks: ToolCallbacks, signal?: AbortSignal,
+): Promise<FinalizedToolCall>;
+
+/** content ?? [] normalization, addedToolNames passthrough, timestamp. */
+export function createToolResultMessage(finalized: FinalizedToolCall): ToolResultMessage;
+export function createErrorToolResult(text: string): AgentToolResult;
+
+export interface ToolCallbacks {
+  beforeToolCall?(call, args, signal): Promise<{ block?: { reason: string } } | undefined>;
+  afterToolCall?(call, result, isError, signal): Promise<ToolResultPatch | undefined>;
+  /** Between phases 1 and 2: the durability point. The harness writes its
+      tool_started record here. Called in source order in both modes —
+      preparation is always sequential. */
+  onToolStart?(call: AgentToolCall, effectiveArgs: unknown): Promise<void>;
+  /** After phase 3, before the result message is emitted; source order.
+      The harness appends the result entry here. */
+  onToolResult?(message: ToolResultMessage): Promise<void>;
+}
+
+/** The batch driver. Rules, preserved from the current loop:
+    - stopReason "length" fails every call without executing: streamed
+      arguments are salvage-parsed and can validate while silently
+      truncated; none are safe.
+    - Mode: sequential when options.toolExecution === "sequential" or when
+      any called tool declares executionMode "sequential"; else parallel.
+    - Parallel mode: phase 1 and onToolStart run sequentially in source
+      order; phase 2 runs concurrently; phases 3, onToolResult, and message
+      emission happen in source order after all executions settle.
+    - Abort: no further calls are prepared; already-executing calls settle.
+    - terminate: true when every finalized result sets terminate. */
+export function executeToolBatch(
+  assistant: AssistantMessage, tools: AgentTool[], callbacks: ToolCallbacks,
+  options: { toolExecution?: "sequential" | "parallel" }, emit: AgentEventSink, signal?: AbortSignal,
+): Promise<{ messages: ToolResultMessage[]; terminate: boolean }>;
+```
+
+### Compatibility wrapper
+
+The existing public interface of `agent-loop.ts` must not break. Every current export keeps its signature and behavior: `agentLoop`, `agentLoopContinue`, `runAgentLoop`, `runAgentLoopContinue`, `AgentEventSink`, and the config surface they consume (`getSteeringMessages`, `getFollowUpMessages`, `prepareNextTurn`, `shouldStopAfterTurn`, `beforeToolCall`, `afterToolCall`, event order included). They are reimplemented as thin compositions of `streamAssistant` and `executeToolBatch` — no durability, no new semantics. Acceptance criterion: the existing `agent-loop` and `agent` test suites pass unchanged.
+
+## 15. Harness internals
+
+The code below is the specification of harness behavior, composed from the section 14 blocks. Live calls and resume run the same procedures: `prompt()` runs `runProcedure()` after appending `operation_started`; `resume()` runs it with the operation already recorded. Everything is lane-scoped; procedures of different lanes run concurrently and meet only at the storage append path.
 
 Two internal error classes carry control flow. `RunFailed` converts to `operation_finished` failed; `AppendFailed` converts to the faulted harness. Neither escapes to a caller. A third signal, `Park`, is not an error: it unwinds the run when a deferred handle was persisted.
 
@@ -1328,7 +1432,7 @@ interface LaneState {
     intent: OperationStarted["intent"];
     aborting: boolean;
     attempts: number;                       // current task
-    toolBatch: null | ToolBatchState;
+    toolBatch: null | ToolBatchState;       // calls × { started?, resultExists }
     missingInitialMessages: ProvisionedEntry[];
     pendingSteer: ProvisionedEntry[];
     pendingFollowUp: ProvisionedEntry[];
@@ -1381,7 +1485,9 @@ async function driverLoop(): Promise<RunResult> {
     // step
     if (needsAssistant()) {                                     // newest own entry is user/tool result
       const assistant = await stepTask();                       // may throw RunFailed, Park
-      if (hasToolCalls(assistant)) await executeToolBatch(assistant);
+      if (hasToolCalls(assistant) && assistant.stopReason !== "aborted") {
+        await runToolBatch(assistant);
+      }
       continue;                                                 // fresh checkpoint
     }
 
@@ -1399,6 +1505,8 @@ async function driverLoop(): Promise<RunResult> {
   }
 }
 
+// ── steps: streamAssistant with durability around it ────────────────────
+
 async function stepTask(): Promise<AssistantMessage> {
   while (true) {
     const attempt = op.attempts + 1;
@@ -1406,59 +1514,109 @@ async function stepTask(): Promise<AssistantMessage> {
       await view.append(errorAssistantEntry());                 // transcript records the give-up
       throw new RunFailed("retries_exhausted");
     }
-    const systemPrompt = op.intent.systemPromptOverride ?? await evalSystemPrompt();
-    const context = await hooks.run("transform_context", { messages: await contextMessages() });
     const options = await hooks.run("before_request", { model, task: "step", attempt, streamOptions });
 
     await appendRecord({ type: "task_attempt", task: "step", attempt });
     try {
-      const response = await streamRequest(context, options);   // before_payload runs inside
-      const final = (await hooks.run("after_response", response))?.message ?? response.message;
+      const final0 = await streamAssistant(await contextMessages(), {
+        model,
+        systemPrompt: op.intent.systemPromptOverride ?? await evalSystemPrompt(),
+        tools: activeTools(),
+        transformContext: (m, s) => hooks.run("transform_context", { messages: m }, s),
+        toProviderMessages,
+        models,
+        streamOptions: {
+          ...options.streamOptions,
+          onPayload:  (p, m) => hooks.run("before_payload", { model: m, payload: p }),
+          onResponse: (r, m) => captureForAfterResponse(r),     // status/headers for after_response
+        },
+        signal: abortSignal,
+      }, emitLaneEvents);
+
+      const final = (await hooks.run("after_response", final0))?.message ?? final0;
       await view.append(assistantEntry(final));
       if (final.stopReason === "deferred") {
         emit({ type: "run_suspend", runId: op.id, deferred: final.deferred });
         throw new Park(final.deferred);                         // unwind; lane suspends
       }
-      return final;
-    } catch (e) {
-      if (e instanceof Park) throw e;
-      if (!isRetryable(e)) { await view.append(errorAssistantEntry(e)); throw new RunFailed(e); }
-      await backoff(attempt);                                   // retry events around this
+      if (final.stopReason === "error" && isRetryable(final)) {
+        await backoff(attempt);                                 // retry events around this
+        continue;
+      }
+      return final;                                             // incl. terminal error, aborted:
+    } catch (e) {                                               // the loop closes the run normally
+      if (e instanceof Park || e instanceof RunFailed) throw e;
+      throw new AppendFailed(e);                                // only appends throw here
     }
   }
 }
 
 async function redeemDeferred(): Promise<void> {
-  const result = await fetchDeferred(model, op.deferred);       // effect-free; no records
-  const final = await result.result();
+  const stream = provider.fetchDeferred(model, op.deferred);    // effect-free; no records
+  const final = await stream.result();
   if (final.stopReason === "deferred") throw new Park(op.deferred);   // still pending; re-suspend
   if (final.stopReason === "error") return;                     // attempt failed; loop retries
   await view.append(assistantEntry(final));                     // redeemed
 }
 
-// ── tools ───────────────────────────────────────────────────────────────
+// ── tools: executeToolBatch with durability callbacks ───────────────────
 
+/** The live path. tool_started records and result entries are written by
+    the callbacks, in source order in both execution modes. */
+async function runToolBatch(assistant: AssistantMessage): Promise<void> {
+  const resultIds = new Map<string, string>();                  // toolCallId → provisioned id
+
+  const { messages } = await executeToolBatch(assistant, activeTools(), {
+    beforeToolCall: async (call, args, signal) => {
+      const r = await hooks.run("before_tool", { toolCallId: call.id, toolName: call.name, args });
+      return r?.block ? { block: r.block } : undefined;         // hook may also patch args
+    },
+    onToolStart: async (call, effectiveArgs) => {
+      const resultEntryId = createEntryId();
+      resultIds.set(call.id, resultEntryId);
+      await appendRecord({ type: "tool_started",
+        assistantEntryId: op.newestAssistantId, toolIndex: indexOf(call),
+        toolCallId: call.id, toolName: call.name,
+        effectiveArgs, resultEntryId, replay: declaredReplay(call) });
+    },
+    afterToolCall: (call, result, isError, signal) =>
+      hooks.run("after_tool", { toolCallId: call.id, toolName: call.name, ...result, isError }),
+    onToolResult: async (message) => {
+      // Blocked/invalid calls have no tool_started and no provisioned id;
+      // their error result entry gets a fresh id (section 5).
+      await appendIfMissing(resultEntry(resultIds.get(message.toolCallId) ?? createEntryId(), message));
+    },
+  }, { toolExecution: config.toolExecution }, emitLaneEvents, abortSignal);
+  // messages are already persisted via onToolResult; terminate feeds hasPendingWork()
+}
+
+/** The recovery path: per call, at its crash site. Uses phases 2 and 3
+    directly — phase 1 already happened; its outcome is the tool_started
+    record or its absence. */
 async function reconcileToolBatch(batch: ToolBatchState): Promise<void> {
   for (const call of batch.calls) {                             // source order
     if (call.resultExists) continue;
     if (call.started) {
       if (call.started.replay === "safe" && currentDeclaration(call) === "safe") {
-        const result = await executeTool(call.started.toolName, call.started.effectiveArgs);
-        const patched = await hooks.run("after_tool", { ...call, ...result });
-        await appendIfMissing(resultEntry(call.started.resultEntryId, patched ?? result));
+        const prepared = { kind: "prepared", toolCall: call.toolCall,
+                           tool: toolByName(call.started.toolName),
+                           args: call.started.effectiveArgs };   // persisted, not re-derived
+        const executed  = await executeToolCall(prepared, emitLaneEvents, abortSignal);
+        const finalized = await finalizeToolCall(prepared, executed, { afterToolCall }, abortSignal);
+        await appendIfMissing(resultEntry(call.started.resultEntryId, createToolResultMessage(finalized)));
       } else {
         await appendIfMissing(syntheticResult(call.started.resultEntryId, "interrupted"));
       }
     } else {
-      await executeToolNormally(call);   // validate → before_tool → block? error entry
-    }                                    //   : tool_started → execute → after_tool → result
+      await runToolBatchForSingleCall(call);   // full path: phase 1 → record → 2 → 3
+    }
   }
 }
 
 // ── abort ───────────────────────────────────────────────────────────────
 
 async function abortPath(): Promise<RunResult> {
-  if (op.deferred) await cancelDeferred(model, op.deferred);    // best effort
+  if (op.deferred) await provider.cancelDeferred?.(model, op.deferred);   // best effort
   for (const call of op.toolBatch?.calls ?? []) {
     if (call.resultExists) continue;
     await appendIfMissing(syntheticResult(idFor(call), call.started ? "interrupted" : "aborted"));
@@ -1511,14 +1669,28 @@ async function navigationProcedure(): Promise<NavigationResult> {
 }
 ```
 
+Hook-to-block wiring, in one table:
+
+| harness hook | block insertion point |
+|---|---|
+| `transform_context` | `StreamAssistantConfig.transformContext` |
+| `before_request` | before `streamAssistant`, patches stream options |
+| `before_payload` | inside the stream function, provider level |
+| `after_response` | on `streamAssistant`'s return value, before the entry is appended |
+| `before_tool` | `ToolCallbacks.beforeToolCall` (phase 1) |
+| `after_tool` | `ToolCallbacks.afterToolCall` (phase 3) |
+| — (record write) | `ToolCallbacks.onToolStart` / `onToolResult` |
+
 Notes:
 
 - Auto-compaction inside a run is `summaryTask("compaction")` plus the compaction entry, under the run's own records; no nested operation.
 - There is no "crashed mid-task" case in the code: an interrupted attempt is simply an attempt without a result entry, and the loop's cap check decides retry versus `RunFailed`.
+- Parallel batches and crash sites compose: `tool_started` records are written in source order during the sequential phase 1 pass, so a crash mid-batch leaves a source-order prefix of records — some with results (their executions finished), some without (section 6 table applies per call).
+- An aborted assistant message (`stopReason: "aborted"`) skips tool execution; `abortPath()` owns the synthetic results.
 - `before_run_end` fires at every finish boundary actually reached, including a boundary re-reached after a crash. Handlers that must not double-fire keep their own durable marker.
 - One policy knob deferred to implementation: whether `resume()` waits inside `fetchDeferred` when the provider is not ready (`wait` option) or re-parks immediately.
 
-## 15. pi-ai: deferred requests
+## 16. pi-ai: deferred requests
 
 The provider-level interface the harness builds on. Everything is per-request; batch APIs can implement the same shape through a custom provider.
 
@@ -1573,7 +1745,7 @@ export interface ProviderStreams {
 
 Deferred assistant messages carry a handle, not content: they project to nothing in provider context, and the default `toProviderMessages` drops them.
 
-## 16. Forks and subagents
+## 17. Forks and subagents
 
 One copy primitive on the session repository:
 
@@ -1595,7 +1767,7 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 - A subagent tool derives its child session id deterministically from its invocation (`f(parentSessionId, toolCallId)`): a safe replay reattaches to the same child instead of spawning a twin, and the child stays discoverable from the parent even when a crash swallowed the tool result.
 - Policy, restated from Part I: a platform thread that shares history with its channel is a lane; a fork is for isolation — subagents, exports, clones. A subagent can also run on a lane of its parent's session when isolation is not wanted.
 
-## 17. Telemetry
+## 18. Telemetry
 
 In-process diagnostics, separate from events (public observation) and hooks (control). Vendor-neutral: pi emits structured span events; subscribers convert to OTel, logs, or metrics. Core packages never import OTel or Node-only APIs. Mechanism and adapters: `packages/agent/docs/observability.md`; its event names are superseded by this document's vocabulary.
 
@@ -1618,26 +1790,26 @@ pi.session.append        entry/record type, seq
 
 Safety: default payloads carry identifiers, counts, durations, stop reasons, status codes — never prompts, completions, tool arguments, tool output, or headers. Content capture is opt-in via redaction hooks at subscriber configuration. Subscribers are passive: their errors are swallowed; exporting, sampling, and scrubbing are their job.
 
-## 18. Open questions
+## 19. Open questions
 
 1. **Per-lane hooks and events.** Registration is harness-global; every payload carries `lane`, handlers scope themselves. Enough, or do we want `lane.hooks.on(...)` with scoped delivery — for example a `before_tool` policy for one Slack thread? Global-with-lane is more general but pushes filtering onto every scoped consumer.
 2. **Records and replication.** Lane operation logs are flat sequences without parent links, because a single writer per lane makes order equal causality (section 2). Replicating or merging diverged copies of a session would need explicit causality — parent links or equivalent. Out of scope (section 1); recorded here so the flat encoding is a known, deliberate bet.
-3. **Fork × lanes.** `scope: "tree"` lane handling is TBD (section 16).
+3. **Fork × lanes.** `scope: "tree"` lane handling is TBD (section 17).
 
-## 19. Testing strategy
+## 20. Testing strategy
 
 TODO after the document is reviewed end to end. Fixed points: the in-memory backend is the reference; the parity suite runs against all three backends; crash-site tests follow the section 6 traces.
 
-## 20. Implementation sequence
+## 21. Implementation sequence
 
 TODO after the document is reviewed end to end.
 
-## 21. Required reading
+## 22. Required reading
 
 For a fresh implementation session, in this order. This document wins over anything older; `harness.md` (v1 of this design) is superseded and must not be followed where they disagree.
 
 1. `packages/agent/docs/harness-v2.md` — this document.
-2. `packages/agent/src/agent-loop.ts` — the loop to split into step primitives.
+2. `packages/agent/src/agent-loop.ts` — the loop to split into the section 14 building blocks.
 3. `packages/agent/src/agent.ts` — queues, continuation, abort, settlement to preserve in spirit.
 4. `packages/agent/src/harness/agent-harness.ts` — the harness being replaced.
 5. `packages/agent/src/harness/types.ts` — current entry union and storage contract.

@@ -441,6 +441,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
 | `supportsUsageInStreaming` | Supports `stream_options: { include_usage: true }` (default: `true`) |
+| `supportsFinishReason` | Whether streamed responses include `finish_reason`. When `false`, pi infers `stop` or `toolUse` when the stream ends. Default: `true`. |
 | `maxTokensField` | Use `max_completion_tokens` or `max_tokens` |
 | `requiresToolResultName` | Include `name` on tool result messages |
 | `requiresAssistantAfterToolResult` | Insert an assistant message before a user message after tool results |

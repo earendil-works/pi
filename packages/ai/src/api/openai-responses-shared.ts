@@ -563,7 +563,9 @@ export async function processResponsesStream<TApi extends Api>(
 			options.applyServiceTierPricing(output.usage, serviceTier);
 		}
 		// Map status to stop reason
-		output.stopReason = mapStopReason(response?.status);
+		const status = response?.status;
+		output.rawStopReason = status;
+		output.stopReason = mapStopReason(status);
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
@@ -716,6 +718,7 @@ export async function processResponsesStream<TApi extends Api>(
 			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
+			output.rawStopReason = event.response?.status;
 			const error = event.response?.error;
 			const details = event.response?.incomplete_details;
 			const msg = error

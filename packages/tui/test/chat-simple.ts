@@ -8,15 +8,16 @@ import { Editor } from "../src/components/editor.ts";
 import { Loader } from "../src/components/loader.ts";
 import { Markdown } from "../src/components/markdown.ts";
 import { Text } from "../src/components/text.ts";
+import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
-import { TUI } from "../src/tui.ts";
+import type { TUI } from "../src/tui.ts";
 import { defaultEditorTheme, defaultMarkdownTheme } from "./test-themes.ts";
 
 // Create terminal
 const terminal = new ProcessTerminal();
 
 // Create TUI
-const tui = new TUI(terminal);
+const tui: TUI = new TuiMainScreen(terminal);
 
 // Create chat container with some initial messages
 tui.addChild(

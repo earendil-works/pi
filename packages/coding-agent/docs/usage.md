@@ -239,11 +239,14 @@ pi --no-extensions -e ./my-extension.ts
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--alt` | Use the alternate-screen TUI with application-owned scrolling in interactive mode |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
+
+When `--alt` is active, inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. Without `--alt`, iTerm2 inline images continue to render normally.
 
 ### File Arguments
 

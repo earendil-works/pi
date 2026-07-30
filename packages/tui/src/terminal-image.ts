@@ -257,6 +257,42 @@ export interface ImageCellSize {
 	rows: number;
 }
 
+export interface KittyImageMetadata extends ImageCellSize {
+	imageId: number;
+	widthPx: number;
+	heightPx: number;
+}
+
+const kittyImageMetadata = new Map<number, KittyImageMetadata>();
+
+export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
+	kittyImageMetadata.delete(metadata.imageId);
+	kittyImageMetadata.set(metadata.imageId, metadata);
+	if (kittyImageMetadata.size > 1000) {
+		const oldestImageId = kittyImageMetadata.keys().next().value;
+		if (oldestImageId !== undefined) kittyImageMetadata.delete(oldestImageId);
+	}
+}
+
+export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
+	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
+	if (!controls) return undefined;
+	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
+	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
+}
+
+export function cropKittyImageLine(line: string, hiddenRows: number, visibleRows: number): string {
+	const metadata = getKittyImageMetadata(line);
+	const match = /\x1b_G([^;]*);/.exec(line);
+	if (!metadata || !match || hiddenRows <= 0 || visibleRows <= 0) return line;
+	const sourceY = Math.floor((metadata.heightPx * hiddenRows) / metadata.rows);
+	const sourceEnd = Math.ceil((metadata.heightPx * (hiddenRows + visibleRows)) / metadata.rows);
+	const sourceHeight = Math.max(1, Math.min(metadata.heightPx, sourceEnd) - sourceY);
+	const controls = match[1].split(",").filter((control) => !/^[yhr]=/.test(control));
+	controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${visibleRows}`);
+	return `${line.slice(0, match.index)}\x1b_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
+}
+
 export function calculateImageCellSize(
 	imageDimensions: ImageDimensions,
 	maxWidthCells: number,
@@ -436,7 +472,7 @@ export function renderImage(
 	base64Data: string,
 	imageDimensions: ImageDimensions,
 	options: ImageRenderOptions = {},
-): { sequence: string; rows: number; imageId?: number } | null {
+): { sequence: string; columns: number; rows: number; imageId?: number } | null {
 	const caps = getCapabilities();
 
 	if (!caps.images) {
@@ -447,13 +483,22 @@ export function renderImage(
 	const size = calculateImageCellSize(imageDimensions, maxWidth, options.maxHeightCells, getCellDimensions());
 
 	if (caps.images === "kitty") {
+		if (options.imageId !== undefined) {
+			registerKittyImageMetadata({
+				imageId: options.imageId,
+				columns: size.columns,
+				rows: size.rows,
+				widthPx: imageDimensions.widthPx,
+				heightPx: imageDimensions.heightPx,
+			});
+		}
 		const sequence = encodeKitty(base64Data, {
 			columns: size.columns,
 			rows: size.rows,
 			imageId: options.imageId,
 			moveCursor: options.moveCursor,
 		});
-		return { sequence, rows: size.rows, imageId: options.imageId };
+		return { sequence, columns: size.columns, rows: size.rows, imageId: options.imageId };
 	}
 
 	if (caps.images === "iterm2") {
@@ -462,7 +507,7 @@ export function renderImage(
 			height: "auto",
 			preserveAspectRatio: options.preserveAspectRatio ?? true,
 		});
-		return { sequence, rows: size.rows };
+		return { sequence, columns: size.columns, rows: size.rows };
 	}
 
 	return null;
@@ -485,12 +530,7 @@ export function hyperlink(text: string, url: string): string {
 /** Shorten home-prefixed absolute paths to ~/... for compact display. */
 function shortenImagePath(filename: string): string {
 	const home = homedir();
-	if (
-		home &&
-		(filename === home ||
-			filename.startsWith(`${home}/`) ||
-			filename.startsWith(home + "\\"))
-	) {
+	if (home && (filename === home || filename.startsWith(`${home}/`) || filename.startsWith(`${home}\\`))) {
 		return `~${filename.slice(home.length)}`;
 	}
 	return filename;

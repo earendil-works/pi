@@ -10,7 +10,8 @@ export default mergeConfig(
 			include: ["src/**/*.eval.ts"],
 			testTimeout: 120000,
 			hookTimeout: 30000,
-			reporters: ["vitest-evals/reporter"],
+			setupFiles: ["./src/vitest-evals/setup.ts"],
+			reporters: ["vitest-evals/reporter", "./src/vitest-evals/reporter.ts"],
 		},
 		resolve: {
 			alias: [{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex }],

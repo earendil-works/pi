@@ -5,7 +5,8 @@ import {
 	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type Terminal,
-	TUI,
+	type TUI,
+	TuiMainScreen,
 } from "../src/index.ts";
 
 class TestTerminal implements Terminal {
@@ -123,7 +124,7 @@ describe("parseTerminalColorSchemeReport", () => {
 describe("TUI.queryTerminalBackgroundColor", () => {
 	it("writes OSC 11 query and resolves with the parsed RGB reply", async () => {
 		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.start();
 		try {
 			const query = tui.queryTerminalBackgroundColor({ timeoutMs: 1000 });
@@ -139,7 +140,7 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 
 	it("consumes OSC 11 replies before input listeners and focused component dispatch", async () => {
 		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);
@@ -164,7 +165,7 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 
 	it("consumes unparseable strict OSC 11 replies and resolves undefined", async () => {
 		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);
@@ -189,7 +190,7 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 
 	it("dispatches non-matching input normally while waiting for an OSC 11 reply", async () => {
 		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);
@@ -222,7 +223,7 @@ describe("TUI.queryTerminalBackgroundColor", () => {
 
 	it("keeps consuming a late OSC 11 reply after timeout", async () => {
 		const terminal = new TestTerminal();
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);

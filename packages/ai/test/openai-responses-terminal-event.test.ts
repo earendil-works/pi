@@ -285,6 +285,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_completed");
 		expect(output.stopReason).toBe("stop");
+		expect(output.rawStopReason).toBe("completed");
 		expect(output.usage).toMatchObject({
 			input: 15,
 			output: 7,
@@ -303,6 +304,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_incomplete");
 		expect(output.stopReason).toBe("length");
+		expect(output.rawStopReason).toBe("incomplete");
 		expect(output.usage).toMatchObject({
 			input: 25,
 			output: 12,
@@ -320,5 +322,6 @@ describe("OpenAI Responses terminal event handling", () => {
 		await expect(processResponsesStream(createFailedEvents(), output, stream, model)).rejects.toThrow(
 			"server_error: boom",
 		);
+		expect(output.rawStopReason).toBe("failed");
 	});
 });

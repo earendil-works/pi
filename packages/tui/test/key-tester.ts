@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { matchesKey } from "../src/keys.ts";
+import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
 import { truncateToWidth } from "../src/utils.ts";
 
 /**
@@ -102,7 +103,7 @@ class KeyLogger implements Component {
 
 // Set up TUI
 const terminal = new ProcessTerminal();
-const tui = new TUI(terminal);
+const tui: TUI = new TuiMainScreen(terminal);
 const logger = new KeyLogger(tui, terminal);
 
 tui.addChild(logger);

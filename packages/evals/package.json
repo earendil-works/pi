@@ -1,15 +1,16 @@
 {
 	"name": "@earendil-works/pi-evals",
-	"version": "0.82.1",
+	"version": "0.83.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"clean": "shx rm -rf .eval",
-		"eval": "node scripts/run-evals.mjs"
+		"eval": "node scripts/run-evals.mjs",
+		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.82.1",
-		"@earendil-works/pi-coding-agent": "^0.82.1",
+		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-coding-agent": "^0.83.0",
 		"@types/node": "24.12.4",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",

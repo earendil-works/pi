@@ -78,6 +78,17 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `tui.select.confirm` | `enter` | Confirm selection |
 | `tui.select.cancel` | `escape`, `ctrl+c` | Cancel selection |
 
+### TUI Alternate-Screen Viewport
+
+These actions apply when interactive mode is started with `--alt`. Two-finger trackpad and mouse-wheel input also scroll the viewport. Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the primary mouse button selects visible text and copies it to the clipboard.
+
+| Keybinding id | Default | Description |
+|--------|---------|-------------|
+| `tui.altScreen.pageUp` | `shift+pageUp` | Scroll the viewport up by one page |
+| `tui.altScreen.pageDown` | `shift+pageDown` | Scroll the viewport down by one page |
+| `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the document |
+| `tui.altScreen.bottom` | `ctrl+end` | Scroll to the end and follow new output |
+
 ### Application
 
 | Keybinding id | Default | Description |

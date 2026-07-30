@@ -26,6 +26,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode"> & {
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
 	supportsUsageInStreaming: true,
+	supportsFinishReason: true,
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
