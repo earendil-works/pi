@@ -588,13 +588,9 @@ export interface SessionBeforeForkEvent {
 	position: "before" | "at";
 }
 
-/** Fired before context compaction (can be cancelled or customized) */
-export interface SessionBeforeCompactEvent {
+/** Fields common to every context-pressure event. */
+interface SessionBeforeCompactEventBase {
 	type: "session_before_compact";
-	/** Native summary preparation. Fields are empty sentinels when preparationAvailable is false. */
-	preparation: CompactionPreparation;
-	/** False when no valid native summary cut exists; terminal extension outcomes may still handle pressure. */
-	preparationAvailable: boolean;
 	/** Native accounting is available even when summary preparation is not. */
 	tokensBefore: number;
 	settings: CompactionSettings;
@@ -606,6 +602,21 @@ export interface SessionBeforeCompactEvent {
 	willRetry: boolean;
 	signal: AbortSignal;
 }
+
+/** Fired before context compaction (can be cancelled, customized, or handled without a checkpoint). */
+export type SessionBeforeCompactEvent = SessionBeforeCompactEventBase &
+	(
+		| {
+				/** A valid native summary cut is available. */
+				preparationAvailable: true;
+				preparation: CompactionPreparation;
+		  }
+		| {
+				/** No valid native summary cut exists; terminal extension outcomes may still handle pressure. */
+				preparationAvailable: false;
+				preparation: undefined;
+		  }
+	);
 
 /** Fired after context compaction */
 export interface SessionCompactEvent {

@@ -461,8 +461,9 @@ pi.on("session_before_compact", async (event, ctx) => {
 
   // reason - "manual" (/compact), "threshold", or "overflow"
   // willRetry - whether the aborted turn is retried after compaction (overflow recovery)
-  // preparationAvailable - false when native summary cutting is impossible; accounting and
-  // terminal handled/cancel outcomes remain available. Do not return `compaction` in that case.
+  // preparationAvailable - false when native summary cutting is impossible; `preparation`
+  // is then undefined while accounting and terminal handled/cancel outcomes remain available.
+  // Do not return `compaction` in that case.
 
   // Cancel:
   return { action: "cancel", errorMessage: "Optional reason" };

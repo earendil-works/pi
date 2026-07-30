@@ -21,6 +21,9 @@ import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-a
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
 		ctx.ui.notify("Custom compaction extension triggered", "info");
+		if (!event.preparationAvailable) {
+			return { action: "cancel", errorMessage: "Custom compaction requires a native preparation cut" };
+		}
 
 		const { preparation, branchEntries: _, signal } = event;
 		const { messagesToSummarize, turnPrefixMessages, tokensBefore, firstKeptEntryId, previousSummary } = preparation;

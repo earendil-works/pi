@@ -56,7 +56,6 @@ import {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
-	createFileOps,
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
@@ -322,6 +321,8 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _abortEpoch = 0;
+	private _disposed = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -580,7 +581,7 @@ export class AgentSession {
 	}
 
 	private _resolveIdleWaitIfIdle(): void {
-		if (this._isAgentRunActive || !this._resolveIdleWait) {
+		if (!this.isIdle || !this._resolveIdleWait) {
 			return;
 		}
 		const resolve = this._resolveIdleWait;
@@ -846,6 +847,8 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
+		this._abortEpoch++;
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -890,7 +893,13 @@ export class AgentSession {
 
 	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive;
+		return (
+			!this._isAgentRunActive &&
+			this._retryAbortController === undefined &&
+			this._autoCompactionAbortController === undefined &&
+			this._compactionAbortController === undefined &&
+			this._branchSummaryAbortController === undefined
+		);
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -1123,6 +1132,8 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		if (this._disposed) throw new Error("Agent session is disposed");
+		const abortEpoch = this._abortEpoch;
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -1209,7 +1220,11 @@ export class AgentSession {
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
-				await this._checkCompaction(lastAssistant, false);
+				await this._checkCompaction(lastAssistant, false, false);
+			}
+			if (this._disposed || this._abortEpoch !== abortEpoch) {
+				preflightResult?.(true);
+				return;
 			}
 
 			// Build messages array (custom message if any, then user message)
@@ -1271,6 +1286,10 @@ export class AgentSession {
 			return;
 		}
 
+		if (this._disposed || this._abortEpoch !== abortEpoch) {
+			preflightResult?.(true);
+			return;
+		}
 		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
 	}
@@ -1551,6 +1570,7 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._abortEpoch++;
 		this.abortRetry();
 		this.abortCompaction();
 		this.agent.abort();
@@ -1954,6 +1974,7 @@ export class AgentSession {
 			throw error;
 		} finally {
 			this._compactionAbortController = undefined;
+			this._resolveIdleWaitIfIdle();
 			this._reconnectToAgent();
 		}
 	}
@@ -1983,8 +2004,13 @@ export class AgentSession {
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 * @param allowOverflowRetry Whether the caller will consume a true result by continuing the interrupted operation
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		allowOverflowRetry = true,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
 
@@ -2015,9 +2041,15 @@ export class AgentSession {
 		// but must not retry: the assistant answer already completed and agent.continue() cannot
 		// continue from an assistant message.
 		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
-			const willRetry = assistantMessage.stopReason !== "stop";
+			const willRetry = allowOverflowRetry && assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
+				if (assistantMessage.stopReason !== "stop") {
+					const messages = this.agent.state.messages;
+					if (messages[messages.length - 1] === assistantMessage) {
+						this.agent.state.messages = messages.slice(0, -1);
+					}
+				}
 				return await this._runAutoCompaction("overflow", false);
 			}
 
@@ -2089,50 +2121,49 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
-		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
+		let controller: AbortController | undefined;
 
 		try {
 			if (!this.model) {
 				return false;
 			}
 
+			controller = new AbortController();
+			this._autoCompactionAbortController = controller;
+			started = true;
+			this._emit({ type: "compaction_start", reason });
+			if (controller.signal.aborted) {
+				this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+				return false;
+			}
+
+			const settings = this.settingsManager.getCompactionSettings();
 			const pathEntries = this.sessionManager.getBranch();
 			const nativePreparation = prepareCompaction(pathEntries, settings);
 			const estimatedTokensBefore =
 				nativePreparation?.tokensBefore ?? estimateMessagesTokens(this.agent.state.messages);
-			const preparation = nativePreparation ?? {
-				firstKeptEntryId: "",
-				messagesToSummarize: [],
-				turnPrefixMessages: [],
-				isSplitTurn: false,
-				tokensBefore: estimatedTokensBefore,
-				fileOps: createFileOps(),
-				settings,
-			};
-
-			this._emit({ type: "compaction_start", reason });
-			this._autoCompactionAbortController = new AbortController();
-			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
+				const preparationFields = nativePreparation
+					? { preparationAvailable: true as const, preparation: nativePreparation }
+					: { preparationAvailable: false as const, preparation: undefined };
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
-					preparation,
-					preparationAvailable: nativePreparation !== undefined,
+					...preparationFields,
 					tokensBefore: estimatedTokensBefore,
 					settings,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: controller.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
-				if (this._autoCompactionAbortController.signal.aborted) {
+				if (controller.signal.aborted) {
 					this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
 					return false;
 				}
@@ -2192,7 +2223,7 @@ export class AgentSession {
 					({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
 				}
 			}
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (controller.signal.aborted) {
 				this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
 				return false;
 			}
@@ -2213,12 +2244,12 @@ export class AgentSession {
 			} else {
 				// Generate compaction result
 				const compactResult = await compact(
-					preparation,
+					nativePreparation,
 					this.model,
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					controller.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -2232,7 +2263,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (controller.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2303,7 +2334,10 @@ export class AgentSession {
 			}
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === controller) {
+				this._autoCompactionAbortController = undefined;
+			}
+			this._resolveIdleWaitIfIdle();
 		}
 	}
 
@@ -2813,6 +2847,7 @@ export class AgentSession {
 			return false;
 		} finally {
 			this._retryAbortController = undefined;
+			this._resolveIdleWaitIfIdle();
 		}
 
 		return true;
@@ -3177,6 +3212,7 @@ export class AgentSession {
 			return { editorText, cancelled: false, summaryEntry };
 		} finally {
 			this._branchSummaryAbortController = undefined;
+			this._resolveIdleWaitIfIdle();
 		}
 	}
 

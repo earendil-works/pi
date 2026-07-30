@@ -109,15 +109,18 @@ describe("AgentSession compaction characterization", () => {
 			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "summary from extension",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-							usage: summaryUsage,
-							details: { source: "extension" },
-						},
-					}));
+					pi.on("session_before_compact", async (event) => {
+						if (!event.preparationAvailable) return { action: "cancel" };
+						return {
+							compaction: {
+								summary: "summary from extension",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								usage: summaryUsage,
+								details: { source: "extension" },
+							},
+						};
+					});
 				},
 			],
 		});
@@ -286,13 +289,16 @@ describe("AgentSession compaction characterization", () => {
 			},
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "forbidden extension checkpoint",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-						},
-					}));
+					pi.on("session_before_compact", async (event) => {
+						if (!event.preparationAvailable) return { action: "cancel" };
+						return {
+							compaction: {
+								summary: "forbidden extension checkpoint",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
 				},
 			],
 		});
@@ -327,7 +333,7 @@ describe("AgentSession compaction characterization", () => {
 	});
 
 	it("emits automatic pressure to extensions even when no native checkpoint cut exists", async () => {
-		let observed: { available: boolean; firstKeptEntryId: string; tokensBefore: number } | undefined;
+		let observed: { available: boolean; preparation: unknown; tokensBefore: number } | undefined;
 		const harness = await createHarness({
 			settings: { summaryCheckpoints: { enabled: false } },
 			extensionFactories: [
@@ -335,7 +341,7 @@ describe("AgentSession compaction characterization", () => {
 					pi.on("session_before_compact", async (event) => {
 						observed = {
 							available: event.preparationAvailable,
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							preparation: event.preparation,
 							tokensBefore: event.tokensBefore,
 						};
 						return { action: "cancel", errorMessage: "No safe lossless projection" };
@@ -347,7 +353,7 @@ describe("AgentSession compaction characterization", () => {
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
 		await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(false);
-		expect(observed).toEqual({ available: false, firstKeptEntryId: "", tokensBefore: 0 });
+		expect(observed).toEqual({ available: false, preparation: undefined, tokensBefore: 0 });
 		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
 			reason: "overflow",
 			errorMessage: "No safe lossless projection",
@@ -386,14 +392,17 @@ describe("AgentSession compaction characterization", () => {
 			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "auto compacted",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-							details: {},
-						},
-					}));
+					pi.on("session_before_compact", async (event) => {
+						if (!event.preparationAvailable) return { action: "cancel" };
+						return {
+							compaction: {
+								summary: "auto compacted",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
 				},
 			],
 		});
@@ -541,6 +550,42 @@ describe("AgentSession compaction characterization", () => {
 		});
 	});
 
+	it("honors synchronous abort and disposal from compaction_start before running handlers", async () => {
+		for (const dispose of [false, true]) {
+			let handlerCalls = 0;
+			const harness = await createHarness({
+				settings: { compaction: { keepRecentTokens: 1 } },
+				extensionFactories: [
+					(pi) => {
+						pi.on("session_before_compact", async () => {
+							handlerCalls++;
+							return { action: "handled", retry: true };
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			seedCompactableSession(harness);
+			const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type !== "compaction_start") return;
+				if (dispose) harness.session.dispose();
+				else harness.session.abortCompaction();
+			});
+
+			await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(false);
+			unsubscribe();
+			expect(handlerCalls).toBe(0);
+			expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+			if (!dispose) {
+				expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+					aborted: true,
+					willRetry: false,
+				});
+			}
+		}
+	});
+
 	it("aborts an in-flight handled overflow before it can retry or checkpoint", async () => {
 		let entered!: () => void;
 		const started = new Promise<void>((resolve) => {
@@ -683,14 +728,17 @@ describe("AgentSession compaction characterization", () => {
 			models: [{ id: "faux-1", contextWindow: 1, maxTokens: 100 }],
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "successful overflow compacted",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-							details: {},
-						},
-					}));
+					pi.on("session_before_compact", async (event) => {
+						if (!event.preparationAvailable) return { action: "cancel" };
+						return {
+							compaction: {
+								summary: "successful overflow compacted",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
 				},
 			],
 		});

@@ -10,6 +10,7 @@ describe("Documentation example", () => {
 		// This is the example from extensions.md - verify it compiles
 		const exampleExtension = (pi: ExtensionAPI) => {
 			pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
+				if (!event.preparationAvailable) return { action: "cancel" };
 				// All these should be accessible on the event
 				const { preparation, branchEntries } = event;
 				// sessionManager, modelRegistry, and model come from ctx

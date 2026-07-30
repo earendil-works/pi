@@ -9,7 +9,8 @@
 
 ### Fixed
 
-- Run automatic compaction handlers before summary credential resolution and make ordinary session abort cancel in-flight compaction handlers.
+- Run automatic compaction handlers before summary credential resolution; make abort/disposal settle pre-prompt compaction before any provider request; and advertise overflow retry only when the caller continues that same operation.
+- Represent unavailable native compaction preparation as an explicit discriminated event state instead of a structurally valid empty checkpoint sentinel.
 
 ## [0.83.0] - 2026-07-29
 

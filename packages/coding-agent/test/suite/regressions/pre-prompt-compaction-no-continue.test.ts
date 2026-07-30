@@ -23,20 +23,25 @@ describe("pre-prompt compaction regression", () => {
 		}
 	});
 
-	it("compacts length-stop overflow before a new prompt without continuing from an assistant message", async () => {
+	it("compacts length-stop overflow before a new prompt without promising an ignored retry", async () => {
+		let observedWillRetry: boolean | undefined;
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "pre-prompt summary",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-							details: {},
-						},
-					}));
+					pi.on("session_before_compact", async (event) => {
+						observedWillRetry = event.willRetry;
+						if (!event.preparationAvailable) return { action: "cancel" };
+						return {
+							compaction: {
+								summary: "pre-prompt summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
 				},
 			],
 		});
@@ -64,12 +69,65 @@ describe("pre-prompt compaction regression", () => {
 		await expect(harness.session.prompt("next prompt")).resolves.toBeUndefined();
 
 		expect(continueSpy).not.toHaveBeenCalled();
+		expect(observedWillRetry).toBe(false);
 		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
 			reason: "overflow",
 			aborted: false,
-			willRetry: true,
+			willRetry: false,
 		});
 		expect(getUserTexts(harness)).toContain("next prompt");
 		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("settles an aborted pre-prompt handler without starting a provider request", async () => {
+		let enterHandler!: () => void;
+		const handlerEntered = new Promise<void>((resolve) => {
+			enterHandler = resolve;
+		});
+		let handlerSettled = false;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						enterHandler();
+						await new Promise<void>((resolve) => {
+							if (event.signal.aborted) resolve();
+							else event.signal.addEventListener("abort", () => resolve(), { once: true });
+						});
+						handlerSettled = true;
+						return { action: "handled", retry: false };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const model = harness.getModel();
+		const overflowAssistant: AssistantMessage = {
+			...fauxAssistantMessage("overflow", { stopReason: "length" }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(100),
+		};
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "previous prompt" }],
+			timestamp: Date.now() - 1,
+		});
+		harness.sessionManager.appendMessage(overflowAssistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const prompt = harness.session.prompt("must not be sent");
+		await handlerEntered;
+		await harness.session.abort();
+		await expect(prompt).resolves.toBeUndefined();
+
+		expect(handlerSettled).toBe(true);
+		expect(harness.session.isIdle).toBe(true);
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(getUserTexts(harness)).not.toContain("must not be sent");
 	});
 });

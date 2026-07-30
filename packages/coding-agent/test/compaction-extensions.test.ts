@@ -142,11 +142,12 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 		expect(compactEvents.length).toBe(1);
 
 		const beforeEvent = beforeCompactEvents[0];
-		expect(beforeEvent.preparation).toBeDefined();
-		expect(beforeEvent.preparation.messagesToSummarize).toBeDefined();
-		expect(beforeEvent.preparation.turnPrefixMessages).toBeDefined();
-		expect(beforeEvent.preparation.tokensBefore).toBeGreaterThanOrEqual(0);
-		expect(typeof beforeEvent.preparation.isSplitTurn).toBe("boolean");
+		expect(beforeEvent.preparationAvailable).toBe(true);
+		const preparation = beforeEvent.preparation!;
+		expect(preparation.messagesToSummarize).toBeDefined();
+		expect(preparation.turnPrefixMessages).toBeDefined();
+		expect(preparation.tokensBefore).toBeGreaterThanOrEqual(0);
+		expect(typeof preparation.isSplitTurn).toBe("boolean");
 		expect(beforeEvent.branchEntries).toBeDefined();
 		// sessionManager, modelRegistry, and model are now on ctx, not event
 
@@ -174,7 +175,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 		const customSummary = "Custom summary from extension";
 
 		const extension = createExtension((event) => {
-			if (event.type === "session_before_compact") {
+			if (event.type === "session_before_compact" && event.preparationAvailable) {
 				return {
 					compaction: {
 						summary: customSummary,
@@ -369,13 +370,15 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 		expect(capturedBeforeEvent).not.toBeNull();
 		const event = capturedBeforeEvent!;
-		expect(typeof event.preparation.isSplitTurn).toBe("boolean");
-		expect(event.preparation.firstKeptEntryId).toBeDefined();
+		expect(event.preparationAvailable).toBe(true);
+		const preparation = event.preparation!;
+		expect(typeof preparation.isSplitTurn).toBe("boolean");
+		expect(preparation.firstKeptEntryId).toBeDefined();
 
-		expect(Array.isArray(event.preparation.messagesToSummarize)).toBe(true);
-		expect(Array.isArray(event.preparation.turnPrefixMessages)).toBe(true);
+		expect(Array.isArray(preparation.messagesToSummarize)).toBe(true);
+		expect(Array.isArray(preparation.turnPrefixMessages)).toBe(true);
 
-		expect(typeof event.preparation.tokensBefore).toBe("number");
+		expect(typeof preparation.tokensBefore).toBe("number");
 
 		expect(Array.isArray(event.branchEntries)).toBe(true);
 
@@ -392,7 +395,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 		const customSummary = "Custom summary with modified values";
 
 		const extension = createExtension((event) => {
-			if (event.type === "session_before_compact") {
+			if (event.type === "session_before_compact" && event.preparationAvailable) {
 				return {
 					compaction: {
 						summary: customSummary,
