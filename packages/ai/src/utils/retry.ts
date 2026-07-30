@@ -23,6 +23,26 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"billing",
 ]);
 
+const NON_RETRYABLE_PROVIDER_REQUEST_ERROR_PATTERN = buildProviderErrorPattern([
+	// Authentication and authorization failures require user action.
+	"authentication",
+	"unauthorized",
+	"invalid.?api.?key",
+	"401",
+	"403",
+
+	// Deterministic request validation failures will not change on replay.
+	"invalid.?request",
+	"bad.?request",
+	"malformed.?request",
+]);
+
+const REPLAY_SAFE_INTERNAL_ERROR_PATTERN = buildProviderErrorPattern([
+	// Codex blocks automatic visible-turn replay after partial output, but isolated
+	// summaries expose no partial output and are safe to replay with fresh requests.
+	"Codex stream stopped after output began\\. Automatic full-context replay was blocked",
+]);
+
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
@@ -117,6 +137,11 @@ export interface RetryCallbacks {
 	onRetryFinished?: (success: boolean, attempt: number, finalError?: string) => void | Promise<void>;
 }
 
+/** Optional retry classification override for calls whose output is safe to replay. */
+export interface RetryAssistantCallOptions {
+	isRetryable?: (message: AssistantMessage) => boolean;
+}
+
 class RetrySleepAbortError extends Error {
 	constructor() {
 		super("Aborted");
@@ -157,15 +182,18 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  *   ends in success, exhausted retries, or an aborted backoff).
  *
  * When `policy` is undefined or disabled, the first response is returned unchanged
- * (equivalent to calling `produce()` directly).
+ * (equivalent to calling `produce()` directly). Callers may opt into a broader
+ * classifier only when the produced output is isolated and safe to replay.
  */
 export async function retryAssistantCall(
 	produce: () => Promise<AssistantMessage>,
 	policy: RetryPolicy | undefined,
 	signal: AbortSignal | undefined,
 	callbacks?: RetryCallbacks,
+	options?: RetryAssistantCallOptions,
 ): Promise<AssistantMessage> {
 	const maxAttempts = policy?.enabled ? policy.maxRetries : 0;
+	const isRetryable = options?.isRetryable ?? isRetryableAssistantError;
 
 	let attempt = 0;
 	let lastRetry: { attempt: number; errorMessage: string } | undefined;
@@ -185,7 +213,7 @@ export async function retryAssistantCall(
 		}
 
 		// Non-retryable, or budget exhausted: return the final error message.
-		if (attempt >= maxAttempts || !isRetryableAssistantError(response)) {
+		if (attempt >= maxAttempts || !isRetryable(response)) {
 			if (lastRetry) await callbacks?.onRetryFinished?.(false, lastRetry.attempt, response.errorMessage);
 			return response;
 		}
@@ -224,4 +252,18 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+}
+
+/**
+ * Retry classification for isolated, non-visible assistant calls such as summaries.
+ * This retains the normal transient allowlist and adds only errors whose visible-turn
+ * replay warning is known to be safe for an isolated internal request. Unknown and
+ * deterministic provider errors remain terminal.
+ */
+export function isReplaySafeAssistantError(message: AssistantMessage): boolean {
+	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	const errorMessage = message.errorMessage;
+	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
+	if (NON_RETRYABLE_PROVIDER_REQUEST_ERROR_PATTERN.test(errorMessage)) return false;
+	return isRetryableAssistantError(message) || REPLAY_SAFE_INTERNAL_ERROR_PATTERN.test(errorMessage);
 }

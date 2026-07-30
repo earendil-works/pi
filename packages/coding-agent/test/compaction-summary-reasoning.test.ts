@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
 	compact,
+	completeSummarization,
 	generateSummary,
 	generateSummaryWithUsage,
 } from "../src/core/compaction/index.ts";
@@ -54,6 +55,8 @@ const mockSummaryResponse: AssistantMessage = {
 };
 
 const messages: AgentMessage[] = [{ role: "user", content: "Summarize this.", timestamp: Date.now() }];
+const codexPartialStreamReplayWarning =
+	"Codex stream stopped after output began. Automatic full-context replay was blocked to avoid duplicate output and an unconfirmed cache charge. Submit a new message to continue.";
 
 describe("generateSummary reasoning options", () => {
 	beforeEach(() => {
@@ -100,6 +103,40 @@ describe("generateSummary reasoning options", () => {
 
 		const sessionIds = requestOptions.map((options) => options?.sessionId);
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
+	});
+
+	it("retries replay-safe summary failures with fresh isolated SSE requests and aggregate usage", async () => {
+		const failedUsage = {
+			...mockSummaryResponse.usage,
+			input: 3,
+			output: 2,
+			totalTokens: 5,
+		};
+		completeSimpleMock
+			.mockResolvedValueOnce({
+				...mockSummaryResponse,
+				content: [],
+				stopReason: "error",
+				errorMessage: codexPartialStreamReplayWarning,
+				usage: failedUsage,
+			})
+			.mockResolvedValueOnce(mockSummaryResponse);
+
+		const response = await completeSummarization(
+			createModel(false),
+			{ systemPrompt: "Summarize", messages: [] },
+			{ maxTokens: 1000 },
+			undefined,
+			{ enabled: true, maxRetries: 1, baseDelayMs: 0 },
+		);
+
+		expect(response.stopReason).toBe("stop");
+		expect(response.usage).toMatchObject({ input: 13, output: 12, totalTokens: 25 });
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
+		expect(requestOptions.every((options) => options?.transport === "sse")).toBe(true);
+		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
+		expect(requestOptions[0]?.sessionId).not.toBe(requestOptions[1]?.sessionId);
 	});
 
 	it("does not set reasoning when thinking is off", async () => {

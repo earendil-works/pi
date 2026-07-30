@@ -23,6 +23,7 @@ import type {
 	BeforeToolCallResult,
 	PrepareNextTurnContext,
 	QueueMode,
+	ShouldStopAfterTurnContext,
 	StreamFn,
 	ToolExecutionMode,
 } from "./types.ts";
@@ -118,6 +119,14 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/** Stop gracefully after a completed turn and before another provider request. */
+	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
+}
+
+/** Options for continuing an interrupted agent run. */
+export interface AgentContinueOptions {
+	/** Process queued steering/follow-up messages before a raw tool-result continuation. */
+	preferQueuedMessages?: boolean;
 }
 
 class PendingMessageQueue {
@@ -134,6 +143,10 @@ class PendingMessageQueue {
 
 	hasItems(): boolean {
 		return this.messages.length > 0;
+	}
+
+	peek(): AgentMessage[] {
+		return this.mode === "all" ? this.messages.slice() : this.messages.slice(0, 1);
 	}
 
 	drain(): AgentMessage[] {
@@ -206,6 +219,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Hook to stop the agent loop after the current turn completes. */
+	public shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -228,6 +243,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
 	}
 
 	/**
@@ -303,6 +319,16 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
+	/**
+	 * Preview the queued messages that would be included in the next provider request.
+	 * Steering takes precedence; follow-ups are eligible only after the current tool chain ends.
+	 */
+	peekNextQueuedMessages(willContinueToolChain: boolean): AgentMessage[] {
+		const steering = this.steeringQueue.peek();
+		if (steering.length > 0) return steering;
+		return willContinueToolChain ? [] : this.followUpQueue.peek();
+	}
+
 	/** Active abort signal for the current run, if any. */
 	get signal(): AbortSignal | undefined {
 		return this.activeRun?.abortController.signal;
@@ -347,7 +373,7 @@ export class Agent {
 	}
 
 	/** Continue from the current transcript. The last message must be a user or tool-result message. */
-	async continue(): Promise<void> {
+	async continue(options: AgentContinueOptions = {}): Promise<void> {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before continuing.");
 		}
@@ -357,7 +383,7 @@ export class Agent {
 			throw new Error("No messages to continue from");
 		}
 
-		if (lastMessage.role === "assistant") {
+		if (lastMessage.role === "assistant" || options.preferQueuedMessages) {
 			const queuedSteering = this.steeringQueue.drain();
 			if (queuedSteering.length > 0) {
 				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
@@ -370,7 +396,9 @@ export class Agent {
 				return;
 			}
 
-			throw new Error("Cannot continue from message role: assistant");
+			if (lastMessage.role === "assistant") {
+				throw new Error("Cannot continue from message role: assistant");
+			}
 		}
 
 		await this.runContinuation();
@@ -443,6 +471,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
+			shouldStopAfterTurn: this.shouldStopAfterTurn,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			prepareNextTurn:

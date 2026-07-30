@@ -47,6 +47,7 @@ await agent.prompt("Hello!");
 ### AgentMessage vs LLM Message
 
 The agent works with `AgentMessage`, a flexible type that can include:
+
 - Standard LLM messages (`user`, `assistant`, `toolResult`)
 - Custom app-specific message types via declaration merging
 
@@ -132,8 +133,8 @@ const stream = agentLoop(
   {
     model,
     convertToLlm,
-    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
-      return shouldCompactBeforeNextTurn(context.messages);
+    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages, willContinue }) => {
+      return willContinue && shouldCompactBeforeNextTurn(context.messages);
     },
   },
   undefined,
@@ -142,6 +143,8 @@ const stream = agentLoop(
 ```
 
 `shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason.
+
+Stateful `Agent` callers can pass the same callback to the constructor or replace `agent.shouldStopAfterTurn` at runtime. `willContinue` is true when the completed tool batch would automatically start another provider turn.
 
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
 
@@ -154,12 +157,12 @@ When you use the `Agent` class, assistant `message_end` processing is treated as
 await agent.continue();
 ```
 
-The last message in context must be `user` or `toolResult` (not `assistant`).
+The last message in context must be `user` or `toolResult` (not `assistant`). When a host stopped after a terminating tool-result turn, `continue({ preferQueuedMessages: true })` drains queued steering first, then queued follow-ups, before falling back to a raw tool-result continuation. This preserves normal queue ordering across an external stop boundary.
 
 ### Event Types
 
 | Event | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `agent_start` | Agent begins processing |
 | `agent_end` | Final event for the run. Awaited subscribers for this event still count toward settlement |
 | `turn_start` | New turn begins (one LLM call + tool executions) |
@@ -209,6 +212,10 @@ const agent = new Agent({
 
   // Tool execution mode: "parallel" (default) or "sequential"
   toolExecution: "parallel",
+
+  // Stop after a completed turn and before another provider request
+  shouldStopAfterTurn: async ({ toolResults, context }) =>
+    toolResults.length > 0 && shouldCompactBeforeNextTurn(context.messages),
 
   // Preflight each tool call after args are validated. Can block execution.
   beforeToolCall: async ({ toolCall, args, context }) => {
@@ -361,6 +368,7 @@ agent.clearAllQueues();
 Use clearSteeringQueue, clearFollowUpQueue, or clearAllQueues to drop queued messages.
 
 When steering messages are detected after a turn completes:
+
 1. All tool calls from the current assistant message have already finished
 2. Steering messages are injected
 3. The LLM responds on the next turn

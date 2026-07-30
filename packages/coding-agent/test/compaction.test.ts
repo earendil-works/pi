@@ -375,6 +375,35 @@ describe("findCutPoint", () => {
 	});
 });
 
+describe("prepareCompaction trailing tool results", () => {
+	it("keeps the tool call when its trailing result exceeds the recent-token budget", () => {
+		const oldUser = createMessageEntry(createUserMessage("old request"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old response"));
+		const currentUser = createMessageEntry(createUserMessage("current request"));
+		const toolCall = createAssistantMessage("");
+		toolCall.content = [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "large.txt" } }];
+		toolCall.stopReason = "toolUse";
+		const toolCallEntry = createMessageEntry(toolCall);
+		const toolResultEntry = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(2000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+
+		const preparation = prepareCompaction([oldUser, oldAssistant, currentUser, toolCallEntry, toolResultEntry], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 200,
+		});
+
+		expect(preparation?.firstKeptEntryId).toBe(toolCallEntry.id);
+		expect(preparation?.turnPrefixMessages.map((message) => message.role)).toEqual(["user"]);
+		expect(preparation?.messagesToSummarize.map((message) => message.role)).toEqual(["user", "assistant"]);
+	});
+});
+
 describe("buildSessionContext", () => {
 	it("should load all messages when no compaction", () => {
 		const entries: SessionEntry[] = [

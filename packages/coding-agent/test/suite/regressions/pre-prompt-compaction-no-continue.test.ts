@@ -23,9 +23,50 @@ describe("pre-prompt compaction regression", () => {
 		}
 	});
 
+	it("fails closed when required pre-prompt compaction fails", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10000, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
+		});
+		harnesses.push(harness);
+
+		const now = Date.now();
+		const model = harness.getModel();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "previous prompt" }],
+			timestamp: now - 1000,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("previous response", { timestamp: now - 500 }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(10001),
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const streamFunction = harness.session.agent.streamFunction;
+		harness.session.agent.streamFunction = (streamModel, context, streamOptions) => {
+			if (context.systemPrompt !== harness.session.systemPrompt) throw new Error("summary hook failed");
+			return streamFunction(streamModel, context, streamOptions);
+		};
+		harness.setResponses([fauxAssistantMessage("must not run")]);
+
+		await expect(harness.session.prompt("next prompt")).rejects.toThrow("Auto-compaction failed");
+
+		expect(getUserTexts(harness)).not.toContain("next prompt");
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "overflow",
+			aborted: false,
+			willRetry: false,
+			errorMessage: "Context overflow recovery failed: summary hook failed",
+		});
+	});
+
 	it("compacts length-stop overflow before a new prompt without continuing from an assistant message", async () => {
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+			models: [{ id: "faux-1", contextWindow: 10000, maxTokens: 100 }],
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -54,7 +95,7 @@ describe("pre-prompt compaction regression", () => {
 			api: model.api,
 			provider: model.provider,
 			model: model.id,
-			usage: createUsage(100),
+			usage: createUsage(10000),
 		};
 		harness.sessionManager.appendMessage(lengthStopAssistant);
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;

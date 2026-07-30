@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed automatic compaction to stop between completed turns before oversized provider requests, fail closed when required compaction cannot complete, and resume retained tool results without duplication.
+- Fixed isolated compaction summaries to retry replay-safe partial-stream failures over fresh SSE requests and persist aggregate usage after recovery.
+
 ## [0.82.1] - 2026-07-25
 
 ### New Features

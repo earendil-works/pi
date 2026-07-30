@@ -111,6 +111,34 @@ describe("#6647 compaction retries transient summarization failures", () => {
 		expect(model.id).toBeTruthy();
 	});
 
+	it("retries the Codex partial-stream replay warning only for isolated summaries", async () => {
+		const harness = await createHarness({ withConfiguredAuth: false });
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } });
+
+		const incidentError: AssistantMessage = {
+			...fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					"Codex stream stopped after output began. Automatic full-context replay was blocked to avoid duplicate output and an unconfirmed cache charge. Submit a new message to continue.",
+			}),
+			usage: createUsage(10),
+		};
+		const success: AssistantMessage = {
+			...fauxAssistantMessage("recovered incident summary"),
+			usage: createUsage(10),
+		};
+		const getCallCount = useScriptedStreamFn(harness, [incidentError, success]);
+
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("recovered incident summary");
+		expect(result.usage).toMatchObject({ input: 20, totalTokens: 20 });
+		expect(getCallCount()).toBe(2);
+		expect(harness.eventsOfType("summarization_retry_scheduled")).toHaveLength(1);
+	});
+
 	it("does not retry a non-retryable error (insufficient_quota)", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);

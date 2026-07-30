@@ -17,14 +17,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type {
 	Agent,
+	AgentContext,
 	AgentEvent,
 	AgentMessage,
 	AgentState,
 	AgentTool,
 	PrepareNextTurnContext,
+	ShouldStopAfterTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText, estimateContextTokens as estimateLlmContextTokens } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -92,7 +94,7 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -300,6 +302,21 @@ const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "hi
 // AgentSession Class
 // ============================================================================
 
+type AutoCompactionOutcome =
+	| { status: "not-needed" }
+	| { status: "completed"; shouldContinue: boolean }
+	| { status: "aborted"; errorMessage: string }
+	| { status: "failed"; errorMessage: string };
+
+interface AutoCompactionOptions {
+	willRetry?: boolean;
+	continueAfterCompaction?: boolean;
+	requireFitBeforeNextRequest?: boolean;
+	willContinueToolChain?: boolean;
+}
+
+const NO_AUTO_COMPACTION: AutoCompactionOutcome = { status: "not-needed" };
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -325,6 +342,10 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	private _hostStopRequested = false;
+	private _midTurnCompactionNeeded = false;
+	private _midTurnNeedsToolContinuation = false;
+	private _preferQueuedMessagesOnNextContinue = false;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -393,6 +414,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installMidTurnCompactionHook();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -538,6 +560,48 @@ export class AgentSession {
 				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
+	}
+
+	private _installMidTurnCompactionHook(): void {
+		const previousShouldStop = this.agent.shouldStopAfterTurn;
+		this.agent.shouldStopAfterTurn = async (context) => {
+			if (await previousShouldStop?.(context)) {
+				this._hostStopRequested = true;
+				return true;
+			}
+			return this._midTurnShouldStop(context);
+		};
+	}
+
+	private _midTurnShouldStop(context: ShouldStopAfterTurnContext): boolean {
+		const nextContext = this._contextWithNextQueuedMessages(context.context, context.willContinue);
+		if (!context.willContinue && nextContext === context.context) return false;
+
+		if (this._contextRequiresCompaction(nextContext)) {
+			this._midTurnCompactionNeeded = true;
+			this._midTurnNeedsToolContinuation = context.willContinue;
+			return true;
+		}
+		return false;
+	}
+
+	private _contextWithNextQueuedMessages(context: AgentContext, willContinueToolChain: boolean): AgentContext {
+		const queuedMessages = this.agent.peekNextQueuedMessages(willContinueToolChain);
+		if (queuedMessages.length === 0) return context;
+		return { ...context, messages: [...context.messages, ...queuedMessages] };
+	}
+
+	private _contextRequiresCompaction(context: AgentContext): boolean {
+		const settings = this.settingsManager.getCompactionSettings();
+		const contextWindow = this.model?.contextWindow ?? 0;
+		if (!settings.enabled || contextWindow === 0) return false;
+
+		const contextTokens = estimateLlmContextTokens({
+			systemPrompt: context.systemPrompt,
+			messages: convertToLlm(context.messages),
+			tools: context.tools,
+		}).tokens;
+		return shouldCompact(contextTokens, contextWindow, settings);
 	}
 
 	// =========================================================================
@@ -1063,9 +1127,15 @@ export class AgentSession {
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
+				const preferQueuedMessages = this._preferQueuedMessagesOnNextContinue;
+				this._preferQueuedMessagesOnNextContinue = false;
+				await this.agent.continue({ preferQueuedMessages });
 			}
 		} finally {
+			this._hostStopRequested = false;
+			this._midTurnCompactionNeeded = false;
+			this._midTurnNeedsToolContinuation = false;
+			this._preferQueuedMessagesOnNextContinue = false;
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
@@ -1073,14 +1143,42 @@ export class AgentSession {
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
+		if (this._hostStopRequested) {
+			this._hostStopRequested = false;
+			this._lastAssistantMessage = undefined;
+			return false;
+		}
+		if (this._midTurnCompactionNeeded) {
+			this._midTurnCompactionNeeded = false;
+			this._lastAssistantMessage = undefined;
+			const willContinueToolChain = this._midTurnNeedsToolContinuation;
+			const preferQueuedMessages = !willContinueToolChain;
+			this._midTurnNeedsToolContinuation = false;
+			const outcome = await this._runAutoCompaction("threshold", {
+				continueAfterCompaction: true,
+				willContinueToolChain,
+			});
+			if (outcome.status === "completed" && outcome.shouldContinue) {
+				this._preferQueuedMessagesOnNextContinue = preferQueuedMessages;
+				return true;
+			}
+			return false;
+		}
+
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
 		if (!msg) {
 			return false;
 		}
 
-		if (this._isRetryableError(msg) && (await this._prepareRetry(msg))) {
-			return true;
+		if (this._isRetryableError(msg) && this._canRetry()) {
+			const compactionOutcome = await this._checkCompaction(msg, true, true, true);
+			if (compactionOutcome.status === "failed" || compactionOutcome.status === "aborted") {
+				return false;
+			}
+			if (await this._prepareRetry(msg)) {
+				return true;
+			}
 		}
 
 		if (msg.stopReason === "error" && this._retryAttempt > 0) {
@@ -1093,8 +1191,9 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
-		if (await this._checkCompaction(msg)) {
-			return true;
+		const compactionOutcome = await this._checkCompaction(msg);
+		if (compactionOutcome.status !== "not-needed") {
+			return compactionOutcome.status === "completed" && compactionOutcome.shouldContinue;
 		}
 
 		// The agent loop drains both queues before emitting agent_end. Any messages
@@ -1198,7 +1297,10 @@ export class AgentSession {
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
-				await this._checkCompaction(lastAssistant, false);
+				const compactionOutcome = await this._checkCompaction(lastAssistant, false, true);
+				if (compactionOutcome.status === "failed" || compactionOutcome.status === "aborted") {
+					throw new Error(`Auto-compaction failed before prompt submission: ${compactionOutcome.errorMessage}`);
+				}
 			}
 
 			// Build messages array (custom message if any, then user message)
@@ -1949,13 +2051,20 @@ export class AgentSession {
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 * @param requireFitBeforeNextRequest If true, successful compaction must leave room for another provider request.
+	 * @param willRetry If true, diagnostics and continuation reflect a pending visible-turn retry.
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		requireFitBeforeNextRequest = false,
+		willRetry = false,
+	): Promise<AutoCompactionOutcome> {
 		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled) return false;
+		if (!settings.enabled) return NO_AUTO_COMPACTION;
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
-		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
+		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return NO_AUTO_COMPACTION;
 
 		const contextWindow = this.model?.contextWindow ?? 0;
 
@@ -1973,7 +2082,16 @@ export class AgentSession {
 		const assistantIsFromBeforeCompaction =
 			compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
 		if (assistantIsFromBeforeCompaction) {
-			return false;
+			if (
+				requireFitBeforeNextRequest &&
+				this._contextRequiresCompaction(this._contextWithNextQueuedMessages(this.agent.state, false))
+			) {
+				return {
+					status: "failed",
+					errorMessage: "Current context remains above threshold after compaction.",
+				};
+			}
+			return NO_AUTO_COMPACTION;
 		}
 
 		// Case 1: Overflow - LLM returned context overflow error, or reported usage exceeded
@@ -1984,20 +2102,21 @@ export class AgentSession {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
-				return await this._runAutoCompaction("overflow", false);
+				return await this._runAutoCompaction("overflow", { requireFitBeforeNextRequest });
 			}
 
 			if (this._overflowRecoveryAttempted) {
+				const errorMessage =
+					"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
 					aborted: false,
 					willRetry: false,
-					errorMessage:
-						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+					errorMessage,
 				});
-				return false;
+				return { status: "failed", errorMessage };
 			}
 
 			this._overflowRecoveryAttempted = true;
@@ -2007,50 +2126,75 @@ export class AgentSession {
 			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
 				this.agent.state.messages = messages.slice(0, -1);
 			}
-			return await this._runAutoCompaction("overflow", willRetry);
+			return await this._runAutoCompaction("overflow", { willRetry, requireFitBeforeNextRequest });
 		}
 
-		// Case 2: Threshold - context is getting large
-		// For error messages or all-zero usage messages, estimate from the last valid response.
-		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
-		// responses can still compact and do not reset context accounting.
-		let contextTokens: number;
-		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
-		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
-			const messages = this.agent.state.messages;
-			const estimate = estimateContextTokens(messages);
-			if (estimate.lastUsageIndex === null) return false; // No usage data at all
-			// Verify the usage source is post-compaction. Kept pre-compaction messages
-			// have stale usage reflecting the old (larger) context and would falsely
-			// trigger compaction right after one just finished.
-			const usageMsg = messages[estimate.lastUsageIndex];
-			if (
-				compactionEntry &&
-				usageMsg.role === "assistant" &&
-				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
-			) {
-				return false;
-			}
-			contextTokens = estimate.tokens;
+		// Case 2: Threshold. Imminent continuations use the same full-context
+		// predicate as the mid-turn boundary so trailing messages and tools count.
+		// Otherwise preserve proactive post-run compaction based on provider usage.
+		let compactionNeeded = false;
+		if (requireFitBeforeNextRequest || this.agent.hasQueuedMessages()) {
+			compactionNeeded = this._contextRequiresCompaction(
+				this._contextWithNextQueuedMessages(this.agent.state, false),
+			);
 		} else {
-			contextTokens = directContextTokens;
+			const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
+			if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
+				const messages = this.agent.state.messages;
+				const estimate = estimateContextTokens(messages);
+				if (estimate.lastUsageIndex === null) return NO_AUTO_COMPACTION;
+				const usageMsg = messages[estimate.lastUsageIndex];
+				if (
+					compactionEntry &&
+					usageMsg.role === "assistant" &&
+					(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+				) {
+					return NO_AUTO_COMPACTION;
+				}
+				compactionNeeded = shouldCompact(estimate.tokens, contextWindow, settings);
+			} else {
+				compactionNeeded = shouldCompact(directContextTokens, contextWindow, settings);
+			}
 		}
-		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			return await this._runAutoCompaction("threshold", false);
+
+		if (compactionNeeded) {
+			return await this._runAutoCompaction("threshold", {
+				...(willRetry ? { willRetry: true } : {}),
+				requireFitBeforeNextRequest,
+			});
 		}
-		return false;
+		return NO_AUTO_COMPACTION;
 	}
 
 	/**
 	 * Internal: Run auto-compaction with events.
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold",
+		options: AutoCompactionOptions = {},
+	): Promise<AutoCompactionOutcome> {
+		const {
+			willRetry = false,
+			continueAfterCompaction = false,
+			requireFitBeforeNextRequest = false,
+			willContinueToolChain = false,
+		} = options;
 		const settings = this.settingsManager.getCompactionSettings();
-		let started = false;
+		const fail = (errorMessage: string): AutoCompactionOutcome => {
+			this._emit({
+				type: "compaction_end",
+				reason,
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+				errorMessage,
+			});
+			return { status: "failed", errorMessage };
+		};
 
 		try {
 			if (!this.model) {
-				return false;
+				return fail("Auto-compaction requires an active model.");
 			}
 
 			let apiKey: string | undefined;
@@ -2066,12 +2210,11 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
-				return false;
+				return fail("Auto-compaction could not prepare the current context.");
 			}
 
 			this._emit({ type: "compaction_start", reason });
 			this._autoCompactionAbortController = new AbortController();
-			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
@@ -2088,6 +2231,7 @@ export class AgentSession {
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
+					const errorMessage = "Auto-compaction was cancelled by an extension.";
 					this._emit({
 						type: "compaction_end",
 						reason,
@@ -2095,7 +2239,7 @@ export class AgentSession {
 						aborted: true,
 						willRetry: false,
 					});
-					return false;
+					return { status: "aborted", errorMessage };
 				}
 
 				if (extensionResult?.compaction) {
@@ -2140,6 +2284,7 @@ export class AgentSession {
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
+				const errorMessage = "Auto-compaction was aborted.";
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2147,7 +2292,7 @@ export class AgentSession {
 					aborted: true,
 					willRetry: false,
 				});
-				return false;
+				return { status: "aborted", errorMessage };
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
@@ -2179,36 +2324,40 @@ export class AgentSession {
 				usage,
 				details,
 			};
-			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			const shouldContinue = willRetry || continueAfterCompaction || this.agent.hasQueuedMessages();
+			const retainedContextTooLarge =
+				(requireFitBeforeNextRequest || shouldContinue) &&
+				this._contextRequiresCompaction(
+					this._contextWithNextQueuedMessages(this.agent.state, willContinueToolChain),
+				);
+			const retainedContextError =
+				"Auto-compaction retained context above threshold; stopping before next provider request.";
+			this._emit({
+				type: "compaction_end",
+				reason,
+				result,
+				aborted: false,
+				willRetry,
+				...(retainedContextTooLarge ? { errorMessage: retainedContextError } : {}),
+			});
 
+			if (retainedContextTooLarge) {
+				return { status: "failed", errorMessage: retainedContextError };
+			}
 			if (willRetry) {
 				const messages = this.agent.state.messages;
 				const lastMsg = messages[messages.length - 1];
 				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
-				return true;
 			}
 
-			// Auto-compaction can complete while follow-up/steering/custom messages are waiting.
-			// Continue once so queued messages are delivered.
-			return this.agent.hasQueuedMessages();
+			return { status: "completed", shouldContinue };
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "compaction failed";
-			if (started) {
-				this._emit({
-					type: "compaction_end",
-					reason,
-					result: undefined,
-					aborted: false,
-					willRetry: false,
-					errorMessage:
-						reason === "overflow"
-							? `Context overflow recovery failed: ${errorMessage}`
-							: `Auto-compaction failed: ${errorMessage}`,
-				});
-			}
-			return false;
+			const cause = error instanceof Error ? error.message : "compaction failed";
+			const errorMessage =
+				reason === "overflow" ? `Context overflow recovery failed: ${cause}` : `Auto-compaction failed: ${cause}`;
+			return fail(errorMessage);
 		} finally {
 			this._autoCompactionAbortController = undefined;
 		}
@@ -2637,6 +2786,11 @@ export class AgentSession {
 		return isRetryableAssistantError(message);
 	}
 
+	private _canRetry(): boolean {
+		const settings = this.settingsManager.getRetrySettings();
+		return settings.enabled && this._retryAttempt < settings.maxRetries;
+	}
+
 	/**
 	 * Retry policy + callbacks shared by compaction and branch-summary summarization calls.
 	 * Uses the same `settings.retry` budget/backoff as agent-turn retries so a single transient
@@ -2696,9 +2850,11 @@ export class AgentSession {
 			errorMessage: message.errorMessage || "Unknown error",
 		});
 
-		// Remove error message from agent state (keep in session for history)
+		// Remove only the retryable error from agent state (keep it in session history).
+		// Compaction may already have removed it, leaving a valid assistant summary tail.
 		const messages = this.agent.state.messages;
-		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+		const lastMessage = messages[messages.length - 1];
+		if (lastMessage?.role === "assistant" && (lastMessage as AssistantMessage).stopReason === "error") {
 			this.agent.state.messages = messages.slice(0, -1);
 		}
 

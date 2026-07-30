@@ -6,7 +6,14 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	contentText,
+	isReplaySafeAssistantError,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -427,13 +434,8 @@ export function findCutPoint(
 
 		// Check if we've exceeded the budget
 		if (accumulatedTokens >= keepRecentTokens) {
-			// Find the closest valid cut point at or after this entry
-			for (let c = 0; c < cutPoints.length; c++) {
-				if (cutPoints[c] >= i) {
-					cutIndex = cutPoints[c];
-					break;
-				}
-			}
+			// A trailing tool result has no later cut point, so retain its preceding assistant tool call.
+			cutIndex = cutPoints.find((candidate) => candidate >= i) ?? cutPoints[cutPoints.length - 1];
 			break;
 		}
 	}
@@ -567,17 +569,25 @@ export async function completeSummarization(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 ): Promise<AssistantMessage> {
-	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
-	const requestOptions: SimpleStreamOptions = {
-		...options,
-		cacheRetention: "none",
-		sessionId: uuidv7(),
+	let aggregateUsage: Usage | undefined;
+	const produce = async (): Promise<AssistantMessage> => {
+		// Every replay is a standalone SSE request with no reusable cache affinity.
+		const requestOptions: SimpleStreamOptions = {
+			...options,
+			transport: "sse",
+			cacheRetention: "none",
+			sessionId: uuidv7(),
+		};
+		const response = streamFn
+			? await (await streamFn(model, context, requestOptions)).result()
+			: await completeSimple(model, context, requestOptions);
+		aggregateUsage = aggregateUsage ? combineUsage(aggregateUsage, response.usage) : response.usage;
+		return response;
 	};
-	const produce = async (): Promise<AssistantMessage> =>
-		streamFn
-			? (await streamFn(model, context, requestOptions)).result()
-			: completeSimple(model, context, requestOptions);
-	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+	const response = await retryAssistantCall(produce, retry, options.signal, callbacks, {
+		isRetryable: isReplaySafeAssistantError,
+	});
+	return { ...response, usage: aggregateUsage ?? response.usage };
 }
 
 /**

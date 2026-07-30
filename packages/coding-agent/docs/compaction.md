@@ -20,7 +20,7 @@ Pi has two summarization mechanisms:
 | Compaction | Context exceeds threshold, or `/compact` | Summarize old messages to free up context |
 | Branch summarization | `/tree` navigation | Preserve context when switching branches |
 
-Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use fresh routing session IDs and, where supported by the provider, disable prompt-cache writes because these one-off prompts are unlikely to be reused.
+Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use isolated SSE transport, fresh routing session IDs, and disabled prompt-cache writes because these one-off prompts are unlikely to be reused. Retryable internal summaries accumulate usage across attempts, while a wholly failed compaction creates no compaction entry.
 
 ## Compaction
 
@@ -33,6 +33,8 @@ contextTokens > contextWindow - reserveTokens
 ```
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response.
+
+Pi also checks after each completed turn that would otherwise continue automatically. If an assistant response, tool result, or queued message crosses the threshold, Pi stops before the next provider request, compacts, and resumes from the retained context. Terminating tools remain stopped unless queued work requires continuation. Cancelled, failed, or insufficient compaction leaves the pending work recoverable and rejects a new prompt before appending it instead of sending oversized context. This threshold continuation keeps extension `willRetry` metadata false because no overflow retry occurred.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 

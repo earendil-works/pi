@@ -123,11 +123,17 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		const runAutoCompaction = (
 			session as unknown as {
-				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				_runAutoCompaction: (
+					reason: "overflow" | "threshold",
+					options?: { willRetry?: boolean },
+				) => Promise<{ status: "completed"; shouldContinue: boolean }>;
 			}
 		)._runAutoCompaction.bind(session);
 
-		await expect(runAutoCompaction("threshold", false)).resolves.toBe(true);
+		await expect(runAutoCompaction("threshold", { willRetry: false })).resolves.toEqual({
+			status: "completed",
+			shouldContinue: true,
+		});
 
 		expect(continueSpy).not.toHaveBeenCalled();
 	});
@@ -300,21 +306,30 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						options?: { willRetry?: boolean; requireFitBeforeNextRequest?: boolean },
+					) => Promise<{ status: "completed"; shouldContinue: boolean }>;
 				},
 				"_runAutoCompaction",
 			)
-			.mockResolvedValue();
+			.mockResolvedValue({ status: "completed", shouldContinue: false });
 
 		const checkCompaction = (
 			session as unknown as {
-				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
+				_checkCompaction: (
+					assistantMessage: AssistantMessage,
+					skipAbortedCheck?: boolean,
+				) => Promise<{ status: string }>;
 			}
 		)._checkCompaction.bind(session);
 
-		await checkCompaction(errorAssistant);
+		await expect(checkCompaction(errorAssistant)).resolves.toEqual({
+			status: "completed",
+			shouldContinue: false,
+		});
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", { requireFitBeforeNextRequest: false });
 	});
 
 	it("should not trigger threshold compaction for error messages when no prior usage exists", async () => {

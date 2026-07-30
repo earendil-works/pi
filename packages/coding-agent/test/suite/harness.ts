@@ -6,7 +6,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
 	FauxModelDefinition,
@@ -68,6 +68,7 @@ export interface HarnessOptions {
 	initialActiveToolNames?: string[];
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
+	shouldStopAfterTurn?: AgentOptions["shouldStopAfterTurn"];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
@@ -172,6 +173,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			if (!runner) return messages;
 			return runner.emitContext(messages);
 		},
+		shouldStopAfterTurn: options.shouldStopAfterTurn,
 	});
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)

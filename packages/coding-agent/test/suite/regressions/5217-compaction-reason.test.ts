@@ -4,7 +4,10 @@ import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 type SessionWithCompactionInternals = {
-	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+	_runAutoCompaction: (
+		reason: "overflow" | "threshold",
+		options?: { willRetry?: boolean },
+	) => Promise<{ status: "completed"; shouldContinue: boolean }>;
 };
 
 interface RecordedCompactionEvent {
@@ -71,7 +74,10 @@ describe("issue #5217 compaction reason on extension events", () => {
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await sessionInternals._runAutoCompaction("threshold", false);
+		await expect(sessionInternals._runAutoCompaction("threshold", { willRetry: false })).resolves.toEqual({
+			status: "completed",
+			shouldContinue: false,
+		});
 
 		expect(recorded).toEqual([
 			{ type: "session_before_compact", reason: "threshold", willRetry: false },
@@ -85,7 +91,10 @@ describe("issue #5217 compaction reason on extension events", () => {
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await sessionInternals._runAutoCompaction("overflow", true);
+		await expect(sessionInternals._runAutoCompaction("overflow", { willRetry: true })).resolves.toEqual({
+			status: "completed",
+			shouldContinue: true,
+		});
 
 		expect(recorded).toEqual([
 			{ type: "session_before_compact", reason: "overflow", willRetry: true },

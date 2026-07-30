@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Exposed `shouldStopAfterTurn` through the stateful `Agent` API so hosts can stop after a completed turn and before another provider request.
+- Added a queue-first continuation option so hosts can preserve follow-up ordering after stopping on a terminating tool result.
+
 ## [0.82.1] - 2026-07-25
 
 ## [0.82.0] - 2026-07-24

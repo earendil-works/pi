@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall } from "../src/utils/retry.ts";
+import {
+	isReplaySafeAssistantError,
+	isRetryableAssistantError,
+	type RetryPolicy,
+	retryAssistantCall,
+} from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -12,6 +17,8 @@ const bunFetchSocketClosedMessage =
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
+const codexPartialStreamReplayWarning =
+	"Codex stream stopped after output began. Automatic full-context replay was blocked to avoid duplicate output and an unconfirmed cache charge. Submit a new message to continue.";
 
 describe("provider retry classification", () => {
 	it("matches explicit provider retry guidance", () => {
@@ -75,6 +82,29 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+
+	it("keeps replay-safe internal classification separate from visible-turn classification", () => {
+		const partialStreamError = fauxAssistantMessage("", {
+			stopReason: "error",
+			errorMessage: codexPartialStreamReplayWarning,
+		});
+		expect(isRetryableAssistantError(partialStreamError)).toBe(false);
+		expect(isReplaySafeAssistantError(partialStreamError)).toBe(true);
+	});
+
+	it.each([
+		"insufficient_quota",
+		"authentication failed",
+		"401 unauthorized",
+		"invalid_request_error",
+		"prompt is too long",
+		"model_not_found",
+		"unsupported parameter: reasoning_effort",
+		"Forbidden",
+		"unknown provider failure",
+	])("keeps terminal and unknown errors non-retryable for replay-safe internal calls: %s", (errorMessage) => {
+		expect(isReplaySafeAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
 	});
 });
 
@@ -161,6 +191,28 @@ describe("retryAssistantCall", () => {
 		expect(produce).toHaveBeenCalledTimes(1);
 		expect(onRetryScheduled).not.toHaveBeenCalled();
 		expect(onRetryFinished).not.toHaveBeenCalled();
+	});
+
+	it("uses an opt-in classifier without changing the default retry policy", async () => {
+		let attempt = 0;
+		const produce = vi.fn(async () => {
+			attempt++;
+			return attempt === 1
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: codexPartialStreamReplayWarning })
+				: fauxAssistantMessage("recovered");
+		});
+
+		const defaultResult = await retryAssistantCall(produce, enabled, undefined);
+		expect(defaultResult.stopReason).toBe("error");
+		expect(produce).toHaveBeenCalledTimes(1);
+
+		attempt = 0;
+		produce.mockClear();
+		const replaySafeResult = await retryAssistantCall(produce, enabled, undefined, undefined, {
+			isRetryable: isReplaySafeAssistantError,
+		});
+		expect(replaySafeResult.content).toEqual([{ type: "text", text: "recovered" }]);
+		expect(produce).toHaveBeenCalledTimes(2);
 	});
 
 	it("emits onRetryAttemptStart after backoff before each retried call", async () => {
