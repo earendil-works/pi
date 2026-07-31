@@ -6,7 +6,17 @@
  * the existing session event stream.
  */
 
-import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
+import type {
+	Api,
+	AssistantBlockContent,
+	AssistantMessage,
+	Message,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+} from "@earendil-works/pi-ai";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 import type { AgentSessionEvent } from "./agent-session.ts";
 import { parseModelPattern } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -64,6 +74,7 @@ const STYLE_PROMPTS: Record<ProgressSummaryStyle, string> = {
 	debug: "Operational live progress. Include event/tool/error state that helps diagnose what the agent is doing; current should name the active operational step.",
 };
 const SENSITIVE_KEY_PATTERN = /authorization|api[-_]?key|token|secret|password|cookie|credential|bearer/i;
+const PROGRESS_SUMMARY_CAPTURE_DIR_ENV = "PI_PROGRESS_SUMMARY_CAPTURE_DIR";
 
 export function normalizeProgressSummarySettings(
 	settings: ProgressSummarySettings | undefined,
@@ -225,12 +236,21 @@ export class ProgressSummaryController {
 				changesSinceSummary: this.changesSinceSummary,
 				sequence: this.sequence + 1,
 			});
-			const response = await this.options.modelRuntime.completeSimple(model, prompt, {
+			const requestOptions = {
 				maxTokens: 512,
 				reasoning: "minimal",
 				cacheRetention: "short",
 				sessionId: `progress-summary:${this.options.sessionId}`,
+			} satisfies SimpleStreamOptions;
+			const capture = captureProgressSummaryRequest({
+				sessionId: this.options.sessionId,
+				sequence: this.sequence + 1,
+				model,
+				prompt,
+				options: requestOptions,
 			});
+			const response = await this.options.modelRuntime.completeSimple(model, prompt, requestOptions);
+			capture?.recordResponseUsage(response.usage);
 			const update = parseSummaryResponse(response, settings.maxBullets);
 			if (!update) return;
 			this.sequence++;
@@ -408,14 +428,26 @@ function projectMessageUpdate(
 	if (assistantEvent.type === "text_delta") {
 		return { kind: "message_update", text: `Assistant text: ${truncate(assistantEvent.delta)}`, important: false };
 	}
-	if (assistantEvent.type === "final_answer_start") {
-		return { kind: "message_update", text: "Final answer started", important: true };
+	if (assistantEvent.type === "block_start") {
+		return {
+			kind: "message_update",
+			text: `${assistantEvent.name} block started`,
+			important: assistantEvent.name === "final_answer",
+		};
 	}
-	if (assistantEvent.type === "final_answer_delta") {
-		return { kind: "message_update", text: `Final answer text: ${truncate(assistantEvent.delta)}`, important: true };
+	if (assistantEvent.type === "block_delta") {
+		return {
+			kind: "message_update",
+			text: `${assistantEvent.name} block text: ${truncate(assistantEvent.delta)}`,
+			important: assistantEvent.name === "final_answer",
+		};
 	}
-	if (assistantEvent.type === "final_answer_end") {
-		return { kind: "message_update", text: "Final answer ended", important: true };
+	if (assistantEvent.type === "block_end") {
+		return {
+			kind: "message_update",
+			text: `${assistantEvent.name} block ended`,
+			important: assistantEvent.name === "final_answer",
+		};
 	}
 	return undefined;
 }
@@ -453,7 +485,7 @@ function extractMessageText(message: Message): string {
 
 function extractAssistantVisibleText(message: AssistantMessage): string {
 	return message.content
-		.filter((part) => part.type === "text" || part.type === "finalAnswer")
+		.filter((part): part is TextContent | AssistantBlockContent => part.type === "text" || part.type === "block")
 		.map((part) => part.text)
 		.join("\n");
 }
@@ -529,6 +561,47 @@ function extractJsonObject(text: string): string | undefined {
 	const end = text.lastIndexOf("}");
 	if (start === -1 || end === -1 || end < start) return undefined;
 	return text.slice(start, end + 1);
+}
+
+function captureProgressSummaryRequest(input: {
+	sessionId: string;
+	sequence: number;
+	model: Model<Api>;
+	prompt: { systemPrompt: string; messages: Message[] };
+	options: SimpleStreamOptions;
+}): { recordResponseUsage: (usage: AssistantMessage["usage"]) => void } | undefined {
+	const captureDir = process.env[PROGRESS_SUMMARY_CAPTURE_DIR_ENV];
+	if (!captureDir) return undefined;
+
+	const timestamp = new Date().toISOString();
+	const filenameTimestamp = timestamp.replace(/[:.]/g, "-");
+	const path = join(captureDir, `${filenameTimestamp}_seq-${input.sequence}.json`);
+	const capture = {
+		timestamp,
+		sessionId: input.sessionId,
+		sequence: input.sequence,
+		model: {
+			provider: input.model.provider,
+			id: input.model.id,
+			api: input.model.api,
+		},
+		request: {
+			prompt: input.prompt,
+			options: input.options,
+		},
+		response: undefined as { usage: AssistantMessage["usage"] } | undefined,
+	};
+	const writeCapture = (): void => {
+		mkdirSync(captureDir, { recursive: true });
+		writeFileSync(path, `${JSON.stringify(capture, null, 2)}\n`);
+	};
+	writeCapture();
+	return {
+		recordResponseUsage: (usage) => {
+			capture.response = { usage };
+			writeCapture();
+		},
+	};
 }
 
 function debugProgressSummary(message: string): void {

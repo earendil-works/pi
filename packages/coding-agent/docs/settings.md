@@ -33,6 +33,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
+| `assistantBlocks` | array | `final_answer` | App-defined assistant blocks for marker parsing, prompt guidance, and TUI metadata |
 
 #### thinkingBudgets
 
@@ -44,6 +45,23 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
     "medium": 10240,
     "high": 32768
   }
+}
+```
+
+#### assistantBlocks
+
+`final_answer` is always registered by default. Add entries to register additional model-facing block markers. `name` identifies the structured content block, `tag` is the XML marker name to parse, `prompt` is appended to the system prompt, and `ui` only controls TUI rendering metadata.
+
+```json
+{
+  "assistantBlocks": [
+    {
+      "name": "handoff",
+      "tag": "handoff",
+      "prompt": "Put concise handoff notes inside <handoff>...</handoff> when useful.",
+      "ui": { "label": "Handoff", "tone": "muted" }
+    }
+  ]
 }
 ```
 
@@ -187,6 +205,8 @@ Progress summaries are optional live UX events that summarize observable run act
   }
 }
 ```
+
+Set `PI_PROGRESS_SUMMARY_CAPTURE_DIR=/path/to/dir` to save each raw progress-summary model request as timestamped JSON. Captures include the timestamp, session id, update sequence, selected model, prompt, request options passed to the summariser model, and response usage when the model call completes.
 
 ### Message Delivery
 
