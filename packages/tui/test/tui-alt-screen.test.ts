@@ -339,6 +339,30 @@ describe("TuiAltScreen", () => {
 			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m\x1b[0m\x1b[7m")),
 			"selection inverse must be reapplied after layout segment resets",
 		);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("stacks flash messages and collapses them as they expire", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("one\ntwo\nthree\nfour", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.flash("First", 80);
+		tui.flash("Second", 500);
+		await terminal.waitForRender();
+		let viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.endsWith(" First "));
+		assert.ok(viewport[1]?.endsWith(" Second "));
+
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await terminal.waitForRender();
+		viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.endsWith(" Second "));
+		assert.ok(!viewport.some((line) => line.includes("First")));
 
 		tui.stop();
 	});

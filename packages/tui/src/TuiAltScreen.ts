@@ -1,3 +1,4 @@
+import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
 import { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
 import { getScrollViewBox, getScrollViewsAt, type LayoutFrame, renderLayoutFrame } from "./layout.ts";
@@ -10,7 +11,7 @@ import {
 	setCapabilities,
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
-import { type Component, CURSOR_MARKER, TuiBase, VIEWPORT_TUI, type ViewportTUI } from "./tui.ts";
+import { type Component, CURSOR_MARKER, compositeTuiLine, TuiBase, VIEWPORT_TUI, type ViewportTUI } from "./tui.ts";
 import {
 	extractAnsiCode,
 	getGraphemeCellRange,
@@ -69,6 +70,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private currentLayout: LayoutFrame | undefined;
 	private readonly implicitDocument: Component;
 	private readonly implicitScrollView: ScrollView;
+	private readonly flashes: AltScreenFlashContainer;
 	private altScreenActive = false;
 	private imageProtocol: ImageProtocol = null;
 	private savedCapabilities?: TerminalCapabilities;
@@ -97,6 +99,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			},
 		};
 		this.implicitScrollView = new ScrollView(this.implicitDocument, { follow: "end", primary: true });
+		this.flashes = new AltScreenFlashContainer(() => this.requestRender());
 		this.wheelScrollLines = Math.max(1, Math.floor(options.wheelScrollLines ?? 1));
 		this.mouseEnabled = options.mouse ?? true;
 		this.openUrl = options.openUrl;
@@ -137,6 +140,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	protected override beforeTerminalStart(): void {
 		this.stopSelectionAutoScroll();
+		this.flashes.dispose();
 		this.altScreenActive = true;
 		const capabilities = getCapabilities();
 		this.imageProtocol = capabilities.images;
@@ -158,6 +162,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	protected override beforeTerminalStop(): void {
 		this.stopSelectionAutoScroll();
+		this.flashes.dispose();
 		if (!this.altScreenActive) return;
 		this.terminal.write(
 			`${BEGIN_SYNCHRONIZED_OUTPUT}${this.deleteKittyImages()}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${END_SYNCHRONIZED_OUTPUT}`,
@@ -209,6 +214,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	scrollToBottom(): void {
 		this.getPrimaryScrollView().scrollToEnd();
 		this.requestRender();
+	}
+
+	/** Show a transient message in the alternate-screen flash stack. */
+	flash(message: string, durationMs?: number): void {
+		this.flashes.flash(message, durationMs);
 	}
 
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
@@ -496,6 +506,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const text = lines.join("\n");
 		if (text.length === 0) return;
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+		this.flash("Copied!");
 	}
 
 	private applySelectionHighlight(text: string): string {
@@ -568,6 +579,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (data.length === 6 && data.startsWith("\x1b[M"));
 	}
 
+	private compositeFlashes(screen: string[], width: number, height: number): string[] {
+		const flashLines = this.flashes.render(width).slice(-height);
+		if (flashLines.length === 0) return screen;
+		const result = [...screen];
+		while (result.length < height) result.push("");
+		for (let row = 0; row < flashLines.length; row++) {
+			const line = flashLines[row]!;
+			const flashWidth = visibleWidth(line);
+			if (flashWidth === 0) continue;
+			result[row] = compositeTuiLine(result[row] ?? "", line, width - flashWidth, flashWidth, width);
+		}
+		return result;
+	}
+
 	protected override doRender(): void {
 		if (this.stopped || !this.altScreenActive) return;
 		const width = Math.max(1, this.terminal.columns);
@@ -578,6 +603,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		screen = this.compositeOverlays(screen, width, height);
 		if (screen.length > height) screen = screen.slice(screen.length - height);
 		screen = this.applySelection(screen, nextLayout);
+		screen = this.compositeFlashes(screen, width, height);
 
 		const cursorPos = this.extractCursorPosition(screen, height);
 		screen = this.applyLineResets(screen).map((line) => {
