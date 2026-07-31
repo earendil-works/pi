@@ -254,6 +254,32 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 	return { sequences, remainder: "" };
 }
 
+function classifyUnmarkedPaste(sequences: string[]): "none" | "pending" | "paste" {
+	let sawNewline = false;
+	let sawTextAfterNewline = false;
+
+	for (const sequence of sequences) {
+		if (sequence === "\r" || sequence === "\n") {
+			sawNewline = true;
+			continue;
+		}
+
+		if (sequence === "\t") {
+			if (sawNewline) sawTextAfterNewline = true;
+			continue;
+		}
+
+		if (sequence.length !== 1) return "none";
+
+		const code = sequence.charCodeAt(0);
+		if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return "none";
+		if (sawNewline) sawTextAfterNewline = true;
+	}
+
+	if (!sawNewline) return "none";
+	return sawTextAfterNewline ? "paste" : "pending";
+}
+
 export type StdinBufferOptions = {
 	/**
 	 * Maximum time to wait for sequence completion (default: 10ms)
@@ -278,6 +304,8 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
+	private pendingUnmarkedPasteSequences: string[] = [];
+	private unmarkedPasteTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
@@ -289,6 +317,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 			this.timeout = null;
+		}
+		if (this.unmarkedPasteTimeout) {
+			clearTimeout(this.unmarkedPasteTimeout);
+			this.unmarkedPasteTimeout = null;
 		}
 
 		// Handle high-byte conversion (for compatibility with parseKeypress)
@@ -303,6 +335,11 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			}
 		} else {
 			str = data;
+		}
+
+		if (this.pendingUnmarkedPasteSequences.length > 0) {
+			str = this.pendingUnmarkedPasteSequences.join("") + str;
+			this.pendingUnmarkedPasteSequences = [];
 		}
 
 		if (str.length === 0 && this.buffer.length === 0) {
@@ -371,6 +408,33 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		const result = extractCompleteSequences(this.buffer);
 		this.buffer = result.remainder;
 
+		if (this.buffer.length === 0) {
+			const unmarkedPaste = classifyUnmarkedPaste(result.sequences);
+			if (unmarkedPaste === "paste") {
+				this.pendingKittyPrintableCodepoint = undefined;
+				this.emit("paste", result.sequences.join(""));
+				return;
+			}
+
+			if (unmarkedPaste === "pending") {
+				const newlineIndex = result.sequences.findIndex((sequence) => sequence === "\r" || sequence === "\n");
+				for (const sequence of result.sequences.slice(0, newlineIndex)) {
+					this.emitDataSequence(sequence);
+				}
+
+				this.pendingUnmarkedPasteSequences = result.sequences.slice(newlineIndex);
+				this.unmarkedPasteTimeout = setTimeout(() => {
+					const pending = this.pendingUnmarkedPasteSequences;
+					this.pendingUnmarkedPasteSequences = [];
+					this.unmarkedPasteTimeout = null;
+					for (const sequence of pending) {
+						this.emitDataSequence(sequence);
+					}
+				}, this.timeoutMs);
+				return;
+			}
+		}
+
 		for (const sequence of result.sequences) {
 			this.emitDataSequence(sequence);
 		}
@@ -402,13 +466,22 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+		if (this.unmarkedPasteTimeout) {
+			clearTimeout(this.unmarkedPasteTimeout);
+			this.unmarkedPasteTimeout = null;
+		}
 
-		if (this.buffer.length === 0) {
+		const sequences = this.pendingUnmarkedPasteSequences;
+		this.pendingUnmarkedPasteSequences = [];
+		if (this.buffer.length > 0) {
+			sequences.push(this.buffer);
+			this.buffer = "";
+		}
+
+		if (sequences.length === 0) {
 			return [];
 		}
 
-		const sequences = [this.buffer];
-		this.buffer = "";
 		this.pendingKittyPrintableCodepoint = undefined;
 		return sequences;
 	}
@@ -418,14 +491,19 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+		if (this.unmarkedPasteTimeout) {
+			clearTimeout(this.unmarkedPasteTimeout);
+			this.unmarkedPasteTimeout = null;
+		}
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
 		this.pendingKittyPrintableCodepoint = undefined;
+		this.pendingUnmarkedPasteSequences = [];
 	}
 
 	getBuffer(): string {
-		return this.buffer;
+		return this.pendingUnmarkedPasteSequences.join("") + this.buffer;
 	}
 
 	destroy(): void {

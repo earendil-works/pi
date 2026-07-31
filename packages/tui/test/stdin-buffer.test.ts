@@ -356,6 +356,18 @@ describe("StdinBuffer", () => {
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
 		});
+
+		it("should flush a pending unmarked newline", async () => {
+			processInput("abc\r");
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c"]);
+			assert.strictEqual(buffer.getBuffer(), "\r");
+
+			assert.deepStrictEqual(buffer.flush(), ["\r"]);
+			assert.strictEqual(buffer.getBuffer(), "");
+
+			await wait(15);
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c"]);
+		});
 	});
 
 	describe("Clear", () => {
@@ -369,7 +381,7 @@ describe("StdinBuffer", () => {
 		});
 	});
 
-	describe("Bracketed Paste", () => {
+	describe("Paste", () => {
 		let emittedPaste: string[] = [];
 
 		beforeEach(() => {
@@ -433,6 +445,73 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedPaste, ["Hello 世界 🎉"]);
 			assert.deepStrictEqual(emittedSequences, []);
 		});
+
+		it("should detect multiline paste without bracketed paste markers", () => {
+			processInput("line one\rline two");
+
+			assert.deepStrictEqual(emittedPaste, ["line one\rline two"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should detect unmarked paste with CRLF newlines", () => {
+			processInput("a\r\nb");
+
+			assert.deepStrictEqual(emittedPaste, ["a\r\nb"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should detect unmarked paste split after a newline", () => {
+			processInput("line one");
+			processInput("\r");
+			processInput("line two");
+
+			assert.deepStrictEqual(emittedPaste, ["\rline two"]);
+			assert.deepStrictEqual(emittedSequences, ["l", "i", "n", "e", " ", "o", "n", "e"]);
+		});
+
+		it("should allow tabs in unmarked paste", () => {
+			processInput("one\r\ttwo");
+
+			assert.deepStrictEqual(emittedPaste, ["one\r\ttwo"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should not treat batched typing followed by enter as paste", async () => {
+			processInput("abc\r");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c"]);
+
+			await wait(15);
+
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c", "\r"]);
+		});
+
+		it("should not treat repeated trailing newlines as paste", async () => {
+			processInput("\r\r");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, []);
+
+			await wait(15);
+
+			assert.deepStrictEqual(emittedSequences, ["\r", "\r"]);
+		});
+
+		it("should not treat batched escape sequences as paste", () => {
+			processInput("abc\r");
+			processInput("\x1b[A");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c", "\r", "\x1b[A"]);
+		});
+
+		it("should not treat DEL as printable paste content", () => {
+			processInput("abc\r\x7f");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c", "\r", "\x7f"]);
+		});
 	});
 
 	describe("Destroy", () => {
@@ -453,6 +532,15 @@ describe("StdinBuffer", () => {
 
 			// Should not have emitted anything
 			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should clear pending unmarked newlines on destroy", async () => {
+			processInput("abc\r");
+			buffer.destroy();
+
+			await wait(15);
+
+			assert.deepStrictEqual(emittedSequences, ["a", "b", "c"]);
 		});
 	});
 });
