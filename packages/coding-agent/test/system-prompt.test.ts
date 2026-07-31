@@ -34,7 +34,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("Final answer contract:");
+			expect(prompt).toContain("Assistant block contract:");
 			expect(prompt).toContain("<final_answer>...</final_answer>");
 		});
 
@@ -47,8 +47,8 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("CUSTOM SYSTEM PROMPT");
-			expect(prompt).toContain("Final answer contract:");
-			expect(prompt.indexOf("Final answer contract:")).toBeLessThan(prompt.indexOf("Current working directory:"));
+			expect(prompt).toContain("Assistant block contract:");
+			expect(prompt.indexOf("Assistant block contract:")).toBeLessThan(prompt.indexOf("Current working directory:"));
 		});
 	});
 

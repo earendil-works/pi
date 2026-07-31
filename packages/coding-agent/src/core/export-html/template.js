@@ -296,7 +296,7 @@
         if (typeof content === 'string') return content.trim().length > 0;
         if (Array.isArray(content)) {
           for (const c of content) {
-            if ((c.type === 'text' || c.type === 'finalAnswer') && c.text && c.text.trim().length > 0) return true;
+            if ((c.type === 'text' || c.type === 'block') && c.text && c.text.trim().length > 0) return true;
           }
         }
         return false;
@@ -306,11 +306,19 @@
         if (typeof content === 'string') return content;
         if (Array.isArray(content)) {
           return content
-            .filter(c => (c.type === 'text' || c.type === 'finalAnswer') && c.text)
+            .filter(c => (c.type === 'text' || c.type === 'block') && c.text)
             .map(c => c.text)
             .join('');
         }
         return '';
+      }
+
+      function formatAssistantBlockLabel(name) {
+        return String(name || 'Assistant block')
+          .split(/[_-]+/u)
+          .filter(part => part.length > 0)
+          .map(part => part.slice(0, 1).toUpperCase() + part.slice(1))
+          .join(' ');
       }
 
       /**
@@ -1246,10 +1254,12 @@
             for (const block of msg.content) {
               if (block.type === 'text' && block.text.trim()) {
                 html += `<div class="assistant-text markdown-content">${safeMarkedParse(block.text)}</div>`;
-              } else if (block.type === 'finalAnswer' && block.text.trim()) {
-                html += `<div class="final-answer-block">
-                  <div class="final-answer-label">Final answer</div>
-                  <div class="final-answer-text markdown-content">${safeMarkedParse(block.text)}</div>
+              } else if (block.type === 'block' && block.text.trim()) {
+                const isFinalAnswer = block.name === 'final_answer';
+                const label = isFinalAnswer ? 'Final answer' : formatAssistantBlockLabel(block.name);
+                html += `<div class="${isFinalAnswer ? 'final-answer-block' : 'assistant-block'}">
+                  <div class="${isFinalAnswer ? 'final-answer-label' : 'assistant-block-label'}">${escapeHtml(label)}</div>
+                  <div class="${isFinalAnswer ? 'final-answer-text' : 'assistant-block-text'} markdown-content">${safeMarkedParse(block.text)}</div>
                 </div>`;
               } else if (block.type === 'thinking' && block.thinking.trim()) {
                 html += `<div class="thinking-block">

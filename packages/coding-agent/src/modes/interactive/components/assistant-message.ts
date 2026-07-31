@@ -1,10 +1,28 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantBlockContent, AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+
+export interface AssistantBlockUiMetadata {
+	name: string;
+	label?: string;
+	tone?: "accent" | "muted" | "text";
+}
+
+function isFinalAnswerBlock(content: AssistantMessage["content"][number]): content is AssistantBlockContent {
+	return content.type === "block" && content.name === "final_answer";
+}
+
+function formatAssistantBlockLabel(name: string): string {
+	return name
+		.split(/[_-]+/u)
+		.filter((part) => part.length > 0)
+		.map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+		.join(" ");
+}
 
 /**
  * Component that renders a complete assistant message
@@ -17,6 +35,7 @@ export class AssistantMessageComponent extends Container {
 	private outputPad: number;
 	private finalAnswerFocused: boolean;
 	private showTrace: boolean;
+	private assistantBlockUi: ReadonlyMap<string, AssistantBlockUiMetadata>;
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 
@@ -28,6 +47,7 @@ export class AssistantMessageComponent extends Container {
 		outputPad = 1,
 		finalAnswerFocused = false,
 		showTrace = true,
+		assistantBlockUi: readonly AssistantBlockUiMetadata[] = [],
 	) {
 		super();
 
@@ -37,6 +57,7 @@ export class AssistantMessageComponent extends Container {
 		this.outputPad = outputPad;
 		this.finalAnswerFocused = finalAnswerFocused;
 		this.showTrace = showTrace;
+		this.assistantBlockUi = new Map(assistantBlockUi.map((block) => [block.name, block]));
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -109,7 +130,7 @@ export class AssistantMessageComponent extends Container {
 		const hasVisibleContent = message.content.some(
 			(c) =>
 				(c.type === "text" && c.text.trim()) ||
-				(c.type === "finalAnswer" && c.text.trim()) ||
+				(c.type === "block" && c.text.trim()) ||
 				(c.type === "thinking" && c.thinking.trim()),
 		);
 
@@ -117,7 +138,7 @@ export class AssistantMessageComponent extends Container {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
-		const hasFinalAnswer = message.content.some((content) => content.type === "finalAnswer" && content.text.trim());
+		const hasFinalAnswer = message.content.some((content) => isFinalAnswerBlock(content) && content.text.trim());
 		const hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const hideTraceText = this.finalAnswerFocused && !this.showTrace && (hasFinalAnswer || hasToolCalls);
 
@@ -128,11 +149,17 @@ export class AssistantMessageComponent extends Container {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme));
-			} else if (content.type === "finalAnswer" && content.text.trim()) {
-				this.contentContainer.addChild(new Text(theme.bold(theme.fg("accent", "Final answer")), this.outputPad, 0));
+			} else if (content.type === "block" && content.text.trim()) {
+				const metadata = this.assistantBlockUi.get(content.name);
+				const label =
+					metadata?.label ??
+					(content.name === "final_answer" ? "Final answer" : formatAssistantBlockLabel(content.name));
+				const tone = metadata?.tone ?? (content.name === "final_answer" ? "accent" : "muted");
+				const token = tone === "text" ? "text" : tone;
+				this.contentContainer.addChild(new Text(theme.bold(theme.fg(token, label)), this.outputPad, 0));
 				this.contentContainer.addChild(
 					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, {
-						color: (text: string) => theme.fg("accent", text),
+						color: (text: string) => theme.fg(token, text),
 					}),
 				);
 			} else if (content.type === "thinking") {
@@ -160,7 +187,7 @@ export class AssistantMessageComponent extends Container {
 					.some(
 						(c) =>
 							(c.type === "text" && c.text.trim()) ||
-							(c.type === "finalAnswer" && c.text.trim()) ||
+							(c.type === "block" && c.text.trim()) ||
 							(c.type === "thinking" && c.thinking.trim()),
 					);
 

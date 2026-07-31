@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import {
 	type Api,
 	type ApiStreamOptions,
+	type AssistantBlockDefinition,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	type AuthCheck,
@@ -26,7 +27,7 @@ import {
 	type MutableModels,
 	type Provider,
 	type ProviderHeaders,
-	parseFinalAnswerMarkers,
+	parseAssistantBlockMarkers,
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
@@ -109,6 +110,7 @@ export class ModelRuntime implements Models {
 	};
 	private availabilityRefresh: Promise<void> | undefined;
 	private availabilityError: string | undefined;
+	private assistantBlocks: readonly AssistantBlockDefinition[] | undefined;
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -444,6 +446,10 @@ export class ModelRuntime implements Models {
 		};
 	}
 
+	setAssistantBlocks(blocks: readonly AssistantBlockDefinition[] | undefined): void {
+		this.assistantBlocks = blocks;
+	}
+
 	stream<TApi extends Api>(
 		model: Model<TApi>,
 		context: Context,
@@ -454,12 +460,13 @@ export class ModelRuntime implements Models {
 				model,
 				options as (StreamOptions & ModelsStreamTransforms) | undefined,
 			);
-			return parseFinalAnswerMarkers(
+			return parseAssistantBlockMarkers(
 				prepared.provider.stream(
 					prepared.model as Model<TApi>,
 					context,
 					prepared.options as ApiStreamOptions<TApi>,
 				),
+				this.assistantBlocks,
 			);
 		});
 	}
@@ -475,8 +482,9 @@ export class ModelRuntime implements Models {
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
 			const prepared = await this.prepareRequest(model, options);
-			return parseFinalAnswerMarkers(
+			return parseAssistantBlockMarkers(
 				prepared.provider.streamSimple(prepared.model, context, prepared.options as SimpleStreamOptions),
+				this.assistantBlocks,
 			);
 		});
 	}

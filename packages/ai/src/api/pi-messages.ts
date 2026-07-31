@@ -54,9 +54,9 @@ export type PiMessagesEvent =
 	| { type: "text_start"; contentIndex: number }
 	| { type: "text_delta"; contentIndex: number; delta: string }
 	| { type: "text_end"; contentIndex: number; content: string; contentSignature?: string }
-	| { type: "final_answer_start"; contentIndex: number }
-	| { type: "final_answer_delta"; contentIndex: number; delta: string }
-	| { type: "final_answer_end"; contentIndex: number; content: string }
+	| { type: "block_start"; name: string; contentIndex: number }
+	| { type: "block_delta"; name: string; contentIndex: number; delta: string }
+	| { type: "block_end"; name: string; contentIndex: number; content: string }
 	| { type: "thinking_start"; contentIndex: number }
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
 	| {
@@ -225,14 +225,14 @@ function createEventConverter(model: Model<"pi-messages">) {
 					textSignature: event.contentSignature,
 				});
 				break;
-			case "final_answer_start":
-				partial.content[event.contentIndex] = { type: "finalAnswer", text: "" };
+			case "block_start":
+				partial.content[event.contentIndex] = { type: "block", name: event.name, text: "" };
 				break;
-			case "final_answer_delta":
+			case "block_delta":
 				(partial.content[event.contentIndex] as { text: string }).text += event.delta;
 				break;
-			case "final_answer_end":
-				Object.assign(partial.content[event.contentIndex]!, { text: event.content });
+			case "block_end":
+				Object.assign(partial.content[event.contentIndex]!, { name: event.name, text: event.content });
 				break;
 			case "thinking_start":
 				partial.content[event.contentIndex] = { type: "thinking", thinking: "" };

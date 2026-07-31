@@ -66,7 +66,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(
 			createAssistantMessage([
 				{ type: "text", text: "scratch" },
-				{ type: "finalAnswer", text: "ship it" },
+				{ type: "block", name: "final_answer", text: "ship it" },
 			]),
 		);
 		const rendered = stripAnsi(component.render(80).join("\n"));
@@ -82,7 +82,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(
 			createAssistantMessage([
 				{ type: "text", text: "scratch" },
-				{ type: "finalAnswer", text: "ship it" },
+				{ type: "block", name: "final_answer", text: "ship it" },
 			]),
 			false,
 			undefined,
@@ -104,7 +104,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(
 			createAssistantMessage([
 				{ type: "text", text: "scratch" },
-				{ type: "finalAnswer", text: "ship it" },
+				{ type: "block", name: "final_answer", text: "ship it" },
 			]),
 			false,
 			undefined,

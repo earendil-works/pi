@@ -38,9 +38,9 @@ export type ProxyAssistantMessageEvent =
 	| { type: "text_start"; contentIndex: number }
 	| { type: "text_delta"; contentIndex: number; delta: string }
 	| { type: "text_end"; contentIndex: number; contentSignature?: string }
-	| { type: "final_answer_start"; contentIndex: number }
-	| { type: "final_answer_delta"; contentIndex: number; delta: string }
-	| { type: "final_answer_end"; contentIndex: number }
+	| { type: "block_start"; name: string; contentIndex: number }
+	| { type: "block_delta"; name: string; contentIndex: number; delta: string }
+	| { type: "block_end"; name: string; contentIndex: number }
 	| { type: "thinking_start"; contentIndex: number }
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
 	| { type: "thinking_end"; contentIndex: number; contentSignature?: string }
@@ -278,35 +278,37 @@ function processProxyEvent(
 			throw new Error("Received text_end for non-text content");
 		}
 
-		case "final_answer_start":
-			partial.content[proxyEvent.contentIndex] = { type: "finalAnswer", text: "" };
-			return { type: "final_answer_start", contentIndex: proxyEvent.contentIndex, partial };
+		case "block_start":
+			partial.content[proxyEvent.contentIndex] = { type: "block", name: proxyEvent.name, text: "" };
+			return { type: "block_start", name: proxyEvent.name, contentIndex: proxyEvent.contentIndex, partial };
 
-		case "final_answer_delta": {
+		case "block_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
-			if (content?.type === "finalAnswer") {
+			if (content?.type === "block" && content.name === proxyEvent.name) {
 				content.text += proxyEvent.delta;
 				return {
-					type: "final_answer_delta",
+					type: "block_delta",
+					name: proxyEvent.name,
 					contentIndex: proxyEvent.contentIndex,
 					delta: proxyEvent.delta,
 					partial,
 				};
 			}
-			throw new Error("Received final_answer_delta for non-finalAnswer content");
+			throw new Error("Received block_delta for non-matching block content");
 		}
 
-		case "final_answer_end": {
+		case "block_end": {
 			const content = partial.content[proxyEvent.contentIndex];
-			if (content?.type === "finalAnswer") {
+			if (content?.type === "block" && content.name === proxyEvent.name) {
 				return {
-					type: "final_answer_end",
+					type: "block_end",
+					name: proxyEvent.name,
 					contentIndex: proxyEvent.contentIndex,
 					content: content.text,
 					partial,
 				};
 			}
-			throw new Error("Received final_answer_end for non-finalAnswer content");
+			throw new Error("Received block_end for non-matching block content");
 		}
 
 		case "thinking_start":

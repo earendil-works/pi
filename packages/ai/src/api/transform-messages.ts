@@ -116,7 +116,7 @@ export function transformMessages<TApi extends Api>(
 					};
 				}
 
-				if (block.type === "text" || block.type === "finalAnswer") {
+				if (block.type === "text" || block.type === "block") {
 					return {
 						type: "text" as const,
 						text: block.text,

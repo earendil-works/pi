@@ -328,9 +328,9 @@ async function streamAssistantResponse(
 			case "text_start":
 			case "text_delta":
 			case "text_end":
-			case "final_answer_start":
-			case "final_answer_delta":
-			case "final_answer_end":
+			case "block_start":
+			case "block_delta":
+			case "block_end":
 			case "thinking_start":
 			case "thinking_delta":
 			case "thinking_end":

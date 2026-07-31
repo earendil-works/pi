@@ -42,6 +42,16 @@ export interface ProgressSummarySettings {
 	presentation?: "focused" | "trace"; // default: "focused" when progress summaries are enabled
 }
 
+export interface AssistantBlockSettings {
+	name: string;
+	tag?: string;
+	prompt?: string;
+	ui?: {
+		label?: string;
+		tone?: "accent" | "muted" | "text";
+	};
+}
+
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
@@ -103,6 +113,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	progressSummary?: ProgressSummarySettings;
+	assistantBlocks?: AssistantBlockSettings[];
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
@@ -852,6 +863,26 @@ export class SettingsManager {
 
 	getProgressSummarySettings(): ProgressSummarySettings | undefined {
 		return this.settings.progressSummary;
+	}
+
+	getAssistantBlocks(): AssistantBlockSettings[] {
+		const configured = this.settings.assistantBlocks ?? [];
+		const blocks: AssistantBlockSettings[] = [
+			{
+				name: "final_answer",
+				tag: "final_answer",
+				prompt:
+					"Put the actual user-facing answer inside <final_answer>...</final_answer>. Use these markers once per completed user request.",
+				ui: { label: "Final answer", tone: "accent" },
+			},
+		];
+		for (const block of configured) {
+			const index = blocks.findIndex((existing) => existing.name === block.name);
+			const next = { ...block, ui: block.ui ? { ...block.ui } : undefined };
+			if (index >= 0) blocks[index] = next;
+			else blocks.push(next);
+		}
+		return blocks;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {

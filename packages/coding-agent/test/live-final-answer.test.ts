@@ -74,24 +74,24 @@ describe.skipIf(!LIVE_ENABLED)("live final answer CLI smoke", () => {
 			const assistantMessageEvent = (event as { assistantMessageEvent?: { type?: unknown } }).assistantMessageEvent;
 			return typeof assistantMessageEvent?.type === "string" ? [assistantMessageEvent.type] : [];
 		});
-		const finalAnswerText = events
+		const blockText = events
 			.flatMap((event) => {
 				if (typeof event !== "object" || event === null) return [];
 				const message = (event as { message?: { role?: string; content?: unknown } }).message;
 				if (message?.role !== "assistant" || !Array.isArray(message.content)) return [];
 				return message.content.flatMap((content) => {
 					if (typeof content !== "object" || content === null) return [];
-					const finalAnswer = content as { type?: unknown; text?: unknown };
-					return finalAnswer.type === "finalAnswer" && typeof finalAnswer.text === "string"
-						? [finalAnswer.text]
+					const block = content as { type?: unknown; name?: unknown; text?: unknown };
+					return block.type === "block" && block.name === "final_answer" && typeof block.text === "string"
+						? [block.text]
 						: [];
 				});
 			})
 			.join("\n");
 
-		expect(assistantEventTypes).toContain("final_answer_start");
-		expect(assistantEventTypes).toContain("final_answer_delta");
-		expect(assistantEventTypes).toContain("final_answer_end");
-		expect(finalAnswerText.toLowerCase()).toContain("live final answer uat passed");
+		expect(assistantEventTypes).toContain("block_start");
+		expect(assistantEventTypes).toContain("block_delta");
+		expect(assistantEventTypes).toContain("block_end");
+		expect(blockText.toLowerCase()).toContain("live final answer uat passed");
 	});
 });

@@ -156,10 +156,10 @@ describe("pi-messages", () => {
 		const { baseUrl } = await startServer({
 			events: [
 				{ type: "start" },
-				{ type: "final_answer_start", contentIndex: 0 },
-				{ type: "final_answer_delta", contentIndex: 0, delta: "Ship" },
-				{ type: "final_answer_delta", contentIndex: 0, delta: " it" },
-				{ type: "final_answer_end", contentIndex: 0, content: "Ship it" },
+				{ type: "block_start", name: "final_answer", contentIndex: 0 },
+				{ type: "block_delta", name: "final_answer", contentIndex: 0, delta: "Ship" },
+				{ type: "block_delta", name: "final_answer", contentIndex: 0, delta: " it" },
+				{ type: "block_end", name: "final_answer", contentIndex: 0, content: "Ship it" },
 				{ type: "done", reason: "stop", usage },
 			],
 		});
@@ -172,8 +172,8 @@ describe("pi-messages", () => {
 		}
 		const message = await eventStream.result();
 
-		expect(message.content).toEqual([{ type: "finalAnswer", text: "Ship it" }]);
-		expect(events.map((event) => event.type)).toContain("final_answer_delta");
+		expect(message.content).toEqual([{ type: "block", name: "final_answer", text: "Ship it" }]);
+		expect(events.map((event) => event.type)).toContain("block_delta");
 	});
 
 	it("appends debug=1 and reports response headers via onResponse", async () => {

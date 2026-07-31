@@ -1,9 +1,9 @@
 import { createProvider, type Provider } from "../models.ts";
 import type {
+	AssistantBlockContent,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
-	FinalAnswerContent,
 	ImageContent,
 	Message,
 	Model,
@@ -45,7 +45,7 @@ export interface FauxModelDefinition {
 	maxTokens?: number;
 }
 
-export type FauxContentBlock = TextContent | FinalAnswerContent | ThinkingContent | ToolCall;
+export type FauxContentBlock = TextContent | AssistantBlockContent | ThinkingContent | ToolCall;
 
 export function fauxText(text: string): TextContent {
 	return { type: "text", text };
@@ -55,8 +55,8 @@ export function fauxThinking(thinking: string): ThinkingContent {
 	return { type: "thinking", thinking };
 }
 
-export function fauxFinalAnswer(text: string): FinalAnswerContent {
-	return { type: "finalAnswer", text };
+export function fauxAssistantBlock(text: string, name = "final_answer"): AssistantBlockContent {
+	return { type: "block", name, text };
 }
 
 export function fauxToolCall(name: string, arguments_: ToolCall["arguments"], options: { id?: string } = {}): ToolCall {
@@ -164,10 +164,12 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | FinalAnswerContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(
+	content: Array<TextContent | AssistantBlockContent | ThinkingContent | ToolCall>,
+): string {
 	return content
 		.map((block) => {
-			if (block.type === "text" || block.type === "finalAnswer") {
+			if (block.type === "text" || block.type === "block") {
 				return block.text;
 			}
 			if (block.type === "thinking") {
@@ -361,9 +363,9 @@ async function streamWithDeltas(
 			continue;
 		}
 
-		if (block.type === "finalAnswer") {
-			partial.content = [...partial.content, { type: "finalAnswer", text: "" }];
-			stream.push({ type: "final_answer_start", contentIndex: index, partial: { ...partial } });
+		if (block.type === "block") {
+			partial.content = [...partial.content, { type: "block", name: block.name, text: "" }];
+			stream.push({ type: "block_start", name: block.name, contentIndex: index, partial: { ...partial } });
 			for (const chunk of splitStringByTokenSize(block.text, minTokenSize, maxTokenSize)) {
 				await scheduleChunk(chunk, tokensPerSecond);
 				if (signal?.aborted) {
@@ -372,10 +374,22 @@ async function streamWithDeltas(
 					stream.end(aborted);
 					return;
 				}
-				(partial.content[index] as FinalAnswerContent).text += chunk;
-				stream.push({ type: "final_answer_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+				(partial.content[index] as AssistantBlockContent).text += chunk;
+				stream.push({
+					type: "block_delta",
+					name: block.name,
+					contentIndex: index,
+					delta: chunk,
+					partial: { ...partial },
+				});
 			}
-			stream.push({ type: "final_answer_end", contentIndex: index, content: block.text, partial: { ...partial } });
+			stream.push({
+				type: "block_end",
+				name: block.name,
+				contentIndex: index,
+				content: block.text,
+				partial: { ...partial },
+			});
 			continue;
 		}
 

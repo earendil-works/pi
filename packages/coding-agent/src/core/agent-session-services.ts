@@ -136,13 +136,16 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const modelRuntime =
 		options.modelRuntime ??
 		(await ModelRuntime.create({
 			authPath: join(agentDir, "auth.json"),
 			modelsPath: join(agentDir, "models.json"),
 		}));
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	modelRuntime.setAssistantBlocks(
+		settingsManager.getAssistantBlocks().map((block) => ({ name: block.name, tag: block.tag ?? block.name })),
+	);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,

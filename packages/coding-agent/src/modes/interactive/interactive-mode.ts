@@ -1941,6 +1941,14 @@ export class InteractiveMode {
 		return settings?.enabled === true && settings.presentation !== "trace";
 	}
 
+	private getAssistantBlockUiMetadata() {
+		return this.settingsManager.getAssistantBlocks().map((block) => ({
+			name: block.name,
+			label: block.ui?.label,
+			tone: block.ui?.tone,
+		}));
+	}
+
 	private clearExtensionWidgets(): void {
 		for (const widget of this.extensionWidgetsAbove.values()) {
 			widget.dispose?.();
@@ -2911,6 +2919,7 @@ export class InteractiveMode {
 						this.outputPad,
 						this.isFinalAnswerFocusedMode(),
 						this.toolOutputExpanded,
+						this.getAssistantBlockUiMetadata(),
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3287,6 +3296,7 @@ export class InteractiveMode {
 					this.outputPad,
 					this.isFinalAnswerFocusedMode(),
 					this.toolOutputExpanded,
+					this.getAssistantBlockUiMetadata(),
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;

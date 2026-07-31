@@ -541,7 +541,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 			const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
 
 			for (const block of msg.content) {
-				if (block.type === "text" || block.type === "finalAnswer") {
+				if (block.type === "text" || block.type === "block") {
 					if (block.text.trim().length > 0) {
 						contentParts.push({ type: "text", text: sanitizeSurrogates(block.text) });
 					}

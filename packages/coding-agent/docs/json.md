@@ -71,11 +71,14 @@ Followed by events as they occur:
 {"type":"turn_start"}
 {"type":"message_start","message":{"role":"assistant","content":[],...}}
 {"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","delta":"Hello",...}}
+{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"block_delta","name":"final_answer","contentIndex":1,"delta":"Done",...}}
 {"type":"progress_summary_update","sequence":1,"milestones":["Identified the relevant files"],"current":"Running validation checks."}
 {"type":"message_end","message":{...}}
 {"type":"turn_end","message":{...},"toolResults":[]}
 {"type":"agent_end","messages":[...]}
 ```
+
+Assistant `message_update` events can include generic block events: `block_start`, `block_delta`, and `block_end`. Blocks have a `name`; the built-in final-answer block is named `final_answer` and is persisted in assistant message content as `{ "type": "block", "name": "final_answer", "text": "..." }`.
 
 ## Example
 

@@ -25,9 +25,9 @@ import type {
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import type {
+	AssistantBlockContent,
 	AssistantMessage,
 	AuthResult,
-	FinalAnswerContent,
 	ImageContent,
 	Message,
 	Model,
@@ -1059,6 +1059,11 @@ export class AgentSession {
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt,
+			assistantBlocks: this.settingsManager.getAssistantBlocks().map((block) => ({
+				name: block.name,
+				tag: block.tag ?? block.name,
+				prompt: block.prompt,
+			})),
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
@@ -3263,12 +3268,14 @@ export class AgentSession {
 
 		if (!lastAssistant) return undefined;
 
-		const finalAnswerText = (lastAssistant as AssistantMessage).content
-			.filter((content): content is FinalAnswerContent => content.type === "finalAnswer")
+		const blockText = (lastAssistant as AssistantMessage).content
+			.filter(
+				(content): content is AssistantBlockContent => content.type === "block" && content.name === "final_answer",
+			)
 			.map((content) => content.text)
 			.join("")
 			.trim();
-		if (finalAnswerText) return finalAnswerText;
+		if (blockText) return blockText;
 
 		const text = (lastAssistant as AssistantMessage).content
 			.filter((content): content is TextContent => content.type === "text")

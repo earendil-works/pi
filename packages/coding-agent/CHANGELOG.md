@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added first-class final-answer streaming in prompts, RPC documentation, TUI rendering, JSONL history, and HTML export.
+- Added first-class assistant block streaming in prompts, RPC documentation, TUI rendering, JSONL history, and HTML export, with built-in `final_answer` support.
 - Added optional live progress summaries with typed stream events, TUI display, configurable style, and configurable summariser model.
 
 ### Changed

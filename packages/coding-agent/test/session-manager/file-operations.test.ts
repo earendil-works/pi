@@ -72,7 +72,7 @@ describe("loadEntriesFromFile", () => {
 			role: "assistant",
 			content: [
 				{ type: "text", text: "scratch\n" },
-				{ type: "finalAnswer", text: "ship it" },
+				{ type: "block", name: "final_answer", text: "ship it" },
 			],
 			api: "openai-responses",
 			provider: "openai",
@@ -94,8 +94,22 @@ describe("loadEntriesFromFile", () => {
 
 		expect(assistant?.content).toEqual([
 			{ type: "text", text: "scratch\n" },
-			{ type: "finalAnswer", text: "ship it" },
+			{ type: "block", name: "final_answer", text: "ship it" },
 		]);
+	});
+
+	it("normalizes legacy finalAnswer assistant content on reload", () => {
+		const file = join(tempDir, "legacy-final-answer.jsonl");
+		writeFileSync(
+			file,
+			'{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+				'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"finalAnswer","text":"ship it"}],"api":"openai-responses","provider":"openai","model":"mock","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":2}}\n',
+		);
+
+		const reloaded = SessionManager.open(file, tempDir);
+		const assistant = reloaded.buildSessionContext().messages.find((message) => message.role === "assistant");
+
+		expect(assistant?.content).toEqual([{ type: "block", name: "final_answer", text: "ship it" }]);
 	});
 
 	it("opens session files larger than Node's max string length", () => {

@@ -1,5 +1,5 @@
 import { type AgentMessage, uuidv7 } from "@earendil-works/pi-agent-core";
-import type { FinalAnswerContent, ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { AssistantBlockContent, ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -292,6 +292,25 @@ export function migrateSessionEntries(entries: FileEntry[]): void {
 }
 
 /** Exported for compaction.test.ts */
+function normalizeAssistantBlockContent(message: AgentMessage): AgentMessage {
+	if (message.role !== "assistant") return message;
+	return {
+		...message,
+		content: message.content.map((block) => {
+			const legacy = block as { type?: unknown; text?: unknown };
+			if (legacy.type === "finalAnswer" && typeof legacy.text === "string") {
+				return { type: "block", name: "final_answer", text: legacy.text };
+			}
+			return block;
+		}),
+	};
+}
+
+function normalizeSessionEntry(entry: FileEntry): FileEntry {
+	if (entry.type !== "message") return entry;
+	return { ...entry, message: normalizeAssistantBlockContent(entry.message) };
+}
+
 export function parseSessionEntries(content: string): FileEntry[] {
 	const entries: FileEntry[] = [];
 	const lines = content.trim().split("\n");
@@ -299,7 +318,7 @@ export function parseSessionEntries(content: string): FileEntry[] {
 	for (const line of lines) {
 		if (!line.trim()) continue;
 		try {
-			const entry = JSON.parse(line) as FileEntry;
+			const entry = normalizeSessionEntry(JSON.parse(line) as FileEntry);
 			entries.push(entry);
 		} catch {
 			// Skip malformed lines
@@ -489,7 +508,7 @@ const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
 	try {
-		return JSON.parse(line) as FileEntry;
+		return normalizeSessionEntry(JSON.parse(line) as FileEntry);
 	} catch {
 		// Skip malformed lines
 		return null;
@@ -602,7 +621,8 @@ function extractTextContent(message: Message): string {
 	}
 	return content
 		.filter(
-			(block): block is TextContent | FinalAnswerContent => block.type === "text" || block.type === "finalAnswer",
+			(block): block is TextContent | AssistantBlockContent =>
+				block.type === "text" || (block.type === "block" && block.name === "final_answer"),
 		)
 		.map((block) => block.text)
 		.join(" ");

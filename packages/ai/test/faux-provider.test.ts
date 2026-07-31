@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	complete,
+	fauxAssistantBlock,
 	fauxAssistantMessage,
-	fauxFinalAnswer,
 	fauxText,
 	fauxThinking,
 	fauxToolCall,
@@ -58,10 +58,10 @@ describe("faux provider", () => {
 		const events = await collectEvents(result);
 		const response = await result.result();
 
-		expect(events.map((event) => event.type)).toContain("final_answer_delta");
+		expect(events.map((event) => event.type)).toContain("block_delta");
 		expect(response.content).toEqual([
 			{ type: "text", text: "trace " },
-			{ type: "finalAnswer", text: "Ship it" },
+			{ type: "block", name: "final_answer", text: "Ship it" },
 			{ type: "text", text: " after" },
 		]);
 	});
@@ -75,13 +75,13 @@ describe("faux provider", () => {
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 		});
 
-		expect(response.content).toEqual([{ type: "finalAnswer", text: "Only answer" }]);
+		expect(response.content).toEqual([{ type: "block", name: "final_answer", text: "Only answer" }]);
 	});
 
 	it("streams native final answer content blocks", async () => {
 		const registration = registerFauxProvider();
 		registrations.push(registration);
-		registration.setResponses([fauxAssistantMessage([fauxText("trace"), fauxFinalAnswer("Ship it")])]);
+		registration.setResponses([fauxAssistantMessage([fauxText("trace"), fauxAssistantBlock("Ship it")])]);
 
 		const response = await complete(registration.getModel(), {
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
@@ -89,7 +89,7 @@ describe("faux provider", () => {
 
 		expect(response.content).toEqual([
 			{ type: "text", text: "trace" },
-			{ type: "finalAnswer", text: "Ship it" },
+			{ type: "block", name: "final_answer", text: "Ship it" },
 		]);
 	});
 

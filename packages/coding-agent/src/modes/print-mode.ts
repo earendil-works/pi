@@ -6,7 +6,7 @@
  * - `pi --mode json "prompt"` - JSON event stream
  */
 
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantBlockContent, AssistantMessage, ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
@@ -136,11 +136,14 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
 				} else {
-					const finalAnswers = assistantMsg.content.filter((content) => content.type === "finalAnswer");
+					const blocks = assistantMsg.content.filter(
+						(content): content is AssistantBlockContent =>
+							content.type === "block" && content.name === "final_answer",
+					);
 					const outputBlocks =
-						finalAnswers.length > 0
-							? finalAnswers
-							: assistantMsg.content.filter((content) => content.type === "text");
+						blocks.length > 0
+							? blocks
+							: assistantMsg.content.filter((content): content is TextContent => content.type === "text");
 					for (const content of outputBlocks) {
 						writeRawStdout(`${content.text}\n`);
 					}

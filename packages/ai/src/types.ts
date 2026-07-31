@@ -330,10 +330,14 @@ export interface TextContent {
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
 }
 
-export interface FinalAnswerContent {
-	type: "finalAnswer";
+export interface AssistantBlockContent {
+	type: "block";
+	name: string;
 	text: string;
 }
+
+/** @deprecated Use AssistantBlockContent with name "final_answer". */
+export type FinalAnswerContent = AssistantBlockContent;
 
 export interface ThinkingContent {
 	type: "thinking";
@@ -392,7 +396,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | FinalAnswerContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | AssistantBlockContent | ThinkingContent | ToolCall)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -471,9 +475,9 @@ export type AssistantMessageEvent =
 	| { type: "text_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "text_end"; contentIndex: number; content: string; partial: AssistantMessage }
-	| { type: "final_answer_start"; contentIndex: number; partial: AssistantMessage }
-	| { type: "final_answer_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "final_answer_end"; contentIndex: number; content: string; partial: AssistantMessage }
+	| { type: "block_start"; name: string; contentIndex: number; partial: AssistantMessage }
+	| { type: "block_delta"; name: string; contentIndex: number; delta: string; partial: AssistantMessage }
+	| { type: "block_end"; name: string; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }

@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added structured `finalAnswer` assistant content and `final_answer_*` stream events, with provider-agnostic `<final_answer>` marker parsing.
+- Added generic structured assistant `block` content and `block_*` stream events, with provider-agnostic marker parsing and built-in `final_answer` support.
 
 ## [0.80.10] - 2026-07-16
 

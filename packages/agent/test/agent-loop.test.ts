@@ -144,11 +144,11 @@ describe("agentLoop with AgentMessage", () => {
 			queueMicrotask(() => {
 				const partial = createAssistantMessage([]);
 				stream.push({ type: "start", partial });
-				partial.content.push({ type: "finalAnswer", text: "" });
-				stream.push({ type: "final_answer_start", contentIndex: 0, partial });
-				(partial.content[0] as { type: "finalAnswer"; text: string }).text = "Done";
-				stream.push({ type: "final_answer_delta", contentIndex: 0, delta: "Done", partial });
-				stream.push({ type: "final_answer_end", contentIndex: 0, content: "Done", partial });
+				partial.content.push({ type: "block", name: "final_answer", text: "" });
+				stream.push({ type: "block_start", name: "final_answer", contentIndex: 0, partial });
+				(partial.content[0] as { type: "block"; name: "final_answer"; text: string }).text = "Done";
+				stream.push({ type: "block_delta", name: "final_answer", contentIndex: 0, delta: "Done", partial });
+				stream.push({ type: "block_end", name: "final_answer", contentIndex: 0, content: "Done", partial });
 				stream.push({ type: "done", reason: "stop", message: partial });
 			});
 			return stream;
@@ -164,7 +164,7 @@ describe("agentLoop with AgentMessage", () => {
 			.filter((event): event is Extract<AgentEvent, { type: "message_update" }> => event.type === "message_update")
 			.map((event) => event.assistantMessageEvent.type);
 
-		expect(updateTypes).toEqual(["final_answer_start", "final_answer_delta", "final_answer_end"]);
+		expect(updateTypes).toEqual(["block_start", "block_delta", "block_end"]);
 	});
 
 	it("should handle custom message types via convertToLlm", async () => {
