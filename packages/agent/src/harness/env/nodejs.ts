@@ -47,6 +47,13 @@ function resolveTimeoutMs(timeout: number | undefined): Result<number | undefine
 	return ok(timeoutMs);
 }
 
+/**
+ * 解析相对路径或绝对路径，支持 `~` 主目录展开和 `file://` URI 转换。
+ * 如果传入的是绝对路径则直接返回，否则基于当前工作目录拼接为绝对路径。
+ * @param cwd - 当前工作目录
+ * @param path - 需要解析的路径
+ * @returns 解析后的绝对路径
+ */
 function resolvePath(cwd: string, path: string): string {
 	let normalized = path;
 	if (normalized === "~") {
@@ -63,6 +70,12 @@ function resolvePath(cwd: string, path: string): string {
 	return isAbsolute(normalized) ? resolve(normalized) : resolve(cwd, normalized);
 }
 
+/**
+ * 根据文件系统状态信息判断文件类型。
+ * 依次检查是否为普通文件、目录或符号链接，不支持的类型（如 socket、FIFO）返回 undefined。
+ * @param stats - 包含 isFile、isDirectory、isSymbolicLink 方法的文件状态对象
+ * @returns 文件类型字符串（"file"、"directory"、"symlink"），无法识别时返回 undefined
+ */
 function fileKindFromStats(stats: {
 	isFile(): boolean;
 	isDirectory(): boolean;
@@ -74,6 +87,13 @@ function fileKindFromStats(stats: {
 	return undefined;
 }
 
+/**
+ * 根据文件系统状态信息创建 {@link FileInfo} 对象。
+ * 从文件状态中提取文件类型、大小、修改时间等信息，文件类型不支持时返回错误。
+ * @param path - 文件路径
+ * @param stats - 包含文件类型判断方法和大小、修改时间等属性的状态对象
+ * @returns 包装 FileInfo 的 Result，文件类型不支持时返回错误
+ */
 function fileInfoFromStats(
 	path: string,
 	stats: { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number },
@@ -89,10 +109,24 @@ function fileInfoFromStats(
 	});
 }
 
+/**
+ * 类型守卫：判断一个错误是否为 Node.js 的 ErrnoException。
+ * 通过检查是否存在 "code" 属性来区分 Node.js 原生错误与普通 Error。
+ * @param error - 待检查的未知类型错误对象
+ * @returns 如果是 Node.js 原生错误则返回 true
+ */
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
 }
 
+/**
+ * 将各种类型的错误统一转换为 {@link FileError}。
+ * 对 Node.js 原生错误，根据错误码（ENOENT、EACCES、EPERM、ENOTDIR、EISDIR、ABORT_ERR 等）
+ * 映射为对应的 FileError 类型码；无法识别的错误统一归为 "unknown"。
+ * @param error - 原始错误对象
+ * @param path - 关联的文件路径（可选）
+ * @returns 转换后的 FileError 实例
+ */
 function toFileError(error: unknown, path?: string): FileError {
 	if (error instanceof FileError) return error;
 	const cause = toError(error);
@@ -117,10 +151,23 @@ function toFileError(error: unknown, path?: string): FileError {
 	return new FileError("unknown", cause.message, path, cause);
 }
 
+/**
+ * 检查 AbortSignal 是否已中止，若已中止则返回对应的错误结果。
+ * 用于在异步文件操作前快速判断是否需要提前终止，避免不必要的 I/O。
+ * @param signal - 可选的 AbortSignal 对象
+ * @param path - 关联的文件路径（可选）
+ * @returns 如果 signal 已中止则返回 aborted 错误，否则返回 undefined 表示可继续执行
+ */
 function abortResult<TValue>(signal: AbortSignal | undefined, path?: string): Result<TValue, FileError> | undefined {
 	return signal?.aborted ? err(new FileError("aborted", "aborted", path)) : undefined;
 }
 
+/**
+ * 检查给定路径是否存在。
+ * 使用 fs.access 配合 F_OK 常量进行存在性检查，不抛出异常。
+ * @param path - 需要检查的路径
+ * @returns 路径存在返回 true，否则返回 false
+ */
 async function pathExists(path: string): Promise<boolean> {
 	try {
 		await access(path, constants.F_OK);
@@ -130,6 +177,15 @@ async function pathExists(path: string): Promise<boolean> {
 	}
 }
 
+/**
+ * 运行一个命令并设置超时。
+ * 通过 spawn 启动子进程，捕获 stdout 输出；超时后通过 killProcessTree 强制终止进程树。
+ * spawn 失败或进程出错时返回 null status，调用方可据此判断执行是否成功。
+ * @param command - 要执行的命令
+ * @param args - 命令参数数组
+ * @param timeoutMs - 超时时间（毫秒）
+ * @returns 包含 stdout 输出和退出状态码的对象（失败时 status 为 null）
+ */
 async function runCommand(
 	command: string,
 	args: string[],
@@ -165,6 +221,12 @@ async function runCommand(
 	});
 }
 
+/**
+ * 在系统 PATH 中查找 bash 可执行文件的路径。
+ * Windows 下使用 where 命令，类 Unix 系统使用 which 命令。
+ * 返回第一个匹配且通过文件系统存在性检查的路径。
+ * @returns bash 的绝对路径，未找到时返回 null
+ */
 async function findBashOnPath(): Promise<string | null> {
 	const result =
 		process.platform === "win32"
@@ -175,21 +237,45 @@ async function findBashOnPath(): Promise<string | null> {
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
 }
 
+/**
+ * Shell 配置接口。
+ * 定义 shell 可执行文件路径、参数格式以及命令传输方式。
+ */
 interface ShellConfig {
 	shell: string;
 	args: string[];
 	commandTransport?: "argv" | "stdin";
 }
 
+/**
+ * 检测是否为旧版 WSL（Windows Subsystem for Linux）的 bash 路径。
+ * 检查路径是否匹配 C:\Windows\System32\bash.exe 或 C:\Windows\SysNative\bash.exe 格式。
+ * 旧版 WSL bash 需要通过 stdin 传递命令（-s 模式），而非使用 -c 参数。
+ * @param path - 需要检查的 shell 路径
+ * @returns 如果匹配旧版 WSL bash 路径则返回 true
+ */
 function isLegacyWslBashPath(path: string): boolean {
 	const normalized = path.replace(/\//g, "\\").toLowerCase();
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
+/**
+ * 根据 shell 路径确定对应的 Shell 配置。
+ * 旧版 WSL bash 需要使用 -s 参数并通过 stdin 传输命令，现代 bash 使用 -c 参数。
+ * @param shell - shell 可执行文件的路径
+ * @returns 包含 shell、args 和 commandTransport 的配置对象
+ */
 function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
+/**
+ * 解析并获取当前环境可用的 shell 配置。
+ * 查找优先级：自定义路径 → Windows Git Bash（Program Files） → PATH 中的 bash → /bin/bash → 回退到 sh。
+ * 找不到任何可用 shell 时返回 shell_unavailable 错误。
+ * @param customShellPath - 用户自定义的 shell 路径（可选）
+ * @returns 包含 ShellConfig 的 Result，找不到可用 shell 时返回错误
+ */
 async function getShellConfig(customShellPath?: string): Promise<Result<ShellConfig, ExecutionError>> {
 	if (customShellPath) {
 		if (await pathExists(customShellPath)) {
@@ -234,6 +320,15 @@ async function getShellConfig(customShellPath?: string): Promise<Result<ShellCon
 	return ok({ shell: "sh", args: ["-c"] });
 }
 
+/**
+ * 合并环境变量。
+ * 按优先级从低到高依次合并：当前进程环境变量 → baseEnv → extraEnv。
+ * extraEnv 中的变量具有最高优先级，可覆盖 baseEnv 和进程环境变量中的同名变量。
+ * @param baseEnv - 基础环境变量（可选）
+ * @param extraEnv - 额外覆盖的环境变量（可选）
+ * @param inheritEnv - 是否继承进程环境变量，默认 true
+ * @returns 合并后的完整环境变量对象
+ */
 function getShellEnv(
 	baseEnv?: NodeJS.ProcessEnv,
 	extraEnv?: Record<string, string>,
@@ -247,6 +342,13 @@ function getShellEnv(
 	};
 }
 
+/**
+ * 强制终止进程及其所有子进程（跨平台实现）。
+ * Windows 下使用 taskkill /F /T /PID 命令，类 Unix 系统使用 SIGKILL 信号。
+ * 优先尝试通过进程组（-pid）杀死整个进程组，失败后回退到直接终止单个进程。
+ * 所有异常均静默忽略（进程可能已经退出）。
+ * @param pid - 需要终止的进程 ID
+ */
 function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
 		try {
@@ -256,7 +358,7 @@ function killProcessTree(pid: number): void {
 				windowsHide: true,
 			});
 		} catch {
-			// Ignore errors.
+			// 忽略错误。
 		}
 		return;
 	}
@@ -267,11 +369,12 @@ function killProcessTree(pid: number): void {
 		try {
 			process.kill(pid, "SIGKILL");
 		} catch {
-			// Process already dead.
+			// 进程已终止。
 		}
 	}
 }
 
+/** 等待子进程退出，协调 stdout/stderr 流的关闭与进程退出事件，返回退出码。 */
 function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	return new Promise((resolvePromise, reject) => {
 		let settled = false;
@@ -341,6 +444,18 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	});
 }
 
+/**
+ * Node.js 执行环境实现类。
+ *
+ * 实现 {@link ExecutionEnv} 接口，提供完整的文件系统操作和命令执行能力，包括：
+ * - 文件操作：文本/二进制文件的读写、目录管理、临时文件和目录创建
+ * - 命令执行：通过 shell 执行命令，支持超时、中断信号、流式回调输出
+ * - 路径处理：绝对/相对路径解析、路径拼接、规范路径获取
+ * - 跨平台支持：同时兼容 Windows 和类 Unix 系统的进程管理
+ *
+ * 内部通过 {@link getShellConfig} 自动检测可用的 shell（bash/sh），
+ * 通过 {@link killProcessTree} 实现跨平台的进程树清理。
+ */
 export class NodeExecutionEnv implements ExecutionEnv {
 	cwd: string;
 	private shellPath?: string;

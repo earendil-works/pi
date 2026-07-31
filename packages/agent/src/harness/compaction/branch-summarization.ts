@@ -19,55 +19,55 @@ import {
 	serializeConversation,
 } from "./utils.ts";
 
-/** File-operation details stored on generated branch summary entries. */
+/** 存储在生成的分支摘要条目上的文件操作详情。 */
 export interface BranchSummaryDetails {
-	/** Files read while exploring the summarized branch. */
+	/** 在探索被摘要分支时读取的文件。 */
 	readFiles: string[];
-	/** Files modified while exploring the summarized branch. */
+	/** 在探索被摘要分支时修改的文件。 */
 	modifiedFiles: string[];
 }
 
 export type { FileOperations } from "./utils.ts";
 
-/** Prepared branch content for summarization. */
+/** 准备好用于摘要的分支内容。 */
 export interface BranchPreparation {
-	/** Messages selected for the branch summary. */
+	/** 选择用于分支摘要的消息。 */
 	messages: AgentMessage[];
-	/** File operations extracted from the branch. */
+	/** 从分支提取的文件操作。 */
 	fileOps: FileOperations;
-	/** Estimated token count for selected messages. */
+	/** 所选消息的预估 token 数。 */
 	totalTokens: number;
 }
 
-/** Entries selected for branch summarization. */
+/** 选择用于分支摘要的条目。 */
 export interface CollectEntriesResult {
-	/** Entries to summarize in chronological order. */
+	/** 按时间顺序排列的待摘要条目。 */
 	entries: SessionTreeEntry[];
-	/** Deepest common ancestor between the previous leaf and target entry. */
+	/** 上一个叶节点和目标条目之间最深层的公共祖先。 */
 	commonAncestorId: string | null;
 }
 
-/** Options for generating a branch summary. */
+/** 生成分支摘要的选项。 */
 export interface GenerateBranchSummaryOptions {
-	/** Provider collection the summarization request goes through; owns auth resolution. */
+	/** 摘要请求经过的提供商集合；拥有认证解析。 */
 	models: Models;
-	/** Model used for summarization. */
+	/** 用于摘要的模型。 */
 	model: Model<any>;
-	/** Abort signal for the summarization request. */
+	/** 摘要请求的中止信号。 */
 	signal: AbortSignal;
-	/** Optional instructions appended to or replacing the default prompt. */
+	/** 追加到或替换默认提示词的可选指令。 */
 	customInstructions?: string;
-	/** Replace the default prompt with custom instructions instead of appending them. */
+	/** 用自定义指令替换默认提示词，而不是追加。 */
 	replaceInstructions?: boolean;
-	/** Tokens reserved for prompt and model output. Defaults to 16384. */
+	/** 为提示词和模型输出预留的 token 数。默认为 16384。 */
 	reserveTokens?: number;
-	/** Optional retry policy for transient summarization errors. */
+	/** 可选的重试策略，用于瞬时摘要错误。 */
 	retry?: RetryPolicy;
-	/** Optional callbacks for retry reporting. */
+	/** 可选的重试回调。 */
 	callbacks?: RetryCallbacks;
 }
 
-/** Collect entries that should be summarized before navigating to a different session tree entry. */
+/** 在导航到不同会话树条目之前收集应被摘要的条目。 */
 export async function collectEntriesForBranchSummary(
 	session: Session,
 	oldLeafId: string | null,
@@ -98,6 +98,13 @@ export async function collectEntriesForBranchSummary(
 
 	return { entries, commonAncestorId };
 }
+/**
+ * 将会话树条目转换为具体的 {@link AgentMessage}，用于分支摘要。
+ *
+ * 与此函数的压缩版本不同，工具结果消息被排除，
+ * 因为它们增加了噪音而无助于分支摘要的上下文。
+ * 压缩条目在此处也被映射为摘要消息。
+ */
 function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined {
 	switch (entry.type) {
 		case "message":
@@ -123,7 +130,14 @@ function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined 
 	}
 }
 
-/** Prepare branch entries for summarization within an optional token budget. */
+/**
+ * 在可选的 token 预算内准备用于摘要的分支条目。
+ *
+ * 按时间倒序遍历条目，收集消息直到 token 预算耗尽。
+ * 文件操作从条目级分支摘要详情和单个助手消息中提取。
+ * 当设置了预算且即将超出时，压缩和分支摘要条目如果
+ * 落在预算的 90% 以内仍会被包含，以保留关键的上下文标记。
+ */
 export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: number = 0): BranchPreparation {
 	const messages: AgentMessage[] = [];
 	const fileOps = createFileOps();
@@ -165,11 +179,13 @@ export function prepareBranchEntries(entries: SessionTreeEntry[], tokenBudget: n
 	return { messages, fileOps, totalTokens };
 }
 
+/** 附加在每个分支摘要前面的前言，用于表明它涵盖了不同的对话分支。 */
 const BRANCH_SUMMARY_PREAMBLE = `The user explored a different conversation branch before returning here.
 Summary of that exploration:
 
 `;
 
+/** 指示模型为已放弃的对话分支创建结构化摘要的提示词模板。 */
 const BRANCH_SUMMARY_PROMPT = `Create a structured summary of this conversation branch for context when returning later.
 
 Use this EXACT format:
@@ -199,7 +215,13 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-/** Generate a summary for abandoned branch entries. */
+/**
+ * 为已放弃的分支条目生成摘要。
+ *
+ * 从分支条目中准备消息，token 预算由模型的上下文窗口减去预留 token 数得出。
+ * 文件操作（读取、写入、编辑）被跟踪并以元数据标签的形式追加。
+ * 摘要以一段前言开头，说明用户曾探索了不同的分支。
+ */
 export async function generateBranchSummary(
 	entries: SessionTreeEntry[],
 	options: GenerateBranchSummaryOptions,

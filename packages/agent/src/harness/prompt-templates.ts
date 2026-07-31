@@ -3,29 +3,33 @@ import { type ExecutionEnv, type FileInfo, type PromptTemplate, type Result, toE
 
 export type PromptTemplateDiagnosticCode = "file_info_failed" | "list_failed" | "read_failed" | "parse_failed";
 
-/** Warning produced while loading prompt templates. */
+/** 加载 prompt template 时产生的警告。 */
 export interface PromptTemplateDiagnostic {
-	/** Diagnostic severity. Currently only warnings are emitted. */
+	/** 诊断严重级别。目前仅发出警告。 */
 	type: "warning";
-	/** Stable diagnostic code. */
+	/** 稳定的诊断代码。 */
 	code: PromptTemplateDiagnosticCode;
-	/** Human-readable diagnostic message. */
+	/** 人类可读的诊断消息。 */
 	message: string;
-	/** Path associated with the diagnostic. */
+	/** 与诊断关联的路径。 */
 	path: string;
 }
 
+/** 从 prompt template markdown 文件解析出的 YAML frontmatter 的结构。 */
 interface PromptTemplateFrontmatter {
+	/** 在斜杠命令菜单中显示的人类可读描述。 */
 	description?: string;
+	/** 用户调用接受参数的命令时显示的占位提示。 */
 	"argument-hint"?: string;
+	/** 允许任意额外的 frontmatter 键用于应用特定元数据。 */
 	[key: string]: unknown;
 }
 
 /**
- * Load prompt templates from one or more paths.
+ * 从一个或多个路径加载 prompt template。
  *
- * Directory inputs load direct `.md` children non-recursively. File inputs load explicit `.md` files. Missing paths and
- * non-markdown files are skipped. Read and parse failures are returned as diagnostics.
+ * 目录输入非递归地加载直接子级 `.md` 文件。文件输入加载显式的 `.md` 文件。缺失路径和
+ * 非 markdown 文件会被跳过。读取和解析失败以诊断信息形式返回。
  */
 export async function loadPromptTemplates(
 	env: ExecutionEnv,
@@ -62,10 +66,10 @@ export async function loadPromptTemplates(
 }
 
 /**
- * Load prompt templates from source-tagged paths.
+ * 从带 source 标记的路径加载 prompt template。
  *
- * Source values are preserved exactly and attached to every loaded prompt template and diagnostic. The agent package does
- * not interpret source values; applications define their own provenance shape.
+ * Source 值被原样保留并附加到每个加载的 prompt template 和诊断信息上。agent 包不解释 source 值；
+ * 应用程序自行定义其来源形状。
  */
 export async function loadSourcedPromptTemplates<TSource, TPromptTemplate extends PromptTemplate = PromptTemplate>(
 	env: ExecutionEnv,
@@ -92,6 +96,12 @@ export async function loadSourcedPromptTemplates<TSource, TPromptTemplate extend
 	return { promptTemplates, diagnostics };
 }
 
+/**
+ * 从单个目录加载所有 `.md` prompt template（非递归）。
+ *
+ * 条目按名称字母顺序排序。仅加载直接子级中的普通 `.md` 文件；
+ * 子目录和非 markdown 文件会被跳过。读取和解析失败以诊断信息形式返回。
+ */
 async function loadTemplatesFromDir(
 	env: ExecutionEnv,
 	dir: string,
@@ -120,6 +130,13 @@ async function loadTemplatesFromDir(
 	return { promptTemplates, diagnostics };
 }
 
+/**
+ * 将单个 `.md` 文件加载为 prompt template。
+ *
+ * 解析 YAML frontmatter 获取描述；回退到正文的第一个非空行
+ * （截断到 60 个字符）。读取或解析失败时返回 `null` promptTemplate，
+ * 并附带描述每次失败的诊断信息。
+ */
 async function loadTemplateFromFile(
 	env: ExecutionEnv,
 	filePath: string,
@@ -164,6 +181,13 @@ async function loadTemplateFromFile(
 	};
 }
 
+/**
+ * 解析符号链接的真实文件系统类型（`"file"` 或 `"directory"`）。
+ *
+ * 如果 `info.kind` 已已知，则直接返回。否则通过 `canonicalPath` 解析符号链接目标
+ * 并重新 stat。当目标无法确定或不存在时返回 `undefined`，
+ * 并为非 not-found 错误附加诊断信息。
+ */
 async function resolveKind(
 	env: ExecutionEnv,
 	info: FileInfo,
@@ -197,6 +221,14 @@ async function resolveKind(
 	return target.value.kind === "file" || target.value.kind === "directory" ? target.value.kind : undefined;
 }
 
+/**
+ * 从 markdown 内容中解析 YAML frontmatter。
+ *
+ * 期望文档以单独一行的 `---` 开头。frontmatter 块从第二行开始，到下一个 `---` 行结束。
+ * 如果未找到开头的 `---` 或缺少闭合分隔符，则返回空的 frontmatter 对象，并将全部内容视为正文。
+ * 解析前行尾符会被规范化（`\r\n` 和 `\r` 转换为 `\n`）。YAML 块使用 `yaml` 库解析；
+ * 解析错误会被捕获并以 `Result` 错误形式返回。
+ */
 function parseFrontmatter<T extends Record<string, unknown>>(
 	content: string,
 ): Result<{ frontmatter: T; body: string }, Error> {
@@ -213,13 +245,26 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 	}
 }
 
+/**
+ * 从环境风格路径中提取 basename。
+ *
+ * 去除尾部斜杠，然后返回最后一个 `/` 之后的所有内容。当没有 `/` 时返回整个字符串。
+ * 这模拟了 POSIX 风格路径的 `basename(1)` 行为。
+ */
 function basenameEnvPath(path: string): string {
 	const normalized = path.replace(/\/+$/, "");
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
 }
 
-/** Parse an argument string using simple shell-style single and double quotes. */
+/**
+ * 使用 shell 风格的引号将参数字符串解析为位置标记。
+ *
+ * 按未引用的空白字符（空格和制表符）分割。单引号（`'...'`）和双引号
+ * （`"..."`）段会抑制分割和转义：引号字符本身被去除，
+ * 引号之间的所有内容按原样保留。连续的空白分隔符会被折叠
+ * （不会产生空参数）。未匹配的引号被视为在输入末尾闭合。
+ */
 export function parseCommandArgs(argsString: string): string[] {
 	const args: string[] = [];
 	let current = "";
@@ -245,7 +290,18 @@ export function parseCommandArgs(argsString: string): string[] {
 	return args;
 }
 
-/** Substitute prompt template placeholders (`$1`, `$@`, `$ARGUMENTS`, `${@:N}`, `${@:N:L}`) with command arguments. */
+/**
+ * 用命令参数替换 prompt template 中的占位符。
+ *
+ * 可识别的占位符：
+ * - `$N`（例如 `$1`、`$2`）：替换为第 N 个位置参数（从 1 开始）。缺失的参数
+ *   变为空字符串。
+ * - `$@` 和 `$ARGUMENTS`：替换为所有参数以单个空格连接。
+ * - `${@:N}`：替换为从位置 N（从 1 开始）到末尾的所有参数，以空格连接。
+ *   N 会被限制在第一个参数范围内。
+ * - `${@:N:L}`：替换为从位置 N 开始、最多取 L 个参数，以空格连接。
+ *   N 会被限制在第一个参数范围内。
+ */
 export function substituteArgs(content: string, args: string[]): string {
 	let result = content;
 	result = result.replace(/\$(\d+)/g, (_, num: string) => args[parseInt(num, 10) - 1] ?? "");
@@ -261,7 +317,7 @@ export function substituteArgs(content: string, args: string[]): string {
 	return result;
 }
 
-/** Format a prompt template invocation with positional arguments. */
+/** 使用位置参数格式化 prompt template 调用。 */
 export function formatPromptTemplateInvocation(template: PromptTemplate, args: string[] = []): string {
 	return substituteArgs(template.content, args);
 }

@@ -22,6 +22,13 @@ interface SessionHeader {
 	metadata?: Record<string, unknown>;
 }
 
+/**
+ * 使用单个条目的标签数据更新内存中的标签查找映射。
+ * 仅作用于类型为 `"label"` 的条目。如果标签文本非空，则将目标条目 ID 映射到该标签；
+ * 如果标签为空或 `undefined`，则移除该目标的任何现有映射。
+ * @param labelsById - 从目标条目 ID 到其当前标签的可变映射。
+ * @param entry - 会话树条目，可能是也可能不是标签条目。
+ */
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
 	if (entry.type !== "label") return;
 	const label = entry.label?.trim();
@@ -32,6 +39,12 @@ function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEnt
 	}
 }
 
+/**
+ * 从会话树条目数组构建完整的标签查找映射。
+ * 遍历所有条目并累积每个目标 ID 的最新标签。后出现的标签条目会覆盖先出现的。
+ * @param entries - 要扫描标签条目的会话树条目数组。
+ * @returns 从条目 ID 到其当前标签字符串的映射。
+ */
 function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 	const labelsById = new Map<string, string>();
 	for (const entry of entries) {
@@ -40,6 +53,12 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 	return labelsById;
 }
 
+/**
+ * 生成一个保证不与现有 ID 冲突的唯一条目 ID。
+ * 最多尝试 100 次生成 UUIDv7 的 8 字符后缀，确保其在提供的查找表中不存在。
+ * @param byId - 具有 `has(id)` 方法用于检查 ID 冲突的对象。
+ * @returns 新会话条目的唯一字符串 ID。
+ */
 function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
 		// The uuidv7 prefix is timestamp-derived and nearly constant between calls,
@@ -50,10 +69,27 @@ function generateEntryId(byId: { has(id: string): boolean }): string {
 	return uuidv7();
 }
 
+/**
+ * 构造一个代码为 `"invalid_session"` 的 {@link SessionError}。
+ * 当 JSONL 会话文件的头部或整体结构格式错误或缺少必需字段时使用。
+ * @param filePath - 有问题的会话文件路径。
+ * @param message - 验证失败的简短描述。
+ * @param cause - 触发此失败的可选底层错误。
+ * @returns 可抛出的 {@link SessionError}。
+ */
 function invalidSession(filePath: string, message: string, cause?: Error): SessionError {
 	return new SessionError("invalid_session", `Invalid JSONL session file ${filePath}: ${message}`, cause);
 }
 
+/**
+ * 构造一个代码为 `"invalid_entry"` 的 {@link SessionError}。
+ * 当 JSONL 会话文件中的特定行未通过结构验证时使用。
+ * @param filePath - 包含无效条目的会话文件路径。
+ * @param lineNumber - 发现无效条目的行号（从 1 开始）。
+ * @param message - 验证失败的简短描述。
+ * @param cause - 触发此失败的可选底层错误。
+ * @returns 可抛出的 {@link SessionError}。
+ */
 function invalidEntry(filePath: string, lineNumber: number, message: string, cause?: Error): SessionError {
 	return new SessionError(
 		"invalid_entry",
@@ -62,6 +98,13 @@ function invalidEntry(filePath: string, lineNumber: number, message: string, cau
 	);
 }
 
+/**
+ * 解析并验证 JSONL 会话文件的第一行作为会话头部。有效的头部必须包含 type、version、id、timestamp、cwd 字段。
+ * @param line - JSONL 文件的原始第一行（未修剪）。
+ * @param filePath - 正在解析的文件路径（用于错误消息）。
+ * @returns 已验证的 {@link SessionHeader} 对象。
+ * @throws {SessionError} 如果验证失败，代码为 `"invalid_session"`。
+ */
 function parseHeaderLine(line: string, filePath: string): SessionHeader {
 	let parsed: unknown;
 	try {
@@ -100,6 +143,15 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 	};
 }
 
+/**
+ * 解析并验证单行（头部之后的行）作为会话树条目。
+ * 每个条目行必须是一个 JSON 对象，至少包含 type、id、parentId、timestamp 字段。
+ * @param line - 要解析的原始 JSON 行。
+ * @param filePath - 文件路径（用于错误消息）。
+ * @param lineNumber - 文件内的行号（从 1 开始）。
+ * @returns 解析后的条目，强制转换为 {@link SessionTreeEntry}。
+ * @throws {SessionError} 如果验证失败，代码为 `"invalid_entry"`。
+ */
 function parseEntryLine(line: string, filePath: string, lineNumber: number): SessionTreeEntry {
 	let parsed: unknown;
 	try {
@@ -131,10 +183,24 @@ function parseEntryLine(line: string, filePath: string, lineNumber: number): Ses
 	return entry as SessionTreeEntry;
 }
 
+/**
+ * 确定处理给定条目后的有效叶节点 ID。
+ * 对于叶节点条目（`type === "leaf"`），叶节点 ID 是条目的 `targetId`；
+ * 对于所有其他条目类型，叶节点 ID 是条目自身的 ID。
+ * @param entry - 刚被追加或处理的条目。
+ * @returns 新的叶节点 ID，如果树指向根节点则为 `null`。
+ */
 function leafIdAfterEntry(entry: SessionTreeEntry): string | null {
 	return entry.type === "leaf" ? entry.targetId : entry.id;
 }
 
+/**
+ * 将解析后的会话头部及其文件路径转换为 {@link JsonlSessionMetadata}。
+ * 提取会话 ID、创建时间戳、工作目录、可选的父会话路径以及 JSONL 文件路径本身。
+ * @param header - 从 JSONL 文件解析出的已验证 {@link SessionHeader}。
+ * @param path - 会话 JSONL 文件的绝对路径。
+ * @returns {@link JsonlSessionMetadata} 对象。
+ */
 function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSessionMetadata {
 	return {
 		id: header.id,
@@ -159,6 +225,14 @@ export async function loadJsonlSessionMetadata(
 	throw invalidSession(filePath, "missing session header");
 }
 
+/**
+ * 从磁盘加载并解析整个 JSONL 会话文件到其内存表示。
+ * 读取完整文件内容，解析头部和所有条目行，跟踪当前叶节点 ID。
+ * @param fs - 用于读取文件的文件系统抽象。
+ * @param filePath - JSONL 会话文件的绝对路径。
+ * @returns 包含解析后的头部、所有条目的有序数组以及当前叶节点 ID 的对象。
+ * @throws {SessionError} 如果文件缺失、为空或包含无效行。
+ */
 async function loadJsonlStorage(
 	fs: JsonlSessionStorageFileSystem,
 	filePath: string,
@@ -301,11 +375,13 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return this.labelsById.get(id);
 	}
 
+	/** 返回最近的会话名称（如果有记录）。 */
 	async getSessionName(): Promise<string | undefined> {
 		const entries = await this.findEntries("session_info");
 		return entries[entries.length - 1]?.name?.trim() || undefined;
 	}
 
+	/** 计算会话统计信息（消息数量、缓存/非缓存 token 数、总费用）。 */
 	async getSessionStats() {
 		let messageCount = 0;
 		let cachedTokens = 0;
@@ -348,6 +424,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		};
 	}
 
+	/** 从叶节点到根或到压缩边界的路径。遇到带有 retainedTail 的压缩条目时停止。 */
 	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
 		if (leafId === null) return [];
 		const path: SessionTreeEntry[] = [];
@@ -369,6 +446,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return path;
 	}
 
+	/** 支持游标分页地返回条目的子集。 */
 	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
 		const start = options?.afterEntrySeq ?? 0;
 		const end = options?.limit === undefined ? undefined : start + options.limit;

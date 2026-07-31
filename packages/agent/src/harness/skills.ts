@@ -15,36 +15,40 @@ export type SkillDiagnosticCode =
 	| "parse_failed"
 	| "invalid_metadata";
 
-/** Warning produced while loading skills. */
+/** 加载技能时产生的警告。 */
 export interface SkillDiagnostic {
-	/** Diagnostic severity. Currently only warnings are emitted. */
+	/** 诊断严重性。目前仅发出警告。 */
 	type: "warning";
-	/** Stable diagnostic code. */
+	/** 稳定的诊断代码。 */
 	code: SkillDiagnosticCode;
-	/** Human-readable diagnostic message. */
+	/** 人类可读的诊断消息。 */
 	message: string;
-	/** Path associated with the diagnostic. */
+	/** 与诊断关联的路径。 */
 	path: string;
 }
 
+/** 从 SKILL.md 文件解析的 YAML frontmatter。所有字段均为可选，以允许优雅降级。 */
 interface SkillFrontmatter {
+	/** 技能名称。省略时默认为父目录名称。 */
 	name?: string;
+	/** 技能描述。没有描述的技能会被静默丢弃。 */
 	description?: string;
+	/** 为 true 时，技能内容对模型可见，但模型无法直接调用该技能。 */
 	"disable-model-invocation"?: boolean;
 	[key: string]: unknown;
 }
 
-/** Format a skill invocation prompt, optionally appending additional user instructions. */
+/** 格式化技能调用提示词，可选择追加额外的用户指令。 */
 export function formatSkillInvocation(skill: Skill, additionalInstructions?: string): string {
 	const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${dirnameEnvPath(skill.filePath)}.\n\n${skill.content}\n</skill>`;
 	return additionalInstructions ? `${skillBlock}\n\n${additionalInstructions}` : skillBlock;
 }
 
 /**
- * Load skills from one or more directories.
+ * 从一个或多个目录加载技能。
  *
- * Traverses directories recursively, loads `SKILL.md` files, loads direct root `.md` files as skills, honors ignore files,
- * and returns diagnostics for invalid skill files. Missing input directories are skipped.
+ * 递归遍历目录，加载 `SKILL.md` 文件，加载直接的根级别 `.md` 文件作为技能，遵循忽略文件规则，
+ * 并返回无效技能文件的诊断信息。缺失的输入目录会被跳过。
  */
 export async function loadSkills(
 	env: ExecutionEnv,
@@ -75,10 +79,10 @@ export async function loadSkills(
 }
 
 /**
- * Load skills from source-tagged directories.
+ * 从带 source 标记的目录加载技能。
  *
- * Source values are preserved exactly and attached to every loaded skill and diagnostic. The agent package does not
- * interpret source values; applications define their own provenance shape.
+ * source 值会被原样保留并附加到每个加载的技能和诊断信息上。agent 包不解释 source 值；
+ * 应用程序定义各自的来源形状。
  */
 export async function loadSourcedSkills<TSource, TSkill extends Skill = Skill>(
 	env: ExecutionEnv,
@@ -100,6 +104,21 @@ export async function loadSourcedSkills<TSource, TSkill extends Skill = Skill>(
 	return { skills, diagnostics };
 }
 
+/**
+ * 递归遍历目录以发现并加载 SKILL.md 文件。
+ *
+ * 在每个目录层级，函数首先查找 SKILL.md 文件并将其作为该目录的技能定义加载。
+ * 当 includeRootFiles 为 true 时，顶层根目录中的独立 .md 文件也会作为技能加载。
+ * 递归会跳过名称以点号开头或为 `node_modules` 的条目，同时也会排除匹配累积忽略规则
+ * （来自遍历过程中发现的 .gitignore、.ignore 和 .fdignore 文件）的条目。
+ *
+ * @param env - 提供文件系统访问的执行环境。
+ * @param dir - 需要扫描的目录的绝对路径。
+ * @param includeRootFiles - 是否将独立的 .md 文件作为技能加载（仅顶层输入目录为 true）。
+ * @param ignoreMatcher - 累积的忽略匹配器，携带来自祖先目录的模式。
+ * @param rootDir - 用于计算相对忽略路径的顶层技能目录。
+ * @returns 加载的技能以及遇到的诊断信息。
+ */
 async function loadSkillsFromDirInternal(
 	env: ExecutionEnv,
 	dir: string,
@@ -174,6 +193,18 @@ async function loadSkillsFromDirInternal(
 	return { skills, diagnostics };
 }
 
+/**
+ * 从给定目录读取忽略文件（`.gitignore`、`.ignore`、`.fdignore`）并将其模式合并到累积的忽略匹配器中。
+ *
+ * 忽略文件中的每个模式行都会加上目录相对于根技能目录的路径前缀，以确保模式无论在哪个子目录中定义
+ * 都能正确应用。注释和空行在预处理过程中会被过滤掉。
+ *
+ * @param env - 提供文件系统访问的执行环境。
+ * @param ig - 需要合并模式到的累积忽略匹配器。
+ * @param dir - 需要检查忽略文件的目录的绝对路径。
+ * @param rootDir - 用于计算相对前缀的顶层技能目录。
+ * @param diagnostics - 读取忽略文件时遇到的警告的累积器。
+ */
 async function addIgnoreRules(
 	env: ExecutionEnv,
 	ig: IgnoreMatcher,
@@ -212,6 +243,16 @@ async function addIgnoreRules(
 	}
 }
 
+/**
+ * 预处理单行忽略模式，添加目录前缀使模式相对于根技能目录生效。
+ *
+ * 开头的 `/` 会被去除（gitignore 模式本身已相对于文件所在位置）。开头的 `!` 否定符号在
+ * 前缀转换过程中会被保留。去除空白后为空或纯注释的行返回 null（调用方应将其丢弃）。
+ *
+ * @param line - 来自忽略文件的一行原始文本。
+ * @param prefix - 需要添加的目录前缀，以 `/` 结尾（根目录时为空字符串）。
+ * @returns 添加前缀后的模式，如果该行应被跳过则返回 null。
+ */
 function prefixIgnorePattern(line: string, prefix: string): string | null {
 	const trimmed = line.trim();
 	if (!trimmed) return null;
@@ -230,6 +271,17 @@ function prefixIgnorePattern(line: string, prefix: string): string | null {
 	return negated ? `!${prefixed}` : prefixed;
 }
 
+/**
+ * 将单个 SKILL.md（或独立的 .md）文件解析为 {@link Skill} 对象。
+ *
+ * 通过 {@link parseFrontmatter} 提取 YAML frontmatter 和 markdown 正文。技能名称取自 frontmatter 的
+ * `name` 字段，如果缺失则回退到父目录名称。当描述缺失或为空时，该技能会被丢弃（返回 null）。
+ * `name` 和 `description` 的验证错误会作为诊断信息发出，但不会阻止技能加载（除非描述缺失）。
+ *
+ * @param env - 提供文件系统访问的执行环境。
+ * @param filePath - markdown 技能文件的绝对路径。
+ * @returns 解析后的技能（可能为 null）以及诊断信息。
+ */
 async function loadSkillFromFile(
 	env: ExecutionEnv,
 	filePath: string,
@@ -278,6 +330,20 @@ async function loadSkillFromFile(
 	};
 }
 
+/**
+ * 根据命名约定验证技能名称。
+ *
+ * 规则：
+ * - 必须与父目录名称匹配（除非通过 frontmatter 显式设置）。
+ * - 最大长度为 {@link MAX_NAME_LENGTH} 个字符。
+ * - 仅允许小写字母（`a-z`）、数字（`0-9`）和连字符（`-`）。
+ * - 不能以连字符开头或结尾。
+ * - 不能包含连续的连字符（`--`）。
+ *
+ * @param name - 需要验证的技能名称。
+ * @param parentDirName - 用于比较的期望目录名称。
+ * @returns 人类可读的错误消息数组（有效时为空）。
+ */
 function validateName(name: string, parentDirName: string): string[] {
 	const errors: string[] = [];
 	if (name !== parentDirName) errors.push(`name "${name}" does not match parent directory "${parentDirName}"`);
@@ -290,6 +356,14 @@ function validateName(name: string, parentDirName: string): string[] {
 	return errors;
 }
 
+/**
+ * 验证技能描述。
+ *
+ * 描述为必填项（去除空白后不能为空），且不能超过 {@link MAX_DESCRIPTION_LENGTH} 个字符。
+ *
+ * @param description - 来自 frontmatter 的描述字符串（可能为 undefined）。
+ * @returns 人类可读的错误消息数组（有效时为空）。
+ */
 function validateDescription(description: string | undefined): string[] {
 	const errors: string[] = [];
 	if (!description || description.trim() === "") {
@@ -300,6 +374,15 @@ function validateDescription(description: string | undefined): string[] {
 	return errors;
 }
 
+/**
+ * 从 markdown 字符串中解析 YAML frontmatter。
+ *
+ * 要求 frontmatter 以独立一行的 `---` 开头（位于内容起始处）。闭合的 `---` 必须单独占一行。
+ * 当找不到有效的 frontmatter 块时，整个内容将被视为正文，frontmatter 对象为空。
+ *
+ * @param content - 包含可选 YAML frontmatter 的原始文件内容。
+ * @returns 包含解析后的 frontmatter（类型为 T）和剩余 markdown 正文的结果，如果 YAML 解析失败则返回错误。
+ */
 function parseFrontmatter<T extends Record<string, unknown>>(
 	content: string,
 ): Result<{ frontmatter: T; body: string }, Error> {
@@ -316,6 +399,14 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 	}
 }
 
+/**
+ * 解析文件系统条目的规范类型，当初始类型既不是文件也不是目录时（例如符号链接），会跟踪符号链接。
+ *
+ * @param env - 提供文件系统访问的执行环境。
+ * @param info - 需要解析的条目的文件信息。
+ * @param diagnostics - 符号链接解析过程中遇到的警告的累积器。
+ * @returns `"file"`、`"directory"`，如果条目无法解析则返回 `undefined`。
+ */
 async function resolveKind(
 	env: ExecutionEnv,
 	info: FileInfo,
@@ -349,22 +440,26 @@ async function resolveKind(
 	return target.value.kind === "file" || target.value.kind === "directory" ? target.value.kind : undefined;
 }
 
+/** 将基础路径和子名称用单个 `/` 分隔符拼接，规范化多余的斜杠。 */
 function joinEnvPath(base: string, child: string): string {
 	return `${base.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
 }
 
+/** 返回父目录路径，去除末尾斜杠和最后一个路径段。根路径返回 `"/"`。 */
 function dirnameEnvPath(path: string): string {
 	const normalized = path.replace(/\/+$/, "");
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex <= 0 ? "/" : normalized.slice(0, slashIndex);
 }
 
+/** 返回最后一个路径段（文件或目录名），去除末尾斜杠。 */
 function basenameEnvPath(path: string): string {
 	const normalized = path.replace(/\/+$/, "");
 	const slashIndex = normalized.lastIndexOf("/");
 	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
 }
 
+/** 计算从 `root` 到 `path` 的相对路径。相等时返回空字符串，否则去除开头的斜杠。 */
 function relativeEnvPath(root: string, path: string): string {
 	const normalizedRoot = root.replace(/\/+$/, "");
 	const normalizedPath = path.replace(/\/+$/, "");

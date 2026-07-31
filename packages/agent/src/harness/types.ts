@@ -20,31 +20,31 @@ import type {
 } from "../index.ts";
 import type { Session } from "./session/session.ts";
 
-/** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
+/** 可失败操作的结果。预期的失败以 `ok: false` 形式返回，而不是抛出异常。 */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
 
-/** Create a successful {@link Result}. */
+/** 创建一个成功的 {@link Result}。 */
 export function ok<TValue, TError>(value: TValue): Result<TValue, TError> {
 	return { ok: true, value };
 }
 
-/** Create a failed {@link Result}. */
+/** 创建一个失败的 {@link Result}。 */
 export function err<TValue, TError>(error: TError): Result<TValue, TError> {
 	return { ok: false, error };
 }
 
-/** Return the success value or throw the failure error. Intended for tests and explicit adapter boundaries. */
+/** 返回成功值，如果是失败则抛出错误。适用于测试和显式适配器边界。 */
 export function getOrThrow<TValue, TError>(result: Result<TValue, TError>): TValue {
 	if (!result.ok) throw result.error;
 	return result.value;
 }
 
-/** Return the success value or `undefined`. Only object values are allowed to avoid truthiness bugs with primitives. */
+/** 返回成功值或 `undefined`。仅允许对象类型值，以避免原始类型的真值判断错误。 */
 export function getOrUndefined<TValue extends object, TError>(result: Result<TValue, TError>): TValue | undefined {
 	return result.ok ? result.value : undefined;
 }
 
-/** Normalize unknown thrown values into Error instances before using them as typed error causes. */
+/** 将未知的抛出值标准化为 Error 实例，以便用作类型化的错误原因。 */
 export function toError(error: unknown): Error {
 	if (error instanceof Error) return error;
 	if (typeof error === "string") return new Error(error);
@@ -56,10 +56,10 @@ export function toError(error: unknown): Error {
 }
 
 /**
- * Skill loaded from a `SKILL.md` file or provided by an application.
+ * 从 `SKILL.md` 文件加载或由应用提供的技能。
  *
- * `name`, `description`, and `filePath` are inserted into the system prompt in an XML-formatted block as suggested by agentskills.io.
- * Use {@link formatSkillsForSystemPrompt} to generate the spec-compatible system prompt block.
+ * `name`、`description` 和 `filePath` 会按照 agentskills.io 的建议，以 XML 格式块插入到系统提示中。
+ * 使用 {@link formatSkillsForSystemPrompt} 生成符合规范的 system prompt 块。
  */
 export interface Skill {
 	/** Stable skill name used for lookup and model-visible listings. */
@@ -74,7 +74,7 @@ export interface Skill {
 	disableModelInvocation?: boolean;
 }
 
-/** Prompt template that can be formatted into a prompt for explicit invocation. */
+/** 可被格式化为显式调用提示的提示模板。 */
 export interface PromptTemplate {
 	/** Stable template name used for lookup or application command routing. */
 	name: string;
@@ -84,7 +84,7 @@ export interface PromptTemplate {
 	content: string;
 }
 
-/** Resources made available to explicit invocation methods and system-prompt callbacks. */
+/** 提供给显式调用方法和 system prompt 回调的资源。 */
 export interface AgentHarnessResources<
 	TSkill extends Skill = Skill,
 	TPromptTemplate extends PromptTemplate = PromptTemplate,
@@ -95,7 +95,7 @@ export interface AgentHarnessResources<
 	skills?: TSkill[];
 }
 
-/** Tool definition executed by an {@link AgentHarness} with an application-defined context. */
+/** 由 {@link AgentHarness} 执行并带有应用自定义上下文的工具定义。 */
 export type AgentHarnessTool<
 	TContext extends object | undefined,
 	TParameters extends TSchema = TSchema,
@@ -111,12 +111,12 @@ export type AgentHarnessTool<
 	): Promise<AgentToolResult<TDetails>>;
 };
 
-/** Static tool context or zero-argument provider resolved for each turn snapshot. */
+/** 静态工具上下文或零参数提供者，在每个 turn 快照时解析。 */
 export type AgentHarnessToolContextSource<TContext extends object | undefined> =
 	| TContext
 	| (() => TContext | Promise<TContext>);
 
-/** Curated provider request options owned by the harness and snapshotted per turn. */
+/** 由 harness 管理并在每轮对话中快照的精选 provider 请求选项。 */
 export interface AgentHarnessStreamOptions {
 	/** Preferred transport forwarded to the stream function. */
 	transport?: Transport;
@@ -134,7 +134,7 @@ export interface AgentHarnessStreamOptions {
 	cacheRetention?: SimpleStreamOptions["cacheRetention"];
 }
 
-/** Per-request stream option patch returned by provider hooks. */
+/** Provider 钩子返回的每次请求的流选项补丁。 */
 export interface AgentHarnessStreamOptionsPatch
 	extends Omit<Partial<AgentHarnessStreamOptions>, "headers" | "metadata"> {
 	/** Header patch. `undefined` values delete keys; explicit `headers: undefined` clears all headers. */
@@ -143,10 +143,10 @@ export interface AgentHarnessStreamOptionsPatch
 	metadata?: Record<string, unknown | undefined>;
 }
 
-/** Kind of filesystem object as addressed by a {@link FileSystem}. Symlinks are not followed automatically. */
+/** {@link FileSystem} 寻址的文件系统对象类型。不会自动跟随符号链接。 */
 export type FileKind = "file" | "directory" | "symlink";
 
-/** Stable, backend-independent file error codes returned by {@link FileSystem} file operations. */
+/** {@link FileSystem} 文件操作返回的、不依赖后端的稳定错误码。 */
 export type FileErrorCode =
 	| "aborted"
 	| "not_found"
@@ -157,7 +157,7 @@ export type FileErrorCode =
 	| "not_supported"
 	| "unknown";
 
-/** Error returned by {@link FileSystem} file operations. */
+/** {@link FileSystem} 文件操作返回的错误。 */
 export class FileError extends Error {
 	/** Backend-independent error code. */
 	public code: FileErrorCode;
@@ -172,7 +172,7 @@ export class FileError extends Error {
 	}
 }
 
-/** Stable, backend-independent execution error codes returned by {@link ExecutionEnv.exec}. */
+/** {@link ExecutionEnv.exec} 返回的、不依赖后端的稳定执行错误码。 */
 export type ExecutionErrorCode =
 	| "aborted"
 	| "timeout"
@@ -181,7 +181,7 @@ export type ExecutionErrorCode =
 	| "callback_error"
 	| "unknown";
 
-/** Error returned by {@link ExecutionEnv.exec}. */
+/** {@link ExecutionEnv.exec} 返回的错误。 */
 export class ExecutionError extends Error {
 	/** Backend-independent error code. */
 	public code: ExecutionErrorCode;
@@ -193,10 +193,10 @@ export class ExecutionError extends Error {
 	}
 }
 
-/** Stable compaction error codes returned by compaction helpers. */
+/** compaction 辅助函数返回的稳定压缩错误码。 */
 export type CompactionErrorCode = "aborted" | "summarization_failed" | "invalid_session" | "unknown";
 
-/** Error returned by compaction helpers. */
+/** compaction 辅助函数返回的错误。 */
 export class CompactionError extends Error {
 	/** Backend-independent error code. */
 	public code: CompactionErrorCode;
@@ -208,10 +208,10 @@ export class CompactionError extends Error {
 	}
 }
 
-/** Stable branch-summary error codes returned by branch summarization helpers. */
+/** 分支摘要辅助函数返回的稳定分支摘要错误码。 */
 export type BranchSummaryErrorCode = "aborted" | "summarization_failed" | "invalid_session";
 
-/** Error returned by branch summarization helpers. */
+/** 分支摘要辅助函数返回的错误。 */
 export class BranchSummaryError extends Error {
 	/** Backend-independent error code. */
 	public code: BranchSummaryErrorCode;
@@ -231,7 +231,7 @@ export type SessionErrorCode =
 	| "storage"
 	| "unknown";
 
-/** Error thrown by session storage, repositories, and session tree operations. */
+/** session 存储、仓库和会话树操作抛出的错误。 */
 export class SessionError extends Error {
 	/** Session subsystem error code. */
 	public code: SessionErrorCode;
@@ -254,7 +254,7 @@ export type AgentHarnessErrorCode =
 	| "branch_summary"
 	| "unknown";
 
-/** Public AgentHarness failure with a stable top-level classification. */
+/** 具有稳定顶层分类的 AgentHarness 公开失败。 */
 export class AgentHarnessError extends Error {
 	public code: AgentHarnessErrorCode;
 
@@ -265,7 +265,7 @@ export class AgentHarnessError extends Error {
 	}
 }
 
-/** Metadata for one filesystem object in a {@link FileSystem}. */
+/** {@link FileSystem} 中单个文件系统对象的元数据。 */
 export interface FileInfo {
 	/** Basename of {@link path}. */
 	name: string;
@@ -280,13 +280,13 @@ export interface FileInfo {
 }
 
 /**
- * Filesystem capability used by the harness.
+ * harness 使用的文件系统能力。
  *
- * Paths passed to methods may be absolute or relative to {@link cwd}. Paths returned by file operations are addressed paths
- * in the filesystem namespace, but are not canonicalized through symlinks unless returned by {@link canonicalPath}.
+ * 传递给方法的路径可以是绝对路径，也可以是相对于 {@link cwd} 的相对路径。文件操作返回的路径是文件系统命名空间中的寻址路径，
+ * 但除非由 {@link canonicalPath} 返回，否则不会通过符号链接进行规范化。
  *
- * Operation methods must never throw or reject. All filesystem failures, including unexpected backend failures, must be
- * encoded in the returned {@link Result}. Implementations must preserve this invariant.
+ * 操作方法绝不能抛出或拒绝。所有文件系统失败（包括意外的后端失败）都必须
+ * 编码在返回的 {@link Result} 中。实现必须保持此不变性。
  */
 export interface FileSystem {
 	/** Current working directory for relative paths. */
@@ -340,7 +340,7 @@ export interface FileSystem {
 	cleanup(): Promise<void>;
 }
 
-/** Options for {@link Shell.exec}. */
+/** {@link Shell.exec} 的选项。 */
 export interface ShellExecOptions {
 	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
 	cwd?: string;
@@ -358,7 +358,7 @@ export interface ShellExecOptions {
 	onStderr?: (chunk: string) => void;
 }
 
-/** Shell execution capability used by the harness. */
+/** harness 使用的 Shell 执行能力。 */
 export interface Shell {
 	/** Execute a shell command in {@link FileSystem.cwd} unless `options.cwd` is provided. */
 	exec(
@@ -369,7 +369,7 @@ export interface Shell {
 	cleanup(): Promise<void>;
 }
 
-/** Filesystem and process execution environment used by the harness. */
+/** harness 使用的文件系统和进程执行环境。 */
 export interface ExecutionEnv extends FileSystem, Shell {}
 
 export interface SessionTreeEntryBase {
@@ -441,7 +441,7 @@ export interface LabelEntry extends SessionTreeEntryBase {
 }
 
 export interface SessionInfoEntry extends SessionTreeEntryBase {
-	type: "session_info"; // legacy name, kept for backwards compatibility
+	type: "session_info"; // 旧名称，为向后兼容而保留
 	name?: string;
 }
 

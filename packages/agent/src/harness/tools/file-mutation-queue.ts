@@ -1,13 +1,16 @@
 import type { ExecutionEnv } from "../types.ts";
 import { getOrThrow } from "../types.ts";
 
+/** 文件变更队列的内部状态：每个规范路径对应一个 Promise 链。 */
 type MutationQueueState = {
 	queues: Map<string, Promise<void>>;
 	registration: Promise<void>;
 };
 
+/** 每个 ExecutionEnv 实例维护独立的变更队列，通过 WeakMap 关联。 */
 const states = new WeakMap<ExecutionEnv, MutationQueueState>();
 
+/** 获取或创建指定 ExecutionEnv 的变更队列状态。 */
 function getState(env: ExecutionEnv): MutationQueueState {
 	let state = states.get(env);
 	if (!state) {
@@ -17,6 +20,7 @@ function getState(env: ExecutionEnv): MutationQueueState {
 	return state;
 }
 
+/** 解析文件的规范路径作为队列 key，优先使用 canonical path，降级使用绝对路径。 */
 async function getMutationQueueKey(env: ExecutionEnv, path: string): Promise<string> {
 	const absolutePath = getOrThrow(await env.absolutePath(path));
 	const canonicalPath = await env.canonicalPath(absolutePath);
@@ -25,7 +29,10 @@ async function getMutationQueueKey(env: ExecutionEnv, path: string): Promise<str
 	throw canonicalPath.error;
 }
 
-/** Serialize file mutations targeting the same environment and canonical path. */
+/**
+ * 对同一 ExecutionEnv 和规范路径下的文件变更进行序列化。
+ * 确保对同一文件的并发写入/编辑按顺序执行，避免竞态条件。
+ */
 export async function withFileMutationQueue<T>(env: ExecutionEnv, path: string, fn: () => Promise<T>): Promise<T> {
 	const state = getState(env);
 	const registration = state.registration.then(async () => {

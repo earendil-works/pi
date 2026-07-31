@@ -1,9 +1,9 @@
 /**
- * Proxy stream function for apps that route LLM calls through a server.
- * The server manages auth and proxies requests to LLM providers.
+ * 通过服务端中转 LLM 调用的代理 stream 函数。
+ * 服务端管理认证并将请求代理转发给 LLM provider。
  */
 
-// Internal import for JSON parsing utility
+// 导入 JSON 解析工具的内部模块
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
@@ -16,7 +16,7 @@ import {
 	type ToolCall,
 } from "@earendil-works/pi-ai";
 
-// Create stream class matching ProxyMessageEventStream
+// 与 ProxyMessageEventStream 匹配的 stream 类，在事件流结束时提取最终的 AssistantMessage。
 class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
 		super(
@@ -31,7 +31,7 @@ class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, Assista
 }
 
 /**
- * Proxy event types - server sends these with partial field stripped to reduce bandwidth.
+ * 代理事件类型 —— 服务端发送时移除了 partial 字段以节省带宽。
  */
 export type ProxyAssistantMessageEvent =
 	| { type: "start" }
@@ -71,32 +71,16 @@ type ProxySerializableStreamOptions = Pick<
 >;
 
 export interface ProxyStreamOptions extends ProxySerializableStreamOptions {
-	/** Local abort signal for the proxy request */
+	/** 代理请求的本地中止信号 */
 	signal?: AbortSignal;
-	/** Auth token for the proxy server */
+	/** 代理服务器的认证令牌 */
 	authToken: string;
-	/** Proxy server URL (e.g., "https://genai.example.com") */
+	/** 代理服务器 URL（例如 "https://genai.example.com"） */
 	proxyUrl: string;
 }
 
 /**
- * Stream function that proxies through a server instead of calling LLM providers directly.
- * The server strips the partial field from delta events to reduce bandwidth.
- * We reconstruct the partial message client-side.
- *
- * Use this as the `streamFn` option when creating an Agent that needs to go through a proxy.
- *
- * @example
- * ```typescript
- * const agent = new Agent({
- *   streamFn: (model, context, options) =>
- *     streamProxy(model, context, {
- *       ...options,
- *       authToken: await getAuthToken(),
- *       proxyUrl: "https://genai.example.com",
- *     }),
- * });
- * ```
+ * 从完整的 ProxyStreamOptions 中提取可序列化的 stream 选项，用于发送给代理服务器。
  */
 function buildProxyRequestOptions(options: ProxyStreamOptions): ProxySerializableStreamOptions {
 	return {
@@ -113,11 +97,17 @@ function buildProxyRequestOptions(options: ProxyStreamOptions): ProxySerializabl
 	};
 }
 
+/**
+ * 通过代理服务器中转 LLM 调用的 stream 函数。
+ * 服务端移除 delta 事件中的 partial 字段以节省带宽，客户端负责重建完整的 partial message。
+ *
+ * 在创建需要通过代理的 Agent 时，将此函数作为 `streamFn` 选项传入。
+ */
 export function streamProxy(model: Model<any>, context: Context, options: ProxyStreamOptions): ProxyMessageEventStream {
 	const stream = new ProxyMessageEventStream();
 
 	(async () => {
-		// Initialize the partial message that we'll build up from events
+		/** 从事件流逐步构建的 partial assistant message。 */
 		const partial: AssistantMessage = {
 			role: "assistant",
 			stopReason: "pending",
@@ -171,7 +161,7 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 						errorMessage = `Proxy error: ${errorData.error}`;
 					}
 				} catch {
-					// Couldn't parse error response
+					// 无法解析错误响应
 				}
 				throw new Error(errorMessage);
 			}
@@ -233,7 +223,7 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 }
 
 /**
- * Process a proxy event and update the partial message.
+ * 处理代理事件并更新 partial 消息。
  */
 function processProxyEvent(
 	proxyEvent: ProxyAssistantMessageEvent,
@@ -322,7 +312,7 @@ function processProxyEvent(
 			if (content?.type === "toolCall") {
 				(content as any).partialJson += proxyEvent.delta;
 				content.arguments = parseStreamingJson((content as any).partialJson) || {};
-				partial.content[proxyEvent.contentIndex] = { ...content }; // Trigger reactivity
+				partial.content[proxyEvent.contentIndex] = { ...content }; // 触发响应式更新
 				return {
 					type: "toolcall_delta",
 					contentIndex: proxyEvent.contentIndex,

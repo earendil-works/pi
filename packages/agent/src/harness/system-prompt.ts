@@ -1,5 +1,9 @@
 import type { Skill } from "./types.ts";
 
+/**
+ * 将可见技能列表格式化为 XML 块，用于嵌入 system prompt。
+ * 被标记为 disableModelInvocation 的技能会被排除。
+ */
 export function formatSkillsForSystemPrompt(skills: Skill[]): string {
 	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
 	if (visibleSkills.length === 0) return "";
@@ -24,6 +28,7 @@ export function formatSkillsForSystemPrompt(skills: Skill[]): string {
 	return lines.join("\n");
 }
 
+/** 转义 XML 特殊字符，防止在 XML 格式的 system prompt 中发生注入。 */
 function escapeXml(value: string): string {
 	return value
 		.replace(/&/g, "&amp;")
