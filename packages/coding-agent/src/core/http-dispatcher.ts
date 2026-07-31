@@ -14,6 +14,26 @@ export const HTTP_IDLE_TIMEOUT_CHOICES = [
 const originalGlobalFetch = globalThis.fetch;
 let installedGlobalFetch: typeof globalThis.fetch | undefined;
 
+const UNDICI_GLOBAL_NAMES = [
+	"fetch",
+	"Headers",
+	"Response",
+	"Request",
+	"FormData",
+	"WebSocket",
+	"CloseEvent",
+	"ErrorEvent",
+	"MessageEvent",
+	"EventSource",
+] as const;
+
+function canInstallUndiciGlobals(): boolean {
+	return UNDICI_GLOBAL_NAMES.every((name) => {
+		const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+		return !descriptor || descriptor.writable === true || typeof descriptor.set === "function";
+	});
+}
+
 export function parseHttpIdleTimeoutMs(value: unknown): number | undefined {
 	if (typeof value === "string") {
 		const trimmed = value.trim();
@@ -99,7 +119,9 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 		installedGlobalFetch === undefined
 			? globalThis.fetch === originalGlobalFetch
 			: globalThis.fetch === installedGlobalFetch;
-	if (shouldInstallGlobals) {
+	// Embedded runtimes can own non-writable Web APIs. Preserve that surface
+	// instead of letting undici.install() fail partway through its assignments.
+	if (shouldInstallGlobals && canInstallUndiciGlobals()) {
 		undici.install?.();
 		installedGlobalFetch = globalThis.fetch;
 	}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyHttpProxySettings } from "../src/core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher } from "../src/core/http-dispatcher.ts";
 
+const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY"] as const;
 
 describe("http proxy settings", () => {
@@ -49,5 +50,27 @@ describe("http proxy settings", () => {
 
 		expect(process.env.HTTP_PROXY).toBeUndefined();
 		expect(process.env.HTTPS_PROXY).toBeUndefined();
+	});
+});
+
+describe("configureHttpDispatcher", () => {
+	afterEach(() => {
+		if (originalWebSocketDescriptor) {
+			Object.defineProperty(globalThis, "WebSocket", originalWebSocketDescriptor);
+		} else {
+			Reflect.deleteProperty(globalThis, "WebSocket");
+		}
+	});
+
+	it("preserves a host-owned Web API surface", () => {
+		const fetchBefore = globalThis.fetch;
+		Object.defineProperty(globalThis, "WebSocket", {
+			configurable: true,
+			value: class HostWebSocket {},
+			writable: false,
+		});
+
+		expect(() => configureHttpDispatcher()).not.toThrow();
+		expect(globalThis.fetch).toBe(fetchBefore);
 	});
 });

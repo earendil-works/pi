@@ -104,6 +104,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		together: "TOGETHER_API_KEY",
 		opencode: "OPENCODE_API_KEY",
 		"opencode-go": "OPENCODE_API_KEY",
+		"openai-codex": "OPENAI_CODEX_ACCESS_TOKEN",
 		"kimi-coding": "KIMI_API_KEY",
 		"cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
 		"cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",

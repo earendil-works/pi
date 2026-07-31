@@ -10,6 +10,7 @@ import { cloudflareAIGatewayProvider } from "../src/providers/cloudflare-ai-gate
 import { cloudflareWorkersAIProvider } from "../src/providers/cloudflare-workers-ai.ts";
 import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import { googleVertexProvider } from "../src/providers/google-vertex.ts";
+import { openaiCodexProvider } from "../src/providers/openai-codex.ts";
 import type { Api, Context, Model, ProviderStreams } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
@@ -21,6 +22,35 @@ function fakeAuthContext(env: Record<string, string>, files: string[] = []): Aut
 }
 
 const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
+
+describe("openai codex provider", () => {
+	it("accepts an externally managed access token without OAuth", async () => {
+		const models = createModels({
+			authContext: fakeAuthContext({ OPENAI_CODEX_ACCESS_TOKEN: "external-token" }),
+		});
+		models.setProvider(openaiCodexProvider());
+
+		expect(await models.getAuth("openai-codex")).toMatchObject({
+			auth: { apiKey: "external-token" },
+			source: "OPENAI_CODEX_ACCESS_TOKEN",
+		});
+	});
+
+	it("adds an externally managed account ID to request auth", async () => {
+		const models = createModels({
+			authContext: fakeAuthContext({
+				OPENAI_CODEX_ACCESS_TOKEN: "opaque-token",
+				OPENAI_CODEX_ACCOUNT_ID: "account-123",
+			}),
+		});
+		models.setProvider(openaiCodexProvider());
+
+		expect((await models.getAuth("openai-codex"))?.auth).toEqual({
+			apiKey: "opaque-token",
+			headers: { "chatgpt-account-id": "account-123" },
+		});
+	});
+});
 
 describe("builtin providers", () => {
 	it("builtinModels registers every builtin provider with models", async () => {
