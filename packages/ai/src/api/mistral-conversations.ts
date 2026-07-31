@@ -569,10 +569,11 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 					}
 					continue;
 				}
+				if ((block as any).type === "toolSearchResult") continue;
 				toolCalls.push({
-					id: block.id,
+					id: (block as any).id,
 					type: "function",
-					function: { name: block.name, arguments: JSON.stringify(block.arguments || {}) },
+					function: { name: (block as any).name, arguments: JSON.stringify((block as any).arguments || {}) },
 				});
 			}
 

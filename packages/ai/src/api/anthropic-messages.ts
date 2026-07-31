@@ -19,6 +19,7 @@ import type {
 	Model,
 	ProviderEnv,
 	ProviderHeaders,
+	ServerToolCallContent,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -28,6 +29,7 @@ import type {
 	Tool,
 	ToolCall,
 	ToolResultMessage,
+	ToolSearchResultContent,
 } from "../types.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -567,7 +569,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
+			type Block = (
+				| ThinkingContent
+				| TextContent
+				| (ToolCall & { partialJson: string })
+				| ServerToolCallContent
+				| ToolSearchResultContent
+			) & { index: number };
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -612,6 +620,35 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						};
 						output.content.push(block);
 						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+					} else if ((event as any).content_block.type === "server_tool_use") {
+						const block: Block = {
+							type: "serverToolCall",
+							id: (event as any).content_block.id,
+							name: isOAuth
+								? fromClaudeCodeName((event as any).content_block.name, context.tools)
+								: (event as any).content_block.name,
+							arguments: (event as any).content_block.input ?? {},
+							index: event.index,
+						};
+						output.content.push(block);
+						stream.push({
+							type: "server_tool_call_start",
+							contentIndex: output.content.length - 1,
+							partial: output,
+						});
+					} else if ((event as any).content_block.type === "tool_search_tool_result") {
+						const block: Block = {
+							type: "toolSearchResult",
+							toolUseId: (event as any).content_block.tool_use_id,
+							content: (event as any).content_block.content ?? [],
+							index: event.index,
+						};
+						output.content.push(block);
+						stream.push({
+							type: "tool_search_result_start",
+							contentIndex: output.content.length - 1,
+							partial: output,
+						});
 					} else if (event.content_block.type === "tool_use") {
 						const block: Block = {
 							type: "toolCall",
@@ -689,6 +726,20 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								type: "thinking_end",
 								contentIndex: index,
 								content: block.thinking,
+								partial: output,
+							});
+						} else if ((block as any).type === "serverToolCall") {
+							stream.push({
+								type: "server_tool_call_end",
+								contentIndex: index,
+								serverToolCall: block as any,
+								partial: output,
+							});
+						} else if ((block as any).type === "toolSearchResult") {
+							stream.push({
+								type: "tool_search_result_end",
+								contentIndex: index,
+								toolSearchResult: block as any,
 								partial: output,
 							});
 						} else if (block.type === "toolCall") {
@@ -1217,6 +1268,23 @@ function convertMessages(
 						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
 						input: block.arguments ?? {},
 					});
+				} else if ((block as any).type === "serverToolCall") {
+					blocks.push({
+						type: "server_tool_use",
+						id: (block as any).id,
+						name: isOAuthToken ? toClaudeCodeName((block as any).name) : (block as any).name,
+						input: (block as any).arguments ?? {},
+					} as any);
+				} else if ((block as any).type === "toolSearchResult") {
+					const refs = ((block as any).content ?? []).map((ref: any) => ({
+						type: "tool_reference",
+						tool_name: ref.tool_name ?? "",
+					}));
+					blocks.push({
+						type: "tool_search_tool_result",
+						tool_use_id: (block as any).toolUseId,
+						content: refs,
+					} as any);
 				}
 			}
 			if (blocks.length === 0) continue;
@@ -1295,6 +1363,14 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
+		// Server tools (e.g. tool_search_tool_20250919) need type passthrough and no input_schema.
+		if (tool.serverTool && tool.type) {
+			return {
+				name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
+				description: tool.description ?? "",
+				type: tool.type,
+			} as Anthropic.Messages.Tool;
+		}
 		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
 		const schema = tool.parameters as { properties?: unknown; required?: string[] };
 		const legacyInputSchema = {
@@ -1316,7 +1392,7 @@ function convertTools(
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			...(strict === true ? { strict: true } : {}),
 			input_schema: inputSchema,
-			...(deferLoading ? { defer_loading: true } : {}),
+			...(deferLoading || tool.deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});

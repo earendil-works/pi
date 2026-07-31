@@ -371,6 +371,19 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+export interface ServerToolCallContent {
+	type: "serverToolCall";
+	id: string;
+	name: string;
+	arguments: Record<string, any>;
+}
+
+export interface ToolSearchResultContent {
+	type: "toolSearchResult";
+	toolUseId: string;
+	content: Array<{ tool_name: string }>;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -418,7 +431,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ServerToolCallContent | ToolSearchResultContent)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -508,6 +521,12 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	description: string;
 	parameters: TParameters;
 	constrainedSampling?: false | ConstrainedSamplingConfig;
+	/** Server tool type (e.g., tool_search_tool_20250919). When set, no input_schema is generated. */
+	type?: string;
+	/** When true, this is a server-side tool (not a function tool). */
+	serverTool?: boolean;
+	/** When true, this tool should use defer_loading. */
+	deferLoading?: boolean;
 }
 
 export interface Context {
@@ -536,6 +555,20 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+	| { type: "server_tool_call_start"; contentIndex: number; partial: AssistantMessage }
+	| {
+			type: "server_tool_call_end";
+			contentIndex: number;
+			serverToolCall: ServerToolCallContent;
+			partial: AssistantMessage;
+	  }
+	| { type: "tool_search_result_start"; contentIndex: number; partial: AssistantMessage }
+	| {
+			type: "tool_search_result_end";
+			contentIndex: number;
+			toolSearchResult: ToolSearchResultContent;
+			partial: AssistantMessage;
+	  }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
