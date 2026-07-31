@@ -1,6 +1,7 @@
 import { createImagesModels, type ImagesProvider, type MutableImagesModels } from "../images-models.ts";
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
+import { createMusicModels, type MusicProvider, type MutableMusicModels } from "../music-models.ts";
 import type { Api, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
@@ -20,6 +21,8 @@ import { huggingfaceProvider } from "./huggingface.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
+import { minimaxCnMusicProvider } from "./minimax-cn-music.ts";
+import { minimaxMusicProvider } from "./minimax-music.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
@@ -145,6 +148,20 @@ export function builtinImagesProviders(): ImagesProvider[] {
 export function builtinImagesModels(options?: CreateModelsOptions): MutableImagesModels {
 	const models = createImagesModels(options);
 	for (const provider of builtinImagesProviders()) {
+		models.setProvider(provider);
+	}
+	return models;
+}
+
+/** All built-in music-generation providers, freshly constructed. */
+export function builtinMusicProviders(): MusicProvider[] {
+	return [minimaxMusicProvider(), minimaxCnMusicProvider()];
+}
+
+/** A `MusicModels` collection with every built-in music-generation provider registered. */
+export function builtinMusicModels(options?: CreateModelsOptions): MutableMusicModels {
+	const models = createMusicModels(options);
+	for (const provider of builtinMusicProviders()) {
 		models.setProvider(provider);
 	}
 	return models;

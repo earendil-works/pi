@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added MiniMax music generation providers for global and CN endpoints with URL and hexadecimal audio output.
+
 ### Fixed
 
 - Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.

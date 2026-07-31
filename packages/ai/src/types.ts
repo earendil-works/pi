@@ -31,6 +31,10 @@ export type KnownImagesApi = "openrouter-images";
 
 export type ImagesApi = KnownImagesApi | (string & {});
 
+export type KnownMusicApi = "minimax-music";
+
+export type MusicApi = KnownMusicApi | (string & {});
+
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
@@ -75,6 +79,10 @@ export type ProviderId = KnownProvider | string;
 export type KnownImagesProvider = "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
+
+export type KnownMusicProvider = "minimax" | "minimax-cn";
+
+export type MusicProviderId = KnownMusicProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
@@ -252,6 +260,11 @@ export interface ProviderImages {
 	): Promise<AssistantImages>;
 }
 
+/** The uniform contract of a music-generation API implementation module. */
+export interface ProviderMusic {
+	generateMusic(model: MusicModel<MusicApi>, context: MusicContext, options?: MusicOptions): Promise<AssistantMusic>;
+}
+
 export interface ImagesOptions {
 	signal?: AbortSignal;
 	apiKey?: string;
@@ -302,6 +315,27 @@ export interface ImagesOptions {
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+export interface MusicOptions {
+	signal?: AbortSignal;
+	apiKey?: string;
+	/** Optional fetch implementation for provider HTTP requests. Defaults to `globalThis.fetch`. */
+	fetch?: FetchFunction;
+	/** Provider-scoped environment values. These take precedence over process.env. */
+	env?: ProviderEnv;
+	/** Return a replacement payload, or undefined to keep the original payload. */
+	onPayload?: (payload: unknown, model: MusicModel<MusicApi>) => unknown | undefined | Promise<unknown | undefined>;
+	/** Invoked after a successful HTTP response is received. */
+	onResponse?: (response: ProviderResponse, model: MusicModel<MusicApi>) => void | Promise<void>;
+	/** Optional custom HTTP headers. Caller values override provider defaults. */
+	headers?: ProviderHeaders;
+	timeoutMs?: number;
+	maxRetries?: number;
+	maxRetryDelayMs?: number;
+	metadata?: Record<string, unknown>;
+}
+
+export type ProviderMusicOptions = MusicOptions & Record<string, unknown>;
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
@@ -328,6 +362,12 @@ export type ImagesFunction<TApi extends ImagesApi = ImagesApi, TOptions extends 
 	context: ImagesContext,
 	options?: TOptions,
 ) => Promise<AssistantImages>;
+
+export type MusicFunction<TApi extends MusicApi = MusicApi, TOptions extends MusicOptions = MusicOptions> = (
+	model: MusicModel<TApi>,
+	context: MusicContext,
+	options?: TOptions,
+) => Promise<AssistantMusic>;
 
 export interface TextSignatureV1 {
 	v: 1;
@@ -449,6 +489,54 @@ export interface AssistantImages {
 	responseId?: string;
 	usage?: Usage;
 	stopReason: ImagesStopReason;
+	errorMessage?: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
+export type MusicOutputFormat = "url" | "hex";
+export type MusicAudioFormat = "mp3" | "wav" | "pcm";
+export type MusicRegion = "global_en" | "cn_zh";
+export type MusicRegionalField = "aigc_watermark";
+
+export interface MusicAudioSetting {
+	sampleRate?: number;
+	bitrate?: number;
+	format?: MusicAudioFormat;
+}
+
+export interface MusicContext {
+	prompt?: string;
+	lyrics?: string;
+	stream?: boolean;
+	outputFormat?: MusicOutputFormat;
+	audioSetting?: MusicAudioSetting;
+	lyricsOptimizer?: boolean;
+	isInstrumental?: boolean;
+	audioUrl?: string;
+	audioBase64?: string;
+	coverFeatureId?: string;
+	aigcWatermark?: boolean;
+}
+
+export type MusicGenerationStatus = "in_progress" | "completed";
+
+export interface MusicAudioContent {
+	type: "audio";
+	data: string;
+	outputFormat: MusicOutputFormat;
+	audioFormat?: MusicAudioFormat;
+}
+
+export type MusicStopReason = "in_progress" | "stop" | "error" | "aborted";
+
+export interface AssistantMusic {
+	api: MusicApi;
+	provider: MusicProviderId;
+	model: string;
+	output: MusicAudioContent[];
+	responseId?: string;
+	status?: MusicGenerationStatus;
+	stopReason: MusicStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -792,4 +880,18 @@ export interface ImagesModel<TApi extends ImagesApi>
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+}
+
+export interface MusicModel<TApi extends MusicApi> {
+	id: string;
+	name: string;
+	api: TApi;
+	provider: MusicProviderId;
+	baseUrl: string;
+	region: MusicRegion;
+	outputFormats: readonly MusicOutputFormat[];
+	audioFormats: readonly MusicAudioFormat[];
+	urlTtlHours: number;
+	regionalFields: readonly MusicRegionalField[];
+	headers?: Record<string, string>;
 }
