@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenRouterImageModels } from "../scripts/generate-image-models.ts";
+import { createMiniMaxImageModels, parseOpenRouterImageModels } from "../scripts/generate-image-models.ts";
 
 const validImageModel = {
 	id: "example/image-model",
@@ -43,5 +43,21 @@ describe("OpenRouter image model parsing", () => {
 				output: ["image"],
 			}),
 		]);
+	});
+});
+
+describe("MiniMax image model generation", () => {
+	it("creates global and CN catalogs for both target models", () => {
+		const models = createMiniMaxImageModels();
+
+		expect(Object.keys(models)).toEqual(["minimax", "minimax-cn"]);
+		expect(models.minimax.map((model) => model.id)).toEqual(["image-01", "image-01-live"]);
+		expect(models["minimax-cn"].map((model) => model.id)).toEqual(["image-01", "image-01-live"]);
+		expect(models.minimax.every((model) => model.baseUrl === "https://api.minimax.io/v1/image_generation")).toBe(
+			true,
+		);
+		expect(
+			models["minimax-cn"].every((model) => model.baseUrl === "https://api.minimaxi.com/v1/image_generation"),
+		).toBe(true);
 	});
 });

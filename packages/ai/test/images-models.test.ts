@@ -195,15 +195,25 @@ describe("ImagesModels", () => {
 		await expect(models.refresh()).resolves.toBeUndefined();
 	});
 
-	it("builtinImagesModels registers the openrouter provider with its catalog", async () => {
-		const models = builtinImagesModels({ authContext: fakeAuthContext({ OPENROUTER_API_KEY: "or-key" }) });
+	it("builtinImagesModels registers all built-in image providers with their catalogs", async () => {
+		const models = builtinImagesModels({
+			authContext: fakeAuthContext({
+				OPENROUTER_API_KEY: "or-key",
+				MINIMAX_API_KEY: "minimax-key",
+				MINIMAX_CN_API_KEY: "minimax-cn-key",
+			}),
+		});
 		const providers = models.getProviders();
-		expect(providers.map((p) => p.id)).toEqual(["openrouter"]);
+		expect(providers.map((p) => p.id)).toEqual(["openrouter", "minimax", "minimax-cn"]);
 
 		const list = models.getModels("openrouter");
 		expect(list.length).toBeGreaterThan(0);
 		expect(list.every((m) => m.api === "openrouter-images")).toBe(true);
 
 		expect((await models.getAuth(list[0]))?.auth.apiKey).toBe("or-key");
+		expect(models.getModels("minimax").map((model) => model.id)).toEqual(["image-01", "image-01-live"]);
+		expect(models.getModels("minimax-cn").map((model) => model.id)).toEqual(["image-01", "image-01-live"]);
+		expect((await models.getAuth("minimax"))?.auth.apiKey).toBe("minimax-key");
+		expect((await models.getAuth("minimax-cn"))?.auth.apiKey).toBe("minimax-cn-key");
 	});
 });
