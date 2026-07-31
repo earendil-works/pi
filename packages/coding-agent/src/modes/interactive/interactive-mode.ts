@@ -151,6 +151,7 @@ import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { SelectorOwnership, type SelectorView } from "./selector-ownership.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -361,6 +362,7 @@ export class InteractiveMode {
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
 	private editorContainer: Container;
+	private selectorOwnership!: SelectorOwnership;
 	private footer: FooterComponent;
 	private footerContainer: Container;
 	private footerDataProvider: FooterDataProvider;
@@ -513,6 +515,20 @@ export class InteractiveMode {
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
+		this.selectorOwnership = new SelectorOwnership(
+			(component, focus) => {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(component);
+				this.ui.setFocus(focus);
+				this.ui.requestRender();
+			},
+			() => {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(this.editor);
+				this.ui.setFocus(this.editor);
+				this.ui.requestRender();
+			},
+		);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
@@ -4196,17 +4212,8 @@ export class InteractiveMode {
 	 * Shows a selector component in place of the editor.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
-	private showSelector(create: (done: () => void) => { component: Component; focus: Component }): void {
-		const done = () => {
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.editor);
-			this.ui.setFocus(this.editor);
-		};
-		const { component, focus } = create(done);
-		this.editorContainer.clear();
-		this.editorContainer.addChild(component);
-		this.ui.setFocus(focus);
-		this.ui.requestRender();
+	private showSelector(create: (done: () => void) => SelectorView): void {
+		this.selectorOwnership.show(create);
 	}
 
 	private showSettingsSelector(): void {
@@ -4566,7 +4573,7 @@ export class InteractiveMode {
 				},
 				initialSearchInput,
 			);
-			return { component: selector, focus: selector };
+			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});
 	}
 

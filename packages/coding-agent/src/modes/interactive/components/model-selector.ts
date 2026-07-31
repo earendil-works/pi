@@ -191,9 +191,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private close(): void {
+	dispose(): void {
+		if (this.closed) return;
 		this.closed = true;
-		if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+		if (this.refreshTimeout) {
+			clearTimeout(this.refreshTimeout);
+			this.refreshTimeout = undefined;
+		}
 		this.refreshAbortController.abort();
 	}
 
@@ -341,7 +345,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
-			this.close();
+			this.dispose();
 			this.onCancelCallback();
 		}
 		// Pass everything else to search input
@@ -352,7 +356,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private handleSelect(model: Model<any>): void {
-		this.close();
+		this.dispose();
 		// Save as new default
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 		this.onSelectCallback(model);
