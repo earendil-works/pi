@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type { Api, AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -84,7 +84,6 @@ import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
-	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
 } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
@@ -4212,8 +4211,8 @@ export class InteractiveMode {
 	 * Shows a selector component in place of the editor.
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
 	 */
-	private showSelector(create: (done: () => void) => SelectorView): void {
-		this.selectorOwnership.show(create);
+	private showSelector(create: (done: () => void) => SelectorView): boolean {
+		return this.selectorOwnership.show(create);
 	}
 
 	private showSettingsSelector(): void {
@@ -4573,87 +4572,175 @@ export class InteractiveMode {
 				},
 				initialSearchInput,
 			);
-			return { component: selector, focus: selector, dispose: () => selector.dispose() };
+			return {
+				component: selector,
+				focus: selector,
+				dispose: () => selector.dispose(),
+			};
 		});
 	}
 
-	private async showModelsSelector(): Promise<void> {
-		// Get all available models
-		await this.session.modelRuntime.refresh();
-		const allModels = [...(await this.session.modelRuntime.getAvailable())];
-		const allModelIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+	private showModelsSelector(): void {
+		const cachedModels = [...this.session.modelRuntime.getAvailableSnapshot()];
 		const configuredPatterns = this.settingsManager.getEnabledModels();
 		const sessionScopedModels = this.session.scopedModels;
-
-		if (allModels.length === 0 && !configuredPatterns?.length && sessionScopedModels.length === 0) {
-			this.showStatus("No models available");
-			return;
-		}
-
-		const configuredScope = configuredPatterns?.length
-			? await resolveModelScopeWithDiagnostics(configuredPatterns, this.session.modelRuntime)
-			: undefined;
-
-		// Check if session has scoped models (from previous session-only changes or CLI --models)
 		const hasSessionScope = sessionScopedModels.length > 0;
-
-		// Build enabled model IDs from session state or settings
-		let currentEnabledIds: string[] | null = null;
-
-		if (hasSessionScope) {
-			// Use current session's scoped models
-			currentEnabledIds = sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
-		} else if (configuredScope) {
-			currentEnabledIds = configuredScope.scopedModels.map(
-				(scoped) => `${scoped.model.provider}/${scoped.model.id}`,
-			);
-		}
-
-		for (const diagnostic of configuredScope?.diagnostics ?? []) {
-			if (diagnostic.code !== "no-match") continue;
-			currentEnabledIds ??= [];
-			if (!currentEnabledIds.includes(diagnostic.pattern)) currentEnabledIds.push(diagnostic.pattern);
-		}
-
-		// Helper to update session's scoped models (session-only, no persist)
-		const updateSessionModels = async (enabledIds: string[] | null) => {
-			currentEnabledIds = enabledIds === null ? null : [...enabledIds];
-			const hasEnabledAvailableModel = enabledIds?.some((id) => allModelIds.has(id)) ?? false;
-			const allAvailableModelsEnabled =
-				enabledIds !== null && [...allModelIds].every((id) => enabledIds.includes(id));
-			if (enabledIds && hasEnabledAvailableModel && !allAvailableModelsEnabled) {
-				const newScopedModels = await resolveModelScope(enabledIds, this.session.modelRuntime);
-				this.session.setScopedModels(
-					newScopedModels.map((sm) => ({
-						model: sm.model,
-						thinkingLevel: sm.thinkingLevel,
-					})),
-				);
-			} else {
-				// All enabled or none enabled = no filter
-				this.session.setScopedModels([]);
+		const currentEnabledIds = hasSessionScope
+			? sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`)
+			: configuredPatterns?.length
+				? [...configuredPatterns]
+				: null;
+		const thinkingLevelsByModelId = new Map<string, string>();
+		for (const scoped of sessionScopedModels) {
+			if (scoped.thinkingLevel) {
+				thinkingLevelsByModelId.set(`${scoped.model.provider}/${scoped.model.id}`, scoped.thinkingLevel);
 			}
-			await this.updateAvailableProviderCount();
+		}
+		const configuredThinkingLevelsByModelId = new Map<string, string>();
+		const getThinkingLevel = (id: string): string | undefined =>
+			thinkingLevelsByModelId.get(id) ?? configuredThinkingLevelsByModelId.get(id);
+
+		const resolveAgainstCatalog = (patterns: string[], models: readonly Model<Api>[]) => {
+			// Keep the selector's session update bound to the catalog it rendered, not a later runtime publication.
+			const catalogRuntime = {
+				getAvailable: async () => models,
+			} as Parameters<typeof resolveModelScopeWithDiagnostics>[1];
+			return resolveModelScopeWithDiagnostics(patterns, catalogRuntime);
+		};
+		const patternsForSelection = (enabledIds: string[]): string[] =>
+			enabledIds.map((id) => {
+				const thinkingLevel = getThinkingLevel(id);
+				return thinkingLevel ? `${id}:${thinkingLevel}` : id;
+			});
+		const recordThinkingLevels = (
+			scopedModels: { model: Model<Api>; thinkingLevel?: string }[],
+			target = thinkingLevelsByModelId,
+		) => {
+			for (const scoped of scopedModels) {
+				const id = `${scoped.model.provider}/${scoped.model.id}`;
+				if (scoped.thinkingLevel) target.set(id, scoped.thinkingLevel);
+			}
+		};
+		const isExactAllEnabled = (enabledIds: string[], currentModels: readonly Model<Api>[]): boolean => {
+			const allModelIds = new Set(currentModels.map((model) => `${model.provider}/${model.id}`));
+			return (
+				enabledIds.length === allModelIds.size &&
+				enabledIds.every((id) => allModelIds.has(id) && !getThinkingLevel(id))
+			);
+		};
+
+		let selector: ScopedModelsSelectorComponent | undefined;
+		let lifecycleGeneration = 0;
+		let configuredResolutionGeneration = 0;
+		const isActive = (generation: number, expectedSelector = selector): boolean =>
+			lifecycleGeneration === generation &&
+			expectedSelector !== undefined &&
+			selector === expectedSelector &&
+			!expectedSelector.disposed;
+
+		const updateSessionModels = async (
+			enabledIds: string[] | null,
+			currentModels: readonly Model<Api>[],
+			generation: number,
+		) => {
+			if (!isActive(generation) || currentModels.length === 0) {
+				// An empty catalog cannot prove that an existing session scope should broaden.
+				return;
+			}
+			if (enabledIds === null) {
+				this.session.setScopedModels([]);
+			} else if (enabledIds.length === 0) {
+				// Retain the established no-filter behavior only when the catalog can prove the selection is empty.
+				this.session.setScopedModels([]);
+			} else if (isExactAllEnabled(enabledIds, currentModels)) {
+				// No unresolved extras: this is the one explicit-list form that means no filter.
+				this.session.setScopedModels([]);
+			} else {
+				const resolved = await resolveAgainstCatalog(patternsForSelection(enabledIds), currentModels);
+				if (!isActive(generation)) return;
+				recordThinkingLevels(resolved.scopedModels);
+				if (resolved.scopedModels.length > 0) {
+					this.session.setScopedModels(resolved.scopedModels);
+				}
+			}
+			// An empty catalog or an unresolved-only selection must not clear/broaden an existing session scope.
+			if (!isActive(generation)) return;
+			this.updateAvailableProviderCount();
+			if (!isActive(generation)) return;
 			this.ui.requestRender();
 		};
 
-		this.showSelector((done) => {
-			const selector = new ScopedModelsSelectorComponent(
+		let sessionUpdate = Promise.resolve();
+		const enqueueSessionUpdate = (enabledIds: string[] | null, currentModels: readonly Model<Api>[]) => {
+			const capturedIds = enabledIds === null ? null : [...enabledIds];
+			const capturedModels = [...currentModels];
+			const generation = lifecycleGeneration;
+			const update = sessionUpdate.then(async () => {
+				if (!isActive(generation)) return;
+				await updateSessionModels(capturedIds, capturedModels, generation);
+			});
+			sessionUpdate = update.catch((error) => {
+				console.error("Could not update scoped models:", error);
+			});
+			return update;
+		};
+		const applyConfiguredScope = async (models: readonly Model<Api>[]): Promise<boolean> => {
+			const configuredResolutionRevision = ++configuredResolutionGeneration;
+			const generation = lifecycleGeneration;
+			const selectorAtStart = selector;
+			const isCurrentConfiguredResolution = (): boolean =>
+				configuredResolutionRevision === configuredResolutionGeneration && isActive(generation, selectorAtStart);
+			// A newer invocation owns every configured-resolution side effect, including errors.
+			if (
+				hasSessionScope ||
+				!configuredPatterns?.length ||
+				selectorAtStart === undefined ||
+				!isCurrentConfiguredResolution()
+			) {
+				return false;
+			}
+			let resolved: Awaited<ReturnType<typeof resolveAgainstCatalog>>;
+			try {
+				resolved = await resolveAgainstCatalog(configuredPatterns, models);
+			} catch (error) {
+				if (!isCurrentConfiguredResolution()) return false;
+				throw error;
+			}
+			if (!isCurrentConfiguredResolution()) return false;
+			recordThinkingLevels(resolved.scopedModels, configuredThinkingLevelsByModelId);
+			if (!isCurrentConfiguredResolution()) return false;
+			const enabledIds = [
+				...resolved.scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`),
+				...resolved.diagnostics
+					.filter((diagnostic) => diagnostic.code === "no-match")
+					.map((diagnostic) => diagnostic.pattern),
+			];
+			selectorAtStart.applyResolvedEnabledModelIds(enabledIds);
+			if (!isCurrentConfiguredResolution()) return false;
+			this.ui.requestRender();
+			return true;
+		};
+
+		const shown = this.showSelector((done) => {
+			selector = new ScopedModelsSelectorComponent(
 				{
-					allModels,
+					allModels: cachedModels,
 					enabledModelIds: currentEnabledIds,
 				},
 				{
-					onChange: async (enabledIds) => {
-						await updateSessionModels(enabledIds);
-					},
-					onPersist: (enabledIds) => {
-						// Persist to settings
-						const allEnabled =
-							enabledIds !== null &&
-							enabledIds.length === allModels.length &&
-							enabledIds.every((id) => allModelIds.has(id));
-						const newPatterns = enabledIds === null || allEnabled ? undefined : enabledIds;
+					onChange: (enabledIds, currentModels) => enqueueSessionUpdate(enabledIds, currentModels),
+					onPersist: (enabledIds, currentModels, isDirty) => {
+						const generation = lifecycleGeneration;
+						if (!isActive(generation)) return;
+						const newPatterns =
+							!hasSessionScope && !isDirty && configuredPatterns !== undefined
+								? configuredPatterns
+								: enabledIds === null || (enabledIds !== null && isExactAllEnabled(enabledIds, currentModels))
+									? undefined
+									: enabledIds.map((id) => {
+											const thinkingLevel = getThinkingLevel(id);
+											return thinkingLevel ? `${id}:${thinkingLevel}` : id;
+										});
 						this.settingsManager.setEnabledModels(newPatterns ? [...newPatterns] : undefined);
 						this.showStatus("Model selection saved to settings");
 					},
@@ -4663,8 +4750,78 @@ export class InteractiveMode {
 					},
 				},
 			);
-			return { component: selector, focus: selector };
+			return {
+				component: selector,
+				focus: selector,
+				dispose: () => {
+					lifecycleGeneration++;
+					configuredResolutionGeneration++;
+					selector?.dispose();
+				},
+			};
 		});
+		if (shown && selector) {
+			void applyConfiguredScope(cachedModels).catch(() => {
+				// Keep diagnostics free of raw provider/resolver exception text (may contain secrets).
+				console.error("Could not resolve configured model scope from cached catalog.");
+			});
+			void this.refreshScopedModelsSelector(selector, applyConfiguredScope);
+		}
+	}
+
+	private async refreshScopedModelsSelector(
+		selector: ScopedModelsSelectorComponent,
+		applyConfiguredScope: (models: readonly Model<Api>[]) => Promise<boolean>,
+	): Promise<void> {
+		const timeoutMs = 15_000;
+		let settled = false;
+		const applyResult = async (errorMessage?: string): Promise<void> => {
+			if (settled || selector.disposed) return;
+			settled = true;
+			const models = this.session.modelRuntime.getAvailableSnapshot();
+			selector.applyCatalogRefresh(models, errorMessage);
+			if (selector.disposed) return;
+			this.ui.requestRender();
+			try {
+				const applied = await applyConfiguredScope(models);
+				if (!applied || selector.disposed) return;
+				this.ui.requestRender();
+			} catch {
+				if (selector.disposed) return;
+				// Stable generic text only: raw resolver errors may contain secrets.
+				console.error("Could not resolve configured model scope from refreshed catalog.");
+				selector.setRefreshError("Could not resolve configured model scope; showing current models.");
+				if (selector.disposed) return;
+				this.ui.requestRender();
+			}
+		};
+		selector.beginRefresh();
+		const timeout = setTimeout(() => {
+			if (selector.disposed || settled) return;
+			selector.abortRefresh();
+			void applyResult("Model refresh timed out; showing cached models.");
+		}, timeoutMs);
+		let errorMessage: string | undefined;
+		try {
+			const result = await this.session.modelRuntime.refresh({
+				signal: selector.refreshSignal,
+			});
+			if (settled || selector.disposed) return;
+			if (result.errors.size === 1) {
+				errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
+			} else if (result.errors.size > 1) {
+				errorMessage = `Could not refresh ${result.errors.size} model catalogs; showing cached models.`;
+			} else {
+				errorMessage = this.session.modelRuntime.getError();
+			}
+		} catch {
+			// Stable generic text only: raw refresh exceptions may contain secrets.
+			if (settled || selector.disposed) return;
+			errorMessage = "Could not refresh model catalogs; showing cached models.";
+		} finally {
+			clearTimeout(timeout);
+		}
+		await applyResult(errorMessage);
 	}
 
 	private showUserMessageSelector(): void {

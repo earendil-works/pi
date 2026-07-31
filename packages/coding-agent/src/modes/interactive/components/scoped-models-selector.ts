@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -67,20 +67,28 @@ function getSortedIds(enabledIds: EnabledIds, allIds: string[]): string[] {
 
 interface ModelItem {
 	fullId: string;
-	model: Model<any> | undefined;
+	model: Model<Api> | undefined;
 	enabled: boolean;
 }
 
 export interface ModelsConfig {
-	allModels: Model<any>[];
+	allModels: Model<Api>[];
 	enabledModelIds: string[] | null;
 }
 
 export interface ModelsCallbacks {
-	/** Called whenever the enabled model set or order changes (session-only, no persist) */
-	onChange: (enabledModelIds: string[] | null) => void | Promise<void>;
-	/** Called when user wants to persist current selection to settings */
-	onPersist: (enabledModelIds: string[] | null) => void | Promise<void>;
+	/** Called whenever the enabled model set or order changes (session-only, no persist). */
+	onChange: (
+		enabledModelIds: string[] | null,
+		allModels: readonly Model<Api>[],
+		isDirty: boolean,
+	) => void | Promise<void>;
+	/** Called when user wants to persist the current selection to settings. */
+	onPersist: (
+		enabledModelIds: string[] | null,
+		allModels: readonly Model<Api>[],
+		isDirty: boolean,
+	) => void | Promise<void>;
 	onCancel: () => void;
 }
 
@@ -89,7 +97,7 @@ export interface ModelsCallbacks {
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
-	private modelsById: Map<string, Model<any>> = new Map();
+	private modelsById: Map<string, Model<Api>> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
 	private filteredItems: ModelItem[] = [];
@@ -110,17 +118,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private callbacks: ModelsCallbacks;
 	private maxVisible = 8;
 	private isDirty = false;
+	private refreshStatusMessage: string | undefined;
+	private refreshStatusSuccess = false;
+	private refreshErrorMessage: string | undefined;
+	private readonly refreshAbortController = new AbortController();
+	private closed = false;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
 		super();
 		this.callbacks = callbacks;
-
-		for (const model of config.allModels) {
-			const fullId = `${model.provider}/${model.id}`;
-			this.modelsById.set(fullId, model);
-			this.allIds.push(fullId);
-		}
-
+		this.replaceModels(config.allModels);
 		this.enabledIds = config.enabledModelIds === null ? null : [...config.enabledModelIds];
 		this.filteredItems = this.buildItems();
 
@@ -149,6 +156,80 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		this.addChild(new DynamicBorder());
 		this.updateList();
+	}
+
+	get refreshSignal(): AbortSignal {
+		return this.refreshAbortController.signal;
+	}
+
+	get disposed(): boolean {
+		return this.closed;
+	}
+
+	abortRefresh(): void {
+		this.refreshAbortController.abort();
+	}
+
+	dispose(): void {
+		if (this.closed) return;
+		this.closed = true;
+		this.abortRefresh();
+	}
+
+	beginRefresh(): void {
+		if (this.closed) return;
+		this.refreshStatusMessage = "Refreshing model catalogs…";
+		this.refreshStatusSuccess = false;
+		this.refreshErrorMessage = undefined;
+		this.updateList();
+	}
+
+	/** Replace the catalog displayed by this mounted selector without resetting user state. */
+	applyCatalogRefresh(allModels: readonly Model<Api>[], errorMessage?: string): void {
+		if (this.closed) return;
+		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
+		const previousFilteredIndex = this.selectedIndex;
+		this.replaceModels(allModels);
+		this.refreshStatusMessage = errorMessage === undefined ? "Model catalogs refreshed." : undefined;
+		this.refreshStatusSuccess = errorMessage === undefined;
+		this.refreshErrorMessage = errorMessage;
+		this.rebuild(selectedId, previousFilteredIndex);
+	}
+
+	setRefreshError(errorMessage: string): void {
+		if (this.closed) return;
+		this.refreshStatusMessage = undefined;
+		this.refreshStatusSuccess = false;
+		this.refreshErrorMessage = this.refreshErrorMessage
+			? `${this.refreshErrorMessage} ${errorMessage}`
+			: errorMessage;
+		this.updateList();
+	}
+
+	/**
+	 * Replace the preliminary raw-pattern rows with a catalog-resolved scope.
+	 * User edits always win over the asynchronous resolution.
+	 */
+	applyResolvedEnabledModelIds(enabledModelIds: string[] | null): void {
+		if (this.closed || this.isDirty) return;
+		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
+		const previousFilteredIndex = this.selectedIndex;
+		this.enabledIds = enabledModelIds === null ? null : [...enabledModelIds];
+		this.rebuild(selectedId, previousFilteredIndex);
+	}
+
+	private replaceModels(models: readonly Model<Api>[]): void {
+		this.modelsById.clear();
+		this.allIds = [];
+		for (const model of models) {
+			const fullId = `${model.provider}/${model.id}`;
+			this.modelsById.set(fullId, model);
+			this.allIds.push(fullId);
+		}
+	}
+
+	private getAllModels(): readonly Model<Api>[] {
+		return this.allIds.map((id) => this.modelsById.get(id)!);
 	}
 
 	private buildItems(): ModelItem[] {
@@ -181,6 +262,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	private refresh(): void {
+		this.rebuild(undefined, this.selectedIndex);
+	}
+
+	private rebuild(selectedId: string | undefined, previousFilteredIndex: number): void {
 		const query = this.searchInput.getValue();
 		const items = this.buildItems();
 		this.filteredItems = query
@@ -190,63 +275,93 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 						: item.fullId,
 				)
 			: items;
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
+		const selectedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
+		this.selectedIndex =
+			selectedIndex >= 0
+				? selectedIndex
+				: Math.min(previousFilteredIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
 	}
 
 	private notifyChange(): void {
-		this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]);
+		const result = this.callbacks.onChange(
+			this.enabledIds === null ? null : [...this.enabledIds],
+			this.getAllModels(),
+			this.isDirty,
+		);
+		if (result && typeof (result as Promise<void>).then === "function") {
+			void (result as Promise<void>).catch((error) => {
+				console.error("Could not apply scoped model selection:", error);
+			});
+		}
 	}
 
 	private updateList(): void {
 		this.listContainer.clear();
+		const noCachedModels = this.allIds.length === 0 && this.searchInput.getValue() === "";
 
 		if (this.filteredItems.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
-			return;
-		}
-
-		const startIndex = Math.max(
-			0,
-			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
-		);
-		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
-		const allEnabled = this.enabledIds === null;
-
-		for (let i = startIndex; i < endIndex; i++) {
-			const item = this.filteredItems[i]!;
-			const isSelected = i === this.selectedIndex;
-			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const id = item.model?.id ?? item.fullId;
-			const modelText = isSelected ? theme.fg("accent", id) : id;
-			const providerBadge = theme.fg("muted", item.model ? ` [${item.model.provider}]` : " [unavailable]");
-			const status = item.model
-				? allEnabled
-					? ""
-					: item.enabled
-						? theme.fg("success", " ✓")
-						: theme.fg("dim", " ✗")
-				: theme.fg("dim", " ✗");
-			this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${status}`, 0, 0));
-		}
-
-		// Add scroll indicator if needed
-		if (startIndex > 0 || endIndex < this.filteredItems.length) {
 			this.listContainer.addChild(
-				new Text(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`), 0, 0),
+				new Text(theme.fg("muted", noCachedModels ? "  No cached models yet." : "  No matching models"), 0, 0),
 			);
+		} else {
+			const startIndex = Math.max(
+				0,
+				Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredItems.length - this.maxVisible),
+			);
+			const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
+			const allEnabled = this.enabledIds === null;
+
+			for (let i = startIndex; i < endIndex; i++) {
+				const item = this.filteredItems[i]!;
+				const isSelected = i === this.selectedIndex;
+				const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
+				const id = item.model?.id ?? item.fullId;
+				const modelText = isSelected ? theme.fg("accent", id) : id;
+				const providerBadge = theme.fg("muted", item.model ? ` [${item.model.provider}]` : " [unavailable]");
+				const status = item.model
+					? allEnabled
+						? ""
+						: item.enabled
+							? theme.fg("success", " ✓")
+							: theme.fg("dim", " ✗")
+					: theme.fg("dim", " ✗");
+				this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${status}`, 0, 0));
+			}
+
+			// Add scroll indicator if needed
+			if (startIndex > 0 || endIndex < this.filteredItems.length) {
+				this.listContainer.addChild(
+					new Text(theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`), 0, 0),
+				);
+			}
+
+			if (this.filteredItems.length > 0) {
+				const selected = this.filteredItems[this.selectedIndex];
+				this.listContainer.addChild(new Spacer(1));
+				this.listContainer.addChild(
+					new Text(
+						theme.fg("muted", `  ${selected.model ? `Model Name: ${selected.model.name}` : "Model unavailable"}`),
+						0,
+						0,
+					),
+				);
+			}
 		}
 
-		if (this.filteredItems.length > 0) {
-			const selected = this.filteredItems[this.selectedIndex];
+		if (noCachedModels && this.filteredItems.length > 0) {
+			this.listContainer.addChild(new Spacer(1));
+			this.listContainer.addChild(new Text(theme.fg("muted", "  No cached models yet."), 0, 0));
+		}
+		if (this.refreshErrorMessage) {
+			this.listContainer.addChild(new Spacer(1));
+			this.listContainer.addChild(new Text(theme.fg("error", `  ${this.refreshErrorMessage}`), 0, 0));
+		}
+		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));
 			this.listContainer.addChild(
-				new Text(
-					theme.fg("muted", `  ${selected.model ? `Model Name: ${selected.model.name}` : "Model unavailable"}`),
-					0,
-					0,
-				),
+				new Text(theme.fg(this.refreshStatusSuccess ? "success" : "muted", `  ${this.refreshStatusMessage}`), 0, 0),
 			);
 		}
 	}
@@ -341,7 +456,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Save/persist to settings
 		if (kb.matches(data, "app.models.save")) {
-			this.callbacks.onPersist(this.enabledIds === null ? null : [...this.enabledIds]);
+			const result = this.callbacks.onPersist(
+				this.enabledIds === null ? null : [...this.enabledIds],
+				this.getAllModels(),
+				this.isDirty,
+			);
+			if (result && typeof (result as Promise<void>).then === "function") {
+				void (result as Promise<void>).catch((error) => {
+					console.error("Could not persist scoped model selection:", error);
+				});
+			}
 			this.isDirty = false;
 			this.footerText.setText(this.getFooterText());
 			return;
