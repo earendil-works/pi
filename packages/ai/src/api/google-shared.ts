@@ -131,26 +131,32 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					// Skip empty text blocks
-					if (!block.text || block.text.trim() === "") continue;
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
+					// Skip empty text blocks — unless they carry a thought signature. Gemini can attach
+					// the signature to a part whose visible text is empty and requires it echoed back;
+					// dropping it breaks the reasoning chain and the model intermittently ends mid-task
+					// turns with a thought-only STOP (empty completion, no tool call).
+					if ((!block.text || block.text.trim() === "") && !thoughtSignature) continue;
 					parts.push({
 						text: sanitizeSurrogates(block.text),
 						...(thoughtSignature && { thoughtSignature }),
 					});
 				} else if (block.type === "thinking") {
-					// Skip empty thinking blocks
-					if (!block.thinking || block.thinking.trim() === "") continue;
 					// Only keep as thinking block if same provider AND same model
 					// Otherwise convert to plain text (no tags to avoid model mimicking them)
 					if (isSameProviderAndModel) {
 						const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thinkingSignature);
+						// Same rule as text blocks: an empty thinking block is dropped only when it
+						// carries no signature (mirrors the anthropic converter's handling).
+						if ((!block.thinking || block.thinking.trim() === "") && !thoughtSignature) continue;
 						parts.push({
 							thought: true,
 							text: sanitizeSurrogates(block.thinking),
 							...(thoughtSignature && { thoughtSignature }),
 						});
 					} else {
+						// Cross-provider/model: the signature is unusable, empty blocks stay dropped.
+						if (!block.thinking || block.thinking.trim() === "") continue;
 						parts.push({
 							text: sanitizeSurrogates(block.thinking),
 						});
