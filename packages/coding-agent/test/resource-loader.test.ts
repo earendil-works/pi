@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { ExtensionRunner } from "../src/core/extensions/runner.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
-import { DefaultResourceLoader } from "../src/core/resource-loader.js";
+import { DefaultResourceLoader, loadProjectContextFiles } from "../src/core/resource-loader.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 import type { Skill } from "../src/core/skills.js";
@@ -304,6 +304,45 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
+		});
+
+		it("loads global context first and ancestor context from root to cwd", () => {
+			const workspaceDir = join(tempDir, "workspace");
+			const projectDir = join(workspaceDir, "project");
+			mkdirSync(projectDir, { recursive: true });
+
+			writeFileSync(join(agentDir, "CLAUDE.md"), "global");
+			writeFileSync(join(tempDir, "AGENTS.MD"), "temp ancestor");
+			writeFileSync(join(workspaceDir, "CLAUDE.md"), "workspace ancestor");
+			writeFileSync(join(projectDir, "AGENTS.md"), "project preferred");
+			writeFileSync(join(projectDir, "CLAUDE.md"), "project ignored");
+
+			const contextFiles = loadProjectContextFiles({ cwd: projectDir, agentDir });
+			const localPaths = contextFiles.map((file) => file.path).filter((path) => path.startsWith(tempDir));
+
+			expect(localPaths).toEqual([
+				join(agentDir, "CLAUDE.md"),
+				join(tempDir, "AGENTS.MD"),
+				join(workspaceDir, "CLAUDE.md"),
+				join(projectDir, "AGENTS.md"),
+			]);
+			expect(contextFiles.some((file) => file.path === join(projectDir, "CLAUDE.md"))).toBe(false);
+		});
+
+		it("does not inherit context from an unrelated scratch ancestry", () => {
+			const workspaceDir = join(tempDir, "workspace");
+			const scratchProjectDir = join(tempDir, "scratch", "project");
+			mkdirSync(workspaceDir, { recursive: true });
+			mkdirSync(scratchProjectDir, { recursive: true });
+			writeFileSync(join(agentDir, "AGENTS.md"), "global");
+			writeFileSync(join(workspaceDir, "AGENTS.md"), "workspace-only");
+			writeFileSync(join(scratchProjectDir, "AGENTS.md"), "scratch project");
+
+			const contextFiles = loadProjectContextFiles({ cwd: scratchProjectDir, agentDir });
+
+			expect(contextFiles.some((file) => file.path === join(workspaceDir, "AGENTS.md"))).toBe(false);
+			expect(contextFiles.some((file) => file.path === join(agentDir, "AGENTS.md"))).toBe(true);
+			expect(contextFiles.some((file) => file.path === join(scratchProjectDir, "AGENTS.md"))).toBe(true);
 		});
 
 		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
