@@ -5,10 +5,10 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InputEvent } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
-import { createTestResourceLoader } from "../utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 describe("AgentSession prompt characterization", () => {
@@ -222,6 +222,104 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prompt("/review src/index.ts");
 
 		expect(expandedPrompt).toBe("Review this code: src/index.ts");
+	});
+
+	it("lets extensions submit native prompts with commands, expansion, images, and extension input source", async () => {
+		const tempDir = join(tmpdir(), `pi-extension-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		tempDirs.push(tempDir);
+		const skillPath = join(tempDir, "test-skill.md");
+		writeFileSync(skillPath, "# Test Skill\n\nUse the extension prompt skill.");
+
+		let extensionApi: ExtensionAPI | undefined;
+		const commandRuns: string[] = [];
+		const inputEvents: InputEvent[] = [];
+		const extensionsResult = await createTestExtensionsResult(
+			[
+				(pi) => {
+					extensionApi = pi;
+					pi.registerCommand("testcmd", {
+						description: "Test command",
+						handler: async (args) => {
+							commandRuns.push(args);
+						},
+					});
+					pi.on("input", (event) => {
+						inputEvents.push(event);
+					});
+				},
+			],
+			tempDir,
+		);
+		const template: PromptTemplate = {
+			name: "review",
+			description: "Review template",
+			content: "Review this code: $1",
+			filePath: join(tempDir, "review.md"),
+			sourceInfo: createSyntheticSourceInfo(join(tempDir, "review.md"), {
+				source: "local",
+				scope: "temporary",
+				origin: "top-level",
+			}),
+		};
+		const resourceLoader = {
+			...createTestResourceLoader({ extensionsResult }),
+			getSkills: () => ({
+				skills: [
+					{
+						name: "test",
+						description: "Test skill",
+						filePath: skillPath,
+						disableModelInvocation: false,
+						baseDir: tempDir,
+						sourceInfo: createSyntheticSourceInfo(skillPath, {
+							source: "local",
+							scope: "project",
+							origin: "top-level",
+							baseDir: tempDir,
+						}),
+					},
+				],
+				diagnostics: [],
+			}),
+			getPrompts: () => ({ prompts: [template], diagnostics: [] }),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		if (!extensionApi) throw new Error("Extension API was not initialized");
+
+		let skillPrompt = "";
+		let templatePrompt = "";
+		let sawImage = false;
+		harness.setResponses([
+			(context) => {
+				const user = [...context.messages].reverse().find((message) => message.role === "user");
+				skillPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("skill ok");
+			},
+			(context) => {
+				const user = [...context.messages].reverse().find((message) => message.role === "user");
+				templatePrompt = user ? getMessageText(user) : "";
+				sawImage =
+					user?.role === "user" &&
+					typeof user.content !== "string" &&
+					user.content.some((part) => part.type === "image");
+				return fauxAssistantMessage("template ok");
+			},
+		]);
+
+		await extensionApi.prompt("/testcmd hello world");
+		await extensionApi.prompt("/skill:test explain this");
+		await extensionApi.prompt("/review src/index.ts", {
+			images: [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }],
+		});
+
+		expect(commandRuns).toEqual(["hello world"]);
+		expect(skillPrompt).toContain("Use the extension prompt skill.");
+		expect(skillPrompt).toContain("explain this");
+		expect(templatePrompt).toBe("Review this code: src/index.ts");
+		expect(sawImage).toBe(true);
+		expect(inputEvents.map((event) => event.source)).toEqual(["extension", "extension"]);
 	});
 
 	it("dispatches extension commands without consuming a provider response", async () => {

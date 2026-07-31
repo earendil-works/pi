@@ -1408,6 +1408,26 @@ pi.sendMessage({
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
 
+### pi.prompt(text, options?)
+
+Submit input through the same native prompt pipeline as interactive and RPC input. This executes extension commands, emits the `input` event with `source: "extension"`, expands skill commands and prompt templates, preserves image attachments, and starts or queues the agent turn.
+
+```typescript
+await pi.prompt("/review src/index.ts", {
+  images: [{ type: "image", mimeType: "image/png", data: "..." }],
+});
+
+// During streaming, select the native queue behavior:
+await pi.prompt("Focus on error handling", { streamingBehavior: "steer" });
+await pi.prompt("Then summarize", { streamingBehavior: "followUp" });
+```
+
+**Options:**
+- `images` - Image attachments to include with the prompt.
+- `streamingBehavior` - Required while the agent is streaming: `"steer"` interrupts after the current tool batch; `"followUp"` waits until the current run finishes.
+
+Unlike `sendUserMessage()`, `prompt()` preserves command handling and skill/template expansion. It returns a promise and reports prompt validation or queueing errors to the caller.
+
 ### pi.sendUserMessage(content, options?)
 
 Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. Always triggers a turn.

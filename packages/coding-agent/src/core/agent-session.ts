@@ -2365,6 +2365,11 @@ export class AgentSession {
 						});
 					});
 				},
+				prompt: (text, options) =>
+					this.prompt(text, {
+						...options,
+						source: "extension",
+					}),
 				sendUserMessage: (content, options) => {
 					this.sendUserMessage(content, options).catch((err) => {
 						runner.emitError({

@@ -72,6 +72,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionMode,
+	ExtensionPromptOptions,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
@@ -110,6 +111,7 @@ export type {
 	ProjectTrustEventDecision,
 	ProjectTrustEventResult,
 	ProjectTrustHandler,
+	PromptHandler,
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,

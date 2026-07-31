@@ -89,6 +89,34 @@ describe("AgentSession queue characterization", () => {
 		expect(harness.session.messages).toEqual([]);
 	});
 
+	it("queues extension prompts with native steer and follow-up behavior", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled steer"),
+			fauxAssistantMessage("handled follow-up"),
+		]);
+
+		await waitForToolStart;
+		if (!extensionApi) throw new Error("Extension API was not initialized");
+		await extensionApi.prompt("steer from prompt", { streamingBehavior: "steer" });
+		await extensionApi.prompt("follow-up from prompt", { streamingBehavior: "followUp" });
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "steer from prompt", "follow-up from prompt"]);
+		expect(getAssistantTexts(harness)).toEqual(["", "handled steer", "handled follow-up"]);
+	});
+
 	it("delivers extension-origin steering messages before the next LLM call", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const waiting = await createWaitingHarness({

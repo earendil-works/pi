@@ -1300,6 +1300,12 @@ export interface ExtensionAPI {
 	): void;
 
 	/**
+	 * Submit native prompt input. Runs extension commands, input handlers, and skill/template expansion.
+	 * When the agent is streaming, use streamingBehavior to specify how to queue the prompt.
+	 */
+	prompt(text: string, options?: ExtensionPromptOptions): Promise<void>;
+
+	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 */
@@ -1546,6 +1552,15 @@ export type SendMessageHandler = <T = unknown>(
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
+export interface ExtensionPromptOptions {
+	/** Image attachments. */
+	images?: ImageContent[];
+	/** When streaming, queue as steering input or a follow-up. Required while streaming. */
+	streamingBehavior?: "steer" | "followUp";
+}
+
+export type PromptHandler = (text: string, options?: ExtensionPromptOptions) => Promise<void>;
+
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
@@ -1611,6 +1626,7 @@ export interface ExtensionRuntimeState {
  */
 export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
+	prompt: PromptHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;

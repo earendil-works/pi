@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `pi.prompt()` for extensions to submit native prompt input with command handling, skill/template expansion, images, and streaming queue behavior.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
