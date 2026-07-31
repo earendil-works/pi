@@ -248,6 +248,8 @@ pi --no-extensions -e ./my-extension.ts
 
 When `--alt` is active, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. Without `--alt`, pi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally.
 
+To use alternate-screen mode by default, set **Rendering mode** to `alternate` in `/settings`. The change applies after restarting pi. `--alt` remains a per-run override.
+
 ### File Arguments
 
 Prefix files with `@` to include them in the message:

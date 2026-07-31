@@ -17,7 +17,7 @@ describe("createInteractiveTui", () => {
 	it("selects the alternate-screen renderer only when requested", async () => {
 		const mainTerminal = new RecordingTerminal();
 		const mainTui = createInteractiveTui({
-			alt: false,
+			renderingMode: "main",
 			showHardwareCursor: false,
 			logDirectory: "/tmp",
 			terminal: mainTerminal,
@@ -30,7 +30,7 @@ describe("createInteractiveTui", () => {
 
 		const altTerminal = new RecordingTerminal();
 		const altTui = createInteractiveTui({
-			alt: true,
+			renderingMode: "alternate",
 			showHardwareCursor: false,
 			logDirectory: "/tmp",
 			terminal: altTerminal,

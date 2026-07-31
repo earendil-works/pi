@@ -397,6 +397,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("rendering mode", () => {
+		it("defaults to main and persists alternate mode", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getRenderingMode()).toBe("main");
+
+			manager.setRenderingMode("alternate");
+			await manager.flush();
+
+			expect(manager.getRenderingMode()).toBe("alternate");
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.terminal.renderingMode).toBe("alternate");
+		});
+
+		it("falls back to main for unsupported values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ terminal: { renderingMode: "other" } }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getRenderingMode()).toBe("main");
+		});
+	});
+
 	describe("outputPad", () => {
 		it("should default to 1 and persist binary values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

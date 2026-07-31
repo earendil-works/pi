@@ -13,7 +13,7 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
-import type { DefaultProjectTrust, WarningSettings } from "../../../core/settings-manager.ts";
+import type { DefaultProjectTrust, RenderingMode, WarningSettings } from "../../../core/settings-manager.ts";
 import {
 	getSelectListTheme,
 	getSettingsListTheme,
@@ -79,6 +79,7 @@ export interface SettingsConfig {
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
+	renderingMode: RenderingMode;
 	warnings: WarningSettings;
 }
 
@@ -110,6 +111,7 @@ export interface SettingsCallbacks {
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
+	onRenderingModeChange: (mode: RenderingMode) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -611,6 +613,13 @@ export class SettingsSelectorComponent extends Container {
 					),
 			},
 			{
+				id: "rendering-mode",
+				label: "Rendering mode",
+				description: "Terminal renderer used, either main or alternate (experimental)",
+				currentValue: config.renderingMode,
+				values: ["main", "alternate"],
+			},
+			{
 				id: "theme",
 				label: "Theme",
 				description: "Color theme for the interface",
@@ -818,6 +827,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "rendering-mode":
+						callbacks.onRenderingModeChange(newValue as RenderingMode);
 						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);

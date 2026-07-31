@@ -252,6 +252,7 @@ export {
 	type DefaultProjectTrust,
 	type ImageSettings,
 	type PackageSource,
+	type RenderingMode,
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,

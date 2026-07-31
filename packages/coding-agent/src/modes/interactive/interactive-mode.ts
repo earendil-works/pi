@@ -91,6 +91,7 @@ import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import type { RenderingMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -329,7 +330,7 @@ export interface InteractiveModeOptions {
 }
 
 interface InteractiveTuiOptions {
-	alt: boolean;
+	renderingMode: RenderingMode;
 	showHardwareCursor: boolean;
 	logDirectory: string;
 	terminal?: Terminal;
@@ -338,7 +339,7 @@ interface InteractiveTuiOptions {
 /** Composition root for selecting the interactive terminal renderer. */
 export function createInteractiveTui(options: InteractiveTuiOptions): TUI {
 	const terminal = options.terminal ?? new ProcessTerminal();
-	if (options.alt) {
+	if (options.renderingMode === "alternate") {
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, { openUrl: openBrowser });
 	}
 	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
@@ -473,7 +474,9 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
-		this.options = options;
+		const renderingMode: RenderingMode =
+			options.alt === undefined ? this.settingsManager.getRenderingMode() : options.alt ? "alternate" : "main";
+		this.options = { ...options, alt: renderingMode === "alternate" };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
 			this.resetExtensionUI();
@@ -483,7 +486,7 @@ export class InteractiveMode {
 		});
 		this.version = VERSION;
 		this.ui = createInteractiveTui({
-			alt: options.alt ?? false,
+			renderingMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
 		});
@@ -4234,6 +4237,7 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
+					renderingMode: this.settingsManager.getRenderingMode(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -4373,6 +4377,10 @@ export class InteractiveMode {
 					},
 					onShowTerminalProgressChange: (enabled) => {
 						this.settingsManager.setShowTerminalProgress(enabled);
+					},
+					onRenderingModeChange: (mode) => {
+						this.settingsManager.setRenderingMode(mode);
+						this.showStatus(`Rendering mode: ${mode} (restart required)`);
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
