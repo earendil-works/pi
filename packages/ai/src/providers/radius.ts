@@ -1,7 +1,8 @@
 import { piMessagesApi } from "../api/pi-messages.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadRadiusOAuth } from "../auth/oauth/load.ts";
-import type { Provider } from "../models.ts";
+import type { Provider, RefreshModelsContext } from "../models.ts";
+import { createRefreshQueue } from "../refresh-queue.ts";
 import {
 	DEFAULT_RADIUS_GATEWAY,
 	getRadiusModels,
@@ -22,7 +23,6 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 	const name = options.name ?? "Radius";
 	const gateway = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
 	let models = getRadiusModels(id, undefined);
-	let inflightRefresh: Promise<void> | undefined;
 	const streams = piMessagesApi();
 
 	return {
@@ -33,34 +33,27 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 			oauth: lazyOAuth({ name, load: () => loadRadiusOAuth({ name, gateway }) }),
 		},
 		getModels: () => models,
-		refreshModels: (context) => {
-			inflightRefresh ??= (async () => {
-				try {
-					const stored = await context.store.read();
-					if (stored) models = stored.models.filter((model) => model.provider === id) as typeof models;
+		refreshModels: createRefreshQueue(async (context: RefreshModelsContext) => {
+			if (context.signal?.aborted) return;
+			const stored = await context.store.read();
+			if (stored) models = stored.models.filter((model) => model.provider === id) as typeof models;
 
-					// Import catalogs cached by the pre-ModelsStore Radius implementation.
-					if (!stored && context.credential?.type === "oauth") {
-						const legacy = getRadiusModels(id, context.credential);
-						if (legacy.length > 0) {
-							models = legacy;
-							await context.store.write({ models: legacy, checkedAt: Date.now() });
-						}
-					}
-
-					if (!context.allowNetwork || context.signal?.aborted) return;
-					const apiKey =
-						context.credential?.type === "oauth" ? context.credential.access : context.credential?.key;
-					const config = await loadRadiusGatewayConfig(gateway, apiKey, context.signal);
-					if (context.signal?.aborted) return;
-					models = getRadiusModelsFromConfig(id, config);
-					await context.store.write({ models, checkedAt: Date.now() });
-				} finally {
-					inflightRefresh = undefined;
+			// Import catalogs cached by the pre-ModelsStore Radius implementation.
+			if (!stored && context.credential?.type === "oauth") {
+				const legacy = getRadiusModels(id, context.credential);
+				if (legacy.length > 0) {
+					models = legacy;
+					await context.store.write({ models: legacy, checkedAt: Date.now() });
 				}
-			})();
-			return inflightRefresh;
-		},
+			}
+
+			if (!context.allowNetwork || context.signal?.aborted) return;
+			const apiKey = context.credential?.type === "oauth" ? context.credential.access : context.credential?.key;
+			const config = await loadRadiusGatewayConfig(gateway, apiKey, context.signal);
+			if (context.signal?.aborted) return;
+			models = getRadiusModelsFromConfig(id, config);
+			await context.store.write({ models, checkedAt: Date.now() });
+		}),
 		stream: (model, context, streamOptions) => streams.stream(model, context, streamOptions),
 		streamSimple: (model, context, streamOptions) => streams.streamSimple(model, context, streamOptions),
 	};

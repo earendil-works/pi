@@ -19,6 +19,10 @@
 			"types": "./dist/compat.d.ts",
 			"import": "./dist/compat.js"
 		},
+		"./internal/refresh-queue": {
+			"types": "./dist/refresh-queue.d.ts",
+			"import": "./dist/refresh-queue.js"
+		},
 		"./providers/*": {
 			"types": "./dist/providers/*.d.ts",
 			"import": "./dist/providers/*.js"

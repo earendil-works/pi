@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext, AuthEvent } from "../src/auth/types.ts";
-import { createModels, createProvider } from "../src/models.ts";
-import { InMemoryModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
+import { createModels, createProvider, type RefreshModelsContext } from "../src/models.ts";
 import { builtinModels, builtinProviders, getBuiltinModel } from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
@@ -10,6 +9,8 @@ import { cloudflareAIGatewayProvider } from "../src/providers/cloudflare-ai-gate
 import { cloudflareWorkersAIProvider } from "../src/providers/cloudflare-workers-ai.ts";
 import { fauxAssistantMessage, fauxProvider } from "../src/providers/faux.ts";
 import { googleVertexProvider } from "../src/providers/google-vertex.ts";
+import { radiusProvider } from "../src/providers/radius.ts";
+import { createRefreshQueue } from "../src/refresh-queue.ts";
 import type { Api, Context, Model, ProviderStreams } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
@@ -293,6 +294,41 @@ describe("envApiKeyAuth", () => {
 	});
 });
 
+describe("createRefreshQueue", () => {
+	it("coalesces context identity, preserves FIFO context, skips queued aborts, and continues after rejection", async () => {
+		const ownerController = new AbortController();
+		const queuedController = new AbortController();
+		let markOwnerStarted: (() => void) | undefined;
+		const ownerStarted = new Promise<void>((resolve) => {
+			markOwnerStarted = resolve;
+		});
+		const starts: string[] = [];
+		const refresh = createRefreshQueue(async (context: { id: string; fail?: boolean; signal?: AbortSignal }) => {
+			starts.push(context.id);
+			if (context.id === "owner") {
+				markOwnerStarted?.();
+				await new Promise<void>((resolve) =>
+					ownerController.signal.addEventListener("abort", () => resolve(), { once: true }),
+				);
+			}
+			if (context.fail) throw new Error("owner failed");
+		});
+		const ownerContext = { id: "owner", fail: true, signal: ownerController.signal };
+		const owner = refresh(ownerContext);
+		expect(refresh(ownerContext)).toBe(owner);
+		await ownerStarted;
+		const queued = refresh({ id: "queued", signal: queuedController.signal });
+		const final = refresh({ id: "final" });
+		queuedController.abort();
+		await expect(queued).resolves.toBeUndefined();
+		expect(starts).toEqual(["owner"]);
+		ownerController.abort();
+		await expect(owner).rejects.toThrow("owner failed");
+		await expect(final).resolves.toBeUndefined();
+		expect(starts).toEqual(["owner", "final"]);
+	});
+});
+
 describe("createProvider", () => {
 	function recordingStreams(label: string, calls: string[]): ProviderStreams {
 		const respond = (model: Model<Api>) => {
@@ -391,38 +427,128 @@ describe("createProvider", () => {
 		expect(result.errorMessage).toContain("no API implementation");
 	});
 
-	it("supports dynamic providers: empty until refreshed, in-flight refreshes deduped", async () => {
-		let fetches = 0;
+	it("does not publish an aborted refresh", async () => {
+		const ownerController = new AbortController();
+		let releaseOwner: (() => void) | undefined;
+		const ownerStarted = new Promise<void>((resolve) => {
+			releaseOwner = resolve;
+		});
+		const starts: string[] = [];
+		const writes: string[] = [];
+		const model = (id: string): Model<Api> => ({ ...testModel("api-a", id), provider: "dynamic" });
 		const provider = createProvider({
 			id: "dynamic",
 			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
 			models: [],
-			fetchModels: async () => {
-				fetches++;
-				await new Promise((resolve) => setTimeout(resolve, 5));
-				return [testModel("api-a", "listed")];
+			fetchModels: async (refreshContext) => {
+				const key = refreshContext.credential?.type === "api_key" ? refreshContext.credential.key! : "missing";
+				starts.push(key);
+				if (key === "owner") {
+					releaseOwner?.();
+					await new Promise<void>((resolve) =>
+						ownerController.signal.addEventListener("abort", () => resolve(), { once: true }),
+					);
+				}
+				return [model(key)];
 			},
 			api: recordingStreams("a", []),
 		});
-
-		const store = new InMemoryModelsStore();
-		const refreshContext = {
-			credential: { type: "api_key" as const },
+		const refresh = (key: string, signal?: AbortSignal): RefreshModelsContext => ({
+			credential: { type: "api_key", key },
 			store: {
-				read: () => store.read("dynamic"),
-				write: (entry: ModelsStoreEntry) => store.write("dynamic", entry),
-				delete: () => store.delete("dynamic"),
+				read: async () => undefined,
+				write: async () => {
+					writes.push(key);
+				},
+				delete: async () => {},
 			},
 			allowNetwork: true,
-		};
+			signal,
+		});
+		const owner = provider.refreshModels!(refresh("owner", ownerController.signal));
+		await ownerStarted;
+		ownerController.abort();
+		await owner;
+		expect(starts).toEqual(["owner"]);
+		expect(writes).toEqual([]);
 		expect(provider.getModels()).toEqual([]);
-		await Promise.all([provider.refreshModels?.(refreshContext), provider.refreshModels?.(refreshContext)]);
-		expect(fetches).toBe(1);
-		expect(provider.getModels().map((m) => m.id)).toEqual(["listed"]);
+	});
 
-		// a later refresh fetches again
-		await provider.refreshModels?.(refreshContext);
-		expect(fetches).toBe(2);
+	it("applies each caller's context when dynamic refreshes are serialized", async () => {
+		let releaseOwner: (() => void) | undefined;
+		const ownerStarted = new Promise<void>((resolve) => {
+			releaseOwner = resolve;
+		});
+		let markOwnerFetching: (() => void) | undefined;
+		const ownerFetching = new Promise<void>((resolve) => {
+			markOwnerFetching = resolve;
+		});
+		const provider = createProvider({
+			id: "dynamic",
+			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+			models: [],
+			fetchModels: async (context) => {
+				const key = context.credential?.type === "api_key" ? (context.credential.key ?? "missing") : "missing";
+				if (key === "owner") {
+					markOwnerFetching?.();
+					await ownerStarted;
+				}
+				return [{ ...testModel("api-a", key), provider: "dynamic" }];
+			},
+			api: recordingStreams("a", []),
+		});
+		const context = (key: string): RefreshModelsContext => ({
+			credential: { type: "api_key", key },
+			store: { read: async () => undefined, write: async () => {}, delete: async () => {} },
+			allowNetwork: true,
+		});
+
+		const owner = provider.refreshModels!(context("owner"));
+		await ownerFetching;
+		const final = provider.refreshModels!(context("final"));
+		releaseOwner?.();
+		await Promise.all([owner, final]);
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["final"]);
+	});
+});
+
+describe("radiusProvider", () => {
+	it("uses each refresh caller's credential", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: URL | string, init?: RequestInit) => {
+				const authorization = new Headers(init?.headers).get("authorization");
+				return Response.json({
+					baseUrl: "https://radius.example.test/v1",
+					models: [
+						{
+							id: authorization === "Bearer owner" ? "owner" : "final",
+							name: "Model",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+						},
+					],
+				});
+			}),
+		);
+		const provider = radiusProvider({ gateway: "https://radius.example.test" });
+		const context = (key: string): RefreshModelsContext => ({
+			credential: { type: "api_key", key },
+			store: { read: async () => undefined, write: async () => {}, delete: async () => {} },
+			allowNetwork: true,
+		});
+
+		try {
+			await provider.refreshModels!(context("owner"));
+			await provider.refreshModels!(context("final"));
+			expect(provider.getModels().map((model) => model.id)).toEqual(["final"]);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });
 

@@ -13,6 +13,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ProviderModelsStore } from "./models-store.ts";
+import { createRefreshQueue } from "./refresh-queue.ts";
 import type {
 	Api,
 	ApiStreamOptions,
@@ -556,7 +557,6 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 export function createProvider<TApi extends Api = Api>(input: CreateProviderOptions<TApi>): Provider<TApi> {
 	const baselineModels = input.models;
 	let dynamicModels: readonly Model<TApi>[] = [];
-	let inflightRefresh: Promise<void> | undefined;
 	const fetchModels = input.fetchModels;
 	const currentModels = (): readonly Model<TApi>[] => {
 		const merged = [...baselineModels];
@@ -594,26 +594,20 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		auth: input.auth,
 		getModels: currentModels,
 		refreshModels: fetchModels
-			? (context) => {
-					inflightRefresh ??= (async () => {
-						try {
-							const stored = await context.store.read();
-							if (stored) {
-								dynamicModels = stored.models
-									.filter((model) => model.provider === input.id)
-									.map((model) => model as Model<TApi>);
-							}
-							if (!context.allowNetwork || context.signal?.aborted) return;
-							const refreshed = await fetchModels(context);
-							if (context.signal?.aborted) return;
-							dynamicModels = refreshed;
-							await context.store.write({ models: refreshed, checkedAt: Date.now() });
-						} finally {
-							inflightRefresh = undefined;
-						}
-					})();
-					return inflightRefresh;
-				}
+			? createRefreshQueue(async (context: RefreshModelsContext) => {
+					if (context.signal?.aborted) return;
+					const stored = await context.store.read();
+					if (stored) {
+						dynamicModels = stored.models
+							.filter((model) => model.provider === input.id)
+							.map((model) => model as Model<TApi>);
+					}
+					if (!context.allowNetwork || context.signal?.aborted) return;
+					const refreshed = await fetchModels(context);
+					if (context.signal?.aborted) return;
+					dynamicModels = refreshed;
+					await context.store.write({ models: refreshed, checkedAt: Date.now() });
+				})
 			: undefined,
 		filterModels: input.filterModels,
 		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
