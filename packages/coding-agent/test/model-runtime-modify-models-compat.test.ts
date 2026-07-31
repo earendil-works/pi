@@ -67,7 +67,8 @@ describe("extension provider model lifecycle", () => {
 
 		runtime.registerNativeProvider(provider);
 		const registry = new ModelRegistry(runtime);
-		expect(registry.getProvider("extension-native")).toBe(provider);
+		expect(registry.getProvider("extension-native")).not.toBe(provider);
+		expect(registry.getProvider("extension-native")).toMatchObject({ id: provider.id, name: provider.name });
 		expect(registry.getRegisteredNativeProvider("extension-native")).toBe(provider);
 		expect(registry.getRegisteredProviderIds()).toContain("extension-native");
 		expect(registry.find("extension-native", "native")).toBeDefined();
