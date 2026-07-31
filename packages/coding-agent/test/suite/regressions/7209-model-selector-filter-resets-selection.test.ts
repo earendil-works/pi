@@ -1,3 +1,6 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { ModelsRefreshOptions } from "@earendil-works/pi-ai";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
@@ -17,6 +20,51 @@ function selectedModelId(rendered: string): string | undefined {
 	const rest = line.replace(/^→\s*/, "");
 	const id = rest.split(" [")[0];
 	return id?.trim() || undefined;
+}
+
+interface Deferred<T> {
+	promise: Promise<T>;
+	resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
+interface CatalogModel {
+	id: string;
+	name: string;
+}
+
+function modelsJson(models: CatalogModel[]): Record<string, unknown> {
+	return {
+		providers: {
+			stable: {
+				baseUrl: "https://example.test/v1",
+				api: "openai-completions",
+				apiKey: "test-key",
+				models,
+			},
+		},
+	};
+}
+
+function writeModelsJson(harness: Harness, models: CatalogModel[]): void {
+	writeFileSync(join(harness.tempDir, "models.json"), JSON.stringify(modelsJson(models)));
+}
+
+function delayRefresh(harness: Harness): Deferred<void> {
+	const refresh = harness.session.modelRuntime.refresh.bind(harness.session.modelRuntime);
+	const completion = deferred<void>();
+	vi.spyOn(harness.session.modelRuntime, "refresh").mockImplementation(async (options: ModelsRefreshOptions = {}) => {
+		await completion.promise;
+		return refresh(options);
+	});
+	return completion;
 }
 
 describe("model selector filter resets selection to top", () => {
@@ -124,5 +172,124 @@ describe("model selector filter resets selection to top", () => {
 		}
 
 		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-2");
+	});
+
+	it("keeps the highlighted model across a reordered background refresh", async () => {
+		const harness = await createHarness({
+			modelsJson: modelsJson([
+				{ id: "alpha-1", name: "Alpha One" },
+				{ id: "alpha-2", name: "Alpha Two" },
+				{ id: "alpha-3", name: "Alpha Three" },
+			]),
+		});
+		harnesses.push(harness);
+		const refreshCompletion = delayRefresh(harness);
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel(),
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+
+		for (const char of "alpha") {
+			selector.handleInput(char);
+		}
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-3");
+
+		writeModelsJson(harness, [
+			{ id: "alpha-2", name: "Alpha Two (replaced)" },
+			{ id: "alpha-3", name: "Alpha Three (replaced)" },
+			{ id: "alpha-1", name: "Alpha One (replaced)" },
+		]);
+		refreshCompletion.resolve();
+
+		await vi.waitFor(() => {
+			const rendered = stripAnsi(selector.render(120).join("\n"));
+			expect(rendered).toContain("Model catalogs refreshed.");
+			expect(rendered).toContain("Model Name: Alpha Three (replaced)");
+			expect(selectedModelId(rendered)).toBe("alpha-3");
+			expect(selector.getSearchInput().getValue()).toBe("alpha");
+		});
+
+		selector.handleInput("\r");
+		expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ provider: "stable", id: "alpha-3" }));
+	});
+
+	it("uses the previous filtered position when a background refresh removes the highlighted model", async () => {
+		const harness = await createHarness({
+			modelsJson: modelsJson([
+				{ id: "alpha-1", name: "Alpha One" },
+				{ id: "alpha-2", name: "Alpha Two" },
+				{ id: "alpha-3", name: "Alpha Three" },
+			]),
+		});
+		harnesses.push(harness);
+		const refreshCompletion = delayRefresh(harness);
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel(),
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+
+		for (const char of "alpha") {
+			selector.handleInput(char);
+		}
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x1b[B");
+		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-3");
+
+		writeModelsJson(harness, [
+			{ id: "alpha-1", name: "Alpha One (replaced)" },
+			{ id: "alpha-2", name: "Alpha Two (replaced)" },
+		]);
+		refreshCompletion.resolve();
+
+		await vi.waitFor(() => {
+			const rendered = stripAnsi(selector.render(120).join("\n"));
+			expect(rendered).toContain("Model catalogs refreshed.");
+			expect(selectedModelId(rendered)).toBe("alpha-2");
+			expect(selector.getSearchInput().getValue()).toBe("alpha");
+		});
+
+		// A user query edit still returns to the top filtered row.
+		selector.handleInput("\x7f");
+		expect(selectedModelId(stripAnsi(selector.render(120).join("\n")))).toBe("alpha-1");
+		selector.handleInput("\r");
+		expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ provider: "stable", id: "alpha-1" }));
+	});
+
+	it("shows both the refresh state and empty cached state immediately", async () => {
+		const harness = await createHarness({
+			modelsJson: { providers: {} },
+			withConfiguredAuth: false,
+		});
+		harnesses.push(harness);
+		const refreshCompletion = delayRefresh(harness);
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel(),
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const rendered = stripAnsi(selector.render(120).join("\n"));
+		expect(rendered).toContain("No cached models yet.");
+		expect(rendered).toContain("Refreshing model catalogs…");
+		selector.dispose();
+		refreshCompletion.resolve();
 	});
 });

@@ -1,4 +1,4 @@
-import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
+import { type Api, type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -19,11 +19,11 @@ import { keyHint } from "./keybinding-hints.ts";
 interface ModelItem {
 	provider: string;
 	id: string;
-	model: Model<any>;
+	model: Model<Api>;
 }
 
 interface ScopedModelItem {
-	model: Model<any>;
+	model: Model<Api>;
 	thinkingLevel?: string;
 }
 
@@ -50,10 +50,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private activeModels: ModelItem[] = [];
 	private filteredModels: ModelItem[] = [];
 	private selectedIndex: number = 0;
-	private currentModel?: Model<any>;
+	private currentModel?: Model<Api>;
 	private settingsManager: SettingsManager;
 	private modelRuntime: ModelRuntime;
-	private onSelectCallback: (model: Model<any>) => void;
+	private onSelectCallback: (model: Model<Api>) => void;
 	private onCancelCallback: () => void;
 	private errorMessage?: string;
 	private refreshStatusMessage = "Refreshing model catalogs…";
@@ -69,11 +69,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	constructor(
 		tui: TUI,
-		currentModel: Model<any> | undefined,
+		currentModel: Model<Api> | undefined,
 		settingsManager: SettingsManager,
 		modelRuntime: ModelRuntime,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
-		onSelect: (model: Model<any>) => void,
+		onSelect: (model: Model<Api>) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
 	) {
@@ -137,7 +137,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private loadModelsFromSnapshot(): void {
-		const models = this.modelRuntime.getAvailableSnapshot().map((model: Model<any>) => ({
+		const models = this.modelRuntime.getAvailableSnapshot().map((model: Model<Api>) => ({
 			provider: model.provider,
 			id: model.id,
 			model,
@@ -161,18 +161,24 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private async refreshModels(): Promise<void> {
 		const timeoutMs = 15_000;
-		let timedOut = false;
-		this.refreshTimeout = setTimeout(() => {
-			timedOut = true;
+		let settled = false;
+		const applyTimeout = (): void => {
+			if (settled || this.closed) return;
+			settled = true;
+			this.refreshTimeout = undefined;
+			this.refreshStatusMessage = "";
+			this.errorMessage = "Model refresh timed out; showing cached models.";
 			this.refreshAbortController.abort();
-		}, timeoutMs);
+			this.updateList();
+			this.tui.requestRender();
+		};
+		this.refreshTimeout = setTimeout(applyTimeout, timeoutMs);
 		try {
 			const result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
-			if (this.closed) return;
+			if (settled || this.closed) return;
+			settled = true;
 			this.refreshStatusMessage = "";
-			if (result.aborted && timedOut) {
-				this.errorMessage = "Model refresh timed out; showing cached models.";
-			} else if (result.errors.size === 1) {
+			if (result.errors.size === 1) {
 				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
 			} else if (result.errors.size > 1) {
 				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs; showing cached models.`;
@@ -183,11 +189,24 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					this.refreshStatusSuccess = true;
 				}
 			}
+			const selectedModel = this.filteredModels[this.selectedIndex];
+			const previousFilteredIndex = this.selectedIndex;
 			this.loadModelsFromSnapshot();
-			this.filterModels(this.searchInput.getValue());
+			this.refreshFilteredModels(this.searchInput.getValue(), selectedModel, previousFilteredIndex);
+			this.tui.requestRender();
+		} catch {
+			// Consume all refresh rejections. After timeout/dispose, leave UI alone.
+			if (settled || this.closed) return;
+			settled = true;
+			this.refreshStatusMessage = "";
+			this.errorMessage = "Could not refresh model catalogs; showing cached models.";
+			this.updateList();
 			this.tui.requestRender();
 		} finally {
-			if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+			if (this.refreshTimeout) {
+				clearTimeout(this.refreshTimeout);
+				this.refreshTimeout = undefined;
+			}
 		}
 	}
 
@@ -237,16 +256,38 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private filterModels(query: string): void {
-		this.filteredModels = query
-			? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
-					getModelSelectorSearchText({ id, provider, name: model.name }),
-				)
-			: this.activeModels;
+		this.filteredModels = this.getFilteredModels(query);
 		// When filtering by a query, move the selector to the top row so the best
 		// match is highlighted. When the query is cleared, keep the current position
 		// clamped to the (restored) list length.
 		this.selectedIndex = query ? 0 : Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 		this.updateList();
+	}
+
+	private refreshFilteredModels(
+		query: string,
+		selectedModel: ModelItem | undefined,
+		previousFilteredIndex: number,
+	): void {
+		this.filteredModels = this.getFilteredModels(query);
+		const selectedIndex = selectedModel
+			? this.filteredModels.findIndex(
+					(item) => item.provider === selectedModel.provider && item.id === selectedModel.id,
+				)
+			: -1;
+		this.selectedIndex =
+			selectedIndex >= 0
+				? selectedIndex
+				: Math.min(previousFilteredIndex, Math.max(0, this.filteredModels.length - 1));
+		this.updateList();
+	}
+
+	private getFilteredModels(query: string): ModelItem[] {
+		return query
+			? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
+					getModelSelectorSearchText({ id, provider, name: model.name }),
+				)
+			: this.activeModels;
 	}
 
 	private updateList(): void {
@@ -298,7 +339,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.listContainer.addChild(new Text(theme.fg("error", line), 0, 0));
 			}
 		} else if (this.filteredModels.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			const emptyMessage =
+				this.scope === "all" && this.allModels.length === 0 && this.searchInput.getValue() === ""
+					? "No cached models yet."
+					: "No matching models";
+			this.listContainer.addChild(new Text(theme.fg("muted", `  ${emptyMessage}`), 0, 0));
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));
@@ -355,7 +400,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private handleSelect(model: Model<any>): void {
+	private handleSelect(model: Model<Api>): void {
 		this.dispose();
 		// Save as new default
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
