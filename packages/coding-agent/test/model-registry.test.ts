@@ -694,6 +694,40 @@ describe("ModelRegistry", () => {
 			expect(opus?.name).not.toBe("Custom Sonnet Name");
 		});
 
+		test("wildcard model override applies to every model before exact overrides", async () => {
+			writeRawModelsJson({
+				openrouter: {
+					modelOverrides: {
+						"*": {
+							name: "Wildcard Name",
+							contextWindow: 12345,
+							headers: { "X-Override-Scope": "wildcard" },
+						},
+						"anthropic/claude-sonnet-4": {
+							name: "Exact Name",
+							headers: { "X-Override-Scope": "exact" },
+						},
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const models = getModelsForProvider(registry, "openrouter");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((model) => model.id === "anthropic/claude-opus-4");
+
+			expect(sonnet).toMatchObject({ name: "Exact Name", contextWindow: 12345 });
+			expect(opus).toMatchObject({ name: "Wildcard Name", contextWindow: 12345 });
+			expect(await registry.getApiKeyAndHeaders(sonnet!)).toMatchObject({
+				ok: true,
+				headers: { "X-Override-Scope": "exact" },
+			});
+			expect(await registry.getApiKeyAndHeaders(opus!)).toMatchObject({
+				ok: true,
+				headers: { "X-Override-Scope": "wildcard" },
+			});
+		});
+
 		test("model override with compat.openRouterRouting", async () => {
 			writeRawModelsJson({
 				openrouter: {

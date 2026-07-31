@@ -340,6 +340,27 @@ Use `modelOverrides` to customize built-in models and matching extension-registe
 
 `modelOverrides` supports these fields per model: `name`, `reasoning`, `thinkingLevelMap`, `input`, `cost` (partial), `contextWindow`, `maxTokens`, `headers`, `compat`.
 
+Use `"*"` to apply an override to every model on the provider, including models added to the catalog later. An exact model ID is applied after the wildcard and takes precedence for overlapping fields:
+
+```json
+{
+  "providers": {
+    "github-copilot": {
+      "modelOverrides": {
+        "*": {
+          "headers": {
+            "Copilot-Integration-Id": "copilot-developer-cli"
+          }
+        },
+        "claude-opus-5": {
+          "maxTokens": 32000
+        }
+      }
+    }
+  }
+}
+```
+
 Direct OpenAI GPT-5.6 Sol, Terra, and Luna default to a `272000` context window so requests remain within OpenAI's short-context pricing tier. To opt into OpenAI's 1.05M context window, increase it for each model you use:
 
 ```json
@@ -360,6 +381,7 @@ The override preserves the built-in pricing metadata. Requests with more than 27
 
 Behavior notes:
 - `modelOverrides` are applied to built-in provider models and matching extension-registered provider models.
+- The `"*"` override applies to every model on the provider; an exact model override takes precedence.
 - Unknown model IDs are ignored.
 - You can combine provider-level `baseUrl`/`headers` with `modelOverrides`.
 - Overriding `name` changes model matching and secondary detail text only; the footer and primary model lists continue to show the model `id`.

@@ -389,6 +389,7 @@ function rawModelHeaders(
 	const definition = config?.models?.find((entry) => entry.id === model.id);
 	const extensionModel = extension?.models?.find((entry) => entry.id === model.id);
 	const headers = {
+		...config?.modelOverrides?.["*"]?.headers,
 		...config?.modelOverrides?.[model.id]?.headers,
 		...definition?.headers,
 		...extensionModel?.headers,
@@ -432,8 +433,10 @@ export function composeModelProvider(
 			models = extension.oauth.modifyModels(models, extensionOAuthCredential);
 		}
 		return models.map((model) => {
-			const override = config?.modelOverrides?.[model.id];
-			return override ? applyModelOverride(model, override) : model;
+			const wildcardOverride = config?.modelOverrides?.["*"];
+			const modelOverride = config?.modelOverrides?.[model.id];
+			const wildcardModel = wildcardOverride ? applyModelOverride(model, wildcardOverride) : model;
+			return modelOverride ? applyModelOverride(wildcardModel, modelOverride) : wildcardModel;
 		});
 	};
 	// Validate eagerly so registration/reload reports structural errors immediately.
