@@ -10,6 +10,7 @@ import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 import type { Skill } from "../src/core/skills.js";
 import { createSyntheticSourceInfo } from "../src/core/source-info.js";
+import { buildSystemPrompt } from "../src/core/system-prompt.js";
 
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
@@ -315,7 +316,9 @@ Content`,
 			writeFileSync(join(tempDir, "AGENTS.MD"), "temp ancestor");
 			writeFileSync(join(workspaceDir, "CLAUDE.md"), "workspace ancestor");
 			writeFileSync(join(projectDir, "AGENTS.md"), "project preferred");
-			writeFileSync(join(projectDir, "CLAUDE.md"), "project ignored");
+			writeFileSync(join(projectDir, "AGENTS.MD"), "uppercase agents ignored");
+			writeFileSync(join(projectDir, "CLAUDE.md"), "project claude ignored");
+			writeFileSync(join(projectDir, "CLAUDE.MD"), "uppercase claude ignored");
 
 			const contextFiles = loadProjectContextFiles({ cwd: projectDir, agentDir });
 			const localPaths = contextFiles.map((file) => file.path).filter((path) => path.startsWith(tempDir));
@@ -326,7 +329,24 @@ Content`,
 				join(workspaceDir, "CLAUDE.md"),
 				join(projectDir, "AGENTS.md"),
 			]);
+			expect(contextFiles.some((file) => file.path === join(projectDir, "AGENTS.MD"))).toBe(false);
 			expect(contextFiles.some((file) => file.path === join(projectDir, "CLAUDE.md"))).toBe(false);
+			expect(contextFiles.some((file) => file.path === join(projectDir, "CLAUDE.MD"))).toBe(false);
+
+			const prompt = buildSystemPrompt({
+				cwd: projectDir,
+				contextFiles,
+				selectedTools: [],
+				skills: [],
+			});
+			const projectContextIndex = prompt.indexOf("# Project Context");
+			const orderedHeadingIndexes = localPaths.map((path) => prompt.indexOf(`## ${path}`));
+			expect(projectContextIndex).toBeGreaterThanOrEqual(0);
+			expect(orderedHeadingIndexes.every((index) => index > projectContextIndex)).toBe(true);
+			expect(orderedHeadingIndexes).toEqual([...orderedHeadingIndexes].sort((a, b) => a - b));
+			expect(prompt).toContain("project preferred");
+			expect(prompt).not.toContain("project claude ignored");
+			expect(prompt).not.toContain("<project_context>");
 		});
 
 		it("does not inherit context from an unrelated scratch ancestry", () => {
