@@ -553,6 +553,22 @@ function createSummarizationOptions(
 }
 
 /**
+ * Guard a summarization response before its text is persisted as a compaction
+ * checkpoint. A `length` stop means generation hit the token cap and returned a
+ * partial summary; persisting it silently truncates the checkpoint mid-word,
+ * which is worse than a failed compaction because it looks valid. Fail loudly
+ * instead so the caller can fall back. See earendil-works/pi#7048.
+ */
+function assertSummaryComplete(response: AssistantMessage, label: string): void {
+	if (response.stopReason === "error") {
+		throw new Error(`${label} failed: ${response.errorMessage || "Unknown error"}`);
+	}
+	if (response.stopReason === "length") {
+		throw new Error(`${label} failed: generation hit the token cap and would persist a truncated summary`);
+	}
+}
+
+/**
  * Shared choke point for every compaction/branch-summary summarization call. Wraps the
  * single LLM call in {@link retryAssistantCall} so transient stream drops (e.g.
  * `terminated`, socket close) honor the configured retry policy instead of failing
@@ -676,9 +692,7 @@ export async function generateSummaryWithUsage(
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
+	assertSummaryComplete(response, "Summarization");
 
 	const textContent = contentText(response.content);
 
@@ -958,9 +972,7 @@ async function generateTurnPrefixSummary(
 		callbacks,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
+	assertSummaryComplete(response, "Turn prefix summarization");
 
 	return {
 		text: contentText(response.content),
