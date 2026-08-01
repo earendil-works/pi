@@ -197,6 +197,9 @@ function convertContentBlocks(
 		if (block.type === "text") {
 			return { type: "text" as const, text: sanitizeSurrogates(block.text) };
 		}
+		if (block.data === undefined || block.mimeType === undefined) {
+			throw new Error("Anthropic requires base64 image data; url-only image content is not supported");
+		}
 		return {
 			type: "image" as const,
 			source: {
@@ -226,14 +229,18 @@ function convertMessages(messages: Message[], isOAuth: boolean, _tools?: Tool[])
 					params.push({ role: "user", content: sanitizeSurrogates(msg.content) });
 				}
 			} else {
-				const blocks: ContentBlockParam[] = msg.content.map((item) =>
-					item.type === "text"
-						? { type: "text" as const, text: sanitizeSurrogates(item.text) }
-						: {
-								type: "image" as const,
-								source: { type: "base64" as const, media_type: item.mimeType as any, data: item.data },
-							},
-				);
+				const blocks: ContentBlockParam[] = msg.content.map((item) => {
+					if (item.type === "text") {
+						return { type: "text" as const, text: sanitizeSurrogates(item.text) };
+					}
+					if (item.data === undefined || item.mimeType === undefined) {
+						throw new Error("Anthropic requires base64 image data; url-only image content is not supported");
+					}
+					return {
+						type: "image" as const,
+						source: { type: "base64" as const, media_type: item.mimeType as any, data: item.data },
+					};
+				});
 				if (blocks.length > 0) {
 					params.push({ role: "user", content: blocks });
 				}

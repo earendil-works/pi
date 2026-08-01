@@ -1,4 +1,5 @@
 import { symlink } from "node:fs/promises";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { applyPatch } from "diff";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
@@ -576,7 +577,7 @@ describe("AgentHarness tools", () => {
 		it("coalesces updates and persists truncated full output", async () => {
 			const context = createContext();
 			const updates: Array<{
-				content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+				content: Array<TextContent | ImageContent>;
 				details?: BashToolDetails;
 			}> = [];
 			const result = await createBashTool().execute(

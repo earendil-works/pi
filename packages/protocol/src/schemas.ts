@@ -83,8 +83,9 @@ export const ThinkingContentSchema = StrictObject({
 });
 export const ImageContentSchema = StrictObject({
 	type: Type.Literal("image"),
-	data: Type.String(),
-	mimeType: Type.String({ minLength: 1 }),
+	data: Type.Optional(Type.String()),
+	mimeType: Type.Optional(Type.String({ minLength: 1 })),
+	url: Type.Optional(Type.String({ minLength: 1 })),
 });
 export const ToolCallContentSchema = StrictObject({
 	type: Type.Literal("toolCall"),

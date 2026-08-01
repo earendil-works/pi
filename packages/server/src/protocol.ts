@@ -41,7 +41,7 @@ type _AiThinkingContentFieldsAccountedFor = Assert<
 		"type" | "thinking" | "thinkingSignature" | "redacted"
 	>
 >;
-type _AiImageContentFieldsAccountedFor = Assert<ExactKeys<AiImageContent, "type" | "data" | "mimeType">>;
+type _AiImageContentFieldsAccountedFor = Assert<ExactKeys<AiImageContent, "type" | "data" | "mimeType" | "url">>;
 type _AiToolCallFieldsAccountedFor = Assert<
 	ExactKeys<ToolCall, "type" | "id" | "name" | "arguments" | "thoughtSignature">
 >;
@@ -231,7 +231,7 @@ function toProtocolUserContent(content: UserMessage["content"]): UserTranscriptI
 			case "text":
 				return { type: "text", text: part.text };
 			case "image":
-				return { type: "image", data: part.data, mimeType: part.mimeType };
+				return { type: "image", data: part.data, mimeType: part.mimeType, url: part.url };
 			default: {
 				const exhaustive: never = part;
 				return exhaustive;
@@ -336,7 +336,7 @@ function toProtocolToolContent(content: Array<AiTextContent | AiImageContent>): 
 			case "text":
 				return { type: "text", text: part.text };
 			case "image":
-				return { type: "image", data: part.data, mimeType: part.mimeType };
+				return { type: "image", data: part.data, mimeType: part.mimeType, url: part.url };
 			default: {
 				const exhaustive: never = part;
 				return exhaustive;
