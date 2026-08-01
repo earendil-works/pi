@@ -38,6 +38,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { normalizeToolSchemaForOpenAI } from "../utils/normalize-json-schema.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -1315,7 +1316,9 @@ function convertTools(
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: tool.parameters as Record<string, unknown>, // TypeBox already generates JSON Schema
+				// TypeBox already generates JSON Schema; normalize `required` on
+				// object schemas so strict providers accept all-optional tools.
+				parameters: normalizeToolSchemaForOpenAI(tool.parameters) as Record<string, unknown>,
 				// Only include strict if provider supports it. Some reject unknown fields.
 				...(compat.supportsStrictMode !== false && { strict: strict ?? false }),
 			},

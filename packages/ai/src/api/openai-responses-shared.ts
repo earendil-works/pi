@@ -31,6 +31,7 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { normalizeToolSchemaForOpenAI } from "../utils/normalize-json-schema.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -369,7 +370,9 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			type: "function",
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as Record<string, unknown>, // TypeBox already generates JSON Schema
+			// TypeBox already generates JSON Schema; normalize `required` on object
+			// schemas so strict providers accept all-optional tools.
+			parameters: normalizeToolSchemaForOpenAI(tool.parameters) as Record<string, unknown>,
 			...(options?.deferLoading ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
