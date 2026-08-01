@@ -476,7 +476,27 @@ describe("Models runtime", () => {
 		expect(((await credentials.read("p1")) as { access: string }).access).toBe("new-token");
 	});
 
-	it("refreshes oauth credentials with less than five minutes remaining", async () => {
+	it("does not refresh a short-lived OAuth token with more than one minute remaining", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const refresh = vi.fn(async (credential) => ({
+			...credential,
+			access: "new-token",
+			expires: Date.now() + 60 * 60_000,
+		}));
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "p1", auth: { oauth: testOAuth({ refresh }) } }));
+		await credentials.modify("p1", async () => ({
+			type: "oauth",
+			access: "current-token",
+			refresh: "r",
+			expires: Date.now() + 4 * 60_000,
+		}));
+
+		expect((await models.getAuth("p1"))?.auth.apiKey).toBe("current-token");
+		expect(refresh).not.toHaveBeenCalled();
+	});
+
+	it("refreshes OAuth credentials with less than one minute remaining", async () => {
 		const credentials = new InMemoryCredentialStore();
 		const refresh = vi.fn(async (credential) => ({
 			...credential,
@@ -489,7 +509,7 @@ describe("Models runtime", () => {
 			type: "oauth",
 			access: "old-token",
 			refresh: "r",
-			expires: Date.now() + 60_000,
+			expires: Date.now() + 30_000,
 		}));
 
 		expect((await models.getAuth("p1"))?.auth.apiKey).toBe("new-token");

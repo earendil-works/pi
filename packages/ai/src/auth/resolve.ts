@@ -92,11 +92,11 @@ function overlayEnvAuthContext(base: AuthContext, env: ProviderEnv): AuthContext
 	};
 }
 
-const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
+const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 60 * 1000;
 
 /**
- * OAuth resolution with double-checked locking: tokens with less than five
- * minutes remaining lock, re-check expiry under the lock, refresh once
+ * OAuth resolution with double-checked locking: tokens with less than one
+ * minute remaining lock, re-check expiry under the lock, refresh once
  * globally, and persist the rotated credential before release.
  */
 async function resolveStoredOAuth(
