@@ -583,7 +583,9 @@ describe("openai-completions tool_choice", () => {
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
 	});
 
-	it("errors when a stream ends after only null finish_reason chunks", async () => {
+	it("warns and stops when content arrives but finish_reason is absent", async () => {
+		// Gateways that omit the terminal finish_reason chunk after delivering content
+		// should not kill the session. The handler now warns and resolves as a normal stop.
 		mockState.chunks = [
 			{
 				id: "chatcmpl-truncated",
@@ -594,6 +596,8 @@ describe("openai-completions tool_choice", () => {
 				choices: [{ delta: { content: "partial answer" }, finish_reason: null }],
 			},
 		];
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
@@ -611,8 +615,10 @@ describe("openai-completions tool_choice", () => {
 			{ apiKey: "test" },
 		).result();
 
-		expect(response.stopReason).toBe("error");
-		expect(response.errorMessage).toBe("Stream ended without finish_reason");
+		expect(response.stopReason).toBe("stop");
+		expect(response.errorMessage).toBeUndefined();
+		expect(warnSpy).toHaveBeenCalledOnce();
+		warnSpy.mockRestore();
 	});
 
 	it("accepts streams without finish_reason when compat disables it", async () => {

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed `openai-completions` streaming handler throwing `Stream ended without finish_reason` when a gateway omits the terminal finish_reason chunk but delivers content; an absent finish_reason on a non-empty stream now logs a warning and resolves as a normal stop instead of an error.
 - Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
 - Fixed Fireworks Kimi K3 models to use the OpenAI-compatible API with native reasoning-effort levels and deferred tools ([#7199](https://github.com/earendil-works/pi/issues/7199), [#7230](https://github.com/earendil-works/pi/pull/7230) by [@XBeg9](https://github.com/XBeg9)).
 

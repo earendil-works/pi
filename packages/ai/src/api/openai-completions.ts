@@ -270,6 +270,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
 			let hasFinishReason = false;
+			let receivedAnyChunk = false;
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
 			const pendingReasoningDetailsByToolCallId = new Map<string, string>();
@@ -435,6 +436,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 			for await (const chunk of openaiStream) {
 				if (!chunk || typeof chunk !== "object") continue;
+				receivedAnyChunk = true;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
@@ -578,7 +580,11 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
 			if ((compat.supportsFinishReason && !hasFinishReason) || output.stopReason === "pending") {
-				throw new Error("Stream ended without finish_reason");
+				if (!receivedAnyChunk) {
+					throw new Error("Stream ended without finish_reason");
+				}
+				console.warn("[pi] stream ended without finish_reason; treating as stop");
+				output.stopReason = output.content.some((block) => block.type === "toolCall") ? "toolUse" : "stop";
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
