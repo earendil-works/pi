@@ -5,6 +5,7 @@
 ### Added
 
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
+- Added the `PI_JITI_CACHE` env var to point the extension loaders jiti transpile cache at a persistent directory (defaults to jiti auto-detect), so packagers with a read only store or a fresh `TMPDIR` per session can avoid cold recompiles.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
 - Added a draggable transcript scrollbar to fullscreen mode with configurable `auto`, `always`, and `hidden` modes through `/settings`; `always` reserves the rightmost column.

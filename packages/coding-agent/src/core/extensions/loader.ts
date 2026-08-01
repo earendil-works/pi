@@ -419,6 +419,8 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
+		// Allow packagers to point the transpile cache at a persistent dir
+		fsCache: process.env.PI_JITI_CACHE || true,
 		// Bun uses modules embedded in the executable. Source TypeScript reuses the
 		// host-resolved modules and root tsconfig paths. Built Node uses dist aliases.
 		...(isBunBinary
