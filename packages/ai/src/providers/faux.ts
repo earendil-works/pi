@@ -154,7 +154,7 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 			if (block.type === "text") {
 				return block.text;
 			}
-			return `[image:${block.mimeType}:${block.data.length}]`;
+			return `[image:${block.url ?? block.mimeType}:${block.data?.length ?? 0}]`;
 		})
 		.join("\n");
 }

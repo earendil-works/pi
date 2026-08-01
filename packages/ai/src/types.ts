@@ -353,8 +353,17 @@ export interface ThinkingContent {
 
 export interface ImageContent {
 	type: "image";
-	data: string; // base64 encoded image data
-	mimeType: string; // e.g., "image/jpeg", "image/png"
+	/** Base64-encoded image data. Provide this together with `mimeType`, or use `url` instead. */
+	data?: string;
+	/** MIME type of `data`, e.g. "image/jpeg", "image/png". Required when `data` is set. */
+	mimeType?: string;
+	/**
+	 * Direct image URL passed to the provider without fetching/base64 conversion.
+	 * Providers that support URL image input (e.g. OpenAI-compatible chat
+	 * completions) use it as-is; others fall back to `data`. Set either `url` or
+	 * `data` + `mimeType`.
+	 */
+	url?: string;
 }
 
 export interface ToolCall {

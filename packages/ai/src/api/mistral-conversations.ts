@@ -23,6 +23,7 @@ import type {
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
+import { imageToUrl } from "../utils/image-content.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
@@ -537,7 +538,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 				.filter((item) => item.type === "text" || supportsImages)
 				.map((item) => {
 					if (item.type === "text") return { type: "text", text: sanitizeSurrogates(item.text) };
-					return { type: "image_url", imageUrl: `data:${item.mimeType};base64,${item.data}` };
+					return { type: "image_url", imageUrl: imageToUrl(item) };
 				});
 			if (content.length > 0) {
 				result.push({ role: "user", content });
@@ -596,7 +597,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 			if (part.type !== "image") continue;
 			toolContent.push({
 				type: "image_url",
-				imageUrl: `data:${part.mimeType};base64,${part.data}`,
+				imageUrl: imageToUrl(part),
 			});
 		}
 		result.push({

@@ -51,6 +51,7 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { requireImageData } from "../utils/image-content.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -804,7 +805,8 @@ function convertToolResultContent(content: (TextContent | ImageContent)[]): Tool
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
 		if (c.type === "image") {
-			result.push({ image: createImageBlock(c.mimeType, c.data) });
+			const { data, mimeType } = requireImageData(c);
+			result.push({ image: createImageBlock(mimeType, data) });
 		} else {
 			const textBlock = createNonBlankTextBlock(c.text);
 			if (textBlock) result.push(textBlock);
@@ -839,9 +841,11 @@ function convertMessages(
 								if (textBlock) content.push(textBlock);
 								break;
 							}
-							case "image":
-								content.push({ image: createImageBlock(c.mimeType, c.data) });
+							case "image": {
+								const { data, mimeType } = requireImageData(c);
+								content.push({ image: createImageBlock(mimeType, data) });
 								break;
+							}
 							default:
 								continue;
 						}

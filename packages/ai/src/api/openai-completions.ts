@@ -37,6 +37,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { imageToUrl } from "../utils/image-content.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -1067,7 +1068,7 @@ export function convertMessages(
 						return {
 							type: "image_url",
 							image_url: {
-								url: `data:${item.mimeType};base64,${item.data}`,
+								url: imageToUrl(item),
 							},
 						} satisfies ChatCompletionContentPartImage;
 					}
@@ -1233,7 +1234,7 @@ export function convertMessages(
 							imageBlocks.push({
 								type: "image_url",
 								image_url: {
-									url: `data:${block.mimeType};base64,${block.data}`,
+									url: imageToUrl(block),
 								},
 							});
 						}

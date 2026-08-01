@@ -18,6 +18,7 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { imageToUrl } from "../utils/image-content.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
@@ -144,7 +145,7 @@ function buildParams(model: ImagesModel<"openrouter-images">, context: ImagesCon
 		return {
 			type: "image_url",
 			image_url: {
-				url: `data:${item.mimeType};base64,${item.data}`,
+				url: imageToUrl(item),
 			},
 		} satisfies ChatCompletionContentPartImage;
 	});

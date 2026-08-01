@@ -4,6 +4,7 @@
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import { requireImageData } from "../utils/image-content.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -110,10 +111,11 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					if (item.type === "text") {
 						return { text: sanitizeSurrogates(item.text) };
 					} else {
+						const { data, mimeType } = requireImageData(item);
 						return {
 							inlineData: {
-								mimeType: item.mimeType,
-								data: item.data,
+								mimeType,
+								data,
 							},
 						};
 					}
@@ -199,12 +201,15 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			// Use "output" key for success, "error" key for errors as per SDK documentation
 			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
 
-			const imageParts: Part[] = imageContent.map((imageBlock) => ({
-				inlineData: {
-					mimeType: imageBlock.mimeType,
-					data: imageBlock.data,
-				},
-			}));
+			const imageParts: Part[] = imageContent.map((imageBlock) => {
+				const { data, mimeType } = requireImageData(imageBlock);
+				return {
+					inlineData: {
+						mimeType,
+						data,
+					},
+				};
+			});
 
 			const includeId = requiresToolCallId(model.id);
 			const functionResponsePart: Part = {

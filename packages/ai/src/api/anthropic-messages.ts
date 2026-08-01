@@ -32,6 +32,7 @@ import type {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { requireImageData } from "../utils/image-content.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -141,12 +142,13 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 				text: sanitizeSurrogates(block.text),
 			};
 		}
+		const { data, mimeType } = requireImageData(block);
 		return {
 			type: "image" as const,
 			source: {
 				type: "base64" as const,
-				media_type: block.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-				data: block.data,
+				media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+				data,
 			},
 		};
 	});
@@ -1143,12 +1145,13 @@ function convertMessages(
 							text: sanitizeSurrogates(item.text),
 						};
 					} else {
+						const { data, mimeType } = requireImageData(item);
 						return {
 							type: "image",
 							source: {
 								type: "base64",
-								media_type: item.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-								data: item.data,
+								media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+								data,
 							},
 						};
 					}
