@@ -6,6 +6,7 @@ import {
 	closeSync,
 	createReadStream,
 	existsSync,
+	fsyncSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -14,7 +15,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -1010,6 +1011,33 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/** Persist every accumulated entry, then fsync the file and its parent directory. */
+	flushDurably(): void {
+		if (!this.persist || !this.sessionFile) {
+			throw new Error("Cannot durably flush an in-memory session");
+		}
+
+		const fd = openSync(this.sessionFile, this.flushed ? "r+" : "wx");
+		try {
+			if (!this.flushed) {
+				for (const entry of this.fileEntries) {
+					writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+				}
+			}
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+		this.flushed = true;
+
+		const dirFd = openSync(dirname(this.sessionFile), "r");
+		try {
+			fsyncSync(dirFd);
+		} finally {
+			closeSync(dirFd);
+		}
 	}
 
 	_persist(entry: SessionEntry): void {

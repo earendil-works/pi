@@ -187,6 +187,52 @@ describe("Agent", () => {
 		expect(agent.state.errorMessage).toBe("provider exploded");
 	});
 
+	it("awaits beforeProviderCall before invoking the stream function", async () => {
+		const calls: string[] = [];
+		const agent = new Agent({
+			beforeProviderCall: async () => {
+				calls.push("barrier-start");
+				await Promise.resolve();
+				calls.push("barrier-end");
+			},
+			streamFn: () => {
+				calls.push("provider");
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("hello");
+
+		expect(calls).toEqual(["barrier-start", "barrier-end", "provider"]);
+	});
+
+	it("does not invoke the stream function when beforeProviderCall fails", async () => {
+		let providerInvoked = false;
+		const agent = new Agent({
+			beforeProviderCall: () => {
+				throw new Error("durability failed");
+			},
+			streamFn: () => {
+				providerInvoked = true;
+				throw new Error("provider should not be invoked");
+			},
+		});
+
+		await agent.prompt("hello");
+
+		expect(providerInvoked).toBe(false);
+		const lastMessage = agent.state.messages.at(-1);
+		expect(lastMessage).toMatchObject({
+			role: "assistant",
+			stopReason: "error",
+			errorMessage: "durability failed",
+		});
+	});
+
 	it("should await async subscribers before prompt resolves", async () => {
 		const barrier = createDeferred();
 		const agent = new Agent({

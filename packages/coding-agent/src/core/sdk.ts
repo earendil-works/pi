@@ -82,6 +82,8 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Durably flush the session file before each provider dispatch. Default: false. */
+	preDispatchDurability?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -387,6 +389,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		preDispatchDurability: options.preDispatchDurability,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

@@ -32,6 +32,7 @@ import {
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
+import { PI_CAPABILITIES } from "./core/capabilities.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -496,6 +497,9 @@ function buildSessionOptions(
 	if (parsed.excludeTools) {
 		options.excludeTools = [...parsed.excludeTools];
 	}
+	if (parsed.preDispatchDurability) {
+		options.preDispatchDurability = true;
+	}
 
 	return { options, cliThinkingFromModel, diagnostics };
 }
@@ -572,6 +576,10 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		console.log(VERSION);
+		process.exit(0);
+	}
+	if (parsed.capabilities) {
+		console.log(JSON.stringify(PI_CAPABILITIES));
 		process.exit(0);
 	}
 
@@ -777,6 +785,7 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			preDispatchDurability: sessionOptions.preDispatchDurability,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {

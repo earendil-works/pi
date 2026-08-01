@@ -143,6 +143,8 @@ export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+	/** Awaited immediately before each provider stream function invocation. */
+	beforeProviderCall?: () => Promise<void> | void;
 
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.

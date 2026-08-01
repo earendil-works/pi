@@ -21,6 +21,16 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("durability capability flags", () => {
+		test("parses --capabilities", () => {
+			expect(parseArgs(["--capabilities"]).capabilities).toBe(true);
+		});
+
+		test("parses --pre-dispatch-durability", () => {
+			expect(parseArgs(["--pre-dispatch-durability"]).preDispatchDurability).toBe(true);
+		});
+	});
+
 	describe("--help flag", () => {
 		test("parses --help flag", () => {
 			const result = parseArgs(["--help"]);

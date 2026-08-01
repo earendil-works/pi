@@ -93,6 +93,14 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		expect(result.stderr).toBe("");
 	});
 
+	it("prints --capabilities as machine-readable JSON", async () => {
+		const result = await runCli(["--capabilities"]);
+
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual({ inputDurability: "pre_dispatch_barrier" });
+		expect(result.stderr).toBe("");
+	});
+
 	it("prints plain --help to stdout when stdout is redirected", async () => {
 		const result = await runCli(["--help"]);
 

@@ -223,6 +223,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Durably flush all session entries before each provider dispatch. Default: false. */
+	preDispatchDurability?: boolean;
 }
 
 export interface ExtensionBindings {
@@ -387,6 +389,13 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		if (config.preDispatchDurability) {
+			const beforeProviderCall = this.agent.beforeProviderCall;
+			this.agent.beforeProviderCall = async () => {
+				await beforeProviderCall?.();
+				this.sessionManager.flushDurably();
+			};
+		}
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)

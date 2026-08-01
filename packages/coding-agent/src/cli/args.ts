@@ -21,9 +21,11 @@ export interface Args {
 	resume?: boolean;
 	help?: boolean;
 	version?: boolean;
+	capabilities?: boolean;
 	mode?: Mode;
 	name?: string;
 	noSession?: boolean;
+	preDispatchDurability?: boolean;
 	session?: string;
 	sessionId?: string;
 	fork?: string;
@@ -77,6 +79,8 @@ export function parseArgs(args: string[]): Args {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
+		} else if (arg === "--capabilities") {
+			result.capabilities = true;
 		} else if (arg === "--mode" && i + 1 < args.length) {
 			const mode = args[++i];
 			if (mode === "text" || mode === "json" || mode === "rpc") {
@@ -105,6 +109,8 @@ export function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--no-session") {
 			result.noSession = true;
+		} else if (arg === "--pre-dispatch-durability") {
+			result.preDispatchDurability = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
 		} else if (arg === "--session-id" && i + 1 < args.length) {
@@ -268,6 +274,7 @@ ${chalk.bold("Options:")}
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
+  --pre-dispatch-durability      Fsync session data before provider dispatch
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
@@ -296,6 +303,7 @@ ${chalk.bold("Options:")}
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
   --help, -h                     Show this help
   --version, -v                  Show version number
+  --capabilities                 Show machine-readable runtime capabilities
 
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 
