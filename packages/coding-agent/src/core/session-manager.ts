@@ -14,7 +14,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -976,8 +976,26 @@ export class SessionManager {
 		}
 	}
 
+	/**
+	 * Ensure the directory that will hold the session file exists. The session
+	 * directory is normally created once (constructor / getDefaultSessionDir()),
+	 * but it can still be missing later — e.g. an explicit --session path whose
+	 * parent was never created, or the directory being removed out from under a
+	 * long-running process. Re-creating it here is cheap (mkdirSync is a no-op
+	 * when the directory already exists) and avoids ENOENT crashes from
+	 * appendFileSync/openSync deep in the persistence path.
+	 */
+	private _ensureSessionFileDir(): void {
+		if (!this.sessionFile) return;
+		const dir = dirname(this.sessionFile);
+		if (dir && !existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+	}
+
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		this._ensureSessionFileDir();
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -1015,29 +1033,42 @@ export class SessionManager {
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
-			}
-			return;
-		}
+		// _persist() runs on every appended entry, including ones written while
+		// handling an *earlier* failure (e.g. Agent.handleRunFailure ->
+		// _handleAgentEvent -> SessionManager.appendMessage -> _appendEntry ->
+		// _persist). A logging/persistence failure here must never throw and mask
+		// the original error it was trying to record, and the target directory
+		// may be missing (never created, or removed after construction), so we
+		// defensively recreate it and swallow (but report) any I/O failure.
+		try {
+			this._ensureSessionFileDir();
 
-		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+			if (!hasAssistant) {
+				if (this.flushed) {
+					appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				} else {
+					// Mark as not flushed so when assistant arrives, all entries get written
+					this.flushed = false;
 				}
-			} finally {
-				closeSync(fd);
+				return;
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+
+			if (!this.flushed) {
+				const fd = openSync(this.sessionFile, "wx");
+				try {
+					for (const e of this.fileEntries) {
+						writeFileSync(fd, `${JSON.stringify(e)}\n`);
+					}
+				} finally {
+					closeSync(fd);
+				}
+				this.flushed = true;
+			} else {
+				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			}
+		} catch (error) {
+			console.error(`[SessionManager] failed to persist session entry to ${this.sessionFile}:`, error);
 		}
 	}
 
