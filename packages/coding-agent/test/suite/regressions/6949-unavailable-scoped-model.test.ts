@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { setKeybindings } from "@earendil-works/pi-tui";
+import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.ts";
@@ -16,11 +16,15 @@ function createInteractiveContext(options: {
 	let selector: ScopedModelsSelectorComponent | undefined;
 	const setScopedModels = vi.fn();
 	const getAvailable = vi.fn().mockResolvedValue(options.allModels);
+	const refresh = vi.fn().mockResolvedValue({ aborted: false, timedOut: false, errors: new Map() });
+	const ui = { requestRender: vi.fn() } as unknown as TUI;
 	const context = {
 		session: {
 			modelRuntime: {
-				refresh: vi.fn(),
+				boundedRefresh: refresh,
 				getAvailable,
+				getAvailableSnapshot: () => options.allModels,
+				getError: () => undefined,
 			},
 			scopedModels: options.scopedModels ?? [],
 			setScopedModels,
@@ -34,14 +38,14 @@ function createInteractiveContext(options: {
 			selector = factory(() => {}).component;
 		},
 		updateAvailableProviderCount: vi.fn(),
-		ui: { requestRender: vi.fn() },
+		ui,
 	};
-	return { context, getAvailable, getSelector: () => selector, setScopedModels };
+	return { context, getSelector: () => selector, refresh, setScopedModels };
 }
 
-async function showModelsSelector(context: object): Promise<void> {
-	const show = Reflect.get(InteractiveMode.prototype, "showModelsSelector") as (this: object) => Promise<void>;
-	await show.call(context);
+function showModelsSelector(context: object): void {
+	const show = Reflect.get(InteractiveMode.prototype, "showModelsSelector") as (this: object) => void;
+	show.call(context);
 }
 
 describe("issue #6949 unavailable scoped models", () => {
@@ -67,6 +71,8 @@ describe("issue #6949 unavailable scoped models", () => {
 		const changes: Array<string[] | null> = [];
 		const persisted: Array<string[] | null> = [];
 		const selector = new ScopedModelsSelectorComponent(
+			{ requestRender: vi.fn() } as unknown as TUI,
+			harness.session.modelRuntime,
 			{
 				allModels: [...harness.models],
 				enabledModelIds: [unavailableId, availableId],
@@ -93,12 +99,12 @@ describe("issue #6949 unavailable scoped models", () => {
 		const harness = await createHarness({ models: [{ id: "available", name: "Available" }] });
 		harnesses.push(harness);
 		const unavailableIds = ["unavailable-one", "unavailable-two"].map((id) => `${harness.models[0].provider}/${id}`);
-		const { context, getAvailable, getSelector } = createInteractiveContext({
+		const { context, getSelector, refresh } = createInteractiveContext({
 			allModels: [],
 			enabledModelIds: unavailableIds,
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
@@ -106,7 +112,7 @@ describe("issue #6949 unavailable scoped models", () => {
 		for (const unavailableId of unavailableIds) {
 			expect(rendered).toContain(`${unavailableId} [unavailable] ✗`);
 		}
-		expect(getAvailable).toHaveBeenCalledTimes(2);
+		expect(refresh).toHaveBeenCalledOnce();
 	});
 
 	it("opens when only a session-scoped model is unavailable", async () => {
@@ -120,7 +126,7 @@ describe("issue #6949 unavailable scoped models", () => {
 			scopedModels: [{ model }],
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
@@ -145,9 +151,10 @@ describe("issue #6949 unavailable scoped models", () => {
 			scopedModels: [{ model: one }, { model: two }],
 		});
 
-		await showModelsSelector(context);
+		showModelsSelector(context);
 		const selector = getSelector();
 		if (!selector) throw new Error("Expected scoped-model selector to open");
+		expect(stripAnsi(selector.render(100).join("\n"))).toContain(`${unavailableId} [unavailable] ✗`);
 		selector.handleInput("\x1b[1;3B");
 
 		await vi.waitFor(() => {

@@ -469,6 +469,14 @@ const { session } = await createAgentSession({
 });
 ```
 
+`create()`, `boundedRefresh()` and the credential mutations (`login`, `logout`, `setRuntimeApiKey`, `removeRuntimeApiKey`) give up after `modelRefreshTimeoutMs` (15 seconds by default) and keep serving the cached catalog, so an unreachable catalog cannot block a save path. `refresh()` is unbounded unless you pass a `signal`. `login()` forwards the interaction's signal and takes an optional callback with the `BoundedRefreshResult`:
+
+```typescript
+const credential = await modelRuntime.login("openrouter", "api_key", interaction, (result) => {
+  if (result.timedOut || result.errors.size > 0) console.warn("Saved, but the model catalog is stale.");
+});
+```
+
 > See [examples/sdk/09-api-keys-and-oauth.ts](../examples/sdk/09-api-keys-and-oauth.ts)
 
 ### System Prompt

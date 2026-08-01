@@ -44,6 +44,8 @@ describe("issue #3217 scoped model ordering", () => {
 		const orderedIds = harness.models.map((model) => `${model.provider}/${model.id}`);
 		const changes: Array<string[] | null> = [];
 		const selector = new ScopedModelsSelectorComponent(
+			createFakeTui(),
+			harness.session.modelRuntime,
 			{
 				allModels: [...harness.models],
 				enabledModelIds: orderedIds,

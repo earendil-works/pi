@@ -78,7 +78,7 @@ function isAlias(id: string): boolean {
  */
 export function findExactModelReferenceMatch(
 	modelReference: string,
-	availableModels: Model<Api>[],
+	availableModels: readonly Model<Api>[],
 ): Model<Api> | undefined {
 	const trimmedReference = modelReference.trim();
 	if (!trimmedReference) {
@@ -124,7 +124,7 @@ export function findExactModelReferenceMatch(
  * Try to match a pattern to a model from the available models list.
  * Returns the matched model or undefined if no match found.
  */
-function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
+function tryMatchModel(modelPattern: string, availableModels: readonly Model<Api>[]): Model<Api> | undefined {
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
 		return exactMatch;
@@ -163,7 +163,11 @@ export interface ParsedModelResult {
 	warning: string | undefined;
 }
 
-function buildFallbackModel(provider: string, modelId: string, availableModels: Model<Api>[]): Model<Api> | undefined {
+function buildFallbackModel(
+	provider: string,
+	modelId: string,
+	availableModels: readonly Model<Api>[],
+): Model<Api> | undefined {
 	const providerModels = availableModels.filter((m) => m.provider === provider);
 	if (providerModels.length === 0) return undefined;
 
@@ -194,7 +198,7 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
  */
 export function parseModelPattern(
 	pattern: string,
-	availableModels: Model<Api>[],
+	availableModels: readonly Model<Api>[],
 	options?: { allowInvalidThinkingLevelFallback?: boolean },
 ): ParsedModelResult {
 	// Try exact match first
@@ -274,7 +278,13 @@ export async function resolveModelScopeWithDiagnostics(
 	patterns: string[],
 	modelRuntime: ModelRuntime,
 ): Promise<ResolveModelScopeResult> {
-	const availableModels = [...(await modelRuntime.getAvailable())];
+	return resolveModelScopeWithDiagnosticsFromModels(patterns, await modelRuntime.getAvailable());
+}
+
+function resolveModelScopeWithDiagnosticsFromModels(
+	patterns: string[],
+	availableModels: readonly Model<Api>[],
+): ResolveModelScopeResult {
 	const scopedModels: ScopedModel[] = [];
 	const diagnostics: ModelScopeDiagnostic[] = [];
 
@@ -350,6 +360,36 @@ export async function resolveModelScopeWithDiagnostics(
 	}
 
 	return { scopedModels, diagnostics };
+}
+
+export interface ModelScopeSelection {
+	scopedModels: ScopedModel[];
+	enabledModelIds: string[];
+	/** Patterns that matched nothing; listed so the user can still see and remove them. */
+	unmatchedPatterns: string[];
+}
+
+export function resolveModelScopeSelection(
+	patterns: string[],
+	availableModels: readonly Model<Api>[],
+): ModelScopeSelection {
+	const { scopedModels, diagnostics } = resolveModelScopeWithDiagnosticsFromModels(patterns, availableModels);
+	return {
+		scopedModels,
+		enabledModelIds: scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`),
+		unmatchedPatterns: diagnostics.filter((d) => d.code === "no-match").map((d) => d.pattern),
+	};
+}
+
+export function isEffectiveModelScope(
+	enabledModelIds: readonly string[] | null,
+	availableModels: readonly Model<Api>[],
+): enabledModelIds is readonly string[] {
+	if (enabledModelIds === null) return false;
+	const allModelIds = new Set(availableModels.map((model) => `${model.provider}/${model.id}`));
+	return (
+		enabledModelIds.some((id) => allModelIds.has(id)) && ![...allModelIds].every((id) => enabledModelIds.includes(id))
+	);
 }
 
 export async function resolveModelScope(patterns: string[], modelRuntime: ModelRuntime): Promise<ScopedModel[]> {

@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -9,7 +9,10 @@ import {
 	matchesKey,
 	Spacer,
 	Text,
+	type TUI,
 } from "@earendil-works/pi-tui";
+import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { formatModelRefreshWarning } from "../model-refresh-status.ts";
 import { getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -67,12 +70,12 @@ function getSortedIds(enabledIds: EnabledIds, allIds: string[]): string[] {
 
 interface ModelItem {
 	fullId: string;
-	model: Model<any> | undefined;
+	model: Model<Api> | undefined;
 	enabled: boolean;
 }
 
 export interface ModelsConfig {
-	allModels: Model<any>[];
+	allModels: Model<Api>[];
 	enabledModelIds: string[] | null;
 }
 
@@ -89,7 +92,7 @@ export interface ModelsCallbacks {
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
-	private modelsById: Map<string, Model<any>> = new Map();
+	private modelsById: Map<string, Model<Api>> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
 	private filteredItems: ModelItem[] = [];
@@ -110,17 +113,20 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private callbacks: ModelsCallbacks;
 	private maxVisible = 8;
 	private isDirty = false;
+	private refreshStatusMessage = "Refreshing model catalogs…";
+	private refreshStatusSuccess = false;
+	private errorMessage?: string;
+	private readonly tui: TUI;
+	private readonly modelRuntime: ModelRuntime;
+	private readonly refreshAbortController = new AbortController();
+	private closed = false;
 
-	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
+	constructor(tui: TUI, modelRuntime: ModelRuntime, config: ModelsConfig, callbacks: ModelsCallbacks) {
 		super();
+		this.tui = tui;
+		this.modelRuntime = modelRuntime;
 		this.callbacks = callbacks;
-
-		for (const model of config.allModels) {
-			const fullId = `${model.provider}/${model.id}`;
-			this.modelsById.set(fullId, model);
-			this.allIds.push(fullId);
-		}
-
+		this.loadModels(config.allModels);
 		this.enabledIds = config.enabledModelIds === null ? null : [...config.enabledModelIds];
 		this.filteredItems = this.buildItems();
 
@@ -149,6 +155,37 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		this.addChild(new DynamicBorder());
 		this.updateList();
+		void this.refreshModels();
+	}
+
+	private loadModels(models: readonly Model<Api>[]): void {
+		this.modelsById.clear();
+		this.allIds = [];
+		for (const model of models) {
+			const fullId = `${model.provider}/${model.id}`;
+			this.modelsById.set(fullId, model);
+			this.allIds.push(fullId);
+		}
+	}
+
+	private async refreshModels(): Promise<void> {
+		const result = await this.modelRuntime.boundedRefresh({ signal: this.refreshAbortController.signal });
+		if (this.closed) return;
+		this.refreshStatusMessage = "";
+		this.errorMessage = formatModelRefreshWarning(result, "showing cached models.") ?? this.modelRuntime.getError();
+		if (!this.errorMessage) {
+			this.refreshStatusMessage = "Model catalogs refreshed.";
+			this.refreshStatusSuccess = true;
+		}
+		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
+		this.loadModels(this.modelRuntime.getAvailableSnapshot());
+		this.refresh(selectedId);
+		this.tui.requestRender();
+	}
+
+	private close(): void {
+		this.closed = true;
+		this.refreshAbortController.abort();
 	}
 
 	private buildItems(): ModelItem[] {
@@ -180,7 +217,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			: theme.fg("dim", `  ${parts.join(" · ")}`);
 	}
 
-	private refresh(): void {
+	private refresh(selectedId?: string): void {
 		const query = this.searchInput.getValue();
 		const items = this.buildItems();
 		this.filteredItems = query
@@ -190,7 +227,11 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 						: item.fullId,
 				)
 			: items;
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
+		const refreshedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
+		this.selectedIndex =
+			refreshedIndex >= 0
+				? refreshedIndex
+				: Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
 	}
@@ -204,7 +245,6 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		if (this.filteredItems.length === 0) {
 			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
-			return;
 		}
 
 		const startIndex = Math.max(
@@ -247,6 +287,15 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 					0,
 					0,
 				),
+			);
+		}
+		if (this.errorMessage) {
+			this.listContainer.addChild(new Spacer(1));
+			this.listContainer.addChild(new Text(theme.fg("error", `  ${this.errorMessage}`), 0, 0));
+		} else if (this.refreshStatusMessage) {
+			this.listContainer.addChild(new Spacer(1));
+			this.listContainer.addChild(
+				new Text(theme.fg(this.refreshStatusSuccess ? "success" : "muted", `  ${this.refreshStatusMessage}`), 0, 0),
 			);
 		}
 	}
@@ -353,6 +402,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 				this.searchInput.setValue("");
 				this.refresh();
 			} else {
+				this.close();
 				this.callbacks.onCancel();
 			}
 			return;
@@ -360,6 +410,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Escape - cancel
 		if (matchesKey(data, Key.escape)) {
+			this.close();
 			this.callbacks.onCancel();
 			return;
 		}

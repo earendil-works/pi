@@ -64,7 +64,7 @@ export interface CreateModelRuntimeOptions {
 	modelsStorePath?: string;
 	/** Allow create() to refresh model catalogs over the network. Defaults to false. */
 	allowModelNetwork?: boolean;
-	/** Timeout for the create-time network model refresh. */
+	/** Timeout for create-time and post-credential network model refreshes. Defaults to 15 seconds. */
 	modelRefreshTimeoutMs?: number;
 	catalogBaseUrl?: string;
 }
@@ -74,6 +74,10 @@ export interface ModelRuntimeAuthOverrides {
 	env?: Record<string, string>;
 	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
 	minOAuthValidityMs?: number;
+}
+
+export interface BoundedRefreshResult extends ModelsRefreshResult {
+	timedOut: boolean;
 }
 
 const DEFAULT_MODEL_REFRESH_TIMEOUT_MS = 15_000;
@@ -94,6 +98,13 @@ function mergeHeaders(
 	return merged;
 }
 
+function whenAborted(signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		signal.addEventListener("abort", () => resolve(), { once: true });
+	});
+}
+
 /** Configured pi-ai Models collection used by coding-agent and SDK consumers. */
 export class ModelRuntime implements Models {
 	private readonly models: MutableModels;
@@ -105,6 +116,7 @@ export class ModelRuntime implements Models {
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
+	private readonly modelRefreshTimeoutMs: number;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
 		all: [],
@@ -114,7 +126,7 @@ export class ModelRuntime implements Models {
 		auth: new Map(),
 	};
 	private availabilityRefresh: Promise<void> | undefined;
-	private availabilityRefreshSeq = 0;
+	private availabilityRefreshGeneration = 0;
 	private availabilityError: string | undefined;
 
 	private constructor(
@@ -124,11 +136,13 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		modelNetworkEnabled: boolean,
+		modelRefreshTimeoutMs: number,
 	) {
 		this.credentials = credentials;
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
+		this.modelRefreshTimeoutMs = modelRefreshTimeoutMs;
 		this.defaultBuiltins = new Map(providers.map((provider) => [provider.id, provider]));
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
@@ -160,19 +174,11 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			process.env.PI_OFFLINE === undefined,
+			options.modelRefreshTimeoutMs ?? DEFAULT_MODEL_REFRESH_TIMEOUT_MS,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
-		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
-		const controller = refreshFromNetwork ? new AbortController() : undefined;
-		const timeout = controller
-			? setTimeout(() => controller.abort(), options.modelRefreshTimeoutMs ?? DEFAULT_MODEL_REFRESH_TIMEOUT_MS)
-			: undefined;
-		try {
-			await runtime.refresh({ allowNetwork: refreshFromNetwork, signal: controller?.signal });
-		} finally {
-			if (timeout) clearTimeout(timeout);
-		}
+		await runtime.boundedRefresh({ allowNetwork: runtime.modelNetworkEnabled && options.allowModelNetwork === true });
 		return runtime;
 	}
 
@@ -242,7 +248,7 @@ export class ModelRuntime implements Models {
 		};
 	}
 
-	private async runAvailabilityRefresh(seq: number): Promise<void> {
+	private async loadAvailabilitySnapshot(): Promise<ModelRuntimeSnapshot> {
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(),
@@ -256,56 +262,55 @@ export class ModelRuntime implements Models {
 			),
 			this.credentials.list(),
 		]);
-		// A newer rebuild was requested while this one was in flight; drop this
-		// result so a slow, superseded refresh cannot clobber the snapshot with
-		// stale data.
-		if (seq !== this.availabilityRefreshSeq) return;
-		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
 				.filter((entry): entry is [string, AuthCheck] => entry[1] !== undefined)
 				.map(([providerId]) => providerId),
 		);
-		this.snapshot = {
+		return {
 			all: [...this.models.getModels()],
 			available: [...available],
 			configuredProviders,
 			storedProviders: new Set(credentials.map((entry) => entry.providerId)),
-			auth,
+			auth: new Map(checks),
 		};
-		this.availabilityError = undefined;
 	}
 
 	private queueAvailabilityRefresh(): Promise<void> {
-		const seq = ++this.availabilityRefreshSeq;
-		const refresh = this.runAvailabilityRefresh(seq);
-		const recorded = refresh.catch((error) => {
-			// Only the latest requested rebuild owns the error state.
-			if (seq === this.availabilityRefreshSeq) {
-				this.availabilityError = error instanceof Error ? error.message : String(error);
-			}
-			throw error;
-		});
-		const tracked = recorded.finally(() => {
-			if (this.availabilityRefresh === tracked) this.availabilityRefresh = undefined;
-		});
+		const generation = ++this.availabilityRefreshGeneration;
+		// Only the newest refresh may publish results or clear the shared slot.
+		const isCurrent = () => generation === this.availabilityRefreshGeneration;
+		const tracked = this.loadAvailabilitySnapshot()
+			.then(
+				(snapshot) => {
+					if (!isCurrent()) return;
+					this.snapshot = snapshot;
+					this.availabilityError = undefined;
+				},
+				(error: unknown) => {
+					if (isCurrent()) {
+						this.availabilityError = error instanceof Error ? error.message : String(error);
+					}
+					throw error;
+				},
+			)
+			.finally(() => {
+				if (isCurrent()) this.availabilityRefresh = undefined;
+			});
 		this.availabilityRefresh = tracked;
 		return tracked;
 	}
 
-	/** Coalesce concurrent readers onto the pending refresh. */
-	private refreshAvailability(): Promise<void> {
-		return this.availabilityRefresh ?? this.queueAvailabilityRefresh();
+	private async waitForAvailability(refresh: Promise<void>): Promise<void> {
+		const timeout = AbortSignal.timeout(this.modelRefreshTimeoutMs);
+		await Promise.race([refresh, whenAborted(timeout)]);
+		// The refresh keeps running; the error clears once it lands.
+		if (timeout.aborted) this.availabilityError = "timed out, model list may be incomplete";
 	}
 
-	/**
-	 * Mutations must observe a rebuild that starts after their state change, and a
-	 * stuck in-flight refresh must not block them. Start a fresh, independent
-	 * rebuild instead of chaining onto the pending one. The sequence guard in
-	 * runAvailabilityRefresh ensures a superseded rebuild cannot clobber its result.
-	 */
-	private forceRefreshAvailability(): Promise<void> {
-		return this.queueAvailabilityRefresh();
+	/** Coalesce concurrent readers without letting a stalled auth check block them indefinitely. */
+	private refreshAvailability(): Promise<void> {
+		return this.waitForAvailability(this.availabilityRefresh ?? this.queueAvailabilityRefresh());
 	}
 
 	getProviders(): readonly Provider[] {
@@ -331,7 +336,7 @@ export class ModelRuntime implements Models {
 	async getAvailable(providerId?: string): Promise<readonly Model<Api>[]> {
 		if (providerId) {
 			if (this.availabilityRefresh) {
-				await this.availabilityRefresh;
+				await this.waitForAvailability(this.availabilityRefresh);
 				return this.snapshot.available.filter((model) => model.provider === providerId);
 			}
 			try {
@@ -429,12 +434,12 @@ export class ModelRuntime implements Models {
 			storedProviders,
 			available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
 		};
-		await this.refresh(refreshOptions);
+		await this.boundedRefresh(refreshOptions);
 	}
 
 	async removeRuntimeApiKey(providerId: string): Promise<void> {
 		this.credentials.removeRuntimeApiKey(providerId);
-		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
+		await this.boundedRefresh();
 	}
 
 	listCredentials(): Promise<readonly CredentialInfo[]> {
@@ -518,13 +523,15 @@ export class ModelRuntime implements Models {
 		return this.streamSimple(model, context, options).result();
 	}
 
-	async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
+	async login(
+		providerId: string,
+		type: AuthType,
+		interaction: AuthInteraction,
+		onRefresh?: (result: BoundedRefreshResult) => void,
+	): Promise<Credential> {
 		const credential = await this.models.login(providerId, type, interaction);
-		const timeoutSignal = AbortSignal.timeout(DEFAULT_MODEL_REFRESH_TIMEOUT_MS);
-		await this.refresh({
-			allowNetwork: this.modelNetworkEnabled,
-			signal: interaction.signal ? AbortSignal.any([interaction.signal, timeoutSignal]) : timeoutSignal,
-		});
+		if (this.modelNetworkEnabled) interaction.notify({ type: "progress", message: "Refreshing model catalogs…" });
+		onRefresh?.(await this.boundedRefresh({ signal: interaction.signal }));
 		return credential;
 	}
 
@@ -532,7 +539,7 @@ export class ModelRuntime implements Models {
 		await this.models.logout(providerId);
 		// Reset credential-dependent compatibility projections before the unconfigured provider is skipped by refresh.
 		this.recomposeProvider(providerId);
-		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
+		await this.boundedRefresh();
 	}
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
@@ -551,11 +558,31 @@ export class ModelRuntime implements Models {
 		};
 		this.updateModelSnapshot();
 		try {
-			await this.forceRefreshAvailability();
+			// A mutation must not join an older stalled refresh, so this always queues a new one.
+			await this.waitForAvailability(this.queueAvailabilityRefresh());
 		} catch {
-			// Availability errors are recorded by forceRefreshAvailability; refreshed models remain usable.
+			// Availability errors are recorded by queueAvailabilityRefresh; refreshed models remain usable.
 		}
 		return result;
+	}
+
+	/** Refresh with the runtime timeout and optional caller cancellation. */
+	async boundedRefresh(options: ModelsRefreshOptions = {}): Promise<BoundedRefreshResult> {
+		const timeoutSignal = AbortSignal.timeout(this.modelRefreshTimeoutMs);
+		const combined = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+		const refresh = this.refresh({ ...options, signal: combined }).then(
+			(result) => ({ status: "settled" as const, result }),
+			(error: unknown) => ({ status: "rejected" as const, error }),
+		);
+		const outcome = await Promise.race([refresh, whenAborted(combined).then(() => ({ status: "aborted" as const }))]);
+		if (outcome.status === "rejected") throw outcome.error;
+		if (outcome.status === "aborted") {
+			return { aborted: true, timedOut: timeoutSignal.aborted, errors: new Map() };
+		}
+		return {
+			...outcome.result,
+			timedOut: outcome.result.aborted && timeoutSignal.aborted,
+		};
 	}
 
 	registerNativeProvider(provider: Provider): void {

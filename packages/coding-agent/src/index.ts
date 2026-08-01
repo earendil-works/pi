@@ -178,6 +178,7 @@ export {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 export {
+	type BoundedRefreshResult,
 	type CreateModelRuntimeOptions,
 	ModelRuntime,
 	type ModelRuntimeAuthOverrides,

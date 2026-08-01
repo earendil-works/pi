@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { formatModelRefreshWarning } from "../model-refresh-status.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -64,7 +65,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private scopeText?: Text;
 	private scopeHintText?: Text;
 	private readonly refreshAbortController = new AbortController();
-	private refreshTimeout?: ReturnType<typeof setTimeout>;
 	private closed = false;
 
 	constructor(
@@ -160,40 +160,21 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private async refreshModels(): Promise<void> {
-		const timeoutMs = 15_000;
-		let timedOut = false;
-		this.refreshTimeout = setTimeout(() => {
-			timedOut = true;
-			this.refreshAbortController.abort();
-		}, timeoutMs);
-		try {
-			const result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
-			if (this.closed) return;
-			this.refreshStatusMessage = "";
-			if (result.aborted && timedOut) {
-				this.errorMessage = "Model refresh timed out; showing cached models.";
-			} else if (result.errors.size === 1) {
-				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
-			} else if (result.errors.size > 1) {
-				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs (${[...result.errors.keys()].join(", ")}); showing cached models.`;
-			} else {
-				this.errorMessage = this.modelRuntime.getError();
-				if (!this.errorMessage) {
-					this.refreshStatusMessage = "Model catalogs refreshed.";
-					this.refreshStatusSuccess = true;
-				}
-			}
-			this.loadModelsFromSnapshot();
-			this.filterModels(this.searchInput.getValue());
-			this.tui.requestRender();
-		} finally {
-			if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
+		const result = await this.modelRuntime.boundedRefresh({ signal: this.refreshAbortController.signal });
+		if (this.closed) return;
+		this.refreshStatusMessage = "";
+		this.errorMessage = formatModelRefreshWarning(result, "showing cached models.") ?? this.modelRuntime.getError();
+		if (!this.errorMessage) {
+			this.refreshStatusMessage = "Model catalogs refreshed.";
+			this.refreshStatusSuccess = true;
 		}
+		this.loadModelsFromSnapshot();
+		this.filterModels(this.searchInput.getValue());
+		this.tui.requestRender();
 	}
 
 	private close(): void {
 		this.closed = true;
-		if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
 		this.refreshAbortController.abort();
 	}
 

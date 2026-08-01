@@ -84,8 +84,8 @@ import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
-	resolveModelScope,
-	resolveModelScopeWithDiagnostics,
+	isEffectiveModelScope,
+	resolveModelScopeSelection,
 } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
@@ -150,6 +150,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
+import { formatModelRefreshWarning } from "./model-refresh-status.ts";
 import { getModelSearchText } from "./model-search.ts";
 import {
 	getAvailableThemes,
@@ -893,7 +894,7 @@ export class InteractiveMode {
 
 		if (!process.env.PI_OFFLINE) {
 			void this.session.modelRuntime
-				.refresh()
+				.boundedRefresh()
 				.then(() => this.updateAvailableProviderCount())
 				.catch(() => {});
 		}
@@ -2735,7 +2736,7 @@ export class InteractiveMode {
 			}
 			if (text === "/scoped-models") {
 				this.editor.setText("");
-				await this.showModelsSelector();
+				this.showModelsSelector();
 				return;
 			}
 			if (text === "/model" || text.startsWith("/model ")) {
@@ -4430,21 +4431,18 @@ export class InteractiveMode {
 	}
 
 	private async findExactModelMatch(searchTerm: string): Promise<Model<any> | undefined> {
-		const models = await this.getModelCandidates();
-		return findExactModelReferenceMatch(searchTerm, models);
-	}
-
-	private async getModelCandidates(): Promise<Model<any>[]> {
 		if (this.session.scopedModels.length > 0) {
-			return this.session.scopedModels.map((scoped) => scoped.model);
+			return findExactModelReferenceMatch(
+				searchTerm,
+				this.session.scopedModels.map((scoped) => scoped.model),
+			);
 		}
-
-		try {
-			await this.session.modelRuntime.refresh();
-			return [...(await this.session.modelRuntime.getAvailable())];
-		} catch {
-			return [];
-		}
+		const cached = findExactModelReferenceMatch(searchTerm, this.session.modelRuntime.getAvailableSnapshot());
+		if (cached) return cached;
+		// Only pay for a catalog refresh when the cached models cannot satisfy the name.
+		this.showStatus("Refreshing model catalogs…");
+		await this.session.modelRuntime.boundedRefresh().catch(() => {});
+		return findExactModelReferenceMatch(searchTerm, this.session.modelRuntime.getAvailableSnapshot());
 	}
 
 	/** Update the footer's available provider count from the current snapshot without refreshing catalogs. */
@@ -4570,81 +4568,54 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showModelsSelector(): Promise<void> {
-		// Get all available models
-		await this.session.modelRuntime.refresh();
-		const allModels = [...(await this.session.modelRuntime.getAvailable())];
-		const allModelIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+	private showModelsSelector(): void {
+		const allModels = [...this.session.modelRuntime.getAvailableSnapshot()];
 		const configuredPatterns = this.settingsManager.getEnabledModels();
 		const sessionScopedModels = this.session.scopedModels;
-
-		if (allModels.length === 0 && !configuredPatterns?.length && sessionScopedModels.length === 0) {
-			this.showStatus("No models available");
-			return;
-		}
-
-		const configuredScope = configuredPatterns?.length
-			? await resolveModelScopeWithDiagnostics(configuredPatterns, this.session.modelRuntime)
+		const configuredSelection = configuredPatterns?.length
+			? resolveModelScopeSelection(configuredPatterns, allModels)
 			: undefined;
 
-		// Check if session has scoped models (from previous session-only changes or CLI --models)
-		const hasSessionScope = sessionScopedModels.length > 0;
-
-		// Build enabled model IDs from session state or settings
-		let currentEnabledIds: string[] | null = null;
-
-		if (hasSessionScope) {
-			// Use current session's scoped models
-			currentEnabledIds = sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
-		} else if (configuredScope) {
-			currentEnabledIds = configuredScope.scopedModels.map(
-				(scoped) => `${scoped.model.provider}/${scoped.model.id}`,
-			);
-		}
-
-		for (const diagnostic of configuredScope?.diagnostics ?? []) {
-			if (diagnostic.code !== "no-match") continue;
+		let currentEnabledIds: string[] | null =
+			sessionScopedModels.length > 0
+				? sessionScopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`)
+				: (configuredSelection?.enabledModelIds ?? null);
+		for (const pattern of configuredSelection?.unmatchedPatterns ?? []) {
 			currentEnabledIds ??= [];
-			if (!currentEnabledIds.includes(diagnostic.pattern)) currentEnabledIds.push(diagnostic.pattern);
+			if (!currentEnabledIds.includes(pattern)) currentEnabledIds.push(pattern);
 		}
 
 		// Helper to update session's scoped models (session-only, no persist)
-		const updateSessionModels = async (enabledIds: string[] | null) => {
+		const updateSessionModels = (enabledIds: string[] | null) => {
 			currentEnabledIds = enabledIds === null ? null : [...enabledIds];
-			const hasEnabledAvailableModel = enabledIds?.some((id) => allModelIds.has(id)) ?? false;
-			const allAvailableModelsEnabled =
-				enabledIds !== null && [...allModelIds].every((id) => enabledIds.includes(id));
-			if (enabledIds && hasEnabledAvailableModel && !allAvailableModelsEnabled) {
-				const newScopedModels = await resolveModelScope(enabledIds, this.session.modelRuntime);
-				this.session.setScopedModels(
-					newScopedModels.map((sm) => ({
-						model: sm.model,
-						thinkingLevel: sm.thinkingLevel,
-					})),
-				);
-			} else {
-				// All enabled or none enabled = no filter
-				this.session.setScopedModels([]);
-			}
-			await this.updateAvailableProviderCount();
+			const models = this.session.modelRuntime.getAvailableSnapshot();
+			this.session.setScopedModels(
+				isEffectiveModelScope(enabledIds, models)
+					? resolveModelScopeSelection(enabledIds, models).scopedModels
+					: [],
+			);
+			this.updateAvailableProviderCount();
 			this.ui.requestRender();
 		};
 
 		this.showSelector((done) => {
 			const selector = new ScopedModelsSelectorComponent(
+				this.ui,
+				this.session.modelRuntime,
 				{
 					allModels,
 					enabledModelIds: currentEnabledIds,
 				},
 				{
-					onChange: async (enabledIds) => {
-						await updateSessionModels(enabledIds);
-					},
+					onChange: updateSessionModels,
 					onPersist: (enabledIds) => {
 						// Persist to settings
+						const allModelIds = new Set(
+							this.session.modelRuntime.getAvailableSnapshot().map((model) => `${model.provider}/${model.id}`),
+						);
 						const allEnabled =
 							enabledIds !== null &&
-							enabledIds.length === allModels.length &&
+							enabledIds.length === allModelIds.size &&
 							enabledIds.every((id) => allModelIds.has(id));
 						const newPatterns = enabledIds === null || allEnabled ? undefined : enabledIds;
 						this.settingsManager.setEnabledModels(newPatterns ? [...newPatterns] : undefined);
@@ -5178,6 +5149,7 @@ export class InteractiveMode {
 		providerName: string,
 		authType: "oauth" | "api_key",
 		previousModel: Model<any> | undefined,
+		refreshWarning?: string,
 	): Promise<void> {
 		await this.session.modelRuntime.getAvailable();
 
@@ -5224,6 +5196,7 @@ export class InteractiveMode {
 				void this.maybeWarnAboutAnthropicSubscriptionAuth();
 			}
 		}
+		if (refreshWarning) this.showWarning(refreshWarning);
 	}
 
 	private showAmbientAuthDialog(providerOption: AuthSelectorProvider): void {
@@ -5282,9 +5255,9 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.loginProvider(dialog, providerId, "api_key");
+			const refreshWarning = await this.loginProvider(dialog, providerId, "api_key");
 			restoreEditor();
-			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel, refreshWarning);
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);
@@ -5364,16 +5337,29 @@ export class InteractiveMode {
 		}
 	}
 
+	/** Returns a warning when the post-login catalog refresh could not finish; login itself still succeeded. */
 	private async loginProvider(
 		dialog: LoginDialogComponent,
 		providerId: string,
 		method: "api_key" | "oauth",
-	): Promise<void> {
-		await this.session.modelRuntime.login(providerId, method, {
-			signal: dialog.signal,
-			prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
-			notify: (event) => this.notifyAuthDialog(dialog, event),
-		});
+	): Promise<string | undefined> {
+		let refreshWarning: string | undefined;
+		await this.session.modelRuntime.login(
+			providerId,
+			method,
+			{
+				signal: dialog.signal,
+				prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
+				notify: (event) => this.notifyAuthDialog(dialog, event),
+			},
+			(result) => {
+				refreshWarning =
+					dialog.signal.aborted && result.aborted
+						? "Model catalog refresh cancelled after credentials were saved; using cached models."
+						: formatModelRefreshWarning(result, "using cached models.");
+			},
+		);
+		return refreshWarning;
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
@@ -5392,9 +5378,9 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.loginProvider(dialog, providerId, "oauth");
+			const refreshWarning = await this.loginProvider(dialog, providerId, "oauth");
 			restoreEditor();
-			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
+			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel, refreshWarning);
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);

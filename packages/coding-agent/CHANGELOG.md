@@ -26,7 +26,7 @@
 - Updated the packaged `brace-expansion` dependency to 5.0.8 to address GHSA-mh99-v99m-4gvg ([#7316](https://github.com/earendil-works/pi/issues/7316)).
 - Fixed forced model availability refreshes remaining blocked behind a stalled earlier refresh ([#7301](https://github.com/earendil-works/pi/issues/7301), [#7421](https://github.com/earendil-works/pi/pull/7421) by [@a-yeyang](https://github.com/a-yeyang)).
 - Fixed `/model` catalog refresh failures to identify every catalog that failed.
-- Fixed provider login remaining stuck after saving credentials when a model catalog refresh stalls ([#7027](https://github.com/earendil-works/pi/issues/7027)).
+- Fixed model-catalog refreshes blocking `/scoped-models`, `/model <name>`, `/login` and other credential changes ([#7027](https://github.com/earendil-works/pi/issues/7027), [#7113](https://github.com/earendil-works/pi/issues/7113), [#7153](https://github.com/earendil-works/pi/issues/7153), [#7443](https://github.com/earendil-works/pi/issues/7443)).
 
 ## [0.83.0] - 2026-07-29
 

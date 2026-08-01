@@ -34,7 +34,7 @@ export class ModelRegistry {
 
 	/** Reload models.json asynchronously. Await before making synchronous registry reads. */
 	async refresh(): Promise<void> {
-		await this.runtime.refresh();
+		await this.runtime.boundedRefresh();
 	}
 
 	getError(): string | undefined {
