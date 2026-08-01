@@ -216,6 +216,15 @@ const NVIDIA_OPENAI_COMPAT: OpenAICompletionsCompat = {
 	supportsStrictMode: false,
 	supportsLongCacheRetention: false,
 };
+const CLINE_GATEWAY_COMPAT: OpenAICompletionsCompat = {
+	// Cline API and ClinePass share the api.cline.bot OpenAI-compatible
+	// gateway. Reasoning is returned OpenRouter-style in delta.reasoning.
+	supportsStore: false,
+	supportsReasoningEffort: false,
+	supportsStrictMode: false,
+	supportsLongCacheRetention: false,
+	thinkingFormat: "openrouter",
+};
 const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 	"abacusai/dracarys-llama-3.1-70b-instruct",
 	"bytedance/seed-oss-36b-instruct",
@@ -1483,6 +1492,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// Process ClinePass models. ClinePass shares the Cline API gateway
+		// (https://api.cline.bot/api/v1) and CLINE_API_KEY auth, but exposes a
+		// fixed subscription catalog with cline-pass/<model> ids.
+		if (data["cline-pass"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cline-pass"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "cline-pass",
+					baseUrl: "https://api.cline.bot/api/v1",
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: CLINE_GATEWAY_COMPAT,
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+			}
+		}
+
 		// Process Mistral models
 		if (data.mistral?.models) {
 			for (const [modelId, model] of Object.entries(data.mistral.models)) {
@@ -2290,6 +2328,132 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...deepseekV4Models);
+
+	// Cline API (https://api.cline.bot/api/v1) is an OpenAI-compatible Chat
+	// Completions gateway with OpenRouter-style model ids. The catalog below is
+	// sourced from Cline's public recommended-models endpoint
+	// (GET /api/v1/ai/cline/recommended-models); costs are taken from the
+	// models.dev OpenRouter and cline-pass catalogs for the same models.
+	const clineModels: Model<"openai-completions">[] = [
+		{
+			id: "anthropic/claude-opus-5",
+			name: "Claude Opus 5",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			compat: { ...CLINE_GATEWAY_COMPAT, cacheControlFormat: "anthropic" },
+		},
+		{
+			id: "zai/glm-5.2",
+			name: "GLM-5.2",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 131072,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "x-ai/grok-4.5",
+			name: "Grok 4.5",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 2, output: 6, cacheRead: 0.3, cacheWrite: 0 },
+			contextWindow: 500000,
+			maxTokens: 500000,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "openai/gpt-5.6-sol",
+			name: "GPT-5.6 Sol",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+			contextWindow: 1050000,
+			maxTokens: 128000,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "moonshotai/kimi-k3",
+			name: "Kimi K3",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 1048576,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "deepseek/deepseek-v4-flash",
+			name: "DeepSeek V4 Flash (free)",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 393216,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "cline-free/glm-5.2",
+			name: "GLM-5.2 (free)",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 131072,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "poolside/laguna-s-2.1:free",
+			name: "Laguna S 2.1 (free)",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 32768,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+		{
+			id: "stepfun/step-3.7-flash",
+			name: "Step 3.7 Flash (free)",
+			api: "openai-completions",
+			baseUrl: "https://api.cline.bot/api/v1",
+			provider: "cline",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 256000,
+			compat: CLINE_GATEWAY_COMPAT,
+		},
+	];
+	allModels.push(...clineModels);
 
 	const antLingCompat: OpenAICompletionsCompat = {
 		supportsStore: false,

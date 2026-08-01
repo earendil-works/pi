@@ -47,6 +47,8 @@ export type KnownProvider =
 	| "xai"
 	| "groq"
 	| "cerebras"
+	| "cline"
+	| "cline-pass"
 	| "openrouter"
 	| "vercel-ai-gateway"
 	| "zai"
