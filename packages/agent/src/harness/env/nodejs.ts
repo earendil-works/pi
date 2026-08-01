@@ -81,7 +81,7 @@ function fileInfoFromStats(
 	const kind = fileKindFromStats(stats);
 	if (!kind) return err(new FileError("invalid", "Unsupported file type", path));
 	return ok({
-		name: path.replace(/\/+$/, "").split("/").pop() ?? path,
+		name: path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? path,
 		path,
 		kind,
 		size: stats.size,
