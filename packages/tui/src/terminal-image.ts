@@ -92,7 +92,13 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	}
 
 	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		// WezTerm's kitty graphics placement is cell-anchored and loses image
+		// content wherever text rows are (re)written over it — a scrolling
+		// transcript constantly rewrites rows, which pokes holes in the image
+		// until only a sliver remains (wezterm#986). Its iTerm2 inline images
+		// are attached to the emitting line and scroll with the buffer, which
+		// survives the redraw model, so prefer that protocol here.
+		return { images: "iterm2", trueColor: true, hyperlinks: true };
 	}
 
 	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.

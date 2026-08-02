@@ -279,6 +279,17 @@ describe("detectCapabilities", () => {
 		});
 	});
 
+	it("prefers the line-attached iTerm2 image protocol over kitty on WezTerm", () => {
+		// WezTerm's cell-anchored kitty placement loses content to text
+		// rewrites ("holes", wezterm#986); iTerm2 images scroll with the buffer.
+		withEnv({ WEZTERM_PANE: "0" }, () => {
+			assert.strictEqual(detectCapabilities().images, "iterm2");
+		});
+		withEnv({ TERM_PROGRAM: "WezTerm" }, () => {
+			assert.strictEqual(detectCapabilities().images, "iterm2");
+		});
+	});
+
 	it("enables images and hyperlinks for Warp via TERM_PROGRAM", () => {
 		withEnv({ TERM_PROGRAM: "WarpTerminal" }, () => {
 			const caps = detectCapabilities();
