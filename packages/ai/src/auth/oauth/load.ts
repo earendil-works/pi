@@ -16,6 +16,7 @@ type OAuthFlowLoaders = {
 	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
+	llmgateway: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
 	radius: (options: { name: string; gateway: string }) => OAuthAuth | Promise<OAuthAuth>;
@@ -46,6 +47,11 @@ export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {
 export const loadOpenRouterOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.openrouter();
 	return ((await importOAuthModule("./openrouter.ts")) as { openRouterOAuth: OAuthAuth }).openRouterOAuth;
+};
+
+export const loadLlmGatewayOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.llmgateway();
+	return ((await importOAuthModule("./llmgateway.ts")) as { llmGatewayOAuth: OAuthAuth }).llmGatewayOAuth;
 };
 
 export const loadKimiCodingOAuth = async (): Promise<OAuthAuth> => {

@@ -583,6 +583,35 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// LLM Gateway - Multiple backend providers
+	// Expected pattern: "exceeds the configured context size (X) for model 'Y'"
+	// (gateway pre-flight check; anthropic-routed models may surface Anthropic's
+	// verbatim "prompt is too long" instead)
+	// =============================================================================
+
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway", () => {
+		it("glm-4.5 via LLM Gateway - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("llmgateway", "glm-4.5");
+			const result = await testContextOverflow(model, process.env.LLMGATEWAY_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/exceeds the configured context size/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+
+		// Anthropic backend
+		it("claude-haiku-4-5 via LLM Gateway - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("llmgateway", "claude-haiku-4-5");
+			const result = await testContextOverflow(model, process.env.LLMGATEWAY_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// Ollama (local)
 	// =============================================================================
 

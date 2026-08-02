@@ -18,6 +18,8 @@ import type {
 	ModelCost,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
+	ThinkingLevel,
+	ThinkingLevelMap,
 } from "../src/types.ts";
 import {
 	createModelDataManifest,
@@ -139,6 +141,30 @@ interface AiGatewayModel {
 	};
 }
 
+interface LlmGatewayModelProvider {
+	tools?: boolean;
+	reasoning?: boolean;
+	reasoning_efforts?: string[];
+}
+
+interface LlmGatewayModel {
+	id: string;
+	name?: string;
+	context_length?: number;
+	max_output?: number;
+	architecture?: {
+		input_modalities?: string[];
+		output_modalities?: string[];
+	};
+	pricing?: {
+		prompt?: string | number;
+		completion?: string | number;
+		input_cache_read?: string | number;
+		input_cache_write?: string | number;
+	};
+	providers?: LlmGatewayModelProvider[];
+}
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -203,6 +229,7 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const LLMGATEWAY_BASE_URL = "https://api.llmgateway.io/v1";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_HEADERS = {
@@ -583,6 +610,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
+	const isLlmGateway = provider === "llmgateway" || baseUrl.includes("api.llmgateway.io");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -607,18 +635,27 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai;
+		baseUrl.includes("chutes.ai") ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isZai ||
+		isLlmGateway;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat =
-		provider === "openrouter" && /^~?anthropic\//.test(model.id) ? "anthropic" : undefined;
+		(provider === "openrouter" && /^~?anthropic\//.test(model.id)) || (isLlmGateway && /^claude-/.test(model.id))
+			? "anthropic"
+			: undefined;
 
 	return {
-		supportsStore: !isNonStandard,
-		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
+		supportsStore: !isNonStandard && !isLlmGateway,
+		supportsDeveloperRole: isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter && !isLlmGateway),
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
@@ -642,7 +679,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
 		zaiToolStream: false,
-		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isLlmGateway,
 		supportsOpenAIGrammarTools: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: false,
@@ -1073,6 +1110,113 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Vercel AI Gateway models:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
+}
+
+const LLMGATEWAY_THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Derives Pi thinking levels from the reasoning_efforts declared by the
+ * tool-capable provider mappings. The gateway forwards reasoning_effort to the
+ * routed mapping unchanged (unsupported values become provider errors), so a
+ * level is only safe when every mapping that declares its accepted efforts
+ * agrees on it; models whose mappings disagree, or declare nothing, keep Pi's
+ * defaults. "off" stays available in every case because omitting
+ * reasoning_effort disables reasoning gateway-side.
+ */
+function getLlmGatewayThinkingLevelMap(mappings: LlmGatewayModelProvider[]): ThinkingLevelMap | undefined {
+	const declared = mappings
+		.map((p) => p.reasoning_efforts)
+		.filter((efforts): efforts is string[] => Array.isArray(efforts));
+	if (declared.length === 0) return undefined;
+
+	const supported = new Set(declared[0]);
+	const agree = declared.every(
+		(efforts) => new Set(efforts).size === supported.size && efforts.every((value) => supported.has(value)),
+	);
+	if (!agree) return undefined;
+
+	const map: ThinkingLevelMap = {};
+	for (const level of LLMGATEWAY_THINKING_LEVELS) {
+		map[level] = supported.has(level) ? level : null;
+	}
+	return map;
+}
+
+async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from LLM Gateway API...");
+		const response = await fetch(`${LLMGATEWAY_BASE_URL}/models?exclude_deprecated=true`);
+		if (!response.ok) throw new Error(`LLM Gateway API returned ${response.status}`);
+		const data = await response.json();
+		const models: Model<any>[] = [];
+
+		const toNumber = (value: string | number | undefined): number => {
+			if (typeof value === "number") {
+				return Number.isFinite(value) ? value : 0;
+			}
+			const parsed = parseFloat(value ?? "0");
+			return Number.isFinite(parsed) ? parsed : 0;
+		};
+
+		const items = Array.isArray(data.data) ? (data.data as LlmGatewayModel[]) : [];
+		for (const model of items) {
+			// Router pseudo-entries, not selectable chat models.
+			if (model.id === "custom" || model.id === "auto") continue;
+			const contextWindow = model.context_length || 0;
+			if (contextWindow <= 0) continue;
+			// supported_parameters advertises "tools" on models without any tool-capable
+			// mapping (and omits it on some that have one). Gateway routing excludes
+			// mappings with tools !== true, so per-mapping capability is the ground truth.
+			const toolMappings = (model.providers ?? []).filter((p) => p.tools === true);
+			if (toolMappings.length === 0) continue;
+			// Keep text-output chat models only (no embedding/TTS/image generation).
+			const output = model.architecture?.output_modalities ?? ["text"];
+			if (!output.includes("text") || output.includes("image") || output.includes("audio") || output.includes("embedding")) {
+				continue;
+			}
+
+			const input: ("text" | "image")[] = ["text"];
+			if (model.architecture?.input_modalities?.includes("image")) {
+				input.push("image");
+			}
+
+			const inputCost = roundCost(toNumber(model.pricing?.prompt) * 1_000_000);
+			const outputCost = roundCost(toNumber(model.pricing?.completion) * 1_000_000);
+			const cacheReadCost = roundCost(toNumber(model.pricing?.input_cache_read) * 1_000_000);
+			const cacheWriteCost = roundCost(toNumber(model.pricing?.input_cache_write) * 1_000_000);
+
+			const reasoning = toolMappings.some((p) => p.reasoning === true);
+			const thinkingLevelMap = reasoning ? getLlmGatewayThinkingLevelMap(toolMappings) : undefined;
+
+			models.push({
+				id: model.id,
+				name: model.name || model.id,
+				api: "openai-completions",
+				baseUrl: LLMGATEWAY_BASE_URL,
+				provider: "llmgateway",
+				reasoning,
+				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+				input,
+				cost: {
+					input: inputCost,
+					output: outputCost,
+					cacheRead: cacheReadCost,
+					cacheWrite: cacheWriteCost,
+				},
+				contextWindow,
+				// The gateway rejects max_tokens above the per-model limit, so the fallback
+				// for models without a declared max_output must stay conservative.
+				maxTokens: model.max_output || 4096,
+			});
+		}
+
+		console.log(`Fetched ${models.length} tool-capable models from LLM Gateway`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch LLM Gateway models:", error);
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
@@ -2071,9 +2215,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const llmGatewayModels = await fetchLlmGatewayModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...llmGatewayModels].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),

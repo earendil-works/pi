@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { llmGatewayOAuth } from "../src/auth/oauth/llmgateway.ts";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
 import { openRouterOAuth } from "../src/auth/oauth/openrouter.ts";
 import { xaiOAuth } from "../src/auth/oauth/xai.ts";
@@ -38,6 +39,12 @@ describe.sequential("OAuthAuth adapters", () => {
 		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
 		expect(await openRouterOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
 		expect(await openRouterOAuth.refresh(credential)).toBe(credential);
+	});
+
+	it("llmgateway derives the api key and keeps the minted credential on refresh", async () => {
+		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
+		expect(await llmGatewayOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
+		expect(await llmGatewayOAuth.refresh(credential)).toBe(credential);
 	});
 
 	it("xAI toAuth derives the api key from the access token", async () => {
