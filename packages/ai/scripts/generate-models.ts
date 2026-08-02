@@ -2967,6 +2967,21 @@ async function generateModels() {
 		}
 	}
 
+	// Mirror Anthropic models as azure-anthropic-foundry entries.
+	// Azure AI Foundry hosts Anthropic Claude via `/anthropic/` prefix;
+	// baseUrl is resolved per-request from ANTHROPIC_FOUNDRY_RESOURCE /
+	// ANTHROPIC_FOUNDRY_BASE_URL, so we emit "" here.
+	if (providers.anthropic) {
+		providers["azure-anthropic-foundry"] = {};
+		for (const [id, model] of Object.entries(providers.anthropic)) {
+			providers["azure-anthropic-foundry"][id] = {
+				...model,
+				provider: "azure-anthropic-foundry",
+				baseUrl: "",
+			} as Model<any>;
+		}
+	}
+
 	const sortedProviderIds = Object.keys(providers).sort();
 	const jsonProviders: Record<string, Record<string, Model<any>>> = {};
 	for (const providerId of sortedProviderIds) {
