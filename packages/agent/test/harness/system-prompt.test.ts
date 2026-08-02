@@ -49,6 +49,12 @@ When a skill file references a relative path, resolve it against the skill direc
 		expect(formatSkillsForSystemPrompt([disabledSkill])).toBe("");
 	});
 
+	it("appends whenToUse to the listed description", () => {
+		expect(formatSkillsForSystemPrompt([{ ...visibleSkill, whenToUse: "Use when things happen." }])).toContain(
+			"<description>Use &lt;this&gt; &amp; that Use when things happen.</description>",
+		);
+	});
+
 	it("escapes XML in all model-visible skill fields", () => {
 		expect(
 			formatSkillsForSystemPrompt([

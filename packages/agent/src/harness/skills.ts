@@ -30,8 +30,52 @@ export interface SkillDiagnostic {
 interface SkillFrontmatter {
 	name?: string;
 	description?: string;
+	when_to_use?: string;
+	"argument-hint"?: string;
 	"disable-model-invocation"?: boolean;
+	"user-invocable"?: boolean;
 	[key: string]: unknown;
+}
+
+/**
+ * Parse a frontmatter boolean. Claude Code accepts true/false/yes/no/on/off/1/0 in any letter case,
+ * while the YAML parser only produces real booleans for true/false.
+ */
+function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number") {
+		if (value === 1) return true;
+		if (value === 0) return false;
+		return undefined;
+	}
+	if (typeof value === "string") {
+		switch (value.trim().toLowerCase()) {
+			case "true":
+			case "yes":
+			case "on":
+			case "1":
+				return true;
+			case "false":
+			case "no":
+			case "off":
+			case "0":
+				return false;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * First paragraph of a markdown body, used as the description fallback (Claude Code compatibility).
+ * Skips headings, HTML comments, and fenced code blocks; collapses internal newlines.
+ */
+function firstParagraph(body: string): string | undefined {
+	for (const block of body.split(/\n\s*\n/)) {
+		const text = block.trim();
+		if (!text || text.startsWith("#") || text.startsWith("<!--") || text.startsWith("```")) continue;
+		return text.replace(/\s*\n\s*/g, " ");
+	}
+	return undefined;
 }
 
 /** Format a skill invocation prompt, optionally appending additional user instructions. */
@@ -250,7 +294,9 @@ async function loadSkillFromFile(
 	const { frontmatter, body } = parsed.value;
 	const skillDir = dirnameEnvPath(filePath);
 	const parentDirName = basenameEnvPath(skillDir);
-	const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+	const rawDescription = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+	// Claude Code compatibility: when `description` is omitted, use the first paragraph of the markdown body.
+	const description = rawDescription ?? firstParagraph(body);
 
 	for (const error of validateDescription(description)) {
 		diagnostics.push({ type: "warning", code: "invalid_metadata", message: error, path: filePath });
@@ -266,13 +312,45 @@ async function loadSkillFromFile(
 		return { skill: null, diagnostics };
 	}
 
+	const disableModelInvocation = parseFrontmatterBoolean(frontmatter["disable-model-invocation"]);
+	if (frontmatter["disable-model-invocation"] !== undefined && disableModelInvocation === undefined) {
+		diagnostics.push({
+			type: "warning",
+			code: "invalid_metadata",
+			message: `invalid boolean value for "disable-model-invocation"`,
+			path: filePath,
+		});
+	}
+	const parsedUserInvocable = parseFrontmatterBoolean(frontmatter["user-invocable"]);
+	if (frontmatter["user-invocable"] !== undefined && parsedUserInvocable === undefined) {
+		diagnostics.push({
+			type: "warning",
+			code: "invalid_metadata",
+			message: `invalid boolean value for "user-invocable"`,
+			path: filePath,
+		});
+	}
+	const whenToUse = typeof frontmatter.when_to_use === "string" ? frontmatter.when_to_use : undefined;
+	// Claude Code documents argument-hint as `[issue-number]`, which YAML parses as a flow list;
+	// re-wrap list elements in brackets so the hint displays as documented.
+	const rawArgumentHint: unknown = frontmatter["argument-hint"];
+	const argumentHint =
+		typeof rawArgumentHint === "string"
+			? rawArgumentHint
+			: Array.isArray(rawArgumentHint)
+				? rawArgumentHint.map((element: unknown) => `[${String(element)}]`).join(" ")
+				: undefined;
+
 	return {
 		skill: {
 			name,
 			description,
 			content: body,
 			filePath,
-			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			disableModelInvocation: disableModelInvocation === true,
+			userInvocable: parsedUserInvocable ?? true,
+			...(whenToUse !== undefined ? { whenToUse } : {}),
+			...(argumentHint !== undefined ? { argumentHint } : {}),
 		},
 		diagnostics,
 	};

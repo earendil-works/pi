@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Claude Code skill frontmatter compatibility: relaxed boolean coercion (`yes`/`no`/`on`/`off`/`1`/`0`), `description` fallback to the first body paragraph, and parsed `user-invocable`, `when_to_use` (appended to descriptions in `formatSkillsForSystemPrompt`), and `argument-hint` fields on `Skill`.
+
 ## [0.82.0] - 2026-07-24
 
 ### Breaking Changes

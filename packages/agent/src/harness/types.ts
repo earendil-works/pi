@@ -72,6 +72,18 @@ export interface Skill {
 	filePath: string;
 	/** Exclude this skill from model-visible skill lists while still allowing explicit application invocation. */
 	disableModelInvocation?: boolean;
+	/**
+	 * Claude Code-compatible supplementary guidance on when to use the skill (`when_to_use`).
+	 * Appended to {@link Skill.description} in model-visible skill lists.
+	 */
+	whenToUse?: string;
+	/**
+	 * Claude Code-compatible invocation control (`user-invocable`). When false, applications should hide the
+	 * skill from user-facing invocation menus. Defaults to true.
+	 */
+	userInvocable?: boolean;
+	/** Claude Code-compatible autocomplete hint (`argument-hint`) describing expected invocation arguments. */
+	argumentHint?: string;
 }
 
 /** Prompt template that can be formatted into a prompt for explicit invocation. */

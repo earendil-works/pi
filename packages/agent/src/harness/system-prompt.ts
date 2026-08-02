@@ -13,9 +13,10 @@ export function formatSkillsForSystemPrompt(skills: Skill[]): string {
 	];
 
 	for (const skill of visibleSkills) {
+		const description = skill.whenToUse ? `${skill.description} ${skill.whenToUse}` : skill.description;
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+		lines.push(`    <description>${escapeXml(description)}</description>`);
 		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
 		lines.push("  </skill>");
 	}

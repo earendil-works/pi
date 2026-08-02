@@ -681,6 +681,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				}
 
 				for (const skill of session.resourceLoader.getSkills().skills) {
+					if (skill.userInvocable === false) continue;
 					commands.push({
 						name: `skill:${skill.name}`,
 						description: skill.description,

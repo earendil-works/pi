@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Claude Code skill frontmatter compatibility: relaxed boolean coercion for `disable-model-invocation`/`user-invocable`, `description` fallback to the first body paragraph, `when_to_use` appended to system-prompt skill listings, and `user-invocable: false` plus `argument-hint` honored by `/skill:name` command menus. See [Skills](docs/skills.md#claude-code-frontmatter).
+
 ### Fixed
 
 - Fixed compaction and branch summaries for providers whose authentication resolves entirely to request headers ([#5871](https://github.com/earendil-works/pi/issues/5871))

@@ -14,6 +14,9 @@ function createTestSkill(options: {
 	filePath: string;
 	baseDir: string;
 	disableModelInvocation?: boolean;
+	userInvocable?: boolean;
+	whenToUse?: string;
+	argumentHint?: string;
 	source?: string;
 }): Skill {
 	return {
@@ -23,6 +26,9 @@ function createTestSkill(options: {
 		baseDir: options.baseDir,
 		sourceInfo: createSyntheticSourceInfo(options.filePath, { source: options.source ?? "test" }),
 		disableModelInvocation: options.disableModelInvocation ?? false,
+		...(options.userInvocable !== undefined ? { userInvocable: options.userInvocable } : {}),
+		...(options.whenToUse !== undefined ? { whenToUse: options.whenToUse } : {}),
+		...(options.argumentHint !== undefined ? { argumentHint: options.argumentHint } : {}),
 	};
 }
 
@@ -74,14 +80,15 @@ describe("skills", () => {
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("exceeds 64 characters"))).toBe(true);
 		});
 
-		it("should warn and skip skill when description is missing", () => {
+		it("should fall back to the first body paragraph when description is missing", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "missing-description"),
 				source: "test",
 			});
 
-			expect(skills).toHaveLength(0);
-			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("description is required"))).toBe(true);
+			expect(skills).toHaveLength(1);
+			expect(skills[0].description).toBe("This skill has no description field.");
+			expect(diagnostics).toHaveLength(0);
 		});
 
 		it("should ignore unknown frontmatter fields", () => {
@@ -117,15 +124,18 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should skip files without frontmatter", () => {
+		it("should load files without frontmatter using fallback metadata", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "no-frontmatter"),
 				source: "test",
 			});
 
-			// no-frontmatter has no description, so it should be skipped
-			expect(skills).toHaveLength(0);
-			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("description is required"))).toBe(true);
+			// no-frontmatter has no frontmatter, so the name comes from the directory
+			// and the description falls back to the first body paragraph
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("no-frontmatter");
+			expect(skills[0].description).toBe("This skill has no YAML frontmatter at all.");
+			expect(diagnostics).toHaveLength(0);
 		});
 
 		it("should warn and skip skill when YAML frontmatter is invalid", () => {
@@ -166,10 +176,10 @@ describe("skills", () => {
 				source: "test",
 			});
 
-			// Should load all skills that have descriptions (even with warnings)
-			// valid-skill, name-mismatch, invalid-name-chars, long-name, unknown-field, nested/child-skill, consecutive-hyphens
-			// NOT: missing-description, no-frontmatter (both missing descriptions)
-			expect(skills.length).toBeGreaterThanOrEqual(6);
+			// All fixtures load, including those relying on fallback metadata
+			// (missing-description, no-frontmatter) and Claude Code frontmatter fields
+			// (claude-frontmatter, invalid-boolean)
+			expect(skills.length).toBeGreaterThanOrEqual(10);
 		});
 
 		it("should return empty for non-existent directory", () => {
@@ -218,6 +228,45 @@ describe("skills", () => {
 
 			expect(skills).toHaveLength(1);
 			expect(skills[0].disableModelInvocation).toBe(false);
+		});
+
+		it("should parse Claude Code frontmatter fields with boolean coercion", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "claude-frontmatter"),
+				source: "test",
+			});
+
+			expect(diagnostics).toHaveLength(0);
+			expect(skills).toHaveLength(1);
+			expect(skills[0].disableModelInvocation).toBe(true); // yes
+			expect(skills[0].userInvocable).toBe(false); // no
+			expect(skills[0].whenToUse).toBe("Use when testing Claude compatibility.");
+			expect(skills[0].argumentHint).toBe("[issue-number]");
+		});
+
+		it("should warn and default on invalid boolean frontmatter values", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "invalid-boolean"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].disableModelInvocation).toBe(false);
+			expect(
+				diagnostics.some((d: ResourceDiagnostic) =>
+					d.message.includes('invalid boolean value for "disable-model-invocation"'),
+				),
+			).toBe(true);
+		});
+
+		it("should default userInvocable to true when not specified", () => {
+			const { skills } = loadSkillsFromDir({
+				dir: join(fixturesDir, "valid-skill"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].userInvocable).toBe(true);
 		});
 	});
 
@@ -342,6 +391,22 @@ describe("skills", () => {
 
 			const result = formatSkillsForPrompt(skills);
 			expect(result).toBe("");
+		});
+
+		it("should append whenToUse to the listed description", () => {
+			const skills: Skill[] = [
+				createTestSkill({
+					name: "test-skill",
+					description: "A test skill.",
+					filePath: "/path/to/skill/SKILL.md",
+					baseDir: "/path/to/skill",
+					whenToUse: "Use when testing things.",
+				}),
+			];
+
+			const result = formatSkillsForPrompt(skills);
+
+			expect(result).toContain("<description>A test skill. Use when testing things.</description>");
 		});
 	});
 

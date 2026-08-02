@@ -141,12 +141,23 @@ Per the [Agent Skills specification](https://agentskills.io/specification#frontm
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Max 64 chars. Lowercase a-z, 0-9, hyphens. Unlike the standard, Pi does not require this to match the parent directory because that standard requirement is suboptimal for shared skill directories. |
-| `description` | Yes | Max 1024 chars. What the skill does and when to use it. |
+| `description` | Recommended | Max 1024 chars. What the skill does and when to use it. When omitted, Pi falls back to the first paragraph of the markdown body (Claude Code behavior). |
 | `license` | No | License name or reference to bundled file. |
 | `compatibility` | No | Max 500 chars. Environment requirements. |
 | `metadata` | No | Arbitrary key-value mapping. |
 | `allowed-tools` | No | Space-delimited list of pre-approved tools (experimental). |
 | `disable-model-invocation` | No | When `true`, skill is hidden from system prompt. Users must use `/skill:name`. |
+| `user-invocable` | No | Claude Code field. When `false`, the skill is hidden from `/skill:name` command menus and listings. Defaults to `true`. |
+| `when_to_use` | No | Claude Code field. Extra when-to-use guidance, appended to `description` in the system prompt skill listing. |
+| `argument-hint` | No | Claude Code field. Hint shown in `/skill:name` autocomplete, e.g. `<pr-url>` or `[issue-number]`. Unquoted bracket forms parse as YAML flow lists and are re-wrapped in brackets per element. |
+
+Boolean frontmatter fields (`disable-model-invocation`, `user-invocable`) accept `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0` in any letter case, per Claude Code. Invalid values warn and fall back to the default.
+
+### Claude Code Frontmatter
+
+Skills written for [Claude Code](https://code.claude.com/docs/en/skills#frontmatter-reference) load in Pi. Pi honors `disable-model-invocation`, `user-invocable`, `when_to_use`, `argument-hint`, the relaxed boolean values, and the description fallback described above.
+
+The remaining Claude Code fields are ignored: `name` (display-only), `arguments` and `$ARGUMENTS` substitution (Pi appends arguments as `User: <args>` instead), `allowed-tools`/`disallowed-tools` (no per-skill tool gating), `model`, `effort`, `context: fork`, `agent`, `background` (no per-skill model, effort, or forked execution), `hooks`, `paths`, and `shell`.
 
 ### Name Rules
 
@@ -180,10 +191,11 @@ Pi validates skills against the Agent Skills standard. Most issues produce warni
 - Name exceeds 64 characters or contains invalid characters
 - Name starts/ends with hyphen or has consecutive hyphens
 - Description exceeds 1024 characters
+- Boolean fields with invalid values
 
 Unknown frontmatter fields are ignored.
 
-**Exception:** Skills with missing description are not loaded.
+**Exception:** Skills with no usable description are not loaded. When `description` is omitted, Pi falls back to the first paragraph of the markdown body, skipping headings, HTML comments, and fenced code blocks. A skill with neither a frontmatter `description` nor a usable body paragraph is not loaded.
 
 Name collisions (same name from different locations) warn and keep the first skill found.
 

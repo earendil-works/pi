@@ -67,8 +67,52 @@ function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
 export interface SkillFrontmatter {
 	name?: string;
 	description?: string;
+	when_to_use?: string;
+	"argument-hint"?: string;
 	"disable-model-invocation"?: boolean;
+	"user-invocable"?: boolean;
 	[key: string]: unknown;
+}
+
+/**
+ * Parse a frontmatter boolean. Claude Code accepts true/false/yes/no/on/off/1/0 in any letter case,
+ * while the YAML parser only produces real booleans for true/false.
+ */
+function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number") {
+		if (value === 1) return true;
+		if (value === 0) return false;
+		return undefined;
+	}
+	if (typeof value === "string") {
+		switch (value.trim().toLowerCase()) {
+			case "true":
+			case "yes":
+			case "on":
+			case "1":
+				return true;
+			case "false":
+			case "no":
+			case "off":
+			case "0":
+				return false;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * First paragraph of a markdown body, used as the description fallback (Claude Code compatibility).
+ * Skips headings, HTML comments, and fenced code blocks; collapses internal newlines.
+ */
+function firstParagraph(body: string): string | undefined {
+	for (const block of body.split(/\n\s*\n/)) {
+		const text = block.trim();
+		if (!text || text.startsWith("#") || text.startsWith("<!--") || text.startsWith("```")) continue;
+		return text.replace(/\s*\n\s*/g, " ");
+	}
+	return undefined;
 }
 
 export interface Skill {
@@ -78,6 +122,12 @@ export interface Skill {
 	baseDir: string;
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
+	/** Claude Code `user-invocable`: when false, the skill is hidden from /skill:name command menus. Defaults to true. */
+	userInvocable?: boolean;
+	/** Claude Code `when_to_use`: supplementary guidance appended to the description in model-visible skill lists. */
+	whenToUse?: string;
+	/** Claude Code `argument-hint`: autocomplete hint describing expected /skill:name arguments. */
+	argumentHint?: string;
 }
 
 export interface LoadSkillsResult {
@@ -282,12 +332,16 @@ function loadSkillFromFile(
 
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent);
+		const { frontmatter, body } = parseFrontmatter<SkillFrontmatter>(rawContent);
 		const skillDir = dirname(filePath);
 		const parentDirName = basename(skillDir);
 
+		const rawDescription = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+		// Claude Code compatibility: when `description` is omitted, use the first paragraph of the markdown body.
+		const description = rawDescription ?? firstParagraph(body);
+
 		// Validate description
-		const descErrors = validateDescription(frontmatter.description);
+		const descErrors = validateDescription(description);
 		for (const error of descErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
@@ -302,18 +356,48 @@ function loadSkillFromFile(
 		}
 
 		// Still load the skill even with warnings (unless description is completely missing)
-		if (!frontmatter.description || frontmatter.description.trim() === "") {
+		if (!description || description.trim() === "") {
 			return { skill: null, diagnostics };
 		}
+
+		const disableModelInvocation = parseFrontmatterBoolean(frontmatter["disable-model-invocation"]);
+		if (frontmatter["disable-model-invocation"] !== undefined && disableModelInvocation === undefined) {
+			diagnostics.push({
+				type: "warning",
+				message: `invalid boolean value for "disable-model-invocation"`,
+				path: filePath,
+			});
+		}
+		const parsedUserInvocable = parseFrontmatterBoolean(frontmatter["user-invocable"]);
+		if (frontmatter["user-invocable"] !== undefined && parsedUserInvocable === undefined) {
+			diagnostics.push({
+				type: "warning",
+				message: `invalid boolean value for "user-invocable"`,
+				path: filePath,
+			});
+		}
+		const whenToUse = typeof frontmatter.when_to_use === "string" ? frontmatter.when_to_use : undefined;
+		// Claude Code documents argument-hint as `[issue-number]`, which YAML parses as a flow list;
+		// re-wrap list elements in brackets so the hint displays as documented.
+		const rawArgumentHint: unknown = frontmatter["argument-hint"];
+		const argumentHint =
+			typeof rawArgumentHint === "string"
+				? rawArgumentHint
+				: Array.isArray(rawArgumentHint)
+					? rawArgumentHint.map((element: unknown) => `[${String(element)}]`).join(" ")
+					: undefined;
 
 		return {
 			skill: {
 				name,
-				description: frontmatter.description,
+				description,
 				filePath,
 				baseDir: skillDir,
 				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
-				disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+				disableModelInvocation: disableModelInvocation === true,
+				userInvocable: parsedUserInvocable ?? true,
+				...(whenToUse !== undefined ? { whenToUse } : {}),
+				...(argumentHint !== undefined ? { argumentHint } : {}),
 			},
 			diagnostics,
 		};
@@ -348,9 +432,10 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 	];
 
 	for (const skill of visibleSkills) {
+		const description = skill.whenToUse ? `${skill.description} ${skill.whenToUse}` : skill.description;
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+		lines.push(`    <description>${escapeXml(description)}</description>`);
 		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
 		lines.push("  </skill>");
 	}
