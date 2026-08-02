@@ -6,7 +6,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
-import { createHarness, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness, type HarnessOptions } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
@@ -65,6 +65,14 @@ function useSummaryStreamFn(harness: Harness, summary: string): () => number {
 		return stream;
 	};
 	return () => callCount;
+}
+
+function createThresholdHarness(extensionFactories?: HarnessOptions["extensionFactories"]): Promise<Harness> {
+	return createHarness({
+		settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 99_000 } },
+		models: [{ id: "faux-1", contextWindow: 100_000, maxTokens: 100 }],
+		extensionFactories,
+	});
 }
 
 function seedCompactableSession(harness: Harness): void {
@@ -267,6 +275,37 @@ describe("AgentSession compaction characterization", () => {
 		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
 	});
 
+	it("cancels auto-compaction while authentication is pending", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const model = harness.getModel();
+		const auth = await harness.session.modelRuntime.getAuth(model);
+		let markAuthStarted = () => {};
+		const authStarted = new Promise<void>((resolve) => {
+			markAuthStarted = resolve;
+		});
+		let releaseAuth = () => {};
+		const authReleased = new Promise<void>((resolve) => {
+			releaseAuth = resolve;
+		});
+		vi.spyOn(harness.session.modelRuntime, "getAuth").mockImplementation(async () => {
+			markAuthStarted();
+			await authReleased;
+			return auth;
+		});
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		const compaction = sessionInternals._runAutoCompaction("threshold", false);
+		await authStarted;
+		harness.session.abortCompaction();
+		releaseAuth();
+
+		await expect(compaction).resolves.toBe(false);
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+		expect(harness.faux.state.callCount).toBe(0);
+	});
+
 	it("resumes after threshold compaction when only agent-level queued messages exist", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
@@ -328,7 +367,137 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
-	it("compacts successful overflow responses without retrying", async () => {
+	it("serializes prompts while authentication is pending", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const provider = harness.getModel().provider;
+		const auth = await harness.session.modelRuntime.checkAuth(provider);
+		let markAuthStarted = () => {};
+		const authStarted = new Promise<void>((resolve) => {
+			markAuthStarted = resolve;
+		});
+		let releaseAuth = () => {};
+		const authReleased = new Promise<void>((resolve) => {
+			releaseAuth = resolve;
+		});
+		vi.spyOn(harness.session.modelRuntime, "hasConfiguredAuth").mockReturnValue(false);
+		const checkAuth = vi.spyOn(harness.session.modelRuntime, "checkAuth").mockImplementation(async () => {
+			markAuthStarted();
+			await authReleased;
+			return auth;
+		});
+		harness.setResponses([fauxAssistantMessage("first answer"), fauxAssistantMessage("second answer")]);
+
+		const firstPrompt = harness.session.prompt("first");
+		await authStarted;
+		const secondPrompt = harness.session.prompt("second", { streamingBehavior: "followUp" });
+		releaseAuth();
+		await Promise.all([firstPrompt, secondPrompt]);
+
+		expect(checkAuth).toHaveBeenCalledTimes(1);
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(getUserTexts(harness)).toEqual(["first", "second"]);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+	});
+
+	it("does not start a prompt when authentication is aborted", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const provider = harness.getModel().provider;
+		const auth = await harness.session.modelRuntime.checkAuth(provider);
+		let markAuthStarted = () => {};
+		const authStarted = new Promise<void>((resolve) => {
+			markAuthStarted = resolve;
+		});
+		let releaseAuth = () => {};
+		const authReleased = new Promise<void>((resolve) => {
+			releaseAuth = resolve;
+		});
+		vi.spyOn(harness.session.modelRuntime, "hasConfiguredAuth").mockReturnValue(false);
+		vi.spyOn(harness.session.modelRuntime, "checkAuth").mockImplementation(async () => {
+			markAuthStarted();
+			await authReleased;
+			return auth;
+		});
+
+		const prompt = harness.session.prompt("hello");
+		const promptResult = prompt.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await authStarted;
+		const abortPromise = harness.session.abort();
+		releaseAuth();
+		await abortPromise;
+
+		const error = await promptResult;
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("Request was aborted");
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.isIdle).toBe(true);
+	});
+
+	it("allows a waiting prompt to proceed after authentication fails", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const provider = harness.getModel().provider;
+		const auth = await harness.session.modelRuntime.checkAuth(provider);
+		let markAuthStarted = () => {};
+		const authStarted = new Promise<void>((resolve) => {
+			markAuthStarted = resolve;
+		});
+		let releaseAuth = () => {};
+		const authReleased = new Promise<void>((resolve) => {
+			releaseAuth = resolve;
+		});
+		let markSecondAuthStarted = () => {};
+		const secondAuthStarted = new Promise<void>((resolve) => {
+			markSecondAuthStarted = resolve;
+		});
+		let releaseSecondAuth = () => {};
+		const secondAuthReleased = new Promise<void>((resolve) => {
+			releaseSecondAuth = resolve;
+		});
+		vi.spyOn(harness.session.modelRuntime, "hasConfiguredAuth").mockReturnValue(false);
+		const checkAuth = vi
+			.spyOn(harness.session.modelRuntime, "checkAuth")
+			.mockImplementationOnce(async () => {
+				markAuthStarted();
+				await authReleased;
+				return undefined;
+			})
+			.mockImplementationOnce(async () => {
+				markSecondAuthStarted();
+				await secondAuthReleased;
+				return auth;
+			});
+		harness.setResponses([fauxAssistantMessage("second answer")]);
+
+		const firstPrompt = harness.session.prompt("first");
+		const firstResult = firstPrompt.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await authStarted;
+		const secondPrompt = harness.session.prompt("second", { streamingBehavior: "followUp" });
+		let idleSettled = false;
+		const idlePromise = harness.session.waitForIdle().then(() => {
+			idleSettled = true;
+		});
+		releaseAuth();
+		await secondAuthStarted;
+
+		expect(idleSettled).toBe(false);
+		releaseSecondAuth();
+		const error = await firstResult;
+		expect(error).toBeInstanceOf(Error);
+		await Promise.all([secondPrompt, idlePromise]);
+		expect(checkAuth).toHaveBeenCalledTimes(2);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(getUserTexts(harness)).toEqual(["second"]);
+	});
+
+	it("defers successful overflow compaction until the next prompt", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			models: [{ id: "faux-1", contextWindow: 1, maxTokens: 100 }],
@@ -346,17 +515,332 @@ describe("AgentSession compaction characterization", () => {
 			],
 		});
 		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("completed answer")]);
+		harness.setResponses([fauxAssistantMessage("completed answer"), fauxAssistantMessage("continued answer")]);
 
-		await expect(harness.session.prompt("hello")).resolves.toBeUndefined();
+		await harness.session.prompt("hello");
 
-		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
-		expect(compactionEnd).toMatchObject({
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
 			reason: "overflow",
 			aborted: false,
 			willRetry: false,
 		});
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("defers threshold compaction until the next prompt while idle", async () => {
+		const extensionEvents: string[] = [];
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("session_before_compact", async (event) => {
+					extensionEvents.push("session_before_compact");
+					return {
+						compaction: {
+							summary: "threshold compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					};
+				});
+				pi.on("before_agent_start", () => {
+					extensionEvents.push("before_agent_start");
+				});
+			},
+		]);
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("completed answer"), fauxAssistantMessage("continued answer")]);
+
+		await harness.session.prompt("x".repeat(2_400));
+
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
+
+		extensionEvents.length = 0;
+		await harness.session.prompt("continue");
+
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+		});
+		expect(extensionEvents).toEqual(["session_before_compact", "before_agent_start"]);
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("does not start a prompt when deferred pre-prompt compaction is aborted", async () => {
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("session_before_compact", async (event) => {
+					markCompactionStarted();
+					await new Promise<void>((resolve) => {
+						if (event.signal.aborted) {
+							resolve();
+							return;
+						}
+						event.signal.addEventListener("abort", () => resolve(), { once: true });
+					});
+					return { cancel: true };
+				});
+			},
+		]);
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("completed answer")]);
+
+		await harness.session.prompt("x".repeat(2_400));
+		const continuedPrompt = harness.session.prompt("continue");
+		const promptResult = continuedPrompt.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await compactionStarted;
+
+		await harness.session.abort();
+
+		const error = await promptResult;
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("Request was aborted");
 		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.isIdle).toBe(true);
+	});
+
+	it("preserves pending context when prompt preparation is aborted", async () => {
+		let beforeStartCount = 0;
+		let markBeforeStart = () => {};
+		const beforeStart = new Promise<void>((resolve) => {
+			markBeforeStart = resolve;
+		});
+		let releaseBeforeStart = () => {};
+		const beforeStartReleased = new Promise<void>((resolve) => {
+			releaseBeforeStart = resolve;
+		});
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("session_before_compact", async (event) => ({
+					compaction: {
+						summary: "prompt preparation compacted",
+						firstKeptEntryId: event.preparation.firstKeptEntryId,
+						tokensBefore: event.preparation.tokensBefore,
+						details: {},
+					},
+				}));
+				pi.on("before_agent_start", async () => {
+					beforeStartCount++;
+					if (beforeStartCount !== 2) return;
+					markBeforeStart();
+					await beforeStartReleased;
+					return { systemPrompt: "stale aborted override" };
+				});
+			},
+		]);
+		harnesses.push(harness);
+		const baseSystemPrompt = harness.session.systemPrompt;
+		let sawPendingContext = false;
+		harness.setResponses([
+			fauxAssistantMessage("completed answer"),
+			(context) => {
+				sawPendingContext = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "carry this",
+				);
+				return fauxAssistantMessage("continued answer");
+			},
+		]);
+
+		await harness.session.prompt("x".repeat(2_400));
+		await harness.session.sendCustomMessage(
+			{ customType: "next-turn", content: "carry this", display: true, details: {} },
+			{ deliverAs: "nextTurn" },
+		);
+		const continuedPrompt = harness.session.prompt("continue");
+		const promptResult = continuedPrompt.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await beforeStart;
+
+		const abortPromise = harness.session.abort();
+		releaseBeforeStart();
+		await abortPromise;
+
+		const error = await promptResult;
+		expect(error).toBeInstanceOf(Error);
+		expect((error as Error).message).toBe("Request was aborted");
+		expect(harness.session.systemPrompt).toBe(baseSystemPrompt);
+
+		await harness.session.prompt("try again");
+
+		expect(sawPendingContext).toBe(true);
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("preserves next-turn context added during prompt preparation", async () => {
+		let markBeforeStart = () => {};
+		const beforeStart = new Promise<void>((resolve) => {
+			markBeforeStart = resolve;
+		});
+		let releaseBeforeStart = () => {};
+		const beforeStartReleased = new Promise<void>((resolve) => {
+			releaseBeforeStart = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => {
+						markBeforeStart();
+						await beforeStartReleased;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		let firstPromptSawPendingContext = false;
+		let secondPromptSawPendingContext = false;
+		harness.setResponses([
+			(context) => {
+				firstPromptSawPendingContext = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "carry this",
+				);
+				return fauxAssistantMessage("first answer");
+			},
+			(context) => {
+				secondPromptSawPendingContext = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "carry this",
+				);
+				return fauxAssistantMessage("second answer");
+			},
+		]);
+
+		const firstPrompt = harness.session.prompt("first");
+		await beforeStart;
+		await harness.session.sendCustomMessage(
+			{ customType: "next-turn", content: "carry this", display: true, details: {} },
+			{ deliverAs: "nextTurn" },
+		);
+		releaseBeforeStart();
+		await firstPrompt;
+		await harness.session.prompt("second");
+
+		expect(firstPromptSawPendingContext).toBe(false);
+		expect(secondPromptSawPendingContext).toBe(true);
+	});
+
+	it("queues input submitted while deferred pre-prompt compaction runs", async () => {
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("session_before_compact", async (event) => {
+					markCompactionStarted();
+					await compactionReleased;
+					return {
+						compaction: {
+							summary: "deferred prompt compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					};
+				});
+			},
+		]);
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("completed answer"),
+			fauxAssistantMessage("continued answer"),
+			fauxAssistantMessage("queued answer"),
+		]);
+
+		await harness.session.prompt("x".repeat(2_400));
+		const continuedPrompt = harness.session.prompt("continue");
+		await compactionStarted;
+
+		expect(harness.session.isStreaming).toBe(true);
+		await harness.session.prompt("queued follow-up", { streamingBehavior: "followUp" });
+		releaseCompaction();
+		await continuedPrompt;
+
+		expect(getUserTexts(harness)).toEqual(["continue", "queued follow-up"]);
+		expect(harness.faux.state.callCount).toBe(3);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(2);
+	});
+
+	it("compacts before a queued continuation", async () => {
+		let queuedFollowUp = false;
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("agent_end", () => {
+					if (queuedFollowUp) return;
+					queuedFollowUp = true;
+					pi.sendUserMessage("queued follow-up", { deliverAs: "followUp" });
+				});
+				pi.on("session_before_compact", async (event) => ({
+					compaction: {
+						summary: "queued continuation compacted",
+						firstKeptEntryId: event.preparation.firstKeptEntryId,
+						tokensBefore: event.preparation.tokensBefore,
+						details: {},
+					},
+				}));
+			},
+		]);
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("completed answer"), fauxAssistantMessage("follow-up answer")]);
+
+		await harness.session.prompt("x".repeat(2_400));
+
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+		});
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("does not continue when a queued message is cleared during compaction", async () => {
+		let activeSession: Harness["session"] | undefined;
+		let queuedFollowUp = false;
+		const harness = await createThresholdHarness([
+			(pi) => {
+				pi.on("agent_end", () => {
+					if (queuedFollowUp) return;
+					queuedFollowUp = true;
+					pi.sendUserMessage("queued follow-up", { deliverAs: "followUp" });
+				});
+				pi.on("session_before_compact", async (event) => {
+					activeSession?.clearQueue();
+					return {
+						compaction: {
+							summary: "queue cleared during compaction",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					};
+				});
+			},
+		]);
+		activeSession = harness.session;
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("completed answer")]);
+
+		await harness.session.prompt("x".repeat(2_400));
+
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 	});
 
 	it("ignores stale pre-compaction assistant usage on pre-prompt checks", async () => {

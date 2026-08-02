@@ -311,6 +311,10 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _promptAuthenticationPromise: Promise<void> | undefined;
+	private _promptAuthenticationAbortController: AbortController | undefined;
+	private _promptAuthenticationWaiterCount = 0;
+	private _promptPreparationAbortController: AbortController | undefined;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -569,7 +573,12 @@ export class AgentSession {
 	}
 
 	private _resolveIdleWaitIfIdle(): void {
-		if (this._isAgentRunActive || !this._resolveIdleWait) {
+		if (
+			this._isAgentRunActive ||
+			this._promptAuthenticationPromise ||
+			this._promptAuthenticationWaiterCount > 0 ||
+			!this._resolveIdleWait
+		) {
 			return;
 		}
 		const resolve = this._resolveIdleWait;
@@ -836,6 +845,8 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		try {
+			this._promptAuthenticationAbortController?.abort();
+			this._promptPreparationAbortController?.abort();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -877,9 +888,11 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
-	/** Whether the session has no active agent run, retry, auto-compaction, or queued continuation. */
+	/** Whether the session has no active prompt authentication or agent run. */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive;
+		return (
+			!this._promptAuthenticationPromise && this._promptAuthenticationWaiterCount === 0 && !this._isAgentRunActive
+		);
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -1093,7 +1106,16 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
-		if (await this._checkCompaction(msg)) {
+		// Defer non-recovery compaction while idle. The next prompt performs the
+		// same check before submission, but queued continuations need room now.
+		const hadQueuedMessages = this.agent.hasQueuedMessages();
+		if (await this._checkCompaction(msg, true, !hadQueuedMessages)) {
+			return true;
+		}
+
+		// A continuation may have been queued while checking compaction. If so,
+		// check again without deferral so it receives enough context space.
+		if (!hadQueuedMessages && this.agent.hasQueuedMessages() && (await this._checkCompaction(msg))) {
 			return true;
 		}
 
@@ -1115,6 +1137,19 @@ export class AgentSession {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
+		let promptAuthentication: Promise<void> | undefined;
+		let resolvePromptAuthentication: (() => void) | undefined;
+		let promptAuthenticationAbortController: AbortController | undefined;
+		let runReservation: AbortController | undefined;
+		const releasePromptAuthentication = () => {
+			if (this._promptAuthenticationPromise === promptAuthentication) {
+				this._promptAuthenticationPromise = undefined;
+			}
+			if (this._promptAuthenticationAbortController === promptAuthenticationAbortController) {
+				this._promptAuthenticationAbortController = undefined;
+			}
+			resolvePromptAuthentication?.();
+		};
 
 		try {
 			// Handle extension commands first (execute immediately, even during streaming)
@@ -1155,6 +1190,17 @@ export class AgentSession {
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
 
+			// Serialize authentication so concurrent prompts cannot both pass the
+			// idle check before either one reserves the agent run.
+			while (this._promptAuthenticationPromise) {
+				this._promptAuthenticationWaiterCount++;
+				try {
+					await this._promptAuthenticationPromise;
+				} finally {
+					this._promptAuthenticationWaiterCount--;
+				}
+			}
+
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
@@ -1179,9 +1225,19 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
+			promptAuthentication = new Promise((resolve) => {
+				resolvePromptAuthentication = resolve;
+			});
+			this._promptAuthenticationPromise = promptAuthentication;
+			promptAuthenticationAbortController = new AbortController();
+			this._promptAuthenticationAbortController = promptAuthenticationAbortController;
+
 			const hasConfiguredAuth =
 				this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
 				(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+			if (promptAuthenticationAbortController.signal.aborted) {
+				throw new Error("Request was aborted");
+			}
 			if (!hasConfiguredAuth) {
 				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
 				if (isOAuth) {
@@ -1194,11 +1250,21 @@ export class AgentSession {
 				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 			}
 
+			// Reserve the run before releasing authentication waiters. They will see
+			// the active run and queue instead of starting another prompt.
+			this._isAgentRunActive = true;
+			runReservation = new AbortController();
+			this._promptPreparationAbortController = runReservation;
+			releasePromptAuthentication();
+
 			// Check if we need to compact before sending (catches aborted responses).
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
 				await this._checkCompaction(lastAssistant, false);
+			}
+			if (runReservation.signal.aborted) {
+				throw new Error("Request was aborted");
 			}
 
 			// Build messages array (custom message if any, then user message)
@@ -1216,10 +1282,10 @@ export class AgentSession {
 			});
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
-			for (const msg of this._pendingNextTurnMessages) {
+			const pendingNextTurnMessages = this._pendingNextTurnMessages.slice();
+			for (const msg of pendingNextTurnMessages) {
 				messages.push(msg);
 			}
-			this._pendingNextTurnMessages = [];
 
 			// Emit before_agent_start extension event
 			const result = await this._extensionRunner.emitBeforeAgentStart(
@@ -1228,6 +1294,11 @@ export class AgentSession {
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
 			);
+			if (runReservation.signal.aborted) {
+				throw new Error("Request was aborted");
+			}
+			this._pendingNextTurnMessages.splice(0, pendingNextTurnMessages.length);
+
 			// Add all custom messages from extensions
 			if (result?.messages) {
 				for (const msg of result.messages) {
@@ -1251,7 +1322,20 @@ export class AgentSession {
 				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
+
+			preflightResult?.(true);
+			if (runReservation.signal.aborted) {
+				throw new Error("Request was aborted");
+			}
 		} catch (error) {
+			if (this._promptPreparationAbortController === runReservation) {
+				this._promptPreparationAbortController = undefined;
+			}
+			if (runReservation) {
+				this._isAgentRunActive = false;
+			}
+			releasePromptAuthentication();
+			this._resolveIdleWaitIfIdle();
 			preflightResult?.(false);
 			throw error;
 		}
@@ -1260,7 +1344,9 @@ export class AgentSession {
 			return;
 		}
 
-		preflightResult?.(true);
+		if (this._promptPreparationAbortController === runReservation) {
+			this._promptPreparationAbortController = undefined;
+		}
 		await this._runAgentPrompt(messages);
 	}
 
@@ -1540,7 +1626,10 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._promptAuthenticationAbortController?.abort();
+		this._promptPreparationAbortController?.abort();
 		this.abortRetry();
+		this.abortCompaction();
 		this.agent.abort();
 		await this.waitForIdle();
 	}
@@ -1949,8 +2038,13 @@ export class AgentSession {
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 * @param deferNonRetryingCompaction If true, postpone compaction that does not immediately continue the agent.
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		deferNonRetryingCompaction = false,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
 
@@ -1984,6 +2078,7 @@ export class AgentSession {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
 			if (!willRetry) {
+				if (deferNonRetryingCompaction) return false;
 				return await this._runAutoCompaction("overflow", false);
 			}
 
@@ -2036,6 +2131,7 @@ export class AgentSession {
 			contextTokens = directContextTokens;
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
+			if (deferNonRetryingCompaction) return false;
 			return await this._runAutoCompaction("threshold", false);
 		}
 		return false;
@@ -2046,12 +2142,16 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
+		let abortController: AbortController | undefined;
 		let started = false;
 
 		try {
 			if (!this.model) {
 				return false;
 			}
+
+			abortController = new AbortController();
+			this._autoCompactionAbortController = abortController;
 
 			let apiKey: string | undefined;
 			let headers: Record<string, string> | undefined;
@@ -2060,6 +2160,9 @@ export class AgentSession {
 				({ apiKey, headers, env } = await this._getRequiredRequestAuth(this.model));
 			} else {
 				({ apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model));
+			}
+			if (abortController.signal.aborted) {
+				return false;
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
@@ -2070,7 +2173,6 @@ export class AgentSession {
 			}
 
 			this._emit({ type: "compaction_start", reason });
-			this._autoCompactionAbortController = new AbortController();
 			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -2084,7 +2186,7 @@ export class AgentSession {
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
@@ -2125,7 +2227,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -2139,7 +2241,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2210,7 +2312,9 @@ export class AgentSession {
 			}
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === abortController) {
+				this._autoCompactionAbortController = undefined;
+			}
 		}
 	}
 
