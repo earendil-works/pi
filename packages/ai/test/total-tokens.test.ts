@@ -282,6 +282,29 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// DeepInfra
+	// =========================================================================
+
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra", () => {
+		it(
+			"moonshotai/Kimi-K2.6 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("deepinfra", "moonshotai/Kimi-K2.6");
+
+				console.log(`\nDeepInfra / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.DEEPINFRA_API_KEY });
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Cerebras
 	// =========================================================================
 

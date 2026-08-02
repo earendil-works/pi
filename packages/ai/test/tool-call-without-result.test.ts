@@ -158,6 +158,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra Provider", () => {
+		const model = getModel("deepinfra", "moonshotai/Kimi-K2.6");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider", () => {
 		const model = getModel("cerebras", "gpt-oss-120b");
 

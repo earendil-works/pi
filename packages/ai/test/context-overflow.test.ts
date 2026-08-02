@@ -291,6 +291,23 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// DeepInfra
+	// Expected pattern: "code":"context_length_exceeded" (generic fallback pattern)
+	// =============================================================================
+
+	describe.skipIf(!process.env.DEEPINFRA_API_KEY)("DeepInfra", () => {
+		it("moonshotai/Kimi-K2.6 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("deepinfra", "moonshotai/Kimi-K2.6");
+			const result = await testContextOverflow(model, process.env.DEEPINFRA_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(/context_length_exceeded/i);
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// Cerebras
 	// Expected: 400/413 status code with no body
 	// =============================================================================
