@@ -176,6 +176,12 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+// LLM Gateway attributes traffic per coding agent via the x-source header
+// ("pi-agent" is registered on their side).
+const LLMGATEWAY_STATIC_HEADERS = {
+	"x-source": "pi-agent",
+} as const;
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -1197,6 +1203,7 @@ async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 				api: "openai-completions",
 				baseUrl: LLMGATEWAY_BASE_URL,
 				provider: "llmgateway",
+				headers: { ...LLMGATEWAY_STATIC_HEADERS },
 				reasoning,
 				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 				input,
