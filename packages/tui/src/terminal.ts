@@ -56,12 +56,6 @@ export interface Terminal {
 	// Stop the terminal and restore state
 	stop(): void;
 
-	/** Temporarily leave renderer-local terminal modes before changing screen buffers. */
-	suspendRenderer?(): void;
-
-	/** Restore renderer-local terminal modes after changing screen buffers. */
-	resumeRenderer?(): void;
-
 	/**
 	 * Drain stdin before exiting to prevent Kitty key release events from
 	 * leaking to the parent shell over slow SSH connections.
@@ -226,23 +220,9 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-		this.pushKeyboardProtocol();
-	}
-
-	private pushKeyboardProtocol(): void {
 		this.keyboardProtocolPushed = true;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
-	}
-
-	private popKeyboardProtocol(): void {
-		const shouldDisable = this.keyboardProtocolPushed || this._kittyProtocolActive;
-		this.clearKeyboardProtocolNegotiationBuffer();
-		if (!shouldDisable) return;
-		process.stdout.write("\x1b[<u");
-		this.keyboardProtocolPushed = false;
-		this._kittyProtocolActive = false;
-		setKittyProtocolActive(false);
 	}
 
 	private handleKeyboardProtocolNegotiationSequence(
@@ -385,21 +365,17 @@ export class ProcessTerminal implements Terminal {
 		}
 	}
 
-	suspendRenderer(): void {
-		process.stdout.write("\x1b[?2004l");
-		this.popKeyboardProtocol();
-		this.disableModifyOtherKeys();
-	}
-
-	resumeRenderer(): void {
-		process.stdout.write("\x1b[?2004h");
-		this.pushKeyboardProtocol();
-	}
-
 	async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
-		// Disable Kitty keyboard protocol first so any late key releases
-		// do not generate new Kitty escape sequences.
-		this.popKeyboardProtocol();
+		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
+		this.clearKeyboardProtocolNegotiationBuffer();
+		if (shouldDisableKittyProtocol) {
+			// Disable Kitty keyboard protocol first so any late key releases
+			// do not generate new Kitty escape sequences.
+			process.stdout.write("\x1b[<u");
+			this.keyboardProtocolPushed = false;
+			this._kittyProtocolActive = false;
+			setKittyProtocolActive(false);
+		}
 		this.disableModifyOtherKeys();
 
 		const previousHandler = this.inputHandler;
@@ -432,7 +408,20 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 
-		this.suspendRenderer();
+		// Disable bracketed paste mode
+		process.stdout.write("\x1b[?2004l");
+
+		const shouldDisableKittyProtocol = this.keyboardProtocolPushed || this._kittyProtocolActive;
+		this.clearKeyboardProtocolNegotiationBuffer();
+
+		// Disable Kitty keyboard protocol if not already done by drainInput()
+		if (shouldDisableKittyProtocol) {
+			process.stdout.write("\x1b[<u");
+			this.keyboardProtocolPushed = false;
+			this._kittyProtocolActive = false;
+			setKittyProtocolActive(false);
+		}
+		this.disableModifyOtherKeys();
 
 		// Clean up StdinBuffer
 		if (this.stdinBuffer) {

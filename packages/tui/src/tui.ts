@@ -334,7 +334,6 @@ export abstract class TuiBase extends Container implements TUI {
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
 	protected fullRedrawCount = 0;
 	protected stopped = false;
-	private rendererSwitchStop = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
@@ -370,10 +369,6 @@ export abstract class TuiBase extends Container implements TUI {
 	protected beforeTerminalStop(): void {}
 
 	protected afterTerminalStop(): void {}
-
-	protected get isRendererSwitchStop(): boolean {
-		return this.rendererSwitchStop;
-	}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
@@ -732,54 +727,8 @@ export abstract class TuiBase extends Container implements TUI {
 		this.terminal.write("\x1b[16t");
 	}
 
-	/** Change renderer-specific screen modes while retaining this TUI instance. */
-	protected switchRenderer(switchMode: () => void, resumeTerminal = true): void {
-		const canSuspend = this.terminal.suspendRenderer !== undefined && this.terminal.resumeRenderer !== undefined;
-		if (this.terminalColorSchemeNotificationsEnabled) this.terminal.write("\x1b[?2031l");
-		this.rendererSwitchStop = true;
-		try {
-			this.beforeTerminalStop();
-			this.terminal.showCursor();
-			if (canSuspend) this.terminal.suspendRenderer?.();
-			else this.terminal.stop();
-			this.afterTerminalStop();
-		} finally {
-			this.rendererSwitchStop = false;
-		}
-
-		switchMode();
-		if (!resumeTerminal && canSuspend) return;
-
-		this.beforeTerminalStart();
-		if (canSuspend) {
-			this.terminal.resumeRenderer?.();
-		} else {
-			this.terminal.start(
-				(data) => this.handleTerminalInput(data),
-				() => this.requestRender(),
-			);
-		}
-		this.afterTerminalStart();
-		this.terminal.hideCursor();
-		if (this.terminalColorSchemeNotificationsEnabled) this.terminal.write("\x1b[?2031h");
-		this.queryCellSize();
-		this.requestRender();
-	}
-
-	protected renderImmediately(force = false): void {
-		if (force) this.resetRenderState();
-		this.renderRequested = false;
-		if (this.renderTimer) {
-			clearTimeout(this.renderTimer);
-			this.renderTimer = undefined;
-		}
-		this.lastRenderAt = performance.now();
-		this.doRender();
-	}
-
 	stop(): void {
 		this.stopped = true;
-		this.renderRequested = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;

@@ -14,7 +14,6 @@
 - Exported the bundled `Marked` parser and token types.
 - Added width-aware source transforms to the `Markdown` component.
 - Added interface-compatible main-screen and alternate-screen TUI renderers with application-owned scrolling ([#7304](https://github.com/earendil-works/pi/issues/7304)).
-- Added `SwitchableTui` for switching between main-screen and alternate-screen renderers with stable TUI references, supported terminal lifecycle handoff, and no transcript replay.
 - Added alternate-screen `VStack`, `HStack`, and nested `ScrollView` layouts with constrained sizing, sticky regions, and pointer-targeted scrolling.
 - Added edge auto-scrolling for alternate-screen drag selection across off-screen scroll-view content.
 - Added proportional scrollbars with mouse dragging, Home/End document navigation, transient `auto` mode, and an `always` mode that reserves the rightmost column; scrollbar modes can be changed at runtime.

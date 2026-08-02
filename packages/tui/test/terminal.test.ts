@@ -111,24 +111,6 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
-	it("moves keyboard modes between renderer screen buffers", () => {
-		const harness = setupNegotiation();
-		try {
-			harness.send("\x1b[?7u");
-			harness.terminal.suspendRenderer();
-
-			assert.equal(harness.writes.filter((write) => write === "\x1b[<u").length, 1);
-			assert.equal(harness.writes.includes("\x1b[?2004l"), true);
-
-			harness.terminal.resumeRenderer();
-
-			assert.equal(harness.writes.filter((write) => write === "\x1b[>7u\x1b[?u\x1b[c").length, 2);
-			assert.equal(harness.writes.includes("\x1b[?2004h"), true);
-		} finally {
-			harness.cleanup();
-		}
-	});
-
 	it("falls back to modifyOtherKeys for zero Kitty flags", () => {
 		const harness = setupNegotiation();
 		try {

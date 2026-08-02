@@ -65,7 +65,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	}
 
 	protected override beforeTerminalStop(): void {
-		if (this.isRendererSwitchStop || this.previousLines.length === 0) return;
+		if (this.previousLines.length === 0) return;
 		this.terminal.write(" ");
 		const targetRow = this.previousLines.length;
 		const lineDiff = targetRow - this.hardwareCursorRow;

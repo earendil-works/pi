@@ -60,7 +60,6 @@ tui.start();
 
 - `TuiMainScreen` renders into the main terminal buffer and preserves terminal scrollback.
 - `TuiAltScreen` renders a fixed-height viewport in the alternate terminal buffer with application-owned scrolling. When stopped, it restores the main buffer and prints the complete final document.
-- `SwitchableTui` keeps one stable TUI while switching between main-screen and alternate-screen rendering. `ProcessTerminal` preserves its terminal lifecycle across switches.
 
 ```typescript
 import { type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
@@ -77,19 +76,6 @@ tui.requestRender(); // Request a re-render
 
 // Global debug key handler (Shift+Ctrl+D)
 tui.onDebug = () => console.log("Debug triggered");
-```
-
-Use `SwitchableTui` when the renderer must change without replacing references retained by components. `setMode()` returns `false` while an overlay is mounted. Custom terminals can implement the optional `suspendRenderer()` and `resumeRenderer()` hooks to preserve their lifecycle while moving screen-local modes; otherwise `SwitchableTui` stops and restarts them during a switch.
-
-```typescript
-import { SwitchableTui } from "@earendil-works/pi-tui";
-
-const tui = new SwitchableTui(terminal, { mode: "main" });
-tui.setLayoutRoot(fullscreenLayout);
-tui.start();
-
-tui.setMode("alternate");
-tui.setMode("main");
 ```
 
 ### Alternate-screen viewport layouts
@@ -683,8 +669,6 @@ The TUI works with any object implementing the `Terminal` interface:
 interface Terminal {
   start(onInput: (data: string) => void, onResize: () => void): void;
   stop(): void;
-  suspendRenderer?(): void;
-  resumeRenderer?(): void;
   write(data: string): void;
   get columns(): number;
   get rows(): number;

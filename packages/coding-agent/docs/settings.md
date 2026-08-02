@@ -65,7 +65,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `outputPad` | number | `1` | Horizontal padding for user messages, assistant messages, and thinking (0 or 1) |
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
-| `uiMode` | string | `"regular"` | Interactive UI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--ui-mode` overrides this setting at startup |
+| `uiMode` | string | `"regular"` | Interactive UI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply after restart; `--ui-mode` overrides this setting for one run |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling, `"always"` reserves the rightmost column and keeps it visible, and `"hidden"` hides it. Has no effect in regular UI mode |
 
 For VS Code, include `--wait` so pi resumes after the editor exits:
