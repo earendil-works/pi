@@ -25,6 +25,7 @@ import {
 	createLsTool,
 	createReadTool,
 	createWriteTool,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { homedir } from "os";
@@ -46,7 +47,9 @@ const toolCache = new Map<string, ReturnType<typeof createBuiltInTools>>();
 function createBuiltInTools(cwd: string) {
 	return {
 		read: createReadTool(cwd),
-		bash: createBashTool(cwd),
+		bash: createBashTool(cwd, {
+			shellPath: SettingsManager.create(cwd).getShellPath(),
+		}),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
 		find: createFindTool(cwd),
