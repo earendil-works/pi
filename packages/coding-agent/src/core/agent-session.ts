@@ -143,7 +143,7 @@ export type AgentSessionEvent =
 			messages: AgentMessage[];
 			willRetry: boolean;
 	  }
-	| { type: "agent_settled" }
+	| { type: "agent_settled"; cycleStartMs: number }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -336,6 +336,11 @@ export class AgentSession {
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
 	private _pendingBashMessages: BashExecutionMessage[] = [];
+
+	// Cycle tracking for REQ-046
+	private _cycleStartTime = 0;
+	/** Visible transcript of the last completed cycle (user message → final response). */
+	private _lastCycleTranscript: string | undefined = undefined;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -580,9 +585,15 @@ export class AgentSession {
 
 	private async _emitAgentSettled(): Promise<void> {
 		this._isAgentRunActive = false;
+		const cycleStartMs = this._cycleStartTime;
+		this._cycleStartTime = 0;
+
+		/* Store visible transcript of this cycle for /copy cycle. */
+		this._lastCycleTranscript = this._buildCycleTranscript();
+
 		try {
-			await this._extensionRunner.emit({ type: "agent_settled" });
-			this._emit({ type: "agent_settled" });
+			await this._extensionRunner.emit({ type: "agent_settled", cycleStartMs });
+			this._emit({ type: "agent_settled", cycleStartMs });
 		} finally {
 			this._resolveIdleWaitIfIdle();
 		}
@@ -1059,6 +1070,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._cycleStartTime = Date.now();
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -3302,6 +3314,51 @@ export class AgentSession {
 		return text.trim() || undefined;
 	}
 
+	/**
+	 * Get the full visible transcript of the last completed cycle.
+	 * Includes user message, assistant response, tool calls, and cycle duration.
+	 * Excludes hidden chain-of-thought and redacts secrets.
+	 * @returns Markdown transcript, or undefined if no cycle completed yet.
+	 */
+	getLastCycleTranscript(): string | undefined {
+		return this._lastCycleTranscript;
+	}
+
+	/**
+	 * Build a Markdown transcript of the last cycle from session messages.
+	 * Captures the last user→assistant turn with all visible tool activity.
+	 */
+	private _buildCycleTranscript(): string | undefined {
+		const messages = this.messages;
+		if (messages.length === 0) return undefined;
+
+		/* Find the last user message (start of cycle). */
+		let userIdx = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === "user") {
+				userIdx = i;
+				break;
+			}
+		}
+		if (userIdx < 0) return undefined;
+
+		const lines: string[] = [];
+		const duration = this._cycleStartTime > 0
+			? formatDuration(Date.now() - this._cycleStartTime)
+			: "unknown";
+
+		lines.push(`## Cycle Transcript`);
+		lines.push(`**Duration:** ${duration}`);
+		lines.push("");
+
+		for (let i = userIdx; i < messages.length; i++) {
+			const msg = messages[i];
+			lines.push(...formatMessageForTranscript(msg));
+		}
+
+		return lines.join("\n");
+	}
+
 	// =========================================================================
 	// Extension System
 	// =========================================================================
@@ -3329,4 +3386,103 @@ export class AgentSession {
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
 	}
+
+	/**
+	 * Build a Markdown transcript of the last cycle from session messages.
+	 * Captures the last user→assistant turn with all visible tool activity.
+	 */
+	private _buildCycleTranscript(): string | undefined {
+		const messages = this.messages;
+		if (messages.length === 0) return undefined;
+
+		/* Find the last user message (start of cycle). */
+		let userIdx = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === "user") {
+				userIdx = i;
+				break;
+			}
+		}
+		if (userIdx < 0) return undefined;
+
+		const lines: string[] = [];
+		const duration = this._cycleStartTime > 0
+			? formatElapsed(this._cycleStartTime, Date.now())
+			: "unknown";
+
+		lines.push("## Cycle Transcript");
+		lines.push(`**Duration:** ${duration}`);
+		lines.push("");
+
+		for (let i = userIdx; i < messages.length; i++) {
+			const msg = messages[i];
+			const role = (msg as any).role ?? "unknown";
+			lines.push(`### ${role}`);
+
+			if (Array.isArray((msg as any).content)) {
+				for (const block of (msg as any).content) {
+					if (block.type === "text" && typeof block.text === "string") {
+						lines.push(redactSecrets(block.text));
+					} else if (block.type === "tool_use") {
+						lines.push(`\`[tool: ${block.name}]\``);
+					} else if (block.type === "tool_result") {
+						const resultText = typeof block.content === "string"
+							? block.content : JSON.stringify(block.content);
+						if (resultText.length > 2000) {
+							lines.push(`\`\`\`\n${resultText.slice(0, 2000)}\n... (truncated)\n\`\`\``);
+						} else if (resultText) {
+							lines.push(`\`\`\`\n${resultText}\n\`\`\``);
+						}
+					}
+				}
+			} else if (typeof (msg as any).content === "string") {
+				lines.push(redactSecrets((msg as any).content));
+			}
+
+			lines.push("");
+		}
+
+		return lines.join("\n");
+	}
+}
+
+/** Format elapsed milliseconds as "HH hours, MM minutes, SS seconds". */
+function formatElapsed(startMs: number, endMs: number): string {
+	const totalSec = Math.round((endMs - startMs) / 1000);
+	const h = Math.floor(totalSec / 3600);
+	const m = Math.floor((totalSec % 3600) / 60);
+	const s = totalSec % 60;
+	const parts: string[] = [];
+	if (h > 0) parts.push(`${h} hour${h !== 1 ? "s" : ""}`);
+	if (m > 0) parts.push(`${m} minute${m !== 1 ? "s" : ""}`);
+	parts.push(`${s} second${s !== 1 ? "s" : ""}`);
+	return parts.join(", ");
+}
+
+/**
+ * Format elapsed time as a human-readable duration string.
+ * Short form for display: "Xh Ym Zs" or "Ym Zs" or "Zs".
+ */
+export function formatDuration(ms: number): string {
+	const totalSec = Math.round(ms / 1000);
+	const h = Math.floor(totalSec / 3600);
+	const m = Math.floor((totalSec % 3600) / 60);
+	const s = totalSec % 60;
+	if (h > 0) return `${h}h ${m}m ${s}s`;
+	if (m > 0) return `${m}m ${s}s`;
+	return `${s}s`;
+}
+
+/** Redact common secret patterns from text. */
+function redactSecrets(text: string): string {
+	let redacted = text;
+	/* Common API key / token patterns. */
+	redacted = redacted.replace(/\b(sk-[a-zA-Z0-9]{20,})\b/g, "[REDACTED]");
+	redacted = redacted.replace(/\b(AIza[0-9A-Za-z\-_]{35})\b/g, "[REDACTED]");
+	redacted = redacted.replace(/\b(Bearer\s+)[A-Za-z0-9\-_.~+\/]+=*/g, "$1[REDACTED]");
+	redacted = redacted.replace(/\b(AUTHORIZATION[=:]\s*)[^\s]+/gi, "$1[REDACTED]");
+	redacted = redacted.replace(/\b(api[_-]?key[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]");
+	redacted = redacted.replace(/\b(token[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]");
+	redacted = redacted.replace(/\b(secret[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]");
+	return redacted;
 }

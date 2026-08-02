@@ -55,7 +55,7 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import { type AgentSession, type AgentSessionEvent, parseSkillBlock, formatDuration } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import {
 	CACHE_TTL_MS,
@@ -2764,6 +2764,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/copy cycle" || text === "/copy --last-cycle") {
+				await this.handleCopyCycleCommand();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/name" || text.startsWith("/name ")) {
 				this.handleNameCommand(text);
 				this.editor.setText("");
@@ -3135,6 +3140,12 @@ export class InteractiveMode {
 				break;
 
 			case "agent_settled":
+				if (event.cycleStartMs > 0) {
+					const durationMs = Date.now() - event.cycleStartMs;
+					const formatted = formatDuration(durationMs);
+					/* Write directly to terminal (outside TUI) — REQ-046. */
+					console.log(`\nExecution time: ${formatted}`);
+				}
 				await this.checkShutdownRequested();
 				break;
 
@@ -5693,6 +5704,33 @@ export class InteractiveMode {
 			this.showStatus("Copied last agent message to clipboard");
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private async handleCopyCycleCommand(): Promise<void> {
+		const transcript = this.session.getLastCycleTranscript();
+		if (!transcript) {
+			this.showError("No completed cycle to copy yet.");
+			return;
+		}
+
+		try {
+			await copyToClipboard(transcript);
+			this.showStatus("Copied last cycle transcript to clipboard");
+		} catch {
+			/* Clipboard failed — write to fallback file. */
+			const fallbackPath = path.join(
+				this.session.sessionManager.getCwd(),
+				`cycle-transcript-${Date.now()}.md`,
+			);
+			try {
+				fs.writeFileSync(fallbackPath, transcript);
+				this.showStatus(`Clipboard unavailable. Transcript saved to: ${fallbackPath}`);
+			} catch (fileError) {
+				this.showError(
+					`Failed to copy or save transcript: ${fileError instanceof Error ? fileError.message : String(fileError)}`,
+				);
+			}
 		}
 	}
 
