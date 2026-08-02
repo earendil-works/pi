@@ -8,7 +8,9 @@
 	"sideEffects": [
 		"./dist/compat.js",
 		"./dist/images.js",
-		"./dist/providers/images/register-builtins.js"
+		"./dist/providers/images/register-builtins.js",
+		"./dist/providers/videos/register-builtins.js",
+		"./dist/videos.js"
 	],
 	"exports": {
 		".": {

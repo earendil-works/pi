@@ -2,6 +2,7 @@ import { createImagesModels, type ImagesProvider, type MutableImagesModels } fro
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { Api, Model } from "../types.ts";
+import { createVideosModels, type MutableVideosModels, type VideosProvider } from "../videos-models.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
@@ -20,6 +21,8 @@ import { huggingfaceProvider } from "./huggingface.ts";
 import { kimiCodingProvider } from "./kimi-coding.ts";
 import { minimaxProvider } from "./minimax.ts";
 import { minimaxCnProvider } from "./minimax-cn.ts";
+import { minimaxCnVideosProvider } from "./minimax-cn-videos.ts";
+import { minimaxVideosProvider } from "./minimax-videos.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
@@ -145,6 +148,20 @@ export function builtinImagesProviders(): ImagesProvider[] {
 export function builtinImagesModels(options?: CreateModelsOptions): MutableImagesModels {
 	const models = createImagesModels(options);
 	for (const provider of builtinImagesProviders()) {
+		models.setProvider(provider);
+	}
+	return models;
+}
+
+/** All built-in video-generation providers, freshly constructed. */
+export function builtinVideosProviders(): VideosProvider[] {
+	return [minimaxVideosProvider(), minimaxCnVideosProvider()];
+}
+
+/** A VideosModels collection with every built-in video-generation provider registered. */
+export function builtinVideosModels(options?: CreateModelsOptions): MutableVideosModels {
+	const models = createVideosModels(options);
+	for (const provider of builtinVideosProviders()) {
 		models.setProvider(provider);
 	}
 	return models;

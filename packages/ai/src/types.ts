@@ -31,6 +31,10 @@ export type KnownImagesApi = "openrouter-images";
 
 export type ImagesApi = KnownImagesApi | (string & {});
 
+export type KnownVideosApi = "minimax-videos";
+
+export type VideosApi = KnownVideosApi | (string & {});
+
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
@@ -75,6 +79,10 @@ export type ProviderId = KnownProvider | string;
 export type KnownImagesProvider = "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
+
+export type KnownVideosProvider = "minimax" | "minimax-cn";
+
+export type VideosProviderId = KnownVideosProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
@@ -252,6 +260,20 @@ export interface ProviderImages {
 	): Promise<AssistantImages>;
 }
 
+export interface ProviderVideos {
+	generateVideos(
+		model: VideosModel<VideosApi>,
+		context: VideosContext,
+		options?: VideosOptions,
+	): Promise<AssistantVideos>;
+	queryVideoGeneration?(
+		model: VideosModel<VideosApi>,
+		taskId: string,
+		options?: VideosOptions,
+	): Promise<AssistantVideos>;
+	downloadVideo?(model: VideosModel<VideosApi>, fileId: string, options?: VideosOptions): Promise<AssistantVideos>;
+}
+
 export interface ImagesOptions {
 	signal?: AbortSignal;
 	apiKey?: string;
@@ -302,6 +324,22 @@ export interface ImagesOptions {
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+export interface VideosOptions {
+	signal?: AbortSignal;
+	apiKey?: string;
+	fetch?: FetchFunction;
+	env?: ProviderEnv;
+	onPayload?: (payload: unknown, model: VideosModel<VideosApi>) => unknown | undefined | Promise<unknown | undefined>;
+	onResponse?: (response: ProviderResponse, model: VideosModel<VideosApi>) => void | Promise<void>;
+	headers?: ProviderHeaders;
+	timeoutMs?: number;
+	maxRetries?: number;
+	maxRetryDelayMs?: number;
+	metadata?: Record<string, unknown>;
+}
+
+export type ProviderVideosOptions = VideosOptions & Record<string, unknown>;
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
@@ -329,6 +367,12 @@ export type ImagesFunction<TApi extends ImagesApi = ImagesApi, TOptions extends 
 	options?: TOptions,
 ) => Promise<AssistantImages>;
 
+export type VideosFunction<TApi extends VideosApi = VideosApi, TOptions extends VideosOptions = VideosOptions> = (
+	model: VideosModel<TApi>,
+	context: VideosContext,
+	options?: TOptions,
+) => Promise<AssistantVideos>;
+
 export interface TextSignatureV1 {
 	v: 1;
 	id: string;
@@ -355,6 +399,11 @@ export interface ImageContent {
 	type: "image";
 	data: string; // base64 encoded image data
 	mimeType: string; // e.g., "image/jpeg", "image/png"
+}
+
+export interface VideoContent {
+	type: "video";
+	url: string;
 }
 
 export interface ToolCall {
@@ -435,11 +484,43 @@ export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
 
+export type VideoGenerationContentRole =
+	| "first_frame"
+	| "last_frame"
+	| "reference_image"
+	| "reference_video"
+	| "reference_audio";
+
+export interface VideoGenerationAsset {
+	type: "image_url" | "video_url" | "audio_url";
+	url: string;
+	role?: VideoGenerationContentRole;
+}
+
+export type VideosInputContent = TextContent | ImageContent | VideoGenerationAsset;
+export type VideosOutputContent = TextContent | VideoContent;
+
 export interface ImagesContext {
 	input: ImagesInputContent[];
 }
 
+export interface VideosContext {
+	prompt?: string;
+	input?: VideosInputContent[];
+	firstFrameImage?: string;
+	promptOptimizer?: boolean;
+	fastPretreatment?: boolean;
+	resolution?: "2K" | (string & {});
+	duration?: number;
+	ratio?: "adaptive" | "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16" | (string & {});
+	callbackUrl?: string;
+	aigcWatermark?: boolean;
+}
+
 export type ImagesStopReason = "stop" | "error" | "aborted";
+
+export type VideosStopReason = ImagesStopReason | "in_progress";
+export type VideoGenerationStatus = "in_progress" | "completed" | "failed" | "deleted";
 
 export interface AssistantImages {
 	api: ImagesApi;
@@ -449,6 +530,20 @@ export interface AssistantImages {
 	responseId?: string;
 	usage?: Usage;
 	stopReason: ImagesStopReason;
+	errorMessage?: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
+export interface AssistantVideos {
+	api: VideosApi;
+	provider: VideosProviderId;
+	model: string;
+	output: VideosOutputContent[];
+	responseId?: string;
+	taskId?: string;
+	fileId?: string;
+	status?: VideoGenerationStatus;
+	stopReason: VideosStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
 }
@@ -792,4 +887,24 @@ export interface ImagesModel<TApi extends ImagesApi>
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+}
+
+export interface VideosModel<TApi extends VideosApi> {
+	id: string;
+	name: string;
+	api: TApi;
+	provider: VideosProviderId;
+	baseUrl: string;
+	apiVersion: "v1" | "v2";
+	input: ("text" | "image" | "video" | "audio")[];
+	output: ("video" | "audio")[];
+	resolutions: string[];
+	durationSeconds: { min: number; max: number; integer: boolean };
+	cost: {
+		outputVideo: number;
+		inputReferenceVideo: number;
+		inputReferenceAudio: number;
+		additionalReferenceImage: number;
+	};
+	headers?: Record<string, string>;
 }

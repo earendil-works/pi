@@ -45,3 +45,4 @@ export { contentText } from "./utils/text.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";
+export * from "./videos-models.ts";
