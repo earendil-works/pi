@@ -89,16 +89,18 @@ describe("visibleWidth", () => {
 		assert.strictEqual(visibleWidth("か\u3099"), 2);
 	});
 
-	it("counts Myanmar marks that terminals allocate cells for", () => {
-		assert.strictEqual(visibleWidth("ကာ"), 2);
-		assert.strictEqual(visibleWidth("ကေ"), 2);
-		assert.strictEqual(visibleWidth("က်"), 2);
-		assert.strictEqual(visibleWidth("ကျ"), 2);
-		assert.strictEqual(visibleWidth("ကြ"), 2);
-		assert.strictEqual(visibleWidth("ကဳ"), 2);
-		assert.strictEqual(visibleWidth("ကဴ"), 2);
-		assert.strictEqual(visibleWidth("ကဵ"), 2);
-		assert.strictEqual(visibleWidth("ကး"), 2);
+	it("keeps Myanmar grapheme clusters at their normal cell width", () => {
+		assert.strictEqual(visibleWidth("မြန်မာစာ"), 4);
+		assert.strictEqual(visibleWidth("မင်္ဂလာပါ"), 4);
+		assert.strictEqual(visibleWidth("ကာ"), 1);
+		assert.strictEqual(visibleWidth("ကေ"), 1);
+		assert.strictEqual(visibleWidth("က်"), 1);
+		assert.strictEqual(visibleWidth("ကျ"), 1);
+		assert.strictEqual(visibleWidth("ကြ"), 1);
+		assert.strictEqual(visibleWidth("ကဳ"), 1);
+		assert.strictEqual(visibleWidth("ကဴ"), 1);
+		assert.strictEqual(visibleWidth("ကဵ"), 1);
+		assert.strictEqual(visibleWidth("ကး"), 1);
 		assert.strictEqual(visibleWidth("ကို"), 1);
 		assert.strictEqual(visibleWidth("က္"), 1);
 	});

@@ -43,8 +43,7 @@ const nonPrintingCharRegex = /^(?:\p{Default_Ignorable_Code_Point}|\p{Control}|\
 const markCharRegex = /^\p{Mark}$/v;
 // Marks that terminals allocate cells for when attached to a base character.
 // This includes Unicode spacing marks and non-spacing exceptions in legacy wcwidth tables.
-const terminalSpacingMarkRegex =
-	/^(?:[\p{Spacing_Mark}--[\u1734\u302E\u302F]]|[\u065F\u0F7F\u102B\u102C\u1031\u1033-\u1035\u1038\u103A-\u103E])+$/v;
+const terminalSpacingMarkRegex = /^(?:[\p{Spacing_Mark}--[\u1734\u302E\u302F\p{Script=Myanmar}]]|[\u065F\u0F7F])+$/v;
 const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
 
 // Cache for non-ASCII strings
@@ -220,7 +219,8 @@ function graphemeWidth(segment: string): number {
 			followsMark = true;
 		} else if (!nonPrintingCharRegex.test(char)) {
 			const c = char.codePointAt(0)!;
-			if (followsMark || (c >= 0xff00 && c <= 0xffef)) {
+			const isMyanmar = /\p{Script=Myanmar}/u.test(char);
+			if (!isMyanmar && (followsMark || (c >= 0xff00 && c <= 0xffef))) {
 				// halfwidth + fullwidth forms
 				width += eastAsianWidth(c);
 			} else if (c === 0x0e33 || c === 0x0eb3) {
