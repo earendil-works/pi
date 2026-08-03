@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
 import type { AgentSessionEvent, RpcExtensionUIRequest, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { getSocketPath } from "../config.ts";
@@ -21,6 +21,10 @@ import {
 	type StopRequest,
 	type StopResponse,
 } from "./protocol.ts";
+
+// Cap buffered input per connection so a client that never sends a newline
+// cannot grow memory without bound.
+const MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 export interface IpcRequestHandler {
 	(request: SpawnRequest): Promise<SpawnResponse | ErrorResponse> | SpawnResponse | ErrorResponse;
@@ -52,6 +56,10 @@ export async function startIpcServer(handler: IpcRequestHandler): Promise<Server
 
 		socket.on("data", async (chunk: Buffer | string) => {
 			buffer += chunk.toString();
+			if (buffer.length > MAX_BUFFER_BYTES) {
+				socket.destroy();
+				return;
+			}
 			const newlineIndex = buffer.indexOf("\n");
 			if (newlineIndex === -1) {
 				return;
@@ -96,6 +104,10 @@ export async function startIpcServer(handler: IpcRequestHandler): Promise<Server
 					let rpcRequestQueue = Promise.resolve();
 					socket.on("data", (rpcChunk: Buffer | string) => {
 						buffer += rpcChunk.toString();
+						if (buffer.length > MAX_BUFFER_BYTES) {
+							socket.destroy();
+							return;
+						}
 						for (;;) {
 							const rpcNewlineIndex = buffer.indexOf("\n");
 							if (rpcNewlineIndex === -1) {
@@ -152,6 +164,9 @@ export async function startIpcServer(handler: IpcRequestHandler): Promise<Server
 		server.once("error", reject);
 		server.listen(socketPath, () => {
 			server.off("error", reject);
+			// Restrict the socket to the owning user (matches the 0o600 default of
+			// the non-legacy transport); otherwise perms depend on the umask.
+			chmodSync(socketPath, 0o600);
 			resolve();
 		});
 	});
