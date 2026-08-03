@@ -13,6 +13,7 @@
 ### Added
 
 - Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
+- Added TUI lifecycle and render-state handoff APIs for replacing renderers without replaying main-screen content.
 - Exported the bundled `Marked` parser and token types.
 - Added width-aware source transforms to the `Markdown` component.
 - Added interface-compatible main-screen and alternate-screen TUI renderers with application-owned scrolling ([#7304](https://github.com/earendil-works/pi/issues/7304)).

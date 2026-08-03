@@ -117,6 +117,22 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("invalidates overlays with an explicit layout root", () => {
+		const tui = new TuiAltScreen(new VirtualTerminal());
+		const overlay = new Text("overlay", 0, 0);
+		let invalidated = false;
+		overlay.invalidate = () => {
+			invalidated = true;
+		};
+		tui.setLayoutRoot(new Text("root", 0, 0));
+		tui.showOverlay(overlay);
+
+		tui.invalidate();
+
+		assert.strictEqual(invalidated, true);
+		tui.stop();
+	});
+
 	it("routes wheel input to the scroll view under the pointer", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);

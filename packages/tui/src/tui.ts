@@ -283,6 +283,11 @@ export function compositeTuiLine(
 
 export type TuiMode = "regular" | "fullscreen";
 
+export interface TuiStopOptions {
+	/** Leave renderer output in place for another TUI taking over the same terminal. */
+	preserveScreen?: boolean;
+}
+
 export interface TUI extends Component {
 	readonly mode: TuiMode;
 	children: Component[];
@@ -301,7 +306,8 @@ export interface TUI extends Component {
 	hideOverlay(): void;
 	hasOverlay(): boolean;
 	start(): void;
-	stop(): void;
+	stop(options?: TuiStopOptions): void;
+	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
@@ -348,7 +354,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private focusOrderCounter = 0;
 	private overlayStack: OverlayStackEntry[] = [];
 
-	protected get hasOverlayEntries(): boolean {
+	get hasOverlayEntries(): boolean {
 		return this.overlayStack.length > 0;
 	}
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
@@ -370,9 +376,9 @@ export abstract class TuiBase extends Container implements TUI {
 
 	protected afterTerminalStart(): void {}
 
-	protected beforeTerminalStop(): void {}
+	protected beforeTerminalStop(_options: TuiStopOptions): void {}
 
-	protected afterTerminalStop(): void {}
+	protected afterTerminalStop(_options: TuiStopOptions): void {}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
@@ -402,6 +408,10 @@ export abstract class TuiBase extends Container implements TUI {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	getFocusedComponent(): Component | null {
+		return this.focusedComponent;
 	}
 
 	setFocus(component: Component | null): void {
@@ -673,8 +683,8 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	override invalidate(): void {
-		super.invalidate();
-		for (const overlay of this.overlayStack) overlay.component.invalidate?.();
+		for (const root of this.getMountedRoots()) root.invalidate();
+		for (const overlay of this.overlayStack) overlay.component.invalidate();
 	}
 
 	start(): void {
@@ -731,7 +741,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.terminal.write("\x1b[16t");
 	}
 
-	stop(): void {
+	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
@@ -740,10 +750,21 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
-		this.beforeTerminalStop();
+		this.beforeTerminalStop(options);
 		this.terminal.showCursor();
 		this.terminal.stop();
-		this.afterTerminalStop();
+		this.afterTerminalStop(options);
+	}
+
+	renderNow(force = false): void {
+		if (force) this.resetRenderState();
+		this.renderRequested = false;
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
+		this.lastRenderAt = performance.now();
+		this.doRender();
 	}
 
 	requestRender(force = false): void {

@@ -1,9 +1,13 @@
-import type { Component, Terminal } from "@earendil-works/pi-tui";
+import type { Component, Terminal, TUI } from "@earendil-works/pi-tui";
 import { Container, isViewportTUI, Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { UiMode } from "../src/core/settings-manager.ts";
-import { createInteractiveTui, InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import {
+	createInteractiveTui,
+	createInteractiveTuiReference,
+	InteractiveMode,
+} from "../src/modes/interactive/interactive-mode.ts";
 
 const clipboardMocks = vi.hoisted(() => ({
 	copyToClipboard: vi.fn<(text: string) => Promise<void>>(),
@@ -14,10 +18,22 @@ vi.mock("../src/utils/clipboard.ts", () => clipboardMocks);
 
 class RecordingTerminal extends VirtualTerminal implements Terminal {
 	readonly writes: string[] = [];
+	startCount = 0;
+	stopCount = 0;
+
+	override start(onInput: (data: string) => void, onResize: () => void): void {
+		this.startCount += 1;
+		super.start(onInput, onResize);
+	}
 
 	override write(data: string): void {
 		this.writes.push(data);
 		super.write(data);
+	}
+
+	override stop(): void {
+		this.stopCount += 1;
+		super.stop();
 	}
 }
 
@@ -50,6 +66,60 @@ describe("createInteractiveTui", () => {
 		await altTerminal.waitForRender();
 		expect(altTerminal.writes.some((write) => write.includes("\x1b[?1049h"))).toBe(true);
 		altTui.stop();
+	});
+
+	it("replaces the renderer while preserving components and focus", async () => {
+		const terminal = new RecordingTerminal(40, 8);
+		const renderer = createInteractiveTui({
+			uiMode: "regular",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+		});
+		let stableUi: TUI;
+		const invalidatedModes: UiMode[] = [];
+		const component: Component & { focused: boolean } = {
+			focused: false,
+			render: () => ["content"],
+			invalidate: () => invalidatedModes.push(stableUi.mode),
+		};
+		renderer.addChild(component);
+		renderer.setFocus(component);
+
+		type SwitchContext = {
+			renderer: ReturnType<typeof createInteractiveTui>;
+			ui: TUI;
+			fullscreenLayoutRoot: Component;
+			options: { uiMode?: UiMode };
+			themeController: { rebindTui: () => void };
+			extensionTerminalInputSubscriptions: Set<never>;
+		};
+		const context = Object.assign(Object.create(InteractiveMode.prototype), {
+			renderer,
+			ui: undefined as unknown as TUI,
+			fullscreenLayoutRoot: component,
+			options: { uiMode: "regular" as UiMode },
+			themeController: { rebindTui: () => {} },
+			extensionTerminalInputSubscriptions: new Set<never>(),
+		}) as SwitchContext;
+		stableUi = createInteractiveTuiReference(() => context.renderer);
+		context.ui = stableUi;
+		const { switchUiMode } = InteractiveMode.prototype as unknown as {
+			switchUiMode(this: SwitchContext, mode: UiMode, restoreProgress?: boolean): boolean;
+		};
+
+		renderer.start();
+		await terminal.waitForRender();
+		expect(switchUiMode.call(context, "fullscreen", false)).toBe(true);
+		await terminal.waitForRender();
+
+		expect(stableUi.mode).toBe("fullscreen");
+		expect(context.renderer.children).toEqual([component]);
+		expect(context.renderer.getFocusedComponent()).toBe(component);
+		expect(component.focused).toBe(true);
+		expect(invalidatedModes).toEqual(["fullscreen"]);
+		expect([terminal.startCount, terminal.stopCount]).toEqual([2, 1]);
+		stableUi.stop();
 	});
 });
 

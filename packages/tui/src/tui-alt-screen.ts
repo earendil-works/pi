@@ -22,7 +22,15 @@ import {
 	setCapabilities,
 	type TerminalCapabilities,
 } from "./terminal-image.ts";
-import { type Component, CURSOR_MARKER, compositeTuiLine, TuiBase, VIEWPORT_TUI, type ViewportTUI } from "./tui.ts";
+import {
+	type Component,
+	CURSOR_MARKER,
+	compositeTuiLine,
+	TuiBase,
+	type TuiStopOptions,
+	VIEWPORT_TUI,
+	type ViewportTUI,
+} from "./tui.ts";
 import {
 	extractAnsiCode,
 	getGraphemeCellRange,
@@ -155,11 +163,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.layoutRoot?.render(width) ?? super.render(width);
 	}
 
-	override invalidate(): void {
-		super.invalidate();
-		this.layoutRoot?.invalidate();
-	}
-
 	protected override getMountedRoots(): readonly Component[] {
 		return this.layoutRoot ? [this.layoutRoot] : this.children;
 	}
@@ -194,7 +197,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		);
 	}
 
-	protected override beforeTerminalStop(): void {
+	protected override beforeTerminalStop(_options: TuiStopOptions): void {
 		this.stopSelectionAutoScroll();
 		this.selectionPressActive = false;
 		this.stopScrollbarHover();
@@ -207,21 +210,25 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.uploadedKittyImages.clear();
 	}
 
-	protected override afterTerminalStop(): void {
+	protected override afterTerminalStop(options: TuiStopOptions): void {
 		if (!this.altScreenActive) return;
 		this.altScreenActive = false;
-		const width = Math.max(1, this.terminal.columns);
-		const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
-		this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
-			(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
-		);
-		let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
-		for (let row = 0; row < this.lastDocument.length; row++) {
-			if (row > 0) buffer += "\r\n";
-			buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
+		if (options.preserveScreen) {
+			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
+		} else {
+			const width = Math.max(1, this.terminal.columns);
+			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
+				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
+			);
+			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
+			for (let row = 0; row < this.lastDocument.length; row++) {
+				if (row > 0) buffer += "\r\n";
+				buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
+			}
+			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
+			this.terminal.write(buffer);
 		}
-		buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
-		this.terminal.write(buffer);
 		if (this.savedCapabilities) {
 			setCapabilities(this.savedCapabilities);
 			this.savedCapabilities = undefined;

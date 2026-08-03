@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
-import { type TUI, TuiBase } from "./tui.ts";
+import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
@@ -43,6 +43,16 @@ function isTermuxSession(): boolean {
 	return Boolean(process.env.TERMUX_VERSION);
 }
 
+export interface TuiMainScreenRenderState {
+	previousLines: string[];
+	previousWidth: number;
+	previousHeight: number;
+	cursorRow: number;
+	hardwareCursorRow: number;
+	maxLinesRendered: number;
+	previousViewportTop: number;
+}
+
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
@@ -55,6 +65,29 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
 
+	captureRenderState(): TuiMainScreenRenderState {
+		return {
+			previousLines: [...this.previousLines],
+			previousWidth: this.previousWidth,
+			previousHeight: this.previousHeight,
+			cursorRow: this.cursorRow,
+			hardwareCursorRow: this.hardwareCursorRow,
+			maxLinesRendered: this.maxLinesRendered,
+			previousViewportTop: this.previousViewportTop,
+		};
+	}
+
+	restoreRenderState(state: TuiMainScreenRenderState): void {
+		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
+		this.previousKittyImageIds = new Set();
+		this.previousWidth = state.previousWidth;
+		this.previousHeight = state.previousHeight;
+		this.cursorRow = state.cursorRow;
+		this.hardwareCursorRow = state.hardwareCursorRow;
+		this.maxLinesRendered = state.maxLinesRendered;
+		this.previousViewportTop = state.previousViewportTop;
+	}
+
 	protected override resetRenderState(): void {
 		this.previousLines = [];
 		this.previousWidth = -1;
@@ -65,8 +98,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousViewportTop = 0;
 	}
 
-	protected override beforeTerminalStop(): void {
-		if (this.previousLines.length === 0) return;
+	protected override beforeTerminalStop(options: TuiStopOptions): void {
+		if (options.preserveScreen || this.previousLines.length === 0) return;
 		this.terminal.write(" ");
 		const targetRow = this.previousLines.length;
 		const lineDiff = targetRow - this.hardwareCursorRow;
