@@ -115,6 +115,14 @@ export interface ProviderResponse {
 
 export interface StreamOptions {
 	temperature?: number;
+	/**
+	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
+	 * fields, so keys here override them. Lets custom OpenAI-compatible servers (llama.cpp, vLLM,
+	 * SGLang, ...) receive parameters pi does not model, e.g. `top_p`, `top_k`, `min_p`,
+	 * `repetition_penalty`. Merged over `Model.samplingParams` per key. Only applied by
+	 * OpenAI-compatible adapters (completions, responses, Azure responses); other APIs ignore it.
+	 */
+	samplingParams?: Record<string, unknown>;
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
@@ -774,6 +782,8 @@ export interface Model<TApi extends Api> {
 	cost: ModelCost;
 	contextWindow: number;
 	maxTokens: number;
+	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
+	samplingParams?: Record<string, unknown>;
 	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
