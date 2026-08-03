@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { type BashOperations, createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
 import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
+import { DEFAULT_MAX_BYTES } from "../src/core/tools/truncate.ts";
 import {
 	createEditTool,
 	createFindTool,
@@ -183,6 +184,22 @@ describe("Coding Agent Tools", () => {
 			expect(result.details?.truncation?.truncatedBy).toBe("lines");
 			expect(result.details?.truncation?.totalLines).toBe(2500);
 			expect(result.details?.truncation?.outputLines).toBe(2000);
+		});
+
+		it("should shell-quote the path in the bash fallback suggestion when the first line exceeds the byte limit", async () => {
+			const testFile = join(testDir, "quote'file.txt");
+			// First line alone exceeds DEFAULT_MAX_BYTES (50KB).
+			writeFileSync(testFile, "x".repeat(DEFAULT_MAX_BYTES + 1) + "\nsecond line");
+
+			const result = await readTool.execute("test-call-sed", { path: testFile });
+			const output = getTextOutput(result);
+
+			// Path must be single-quoted with proper escaping so the suggested command
+			// survives paths containing quotes.
+			const expectedEscaped = testFile.replace(/'/g, "'\\''");
+			expect(output).toContain(`Use bash: sed -n '1p' '${expectedEscaped}' | head -c`);
+			// The raw, unescaped path must not appear in the suggestion.
+			expect(output).not.toContain(`sed -n '1p' ${testFile}`);
 		});
 
 		it("should detect image MIME type from file magic (not extension)", async () => {
