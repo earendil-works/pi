@@ -1,0 +1,4 @@
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2025@sha256:d5bbb83057f6bc2b6aeba5d01ec80a53003aba9bc84a6b1ebe780570cd52558a
+
+WORKDIR C:\workspace

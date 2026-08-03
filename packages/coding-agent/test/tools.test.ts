@@ -85,6 +85,23 @@ describe("Coding Agent Tools", () => {
 			await expect(readTool.execute("test-call-2", { path: testFile })).rejects.toThrow(/ENOENT|not found/i);
 		});
 
+		it("should support path resolution delegated to a remote filesystem", async () => {
+			const resolvePath = vi.fn(async () => "/remote/workspace/test.txt");
+			const access = vi.fn(async () => {});
+			const readFile = vi.fn(async () => Buffer.from("remote content"));
+			const remoteReadTool = createReadTool("/remote/workspace", {
+				operations: { access, readFile },
+				resolvePath,
+			});
+
+			const result = await remoteReadTool.execute("test-call-remote", { path: "test.txt" });
+
+			expect(resolvePath).toHaveBeenCalledWith("test.txt", "/remote/workspace");
+			expect(access).toHaveBeenCalledWith("/remote/workspace/test.txt");
+			expect(readFile).toHaveBeenCalledWith("/remote/workspace/test.txt");
+			expect(getTextOutput(result)).toBe("remote content");
+		});
+
 		it("should truncate files exceeding line limit", async () => {
 			const testFile = join(testDir, "large.txt");
 			const lines = Array.from({ length: 2500 }, (_, i) => `Line ${i + 1}`);

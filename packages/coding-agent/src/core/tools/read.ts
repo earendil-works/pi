@@ -60,6 +60,8 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Custom path resolution. Default: local filesystem-aware resolution. */
+	resolvePath?: (filePath: string, cwd: string) => string | Promise<string>;
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -206,6 +208,7 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
+	const pathResolver = options?.resolvePath ?? resolveReadPathAsync;
 	return {
 		name: "read",
 		label: "read",
@@ -235,7 +238,7 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
-							const absolutePath = await resolveReadPathAsync(path, cwd);
+							const absolutePath = await pathResolver(path, cwd);
 							if (aborted) return;
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);

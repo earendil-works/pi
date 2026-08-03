@@ -10,6 +10,7 @@
 ### Added
 
 - Added built-in Baseten provider support with `BASETEN_API_KEY` authentication and `zai-org/GLM-5.2` as the default model.
+- Added `ReadToolOptions.resolvePath` for read tools backed by extension-provided filesystems.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added runtime switching between regular and fullscreen UI modes through `/settings`.
