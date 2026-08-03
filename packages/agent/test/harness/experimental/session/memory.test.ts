@@ -25,7 +25,7 @@ function operationStarted(id: string, lane = "main"): NewRecord {
 		id,
 		lane,
 		sourceLeafId: null,
-		intent: { kind: "run", initialMessages: [] },
+		intent: { kind: "run", originalPrompt: [], initialMessages: [] },
 	};
 }
 

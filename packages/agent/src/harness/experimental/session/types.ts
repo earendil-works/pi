@@ -87,6 +87,9 @@ export interface OperationStartedRecord extends RecordBase {
 	intent:
 		| {
 				kind: "run";
+				/** Normalized caller input before before_run; kept for suspended operations and before_resume. */
+				originalPrompt: AgentMessage[];
+				/** Captured nextRun items, then the prompt, then before_run injections. */
 				initialMessages: ProvisionedEntry[];
 				systemPromptOverride?: string;
 				resumeData?: { [extensionId: string]: JsonValue };
@@ -119,12 +122,26 @@ export interface OperationFinishedRecord extends RecordBase {
 	error?: { code: string; message: string };
 }
 
-export interface TaskAttemptRecord extends RecordBase {
-	type: "task_attempt";
-	runId: string;
-	task: "step" | "compaction" | "branch_summary";
-	attempt: number;
-}
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
+export type TaskAttemptRecord = RecordBase &
+	(
+		| {
+				type: "task_attempt";
+				runId: string;
+				task: "step" | "branch_summary";
+				attempt: number;
+				compactionReason?: never;
+		  }
+		| {
+				type: "task_attempt";
+				runId: string;
+				task: "compaction";
+				attempt: number;
+				/** Persists why compaction summary generation started so recovery resumes the same work. */
+				compactionReason: CompactionReason;
+		  }
+	);
 
 export interface ToolStartedRecord extends RecordBase {
 	type: "tool_started";
