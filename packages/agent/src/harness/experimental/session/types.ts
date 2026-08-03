@@ -325,6 +325,7 @@ export type SessionErrorCode =
 	| "not_found"
 	| "already_exists"
 	| "invalid_entry"
+	| "invalid_payload"
 	| "invalid_lane"
 	| "invalid_query"
 	| "invalid_fork_target"

@@ -19,21 +19,104 @@ import type {
 } from "./types.ts";
 import { SessionError } from "./types.ts";
 
-class LaneSessionTree implements SessionTree {
-	private readonly storage: SessionStorage;
-	private readonly lane: string;
-	private readonly idGenerator: IdGenerator;
+type JsonValidationFrame = { value: unknown } | { exit: object };
 
-	constructor(storage: SessionStorage, lane: string, idGenerator: IdGenerator) {
+function invalidPayload(reason: string): never {
+	throw new SessionError("invalid_payload", `Durable payload ${reason}`);
+}
+
+function assertJsonSerializable(value: unknown): void {
+	const active = new WeakSet<object>();
+	const stack: JsonValidationFrame[] = [{ value }];
+	while (stack.length > 0) {
+		const frame = stack.pop()!;
+		if ("exit" in frame) {
+			active.delete(frame.exit);
+			continue;
+		}
+		const candidate = frame.value;
+		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") continue;
+		if (typeof candidate === "number") {
+			if (!Number.isFinite(candidate)) invalidPayload("contains a non-finite number");
+			continue;
+		}
+		if (typeof candidate !== "object") invalidPayload(`contains ${typeof candidate}`);
+		if (active.has(candidate)) invalidPayload("contains a cycle");
+		active.add(candidate);
+		stack.push({ exit: candidate });
+
+		if (Array.isArray(candidate)) {
+			if (Object.getPrototypeOf(candidate) !== Array.prototype) {
+				invalidPayload("contains a non-standard array");
+			}
+			if (
+				Object.getOwnPropertySymbols(candidate).length > 0 ||
+				Object.getOwnPropertyNames(candidate).length !== candidate.length + 1
+			) {
+				invalidPayload("contains an array with unsupported properties");
+			}
+			for (let index = candidate.length - 1; index >= 0; index--) {
+				if (!Object.hasOwn(candidate, index)) invalidPayload("contains a sparse array");
+				const descriptor = Object.getOwnPropertyDescriptor(candidate, index)!;
+				if (!("value" in descriptor)) invalidPayload("contains an array accessor");
+				stack.push({ value: descriptor.value });
+			}
+			continue;
+		}
+
+		const prototype = Object.getPrototypeOf(candidate);
+		if (prototype !== Object.prototype && prototype !== null) {
+			invalidPayload("contains a non-plain object");
+		}
+		if (Object.getOwnPropertySymbols(candidate).length > 0) {
+			invalidPayload("contains a symbol-keyed property");
+		}
+		const keys = Object.keys(candidate);
+		if (Object.getOwnPropertyNames(candidate).length !== keys.length) {
+			invalidPayload("contains a non-enumerable property");
+		}
+		for (let index = keys.length - 1; index >= 0; index--) {
+			const descriptor = Object.getOwnPropertyDescriptor(candidate, keys[index]!)!;
+			if (!("value" in descriptor)) invalidPayload("contains an accessor");
+			stack.push({ value: descriptor.value });
+		}
+	}
+}
+
+export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
+	private readonly storage: SessionStorage<TMetadata>;
+	readonly idGenerator: IdGenerator;
+
+	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
 		this.storage = storage;
-		this.lane = lane;
-		this.idGenerator = idGenerator;
+		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
+	}
+
+	async getMetadata(): Promise<TMetadata> {
+		return this.storage.getMetadata();
+	}
+
+	view(lane: string): SessionTree {
+		if (lane === "main") return this;
+		return {
+			getLeafId: () => this.getLeafIdForLane(lane),
+			getEntry: (id) => this.getEntry(id),
+			getStats: () => this.getStats(),
+			getName: () => this.getName(),
+			setName: (name) => this.setName(name),
+			getLabel: (targetId) => this.getLabel(targetId),
+			setLabel: (targetId, label) => this.setLabel(targetId, label),
+			findEntries: (query) => this.findEntries(query),
+			findEntry: (query) => this.findEntry(query),
+			findEntriesOnBranch: (query) => this.findEntriesOnLane(lane, query),
+			findEntryOnBranch: (query) => this.findEntryOnLane(lane, query),
+			appendMessage: (message) => this.appendMessageToLane(lane, message),
+			appendCustomEntry: (customType, data) => this.appendCustomEntryToLane(lane, customType, data),
+		};
 	}
 
 	async getLeafId(): Promise<string | null> {
-		const pointer = (await this.storage.getLanes()).find(({ lane }) => lane === this.lane);
-		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${this.lane}`);
-		return pointer.leafId;
+		return this.getLeafIdForLane("main");
 	}
 
 	async getEntry(id: string): Promise<Entry | undefined> {
@@ -68,105 +151,20 @@ class LaneSessionTree implements SessionTree {
 		return (await this.findEntries({ ...query, limit: 1 }))[0];
 	}
 
-	async findEntriesOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry[]> {
-		const start = query.start ?? (await this.getLeafId());
-		if (start === null) return [];
-		return this.storage.findEntriesOnBranch({
-			...query,
-			start,
-		});
-	}
-
-	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
-		return (await this.findEntriesOnBranch({ ...query, limit: 1 }))[0];
-	}
-
-	async appendMessage(message: AgentMessage): Promise<string> {
-		const entry = await this.storage.appendEntry(
-			{ type: "message", id: this.idGenerator.next(), message },
-			this.lane,
-		);
-		return entry.id;
-	}
-
-	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		const entry = await this.storage.appendEntry(
-			{ type: "custom", id: this.idGenerator.next(), customType, data },
-			this.lane,
-		);
-		return entry.id;
-	}
-}
-
-export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
-	private readonly storage: SessionStorage<TMetadata>;
-	private readonly main: LaneSessionTree;
-	readonly idGenerator: IdGenerator;
-
-	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
-		this.storage = storage;
-		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
-		this.main = new LaneSessionTree(storage, "main", this.idGenerator);
-	}
-
-	async getMetadata(): Promise<TMetadata> {
-		return this.storage.getMetadata();
-	}
-
-	view(lane: string): SessionTree {
-		return lane === "main" ? this.main : new LaneSessionTree(this.storage, lane, this.idGenerator);
-	}
-
-	async getLeafId(): Promise<string | null> {
-		return this.main.getLeafId();
-	}
-
-	async getEntry(id: string): Promise<Entry | undefined> {
-		return this.main.getEntry(id);
-	}
-
-	async getStats(): Promise<SessionStats> {
-		return this.main.getStats();
-	}
-
-	async getName(): Promise<string | undefined> {
-		return this.main.getName();
-	}
-
-	async setName(name: string): Promise<void> {
-		await this.main.setName(name);
-	}
-
-	async getLabel(targetId: string): Promise<string | undefined> {
-		return this.main.getLabel(targetId);
-	}
-
-	async setLabel(targetId: string, label: string | undefined): Promise<void> {
-		await this.main.setLabel(targetId, label);
-	}
-
-	async findEntries(query?: EntryQuery): Promise<Entry[]> {
-		return this.main.findEntries(query);
-	}
-
-	async findEntry(query?: EntryQuery): Promise<Entry | undefined> {
-		return this.main.findEntry(query);
-	}
-
 	async findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]> {
-		return this.main.findEntriesOnBranch(query);
+		return this.findEntriesOnLane("main", query);
 	}
 
 	async findEntryOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry | undefined> {
-		return this.main.findEntryOnBranch(query);
+		return this.findEntryOnLane("main", query);
 	}
 
 	async appendMessage(message: AgentMessage): Promise<string> {
-		return this.main.appendMessage(message);
+		return this.appendMessageToLane("main", message);
 	}
 
 	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		return this.main.appendCustomEntry(customType, data);
+		return this.appendCustomEntryToLane("main", customType, data);
 	}
 
 	async getLanes(): Promise<LanePointer[]> {
@@ -182,11 +180,11 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
-		return this.storage.appendEntry(entry, lane);
+		return this.commitEntry(entry, lane);
 	}
 
 	async appendRecord(record: NewRecord): Promise<LaneRecord> {
-		return this.storage.appendRecord(record);
+		return this.commitRecord(record);
 	}
 
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
@@ -195,5 +193,46 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 
 	async getLog(options?: LogOptions): Promise<LogItem[]> {
 		return this.storage.getLog(options);
+	}
+
+	private async getLeafIdForLane(lane: string): Promise<string | null> {
+		const pointer = (await this.storage.getLanes()).find((candidate) => candidate.lane === lane);
+		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+		return pointer.leafId;
+	}
+
+	private async findEntriesOnLane(lane: string, query: EntryQuery & BranchBounds = {}): Promise<Entry[]> {
+		const start = query.start ?? (await this.getLeafIdForLane(lane));
+		if (start === null) return [];
+		return this.storage.findEntriesOnBranch({ ...query, start });
+	}
+
+	private async findEntryOnLane(lane: string, query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
+		return (await this.findEntriesOnLane(lane, { ...query, limit: 1 }))[0];
+	}
+
+	private async appendMessageToLane(lane: string, message: AgentMessage): Promise<string> {
+		const entry = await this.commitEntry({ type: "message", id: this.idGenerator.next(), message }, lane);
+		return entry.id;
+	}
+
+	private async appendCustomEntryToLane(lane: string, customType: string, data?: unknown): Promise<string> {
+		const entry = await this.commitEntry(
+			data === undefined
+				? { type: "custom", id: this.idGenerator.next(), customType }
+				: { type: "custom", id: this.idGenerator.next(), customType, data },
+			lane,
+		);
+		return entry.id;
+	}
+
+	private async commitEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		assertJsonSerializable(entry);
+		return this.storage.appendEntry(entry, lane);
+	}
+
+	private async commitRecord(record: NewRecord): Promise<LaneRecord> {
+		assertJsonSerializable(record);
+		return this.storage.appendRecord(record);
 	}
 }

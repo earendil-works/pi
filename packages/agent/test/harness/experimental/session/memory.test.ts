@@ -384,6 +384,49 @@ describe("Session", () => {
 		expect(await session.getLog()).toEqual([{ kind: "entry", seq: entry.seq, lane: "main", entry }]);
 	});
 
+	it("rejects non-JSON entry payloads before committing storage state", async () => {
+		const session = new Session(createStorage(), { idGenerator: { next: () => "invalid-entry" } });
+		const cyclic: { self?: unknown } = {};
+		cyclic.self = cyclic;
+
+		for (const data of [{ value: 1n }, { value: Number.NaN }, { value: new Map() }, cyclic]) {
+			await expect(session.appendCustomEntry("invalid", data)).rejects.toMatchObject({ code: "invalid_payload" });
+		}
+
+		expect(await session.getLeafId()).toBeNull();
+		expect(await session.findEntries()).toEqual([]);
+		expect(await session.getLog()).toEqual([]);
+
+		const validId = await session.appendCustomEntry("valid", { value: 1 });
+		expect(await session.getEntry(validId)).toMatchObject({ seq: 1 });
+	});
+
+	it("rejects non-JSON record payloads before committing storage state", async () => {
+		const session = new Session(createStorage());
+
+		await expect(
+			session.appendRecord({
+				type: "tool_started",
+				id: "invalid-record",
+				lane: "main",
+				runId: "run",
+				assistantEntryId: "assistant",
+				toolIndex: 0,
+				toolCallId: "call",
+				toolName: "example",
+				effectiveArgs: { value: 1n },
+				resultEntryId: "result",
+				replay: "never",
+			}),
+		).rejects.toMatchObject({ code: "invalid_payload" });
+
+		expect(await session.findRecords()).toEqual([]);
+		expect(await session.getLog()).toEqual([]);
+
+		const valid = await session.appendRecord(operationStarted("valid-record"));
+		expect(valid.seq).toBe(1);
+	});
+
 	it("serializes concurrent lane writes through storage-owned parents", async () => {
 		const session = new Session(createStorage());
 		const ids = await Promise.all([
