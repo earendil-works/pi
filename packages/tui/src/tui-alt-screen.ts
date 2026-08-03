@@ -53,6 +53,15 @@ const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 const OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 const PAGE_SCROLL_OVERLAP = 4;
+const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
+const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
+const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
+
+interface CachedKittyImage {
+	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
+}
 
 interface SelectionPoint {
 	row: number;
@@ -108,7 +117,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private altScreenActive = false;
 	private imageProtocol: ImageProtocol = null;
 	private savedCapabilities?: TerminalCapabilities;
-	private readonly uploadedKittyImages = new Map<number, number>();
+	private readonly uploadedKittyImages = new Map<number, CachedKittyImage>();
 	private selectionAnchor?: SelectionPoint;
 	private selectionFocus?: SelectionPoint;
 	private selectionDragPointer?: { x: number; y: number };
@@ -239,26 +248,54 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return this.imageProtocol === "kitty" ? deleteAllKittyImages() : "";
 	}
 
-	private prepareKittyScreen(screen: string[]): { lines: string[]; staleImageDeletion: string } {
+	private prepareKittyScreen(screen: string[]): { lines: string[]; evictedImageDeletion: string } {
 		const visibleImageIds = new Set<number>();
 		const lines = screen.map((line) => {
 			const placement = getKittyImagePlacement(line);
 			if (!placement) return line;
 			visibleImageIds.add(placement.imageId);
-			if (this.uploadedKittyImages.get(placement.imageId) === placement.transmissionGeneration) {
-				return placement.replacementLine;
-			}
-			this.uploadedKittyImages.set(placement.imageId, placement.transmissionGeneration);
-			return line;
+
+			const cachedImage = this.uploadedKittyImages.get(placement.imageId);
+			const nextCachedImage = {
+				transmissionGeneration: placement.transmissionGeneration,
+				transmissionBytes: placement.transmissionBytes,
+				estimatedDecodedBytes: placement.estimatedDecodedBytes,
+			};
+			if (cachedImage) this.uploadedKittyImages.delete(placement.imageId);
+			this.uploadedKittyImages.set(placement.imageId, nextCachedImage);
+
+			return cachedImage?.transmissionGeneration === placement.transmissionGeneration
+				? placement.replacementLine
+				: line;
 		});
 
-		let staleImageDeletion = "";
-		for (const imageId of this.uploadedKittyImages.keys()) {
+		let cachedOffscreenImageCount = 0;
+		let cachedOffscreenTransmissionBytes = 0;
+		let cachedOffscreenDecodedBytes = 0;
+		for (const [imageId, cachedImage] of this.uploadedKittyImages) {
 			if (visibleImageIds.has(imageId)) continue;
-			staleImageDeletion += deleteKittyImage(imageId);
-			this.uploadedKittyImages.delete(imageId);
+			cachedOffscreenImageCount += 1;
+			cachedOffscreenTransmissionBytes += cachedImage.transmissionBytes;
+			cachedOffscreenDecodedBytes += cachedImage.estimatedDecodedBytes;
 		}
-		return { lines, staleImageDeletion };
+
+		let evictedImageDeletion = "";
+		for (const [imageId, cachedImage] of this.uploadedKittyImages) {
+			if (
+				cachedOffscreenImageCount <= MAX_CACHED_OFFSCREEN_KITTY_IMAGES &&
+				cachedOffscreenTransmissionBytes <= MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES &&
+				cachedOffscreenDecodedBytes <= MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES
+			) {
+				break;
+			}
+			if (visibleImageIds.has(imageId)) continue;
+			evictedImageDeletion += deleteKittyImage(imageId);
+			this.uploadedKittyImages.delete(imageId);
+			cachedOffscreenImageCount -= 1;
+			cachedOffscreenTransmissionBytes -= cachedImage.transmissionBytes;
+			cachedOffscreenDecodedBytes -= cachedImage.estimatedDecodedBytes;
+		}
+		return { lines, evictedImageDeletion };
 	}
 
 	protected override resetRenderState(): void {
@@ -815,7 +852,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const preparedKittyScreen =
 			redrawImages && this.imageProtocol === "kitty"
 				? this.prepareKittyScreen(screen)
-				: { lines: screen, staleImageDeletion: "" };
+				: { lines: screen, evictedImageDeletion: "" };
 
 		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
 		if (fullRedraw) {
@@ -829,7 +866,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (this.imageProtocol === "iterm2") buffer += "\x1b[2J";
 			else if (this.imageProtocol === "kitty") buffer += deleteAllKittyPlacements();
 		}
-		buffer += preparedKittyScreen.staleImageDeletion;
+		buffer += preparedKittyScreen.evictedImageDeletion;
 
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;

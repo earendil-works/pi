@@ -36,6 +36,7 @@ const compat: Omit<Required<OpenAICompletionsCompat>, "deferredToolsMode"> & {
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	chatTemplateKwargs: {},
+	chatTemplateArgs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,

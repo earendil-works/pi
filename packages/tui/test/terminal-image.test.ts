@@ -450,6 +450,8 @@ describe("Kitty image cursor movement", () => {
 		const line = `left ${cropKittyImageLine(transmission, 2, 1)} right`;
 		const placement = getKittyImagePlacement(line);
 		assert.ok(placement);
+		assert.strictEqual(placement.transmissionBytes, line.length - "left ".length - " right".length);
+		assert.strictEqual(placement.estimatedDecodedBytes, 100 * 100 * 4);
 		assert.strictEqual(placement.sequence, "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\");
 		assert.strictEqual(placement.replacementLine, `left ${placement.sequence} right`);
 		assert.ok(!placement.replacementLine.includes("AAAA"));

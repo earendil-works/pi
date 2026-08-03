@@ -8,8 +8,6 @@ import { PiServer } from "../src/index.ts";
 import { TestSessionBackend } from "../src/testing/index.ts";
 import { createUnixServer } from "../src/transports/unix/index.ts";
 
-const TOKEN = "transport-smoke-token";
-
 const backend = new TestSessionBackend();
 
 let server: PiServer | undefined;
@@ -28,25 +26,25 @@ afterEach(async () => {
 });
 
 test("requires explicit listeners", () => {
-	expect(() => Reflect.construct(PiServer, [backend, { token: TOKEN }])).toThrow(/listeners/);
+	expect(() => Reflect.construct(PiServer, [backend, {}])).toThrow(/listeners/);
 });
 
 test("rejects Unix socket paths that cannot fit in sockaddr_un", () => {
-	expect(() => createUnixServer(backend, { token: TOKEN, path: `/tmp/${"x".repeat(512)}` })).toThrow(/too long/);
+	expect(() => createUnixServer(backend, { path: `/tmp/${"x".repeat(512)}` })).toThrow(/too long/);
 });
 
 test("rejects an overlong derived private Unix bind path", async () => {
 	const maxLength = process.platform === "linux" ? 107 : 103;
 	const suffixLength = Buffer.byteLength("/tmp//s");
 	const path = `/tmp/${"x".repeat(maxLength - suffixLength)}/s`;
-	server = createUnixServer(backend, { token: TOKEN, path });
+	server = createUnixServer(backend, { path });
 
 	await expect(server.start()).rejects.toThrow(/private Unix bind path.*too long/);
 });
 
 test("rejects concurrent start calls without leaking the Unix listener", async () => {
 	const path = await makeSocketPath();
-	server = createUnixServer(backend, { token: TOKEN, path });
+	server = createUnixServer(backend, { path });
 	const starting = server.start();
 	await expect(server.start()).rejects.toThrow(/starting/);
 	await starting;
@@ -71,7 +69,6 @@ test("handshake timeout cleanup does not wait for a blocked output queue", async
 	}
 	const core = new PiServer(backend, {
 		listeners: [],
-		token: TOKEN,
 		maxFrameLength: 1024,
 		handshakeTimeoutMs: 10,
 	});
@@ -87,17 +84,17 @@ test("handshake timeout cleanup does not wait for a blocked output queue", async
 
 test("rejects timeout values above Node's maximum timer delay", () => {
 	const unix = { path: "/tmp/pi-server-timeout-test.sock" };
-	expect(() =>
-		createUnixServer(backend, { token: TOKEN, path: unix.path, handshakeTimeoutMs: 2_147_483_648 }),
-	).toThrow(/handshakeTimeoutMs/);
-	expect(() =>
-		createUnixServer(backend, { token: TOKEN, path: unix.path, gracefulCloseTimeoutMs: 2_147_483_648 }),
-	).toThrow(/gracefulCloseTimeoutMs/);
+	expect(() => createUnixServer(backend, { path: unix.path, handshakeTimeoutMs: 2_147_483_648 })).toThrow(
+		/handshakeTimeoutMs/,
+	);
+	expect(() => createUnixServer(backend, { path: unix.path, gracefulCloseTimeoutMs: 2_147_483_648 })).toThrow(
+		/gracefulCloseTimeoutMs/,
+	);
 });
 
 test("rejects pending-byte limits smaller than one maximum frame", async () => {
 	const path = await makeSocketPath();
-	expect(() => createUnixServer(backend, { token: TOKEN, path, maxFrameLength: 128, maxPendingBytes: 131 })).toThrow(
+	expect(() => createUnixServer(backend, { path, maxFrameLength: 128, maxPendingBytes: 131 })).toThrow(
 		/maxPendingBytes/,
 	);
 });

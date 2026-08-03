@@ -12,7 +12,6 @@ export type Unsubscribe = () => void;
 export type ListenerErrorHandler = (error: Error) => void;
 
 export interface PiClientOptions {
-	token: string;
 	transportFactory: ByteTransportFactory;
 	maxFrameLength?: number;
 	/** Reports subscriber failures without allowing them to corrupt client state. */

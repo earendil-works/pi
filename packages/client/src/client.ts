@@ -69,7 +69,6 @@ export class PiClient {
 		this.#options = options;
 		this.#state = new ClientState(options.onListenerError);
 		this.#connection = new Connection({
-			token: options.token,
 			transportFactory: options.transportFactory,
 			maxFrameLength: options.maxFrameLength,
 			onHandshake: (snapshot) => this.#state.applyServerSnapshot(snapshot),

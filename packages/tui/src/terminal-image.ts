@@ -275,6 +275,8 @@ interface RegisteredKittyImageMetadata extends KittyImageMetadata {
 export interface KittyImagePlacement {
 	imageId: number;
 	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
 	sequence: string;
 	replacementLine: string;
 }
@@ -359,6 +361,8 @@ export function getKittyImagePlacement(line: string): KittyImagePlacement | unde
 	return {
 		imageId: metadata.imageId,
 		transmissionGeneration: metadata.transmissionGeneration,
+		transmissionBytes: transmissionEnd - match.index,
+		estimatedDecodedBytes: metadata.widthPx * metadata.heightPx * 4,
 		sequence,
 		replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`,
 	};

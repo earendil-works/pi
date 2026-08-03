@@ -86,6 +86,7 @@ interface ModelsDevModel {
 	structured_output?: boolean;
 	reasoning?: boolean;
 	reasoning_options?: ModelsDevReasoningOption[];
+	status?: string;
 	limit?: {
 		context?: number;
 		output?: number;
@@ -561,6 +562,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	chatTemplateKwargs: {},
+	chatTemplateArgs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
@@ -651,6 +653,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
+		chatTemplateArgs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
@@ -1086,6 +1089,100 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
+}
+
+function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
+	if (!provider?.models) return [];
+
+	const baseUrl = "https://inference.baseten.co/v1";
+	const baseCompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		supportsUsageInStreaming: true,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: true,
+		supportsLongCacheRetention: false,
+	};
+	const reasoningEffortCompat: OpenAICompletionsCompat = {
+		...baseCompat,
+		supportsReasoningEffort: true,
+		thinkingFormat: "openai",
+	};
+	const toggleReasoningCompat: OpenAICompletionsCompat = {
+		...baseCompat,
+		thinkingFormat: "baseten",
+		chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
+	};
+	const toggleReasoningEffortCompat: OpenAICompletionsCompat = {
+		...reasoningEffortCompat,
+		thinkingFormat: "baseten",
+		chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
+	};
+	const toggleThinkingLevelMap = {
+		off: "off",
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: null,
+	} as const;
+	const glm52ThinkingLevelMap = {
+		off: "none",
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: "max",
+	} as const;
+	const models: Model<Api>[] = [];
+
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		if (model.status === "deprecated") continue;
+
+		const reasoning = model.reasoning === true;
+		const reasoningOptions = model.reasoning_options ?? [];
+		const isGlm52 = modelId === "zai-org/GLM-5.2" || modelId === "zai-org/GLM-5.2-Fast";
+		const supportsToggle = reasoningOptions.some((option) => option.type === "toggle") || isGlm52;
+		const supportsEffort = reasoningOptions.some((option) => option.type === "effort") || isGlm52;
+		const compat =
+			supportsToggle && supportsEffort
+				? toggleReasoningEffortCompat
+				: supportsToggle
+					? toggleReasoningCompat
+					: supportsEffort
+						? reasoningEffortCompat
+						: baseCompat;
+		const thinkingLevelMap = isGlm52
+			? glm52ThinkingLevelMap
+			: supportsToggle
+				? toggleThinkingLevelMap
+				: getEffortThinkingLevelMap(reasoningOptions);
+
+		models.push({
+			id: modelId,
+			name: model.name || modelId,
+			api: "openai-completions",
+			provider: "baseten",
+			baseUrl,
+			reasoning,
+			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+			input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			cost: {
+				input: model.cost?.input || 0,
+				output: model.cost?.output || 0,
+				cacheRead: model.cost?.cache_read || 0,
+				cacheWrite: model.cost?.cache_write || 0,
+			},
+			compat,
+			contextWindow: model.limit?.context || 4096,
+			maxTokens: model.limit?.output || 4096,
+		});
+	}
+
+	return models;
 }
 
 async function loadModelsDevData(): Promise<Model<any>[]> {
@@ -1617,7 +1714,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		const togetherProvider = data.together ?? data.togetherai ?? data["together-ai"];
 		if (togetherProvider?.models) {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
@@ -1646,6 +1743,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		models.push(...processBasetenModels(data.baseten));
+
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:
 		// - @ai-sdk/openai → openai-responses
@@ -1661,7 +1760,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			if (!data[variant.key]?.models) continue;
 
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
@@ -1757,7 +1856,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// Process GitHub Copilot models
 		if (data["github-copilot"]?.models) {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 

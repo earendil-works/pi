@@ -12,7 +12,6 @@ import type { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 
 export interface PiServerOptions {
-	token: string;
 	listeners: readonly PiServerListener[];
 	maxFrameLength?: number;
 	handshakeTimeoutMs?: number;

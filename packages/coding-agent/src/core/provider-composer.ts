@@ -84,7 +84,7 @@ function mergeCompat(
 	const baseNested = base as Record<string, unknown> | undefined;
 	const overrideNested = override as Record<string, unknown>;
 	const mergedNested = merged as Record<string, unknown>;
-	for (const key of ["openRouterRouting", "vercelGatewayRouting", "chatTemplateKwargs"] as const) {
+	for (const key of ["openRouterRouting", "vercelGatewayRouting", "chatTemplateKwargs", "chatTemplateArgs"] as const) {
 		const baseValue = baseNested?.[key];
 		const overrideValue = overrideNested[key];
 		if (

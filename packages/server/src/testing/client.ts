@@ -9,7 +9,7 @@ import {
 	type ServerMessage,
 	ServerMessageDecoder,
 } from "@earendil-works/pi-protocol";
-import { Deferred, TEST_TOKEN } from "./backend.ts";
+import { Deferred } from "./backend.ts";
 
 interface MessageWaiter {
 	predicate: (message: ServerMessage) => boolean;
@@ -40,9 +40,9 @@ export class ProtocolTestClient {
 		return this.closedValue;
 	}
 
-	hello(token = TEST_TOKEN, version: number = PROTOCOL_VERSION): Promise<ServerMessage> {
+	hello(version: number = PROTOCOL_VERSION): Promise<ServerMessage> {
 		const response = this.next((message) => message.type === "hello" || message.type === "hello_error");
-		void this.sendMessage({ type: "hello", token, version });
+		void this.sendMessage({ type: "hello", version });
 		return response;
 	}
 

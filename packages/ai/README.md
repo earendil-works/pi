@@ -76,6 +76,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
 - **Together AI**
+- **Baseten**
 - **Hugging Face**
 - **Moonshot AI** (with separate China provider)
 - **GitHub Copilot** (requires OAuth, see below)
@@ -424,6 +425,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
+| Baseten | `BASETEN_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
@@ -1167,8 +1169,9 @@ interface OpenAICompletionsCompat {
   requiresAssistantAfterToolResult?: boolean; // Whether tool results must be followed by an assistant message (default: false)
   requiresThinkingAsText?: boolean;  // Whether thinking blocks must be converted to text (default: false)
   requiresReasoningContentOnAssistantMessages?: boolean; // Whether all replayed assistant messages must include empty reasoning_content when reasoning is enabled (default: auto-detected for DeepSeek)
-  thinkingFormat?: 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'chat-template' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling'; // Format for reasoning param: 'openai' uses reasoning_effort, 'openrouter' uses reasoning: { effort }, 'deepseek' uses thinking: { type } plus reasoning_effort when supported, 'together' uses reasoning: { enabled } plus reasoning_effort when supported, 'zai' uses thinking: { type }, 'qwen' uses enable_thinking, 'chat-template' uses configurable chat_template_kwargs, 'qwen-chat-template' uses chat_template_kwargs.enable_thinking and preserve_thinking, 'string-thinking' uses top-level thinking, 'ant-ling' uses reasoning: { effort } only for mapped efforts (default: openai)
+  thinkingFormat?: 'openai' | 'openrouter' | 'deepseek' | 'together' | 'baseten' | 'zai' | 'qwen' | 'chat-template' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling'; // Format for reasoning param: 'openai' uses reasoning_effort, 'openrouter' uses reasoning: { effort }, 'deepseek' uses thinking: { type } plus reasoning_effort when supported, 'together' uses reasoning: { enabled } plus reasoning_effort when supported, 'baseten' uses configurable chat_template_args plus reasoning_effort when supported, 'zai' uses thinking: { type }, 'qwen' uses enable_thinking, 'chat-template' uses configurable chat_template_kwargs, 'qwen-chat-template' uses chat_template_kwargs.enable_thinking and preserve_thinking, 'string-thinking' uses top-level thinking, 'ant-ling' uses reasoning: { effort } only for mapped efforts (default: openai)
   chatTemplateKwargs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort'; omitWhenOff?: boolean }>; // chat_template_kwargs values; use $var for pi-controlled thinking values
+  chatTemplateArgs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort'; omitWhenOff?: boolean }>; // chat_template_args values for thinkingFormat: 'baseten'; use $var for pi-controlled thinking values
   cacheControlFormat?: 'anthropic';  // Anthropic-style cache_control on system prompt, last tool, and last user/assistant text content
   openRouterRouting?: OpenRouterRouting; // OpenRouter routing preferences (default: {})
   vercelGatewayRouting?: VercelGatewayRouting; // Vercel AI Gateway routing preferences (default: {})

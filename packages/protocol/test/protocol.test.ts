@@ -31,7 +31,6 @@ const emptyServerSnapshot: ServerSnapshot = {
 const clientHello: ClientHello = {
 	type: "hello",
 	version: PROTOCOL_VERSION,
-	token: "secret",
 };
 
 const serverHello: ServerHello = {
@@ -53,24 +52,27 @@ function itemMessage(item: unknown, type: "item_updated" | "item_finished" = "it
 }
 
 describe("protocol validation", () => {
-	test("uses protocol version 2", () => {
-		expect(PROTOCOL_VERSION).toBe(2);
-		expect(isSupportedProtocolVersion(2)).toBe(true);
-		expect(isSupportedProtocolVersion(1)).toBe(false);
+	test("uses protocol version 1", () => {
+		expect(PROTOCOL_VERSION).toBe(1);
+		expect(isSupportedProtocolVersion(1)).toBe(true);
+		expect(isSupportedProtocolVersion(2)).toBe(false);
 		expect(isSupportedProtocolVersion(2.5)).toBe(false);
 	});
 
-	test.each([0, 1, PROTOCOL_VERSION])("accepts integer client hello version %s for negotiation", (version) => {
-		const message = { ...clientHello, version };
-		expect(parseClientMessage(message)).toEqual(message);
-	});
+	test.each([0, PROTOCOL_VERSION, PROTOCOL_VERSION + 1])(
+		"accepts integer client hello version %s for negotiation",
+		(version) => {
+			const message = { ...clientHello, version };
+			expect(parseClientMessage(message)).toEqual(message);
+		},
+	);
 
 	test.each([
-		{ type: "hello", version: "2", token: "secret" },
-		{ type: "hello", version: 2.5, token: "secret" },
-		{ type: "hello", version: 2, token: "" },
-		{ type: "hello", version: 2, token: "secret", extra: true },
-	])("rejects an invalid strict handshake: $version", (message) => {
+		["string version", { type: "hello", version: String(PROTOCOL_VERSION) }],
+		["fractional version", { type: "hello", version: PROTOCOL_VERSION + 0.5 }],
+		["credential field", { type: "hello", version: PROTOCOL_VERSION, token: "secret" }],
+		["unknown field", { type: "hello", version: PROTOCOL_VERSION, extra: true }],
+	] as const)("rejects a handshake with %s", (_label, message) => {
 		expect(() => parseClientMessage(message)).toThrow(ProtocolValidationError);
 	});
 
@@ -99,7 +101,13 @@ describe("protocol validation", () => {
 	});
 
 	test.each([
-		{ type: "hello", version: 1, connectionId: "connection-1", snapshot: emptyServerSnapshot },
+		{
+			type: "hello",
+			version: PROTOCOL_VERSION + 1,
+			connectionId: "connection-1",
+			snapshot: emptyServerSnapshot,
+		},
+		{ type: "hello_error", error: { code: "auth", message: "Authentication failed" } },
 		{ type: "response", id: "request-1", ok: true, result: { command: "unknown" } },
 		{ type: "event", event: { type: "session_removed", sessionId: 42 } },
 	])("rejects invalid server messages", (wire) => {
@@ -257,7 +265,11 @@ describe("protocol validation", () => {
 	test("validation errors do not retain rejected payloads", () => {
 		let thrown: unknown;
 		try {
-			parseClientMessage({ type: "hello", version: "2", token: "x".repeat(2_000_000) });
+			parseClientMessage({
+				type: "hello",
+				version: String(PROTOCOL_VERSION),
+				extra: "x".repeat(2_000_000),
+			});
 		} catch (error) {
 			thrown = error;
 		}
@@ -284,7 +296,9 @@ describe("validated framed protocol APIs", () => {
 	});
 
 	test("validates messages before encoding", () => {
-		expect(() => encodeClientMessage({ type: "hello", version: 2, token: "" })).toThrow(ProtocolValidationError);
+		expect(() => encodeClientMessage({ type: "hello", version: PROTOCOL_VERSION + 0.5 })).toThrow(
+			ProtocolValidationError,
+		);
 	});
 
 	test("omits explicit undefined optional properties on the wire", () => {
@@ -324,7 +338,7 @@ describe("validated framed protocol APIs", () => {
 	test("incrementally decodes server messages", () => {
 		const errorMessage: ServerMessage = {
 			type: "hello_error",
-			error: { code: "auth", message: "Invalid token" },
+			error: { code: "version", message: "Unsupported protocol version" },
 		};
 		const decoder = new ServerMessageDecoder();
 		expect(decoder.push(encodeServerMessage(errorMessage))).toEqual([errorMessage]);
@@ -334,7 +348,7 @@ describe("validated framed protocol APIs", () => {
 	test.each([
 		["empty CBOR payload", encodeFrame(new Uint8Array())],
 		["malformed CBOR", encodeFrame(new Uint8Array([0xff]))],
-		["schema-invalid CBOR", encodeFrame(encodeCbor({ type: "hello", version: 2, token: "", extra: true }))],
+		["schema-invalid CBOR", encodeFrame(encodeCbor({ type: "hello", version: PROTOCOL_VERSION, extra: true }))],
 	] as const)("rejects invalid framed client input: %s", (_label, wire) => {
 		const decoder = new ClientMessageDecoder();
 		expect(() => decoder.push(wire)).toThrow(ProtocolValidationError);

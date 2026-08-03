@@ -19,7 +19,7 @@ import {
 } from "./support.ts";
 
 describe("PiClient", () => {
-	test("sends a framed version and bearer token before accepting a fragmented server hello", async () => {
+	test("sends a framed version before accepting a fragmented server hello", async () => {
 		const server = new MemoryByteServer();
 		const received: ClientMessage[] = [];
 		server.onMessage((message) => {
@@ -39,8 +39,7 @@ describe("PiClient", () => {
 		const client = createClient(server);
 
 		await expect(client.connect()).resolves.toEqual(baseServerSnapshot);
-		expect(received[0]).toEqual({ type: "hello", version: PROTOCOL_VERSION, token: "bearer-secret" });
-		expect(server.sentByClient[0]).toBeInstanceOf(Uint8Array);
+		expect(received[0]).toEqual({ type: "hello", version: PROTOCOL_VERSION });
 		expect(client.connectionState).toBe("connected");
 	});
 
@@ -48,7 +47,6 @@ describe("PiClient", () => {
 		let closeCount = 0;
 		let sendCount = 0;
 		const client = new PiClient({
-			token: "bearer-secret",
 			transportFactory: (handlers) => {
 				handlers.onData(
 					encodeServerMessage({
@@ -113,7 +111,6 @@ describe("PiClient", () => {
 			}
 		});
 		const client = new PiClient({
-			token: "bearer-secret",
 			transportFactory: (handlers) => server.connect(handlers),
 			onListenerError: (error) => listenerErrors.push(error),
 		});
@@ -161,7 +158,6 @@ describe("PiClient", () => {
 			});
 		}
 		const client = new PiClient({
-			token: "bearer-secret",
 			transportFactory: (handlers) => (connection++ === 0 ? first : second).connect(handlers),
 		});
 		let reconnect: Promise<ServerSnapshot> | undefined;
@@ -180,20 +176,20 @@ describe("PiClient", () => {
 		expect(first.clientCloseCount).toBe(1);
 	});
 
-	test("rejects a typed handshake authentication error", async () => {
+	test("rejects a typed handshake version error", async () => {
 		const server = new MemoryByteServer();
 		server.onMessage(() => {
 			server.send({
 				type: "hello_error",
-				error: { code: "auth", message: "Invalid token" },
+				error: { code: "version", message: "Unsupported protocol version" },
 			});
 		});
-		const client = createClient(server, "wrong");
+		const client = createClient(server);
 
 		await expect(client.connect()).rejects.toMatchObject({
 			name: "PiServerError",
-			code: "auth",
-			message: "Invalid token",
+			code: "version",
+			message: "Unsupported protocol version",
 		});
 		expect(client.connectionState).toBe("disconnected");
 		expect(server.clientCloseCount).toBe(1);
@@ -217,7 +213,7 @@ describe("PiClient", () => {
 		}
 		const transportFactory: ByteTransportFactory = (handlers) =>
 			(connection++ === 0 ? first : second).connect(handlers);
-		const client = new PiClient({ token: "bearer-secret", transportFactory });
+		const client = new PiClient({ transportFactory });
 		const states: string[] = [];
 		client.onConnectionStateChange(({ state }) => states.push(state));
 		await client.connect();
@@ -247,7 +243,6 @@ describe("PiClient", () => {
 			});
 		}
 		const client = new PiClient({
-			token: "bearer-secret",
 			transportFactory: (handlers) => (connection++ === 0 ? first : second).connect(handlers),
 		});
 		await client.connect();
@@ -285,7 +280,6 @@ describe("PiClient", () => {
 			}
 		});
 		const client = new PiClient({
-			token: "bearer-secret",
 			maxFrameLength: 512,
 			transportFactory: (handlers) => server.connect(handlers),
 		});
@@ -325,7 +319,6 @@ describe("PiClient", () => {
 		expect(
 			() =>
 				new PiClient({
-					token: "secret",
 					maxFrameLength: 0x1_0000_0000,
 					transportFactory: (handlers) => server.connect(handlers),
 				}),

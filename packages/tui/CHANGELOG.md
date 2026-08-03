@@ -8,7 +8,7 @@
 - Fixed phantom alternate-screen text selection from unmatched mouse events when changing terminal pane focus.
 - Fixed spaces in searchable settings queries changing the selected value instead of filtering multi-word labels.
 - Fixed alternate-screen Kitty images crossing vertical layout clip boundaries and overlapping sticky regions while scrolling.
-- Fixed alternate-screen redraws retransmitting Kitty image data, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
+- Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
 
 ### Added
 

@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
 	type ClientHello,
 	type ClientMessage,
@@ -31,15 +31,10 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
-function tokenDigest(token: string): Buffer {
-	return createHash("sha256").update(token, "utf8").digest();
-}
-
 export class PiServer {
 	readonly id: string;
 
 	private readonly listeners: readonly PiServerListener[];
-	private readonly expectedTokenDigest: Buffer;
 	private readonly maxFrameLength: number;
 	private readonly handshakeTimeoutMs: number;
 	private readonly onError: ((error: Error) => void) | undefined;
@@ -55,7 +50,6 @@ export class PiServer {
 		const resolved = resolveOptions(options);
 		this.listeners = options.listeners;
 		this.id = options.serverId ?? randomUUID();
-		this.expectedTokenDigest = tokenDigest(options.token);
 		this.maxFrameLength = resolved.maxFrameLength;
 		this.handshakeTimeoutMs = resolved.handshakeTimeoutMs;
 		this.onError = options.onError;
@@ -220,10 +214,6 @@ export class PiServer {
 	}
 
 	private async finishHandshake(state: ConnectionState, hello: ClientHello): Promise<void> {
-		if (!this.authenticate(hello)) {
-			await this.failProtocol(state, { code: "auth", message: "Authentication failed" });
-			return;
-		}
 		if (!isSupportedProtocolVersion(hello.version)) {
 			await this.failProtocol(state, {
 				code: "version",
@@ -252,10 +242,6 @@ export class PiServer {
 				});
 			}
 		}
-	}
-
-	private authenticate(hello: ClientHello): boolean {
-		return timingSafeEqual(tokenDigest(hello.token), this.expectedTokenDigest);
 	}
 
 	private async handleRequest(state: ConnectionState, envelope: RequestEnvelope): Promise<void> {
@@ -381,7 +367,6 @@ export class PiServer {
 
 function resolveOptions(options: PiServerOptions): { maxFrameLength: number; handshakeTimeoutMs: number } {
 	if (!Array.isArray(options.listeners)) throw new TypeError("PiServer listeners must be an array");
-	if (!options.token) throw new TypeError("PiServer token must not be empty");
 	if (options.serverId === "") throw new TypeError("PiServer serverId must not be empty");
 	const maxFrameLength = options.maxFrameLength ?? DEFAULT_MAX_FRAME_LENGTH;
 	if (!Number.isSafeInteger(maxFrameLength) || maxFrameLength <= 0 || maxFrameLength > MAX_UINT32) {

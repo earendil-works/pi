@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `ModelRegistry.getApiKeyAndHeaders()` now returns `ProviderHeaders` with `string | null` values and preserves `null` header-deletion markers. Extensions that inspect returned headers must handle `null`; extensions forwarding them to pi-ai streams should pass them through unchanged. This prevents placeholder OpenAI credentials from being sent through Cloudflare AI Gateway ([#7030](https://github.com/earendil-works/pi/issues/7030)).
+
 ### Added
 
+- Added built-in Baseten provider support with `BASETEN_API_KEY` authentication and `zai-org/GLM-5.2` as the default model.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added runtime switching between regular and fullscreen UI modes through `/settings`.

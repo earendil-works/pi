@@ -377,6 +377,7 @@ ${chalk.bold("Environment Variables:")}
   XAI_API_KEY                      - xAI Grok API key
   FIREWORKS_API_KEY                - Fireworks API key
   TOGETHER_API_KEY                 - Together AI API key
+  BASETEN_API_KEY                  - Baseten API key
   OPENROUTER_API_KEY               - OpenRouter API key
   AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
   ZAI_API_KEY                      - ZAI Coding Plan API key (Global)
