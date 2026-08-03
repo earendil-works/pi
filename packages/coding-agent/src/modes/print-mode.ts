@@ -7,8 +7,9 @@
  */
 
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AgentSessionEvent } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
-import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
+import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 
 /**
@@ -26,6 +27,24 @@ export interface PrintModeOptions {
 }
 
 /**
+ * Serialize a session event for `--mode json`.
+ *
+ * Streaming `message_update` events carry the complete assistant message twice
+ * (`message` and `assistantMessageEvent.partial`). Serializing those snapshots
+ * on every delta makes the stream grow quadratically with the response size.
+ * JSON mode emits only the incremental event; `message_start` and `message_end`
+ * provide the complete snapshots.
+ */
+function serializeJsonModeEvent(event: AgentSessionEvent): string {
+	if (event.type !== "message_update") {
+		return JSON.stringify(event);
+	}
+	const assistantMessageEvent: Record<string, unknown> = { ...event.assistantMessageEvent };
+	delete assistantMessageEvent.partial;
+	return JSON.stringify({ type: "message_update", assistantMessageEvent });
+}
+
+/**
  * Run in print (single-shot) mode.
  * Sends prompts to the agent and outputs the result.
  */
@@ -34,6 +53,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribeBackpressure: (() => void) | undefined;
 	let disposed = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
@@ -41,6 +61,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		if (disposed) return;
 		disposed = true;
 		unsubscribe?.();
+		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
 	};
 
@@ -101,11 +122,17 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		});
 
 		unsubscribe?.();
+		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
 			if (mode === "json") {
-				writeRawStdout(`${JSON.stringify(event)}\n`);
+				writeRawStdout(`${serializeJsonModeEvent(event)}\n`);
 			}
 		});
+		if (mode === "json") {
+			unsubscribeBackpressure = session.agent.subscribe(async () => {
+				await waitForRawStdoutBackpressure();
+			});
+		}
 	};
 
 	try {

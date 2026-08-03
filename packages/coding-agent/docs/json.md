@@ -38,7 +38,7 @@ type AgentEvent =
   | { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
   // Message lifecycle
   | { type: "message_start"; message: AgentMessage }
-  | { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
+  | { type: "message_update"; assistantMessageEvent: AssistantMessageEvent }
   | { type: "message_end"; message: AgentMessage }
   // Tool execution
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
@@ -73,11 +73,28 @@ Followed by events as they occur:
 {"type":"agent_start"}
 {"type":"turn_start"}
 {"type":"message_start","message":{"role":"assistant","content":[],...}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","delta":"Hello",...}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world"}}
 {"type":"message_end","message":{...}}
 {"type":"turn_end","message":{...},"toolResults":[]}
 {"type":"agent_end","messages":[...]}
 ```
+
+## Streaming Updates
+
+`message_update` lines contain only the incremental streaming event. They omit
+the accumulated assistant message (`message`) and the cumulative `partial`
+snapshot carried inside `assistantMessageEvent`, so output size grows linearly
+with the model response instead of quadratically.
+
+Consumers that need the full message during streaming should accumulate the
+delta fields (`text_delta.delta`, `thinking_delta.delta`, `toolcall_delta.delta`)
+keyed by `contentIndex`, or use the complete snapshots from `message_start` and
+`message_end`.
+
+This is a breaking change from earlier releases where each `message_update`
+included the complete `message` and `partial` snapshots. Consumers relying on
+those fields must switch to accumulating deltas or reading `message_end`.
 
 ## Example
 
