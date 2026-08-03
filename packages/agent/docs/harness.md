@@ -1977,7 +1977,7 @@ type SessionForkOptions =
   /** New: the entire tree — all session entries, every branch, leaf preserved. */
   | { scope: "tree" };
 
-interface SessionRepository {
+interface SessionRepo {
   ...
   create(options: TCreateOptions): Promise<Session>;
   fork(source, options: SessionForkOptions & TCreateOptions): Promise<Session>;
@@ -1993,63 +1993,17 @@ Rules, both scopes:
 - Persisted config derives from the copied tree via the usual branch point queries; `main` sits at the fork point (`scope: "branch"`) or the source's `main` leaf (`scope: "tree"`).
 - **Threads are refs first.** A platform thread sharing one source of truth with its channel is a ref in the same session (section 6), not a fork. Fork when a *separate* session is wanted: subagents, exports, clones. Whether a thread becomes a ref, a fork, or a fresh session with platform backlog as prompt-time context is application policy; all three are supported.
 
-## 14. Session stores
+## 14. Storage backends
 
-`Session` is the only opened-session object. `SessionRepository` borrows a
-caller-owned `SessionStore`, loads snapshots, and constructs `Session` objects.
-The in-memory store is the simplest built-in option:
+Backends implement append + read + the finder queries for one session. They know nothing about operations, queues, or recovery — the harness entry payloads are opaque to them apart from the columns they index.
 
-```ts
-await using store = createInMemorySessionStore();
-const search = createScanningSessionSearch(store);
-const repository = createSessionRepository({ store, search });
-const session = await repository.create({});
-```
-
-Use `createJsonlSessionStore({ fs, sessionsRoot })` for filesystem persistence;
-the same scanning search composes with it. Omitting `search` is valid, but
-`repository.search()` then returns no hits. SQLite support is provided
-separately by `createSqliteSessionStore()` and should use
-`createSqliteSessionSearch(options)` against the same canonical database. Drain
-all session or harness operations before the store leaves
-scope; repositories and sessions do not dispose it.
-
-A custom store implements `SessionStore`:
-
-```ts
-interface SessionStore<
-  TMetadata extends SessionMetadata = SessionMetadata,
-  TCreateOptions extends SessionCreateOptions = SessionCreateOptions,
-  TListOptions = void,
-> extends AsyncDisposable {
-  create(options: TCreateOptions): Promise<SessionSnapshot<TMetadata>>;
-  load(metadata: TMetadata): Promise<SessionSnapshot<TMetadata>>;
-  list(options?: TListOptions): Promise<TMetadata[]>;
-  appendEntry(metadata: TMetadata, entry: SessionTreeEntry): Promise<void>;
-  delete(metadata: TMetadata): Promise<void>;
-  fork(
-    source: TMetadata,
-    options: SessionForkOptions & TCreateOptions,
-    entries: readonly SessionTreeEntry[],
-  ): Promise<SessionSnapshot<TMetadata>>;
-}
-```
-
-`create()` and `load()` return complete snapshots. `appendEntry()` receives a
-complete entry and must preserve append order and entry-id uniqueness. `fork()`
-stores the entries selected by the repository. Disposal rejects new operations,
-drains accepted writes, and releases owned resources. Store implementations
-know nothing about harness operations, queues, or recovery.
-Expose custom implementations through a factory returning `SessionStore` rather
-than exporting the concrete class.
-
-Contract, all stores:
+Contract, all backends:
 
 - One total append order (`seq`) across session and harness entries. Harness entries and leaf records carry `ref`; session entries do not (membership derives from parent linkage).
 - An append is durable when its promise resolves; events fire after.
 - Entry ids are unique per session, enforced at append.
 - Reads return immutable snapshots; callers cannot mutate stored state.
-- One writer per *session*, enforced by the serving layer; SQLite additionally rejects concurrent writers itself. This is per session, not per store: one SQLite database can host many sessions, all writable concurrently — each through its own single live harness. The same applies to a directory of JSONL files.
+- One writer per *session*, enforced by the serving layer; SQLite additionally rejects concurrent writers itself. This is per session, not per backend: one SQLite database is a repo hosting many sessions, all writable concurrently — each through its own single live harness. Same for a directory of JSONL files.
 
 ### JSONL
 
@@ -2100,7 +2054,7 @@ CREATE INDEX idx_harness_ref_kind_seq ON harness_entries(session_id, ref, type, 
 
 ### Append failure
 
-Any store append failure faults the harness (section 4): the instance stops, in-flight calls resolve `faulted`, and the log remains a valid prefix. For SQLite, a failed transaction rolls back cleanly; for JSONL, a partial line becomes the torn tail the next open repairs.
+Any backend append failure faults the harness (section 4): the instance stops, in-flight calls resolve `faulted`, and the log remains a valid prefix. For SQLite, a failed transaction rolls back cleanly; for JSONL, a partial line becomes the torn tail the next open repairs.
 
 ## 15. Telemetry
 
@@ -2337,10 +2291,10 @@ Current implementation (what is being replaced or wrapped):
 5. `packages/agent/src/agent-loop.ts` — monolithic loop to split into step primitives.
 6. `packages/agent/src/agent.ts` — stateful wrapper: queues, continuation, abort, settlement.
 7. `packages/agent/src/harness/agent-harness.ts` — the harness this design replaces.
-8. `packages/agent/src/harness/types.ts` — entry union, session store contract, event/hook types.
+8. `packages/agent/src/harness/types.ts` — entry union, storage contract, event/hook types.
 9. `packages/agent/src/harness/session/session.ts` — Session, context build, entry creation.
-10. `packages/agent/src/harness/session/jsonl-store.ts` — JSONL session store and v3 document codec.
-11. `packages/agent/src/harness/session/memory-store.ts` — in-memory session store.
+10. `packages/agent/src/harness/session/jsonl-storage.ts` — JSONL v3 format and reload.
+11. `packages/agent/src/harness/session/memory-storage.ts` — in-memory parity.
 12. `packages/agent/src/harness/messages.ts` — defaultConvertToLlm and message helpers.
 12a. `packages/ai/src/utils/transform-messages.ts` — orphaned-tool-call healing; the adjacency backstop referenced in sections 5 and 13.
 13. `packages/agent/src/harness/compaction/compaction.ts` — preparation, split-turn generation, retry.
@@ -2354,7 +2308,7 @@ SQLite backend:
 18. `packages/storage/sqlite-node/src/sqlite/storage/branch-entries.ts` — active-branch materialization.
 19. `packages/storage/sqlite-node/src/sqlite/storage/session-materialized.ts` — stats/labels/config projections.
 20. `packages/storage/sqlite-node/src/sqlite/migrations/001_initial.sql` and `migrations.ts` — schema and migration mechanism.
-21. `packages/storage/sqlite-node/src/sqlite/session-store.ts` — create/open/fork.
+21. `packages/storage/sqlite-node/src/sqlite/repo.ts` — create/open/fork.
 
 Behavioral tests (compatibility requirements):
 
@@ -2362,5 +2316,5 @@ Behavioral tests (compatibility requirements):
 23. `packages/agent/test/agent.test.ts`
 24. `packages/agent/test/harness/agent-harness.test.ts`
 25. `packages/agent/test/harness/session.test.ts`
-26. `packages/agent/test/harness/session-stores.test.ts`
+26. `packages/agent/test/harness/storage.test.ts`
 27. `packages/agent/test/harness/sqlite-migrations.test.ts`

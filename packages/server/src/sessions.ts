@@ -78,11 +78,18 @@ export class LiveSessionManager {
 				return { command: "attach" as const, session };
 			}
 			case "detach": {
-				const live = this.requireAttached(connection, command.sessionId);
-				this.detach(connection, live);
-				if (live.connections.size > 0) await this.broadcastSnapshot(live);
-				await this.maybeDispose(live);
-				this.options.broadcastServerSnapshot();
+				const live = this.liveSessions.get(command.sessionId);
+				if (connection.sessionIds.has(command.sessionId)) {
+					connection.sessionIds.delete(command.sessionId);
+					if (live) {
+						live.connections.delete(connection);
+						if (live.connections.size > 0 && !live.terminal && !live.disposing) {
+							await this.broadcastSnapshot(live);
+						}
+						await this.maybeDispose(live);
+					}
+					this.options.broadcastServerSnapshot();
+				}
 				return { command: "detach" as const, sessionId: command.sessionId };
 			}
 			case "prompt": {
@@ -304,11 +311,6 @@ export class LiveSessionManager {
 		}
 		connection.sessionIds.add(live.id);
 		live.connections.add(connection);
-	}
-
-	private detach(connection: ConnectionState, live: LiveSession): void {
-		connection.sessionIds.delete(live.id);
-		live.connections.delete(connection);
 	}
 
 	private requireAttached(connection: ConnectionState, sessionId: string): LiveSession {

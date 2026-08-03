@@ -5,7 +5,6 @@ import { Image } from "../src/components/image.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
-import { TuiAltScreen } from "../src/TuiAltScreen.ts";
 import {
 	encodeKitty,
 	hyperlink,
@@ -13,6 +12,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
+import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -409,6 +409,180 @@ describe("TuiAltScreen", () => {
 		);
 
 		tui.stop();
+	});
+
+	it("reuses moved Kitty images without dropping HStack siblings", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 6);
+			const tui = new TuiAltScreen(terminal);
+			const label = new Text("left", 0, 0);
+			const image = new Image(
+				"A".repeat(8192),
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{},
+				{ widthPx: 100, heightPx: 100 },
+			);
+			const header = new Text("header", 0, 0);
+			const row = new HStack([
+				{ component: label, basis: 10 },
+				{ component: image, basis: 10 },
+			]);
+			tui.setLayoutRoot(
+				new VStack([
+					{ component: header, basis: "auto" },
+					{ component: row, basis: 4 },
+				]),
+			);
+			tui.start();
+			await terminal.waitForRender();
+			assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b_Ga=T")));
+
+			const eventCount = terminal.events.length;
+			label.setText("changed");
+			header.setText("header\nsecond");
+			tui.requestRender();
+			await terminal.waitForRender();
+			const redrawWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			const placementIndex = redrawWrites.indexOf("\x1b_Ga=p,q=2");
+			assert.ok(redrawWrites.includes("\x1b_Ga=d,d=a,q=2\x1b\\"));
+			assert.ok(placementIndex > redrawWrites.indexOf("changed"));
+			assert.ok(!redrawWrites.includes("\x1b_Ga=T"));
+			assert.ok(redrawWrites.length < 2000, `expected placement-only redraw, got ${redrawWrites.length} bytes`);
+			assert.ok(terminal.getViewport().some((line) => line.trimEnd() === "changed"));
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("retains recently offscreen Kitty images for placement-only reuse", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 1);
+			const tui = new TuiAltScreen(terminal);
+			const imageId = 321;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 1, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 1, widthPx: 100, heightPx: 50 });
+			tui.setLayoutRoot(
+				new ScrollView(
+					{
+						render: () => [imageLine, "after"],
+						invalidate: () => {},
+					},
+					{ primary: true },
+				),
+			);
+			tui.start();
+			await terminal.waitForRender();
+			assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b_Ga=T")));
+
+			const eventCount = terminal.events.length;
+			tui.scrollBy(1);
+			await terminal.waitForRender();
+			tui.scrollBy(-1);
+			await terminal.waitForRender();
+			const reentryWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.ok(reentryWrites.includes("\x1b_Ga=p,q=2"));
+			assert.ok(!reentryWrites.includes("\x1b_Ga=T"));
+			assert.ok(!reentryWrites.includes(`\x1b_Ga=d,d=I,i=${imageId},q=2\x1b\\`));
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("evicts the least recently visible Kitty image when the cache is full", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 1);
+			const tui = new TuiAltScreen(terminal);
+			const firstImageId = 500;
+			const imageLines = Array.from({ length: 18 }, (_, index) => {
+				const imageId = firstImageId + index;
+				registerKittyImageMetadata({ imageId, columns: 2, rows: 1, widthPx: 100, heightPx: 50 });
+				return encodeKitty("AAAA", { columns: 2, rows: 1, imageId, moveCursor: false });
+			});
+			tui.setLayoutRoot(
+				new ScrollView(
+					{
+						render: () => imageLines,
+						invalidate: () => {},
+					},
+					{ primary: true },
+				),
+			);
+			tui.start();
+			await terminal.waitForRender();
+			for (let index = 1; index < imageLines.length; index++) {
+				tui.scrollBy(1);
+				await terminal.waitForRender();
+			}
+			assert.ok(
+				terminal.events.some(
+					(event) => event.type === "write" && event.data.includes(`\x1b_Ga=d,d=I,i=${firstImageId},q=2\x1b\\`),
+				),
+			);
+
+			const eventCount = terminal.events.length;
+			tui.scrollToTop();
+			await terminal.waitForRender();
+			const reentryWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			assert.ok(reentryWrites.includes("\x1b_Ga=T"));
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("evicts offscreen Kitty images when decoded raster memory exceeds the cache quota", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 1);
+			const tui = new TuiAltScreen(terminal);
+			const firstImageId = 600;
+			const imageLines = Array.from({ length: 4 }, (_, index) => {
+				const imageId = firstImageId + index;
+				registerKittyImageMetadata({ imageId, columns: 2, rows: 1, widthPx: 3840, heightPx: 2160 });
+				return encodeKitty("AAAA", { columns: 2, rows: 1, imageId, moveCursor: false });
+			});
+			tui.setLayoutRoot(
+				new ScrollView(
+					{
+						render: () => imageLines,
+						invalidate: () => {},
+					},
+					{ primary: true },
+				),
+			);
+			tui.start();
+			await terminal.waitForRender();
+			for (let index = 1; index < imageLines.length; index++) {
+				tui.scrollBy(1);
+				await terminal.waitForRender();
+			}
+			assert.ok(
+				terminal.events.some(
+					(event) => event.type === "write" && event.data.includes(`\x1b_Ga=d,d=I,i=${firstImageId},q=2\x1b\\`),
+				),
+			);
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
 	});
 
 	it("opens an OSC 8 hyperlink on click but not on drag", async () => {

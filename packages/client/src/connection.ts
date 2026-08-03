@@ -90,9 +90,9 @@ export class Connection {
 		return handshake.promise;
 	}
 
-	disconnect(reason = "Client disconnected"): void {
+	disconnect(reason: string | Error = "Client disconnected"): void {
 		if (this.#lifecycle.state === "disconnected") return;
-		this.#failAndClose(new PiDisconnectedError(reason));
+		this.#failAndClose(typeof reason === "string" ? new PiDisconnectedError(reason) : reason);
 	}
 
 	fail(error: Error): void {

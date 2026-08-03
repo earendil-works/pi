@@ -41,6 +41,17 @@ const serverHello: ServerHello = {
 	snapshot: emptyServerSnapshot,
 };
 
+function itemMessage(item: unknown, type: "item_updated" | "item_finished" = "item_finished") {
+	return {
+		type: "event",
+		event: {
+			type: "session_progress",
+			sessionId: "session-1",
+			progress: { type, item },
+		},
+	};
+}
+
 describe("protocol validation", () => {
 	test("uses protocol version 2", () => {
 		expect(PROTOCOL_VERSION).toBe(2);
@@ -119,6 +130,115 @@ describe("protocol validation", () => {
 			},
 		};
 		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test.each([
+		{ status: "streaming" },
+		{ status: "complete", stopReason: "stop" },
+		{ status: "error", stopReason: "error" },
+		{ status: "error", stopReason: "error", errorMessage: "failed" },
+		{ status: "aborted", stopReason: "aborted" },
+	])("accepts a consistent $status assistant item", (state) => {
+		const message = itemMessage(
+			{
+				id: "assistant-1",
+				role: "assistant",
+				content: [{ type: "text", text: "hello" }],
+				model: { provider: "test", id: "model" },
+				timestamp: 1,
+				...state,
+			},
+			state.status === "streaming" ? "item_updated" : "item_finished",
+		);
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test.each([
+		{ status: "streaming", stopReason: "stop" },
+		{ status: "complete" },
+		{ status: "complete", stopReason: "error" },
+		{ status: "error", stopReason: "error", errorMessage: "" },
+		{ status: "aborted", stopReason: "stop" },
+	])("rejects an inconsistent $status assistant item", (state) => {
+		expect(() =>
+			parseServerMessage(
+				itemMessage({
+					id: "assistant-1",
+					role: "assistant",
+					content: [{ type: "text", text: "hello" }],
+					model: { provider: "test", id: "model" },
+					timestamp: 1,
+					...state,
+				}),
+			),
+		).toThrow(ProtocolValidationError);
+	});
+
+	test.each([
+		{ status: "running", isError: false },
+		{ status: "complete", isError: false },
+		{ status: "error", isError: true },
+	])("accepts a consistent $status tool item", (state) => {
+		const message = itemMessage(
+			{
+				id: "tool-1",
+				role: "tool",
+				toolCallId: "call-1",
+				toolName: "read",
+				input: {},
+				content: [],
+				timestamp: 1,
+				...state,
+			},
+			state.status === "running" ? "item_updated" : "item_finished",
+		);
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
+	test("rejects nonterminal items reported as finished", () => {
+		const assistant = {
+			id: "assistant-1",
+			role: "assistant",
+			content: [],
+			model: { provider: "test", id: "model" },
+			status: "streaming",
+			timestamp: 1,
+		};
+		const tool = {
+			id: "tool-1",
+			role: "tool",
+			toolCallId: "call-1",
+			toolName: "read",
+			input: {},
+			content: [],
+			status: "running",
+			isError: false,
+			timestamp: 1,
+		};
+
+		expect(() => parseServerMessage(itemMessage(assistant))).toThrow(ProtocolValidationError);
+		expect(() => parseServerMessage(itemMessage(tool))).toThrow(ProtocolValidationError);
+	});
+
+	test.each([
+		{ status: "running", isError: true },
+		{ status: "complete", isError: true },
+		{ status: "error", isError: false },
+	])("rejects an inconsistent $status tool item", (state) => {
+		expect(() =>
+			parseServerMessage(
+				itemMessage({
+					id: "tool-1",
+					role: "tool",
+					toolCallId: "call-1",
+					toolName: "read",
+					input: {},
+					content: [],
+					timestamp: 1,
+					...state,
+				}),
+			),
+		).toThrow(ProtocolValidationError);
 	});
 
 	test("rejects cyclic protocol values with a protocol validation error", () => {

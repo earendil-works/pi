@@ -5,16 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
 	applyMigrations,
 	createNodeSqliteFactory,
-	createSqliteSessionStore,
+	loadMigrations,
 	type SqliteDatabase,
 	type SqliteDatabaseFactory,
 	type SqliteRunResult,
 	type SqliteSessionMetadata,
+	SqliteSessionRepository,
 	type SqliteStatement,
 } from "../../../storage/sqlite-node/src/index.ts";
 import { SqliteSessionConnection } from "../../../storage/sqlite-node/src/sqlite/storage/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { createSessionRepository } from "../../src/harness/session/repository.ts";
 import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
 
 function createTempDir(): string {
@@ -96,14 +96,13 @@ describe("SQLite migrations", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
 		try {
 			const rows = await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>();
-			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql"]);
+			expect(rows.map((row) => row.id)).toEqual(["001_initial.sql", "002_branch_tips.sql"]);
 			const tables = await db
 				.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
 				.all<{ name: string; sql: string | null }>();
@@ -114,16 +113,23 @@ describe("SQLite migrations", () => {
 					"session_entries",
 					"session_sequences",
 					"branch_entries",
+					"branch_tips",
 					"session_materialized",
 					"entry_materialized",
 				]),
 			);
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
 			expect(sessionColumns.map((column) => column.name)).toContain("active_leaf_id");
+			const branchIndexes = await db
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'branch_entries'")
+				.all<{ name: string }>();
+			expect(branchIndexes.map((index) => index.name)).toContain("idx_branch_entries_session_branch_seq");
+			expect(branchIndexes.map((index) => index.name)).not.toContain("idx_branch_entries_session_branch");
 			for (const tableName of [
 				"sessions",
 				"session_sequences",
 				"branch_entries",
+				"branch_tips",
 				"session_materialized",
 				"entry_materialized",
 			]) {
@@ -135,13 +141,42 @@ describe("SQLite migrations", () => {
 		}
 	});
 
+	it("clears legacy branch projections when adding explicit tips", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const sqlite = createNodeSqliteFactory();
+		const db = await sqlite.open(databasePath);
+		try {
+			const initial = (await loadMigrations()).find((migration) => migration.id === "001_initial.sql");
+			if (!initial) throw new Error("Missing initial SQLite migration");
+			await db.exec(initial.sql);
+			await db.exec("CREATE TABLE migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
+			await db
+				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
+				.run(initial.id, "2026-01-01T00:00:00.000Z");
+			await db
+				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
+				.run("session-1", "legacy-branch", "entry-1", 1);
+
+			await applyMigrations(db);
+
+			expect(await db.prepare("SELECT entry_id FROM branch_entries").all<{ entry_id: string }>()).toEqual([]);
+			expect(
+				await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'branch_tips'").get(),
+			).toBeDefined();
+			expect(
+				(await db.prepare("SELECT id FROM migrations ORDER BY id").all<{ id: string }>()).map((row) => row.id),
+			).toEqual(["001_initial.sql", "002_branch_tips.sql"]);
+		} finally {
+			await db.close();
+		}
+	});
+
 	it("persists session metadata through create, list, open, and fork", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createSessionRepository({
-			store: createSqliteSessionStore({ env, sqlite: createNodeSqliteFactory(), databasePath }),
-		});
+		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const source = await repo.create({
 			cwd: root,
 			id: "session-1",
@@ -166,8 +201,7 @@ describe("SQLite migrations", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const source = await repo.create({ cwd: root, id: "source" });
 		await source.appendMessage(createUserMessage("one"));
 		await source.appendMessage(createAssistantMessage("two"));
@@ -206,8 +240,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const childId = await session.appendMessage(createAssistantMessage("child"));
@@ -229,6 +262,11 @@ END;
 				.get<{ id: string; type: string }>("session-1");
 			expect(latestSessionEntry?.type).toBe("leaf");
 			expect(latestBranchRow?.entry_id).toBe(latestSessionEntry?.id);
+			if (!latestBranchRow) throw new Error("Missing latest branch row");
+			const branchTip = await db
+				.prepare("SELECT branch_id, tip_id FROM branch_tips WHERE session_id = ? AND branch_id = ?")
+				.get<{ branch_id: string; tip_id: string }>("session-1", latestBranchRow.branch_id);
+			expect(branchTip?.tip_id).toBe(latestSessionEntry?.id);
 		} finally {
 			await db.close();
 		}
@@ -243,8 +281,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const firstChildId = await session.appendMessage(createAssistantMessage("first child"));
@@ -259,10 +296,15 @@ END;
 				)
 				.all<{ branch_id: string; entry_id: string; entry_seq: number }>("session-1");
 			const branchIds = [...new Set(branchRows.map((row) => row.branch_id))];
-			expect(branchIds).toHaveLength(3);
-			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(3);
+			expect(branchIds).toHaveLength(2);
+			expect(branchRows.filter((row) => row.entry_id === rootId)).toHaveLength(2);
 			expect(branchRows.filter((row) => row.entry_id === firstChildId)).toHaveLength(1);
 			expect(branchRows.filter((row) => row.entry_id === secondChildId)).toHaveLength(1);
+			const tips = await db
+				.prepare("SELECT branch_id, tip_id FROM branch_tips WHERE session_id = ? ORDER BY branch_id")
+				.all<{ branch_id: string; tip_id: string }>("session-1");
+			expect(tips.map((tip) => tip.branch_id)).toEqual(branchIds.sort());
+			expect(new Set(tips.map((tip) => tip.tip_id)).size).toBe(tips.length);
 		} finally {
 			await db.close();
 		}
@@ -272,9 +314,7 @@ END;
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createSessionRepository({
-			store: createSqliteSessionStore({ env, sqlite: createNodeSqliteFactory(), databasePath }),
-		});
+		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		await session.appendMessage(createAssistantMessage("first child"));
@@ -294,9 +334,7 @@ END;
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createSessionRepository({
-			store: createSqliteSessionStore({ env, sqlite: createNodeSqliteFactory(), databasePath }),
-		});
+		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const ids = [
 			await session.appendMessage(createUserMessage("one")),
@@ -322,12 +360,11 @@ END;
 			open: async () => db,
 		};
 		const env = new NodeExecutionEnv({ cwd: root });
-		const store = createSqliteSessionStore({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
 
 		await expect(repo.create({ cwd: root, id: "session-1" })).rejects.toThrow("insert failed");
 		expect(db.closeCount).toBe(0);
-		await store[Symbol.asyncDispose]();
+		await repo[Symbol.asyncDispose]();
 		expect(db.closeCount).toBe(1);
 	});
 
@@ -343,8 +380,7 @@ END;
 			open: async () => db,
 		};
 		const env = new NodeExecutionEnv({ cwd: root });
-		const store = createSqliteSessionStore({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
 		const metadata: SqliteSessionMetadata = {
 			id: "missing",
 			createdAt: new Date().toISOString(),
@@ -355,7 +391,7 @@ END;
 
 		await expect(repo.open(metadata)).rejects.toThrow("Session not found: missing");
 		expect(db.closeCount).toBe(0);
-		await store[Symbol.asyncDispose]();
+		await repo[Symbol.asyncDispose]();
 		expect(db.closeCount).toBe(1);
 	});
 
@@ -364,42 +400,61 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const { sqlite, counts } = createCloseCountingSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		for (let i = 0; i < 10; i++) await session.appendMessage(createUserMessage(`message ${i}`));
 		await session.getEntries();
 		expect(counts).toEqual({ opens: 1, closes: 0 });
-		await store[Symbol.asyncDispose]();
+		await repo[Symbol.asyncDispose]();
 		expect(counts).toEqual({ opens: 1, closes: 1 });
-		await store[Symbol.asyncDispose]();
+		await repo[Symbol.asyncDispose]();
 		expect(counts).toEqual({ opens: 1, closes: 1 });
 	});
 
-	it("shares one connection across source and fork until the store is disposed", async () => {
+	it("shares one connection across source and fork until the repository is disposed", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const { sqlite, counts } = createCloseCountingSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const source = await repo.create({ cwd: root, id: "session-1" });
 
 		const fork = await repo.fork(await source.getMetadata(), { cwd: root, id: "session-2" });
 		await fork.appendMessage(createUserMessage("fork"));
 		expect(counts).toEqual({ opens: 1, closes: 0 });
-		await store[Symbol.asyncDispose]();
+		await repo[Symbol.asyncDispose]();
 		expect(counts).toEqual({ opens: 1, closes: 1 });
 	});
 
-	it("fails loudly when a stored entry cannot be decoded", async () => {
+	it("rejects a missing active leaf when opened", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const metadata = await session.getMetadata();
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?").run("missing", metadata.id);
+		} finally {
+			await db.close();
+		}
+
+		await expect(repo.open(metadata)).rejects.toMatchObject({
+			code: "invalid_session",
+			message: "Entry missing not found",
+		});
+	});
+
+	it("fails loudly when a stored entry is read and cannot be decoded", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("message"));
 		const metadata = await session.getMetadata();
@@ -413,10 +468,11 @@ END;
 			await db.close();
 		}
 
-		await expect(repo.open(metadata)).rejects.toMatchObject({ code: "invalid_entry" });
+		const reopened = await repo.open(metadata);
+		await expect(reopened.getEntries()).rejects.toMatchObject({ code: "invalid_entry" });
 	});
 
-	it("restores in-memory state when appendEntry fails after mutating caches", async () => {
+	it("does not publish connection state when an append transaction fails", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const sqlite = createNodeSqliteFactory();
@@ -426,28 +482,43 @@ END;
 			cwd: root,
 			sessionId: "session-1",
 		});
-		const originalPrepare = db.prepare.bind(db);
-		db.prepare = (sql: string) => {
-			if (sql.startsWith("UPDATE sessions SET active_leaf_id = ?")) {
-				return new ThrowingStatement(async () => {
-					throw new Error("active leaf update failed");
-				});
-			}
-			return originalPrepare(sql);
-		};
+		await db.exec(`
+			CREATE TEMP TRIGGER fail_branch_tip_insert
+			BEFORE INSERT ON branch_tips
+			BEGIN
+				SELECT RAISE(ABORT, 'branch insert failed');
+			END;
+		`);
 
+		const rootEntry = {
+			type: "message" as const,
+			id: "root",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+			message: createUserMessage("root"),
+		};
+		try {
+			await expect(storage.appendEntry(rootEntry)).rejects.toMatchObject({ code: "storage" });
+		} finally {
+			await db.exec("DROP TRIGGER fail_branch_tip_insert");
+		}
+		const sessionRow = await db
+			.prepare("SELECT active_leaf_id FROM sessions WHERE id = ?")
+			.get<{ active_leaf_id: string | null }>("session-1");
+		expect(sessionRow?.active_leaf_id).toBeNull();
+		expect(await storage.readEntries()).toEqual([]);
 		await expect(
 			storage.appendEntry({
-				type: "message",
-				id: "root",
+				type: "leaf",
+				id: "leaf",
 				parentId: null,
 				timestamp: new Date().toISOString(),
-				message: createUserMessage("root"),
+				targetId: rootEntry.id,
 			}),
-		).rejects.toMatchObject({ code: "storage" });
-		expect(await storage.getLeafId()).toBeNull();
-		expect(await storage.getEntry("root")).toBeUndefined();
-		expect(await storage.getEntries()).toEqual([]);
+		).rejects.toMatchObject({ code: "not_found" });
+		expect(await storage.readEntries()).toEqual([]);
+		await storage.appendEntry(rootEntry);
+		expect(await storage.readEntries()).toEqual([rootEntry]);
 		await db.close();
 	});
 
@@ -456,8 +527,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const store = createSqliteSessionStore({ env, sqlite, databasePath });
-		const repo = createSessionRepository({ store });
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const userId = await session.appendMessage(createUserMessage("one"));
 		await session.appendThinkingLevelChange("high");

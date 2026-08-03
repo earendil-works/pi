@@ -50,7 +50,7 @@ Custom transports can use `@earendil-works/pi-server/testing` for deterministic 
 
 `@earendil-works/pi-ai` domain objects and `@earendil-works/pi-protocol` wire DTOs remain independent. This package owns their boundary and exports `toProtocolModelMetadata()`, `toProtocolAssistantMessage()`, `toProtocolUserMessage()`, and `toProtocolToolResultMessage()`.
 
-The adapters reject invalid tool inputs, explicitly sanitize diagnostic details, and exhaustively handle closed `pi-ai` unions. The protocol mirrors `pi-ai` vocabulary such as `toolCall` and `toolUse` where the semantics are identical. Compile-time assertions cover shared thinking-level and model-input vocabularies. Tests encode adapter output through the protocol runtime schemas so incompatible changes fail in the bridging package.
+The adapters reject invalid tool inputs, identifiers, timestamps, and mismatched tool results; `toProtocolToolResultMessage()` requires the original `ToolCall` so it can verify the association and convert its arguments itself. Diagnostic details are explicitly sanitized. Closed `pi-ai` unions are mapped exhaustively, and compile-time field manifests enumerate current `pi-ai` properties so additions require an explicit review. The protocol mirrors `pi-ai` vocabulary such as `toolCall` and `toolUse` where the semantics are identical. Protocol schemas enforce consistent lifecycle states, and tests encode adapter output through the runtime schemas so incompatible changes fail in the bridging package.
 
 ## Legacy server migration
 

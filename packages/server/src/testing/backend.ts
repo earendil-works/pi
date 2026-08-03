@@ -89,20 +89,29 @@ export class TestSessionRuntime implements PiSessionRuntime {
 			],
 		});
 		const outcome = await done.promise;
+		const assistant =
+			outcome === "complete"
+				? {
+						id: `assistant-${this.stored.snapshot.revision + 1}`,
+						role: "assistant" as const,
+						content: [{ type: "text" as const, text: `reply:${input.text}` }],
+						status: "complete" as const,
+						model: this.stored.snapshot.model,
+						stopReason: "stop" as const,
+						timestamp: this.stored.snapshot.revision + 1,
+					}
+				: {
+						id: `assistant-${this.stored.snapshot.revision + 1}`,
+						role: "assistant" as const,
+						content: [{ type: "text" as const, text: "" }],
+						status: "aborted" as const,
+						model: this.stored.snapshot.model,
+						stopReason: "aborted" as const,
+						timestamp: this.stored.snapshot.revision + 1,
+					};
 		this.update({
 			phase: "idle",
-			transcript: [
-				...this.stored.snapshot.transcript,
-				{
-					id: `assistant-${this.stored.snapshot.revision + 1}`,
-					role: "assistant",
-					content: [{ type: "text", text: outcome === "complete" ? `reply:${input.text}` : "" }],
-					status: outcome === "complete" ? "complete" : "aborted",
-					model: this.stored.snapshot.model,
-					stopReason: outcome === "complete" ? "stop" : "aborted",
-					timestamp: this.stored.snapshot.revision + 1,
-				},
-			],
+			transcript: [...this.stored.snapshot.transcript, assistant],
 		});
 		this.pendingPrompt = undefined;
 	}

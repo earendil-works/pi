@@ -3,70 +3,66 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	createNodeSqliteFactory,
 	createSqliteSessionSearch,
-	createSqliteSessionStore,
 	type SqliteSessionMetadata,
+	SqliteSessionRepository,
 } from "../../../storage/sqlite-node/src/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { createJsonlSessionStore } from "../../src/harness/session/jsonl-store.ts";
-import { createSessionRepository } from "../../src/harness/session/repository.ts";
-import { createScanningSessionSearch } from "../../src/harness/session/search-backend.ts";
+import { JsonlSessionRepository } from "../../src/harness/session/jsonl-repo.ts";
+import { createScanningSessionSearch } from "../../src/harness/session/search.ts";
 import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "../../src/harness/types.ts";
 import { createTempDir, createUserMessage } from "./session-test-utils.ts";
 
-const ownedStores: AsyncDisposable[] = [];
+const ownedRepositories: AsyncDisposable[] = [];
 
 afterEach(async () => {
-	for (const store of ownedStores.splice(0)) await store[Symbol.asyncDispose]();
+	for (const repository of ownedRepositories.splice(0)) await repository[Symbol.asyncDispose]();
 });
 
-function createSqliteRepository(options: Parameters<typeof createSqliteSessionStore>[0]) {
-	const store = createSqliteSessionStore(options);
-	ownedStores.push(store);
-	return createSessionRepository({
-		store,
-		search: createSqliteSessionSearch(options),
-	});
+function createSqliteFixture(options: ConstructorParameters<typeof SqliteSessionRepository>[0]) {
+	const repository = new SqliteSessionRepository(options);
+	ownedRepositories.push(repository);
+	return { repository, search: createSqliteSessionSearch(options) };
 }
 
-function createJsonlRepository(options: Parameters<typeof createJsonlSessionStore>[0]) {
-	const store = createJsonlSessionStore(options);
-	ownedStores.push(store);
-	return createSessionRepository({ store, search: createScanningSessionSearch(store) });
+function createJsonlFixture(options: ConstructorParameters<typeof JsonlSessionRepository>[0]) {
+	const repository = new JsonlSessionRepository(options);
+	ownedRepositories.push(repository);
+	return { repository, search: createScanningSessionSearch(repository) };
 }
 
-describe("JsonlSessionStore with scanning search", () => {
+describe("JsonlSessionBackend with scanning search", () => {
 	it("searches canonical session entries by scanning", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createJsonlRepository({ fs: env, sessionsRoot: join(root, "sessions") });
+		const { repository: repo, search } = createJsonlFixture({ fs: env, sessionsRoot: join(root, "sessions") });
 		const included = await repo.create({ cwd: root, id: "included" });
 		const excluded = await repo.create({ cwd: `${root}/other`, id: "excluded" });
 		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
 		await excluded.appendMessage(createUserMessage("Find the auth defect"));
 
-		await expect(repo.search({ text: "AUTH", cwd: root })).resolves.toEqual([
+		await expect(search.search({ text: "AUTH", cwd: root })).resolves.toEqual([
 			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
 		]);
 	});
 });
 
-describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
-	it("uses SQLite FTS5 when composed with its search store", async () => {
+describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
+	it("uses SQLite FTS5 when composed with its search implementation", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const repo = createSqliteRepository({ env, sqlite, databasePath });
+		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
 		const included = await repo.create({ cwd: root, id: "included" });
 		const excluded = await repo.create({ cwd: `${root}/other`, id: "excluded" });
 		const metadata = await included.getMetadata();
 		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
 		await excluded.appendMessage(createUserMessage("Find the auth defect"));
 
-		await expect(repo.search({ text: "auth", cwd: root })).resolves.toEqual([
+		await expect(search.search({ text: "auth", cwd: root })).resolves.toEqual([
 			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
 		]);
-		await expect(repo.search({ text: "uth", cwd: root })).resolves.toEqual([
+		await expect(search.search({ text: "uth", cwd: root })).resolves.toEqual([
 			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
 		]);
 
@@ -82,7 +78,7 @@ describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
 		}
 
 		await repo.delete(metadata);
-		await expect(repo.search({ text: "auth", cwd: root })).resolves.toEqual([]);
+		await expect(search.search({ text: "auth", cwd: root })).resolves.toEqual([]);
 	});
 
 	it("creates an empty canonical session without initializing FTS", async () => {
@@ -90,7 +86,7 @@ describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const repo = createSqliteRepository({ env, sqlite, databasePath });
+		const { repository: repo } = createSqliteFixture({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
@@ -110,8 +106,8 @@ describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const repo = createSqliteRepository({ env, sqlite, databasePath });
-		await repo.search({ text: "initialize" });
+		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await search.search({ text: "initialize" });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
@@ -130,8 +126,8 @@ describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const repo = createSqliteRepository({ env, sqlite, databasePath });
-		await repo.search({ text: "initialize" });
+		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await search.search({ text: "initialize" });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("must remain"));
 		const metadata = await session.getMetadata();
@@ -151,25 +147,25 @@ describe("SqliteSessionStore with explicit SQLite FTS5 search", () => {
 	it("initializes canonical storage when searched before the first session is created", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createSqliteRepository({
+		const { repository: repo, search } = createSqliteFixture({
 			env,
 			sqlite: createNodeSqliteFactory(),
 			databasePath: join(root, "sessions.sqlite"),
 		});
 
-		await expect(repo.search({ text: "auth" })).resolves.toEqual([]);
+		await expect(search.search({ text: "auth" })).resolves.toEqual([]);
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("Find the auth defect"));
 
-		await expect(repo.search({ text: "auth" })).resolves.toEqual([
+		await expect(search.search({ text: "auth" })).resolves.toEqual([
 			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "session-1" }) }),
 		]);
 		await expect(session.appendMessage(createUserMessage("Still writable"))).resolves.toBeTypeOf("string");
 	});
 });
 
-describe("SqliteSessionStore with custom search", () => {
-	it("can swap out the default search implementation", async () => {
+describe("SqliteSessionRepository with custom search", () => {
+	it("uses an independently supplied search implementation", async () => {
 		const root = createTempDir();
 		const searches: SessionSearchOptions[] = [];
 		const search: SessionSearch<SqliteSessionMetadata> = {
@@ -179,16 +175,16 @@ describe("SqliteSessionStore with custom search", () => {
 			},
 		};
 		const env = new NodeExecutionEnv({ cwd: root });
-		const store = createSqliteSessionStore({
+		const repo = new SqliteSessionRepository({
 			env,
 			sqlite: createNodeSqliteFactory(),
 			databasePath: join(root, "sessions.sqlite"),
 		});
-		const repo = createSessionRepository({ store, search });
+		ownedRepositories.push(repo);
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("stored canonically"));
 
-		await expect(repo.search({ text: "custom query" })).resolves.toEqual([]);
+		await expect(search.search({ text: "custom query" })).resolves.toEqual([]);
 		expect(searches).toEqual([{ text: "custom query" }]);
 	});
 });

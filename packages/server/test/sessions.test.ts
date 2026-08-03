@@ -140,6 +140,8 @@ describe("PiServer Unix integration", () => {
 		const detached = await client.request({ command: "detach", sessionId: createdId });
 		expect(detached).toMatchObject({ ok: true, result: { command: "detach", sessionId: createdId } });
 		expect(backend.latestRuntime(createdId).disposeCount).toBe(1);
+		const detachedAgain = await client.request({ command: "detach", sessionId: createdId });
+		expect(detachedAgain).toMatchObject({ ok: true, result: { command: "detach", sessionId: createdId } });
 
 		const attached = await attach(client, createdId);
 		expect(attached.id).toBe(backend.lastCreatedId);

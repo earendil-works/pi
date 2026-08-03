@@ -76,6 +76,8 @@ export interface ModelRuntimeAuthOverrides {
 	minOAuthValidityMs?: number;
 }
 
+const DEFAULT_MODEL_REFRESH_TIMEOUT_MS = 15_000;
+
 function mergeHeaders(
 	base: ProviderHeaders | undefined,
 	override: ProviderHeaders | undefined,
@@ -112,6 +114,7 @@ export class ModelRuntime implements Models {
 		auth: new Map(),
 	};
 	private availabilityRefresh: Promise<void> | undefined;
+	private availabilityRefreshSeq = 0;
 	private availabilityError: string | undefined;
 
 	private constructor(
@@ -163,7 +166,7 @@ export class ModelRuntime implements Models {
 		const refreshFromNetwork = runtime.modelNetworkEnabled && options.allowModelNetwork === true;
 		const controller = refreshFromNetwork ? new AbortController() : undefined;
 		const timeout = controller
-			? setTimeout(() => controller.abort(), options.modelRefreshTimeoutMs ?? 15_000)
+			? setTimeout(() => controller.abort(), options.modelRefreshTimeoutMs ?? DEFAULT_MODEL_REFRESH_TIMEOUT_MS)
 			: undefined;
 		try {
 			await runtime.refresh({ allowNetwork: refreshFromNetwork, signal: controller?.signal });
@@ -239,7 +242,7 @@ export class ModelRuntime implements Models {
 		};
 	}
 
-	private async runAvailabilityRefresh(): Promise<void> {
+	private async runAvailabilityRefresh(seq: number): Promise<void> {
 		const providers = this.models.getProviders();
 		const [available, checks, credentials] = await Promise.all([
 			this.models.getAvailable(),
@@ -253,6 +256,10 @@ export class ModelRuntime implements Models {
 			),
 			this.credentials.list(),
 		]);
+		// A newer rebuild was requested while this one was in flight; drop this
+		// result so a slow, superseded refresh cannot clobber the snapshot with
+		// stale data.
+		if (seq !== this.availabilityRefreshSeq) return;
 		const auth = new Map(checks);
 		const configuredProviders = new Set(
 			checks
@@ -269,10 +276,14 @@ export class ModelRuntime implements Models {
 		this.availabilityError = undefined;
 	}
 
-	private queueAvailabilityRefresh(after: Promise<void> | undefined): Promise<void> {
-		const refresh = (after ?? Promise.resolve()).catch(() => {}).then(() => this.runAvailabilityRefresh());
+	private queueAvailabilityRefresh(): Promise<void> {
+		const seq = ++this.availabilityRefreshSeq;
+		const refresh = this.runAvailabilityRefresh(seq);
 		const recorded = refresh.catch((error) => {
-			this.availabilityError = error instanceof Error ? error.message : String(error);
+			// Only the latest requested rebuild owns the error state.
+			if (seq === this.availabilityRefreshSeq) {
+				this.availabilityError = error instanceof Error ? error.message : String(error);
+			}
 			throw error;
 		});
 		const tracked = recorded.finally(() => {
@@ -284,12 +295,17 @@ export class ModelRuntime implements Models {
 
 	/** Coalesce concurrent readers onto the pending refresh. */
 	private refreshAvailability(): Promise<void> {
-		return this.availabilityRefresh ?? this.queueAvailabilityRefresh(undefined);
+		return this.availabilityRefresh ?? this.queueAvailabilityRefresh();
 	}
 
-	/** Mutations must not observe an in-flight refresh started before them. */
+	/**
+	 * Mutations must observe a rebuild that starts after their state change, and a
+	 * stuck in-flight refresh must not block them. Start a fresh, independent
+	 * rebuild instead of chaining onto the pending one. The sequence guard in
+	 * runAvailabilityRefresh ensures a superseded rebuild cannot clobber its result.
+	 */
 	private forceRefreshAvailability(): Promise<void> {
-		return this.queueAvailabilityRefresh(this.availabilityRefresh);
+		return this.queueAvailabilityRefresh();
 	}
 
 	getProviders(): readonly Provider[] {
@@ -504,7 +520,11 @@ export class ModelRuntime implements Models {
 
 	async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
 		const credential = await this.models.login(providerId, type, interaction);
-		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
+		const timeoutSignal = AbortSignal.timeout(DEFAULT_MODEL_REFRESH_TIMEOUT_MS);
+		await this.refresh({
+			allowNetwork: this.modelNetworkEnabled,
+			signal: interaction.signal ? AbortSignal.any([interaction.signal, timeoutSignal]) : timeoutSignal,
+		});
 		return credential;
 	}
 

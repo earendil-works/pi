@@ -3,13 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach } from "vitest";
-import { createInMemorySessionStore } from "../../src/harness/session/memory-store.ts";
-import { createSessionRepository } from "../../src/harness/session/repository.ts";
+import { InMemorySessionRepository } from "../../src/harness/session/memory-repo.ts";
 import type { Session } from "../../src/harness/session/session.ts";
 
 export async function createInMemorySession(id?: string): Promise<Session> {
-	const store = createInMemorySessionStore();
-	return createSessionRepository({ store }).create({ id });
+	return new InMemorySessionRepository().create({ id });
 }
 
 export function createUserMessage(text: string): AgentMessage {

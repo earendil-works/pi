@@ -13,7 +13,10 @@ import {
 import type { Terminal } from "./terminal.ts";
 import {
 	deleteAllKittyImages,
+	deleteAllKittyPlacements,
+	deleteKittyImage,
 	getCapabilities,
+	getKittyImagePlacement,
 	type ImageProtocol,
 	isImageLine,
 	setCapabilities,
@@ -42,6 +45,15 @@ const END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 const OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 const PAGE_SCROLL_OVERLAP = 4;
+const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
+const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
+const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
+
+interface CachedKittyImage {
+	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
+}
 
 interface SelectionPoint {
 	row: number;
@@ -83,6 +95,7 @@ export interface TuiAltScreenOptions {
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
 export class TuiAltScreen extends TuiBase implements ViewportTUI {
+	readonly mode = "fullscreen" as const;
 	readonly [VIEWPORT_TUI] = true as const;
 	private previousScreen: string[] = [];
 	private lastDocument: string[] = [];
@@ -96,6 +109,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private altScreenActive = false;
 	private imageProtocol: ImageProtocol = null;
 	private savedCapabilities?: TerminalCapabilities;
+	private readonly uploadedKittyImages = new Map<number, CachedKittyImage>();
 	private selectionAnchor?: SelectionPoint;
 	private selectionFocus?: SelectionPoint;
 	private selectionDragPointer?: { x: number; y: number };
@@ -172,6 +186,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.altScreenActive = true;
 		const capabilities = getCapabilities();
 		this.imageProtocol = capabilities.images;
+		this.uploadedKittyImages.clear();
 		if (capabilities.images === "iterm2") {
 			this.savedCapabilities = capabilities;
 			setCapabilities({ ...capabilities, images: null });
@@ -198,6 +213,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.terminal.write(
 			`${BEGIN_SYNCHRONIZED_OUTPUT}${this.deleteKittyImages()}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${END_SYNCHRONIZED_OUTPUT}`,
 		);
+		this.uploadedKittyImages.clear();
 	}
 
 	protected override afterTerminalStop(): void {
@@ -223,6 +239,56 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private deleteKittyImages(): string {
 		return this.imageProtocol === "kitty" ? deleteAllKittyImages() : "";
+	}
+
+	private prepareKittyScreen(screen: string[]): { lines: string[]; evictedImageDeletion: string } {
+		const visibleImageIds = new Set<number>();
+		const lines = screen.map((line) => {
+			const placement = getKittyImagePlacement(line);
+			if (!placement) return line;
+			visibleImageIds.add(placement.imageId);
+
+			const cachedImage = this.uploadedKittyImages.get(placement.imageId);
+			const nextCachedImage = {
+				transmissionGeneration: placement.transmissionGeneration,
+				transmissionBytes: placement.transmissionBytes,
+				estimatedDecodedBytes: placement.estimatedDecodedBytes,
+			};
+			if (cachedImage) this.uploadedKittyImages.delete(placement.imageId);
+			this.uploadedKittyImages.set(placement.imageId, nextCachedImage);
+
+			return cachedImage?.transmissionGeneration === placement.transmissionGeneration
+				? placement.replacementLine
+				: line;
+		});
+
+		let cachedOffscreenImageCount = 0;
+		let cachedOffscreenTransmissionBytes = 0;
+		let cachedOffscreenDecodedBytes = 0;
+		for (const [imageId, cachedImage] of this.uploadedKittyImages) {
+			if (visibleImageIds.has(imageId)) continue;
+			cachedOffscreenImageCount += 1;
+			cachedOffscreenTransmissionBytes += cachedImage.transmissionBytes;
+			cachedOffscreenDecodedBytes += cachedImage.estimatedDecodedBytes;
+		}
+
+		let evictedImageDeletion = "";
+		for (const [imageId, cachedImage] of this.uploadedKittyImages) {
+			if (
+				cachedOffscreenImageCount <= MAX_CACHED_OFFSCREEN_KITTY_IMAGES &&
+				cachedOffscreenTransmissionBytes <= MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES &&
+				cachedOffscreenDecodedBytes <= MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES
+			) {
+				break;
+			}
+			if (visibleImageIds.has(imageId)) continue;
+			evictedImageDeletion += deleteKittyImage(imageId);
+			this.uploadedKittyImages.delete(imageId);
+			cachedOffscreenImageCount -= 1;
+			cachedOffscreenTransmissionBytes -= cachedImage.transmissionBytes;
+			cachedOffscreenDecodedBytes -= cachedImage.estimatedDecodedBytes;
+		}
+		return { lines, evictedImageDeletion };
 	}
 
 	protected override resetRenderState(): void {
@@ -774,18 +840,30 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			(line, row) =>
 				line !== this.previousScreen[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")),
 		);
+		const redrawImages = fullRedraw || imagesNeedRedraw;
+		const hadUploadedKittyImages = this.uploadedKittyImages.size > 0;
+		const preparedKittyScreen =
+			redrawImages && this.imageProtocol === "kitty"
+				? this.prepareKittyScreen(screen)
+				: { lines: screen, evictedImageDeletion: "" };
 
 		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
 		if (fullRedraw) {
 			this.fullRedrawCount += 1;
-			buffer += `${this.deleteKittyImages()}\x1b[2J`;
+			const clearImages =
+				this.imageProtocol === "kitty" && hadUploadedKittyImages
+					? deleteAllKittyPlacements()
+					: this.deleteKittyImages();
+			buffer += `${clearImages}\x1b[2J`;
 		} else if (imagesNeedRedraw) {
-			buffer += this.imageProtocol === "iterm2" ? "\x1b[2J" : this.deleteKittyImages();
+			if (this.imageProtocol === "iterm2") buffer += "\x1b[2J";
+			else if (this.imageProtocol === "kitty") buffer += deleteAllKittyPlacements();
 		}
+		buffer += preparedKittyScreen.evictedImageDeletion;
 
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
-			buffer += `\x1b[${row + 1};1H\x1b[2K${screen[row] ?? ""}`;
+			buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
 		}
 
 		if (cursorPos) {

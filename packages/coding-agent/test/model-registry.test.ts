@@ -1050,6 +1050,8 @@ describe("ModelRegistry", () => {
 				apiKey: undefined,
 				headers: {
 					"cf-aig-authorization": "Bearer stored-cf-token",
+					Authorization: null,
+					"x-api-key": null,
 					"x-account": "stored-account",
 				},
 				env: {

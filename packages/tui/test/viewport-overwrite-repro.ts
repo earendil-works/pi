@@ -18,9 +18,9 @@
  *   some earlier PRE-TOOL lines near the bottom are overwritten by POST-TOOL lines.
  */
 
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
 import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

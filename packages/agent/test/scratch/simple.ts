@@ -8,11 +8,10 @@ import {
 	AgentHarness,
 	createBashTool,
 	createEditTool,
-	createInMemorySessionStore,
 	createReadTool,
-	createSessionRepository,
 	createWriteTool,
 	formatSkillsForSystemPrompt,
+	InMemorySessionRepository,
 	loadSourcedPromptTemplates,
 	loadSourcedSkills,
 	type PromptTemplate,
@@ -51,8 +50,8 @@ if (!model) {
 	process.exit(-1);
 }
 
-await using store = createInMemorySessionStore();
-const session = await createSessionRepository({ store }).create({});
+await using repository = new InMemorySessionRepository();
+const session = await repository.create({});
 const agent = new AgentHarness({
 	session,
 	models,

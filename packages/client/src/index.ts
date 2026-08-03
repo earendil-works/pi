@@ -1,6 +1,12 @@
-export type { PiSessionHandle } from "./client.ts";
 export { PiClient } from "./client.ts";
-export { PiDisconnectedError, PiServerError, PiSessionDetachedError } from "./errors.ts";
+export {
+	PiClientDisposedError,
+	PiDisconnectedError,
+	PiServerError,
+	PiSessionDetachedError,
+	PiSessionOwnershipError,
+} from "./errors.ts";
+export type { AcquireSessionOptions, PiSessionHandle, SessionLease, SessionLeaseMode } from "./session-handle.ts";
 export type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
 export type {
 	ConnectionState,

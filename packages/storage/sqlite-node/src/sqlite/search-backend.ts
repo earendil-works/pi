@@ -2,7 +2,12 @@ import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "@ear
 import { getFileSystemResultOrThrow } from "@earendil-works/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
 import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
-import type { SqliteDatabase, SqliteDatabaseFactory, SqliteSessionMetadata, SqliteSessionStoreEnv } from "./types.ts";
+import type {
+	SqliteDatabase,
+	SqliteDatabaseFactory,
+	SqliteSessionMetadata,
+	SqliteSessionRepositoryEnv,
+} from "./types.ts";
 
 function getParentPath(path: string): string {
 	const normalized = path.replace(/[\\/]+$/, "");
@@ -19,7 +24,7 @@ async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 }
 
 export interface SqliteSessionSearchOptions {
-	env: Pick<SqliteSessionStoreEnv, "absolutePath" | "createDir">;
+	env: Pick<SqliteSessionRepositoryEnv, "absolutePath" | "createDir">;
 	sqlite: SqliteDatabaseFactory;
 	databasePath: string;
 }

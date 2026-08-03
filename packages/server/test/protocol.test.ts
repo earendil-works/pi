@@ -1,7 +1,8 @@
-import type { Api, AssistantMessage, Model, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import { encodeServerMessage, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import {
+	sanitizeProtocolDetails,
 	toProtocolAssistantMessage,
 	toProtocolJsonValue,
 	toProtocolModelMetadata,
@@ -150,6 +151,12 @@ describe("pi-ai protocol bridge", () => {
 			isError: false,
 			timestamp: 2,
 		} satisfies ToolResultMessage;
+		const call = {
+			type: "toolCall",
+			id: "call-1",
+			name: "read",
+			arguments: { path: "README.md" },
+		} satisfies ToolCall;
 
 		const userResult = toProtocolUserMessage(user, { id: "user-1" });
 		expect(userResult).toMatchObject({
@@ -160,7 +167,7 @@ describe("pi-ai protocol bridge", () => {
 
 		const toolResult = toProtocolToolResultMessage(tool, {
 			id: "tool-1",
-			call: { toolName: "read", input: { path: "README.md" } },
+			call,
 		});
 		expect(toolResult).toMatchObject({
 			id: "tool-1",
@@ -170,6 +177,28 @@ describe("pi-ai protocol bridge", () => {
 			status: "complete",
 		});
 		assertValidServerPayload(toolResult);
+	});
+
+	test("rejects tool results associated with a different call", () => {
+		const call = {
+			type: "toolCall",
+			id: "call-1",
+			name: "read",
+			arguments: { path: "README.md" },
+		} satisfies ToolCall;
+		const result = {
+			role: "toolResult",
+			toolCallId: "call-2",
+			toolName: "read",
+			content: [{ type: "text", text: "result" }],
+			isError: false,
+			timestamp: 2,
+		} satisfies ToolResultMessage;
+
+		expect(() => toProtocolToolResultMessage(result, { id: "tool-1", call })).toThrow(/tool call/i);
+		expect(() =>
+			toProtocolToolResultMessage({ ...result, toolCallId: "call-1", toolName: "write" }, { id: "tool-1", call }),
+		).toThrow(/tool call/i);
 	});
 
 	test("derives streaming status from a pending stop reason", () => {
@@ -197,6 +226,65 @@ describe("pi-ai protocol bridge", () => {
 		assertValidServerPayload(result);
 	});
 
+	test("preserves optional non-empty assistant error messages", () => {
+		const message = {
+			role: "assistant",
+			content: [],
+			api: "test-api",
+			provider: "test-provider",
+			model: "model-1",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			timestamp: 123,
+		} satisfies AssistantMessage;
+
+		const resultWithoutMessage = toProtocolAssistantMessage(message, { id: "message-error" });
+		expect(resultWithoutMessage).toMatchObject({ status: "error", stopReason: "error" });
+		expect(resultWithoutMessage).not.toHaveProperty("errorMessage");
+		assertValidServerPayload(resultWithoutMessage);
+		expect(() => toProtocolAssistantMessage({ ...message, errorMessage: "" }, { id: "message-error" })).toThrow(
+			TypeError,
+		);
+		const resultWithMessage = toProtocolAssistantMessage(
+			{ ...message, errorMessage: "failed" },
+			{ id: "message-error" },
+		);
+		expect(resultWithMessage).toMatchObject({ status: "error", stopReason: "error", errorMessage: "failed" });
+		assertValidServerPayload(resultWithMessage);
+	});
+
+	test("rejects invalid source identifiers and timestamps", () => {
+		const message = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "", name: "read", arguments: {} }],
+			api: "test-api",
+			provider: "test-provider",
+			model: "model-1",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 1,
+		} satisfies AssistantMessage;
+
+		expect(() => toProtocolAssistantMessage(message, { id: "assistant-1" })).toThrow(/tool call id/i);
+		expect(() =>
+			toProtocolUserMessage({ role: "user", content: "hello", timestamp: Number.NaN }, { id: "user-1" }),
+		).toThrow(/timestamp/i);
+	});
+
 	test("rejects lossy tool input conversions", () => {
 		const circular: Record<string, unknown> = {};
 		circular.self = circular;
@@ -205,5 +293,13 @@ describe("pi-ai protocol bridge", () => {
 		expect(() => toProtocolJsonValue(1n)).toThrow(TypeError);
 		expect(() => toProtocolJsonValue(undefined)).toThrow(TypeError);
 		expect(() => toProtocolJsonValue(circular)).toThrow(TypeError);
+	});
+
+	test("rejects sparse execution data and normalizes sparse diagnostic arrays", () => {
+		const sparse = new Array<unknown>(2);
+		sparse[1] = "value";
+
+		expect(() => toProtocolJsonValue(sparse)).toThrow(/undefined/i);
+		expect(sanitizeProtocolDetails(sparse)).toEqual([null, "value"]);
 	});
 });

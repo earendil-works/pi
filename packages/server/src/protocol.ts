@@ -7,6 +7,7 @@ import {
 	getSupportedThinkingLevels,
 	type Model,
 	type ModelThinkingLevel,
+	type ToolCall,
 	type ToolResultMessage,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
@@ -21,12 +22,84 @@ import type {
 } from "@earendil-works/pi-protocol";
 
 type Assert<T extends true> = T;
+type ExactKeys<T, Keys extends keyof T> = keyof T extends Keys ? true : false;
 type _AiThinkingLevelsFitProtocol = Assert<ModelThinkingLevel extends ThinkingLevel ? true : false>;
 type _ProtocolThinkingLevelsFitAi = Assert<ThinkingLevel extends ModelThinkingLevel ? true : false>;
 type AiModelInput = Model<Api>["input"][number];
 type ProtocolModelInput = ModelMetadata["input"][number];
 type _AiModelInputsFitProtocol = Assert<AiModelInput extends ProtocolModelInput ? true : false>;
 type _ProtocolModelInputsFitAi = Assert<ProtocolModelInput extends AiModelInput ? true : false>;
+/**
+ * Enumerate mapped and intentionally omitted pi-ai fields so additions fail compilation here.
+ * Provider replay metadata, diagnostics, cache-write retention splits, model transport settings,
+ * pricing tiers, and deferred-tool availability remain intentionally server-side.
+ */
+type _AiTextContentFieldsAccountedFor = Assert<ExactKeys<AiTextContent, "type" | "text" | "textSignature">>;
+type _AiThinkingContentFieldsAccountedFor = Assert<
+	ExactKeys<
+		Extract<AssistantMessage["content"][number], { type: "thinking" }>,
+		"type" | "thinking" | "thinkingSignature" | "redacted"
+	>
+>;
+type _AiImageContentFieldsAccountedFor = Assert<ExactKeys<AiImageContent, "type" | "data" | "mimeType">>;
+type _AiToolCallFieldsAccountedFor = Assert<
+	ExactKeys<ToolCall, "type" | "id" | "name" | "arguments" | "thoughtSignature">
+>;
+type _AiUsageFieldsAccountedFor = Assert<
+	ExactKeys<
+		AiUsage,
+		"input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "reasoning" | "totalTokens" | "cost"
+	>
+>;
+type _AiUsageCostFieldsAccountedFor = Assert<
+	ExactKeys<AiUsage["cost"], "input" | "output" | "cacheRead" | "cacheWrite" | "total">
+>;
+type _AiModelFieldsAccountedFor = Assert<
+	ExactKeys<
+		Model<Api>,
+		| "id"
+		| "name"
+		| "api"
+		| "provider"
+		| "baseUrl"
+		| "reasoning"
+		| "thinkingLevelMap"
+		| "input"
+		| "cost"
+		| "contextWindow"
+		| "maxTokens"
+		| "headers"
+		| "compat"
+	>
+>;
+type _AiModelCostFieldsAccountedFor = Assert<
+	ExactKeys<Model<Api>["cost"], "input" | "output" | "cacheRead" | "cacheWrite" | "tiers">
+>;
+type _AiUserMessageFieldsAccountedFor = Assert<ExactKeys<UserMessage, "role" | "content" | "timestamp">>;
+type _AiAssistantMessageFieldsAccountedFor = Assert<
+	ExactKeys<
+		AssistantMessage,
+		| "role"
+		| "content"
+		| "api"
+		| "provider"
+		| "model"
+		| "responseModel"
+		| "responseId"
+		| "diagnostics"
+		| "usage"
+		| "stopReason"
+		| "errorMessage"
+		| "rawStopReason"
+		| "timestamp"
+	>
+>;
+type _AiToolResultMessageFieldsAccountedFor = Assert<
+	ExactKeys<
+		ToolResultMessage,
+		"role" | "toolCallId" | "toolName" | "content" | "details" | "usage" | "addedToolNames" | "isError" | "timestamp"
+	>
+>;
 
 export interface AssistantTranscriptOptions {
 	id: string;
@@ -36,14 +109,9 @@ export interface UserTranscriptOptions {
 	id: string;
 }
 
-export interface ToolCallMetadata {
-	toolName: string;
-	input: JsonValue;
-}
-
 export interface ToolTranscriptOptions {
 	id: string;
-	call: ToolCallMetadata;
+	call: ToolCall;
 }
 
 function nonNegativeInteger(value: number | undefined): number | undefined {
@@ -55,8 +123,15 @@ function nonNegativeNumber(value: number): number {
 	return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+function identifier(value: string, label: string): string {
+	if (typeof value !== "string" || value.length === 0) throw new TypeError(`${label} must be a non-empty string`);
+	return value;
+}
+
 function timestamp(value: number): number {
-	return Number.isFinite(value) && value >= 0 ? Math.floor(value) : Date.now();
+	if (!Number.isSafeInteger(value) || value < 0)
+		throw new TypeError("Protocol timestamps must be non-negative integers");
+	return value;
 }
 
 /** Validate and copy a value from an execution boundary into the protocol's JSON-compatible subset. */
@@ -74,7 +149,7 @@ export function toProtocolJsonValue(value: unknown, seen = new Set<object>()): J
 	}
 	seen.add(value);
 	try {
-		if (Array.isArray(value)) return value.map((entry) => toProtocolJsonValue(entry, seen));
+		if (Array.isArray(value)) return Array.from(value, (entry) => toProtocolJsonValue(entry, seen));
 		const result: Record<string, JsonValue> = {};
 		for (const [key, entry] of Object.entries(value)) result[key] = toProtocolJsonValue(entry, seen);
 		return result;
@@ -94,7 +169,7 @@ export function sanitizeProtocolDetails(value: unknown, seen = new Set<object>()
 	if (seen.has(value)) return "[Circular]";
 	seen.add(value);
 	try {
-		if (Array.isArray(value)) return value.map((entry) => sanitizeProtocolDetails(entry, seen) ?? null);
+		if (Array.isArray(value)) return Array.from(value, (entry) => sanitizeProtocolDetails(entry, seen) ?? null);
 		const result: Record<string, JsonValue> = {};
 		for (const [key, entry] of Object.entries(value)) {
 			const normalized = sanitizeProtocolDetails(entry, seen);
@@ -129,10 +204,10 @@ export function toProtocolUsage(usage: AiUsage | undefined): Usage | undefined {
 
 export function toProtocolModelMetadata(model: Model<Api>, authenticated: boolean): ModelMetadata {
 	const result = {
-		provider: model.provider,
-		id: model.id,
-		name: model.name || model.id,
-		api: model.api,
+		provider: identifier(model.provider, "Model provider"),
+		id: identifier(model.id, "Model id"),
+		name: identifier(model.name, "Model name"),
+		api: identifier(model.api, "Model API"),
 		reasoning: model.reasoning,
 		input: [...model.input],
 		contextWindow: Math.max(1, Math.floor(model.contextWindow)),
@@ -151,16 +226,23 @@ export function toProtocolModelMetadata(model: Model<Api>, authenticated: boolea
 
 function toProtocolUserContent(content: UserMessage["content"]): UserTranscriptItem["content"] {
 	if (typeof content === "string") return [{ type: "text", text: content }];
-	return content.map((part) =>
-		part.type === "image"
-			? { type: "image", data: part.data, mimeType: part.mimeType }
-			: { type: "text", text: part.text },
-	);
+	return content.map((part) => {
+		switch (part.type) {
+			case "text":
+				return { type: "text", text: part.text };
+			case "image":
+				return { type: "image", data: part.data, mimeType: part.mimeType };
+			default: {
+				const exhaustive: never = part;
+				return exhaustive;
+			}
+		}
+	});
 }
 
 export function toProtocolUserMessage(message: UserMessage, options: UserTranscriptOptions): UserTranscriptItem {
 	const result = {
-		id: options.id,
+		id: identifier(options.id, "Transcript item id"),
 		role: "user",
 		content: toProtocolUserContent(message.content),
 		timestamp: timestamp(message.timestamp),
@@ -182,8 +264,8 @@ function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscr
 			case "toolCall":
 				return {
 					type: "toolCall",
-					toolCallId: part.id || `tool-${message.timestamp}`,
-					toolName: part.name || "unknown",
+					toolCallId: identifier(part.id, "Tool call id"),
+					toolName: identifier(part.name, "Tool call name"),
 					input: toProtocolJsonValue(part.arguments),
 				};
 			default: {
@@ -194,79 +276,101 @@ function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscr
 	});
 }
 
-function toProtocolStopReason(
-	stopReason: AssistantMessage["stopReason"],
-): AssistantTranscriptItem["stopReason"] | undefined {
-	switch (stopReason) {
+export function toProtocolAssistantMessage(
+	message: AssistantMessage,
+	options: AssistantTranscriptOptions,
+): AssistantTranscriptItem {
+	const usage = toProtocolUsage(message.usage);
+	const common = {
+		id: identifier(options.id, "Transcript item id"),
+		role: "assistant",
+		content: toProtocolAssistantContent(message),
+		model: {
+			provider: identifier(message.provider, "Assistant provider"),
+			id: identifier(message.model, "Assistant model"),
+		},
+		...(message.responseModel === undefined
+			? {}
+			: { responseModel: identifier(message.responseModel, "Assistant response model") }),
+		...(usage ? { usage } : {}),
+		timestamp: timestamp(message.timestamp),
+	} as const;
+	switch (message.stopReason) {
 		case "pending":
-			return undefined;
+			return { ...common, status: "streaming" } satisfies AssistantTranscriptItem;
 		case "stop":
 		case "length":
 		case "toolUse":
+			return {
+				...common,
+				status: "complete",
+				stopReason: message.stopReason,
+			} satisfies AssistantTranscriptItem;
 		case "error":
+			if (message.errorMessage?.length === 0) {
+				throw new TypeError("Assistant error messages must not be empty");
+			}
+			return {
+				...common,
+				status: "error",
+				stopReason: "error",
+				...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
+			} satisfies AssistantTranscriptItem;
 		case "aborted":
-			return stopReason;
+			return {
+				...common,
+				status: "aborted",
+				stopReason: "aborted",
+				...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
+			} satisfies AssistantTranscriptItem;
 		default: {
-			const exhaustive: never = stopReason;
+			const exhaustive: never = message.stopReason;
 			return exhaustive;
 		}
 	}
 }
 
-export function toProtocolAssistantMessage(
-	message: AssistantMessage,
-	options: AssistantTranscriptOptions,
-): AssistantTranscriptItem {
-	const streaming = message.stopReason === "pending";
-	const stopReason = streaming ? undefined : toProtocolStopReason(message.stopReason);
-	const usage = toProtocolUsage(message.usage);
-	const result = {
-		id: options.id,
-		role: "assistant",
-		content: toProtocolAssistantContent(message),
-		status: streaming
-			? "streaming"
-			: message.stopReason === "error"
-				? "error"
-				: message.stopReason === "aborted"
-					? "aborted"
-					: "complete",
-		model: { provider: message.provider, id: message.model },
-		...(message.responseModel ? { responseModel: message.responseModel } : {}),
-		...(usage ? { usage } : {}),
-		...(stopReason ? { stopReason } : {}),
-		...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
-		timestamp: timestamp(message.timestamp),
-	} satisfies AssistantTranscriptItem;
-	return result;
-}
-
 function toProtocolToolContent(content: Array<AiTextContent | AiImageContent>): ToolTranscriptItem["content"] {
-	return content.map((part) =>
-		part.type === "image"
-			? { type: "image", data: part.data, mimeType: part.mimeType }
-			: { type: "text", text: part.text },
-	);
+	return content.map((part) => {
+		switch (part.type) {
+			case "text":
+				return { type: "text", text: part.text };
+			case "image":
+				return { type: "image", data: part.data, mimeType: part.mimeType };
+			default: {
+				const exhaustive: never = part;
+				return exhaustive;
+			}
+		}
+	});
 }
 
 export function toProtocolToolResultMessage(
 	message: ToolResultMessage,
 	options: ToolTranscriptOptions,
 ): ToolTranscriptItem {
+	const callId = identifier(options.call.id, "Tool call id");
+	const callName = identifier(options.call.name, "Tool call name");
+	if (identifier(message.toolCallId, "Tool result call id") !== callId) {
+		throw new TypeError(`Tool result ${message.toolCallId} does not match tool call ${callId}`);
+	}
+	if (identifier(message.toolName, "Tool result name") !== callName) {
+		throw new TypeError(`Tool result ${message.toolName} does not match tool call ${callName}`);
+	}
 	const details = sanitizeProtocolDetails(message.details);
 	const usage = toProtocolUsage(message.usage);
-	const result = {
-		id: options.id,
+	const common = {
+		id: identifier(options.id, "Transcript item id"),
 		role: "tool",
-		toolCallId: message.toolCallId || `tool-${message.timestamp}`,
-		toolName: options.call.toolName,
-		input: options.call.input,
+		toolCallId: callId,
+		toolName: callName,
+		input: toProtocolJsonValue(options.call.arguments),
 		content: toProtocolToolContent(message.content),
 		...(details === undefined ? {} : { details }),
-		status: message.isError ? "error" : "complete",
-		isError: message.isError,
 		...(usage ? { usage } : {}),
 		timestamp: timestamp(message.timestamp),
-	} satisfies ToolTranscriptItem;
-	return result;
+	} as const;
+	return message.isError
+		? ({ ...common, status: "error", isError: true } satisfies ToolTranscriptItem)
+		: ({ ...common, status: "complete", isError: false } satisfies ToolTranscriptItem);
 }
