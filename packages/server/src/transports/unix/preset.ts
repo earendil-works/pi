@@ -14,7 +14,6 @@ export function createUnixServer(backend: PiSessionBackend, options: UnixServerO
 		onError: options.onError,
 	});
 	return new PiServer(backend, {
-		token: options.token,
 		listeners: [listener],
 		maxFrameLength: options.maxFrameLength,
 		handshakeTimeoutMs: options.handshakeTimeoutMs,

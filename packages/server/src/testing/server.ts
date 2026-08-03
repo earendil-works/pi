@@ -1,9 +1,8 @@
 import { PiServer } from "../server.ts";
 import type { PiServerOptions, PiSessionBackend } from "../types.ts";
-import { TEST_TOKEN, TestSessionBackend } from "./backend.ts";
+import { TestSessionBackend } from "./backend.ts";
 
-export interface TestServerOptions extends Omit<PiServerOptions, "token"> {
-	token?: string;
+export interface TestServerOptions extends PiServerOptions {
 	backend?: PiSessionBackend;
 }
 
@@ -17,7 +16,6 @@ export function createTestServer(options: TestServerOptions): TestServer {
 	const backend = options.backend ?? new TestSessionBackend();
 	return {
 		server: new PiServer(backend, {
-			token: options.token ?? TEST_TOKEN,
 			listeners: options.listeners,
 			maxFrameLength: options.maxFrameLength,
 			handshakeTimeoutMs: options.handshakeTimeoutMs,

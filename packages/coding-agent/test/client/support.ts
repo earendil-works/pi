@@ -74,7 +74,7 @@ export function sessionSnapshot(id: string, overrides: Partial<SessionSnapshot> 
 }
 
 export async function connectClient(server: MemoryServer): Promise<PiClient> {
-	const client = new PiClient({ token: "secret", transportFactory: (handlers) => server.connect(handlers) });
+	const client = new PiClient({ transportFactory: (handlers) => server.connect(handlers) });
 	server.onMessage((message) => {
 		if (message.type !== "hello") return;
 		server.send({

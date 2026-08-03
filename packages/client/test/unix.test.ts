@@ -78,7 +78,6 @@ describe.runIf(process.platform !== "win32")("Unix-domain sockets", () => {
 		});
 		await listen(server, socketPath);
 		const client = new PiClient({
-			token: "unix-secret",
 			transportFactory: createUnixTransportFactory({ path: socketPath }),
 		});
 
@@ -192,7 +191,6 @@ describe.runIf(process.platform !== "win32")("Unix-domain sockets", () => {
 		});
 		await listen(server, socketPath);
 		const client = new PiClient({
-			token: "unix-secret",
 			transportFactory: createUnixTransportFactory({ path: socketPath }),
 		});
 

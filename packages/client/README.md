@@ -15,7 +15,7 @@ const transportFactory: ByteTransportFactory = async (handlers) => {
   };
 };
 
-const client = new PiClient({ token: bearerToken, transportFactory });
+const client = new PiClient({ transportFactory });
 await client.connect();
 const session = await client.createSession({ cwd: "/workspace" });
 const unsubscribe = session.subscribe((snapshot) => render(snapshot));
@@ -23,7 +23,7 @@ await session.prompt("Inspect this project");
 unsubscribe();
 ```
 
-Call `handlers.onData(chunk)` for inbound bytes, `handlers.onClose()` for an orderly terminal close, and `handlers.onError(error)` for transport failures. A factory must create a fresh transport for every connection attempt.
+Call `handlers.onData(chunk)` for inbound bytes, `handlers.onClose()` for an orderly terminal close, and `handlers.onError(error)` for transport failures. A factory must create a fresh transport for every connection attempt and complete any transport-specific authentication before resolving. For example, a WebSocket factory can provide credentials in its upgrade request.
 
 `PiClient` does not reconnect automatically. Call `reconnect()` after disconnection. One connection can attach several sessions. Requests are correlated by ID. Server snapshots and successful response snapshots are authoritative, while progress events do not mutate snapshot state optimistically. Read cached session summaries from `client.snapshot?.sessions`; call `listSessions()` to request a refreshed list from the server.
 
@@ -37,7 +37,7 @@ Calling `dispose()` or `detach()` releases only that lease. A lease rejects comm
 
 `PiClientOptions.maxFrameLength` bounds inbound and outbound CBOR payloads. Configure matching limits on the client and server. Transports should separately bound queued outbound bytes and preserve send order.
 
-Treat peers as untrusted. Use a secure transport where required and protect the protocol bearer token.
+Treat peers as untrusted. Use a secure transport with appropriate access controls and authenticate during transport establishment.
 
 Subscriber exceptions are isolated from protocol state. Set `onListenerError` in `PiClientOptions` to report them to application logging or diagnostics.
 
@@ -50,7 +50,6 @@ import { PiClient } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
 
 const client = new PiClient({
-  token: bearerToken,
   transportFactory: createUnixTransportFactory({
     path: "/tmp/pi.sock",
   }),

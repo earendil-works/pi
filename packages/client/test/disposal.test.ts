@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 import { describe, expect, test } from "vitest";
 import { PiClient, PiClientDisposedError } from "../src/index.ts";
 import { attachSession, baseServerSnapshot, connectClient, MemoryByteServer, sessionSnapshot } from "./support.ts";
@@ -9,14 +10,13 @@ describe("PiClient disposal", () => {
 			if (message.type !== "hello") return;
 			server.send({
 				type: "hello",
-				version: 2,
+				version: PROTOCOL_VERSION,
 				connectionId: "connection-1",
 				snapshot: baseServerSnapshot,
 			});
 		});
 
 		const client = await PiClient.connect({
-			token: "secret",
 			transportFactory: (handlers) => server.connect(handlers),
 		});
 
