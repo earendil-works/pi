@@ -9,6 +9,7 @@ export function splitDeferredTools(
 	context: Context,
 	enabled: boolean,
 	normalizeName: ToolNameNormalizer = identityToolName,
+	options?: { deferClientMarked?: boolean },
 ): { immediate: Tool[]; deferred: Map<string, Tool> } {
 	const uniqueTools = new Map<string, Tool>();
 	for (const tool of context.tools ?? []) uniqueTools.set(normalizeName(tool.name), tool);
@@ -25,6 +26,18 @@ export function splitDeferredTools(
 			for (const name of message.addedToolNames ?? []) {
 				const normalizedName = normalizeName(name);
 				if (!usedNames.has(normalizedName)) deferredNames.add(normalizedName);
+			}
+		}
+	}
+
+	// Tools the caller marked deferLoading defer until first use. Only providers
+	// that always send the deferred batch (Anthropic) opt in: marker-driven
+	// providers would silently drop client-marked tools that have no transcript
+	// marker to emit them at.
+	if (options?.deferClientMarked) {
+		for (const [name, tool] of uniqueTools) {
+			if (tool.deferLoading === true && !usedNames.has(name)) {
+				deferredNames.add(name);
 			}
 		}
 	}

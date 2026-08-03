@@ -334,6 +334,90 @@ describe("deferred tools", () => {
 		expect(payload.tools?.find((tool) => tool.name === "late_tool")?.defer_loading).toBe(true);
 	});
 
+	it("defers client-marked Anthropic tools without cache_control", async () => {
+		const context: Context = {
+			messages: [makeUserMessage(1)],
+			tools: [makeTool("base_tool"), { ...makeTool("client_deferred"), deferLoading: true }],
+		};
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool" }, { name: "client_deferred", defer_loading: true }]);
+		expect(payload.tools?.some((tool) => tool.defer_loading && tool.cache_control)).toBe(false);
+	});
+
+	it("keeps a used client-marked tool immediate without defer_loading", async () => {
+		const context: Context = {
+			messages: [makeUserMessage(1), makeAssistantToolCall(), makeToolResult([]), makeUserMessage(4)],
+			tools: [{ ...makeTool("base_tool"), deferLoading: true }, makeTool("other_tool")],
+		};
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.tools?.find((tool) => tool.name === "base_tool")?.defer_loading).toBeUndefined();
+		expect(payload.tools?.find((tool) => tool.name === "other_tool")?.defer_loading).toBeUndefined();
+	});
+
+	it("force-loads client-marked tools when every tool is deferred", async () => {
+		const context: Context = {
+			messages: [makeUserMessage(1)],
+			tools: [
+				{ ...makeTool("first_deferred"), deferLoading: true },
+				{ ...makeTool("second_deferred"), deferLoading: true },
+			],
+		};
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["first_deferred", "second_deferred"]);
+		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+	});
+
+	it("sends client-marked tools fully loaded when tool references are unsupported", async () => {
+		const context: Context = {
+			messages: [makeUserMessage(1)],
+			tools: [makeTool("base_tool"), { ...makeTool("client_deferred"), deferLoading: true }],
+		};
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-haiku-4-5"), context);
+
+		expect(payload.tools?.map((tool) => tool.name)).toEqual(["base_tool", "client_deferred"]);
+		expect(payload.tools?.every((tool) => !tool.defer_loading)).toBe(true);
+	});
+
+	it("emits server tools without a description field", async () => {
+		const serverTool = {
+			name: "tool_search_tool_regex",
+			description: "",
+			parameters: Type.Object({}),
+			serverTool: true,
+			type: "tool_search_tool_regex_20251119",
+		} as Tool;
+		const context: Context = {
+			messages: [makeUserMessage(1)],
+			tools: [serverTool, makeTool("base_tool")],
+		};
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		const emitted = payload.tools?.find((tool) => tool.name === "tool_search_tool_regex");
+		expect(emitted).toMatchObject({ type: "tool_search_tool_regex_20251119" });
+		expect(emitted && "description" in emitted).toBe(false);
+	});
+
+	it("drops empty tool output instead of emitting an empty sibling text block", async () => {
+		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
+		const result = context.messages[2] as ToolResultMessage;
+		result.content = [];
+
+		const payload = await capturePayload<AnthropicPayload>(getModel("anthropic", "claude-opus-4-6"), context);
+
+		const blocks = findAnthropicToolResultContent(payload);
+		expect(blocks).toMatchObject([
+			{
+				type: "tool_result",
+				tool_use_id: "call_1",
+				content: [{ type: "tool_reference", tool_name: "late_tool" }],
+			},
+		]);
+		expect(blocks.some((block) => block.type === "text" && (block.text ?? "").trim() === "")).toBe(false);
+	});
+
 	it("serializes Kimi deferred tools as system tool definitions", async () => {
 		const context = makeContext([makeTool("base_tool"), makeTool("late_tool")]);
 		const payload = await capturePayload<KimiPayload>(makeKimiModel("kimi"), context);

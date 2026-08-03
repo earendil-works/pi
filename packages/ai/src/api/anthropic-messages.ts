@@ -1001,6 +1001,7 @@ function buildParams(
 		{ ...context, messages: transformedMessages },
 		compat.supportsToolReferences,
 		normalizeToolName,
+		{ deferClientMarked: true },
 	);
 	let immediateTools = toolPlacement.immediate;
 	let deferredTools = [...toolPlacement.deferred.values()];
@@ -1155,11 +1156,15 @@ function convertToolResult(
 			content: references.length > 0 ? references : convertedContent,
 			is_error: msg.isError,
 		},
+		// Anthropic rejects empty text blocks, so drop content that is empty after
+		// conversion (e.g. a result that held only tool references).
 		siblingContent:
 			references.length === 0
 				? []
 				: typeof convertedContent === "string"
-					? [{ type: "text", text: convertedContent }]
+					? convertedContent.trim().length > 0
+						? [{ type: "text", text: convertedContent }]
+						: []
 					: convertedContent,
 	};
 }
@@ -1363,11 +1368,11 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		// Server tools (e.g. tool_search_tool_20250919) need type passthrough and no input_schema.
+		// Server tools need type passthrough and no input_schema or description:
+		// the API rejects extra fields on server tools.
 		if (tool.serverTool && tool.type) {
 			return {
 				name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
-				description: tool.description ?? "",
 				type: tool.type,
 			} as Anthropic.Messages.Tool;
 		}
@@ -1392,7 +1397,7 @@ function convertTools(
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			...(strict === true ? { strict: true } : {}),
 			input_schema: inputSchema,
-			...(deferLoading || tool.deferLoading ? { defer_loading: true } : {}),
+			...(deferLoading ? { defer_loading: true } : {}),
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});

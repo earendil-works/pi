@@ -291,6 +291,9 @@
 
 ### Fixed
 
+- Fixed Anthropic Messages requests with client-marked `deferLoading` tools: marked tools now join the deferred batch instead of receiving `cache_control` alongside `defer_loading`, which the API rejects when a deferred tool is last in the list.
+- Fixed Anthropic server tool definitions (e.g. `tool_search_tool_regex_20251119`) to omit the `description` field the API rejects as an extra input.
+- Fixed Anthropic tool results whose content is empty after conversion (e.g. only tool references) to skip the sibling text block instead of emitting an empty one the API rejects.
 - Fixed OpenAI Codex Responses to preserve opt-in raw provider events through both SSE and WebSocket `streamSimple()` calls.
 - Fixed OpenRouter model context windows to use the top provider's actual context length ([#6481](https://github.com/earendil-works/pi-mono/pull/6481) by [@davidbrai](https://github.com/davidbrai)).
 - Fixed the GitHub Copilot `mai-code-1-flash-picker` model to route through the `/responses` endpoint ([#6544](https://github.com/earendil-works/pi-mono/pull/6544) by [@petrroll](https://github.com/petrroll)).
