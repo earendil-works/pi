@@ -290,15 +290,16 @@ async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal?: AbortS
 }
 
 async function createAuthorizationFlow(
+	redirectUri: string,
+	state: string,
 	originator: string = "pi",
-): Promise<{ verifier: string; state: string; url: string }> {
+): Promise<{ verifier: string; url: string }> {
 	const { verifier, challenge } = await generatePKCE();
-	const state = createState();
 
 	const url = new URL(AUTHORIZE_URL);
 	url.searchParams.set("response_type", "code");
 	url.searchParams.set("client_id", CLIENT_ID);
-	url.searchParams.set("redirect_uri", REDIRECT_URI);
+	url.searchParams.set("redirect_uri", redirectUri);
 	url.searchParams.set("scope", SCOPE);
 	url.searchParams.set("code_challenge", challenge);
 	url.searchParams.set("code_challenge_method", "S256");
@@ -307,13 +308,14 @@ async function createAuthorizationFlow(
 	url.searchParams.set("codex_cli_simplified_flow", "true");
 	url.searchParams.set("originator", originator);
 
-	return { verifier, state, url: url.toString() };
+	return { verifier, url: url.toString() };
 }
 
 type OAuthServerInfo = {
 	close: () => void;
 	cancelWait: () => void;
 	waitForCode: () => Promise<{ code: string } | null>;
+	redirectUri: string;
 };
 
 function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
@@ -365,19 +367,16 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 	});
 
 	return new Promise((resolve) => {
-		server
-			.listen(1455, getCallbackHost(), () => {
-				resolve({
-					close: () => server.close(),
-					cancelWait: () => {
-						settleWait?.(null);
-					},
-					waitForCode: () => waitForCodePromise,
-				});
-			})
-			.on("error", (_err: NodeJS.ErrnoException) => {
+		const onListenError = (_err: NodeJS.ErrnoException) => {
+			if (_err.code === "EADDRINUSE") {
+				// Another local process holds the default port. Fall back to an
+				// ephemeral port so a port collision can't block login.
+				server.off("error", onListenError);
+				startListening(0);
+			} else {
 				settleWait?.(null);
 				resolve({
+					redirectUri: REDIRECT_URI,
 					close: () => {
 						try {
 							server.close();
@@ -388,7 +387,32 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 					cancelWait: () => {},
 					waitForCode: async () => null,
 				});
+			}
+		};
+
+		function startListening(port: number) {
+			server.listen(port, getCallbackHost(), () => {
+				const address = server.address();
+				const actualPort = typeof address === "object" && address !== null ? address.port : port;
+				resolve({
+					redirectUri: `http://localhost:${actualPort}/auth/callback`,
+					close: () => {
+						try {
+							server.close();
+						} catch {
+							// ignore
+						}
+					},
+					cancelWait: () => {
+						settleWait?.(null);
+					},
+					waitForCode: () => waitForCodePromise,
+				});
 			});
+		}
+
+		server.on("error", onListenError);
+		startListening(1455);
 	});
 }
 
@@ -442,8 +466,10 @@ async function loginOpenAICodexDeviceCode(interaction: AuthInteraction): Promise
 }
 
 async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCredential> {
-	const { verifier, state, url } = await createAuthorizationFlow();
+	const state = createState();
 	const server = await startLocalOAuthServer(state);
+	const redirectUri = server.redirectUri;
+	const { verifier, url } = await createAuthorizationFlow(redirectUri, state);
 	const manualAbort = new AbortController();
 	let code: string | undefined;
 	let manualCode: string | undefined;
@@ -460,7 +486,7 @@ async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCred
 			.prompt({
 				type: "manual_code",
 				message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-				placeholder: REDIRECT_URI,
+				placeholder: redirectUri,
 				signal: manualAbort.signal,
 			})
 			.then((input) => {
@@ -493,7 +519,7 @@ async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCred
 		}
 
 		if (!code) throw new Error("Missing authorization code");
-		return exchangeAuthorizationCodeForCredentials(code, verifier, REDIRECT_URI, interaction.signal);
+		return exchangeAuthorizationCodeForCredentials(code, verifier, redirectUri, interaction.signal);
 	} finally {
 		manualAbort.abort();
 		server.close();

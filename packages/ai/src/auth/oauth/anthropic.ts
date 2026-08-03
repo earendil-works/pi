@@ -5,6 +5,7 @@
  * It is only intended for CLI use, not browser environments.
  */
 
+import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
@@ -32,7 +33,7 @@ const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
 const CALLBACK_PORT = 53692;
 const CALLBACK_PATH = "/callback";
-const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
+const redirectUriForPort = (port: number) => `http://localhost:${port}${CALLBACK_PATH}`;
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 async function getNodeApis(): Promise<NodeApis> {
@@ -150,20 +151,34 @@ async function startCallbackServer(expectedState: string): Promise<CallbackServe
 			}
 		});
 
-		server.on("error", (err) => {
-			reject(err);
-		});
+		const onListenError = (err: Error) => {
+			if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+				// Another local process holds the default port. Fall back to an
+				// ephemeral port so a port collision can't block login.
+				server.off("error", onListenError);
+				startListening(0);
+			} else {
+				reject(err);
+			}
+		};
 
-		server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
-			resolve({
-				server,
-				redirectUri: REDIRECT_URI,
-				cancelWait: () => {
-					settleWait?.(null);
-				},
-				waitForCode: () => waitForCodePromise,
+		function startListening(port: number) {
+			server.listen(port, CALLBACK_HOST, () => {
+				const address = server.address();
+				const actualPort = typeof address === "object" && address !== null ? address.port : port;
+				resolve({
+					server,
+					redirectUri: redirectUriForPort(actualPort),
+					cancelWait: () => {
+						settleWait?.(null);
+					},
+					waitForCode: () => waitForCodePromise,
+				});
 			});
-		});
+		}
+
+		server.on("error", onListenError);
+		startListening(CALLBACK_PORT);
 	});
 }
 
@@ -228,10 +243,13 @@ async function exchangeAuthorizationCode(
 
 async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
-	const server = await startCallbackServer(verifier);
+	// Independent state (distinct from the PKCE verifier) to keep verifier out of the URL.
+	const state = randomBytes(16).toString("hex");
+	const server = await startCallbackServer(state);
+	const redirectUri = server.redirectUri;
 	const manualAbort = new AbortController();
 	let code: string | undefined;
-	let state: string | undefined;
+	let stateFromCallback: string | undefined;
 	let manualInput: string | undefined;
 	let manualError: Error | undefined;
 
@@ -240,11 +258,11 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 			code: "true",
 			client_id: CLIENT_ID,
 			response_type: "code",
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: redirectUri,
 			scope: SCOPES,
 			code_challenge: challenge,
 			code_challenge_method: "S256",
-			state: verifier,
+			state,
 		});
 		interaction.notify({
 			type: "auth_url",
@@ -257,7 +275,7 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 			.prompt({
 				type: "manual_code",
 				message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-				placeholder: REDIRECT_URI,
+				placeholder: redirectUri,
 				signal: manualAbort.signal,
 			})
 			.then((input) => {
@@ -273,12 +291,12 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 		if (manualError) throw manualError;
 		if (result?.code) {
 			code = result.code;
-			state = result.state;
+			stateFromCallback = result.state;
 		} else if (manualInput) {
 			const parsed = parseAuthorizationInput(manualInput);
-			if (parsed.state && parsed.state !== verifier) throw new Error("OAuth state mismatch");
+			if (parsed.state && parsed.state !== state) throw new Error("OAuth state mismatch");
 			code = parsed.code;
-			state = parsed.state ?? verifier;
+			stateFromCallback = parsed.state ?? state;
 		}
 
 		if (!code) {
@@ -286,16 +304,16 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 			if (manualError) throw manualError;
 			if (manualInput) {
 				const parsed = parseAuthorizationInput(manualInput);
-				if (parsed.state && parsed.state !== verifier) throw new Error("OAuth state mismatch");
+				if (parsed.state && parsed.state !== state) throw new Error("OAuth state mismatch");
 				code = parsed.code;
-				state = parsed.state ?? verifier;
+				stateFromCallback = parsed.state ?? state;
 			}
 		}
 
 		if (!code) throw new Error("Missing authorization code");
-		if (!state) throw new Error("Missing OAuth state");
+		if (!stateFromCallback) throw new Error("Missing OAuth state");
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI);
+		return exchangeAuthorizationCode(code, stateFromCallback, verifier, redirectUri);
 	} finally {
 		manualAbort.abort();
 		server.server.close();

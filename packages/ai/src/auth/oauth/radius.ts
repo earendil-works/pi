@@ -141,6 +141,7 @@ async function requestOAuthToken(
 type OAuthCallbackServer = {
 	waitForCode(): Promise<string | null>;
 	close(): void;
+	redirectUri: string;
 };
 
 function startOAuthCallbackServer(
@@ -202,20 +203,35 @@ function startOAuthCallbackServer(
 	});
 
 	return new Promise((resolve) => {
-		server
-			.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
+		const onListenError = (err: NodeJS.ErrnoException) => {
+			if (err.code === "EADDRINUSE") {
+				// Another local process holds the default port. Fall back to an
+				// ephemeral port so a port collision can't block login.
+				server.off("error", onListenError);
+				startListening(0);
+			} else {
+				finish(null);
+				resolve({ redirectUri: REDIRECT_URI, waitForCode: async () => null, close: () => {} });
+			}
+		};
+
+		function startListening(port: number) {
+			server.listen(port, CALLBACK_HOST, () => {
+				const address = server.address();
+				const actualPort = typeof address === "object" && address !== null ? address.port : port;
 				resolve({
+					redirectUri: `http://${CALLBACK_HOST}:${actualPort}${CALLBACK_PATH}`,
 					waitForCode: () => wait,
 					close: () => {
 						finish(null);
 						server.close();
 					},
 				});
-			})
-			.once("error", () => {
-				finish(null);
-				resolve({ waitForCode: async () => null, close: () => {} });
 			});
+		}
+
+		server.on("error", onListenError);
+		startListening(CALLBACK_PORT);
 	});
 }
 
@@ -226,11 +242,13 @@ async function loginWithBrowser(
 ): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = crypto.randomUUID();
+	const callbackServer = await startOAuthCallbackServer(state, interaction.signal);
+	const redirectUri = callbackServer.redirectUri;
 	const authorizeUrl = new URL(authorizationEndpoint);
 	authorizeUrl.search = new URLSearchParams({
 		response_type: "code",
 		client_id: OAUTH_CLIENT_ID,
-		redirect_uri: REDIRECT_URI,
+		redirect_uri: redirectUri,
 		scope: OAUTH_SCOPE,
 		code_challenge: challenge,
 		code_challenge_method: "S256",
@@ -238,8 +256,7 @@ async function loginWithBrowser(
 		state,
 	}).toString();
 
-	const callbackServer = await startOAuthCallbackServer(state, interaction.signal);
-	interaction.notify({ type: "progress", message: `Listening for OAuth callback on ${REDIRECT_URI}` });
+	interaction.notify({ type: "progress", message: `Listening for OAuth callback on ${redirectUri}` });
 	interaction.notify({
 		type: "auth_url",
 		url: authorizeUrl.toString(),
@@ -259,7 +276,7 @@ async function loginWithBrowser(
 			new URLSearchParams({
 				grant_type: "authorization_code",
 				client_id: OAUTH_CLIENT_ID,
-				redirect_uri: REDIRECT_URI,
+				redirect_uri: redirectUri,
 				code,
 				code_verifier: verifier,
 			}),
