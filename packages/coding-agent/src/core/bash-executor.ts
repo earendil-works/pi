@@ -67,7 +67,8 @@ export async function executeBashWithOperations(
 		}
 		const id = randomBytes(8).toString("hex");
 		tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
-		tempFileStream = createWriteStream(tempFilePath);
+		// 0600: output may contain secrets; /tmp is world-readable.
+		tempFileStream = createWriteStream(tempFilePath, { mode: 0o600 });
 		for (const chunk of outputChunks) {
 			tempFileStream.write(chunk);
 		}
