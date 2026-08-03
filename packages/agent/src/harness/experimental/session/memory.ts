@@ -21,12 +21,6 @@ import {
 	type SessionStorage,
 } from "./types.ts";
 
-function assertValidLimit(limit: number | undefined): void {
-	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-		throw new SessionError("invalid_query", "limit must be a positive integer");
-	}
-}
-
 function* ordered<T>(items: readonly T[], order: EntryOrder | undefined): IterableIterator<T> {
 	if (order === "oldestFirst") {
 		yield* items;
@@ -164,8 +158,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 
 	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
-		assertValidLimit(query.limit);
-		this.validateCursor(query.cursor?.afterSeq);
 		const results: Entry[] = [];
 		for (const entry of ordered(this.entries, query.order)) {
 			if (!this.matchesEntryQuery(entry, query)) continue;
@@ -176,8 +168,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 
 	async findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]> {
-		assertValidLimit(query.limit);
-		this.validateCursor(query.cursor?.afterSeq);
 		const results: Entry[] = [];
 		if (query.order === "oldestFirst") {
 			for (const entry of [...this.walkToRoot(query.start)].reverse()) {
@@ -195,8 +185,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 
 	async findRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
-		assertValidLimit(query.limit);
-		if (query.afterSeq !== undefined) this.validateCursor(query.afterSeq);
 		const results: LaneRecord[] = [];
 		for (const record of ordered(this.records, query.order)) {
 			if (!this.matchesRecordQuery(record, query)) continue;
@@ -207,8 +195,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
-		assertValidLimit(options.limit);
-		if (options.afterSeq !== undefined) this.validateCursor(options.afterSeq);
 		const results: LogItem[] = [];
 		for (const item of this.log) {
 			if (options.afterSeq !== undefined && item.seq <= options.afterSeq) continue;
@@ -291,12 +277,6 @@ export class InMemorySessionStorage implements SessionStorage {
 
 	private validateUnusedId(id: string): void {
 		if (this.usedIds.has(id)) throw new SessionError("already_exists", `Session id already exists: ${id}`);
-	}
-
-	private validateCursor(afterSeq: number | undefined): void {
-		if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
-			throw new SessionError("invalid_query", "cursor sequence must be a non-negative integer");
-		}
 	}
 
 	private *walkToRoot(

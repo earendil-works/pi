@@ -25,6 +25,18 @@ function invalidPayload(reason: string): never {
 	throw new SessionError("invalid_payload", `Durable payload ${reason}`);
 }
 
+function assertValidLimit(limit: number | undefined): void {
+	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+		throw new SessionError("invalid_query", "limit must be a positive integer");
+	}
+}
+
+function assertValidCursor(afterSeq: number | undefined): void {
+	if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
+		throw new SessionError("invalid_query", "cursor sequence must be a non-negative integer");
+	}
+}
+
 function assertJsonSerializable(value: unknown): void {
 	const active = new WeakSet<object>();
 	const stack: JsonValidationFrame[] = [{ value }];
@@ -106,10 +118,10 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 			setName: (name) => this.setName(name),
 			getLabel: (targetId) => this.getLabel(targetId),
 			setLabel: (targetId, label) => this.setLabel(targetId, label),
-			findEntries: (query) => this.findEntries(query),
-			findEntry: (query) => this.findEntry(query),
-			findEntriesOnBranch: (query) => this.findEntriesOnLane(lane, query),
-			findEntryOnBranch: (query) => this.findEntryOnLane(lane, query),
+			findEntries: (query) => this.queryEntries(query),
+			findEntry: async (query = {}) => (await this.queryEntries(query, 1))[0],
+			findEntriesOnBranch: (query) => this.queryBranchEntries(lane, query),
+			findEntryOnBranch: async (query = {}) => (await this.queryBranchEntries(lane, query, 1))[0],
 			appendMessage: (message) => this.appendMessageToLane(lane, message),
 			appendCustomEntry: (customType, data) => this.appendCustomEntryToLane(lane, customType, data),
 		};
@@ -144,19 +156,19 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	async findEntries(query?: EntryQuery): Promise<Entry[]> {
-		return this.storage.findEntries(query);
+		return this.queryEntries(query);
 	}
 
-	async findEntry(query?: EntryQuery): Promise<Entry | undefined> {
-		return (await this.findEntries({ ...query, limit: 1 }))[0];
+	async findEntry(query: EntryQuery = {}): Promise<Entry | undefined> {
+		return (await this.queryEntries(query, 1))[0];
 	}
 
 	async findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]> {
-		return this.findEntriesOnLane("main", query);
+		return this.queryBranchEntries("main", query);
 	}
 
-	async findEntryOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry | undefined> {
-		return this.findEntryOnLane("main", query);
+	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
+		return (await this.queryBranchEntries("main", query, 1))[0];
 	}
 
 	async appendMessage(message: AgentMessage): Promise<string> {
@@ -188,11 +200,11 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
-		return this.storage.findRecords(query);
+		return this.queryRecords(query);
 	}
 
 	async getLog(options?: LogOptions): Promise<LogItem[]> {
-		return this.storage.getLog(options);
+		return this.queryLog(options);
 	}
 
 	private async getLeafIdForLane(lane: string): Promise<string | null> {
@@ -201,14 +213,35 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return pointer.leafId;
 	}
 
-	private async findEntriesOnLane(lane: string, query: EntryQuery & BranchBounds = {}): Promise<Entry[]> {
-		const start = query.start ?? (await this.getLeafIdForLane(lane));
-		if (start === null) return [];
-		return this.storage.findEntriesOnBranch({ ...query, start });
+	private async queryEntries(query: EntryQuery = {}, resultLimit = query.limit): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		return this.storage.findEntries(resultLimit === query.limit ? query : { ...query, limit: resultLimit });
 	}
 
-	private async findEntryOnLane(lane: string, query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
-		return (await this.findEntriesOnLane(lane, { ...query, limit: 1 }))[0];
+	private async queryBranchEntries(
+		lane: string,
+		query: EntryQuery & BranchBounds = {},
+		resultLimit = query.limit,
+	): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		const start = query.start ?? (await this.getLeafIdForLane(lane));
+		if (start === null) return [];
+		const storageQuery = resultLimit === query.limit ? query : { ...query, limit: resultLimit };
+		return this.storage.findEntriesOnBranch({ ...storageQuery, start });
+	}
+
+	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.afterSeq);
+		return this.storage.findRecords(query);
+	}
+
+	private async queryLog(options: LogOptions = {}): Promise<LogItem[]> {
+		assertValidLimit(options.limit);
+		assertValidCursor(options.afterSeq);
+		return this.storage.getLog(options);
 	}
 
 	private async appendMessageToLane(lane: string, message: AgentMessage): Promise<string> {

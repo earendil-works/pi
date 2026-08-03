@@ -209,6 +209,20 @@ export function createSessionBackendConformance(
 			]);
 		}),
 
+		createCase(factory, "queries and facts", "rejects invalid queries before empty reads", async (repository) => {
+			const session = await repository.create({ id: "invalid-queries" });
+			await session.createLane("thread", null);
+			const thread = session.view("thread");
+
+			await rejectsWithCode(session.findEntries({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findEntry({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findEntriesOnBranch({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(thread.findEntriesOnBranch({ cursor: { afterSeq: -1 } }), "invalid_query");
+			await rejectsWithCode(thread.findEntryOnBranch({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findRecords({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.getLog({ afterSeq: -1 }), "invalid_query");
+		}),
+
 		createCase(
 			factory,
 			"queries and facts",
