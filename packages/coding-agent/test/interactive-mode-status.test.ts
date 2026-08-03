@@ -1223,3 +1223,83 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).not.toContain("[Skills]");
 	});
 });
+
+function createToolUpdateModeFixture() {
+	const component = { updateResult: vi.fn() };
+	const ui = { requestRender: vi.fn() };
+	const mode = {
+		pendingTools: new Map([["tool-1", component]]),
+		ui,
+		footer: { invalidate: vi.fn() },
+		isInitialized: true,
+	};
+	return { mode, component, ui };
+}
+
+async function handleToolEvent(mode: object, event: object): Promise<void> {
+	await (
+		InteractiveMode as unknown as {
+			prototype: { handleEvent(this: object, event: object): Promise<void> };
+		}
+	).prototype.handleEvent.call(mode, event);
+}
+
+describe("InteractiveMode Graph Loop partial progress", () => {
+	test("tool_execution_update for graph_compose with structured details.progress does not touch the chat tool card", async () => {
+		const { mode, component, ui } = createToolUpdateModeFixture();
+		const partialResult = {
+			content: [{ type: "text" as const, text: "Composing step 3/5" }],
+			details: { progress: "step 3/5" },
+		};
+
+		await handleToolEvent(mode, {
+			type: "tool_execution_update",
+			toolCallId: "tool-1",
+			toolName: "graph_compose",
+			args: {},
+			partialResult,
+		});
+
+		expect(component.updateResult).not.toHaveBeenCalled();
+		expect(ui.requestRender).not.toHaveBeenCalled();
+	});
+
+	test("tool_execution_update for graph_compose with plain partial content still updates the chat tool card", async () => {
+		const { mode, component, ui } = createToolUpdateModeFixture();
+		const partialResult = {
+			content: [{ type: "text" as const, text: "working..." }],
+			details: {},
+		};
+
+		await handleToolEvent(mode, {
+			type: "tool_execution_update",
+			toolCallId: "tool-1",
+			toolName: "graph_compose",
+			args: {},
+			partialResult,
+		});
+
+		expect(component.updateResult).toHaveBeenCalledTimes(1);
+		expect(component.updateResult).toHaveBeenCalledWith({ ...partialResult, isError: false }, true);
+		expect(ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+
+	test("tool_execution_end for graph_compose writes the final result to the chat tool card", async () => {
+		const { mode, component, ui } = createToolUpdateModeFixture();
+		const result = {
+			content: [{ type: "text" as const, text: "final composed plan" }],
+		};
+
+		await handleToolEvent(mode, {
+			type: "tool_execution_end",
+			toolCallId: "tool-1",
+			toolName: "graph_compose",
+			result,
+			isError: false,
+		});
+
+		expect(component.updateResult).toHaveBeenCalledTimes(1);
+		expect(component.updateResult).toHaveBeenCalledWith({ ...result, isError: false });
+		expect(ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+});

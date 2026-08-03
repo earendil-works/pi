@@ -3044,7 +3044,14 @@ export class InteractiveMode {
 
 			case "tool_execution_update": {
 				const component = this.pendingTools.get(event.toolCallId);
-				if (component) {
+				// AgentSession already forwards graph_compose progress to the extension runner
+				// before reaching InteractiveMode; skip here so only the chat tool card stops
+				// consuming these structured progress updates, while plain partial content
+				// (and the input-area widget fed by the links event handler) is unaffected.
+				const isGraphProgressUpdate =
+					event.toolName === "graph_compose" &&
+					typeof event.partialResult?.details?.progress === "string";
+				if (component && !isGraphProgressUpdate) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
 					this.ui.requestRender();
 				}
