@@ -143,6 +143,22 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return this.deleteKittyImages(ids);
 	}
 
+	/**
+	 * True when a kitty image header sits above `viewportTop` but its reserved
+	 * rows reach into the visible window. Skip/clamp of off-screen diffs must
+	 * not run in that case: differential deletes only scan from the clamped
+	 * firstChanged and would miss the header id, leaving a ghost image.
+	 */
+	private hasKittyImageStraddlingViewport(lines: string[], viewportTop: number): boolean {
+		if (viewportTop <= 0) return false;
+		for (let i = 0; i < viewportTop && i < lines.length; i++) {
+			if (extractKittyImageIds(lines[i] ?? "").length === 0) continue;
+			const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
+			if (blockEnd >= viewportTop) return true;
+		}
+		return false;
+	}
+
 	protected doRender(): void {
 		if (this.stopped) return;
 		const width = this.terminal.columns;
@@ -344,11 +360,55 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If the first changed line is above the previous viewport, a full redraw is the
+		// safe default — BUT when total length is unchanged and the visible window's
+		// lines are identical, the change is purely off-screen (classic case: working
+		// spinner sitting one row above a short viewport). Full-clearing then causes
+		// continuous flicker for no visible benefit. Skip, or clamp and differential.
+		// Kitty images whose header is above the fold but whose body reaches into the
+		// viewport must still full-clear: otherwise deleteChangedKittyImages misses the
+		// header id and leaves a ghost graphic on screen.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			const sameLength = newLines.length === this.previousLines.length;
+			const sameWindow = sameLength && this.previousLines.length === prevViewportTop + height;
+			const kittyStraddles =
+				this.hasKittyImageStraddlingViewport(this.previousLines, prevViewportTop) ||
+				this.hasKittyImageStraddlingViewport(newLines, prevViewportTop);
+			if (sameWindow && !kittyStraddles) {
+				let visibleSame = true;
+				const visibleEnd = Math.min(newLines.length, prevViewportTop + height);
+				for (let i = prevViewportTop; i < visibleEnd; i++) {
+					if (newLines[i] !== this.previousLines[i]) {
+						visibleSame = false;
+						break;
+					}
+				}
+				if (visibleSame) {
+					// Off-screen-only update: keep the terminal buffer, remember new lines.
+					// Union kitty ids so a later fullRender can still delete images that
+					// physically remain on screen after an off-screen model drop.
+					logRedraw(`skip offscreen (${firstChanged} < ${prevViewportTop})`);
+					this.positionHardwareCursor(cursorPos, newLines.length);
+					this.previousLines = newLines;
+					const nextIds = this.collectKittyImageIds(newLines);
+					for (const id of this.previousKittyImageIds) nextIds.add(id);
+					this.previousKittyImageIds = nextIds;
+					this.previousWidth = width;
+					this.previousHeight = height;
+					this.previousViewportTop = prevViewportTop;
+					return;
+				}
+				// Visible rows also changed; differential from the viewport top instead of clearing.
+				firstChanged = prevViewportTop;
+			} else {
+				logRedraw(
+					kittyStraddles
+						? `firstChanged < viewportTop kitty-straddle (${firstChanged} < ${prevViewportTop})`
+						: `firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`,
+				);
+				fullRender(true);
+				return;
+			}
 		}
 
 		// Render from first changed line to end
