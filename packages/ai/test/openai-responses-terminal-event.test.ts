@@ -124,13 +124,14 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
 	} as unknown as ResponseStreamEvent;
 }
 
-async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
+async function* createIncompleteEvents(reason = "max_output_tokens"): AsyncIterable<ResponseStreamEvent> {
 	yield {
 		type: "response.incomplete",
 		sequence_number: 0,
 		response: {
 			id: "resp_incomplete",
 			status: "incomplete",
+			incomplete_details: { reason },
 			usage: {
 				input_tokens: 30,
 				output_tokens: 12,
@@ -187,7 +188,11 @@ async function* createPhasedMessageEvents(
 		yield {
 			type: "response.incomplete",
 			sequence_number: 2,
-			response: { id: "resp_phase", status: "incomplete" },
+			response: {
+				id: "resp_phase",
+				status: "incomplete",
+				incomplete_details: { reason: "max_output_tokens" },
+			},
 		} as ResponseStreamEvent;
 		return;
 	}
@@ -304,7 +309,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_incomplete");
 		expect(output.stopReason).toBe("length");
-		expect(output.rawStopReason).toBe("incomplete");
+		expect(output.rawStopReason).toBe("incomplete.max_output_tokens");
 		expect(output.usage).toMatchObject({
 			input: 25,
 			output: 12,
@@ -312,6 +317,30 @@ describe("OpenAI Responses terminal event handling", () => {
 			cacheWrite: 0,
 			totalTokens: 42,
 		});
+	});
+
+	it("finalizes content-filtered incomplete responses as non-retryable errors", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createIncompleteEvents("content_filter"), output, stream, model);
+
+		expect(output.stopReason).toBe("error");
+		expect(output.rawStopReason).toBe("incomplete.content_filter");
+		expect(output.errorMessage).toBe("Response incomplete: content_filter");
+	});
+
+	it("preserves unknown provider incomplete reasons as non-retryable errors", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createIncompleteEvents("max_time_limit"), output, stream, model);
+
+		expect(output.stopReason).toBe("error");
+		expect(output.rawStopReason).toBe("incomplete.max_time_limit");
+		expect(output.errorMessage).toBe("Response incomplete: max_time_limit");
 	});
 
 	it("rejects failed terminal events with the provider error", async () => {
