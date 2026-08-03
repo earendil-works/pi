@@ -11,6 +11,8 @@
 			"dependencies": {
 				"@earendil-works/pi-agent-core": "^0.83.0",
 				"@earendil-works/pi-ai": "^0.83.0",
+				"@earendil-works/pi-client": "^0.83.0",
+				"@earendil-works/pi-protocol": "^0.83.0",
 				"@earendil-works/pi-tui": "^0.83.0",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
@@ -507,6 +509,28 @@
 			},
 			"bin": {
 				"pi-ai": "dist/cli.js"
+			},
+			"engines": {
+				"node": ">=22.19.0"
+			}
+		},
+		"node_modules/@earendil-works/pi-client": {
+			"version": "0.83.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-client/-/pi-client-0.83.0.tgz",
+			"license": "MIT",
+			"dependencies": {
+				"@earendil-works/pi-protocol": "^0.83.0"
+			},
+			"engines": {
+				"node": ">=22.19.0"
+			}
+		},
+		"node_modules/@earendil-works/pi-protocol": {
+			"version": "0.83.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-protocol/-/pi-protocol-0.83.0.tgz",
+			"license": "MIT",
+			"dependencies": {
+				"typebox": "1.3.7"
 			},
 			"engines": {
 				"node": ">=22.19.0"

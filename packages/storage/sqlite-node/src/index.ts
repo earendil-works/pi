@@ -93,5 +93,5 @@ export function createNodeSqliteFactory(): SqliteDatabaseFactory {
 	};
 }
 
-// Re-export the SQLite session storage backend and types so this package is a complete node-sqlite backend.
+// Re-export the SQLite session backend and types so this package is a complete node-sqlite backend.
 export * from "./sqlite/index.ts";

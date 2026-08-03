@@ -19,6 +19,23 @@ export class PiDisconnectedError extends Error {
 	}
 }
 
+export class PiClientDisposedError extends Error {
+	constructor() {
+		super("Pi client is disposed");
+		this.name = "PiClientDisposedError";
+	}
+}
+
+export class PiSessionOwnershipError extends Error {
+	readonly sessionId: string;
+
+	constructor(sessionId: string, message: string) {
+		super(message);
+		this.name = "PiSessionOwnershipError";
+		this.sessionId = sessionId;
+	}
+}
+
 export class PiSessionDetachedError extends Error {
 	readonly sessionId: string;
 

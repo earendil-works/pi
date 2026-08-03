@@ -129,7 +129,16 @@ function layoutComponent(
 
 	if (node.type === "scroll") {
 		const previousScrollTop = node.state.scrollTop;
-		const childBox = layoutComponent(context, node.component, x, y - previousScrollTop, safeWidth, undefined, clip);
+		const contentWidth = node.state.getContentWidth(safeWidth);
+		const childBox = layoutComponent(
+			context,
+			node.component,
+			x,
+			y - previousScrollTop,
+			contentWidth,
+			undefined,
+			clip,
+		);
 		const contentHeight = childBox.rect.height;
 		const viewportHeight = height === undefined ? contentHeight : Math.max(0, Math.floor(height));
 		node.state.updateLayout(contentHeight, viewportHeight, context.requestRender);
@@ -144,7 +153,7 @@ function layoutComponent(
 			clip: childClip,
 			children: [childBox],
 			scrollView,
-			scrollContentLines: renderCached(context, node.component, safeWidth),
+			scrollContentLines: renderCached(context, node.component, contentWidth),
 			layer: 0,
 		};
 		childBox.parent = box;
@@ -155,7 +164,9 @@ function layoutComponent(
 	const entries = visibleStackEntries(node.entries, context.viewport);
 	const gapTotal = Math.max(0, entries.length - 1) * node.gap;
 	if (node.type === "vstack") {
-		const intrinsicHeights = entries.map((entry) => measureHeight(context, entry.component, safeWidth));
+		const intrinsicHeights = entries.map((entry) =>
+			typeof entry.basis === "number" ? entry.basis : measureHeight(context, entry.component, safeWidth),
+		);
 		const sizes = allocateStackSizes(entries, intrinsicHeights, height, node.gap);
 		const naturalHeight = sizes.reduce((sum, size) => sum + size, 0) + gapTotal;
 		const allocatedHeight = height === undefined ? naturalHeight : Math.max(0, Math.floor(height));
@@ -180,7 +191,9 @@ function layoutComponent(
 		return box;
 	}
 
-	const intrinsicWidths = entries.map((entry) => measureWidth(context, entry.component, safeWidth));
+	const intrinsicWidths = entries.map((entry) =>
+		typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, safeWidth),
+	);
 	const widths = allocateStackSizes(entries, intrinsicWidths, safeWidth, node.gap);
 	const intrinsicHeights = entries.map((entry, index) =>
 		measureHeight(context, entry.component, Math.max(1, widths[index]!)),
@@ -261,9 +274,9 @@ export function getScrollbarGeometry(box: LayoutBox): ScrollbarGeometry | undefi
 		minThumbHeight,
 		Math.min(trackHeight, Math.round((trackHeight * trackHeight) / contentHeight)),
 	);
-	const maxScrollTop = contentHeight - trackHeight;
+	const maxScrollTop = Math.max(0, contentHeight - trackHeight);
 	const maxThumbTop = trackHeight - thumbHeight;
-	const thumbOffset = Math.round((box.scrollView.scrollTop / maxScrollTop) * maxThumbTop);
+	const thumbOffset = maxScrollTop === 0 ? 0 : Math.round((box.scrollView.scrollTop / maxScrollTop) * maxThumbTop);
 	const column = box.rect.x + box.rect.width - 1;
 	if (column < box.clip.x || column >= box.clip.x + box.clip.width) return undefined;
 
@@ -291,12 +304,18 @@ function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): v
 function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 	if (box.lines) {
 		const offset = box.lineOffset ?? 0;
-		for (let localRow = 0; localRow < box.rect.height; localRow++) {
-			const row = box.rect.y + localRow;
-			if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length) continue;
-			const sourceLine = box.lines[offset + localRow];
+		const firstRow = Math.max(box.rect.y, box.clip.y, 0);
+		const lastRow = Math.min(box.rect.y + box.rect.height, box.clip.y + box.clip.height, screen.length);
+		for (let row = firstRow; row < lastRow; row++) {
+			const sourceLine = box.lines[offset + row - box.rect.y];
 			if (sourceLine === undefined) continue;
-			const line = sourceLine.replace(OSC133_ZONE_PREFIX, "");
+			let line = sourceLine.replace(OSC133_ZONE_PREFIX, "");
+			const imageMetadata = getKittyImageMetadata(line);
+			if (imageMetadata) {
+				const clipBottom = Math.min(screen.length, box.clip.y + box.clip.height);
+				const visibleRows = Math.min(imageMetadata.rows, clipBottom - row);
+				if (visibleRows < imageMetadata.rows) line = cropKittyImageLine(line, 0, visibleRows);
+			}
 			if (isImageLine(line) && box.rect.x === 0 && box.rect.width >= totalWidth) screen[row] = line;
 			else screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
 		}

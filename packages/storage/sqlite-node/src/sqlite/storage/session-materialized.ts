@@ -1,4 +1,4 @@
-import type { SessionStats, SessionTreeEntry, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { SessionTreeEntry, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { invalidSession, isRecord } from "./shared.ts";
 
 export interface SessionMaterializedRow {
@@ -311,22 +311,9 @@ export function materializedStateFromRows(
 			} else {
 				state.labelsById.delete(payload.targetId);
 			}
-			continue;
-		}
-		if (row.type !== "label") {
 		}
 	}
 	return state;
-}
-
-export function sessionStatsFromMaterializedState(state: SessionMaterializedState): SessionStats {
-	return {
-		messageCount: state.messageCount,
-		cachedTokens: state.cachedTokens,
-		uncachedTokens: state.uncachedTokens,
-		totalTokens: state.totalTokens,
-		costTotal: state.costTotal,
-	};
 }
 
 export function materializedStateValues(

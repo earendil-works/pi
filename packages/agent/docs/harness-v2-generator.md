@@ -1,4 +1,6 @@
-# Durable AgentHarness design
+# Durable AgentHarness design (generator variant)
+
+> **Variant note.** This document and `harness-v2-effects.md` are two candidate designs for the same goals. They share Parts I and II in substance. They differ in Part III: the effects variant keeps straight-line async procedures and gets deterministic stepping from a gated effect boundary; this variant inverts control flow into a synchronous state machine whose yielded actions are the stepping points (section 15). Judge them against each other; only one will be implemented.
 
 > **Compatibility policy.** Old coding-agent v3 JSONL sessions must open and restore idle. This is the only backward-compatibility requirement. All other formats and APIs in `packages/agent/src/harness` and `packages/storage/sqlite-node` (and their respective tests) may break. We do not write migrations, schema versioning, or conversion paths for anything else.
 
@@ -26,6 +28,7 @@ The harness executes runs against one session. The session holds four kinds of s
 - **Lanes.** A session hosts one or more lanes. A lane is a named position in the conversation tree. Each lane runs at most one operation at a time. Lanes run in parallel. A run and its queued messages belong to the lane that accepted them. Example: a Slack channel is a session; each thread is a lane. Interactive pi uses one lane and does not show the concept in its UI. Extensions get the full harness API, including lanes. Example: a subagent tool runs on a second lane of its parent's session.
 - **No partial outcomes.** A crash inside any operation — run, compaction, navigation — leaves one of two states: the operation has not happened, or recovery can complete it. Nothing in between is observable.
 - **Harness API.** Events observe execution and cannot change it. Hooks intercept execution and can change it: context, requests, tools, run boundaries. Extensions build on events and hooks.
+- **Deterministic stepping.** Each operation runs as a synchronous state machine that yields one action per effect — durable write, provider request, tool execution, hook, timer. In `drive: "manual"` the machine halts before every action and a test drives it action by action: stop at any boundary, inject input, or close and reopen to simulate a crash. Production and tests drive the same machine (section 15).
 - **Observability.** All execution is instrumentable for logging and tracing, down to provider request and response internals. This channel is separate from the hook system.
 - **UI model.** A client gets one atomic snapshot, then a live event stream. Events are not replayed. Reconnect means a new snapshot.
 - **Single writer.** One harness writes a session at a time. The serving layer enforces this. All lanes of a session live in that one harness. Restore treats states that a single writer cannot produce as corruption.
@@ -78,7 +81,7 @@ Records are not tree entries because they describe execution, not conversation: 
 
 A lane is a named position in the tree plus the work serialized on it. The closest existing concept is a git branch checked out in its own worktree: a name attached to a position, advanced by new work, movable to any entry without rewriting history, and never checked out twice. One difference to git intuition: navigation moves a lane to any entry, not only forward.
 
-Every session has the lane `main`. `main` cannot be deleted. Applications create further lanes with a name and an anchor entry. Lane names are application keys: a Slack thread id, an email thread id. No UI lists lanes in the abstract; the platform's own UI (the thread list) plays that role.
+Every session has the lane `main`. Applications create further lanes with a name and an anchor entry. Lane names are permanent application keys: a Slack thread id, an email thread id. No UI lists lanes in the abstract; the platform's own UI (the thread list) plays that role.
 
 A lane owns:
 
@@ -90,7 +93,8 @@ A lane owns:
 Rules:
 
 - Lanes run operations in parallel. The harness stays the single writer; lane records and entries interleave in the shared sequence.
-- Creating a lane copies nothing. Deleting a lane deletes its name, its queues, and its operation log — never entries.
+- Creating a lane copies nothing. Lanes are not deleted or renamed.
+- State-dependent mutations on one lane are linearized on that lane's mutation line: validation, at most one durable write, and the in-memory update complete before the next mutation starts (section 15). Provider, tool, hook, and retry work never occupies the mutation line.
 - Two lanes at the same leaf diverge on their next append. The tree handles this; no coordination exists between lanes.
 - A lane with an unfinished operation restores as suspended, independently of its siblings. Suspension has a reason: crash, or a deferred provider request (section 1).
 
@@ -129,7 +133,7 @@ Between steps, the lane passes a checkpoint:
 2. Consume queued steering messages.
 3. Compact if the next request would not fit.
 
-A step with tool calls always forces another step; the model must see its tool results answered. Follow-up messages are consumed only when tool continuation and steering are exhausted. The run ends when a checkpoint finds nothing pending.
+A step with tool calls forces another step so the model sees its results — with one exception: a batch in which every finalized tool result persisted `terminate: true` suppresses automatic tool continuation (steering or follow-up input can still start another step). Follow-up messages are consumed only when tool continuation and steering are exhausted. The run ends when a checkpoint finds nothing pending.
 
 ### Append-only context
 
@@ -154,7 +158,7 @@ stateDiagram-v2
 
 - States are per lane. One exception: a failed storage write faults the whole harness. A faulted harness stops all effects and rejects all calls; after the cause is fixed, reopening restores each lane from its records.
 - **Suspended** means: an operation is open, nothing executes. Reached by restore after a crash, or deliberately when a deferred handle is persisted. `resume()` continues the operation; `abort()` closes it without further execution.
-- **Abort** records the cancellation durably, signals running effects, and returns. Reconciliation finishes in the background: unresolved tool calls get synthetic results, and the transcript gets a closing assistant message.
+- **Abort** records the cancellation durably, signals running effects, and returns. Reconciliation follows: unresolved tool calls get synthetic results, and the transcript gets a closing assistant message. Automatic drive runs it in the background; manual drive leaves it parked at its next action.
 
 ### Resume
 
@@ -204,12 +208,19 @@ interface OperationStarted extends RecordBase {
   intent:
     | {
         kind: "run";
-        /** Prompt plus before_run injections. Full payloads, provisioned ids. */
+        /** Normalized caller input after skill/template expansion, before
+            before_run. Kept for SuspendedOperation and before_resume. */
+        originalPrompt: AgentMessage[];
+        /** Captured nextRun items, then the prompt, then before_run
+            injections. Full payloads, provisioned ids. Capture happens in
+            the acceptance mutation (section 15): items present when it runs
+            belong to this run; later items belong to the next. */
         initialMessages: ProvisionedEntry[];
         /** Present only when a hook overrode the system prompt; fixed for the
             whole run. Absent: the systemPrompt callback runs per request. */
         systemPromptOverride?: string;
-        /** Opaque per-extension state, returned to before_resume. */
+        /** Opaque state keyed by stable hook registration id. Each
+            before_resume handler receives only the value under its id. */
         resumeData?: Record<string, JsonValue>;
       }
     | {
@@ -219,7 +230,7 @@ interface OperationStarted extends RecordBase {
       }
     | {
         kind: "navigation";
-        targetId: string;               // destination entry; null = root
+        targetId: string | null;        // destination entry; null = root
         summarize: boolean;
         customInstructions?: string;
         label?: string;                 // global fact, written at completion
@@ -258,6 +269,10 @@ interface TaskAttempt extends RecordBase {
   runId: string;
   task: "step" | "compaction" | "branch_summary";
   attempt: number;                     // 1-based within this task
+  /** Required exactly for compaction tasks. Persists why the summary is
+      being generated so resume re-enters the same structural work without
+      re-deriving context pressure. */
+  compactionReason?: "manual" | "threshold" | "overflow";
 }
 // The model of a resumed request is not read from records: the lane's
 // effective model is derived from its path, and a deferred handle's model
@@ -290,6 +305,15 @@ interface QueueEnqueued extends RecordBase {
   target: ProvisionedEntry;
 }
 
+// Durable retraction of a pending queue item, before consumption. Without
+// this record a crash would resurrect the item: recovery treats a
+// queue_enqueued without its entry as pending.
+interface QueueCancelled extends RecordBase {
+  type: "queue_cancelled";
+  runId?: string;                      // matches the queue_enqueued it kills
+  entryId: string;                     // the enqueued target's provisioned id
+}
+
 // Deferred-write acceptance: an entry or configuration change requested
 // while a step was in flight. Applied at the next checkpoint.
 interface WriteDeferred extends RecordBase {
@@ -297,9 +321,17 @@ interface WriteDeferred extends RecordBase {
   runId: string;
   target: ProvisionedEntry;
 }
+
+type LaneRecord = OperationStarted | AbortRequested | OperationFinished
+  | TaskAttempt | ToolStarted | QueueEnqueued | QueueCancelled | WriteDeferred;
+
+type NewRecord<T extends LaneRecord = LaneRecord> =
+  T extends LaneRecord ? Omit<T, "seq" | "timestamp"> : never;
 ```
 
 Blocked or invalid tool calls write no `tool_started`. No effect starts, so no intent is needed: the block is durable as a tool-result entry with `isError: true` and the block reason as content. A crash before that entry loses only the decision, and recovery makes it again — `before_tool` runs again for a call with no `tool_started` and no result.
+
+A tool step needs no outcome record. Its result entry is the complete durable outcome, including the batch-control decision: the tool-result entry persists `terminate` (section 12). A crash after execution but before the result entry follows the replay policy (section 6); re-finalization runs `after_tool` again, which the section 1 non-goal explicitly permits.
 
 ### Validity
 
@@ -308,6 +340,9 @@ Recovery rejects a lane's log as corrupt when:
 - more than one operation is open;
 - a record references an operation that does not exist, or follows its finish;
 - attempt numbers are not consecutive within a task;
+- `compactionReason` is absent from a compaction attempt or present on another task kind;
+- a steer or follow-up `queue_enqueued` for a run follows its `abort_requested`;
+- a `queue_cancelled` targets an id with no `queue_enqueued`, or one whose entry exists;
 - two `tool_started` records share an invocation identity;
 - a provisioned id exists with different content.
 
@@ -318,6 +353,7 @@ Traces at the storage level. All traces show one lane. Legend:
 ```text
 E   entry appended to the tree (chained to the lane's leaf)
 R   record appended to the lane's operation log
+L   lane pointer move
 G   global fact written
 H   hook (awaited; hooks are Part I concepts, their API is Part III)
 X   crash site
@@ -352,7 +388,15 @@ R   task_attempt                      attempt 2 — durable count
 E   assistant message
 ```
 
-Crash during backoff: restore counts two attempts; resume starts attempt 3. The count never resets. Attempts exhausted: an assistant message with the error is appended, then `operation_finished` failed.
+Crash during backoff: restore counts two attempts; resume starts attempt 3. The count never resets. Retryable errors below the cap are never appended as entries. Attempts exhausted — or a non-retryable terminal error — appends an assistant message with the error, then `operation_finished` failed:
+
+```text
+E   assistant message                 stop reason error; the failure is durable
+X   crash                             operation still open
+R   operation_finished                recovery writes failed — never completed
+```
+
+The error entry is the terminal-failure marker. Recovery that finds it drains accepted writes and queued input; unless consumed steering or follow-up input starts new work, it closes the run failed (section 7). A run whose newest own message is a task-produced error can never be completed by recovery.
 
 ### Steering while a tool runs
 
@@ -367,6 +411,31 @@ R   task_attempt                      next request sees the steering message
 ```
 
 Crash before `queue_enqueued`: the steer never happened; the caller's promise never resolved. Crash after: recovery finds the record without its entry and appends it at the same point the checkpoint would have.
+
+A queued item can be durably retracted before consumption:
+
+```text
+R   queue_enqueued                    steer, full payload, provisioned id
+    cancelQueued(entryId)             caller resolves here
+R   queue_cancelled                   the entry will never be appended
+```
+
+Crash between the two records: the item is still pending; the cancel promise never resolved. Cancellation and consumption are jobs on the lane mutation line, so `[cancel, consume]` and `[consume, cancel]` are the only histories (section 15).
+
+### Input at the finish boundary
+
+Same-lane decisions have one order: the lane mutation line (section 15). The final pending-work check and the terminal append are one `tryFinishRun` mutation, so a concurrent steer has exactly two histories:
+
+```text
+steer first                         finish first
+R   queue_enqueued                  R   operation_finished
+    tryFinishRun → continue             steer() → no_active_run
+E   user message
+... run continues
+R   operation_finished
+```
+
+Deferred writes and abort use the same ordering. A deferred write accepted before finish must be applied before the run can close; one accepted after finish observes an idle lane and appends directly. `abort_requested` before finish selects abort reconciliation; abort after finish returns `no_active_operation`. There is no third history — that is the entire mechanism.
 
 ### Deferred write mid-step
 
@@ -434,16 +503,28 @@ Auto-compaction writes no `operation_started`; it belongs to the run. Manual `co
 
 ```text
     navigateTree(target, { summarize: true, label: "before-refactor" })
-R   operation_started                 kind navigation; target, provisioned summary id
+R   operation_started                 kind navigation; target, provisioned summary id, label
 H   before_navigation                 may decline or supply the summary
 R   task_attempt                      task branch_summary — skipped if hook supplied
-E   branch summary entry              chained to the target
-G   label                             from the intent
-R   operation_finished                completed; the lane's leaf moves here,
-                                      atomically with this record
+    summary text generated            in memory only
+L   lane move → target                one storage write; the commit point
+E   branch summary entry              appends chain to the lane's leaf — now the target,
+                                      so the summary lands on the target branch
+G   label                             from the intent; latest-wins, idempotent
+R   operation_finished                completed
 ```
 
-The leaf move and `operation_finished` are one atomic write. Crash before: the lane is still at the old position; recovery completes the navigation. Crash after: the navigation is complete. No half-moved state exists.
+The move commits first; every later write chains off durable state. No multi-object atomic write exists anywhere in the design. Acceptance rejects `target === sourceLeafId`, so "has the move happened" is always decidable: the lane's leaf equals `intent.targetId` if and only if the move committed. Per crash site:
+
+| crash after | recovery sees | action |
+|---|---|---|
+| `operation_started` | leaf at `sourceLeafId` | rerun hook or summary task, then move |
+| summary generated | nothing durable of the text | regenerate under the same attempt cap |
+| lane move | leaf at `intent.targetId` | append summary if `summaryEntryId` missing |
+| summary entry | entry exists | set label, finish |
+| label | fact set (idempotent) | finish |
+
+Between the move and `operation_finished`, readers see the lane at the target with an open navigation — a recoverable state, not an invalid one. The lane runs nothing else meanwhile; one operation per lane already guarantees that.
 
 ### Deferred provider request
 
@@ -460,9 +541,13 @@ E   assistant message                 the real result
     run continues normally
 ```
 
-The suspended lane is indistinguishable from a crashed one in storage: an open operation whose newest entry is a deferred assistant message with no successor. Restore lists it as suspended; `resume()` redeems the handle. Redemption is an effect-free read and writes no records: still-pending re-suspends the lane (poll cadence is application policy), and a crash during the fetch owes nothing.
+The suspended lane is indistinguishable from a crashed one in storage: an open operation whose newest entry is a deferred assistant message with no successor. Restore lists it as suspended; `resume()` checks the handle. Redemption writes no intent record: it starts no new model work, and a committed successor entry prevents another fetch.
 
-A terminal redemption answer — expired, unknown, already consumed — completes the original attempt as failed. The task then starts a fresh attempt with a new request and a new `task_attempt` record; task attempts are what the durable cap bounds. As with any failed attempt, an error assistant message is appended only when the cap is exhausted, followed by `operation_finished` failed.
+Each `resume()` performs one fetch. Three outcomes:
+
+- **pending** — the provider returns stop reason `deferred` again. Nothing is written; the lane re-suspends. Poll cadence is application policy.
+- **ready** — a normal assistant message. It is appended as the successor and the run continues.
+- **terminal** — the provider returns stop reason `error` (expired, unknown, consumed), or the fetch itself rejects; the harness converts a rejection to the same error-message form. The message is appended and the run finishes failed. Redemption failure never starts an automatic replacement request; steering or follow-up input already accepted for this run can still start a later step.
 
 `abort()` on a suspended lane: `abort_requested` record, best-effort cancellation of the handle at the provider, then normal reconciliation and `operation_finished` aborted. The deferred entry stays in the transcript.
 
@@ -474,7 +559,7 @@ Deferred assistant messages carry a handle, not content; they project to nothing
 
 Opening a session restores every lane independently. Restore reads; it never appends and never starts effects.
 
-Per lane, one question: does the operation log hold an `operation_started` without a matching `operation_finished`? No: the lane is idle. Its only remaining state is pending next-run queue items. Next-run messages can be enqueued at any time; only the acceptance of a run consumes them — compaction and navigation pass over the queue. Pending items are therefore the `queue_enqueued` records after the lane's most recent run-kind `operation_started` whose provisioned entries do not exist; nothing older can still be pending. Yes: the lane is suspended, and its state is reduced from two bounded reads:
+Per lane, one question: does the operation log hold an `operation_started` without a matching `operation_finished`? No: the lane is idle. Its only remaining state is pending next-run queue items. Next-run messages can be enqueued at any time; only the acceptance of a run consumes them — compaction and navigation pass over the queue. Pending items are therefore the `queue_enqueued` records after the lane's most recent run-kind `operation_started` whose provisioned entries do not exist and that no `queue_cancelled` retracts; nothing older can still be pending. Items a run captured are listed in its intent's `initialMessages`, so a captured-but-unappended item is completed by that run's recovery and is never offered to the next run. Yes: the lane is suspended, and its state is reduced from two bounded reads:
 
 1. **The lane's records** since that `operation_started`. Everything after the finish of the previous operation is irrelevant history.
 2. **The lane's own entries**: the path from its leaf back to the operation's anchor (`sourceLeafId`). These are exactly the entries this operation appended.
@@ -487,9 +572,9 @@ From those two reads, the lane's state:
 
 - **aborting** — an `abort_requested` record exists.
 - **attempts used** — `task_attempt` records newer than the lane's newest own entry. An entry landing ends its task; attempts before it belong to finished work.
-- **tool batch** — the newest assistant entry with tool calls, each call matched against `tool_started` records and result entries (section 6, crash-site table).
+- **tool batch** — the newest assistant entry with tool calls, each call matched against `tool_started` records and result entries (section 6, crash-site table). The assistant stop reason is retained: a `length` batch is truncated and never executes on recovery. Persisted `terminate` values on result entries decide whether the completed batch forces another step.
 - **deferred handle** — the newest own entry is a deferred assistant message with no successor.
-- **pending queue items** — `queue_enqueued` records whose provisioned entry does not exist.
+- **pending queue items** — `queue_enqueued` records whose provisioned entry does not exist, excluding items retracted by `queue_cancelled` and steer/follow-up items killed by this run's `abort_requested`.
 - **pending writes** — `write_deferred` records whose provisioned entry does not exist.
 - **missing initial messages** — provisioned ids from the run intent without entries.
 - **structural targets** — for compaction and navigation: does the provisioned result entry exist.
@@ -504,12 +589,13 @@ The same rules run live: during normal execution the harness updates this state 
 - aborting → reconcile: synthetic tool results, closing assistant message, `operation_finished` aborted.
 - unresolved tool batch → per call: skip, re-execute, or synthesize (section 6).
 - deferred handle → redeem (section 6).
-- unfinished task → next attempt, if the cap allows; else fail the operation.
+- terminal failure — the newest own message is a task-produced assistant error (a give-up entry, a non-retryable request error, or a failed redemption; never an arbitrary deferred-write message) → apply accepted writes and consume queued conversational input; if nothing consumed starts new work, append `operation_finished` failed. Recovery never completes such a run.
+- unfinished task → resume that exact task before consuming new checkpoint input: next attempt if the cap allows, else fail the operation. A compaction task resumes with its recorded `compactionReason`.
 - otherwise → continue at the next checkpoint; pending writes and queue items apply normally there.
 
 Recovery appends are ordinary appends with one extra rule: skip any provisioned id that already exists. A crash during recovery therefore leaves less to recover; re-running recovery is always safe. Recovery never repeats an effect whose outcome is unknown, and interrupted hook handlers are not re-run (section 1).
 
-Old v3 sessions contain no records. Every lane question answers "idle"; the file restores as `main` at its last entry.
+Old v3 sessions contain no records. Every lane question answers "idle"; section 12 normalization restores `main` at the final retained logical entry (v3 `leaf` entries and discarded fact-like entries resolve through their nearest retained ancestor).
 
 # Part III — API and implementation
 
@@ -531,21 +617,30 @@ interface AgentLane {
   skill(name: string, additionalInstructions?: string): Promise<RunResult>;
   promptFromTemplate(name: string, args?: string[]): Promise<RunResult>;
   compact(options?: { customInstructions?: string }): Promise<CompactionResult>;
-  navigateTree(targetId: string, options?: NavigateOptions): Promise<NavigationResult>;
+  navigateTree(targetId: string | null, options?: NavigateOptions): Promise<NavigationResult>;
   resume(): Promise<ResumeResult>;       // continue this lane's open operation
   abort(): Promise<AbortResult>;         // durable on resolve; reconciliation runs in background
 
-  // Queues. Durable on resolve (queue_enqueued record). steer/followUp
-  // require an active run; nextRun works anytime.
+  // Queues. Durable on resolve (queue_enqueued record); the returned
+  // entryId identifies the item until consumption. steer/followUp require
+  // an active run; nextRun and cancelQueued work anytime.
   steer(text: string, images?: ImageContent[]): Promise<QueueResult>;
   steer(message: AgentMessage): Promise<QueueResult>;
   followUp(text: string, images?: ImageContent[]): Promise<QueueResult>;
   followUp(message: AgentMessage): Promise<QueueResult>;
   nextRun(text: string, images?: ImageContent[]): Promise<QueueResult>;
   nextRun(message: AgentMessage): Promise<QueueResult>;
+  /** Durably retract a pending queue item (queue_cancelled record). */
+  cancelQueued(entryId: string): Promise<CancelQueuedResult>;
 
   waitForIdle(): Promise<void>;
   runWhenIdle(callback: () => void | Promise<void>): Promise<void>;   // runtime-only
+
+  // Manual drive controls. Section 15 defines their exact behavior; they
+  // are usable only with AgentHarnessOptions.drive === "manual".
+  peekAction(): Promise<ActionInfo | undefined>;
+  executeAction(): Promise<ActionInfo | undefined>;
+  runToCompletion(): Promise<void>;
 
   // Persisted configuration — entries on the path behind this lane's leaf,
   // resolved by point queries. Setters resolve on durable acceptance;
@@ -554,8 +649,9 @@ interface AgentLane {
   getThinkingLevel(): Promise<ThinkingLevel>; setThinkingLevel(level: ThinkingLevel): Promise<void>;
   getActiveTools(): Promise<string[]>;        setActiveTools(names: string[]): Promise<void>;
 
-  /** This lane's view of the tree: reads default to this lane's leaf,
-      appends chain to it (deferred while this lane has a step in flight). */
+  /** This lane's view of the tree: reads default to this lane's leaf;
+      appends defer while a run is open and otherwise chain to the leaf
+      (section 12). */
   session: SessionTree;
 
   /** Scoped: this lane's transcript, state, queues, and events (section 9). */
@@ -574,16 +670,12 @@ class AgentHarness implements AgentLane {
     suspended: SuspendedOperation[];
   }>;
 
-  // Lane management. Names are application keys ("slack:1719432.0021").
-  // Handles are stateless facades bound to the name: any number may exist,
-  // all equivalent; identity is the name, never the object. deleteLane
-  // invalidates all handles of that name; createLane under the same name
-  // rebinds them — names are external identities, so that is the intent.
+  // Lane management. Names are permanent application keys
+  // ("slack:1719432.0021"). Handles are stateless facades bound to the
+  // name: any number may exist, all equivalent; identity is the name,
+  // never the object. Lanes are not deleted or renamed.
   lane(name: string): Promise<AgentLane | undefined>;    // lookup, never creates
   createLane(name: string, at: string | null): Promise<LaneResult>;
-  /** Rejected while the lane's operation is active or suspended.
-      "main" cannot be deleted. */
-  deleteLane(name: string): Promise<LaneResult>;
   /** Inventory. Always includes "main". */
   lanes(): Promise<LaneInfo[]>;
 
@@ -648,6 +740,11 @@ interface AgentHarnessOptions {
   compaction?: CompactionSettings;
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
+  /** automatic: operation methods drive their machines to completion.
+      manual: the machine halts before each action; peekAction() /
+      executeAction() / runToCompletion() drive it. Deterministic tests
+      and debuggers. Section 15. */
+  drive?: "automatic" | "manual";       // default automatic
 
   // Projection
   /** AgentMessage → provider messages, before each request. Default handles
@@ -657,6 +754,9 @@ interface AgentHarnessOptions {
   /** Custom entry → context messages, at context build. Entries without a
       projector never enter provider context. */
   entryProjectors?: Record<string, EntryProjector>;
+
+  // Telemetry. The default context is a no-op. Section 18.
+  context?: ExecutionContext;
 }
 ```
 
@@ -693,7 +793,12 @@ type NavigationResult =
   | { ok: false; outcome: "failed"; runId: string; error: ErrorInfo }
   | Failure;
 
-type QueueResult = { ok: true } | Failure;
+type QueueResult = { ok: true; entryId: string } | Failure;
+
+type CancelQueuedResult =
+  | { ok: true }                                            // entry will never be appended
+  | { ok: false; outcome: "already_consumed" | "already_cleared" }
+  | Failure;                                                // unknown id: rejected
 
 type ResumeResult =
   | ({ kind: "run" } & RunResult)
@@ -701,7 +806,9 @@ type ResumeResult =
   | ({ kind: "navigation" } & NavigationResult);
 ```
 
-Rejection codes: `busy` (this lane), `no_active_run`, `nothing_to_resume`, `missing_identities`, `invalid_message`, `unknown_skill`, `unknown_template`, `unknown_target`, `unknown_lane`, `lane_exists`, `invalid_lane`, `nothing_to_compact`, `closed`, `faulted`.
+Rejection codes: `busy` (this lane), `no_active_run`, `no_active_operation`, `nothing_to_resume`, `missing_identities`, `invalid_message`, `unknown_skill`, `unknown_template`, `unknown_target`, `unknown_queue_item`, `unknown_lane`, `lane_exists`, `invalid_lane`, `nothing_to_compact`, `closed`, `faulted`.
+
+`cancelQueued` outcomes mirror the mutation-line histories: `already_consumed` means the entry exists (the model saw or will see it); `already_cleared` means abort drained the item or an earlier cancel won.
 
 `finalMessage` is the run's newest entry that projects to an assistant message; `finalEntryId` is that entry's id. `leafId` is the lane's leaf when the operation finished — the race-free anchor for branch queries (`findEntriesOnBranch({ start: leafId })`). The two differ when a deferred write was applied after the final assistant message. Full transcripts are not duplicated into results; they are in the session and were delivered as events.
 
@@ -714,7 +821,7 @@ interface SuspendedOperation {
   id: string;
   startedAt: number;                             // Unix ms, from the operation_started record
   reason: "crash" | "deferred";
-  prompt?: (TextContent | ImageContent)[];       // runs: original prompt, for display
+  prompt?: AgentMessage[];                       // runs: normalized original prompt
   deferred?: DeferredHandle;                     // reason "deferred"
   aborting?: { steer: AgentMessage[]; followUp: AgentMessage[] };  // abort accepted pre-crash;
                                                  // cleared payloads, offered for requeue
@@ -772,6 +879,11 @@ start((event) => send(client, event));                // flush buffer in order, 
 `watch()` is lane-scoped: this lane's transcript, operation state, queues, pending writes, and only this lane's events. A Slack thread renderer sees its thread and nothing else. `watchSession()` is the session-wide observer: lane inventory, no transcripts, unfiltered event stream. A dashboard composes both: `watchSession()` for the overview, `lane.watch()` per opened thread.
 
 ```ts
+interface QueuedItem {
+  entryId: string;                     // correlates with QueueResult and cancelQueued
+  message: AgentMessage;
+}
+
 interface LaneSnapshot {
   lane: string;
   /** This lane's branch, oldest first: the context window plus its
@@ -799,8 +911,8 @@ interface LaneSnapshot {
     retry?: { attempt: number; maxAttempts: number; nextAttemptAt: number };
   };
 
-  queues: { steer: AgentMessage[]; followUp: AgentMessage[]; nextRun: AgentMessage[] };
-  pendingWrites: { id: string; entry: Entry }[];
+  queues: { steer: QueuedItem[]; followUp: QueuedItem[]; nextRun: QueuedItem[] };
+  pendingWrites: { id: string; entry: ProvisionedEntry }[];
 
   faulted: boolean;                      // harness-wide, mirrored into every snapshot
 }
@@ -816,7 +928,7 @@ Rules:
 - Configuration is not in snapshots. Getters return the current value; `config_update` events (section 10) tell a UI when to re-read. One source of truth.
 - `streamingMessage` and `runningTools` let a client that attaches mid-step render immediately, without replaying events.
 - Reconnect means a new `watch()`. Against a living harness the new snapshot includes live progress. Only process death loses stream state: a restored harness has no partial streams to report, and the snapshot shows the suspended operation instead. The durable transcript is complete either way. Surviving transport drops is the serving layer's job.
-- A lane watcher receives the section 10 event vocabulary filtered to its lane. `watchSession()` and `events.on(type, listener)` receive everything; `events.on` is live-only — no snapshot, no buffer.
+- A lane watcher receives the section 10 event vocabulary filtered to its lane, plus harness-global events such as `fault`. `watchSession()` and `events.on(type, listener)` receive everything; `events.on` is live-only — no snapshot, no buffer.
 - Watchers are independent; each has its own buffer and its own `start()` gate.
 
 ## 10. Events
@@ -826,12 +938,12 @@ One flat stream. `events.on(type, listener)` receives everything; lane watchers 
 Guarantees:
 
 - Passive. A throwing listener is caught and reported as a `handler_error` event plus telemetry; it never affects execution. A listener that throws while handling `handler_error` goes to telemetry only.
-- Ordered. Delivery follows process order, identical for watchers and `events.on`.
+- Ordered. Delivery follows process order, identical for watchers and `events.on`. Concurrent lanes do not promise `seq`-ordered passive delivery; durable consumers use `getLog()`.
 - Not persisted, not replayed. Reconnect means a new `watch()`.
 - Events that report durable facts fire after the fact is committed; what an event announces is already queryable.
 - Events report final values, after hook transformation.
 - Payloads are JSON-serializable and secret-free; a server can proxy them verbatim. Live objects (models, tools) are referenced by name, never embedded.
-- Every event carries `lane: string` (omitted below). Operation-scoped events carry `runId`; step-scoped events carry `stepId`; recovered work carries `recovery: true`.
+- Lane-scoped events carry `lane: string` (omitted below); harness-global events such as `fault` omit it. Operation-scoped events carry `runId`; step-scoped events carry `stepId`; recovered work carries `recovery: true`.
 
 ### Catalog
 
@@ -862,13 +974,13 @@ Guarantees:
 // Tools
 { type: "tool_start";  runId; stepId; toolCallId; toolName; args }      // effective args
 { type: "tool_update"; runId; stepId; toolCallId; toolName; partialResult }
-{ type: "tool_end";    runId; stepId; toolCallId; toolName; result; isError }
+{ type: "tool_end";    runId; stepId; toolCallId; toolName; result; isError; terminate }
 
 // Tree, queues, facts
 { type: "entry_added";   entry: Entry }              // non-message entries
 { type: "write_pending"; runId; entryId; entry }     // deferred write accepted; entry_added
                                                      // or message_end follows with the same id
-{ type: "queue_update";  steer: AgentMessage[]; followUp: AgentMessage[]; nextRun: AgentMessage[] }
+{ type: "queue_update";  steer: QueuedItem[]; followUp: QueuedItem[]; nextRun: QueuedItem[] }
 { type: "fact_update" } & (
   | { fact: "name";  name: string }
   | { fact: "label"; targetId: string; label: string | undefined })
@@ -891,7 +1003,6 @@ Guarantees:
 
 // Lanes
 { type: "lane_created"; at: string | null }
-{ type: "lane_deleted" }
 ```
 
 ### Nesting
@@ -914,18 +1025,24 @@ Failed attempts emit `retry_scheduled`, then `retry_start`, then `retry_end` whe
 
 ## 11. Hooks
 
-Hooks are awaited interception points. Registration mirrors events:
+Hooks are awaited interception points. Registration mirrors events, with an optional stable registration id:
 
 ```ts
 const off = harness.hooks.on("before_tool", async (event) => {
   if (event.toolName === "bash") return { block: { reason: "not allowed" } };
 });
+
+harness.hooks.on("before_run", async () => ({
+  resumeData: { version: 1 },
+}), { id: "extension.example" });
 ```
 
 Semantics, uniform across all hooks:
 
 - Registration is harness-global. Every hook event carries `lane` (omitted below); a handler scopes itself. Per-lane registration is an open question (section 19).
-- Handlers run sequentially in registration order. Each transformation handler sees the output of the previous one.
+- `before_run` and `before_resume` registrations require a stable `id`. An id is unique within one hook name; duplicate registration rejects synchronously. The same extension uses the same id for both hooks across restarts. The runner stores each `before_run` handler's `resumeData` under its id and hands each `before_resume` handler only the value under the same id.
+- `before_run` runs on the normalized caller prompt, outside the lane mutation line, before acceptance. It does not see captured nextRun items; the acceptance mutation captures those afterwards (section 15). A rejected acceptance (busy lane) discards the hook output.
+- Handlers run sequentially in registration order. Each transformation handler sees the output of the previous one; returned `messages` append and a returned `systemPrompt` replaces the current value.
 - A throwing handler does not fail the run: it is skipped, reported via `handler_error`, and the remaining handlers run. One exception: `before_tool` fails closed — a throwing handler blocks the tool. A skipped policy handler must not allow a tool it might have blocked.
 - Hook results that feed durable state are persisted before execution proceeds: `before_run` output lands in the `operation_started` record, `before_tool` effective arguments in the `tool_started` record.
 - Events report post-hook values; observers never see pre-hook state.
@@ -938,25 +1055,31 @@ Semantics, uniform across all hooks:
 // Once per run, before acceptance. Not re-run on retry or resume; its
 // output is persisted in the operation_started record.
 before_run: {
-  event:  { prompt: (TextContent | ImageContent)[]; systemPrompt: string; resources };
+  event:  { prompt: AgentMessage[]; systemPrompt: string; resources };
   result: {
     messages?: AgentMessage[];       // persisted as entries after the prompt
     systemPrompt?: string;           // persisted override, fixed for the run
-    resumeData?: JsonValue;          // per extension id; handed to before_resume
+    resumeData?: JsonValue;          // stored under this handler's registration id
   } | undefined;
 }
 
 // On resume(), before any effect. Rebuilds process-local extension state.
 // Must be idempotent: a crash can rerun it. Cannot rewrite the prompt.
 before_resume: {
-  event:  { runId; kind; prepared: { prompt; systemPromptOverride? }; resumeData? };
+  event:
+    | { runId; kind: "run"; prepared: { prompt: AgentMessage[]; systemPromptOverride? };
+        resumeData?: JsonValue }
+    | { runId; kind: "compaction" | "navigation"; resumeData?: JsonValue };
   result: void;
 }
 
-// When nothing is pending: no tool continuation, no queued messages.
-// Returned or enqueued follow-ups continue the same run. May fire again
-// after a crash at the same boundary; handlers that must not double-fire
-// keep their own durable marker.
+// At a normal finish boundary: no tool continuation, no queued messages.
+// Returned follow-ups continue the same run; the runner commits them
+// conditionally — an abort that wins while the hook runs drops the
+// follow-up (section 15). Does not run for abort, terminal failure, or
+// exhausted auto-compaction. May fire again after a crash at the same
+// boundary; handlers that must not double-fire keep their own durable
+// marker.
 before_run_end: {
   event:  { runId; messages: AgentMessage[] };
   result: { followUp?: string } | undefined;
@@ -1010,7 +1133,8 @@ after_tool: {
 // Structural operations ------------------------------------------------
 
 // Decline, adjust, or supply the summary. Runs after operation_started,
-// live and on resume alike; not re-run if the result entry exists.
+// live and on resume alike. Not re-run when the result entry exists or a
+// task_attempt already durably selected generated-summary work.
 before_compaction: {
   event:  { reason: "manual" | "threshold" | "overflow"; preparation: CompactionPreparation; customInstructions? };
   result: { decline?: boolean; compaction?: CompactResult } | undefined;
@@ -1039,8 +1163,8 @@ Hooks re-run only where the work itself re-runs. Persisted outputs are never rec
 | `after_response` | per response | per response | per response |
 | `before_tool` | per call | — | not when `tool_started` exists |
 | `after_tool` | per executed result | — | on safe replay only |
-| `before_compaction`, `before_navigation` | per operation | no | not when the result entry exists |
-| `before_run_end` | per finish boundary | — | at the boundary resume reaches (may repeat) |
+| `before_compaction`, `before_navigation` | per operation | no | not when a result entry or a generated-summary `task_attempt` exists |
+| `before_run_end` | per normal finish boundary | — | at the boundary resume reaches (may repeat); never for abort, terminal failure, or exhausted auto-compaction |
 
 ## 12. Session and SessionTree
 
@@ -1061,7 +1185,8 @@ interface MessageEntry           extends EntryBase { type: "message"; message: A
 interface ModelChangeEntry       extends EntryBase { type: "model_change"; provider: string; modelId: string }
 interface ThinkingLevelEntry     extends EntryBase { type: "thinking_level_change"; thinkingLevel: string }
 interface ActiveToolsEntry       extends EntryBase { type: "active_tools_change"; activeToolNames: string[] }
-interface CompactionEntry        extends EntryBase { type: "compaction"; summary: string; firstKeptEntryId?: string;
+interface CompactionEntry        extends EntryBase { type: "compaction"; summary: string;
+                                                     retainedTail: AgentMessage[];
                                                      tokensBefore: number; details?; usage? }
 interface BranchSummaryEntry     extends EntryBase { type: "branch_summary"; fromId: string; summary: string;
                                                      details?; usage? }
@@ -1071,11 +1196,24 @@ type Entry = MessageEntry | ModelChangeEntry | ThinkingLevelEntry | ActiveToolsE
            | CompactionEntry | BranchSummaryEntry | CustomEntry;
 ```
 
-v3 files additionally contain `custom_message`, `label`, and `session_info` entries. They convert on read: `custom_message` to a custom agent message, the other two to global facts (latest by file position wins). Their `parentId` carries no meaning and is ignored.
+A v4 tool-result `MessageEntry` additionally persists the finalized batch-control decision as `terminate?: true` beside `message`. It is orchestration state for the reduction (section 7), never model context; the projection to provider messages ignores it. `AgentToolResult.terminate` exists at the tool API level but `ToolResultMessage` does not carry it, so the entry field is the durable form.
+
+Every v4 compaction — generated or hook-supplied — stores the complete `retainedTail`; an empty tail is `[]`, never omission. The compaction entry is a self-contained checkpoint: context builds never read past it.
+
+v3 files additionally contain `custom_message`, `label`, `session_info`, and `leaf` entries, plus old compaction entries that use `firstKeptEntryId`. Load normalizes them before exposing the v4 tree:
+
+- `custom_message` becomes a custom agent message.
+- `label` and `session_info` become global facts (latest by file position wins) and disappear from the logical tree. A label targets its nearest retained parent.
+- `leaf` entries disappear; `main`'s leaf resolves through the last `leaf` entry, then to the nearest retained ancestor if that target was discarded.
+- Each retained child of a discarded entry is reparented to the discarded entry's nearest retained ancestor.
+- An old compaction resolves `firstKeptEntryId` against its own branch and materializes that range as `retainedTail`. V4 never exposes or persists `firstKeptEntryId`.
+- v3 entry timestamps are ISO strings and convert to Unix milliseconds.
+
+Read-only opens keep the physical v3 file unchanged; the first v4 write persists the normalized form (section 13).
 
 ### SessionTree
 
-The tree-facing contract. Each lane exposes one view (`lane.session`); `Session` itself implements it for `main`. Reads pass through always. Writes on a lane view defer while that lane has a step in flight; writes on a standalone `Session` apply immediately.
+The tree-facing contract. Each lane exposes one view (`lane.session`); `Session` itself implements it for `main`. Reads pass through always. A write through a lane view enters that lane's mutation line: while a run is open — including suspension and cancellation — it becomes a durable deferred write; during compaction or navigation it waits for the operation to end; on an idle lane it appends directly. Writes on a standalone `Session` (no harness attached) apply immediately.
 
 ```ts
 interface EntryQuery {
@@ -1125,41 +1263,52 @@ Query semantics: a branch scan takes the path from `start` to root, walks it in 
 - `newestFirst` with `stopAtType: "compaction"` ends at the newest compaction: the context window.
 - `type` and `customType` filter results; a `stopAt` entry is returned only if it passes the filter.
 - Extension patterns: effective state = `findEntryOnBranch({ type: "custom", customType })`; collections = `findEntriesOnBranch(...)`; global inventory = `findEntries(...)`.
-- Context build is a branch scan with `stopAtType: "compaction"`, projected through `entryProjectors` and `toProviderMessages`.
+- Context build is a branch scan with `stopAtType: "compaction"`, projected through `entryProjectors` and `toProviderMessages`. Its projection is the compaction summary, the materialized `retainedTail`, then the entries after the compaction; nothing before the compaction is read.
 - `SessionTree` has no navigation; moving a lane is `navigateTree()` on the lane.
 
 Read consistency: finders and `getEntry` return committed entries only. A deferred write is not in the tree until applied; a handler that appends and immediately queries does not see its own write. Pending writes are visible in the snapshot, correlated by provisioned id.
 
 ### Session
 
-`Session` adds the lane surface and the record log. It is usable standalone — no harness required; the harness is the only writer of records, but lanes, entries, and facts are Session-level.
+`Session` adds the lane surface and the record log. It is usable standalone — no harness required. In production the harness writes records; recovery fixtures and Tier A tests prefill them through the same API. Lanes, entries, and facts are Session-level.
 
 ```ts
 class Session implements SessionTree {          // bound to "main"
+  constructor(storage: SessionStorage, options?: { idGenerator?: IdGenerator });
+  /** Process-local id provisioning used by Session and harness. Default
+      UUIDv7; tests inject a deterministic generator. Sync by design. */
+  readonly idGenerator: IdGenerator;
+
   /** SessionTree bound to a lane: reads default to its leaf, appends chain
       to it and advance it. The only write-binding mechanism; no SessionTree
       method takes a lane parameter. view("main") behaves like the Session. */
   view(lane: string): SessionTree;
 
-  // Lanes — pointer management. Durable via storage (section 13).
+  // Lanes — permanent named pointers. Durable via storage (section 13).
   getLanes(): Promise<{ lane: string; leafId: string | null }[]>;
   createLane(lane: string, at: string | null): Promise<void>;   // rejects existing names
-  deleteLane(lane: string): Promise<void>;                      // "main" rejected
   moveLane(lane: string, to: string | null): Promise<void>;
 
-  // Records — harness and recovery only. The moveLane option serves
-  // navigation: the leaf move and the operation_finished record are one
-  // atomic write (section 6).
-  appendRecord(record: NewRecord, options?: { moveLane?: { lane: string; to: string | null } }): Promise<Record>;
-  findRecords(query?: { lane?: string; type?: Record["type"]; runId?: string;
-                        afterSeq?: number; order?; limit? }): Promise<Record[]>;
+  /** Low-level provisioned append for the harness, recovery, and test
+      fixtures. Bypasses the SessionTree deferral policy; a harness caller
+      already holds the lane mutation line. */
+  appendEntry<T extends Entry>(entry: ProvisionedEntry<T>, lane: string): Promise<T>;
+
+  // Records — harness and recovery only.
+  appendRecord(record: NewRecord): Promise<LaneRecord>;
+  findRecords(query?: { lane?: string; type?: LaneRecord["type"]; runId?: string;
+                        afterSeq?: number; order?; limit? }): Promise<LaneRecord[]>;
   /** Full chronological view: entries, records, facts, lane moves,
       merged by seq. Debugging and tests. */
   getLog(options?: { afterSeq?: number; limit?: number }): Promise<LogItem[]>;
 }
+
+interface IdGenerator { next(): string; }
 ```
 
 The old `getStorage()` escape hatch is gone: all writes flow through `Session`, which is the single writer the storage contract assumes.
+
+**Ownership rule:** after an application passes a `Session` to `AgentHarness.create()`, it mutates that session only through the harness and its lane views until `close()` resolves. Concurrent writes through the original standalone reference are unsupported caller misuse; the harness adds no machinery for it.
 
 ## 13. Storage
 
@@ -1174,16 +1323,14 @@ interface SessionStorage {
   // Lanes
   getLanes(): Promise<{ lane: string; leafId: string | null }[]>;
   createLane(lane: string, at: string | null): Promise<void>;
-  deleteLane(lane: string): Promise<void>;
   moveLane(lane: string, to: string | null): Promise<void>;
 
   /** Durable on resolve. Input carries no parentId, seq, or timestamp;
       storage assigns all three. parentId is the lane's current leaf; the
       entry becomes the lane's new leaf, in the same transaction. Callers
       cannot pass a stale parent because they never pass one. */
-  appendEntry(entry: NewEntry, lane: string): Promise<Entry>;
-  appendRecord(record: NewRecord, options?: { moveLane? }): Promise<Record>;
-  createEntryId(): Promise<string>;
+  appendEntry<T extends Entry>(entry: ProvisionedEntry<T>, lane: string): Promise<T>;
+  appendRecord(record: NewRecord): Promise<LaneRecord>;
 
   // Reads
   getEntry(id: string): Promise<Entry | undefined>;
@@ -1203,16 +1350,19 @@ interface SessionStorage {
 Contract rules, all backends:
 
 - One monotonic `seq` across entries, records, facts, and lane moves.
+- Storage linearizes concurrent writes from all lanes of the session and allocates `seq` inside each write's atomic commit; callers never read, reserve, or increment the sequence. Write promises resolve in commit order. The lane mutation line (section 15) serializes decisions; this rule serializes the writes underneath them — both are needed, neither replaces the other.
 - A write is durable when its promise resolves; events fire after.
-- Ids are unique per session, enforced at append.
+- `Session` and the harness provision ids with `session.idGenerator`; storage enforces per-session uniqueness at append.
+- Every durable payload must be JSON-serializable. `Session` validates before dispatch so Memory, JSONL, and SQLite accept the same values; Memory does not retain values JSONL would reject.
 - Reads return immutable data.
+- No conditional writes exist. Single-writer plus the lane mutation line make compare-and-set unnecessary; storage stays plain appends and pointer/fact updates.
 - One writer per session, enforced by the serving layer; SQLite additionally rejects a second writer itself. Per session, not per backend: one SQLite database hosts many sessions, each with its own single writer.
 - Any write failure faults the harness (section 4). The store is left a valid prefix.
 - Global-fact and lane-move history is kept, never rewritten: latest by `seq` wins. History is the cheaper implementation (insert, never update), and lane-move history is a reflog if anyone ever wants one.
 
 ### Memory
 
-Plain structures: entry map, record list, lane map, fact lists, one seq counter. Append validates, clones, commits; reads clone out. The reference implementation: the parity test suite runs against it first.
+Plain structures: entry map, record list, lane map, fact lists, one seq counter, one session-wide write queue. Append validates, clones, allocates `seq` at the head of that queue, commits; reads clone out. The reference implementation: the parity test suite runs against it first.
 
 ### JSONL
 
@@ -1222,22 +1372,23 @@ One file per session: a header line, then one JSON object per line, in `seq` ord
 {"kind":"header", "version":4, id, createdAt, cwd, parentSessionId?}
 {"kind":"entry",  "lane":"main", id, parentId, type, timestamp, ...}
 {"kind":"record", "lane":"main", id, runId?, type, timestamp, ...}
-{"kind":"lane",   "lane":"slack:t1", "leafId":"e42"}        // create/move; "deleted":true deletes
+{"kind":"lane",   "lane":"slack:t1", "leafId":"e42"}        // create or move
 {"kind":"fact",   "fact":"name",  "name":"Refactor auth"}
 {"kind":"fact",   "fact":"label", "targetId":"e17", "label":"checkpoint"}
 ```
 
-- Open reads the whole file into memory; all queries run against that state. Appends serialize through the instance, one line each. `seq` is the line position.
+- Open reads the whole file into memory; all queries run against that state. One session-wide append queue serializes writes from every lane, one line each; the queue allocates `seq`, and its order is the line order. Every storage mutation in this section is exactly one line — nothing in the design needs a multi-line atomic write.
 - The `lane` field on entry lines is envelope metadata: replay derives each lane's leaf from it (last entry line per lane, overridden by later `lane` lines). It dies at decode; entries expose `seq` but no lane.
 - Torn tail: a malformed final line is the append that died mid-write. Open truncates it; the write was never acknowledged, nothing is lost. A malformed line anywhere else is corruption; open rejects.
 - Durability is process-crash level: a resolved append call. No fsync promise; if power-loss durability is ever needed, it becomes an explicit capability.
-- v3 files: entries only, no `kind` tags. Read conversions per section 12; the lane of every entry is `main`; the leaf is the last entry. Before the first v4 append, the file is rewritten once with a v4 header (write temp, rename). This is the single conversion the compatibility policy allows. Read-only opens never rewrite.
+- v3 files: entries only, no `kind` tags. Open builds the normalized logical tree from section 12; every entry belongs to `main`, and `main`'s leaf resolves through the last `leaf` entry to its nearest retained ancestor. Before the first v4 append, the file is rewritten once with a v4 header (write temp, rename). This is the single conversion the compatibility policy allows. Read-only opens never rewrite.
 
 ### SQLite
 
 Greenfield schema; existing WIP databases are discarded. The engine design is the current engine's, with one persisted leaf per lane instead of the single implicit active leaf.
 
 ```sql
+session_sequences (session_id, next_seq)                    -- atomic seq allocator
 entries        (session_id, seq, id, parent_id, type, timestamp, payload)
 records        (session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload)
 lanes          (session_id, lane, leaf_id)          -- current pointer per lane
@@ -1265,9 +1416,9 @@ Two invariants carry the whole design:
 1. Reverse index: look up `start` → any containing branch.
 2. Range scan that branch, `entry_seq <= start.seq` (parent-before-child makes path order equal seq order), join entries, apply filters and stops.
 
-**Append plan** — `appendEntry(entry, lane)`, one transaction:
+**Append plan** — `appendEntry(entry, lane)`, one transaction. The storage instance queues writes before opening the transaction; the transaction increments the session's sequence row and uses the returned value, so concurrent lane calls cannot receive the same `seq` and their promises resolve in that order.
 
-1. `leaf = lanes[lane].leaf_id`; allocate `seq`; insert the entry with `parent_id = leaf`.
+1. `leaf = lanes[lane].leaf_id`; allocate `seq` from `session_sequences`; insert the entry with `parent_id = leaf`.
 2. `branch_tips` lookup: does a branch end at `leaf`?
    - Yes → insert one `branch_entries` row there; update that tip to the new entry.
    - No → new branch: copy rows `entry_seq <= leaf.seq` from any branch containing `leaf`, insert the new entry's row, insert its tip. (Empty lane: no copy, just the new branch.)
@@ -1307,7 +1458,7 @@ Case 4 — a branch still ends at an entry that has children.
   The has-children test would copy needlessly; the tip test never does.
 ```
 
-Stale branches (no lane resolves through them) are kept, matching the current engine. Deleting a lane drops its pointer; branch rows stay.
+Stale branches (no lane resolves through them) are kept, matching the current engine.
 
 Every restore query is an index seek plus a bounded scan: a lane's open operation via `(lane, type, seq)`, its last run-kind start via `(lane, type, op_kind, seq)`, its records above the operation via the same index, its own entries via the read plan from its leaf. No query touches another lane's traffic.
 
@@ -1351,6 +1502,15 @@ export function streamAssistant(
 
 ### Tool execution
 
+Tools declare recovery safety. Omission means `"never"`:
+
+```ts
+interface AgentTool {
+  replay?: "never" | "safe";
+  // existing fields
+}
+```
+
 Three phases per call, exposed separately because the harness needs to write between them and recovery needs phase 2 and 3 without phase 1:
 
 ```ts
@@ -1360,7 +1520,8 @@ type ImmediateOutcome  = { kind: "immediate"; result: AgentToolResult; isError: 
 type FinalizedToolCall = { toolCall: AgentToolCall; result: AgentToolResult; isError: boolean };
 
 /** Phase 1 — clearance. Tool lookup, prepareArguments, schema validation,
-    beforeToolCall (may block), abort checks. No effect starts here. */
+    beforeToolCall (may replace args or block), validation of replacement
+    args, abort checks. No effect starts here. */
 export function prepareToolCall(
   toolCall: AgentToolCall, tools: AgentTool[], callbacks: ToolCallbacks, signal?: AbortSignal,
 ): Promise<PreparedToolCall | ImmediateOutcome>;
@@ -1383,15 +1544,19 @@ export function createToolResultMessage(finalized: FinalizedToolCall): ToolResul
 export function createErrorToolResult(text: string): AgentToolResult;
 
 export interface ToolCallbacks {
-  beforeToolCall?(call, args, signal): Promise<{ block?: { reason: string } } | undefined>;
+  beforeToolCall?(call, args, signal): Promise<{
+    args?: Record<string, unknown>;
+    block?: { reason: string };
+  } | undefined>;
   afterToolCall?(call, result, isError, signal): Promise<ToolResultPatch | undefined>;
   /** Between phases 1 and 2: the durability point. The harness writes its
       tool_started record here. Called in source order in both modes —
       preparation is always sequential. */
-  onToolStart?(call: AgentToolCall, effectiveArgs: unknown): Promise<void>;
+  onToolStart?(call: AgentToolCall, effectiveArgs: Record<string, unknown>): Promise<void>;
   /** After phase 3, before the result message is emitted; source order.
-      The harness appends the result entry here. */
-  onToolResult?(message: ToolResultMessage): Promise<void>;
+      The harness appends the result entry here, persisting the finalized
+      terminate decision on it (section 12). */
+  onToolResult?(message: ToolResultMessage, terminate: boolean): Promise<void>;
 }
 
 /** The batch driver. Rules, preserved from the current loop:
@@ -1417,13 +1582,238 @@ The existing public interface of `agent-loop.ts` must not break. Every current e
 
 ## 15. Harness internals
 
-The code below is the specification of harness behavior, composed from the section 14 blocks. Live calls and resume run the same procedures: `prompt()` runs `runProcedure()` after appending `operation_started`; `resume()` runs it with the operation already recorded. Everything is lane-scoped; procedures of different lanes run concurrently and meet only at the storage append path.
+The code below is the specification of harness behavior, composed from the section 14 blocks. Live calls and resume run the same machines: `prompt()` starts `operationMachine()` after acceptance; `resume()` starts it with the operation already recorded. Everything is lane-scoped; machines of different lanes run concurrently and meet only at the storage append path.
 
-Two internal error classes carry control flow. `RunFailed` converts to `operation_finished` failed; `AppendFailed` converts to the faulted harness. Neither escapes to a caller. A third signal, `Park`, is not an error: it unwinds the run when a deferred handle was persisted.
+Part III adds no new durability semantics over Part II. It adds two mechanisms: the **state machine**, whose yielded actions make every crash site steppable, and the **lane mutation line**, which closes the check-then-act races between a running machine and the public lane surface.
+
+### Design
+
+Each accepted operation creates one machine execution. The machine is a synchronous generator. It owns control flow and yields one `MachineAction` at each effect boundary.
+
+1. The procedure stays readable top to bottom; each boundary is a `yield` expression at the point where it occurs.
+2. `peekAction()` identifies the next boundary before it executes; `executeAction()` crosses exactly that boundary, then advances through pure code to the next boundary or the terminal outcome.
+3. The generator performs no I/O. The executor implements yielded actions; production and tests use the same machine and the same executor.
+4. Expected control flow uses yielded results and returned values. An exception is a fault or an invariant defect.
+5. No recovery-critical state exists only in generator locals. Restore derives the next action from records and entries alone (section 7).
+6. An action executes against current `LaneState`. Conditional actions may commit nothing when an external input won the ordering (below); the machine observes the updated state at its next transition.
+
+### Actions
+
+`MachineAction` is a discriminated union: one variant per effect boundary. The list is the complete crash-site catalog: stopping before or after one action is exactly a section 6 X state. Reads, validation, and id allocation are pure machine computation — with one exception, `check_context`, because the machine cannot read storage to estimate context size.
+
+```ts
+type MachineAction =
+  // Durable writes
+  | { kind: "append_entry"; entry: ProvisionedEntry; ifExists?: "verify" }
+  | { kind: "append_record"; record: NewRecord }
+  | { kind: "move_lane"; to: string | null }
+  | { kind: "set_fact"; fact: FactWrite }
+
+  // Conditional commits — the mutation-line jobs (below)
+  | { kind: "try_finish_run"; runId: string; outcome: "completed" | "failed"; error?: ErrorInfo }
+  | { kind: "finish_operation"; runId: string;
+      outcome: "completed" | "declined" | "failed" | "aborted"; error?: ErrorInfo }
+  | { kind: "commit_follow_up"; runId: string; item: ProvisionedEntry }
+  | { kind: "consume_queue_item"; runId: string; queue: "steer" | "followUp"; entryId: string }
+  | { kind: "apply_pending_write"; runId: string; entryId: string }
+
+  // Reads the machine cannot perform
+  | { kind: "check_context" }                       // → { reason: "threshold" | "overflow" } | undefined
+
+  // External effects
+  | { kind: "stream_assistant"; task: "step" | "compaction" | "branch_summary";
+      attempt: number; streamOptions?: StreamOptionsPatch }
+  | { kind: "execute_tools"; calls: PreparedToolCall[]; mode: "sequential" | "parallel" }
+  | { kind: "fetch_deferred"; handle: DeferredHandle }
+  | { kind: "cancel_deferred"; handle: DeferredHandle }
+
+  // Interception and time
+  | { kind: "run_hook"; name: HookName; event: HookEvent }
+  | { kind: "sleep"; delayMs: number };             // → "elapsed" | "aborted"
+```
+
+Each action kind has one result type; the controller passes the result back into the generator. A mismatched result is an executor defect and faults the harness.
+
+`peekAction()` and `executeAction()` return the JSON-safe `ActionInfo` projection. It is the same shape the effects variant exposes, with two differences: `execute_tools` (one batch action carrying `toolCallIds`, because phase 2 runs concurrently inside one action) replaces per-call `execute_tool`, and `check_context` exists.
+
+Executor semantics:
+
+- `append_entry` with `ifExists: "verify"` skips an existing entry with equal content and faults on different content — recovery-safe re-entry.
+- The conditional commits execute the same mutation-line jobs defined below; their results report which history won.
+- `run_hook` for `before_run_end` is itself conditional: executed while the run is aborting, it skips the handlers and returns nothing. Every other hook action runs unconditionally.
+- `stream_assistant` builds context from the lane's path, applies the `streamOptions` patch from the preceding `before_request` hook action, and makes one provider request through section 14 `streamAssistant`; `transform_context`, `before_payload`, and `after_response` run inside it. Summary tasks force `deferred: false`; a deferred structural result is a defect. It relays `message_start`/`message_update` and holds `message_end` until the machine commits the entry.
+- `execute_tools` runs section 14 phase 2 (`executeToolCall`) for every prepared call, concurrently or sequentially per the mode, and returns one source-ordered outcome per call: `{ kind: "settled"; result; isError } | { kind: "interrupted" }`. It never appends anything.
+- The executor converts a rejected `fetch_deferred` into a `stopReason: "error"` assistant message; on a returned pending message it verifies the handle equals the persisted handle (section 16). `cancel_deferred` is best effort: rejection goes to telemetry and the action returns normally.
+- Unexpected rejections from durable writes fault the harness (section 4).
+
+### The execution controller
+
+`OperationExecution` holds the generator, its current unexecuted action, and the executor. It is the only drive abstraction; automatic and manual modes differ solely in who calls it.
+
+```ts
+type Machine<R> = Generator<MachineAction, R, MachineActionResult>;
+
+class OperationExecution<R> {
+  readonly result: Promise<R>;
+  private current: IteratorResult<MachineAction, R>;
+  private driving = false;
+  private stopped?: Error;
+
+  constructor(
+    private readonly machine: Machine<R>,
+    private readonly execute: (action: MachineAction) => Promise<MachineActionResult>,
+  ) {
+    this.result = new Promise<R>((resolve, reject) => {
+      this.resolve = resolve; this.reject = reject;
+    });
+    this.current = machine.next();
+    if (this.current.done) this.resolve(this.current.value);
+  }
+
+  peek(): MachineAction | undefined {
+    return this.current.done ? undefined : this.current.value;
+  }
+
+  /** Executes exactly the peeked action, never a later one. */
+  async executeOne(): Promise<MachineAction | undefined> {
+    if (this.current.done || this.stopped) return undefined;
+    if (this.driving) throw new Error("Operation execution is already being driven");
+    this.driving = true;
+    try {
+      const value = await this.execute(this.current.value);
+      if (this.stopped) return undefined;            // close() landed during the action
+      this.current = this.machine.next(value);
+      if (this.current.done) this.resolve(this.current.value);
+      return this.peek();
+    } catch (error) {
+      this.reject(error);
+      throw error;
+    } finally {
+      this.driving = false;
+    }
+  }
+
+  async runToCompletion(): Promise<void> {
+    while (!this.current.done && !this.stopped) await this.executeOne();
+  }
+
+  /** close(): called after the in-flight action returns. The stop latch
+      guarantees no further action starts — without it, an automatic driver
+      could begin the next action between the check and the abandonment. */
+  stop(error: Error): void {
+    if (this.current.done || this.stopped) return;
+    this.stopped = error;
+    this.reject(error);
+    // Never machine.return(): process loss runs no generator cleanup either.
+  }
+}
+```
+
+The operation method is identical in both drive modes; only the driver differs:
+
+```ts
+async function prompt(message: AgentMessage): Promise<RunResult> {
+  const accepted = await acceptRun(message);         // the acceptance job, below
+  if (!accepted.ok) return accepted;
+
+  const execution = new OperationExecution(operationMachine(laneState), executeMachineAction);
+  activeExecution = execution;
+  try {
+    if (options.drive !== "manual") await execution.runToCompletion();
+    return { ok: true, runId: accepted.runId, ...(await execution.result) };
+  } finally {
+    if (activeExecution === execution) activeExecution = undefined;
+  }
+}
+```
+
+`close()` signals the running action's `AbortController`, awaits the in-flight `executeOne()`, then calls `stop(new HarnessClosed())`. Parked operations reject their local promises; nothing else commits. The durable state is exactly the prefix of executed actions — the definition of a crash site. Reopen the backend and `resume()` runs ordinary section 7 recovery.
+
+### The lane mutation line
+
+Every race in this design has one shape: a decision is made from lane state, an `await` passes, then a durable write commits the stale decision. The fix is structural. Each lane has one process-local FIFO — a promise chain — and every state-dependent decision commits inside one job on it:
+
+```ts
+let tail: Promise<unknown> = Promise.resolve();
+
+function mutateLane<T>(job: () => Promise<T>): Promise<T> {
+  const result = tail.then(job);
+  tail = result.then(() => undefined, () => undefined);
+  return result;
+}
+```
+
+A job is: validate against live `LaneState` → at most one durable write → update `LaneState`. Nothing else. Provider requests, tool executions, hooks, and backoff never run inside a job; they run between jobs, which is exactly why every commit revalidates inside its own job. Because jobs run one at a time, two concurrent operations on a lane have exactly two possible histories — `[A, B]` or `[B, A]` — and both are defined outcomes. No third, interleaved history exists.
+
+The jobs, by caller:
+
+- **Lane surface** (enqueue directly, never through the machine):
+  - *Operation acceptance* — validate idle, capture the pending `nextRun` items into `initialMessages`, write `operation_started`, set `state.operation`. The second of two concurrent acceptances sees the first and rejects `busy` with no write. `before_run` ran before this job, outside the line, on the prompt only.
+  - *Queue acceptance* (`steer`, `followUp`) — validate an active, non-aborting run; write `queue_enqueued`. `nextRun` validates nothing and always accepts.
+  - *Queue cancellation* (`cancelQueued`) — target entry exists: `already_consumed`; not pending (abort-drained or already cancelled): `already_cleared`; else write `queue_cancelled` and remove the item from its pending set.
+  - *Deferred-write acceptance* (lane-view writes, config setters) — run open: write `write_deferred`; structural operation open: wait for it to end, then re-enter; idle: append the entry directly.
+  - *Abort* — write `abort_requested`, set `aborting`, drain `pendingSteer`/`pendingFollowUp` (payloads return to the abort caller and in the `run_abort` event), signal the active effect's `AbortController`.
+  - *Resume admission* — reserve the lane's single execution slot; no write.
+- **Machine via conditional-commit actions** (the executor runs these jobs):
+  - `try_finish_run` — if aborting or anything pending, write nothing and return `"continue"`; else write `operation_finished` and idle the lane.
+  - `consume_queue_item` — if the item is still pending and the run is not aborting, append its entry and remove it; else `"skipped"`.
+  - `apply_pending_write` — same shape for deferred writes; they apply even while aborting.
+  - `commit_follow_up` — write `queue_enqueued` only while the run is active and non-aborting; else `"dropped"`.
+  - `finish_operation` — terminal record unless preempted: a non-abort outcome returns `"continue"` when an abort marker exists; an `"aborted"` outcome returns `"continue"` while deferred writes are still pending, so reconciliation applies them first.
+  - Plain `append_entry`/`append_record`/`move_lane`/`set_fact` — unconditional single writes, still serialized by the line.
+
+Two examples, both orders legal, nothing else possible:
+
+```text
+steer vs finish                          abort vs before_run_end follow-up
+[steer, finish]:                         [abort, commit]:
+  queue_enqueued; pendingSteer=[x]         abort_requested; queues drained
+  try_finish_run → "continue"              commit_follow_up → "dropped"
+  run consumes the steer                   reconciliation; no record after abort
+[finish, steer]:                         [commit, abort]:
+  operation_finished; lane idle            queue_enqueued committed
+  steer → no_active_run, no write          abort drains it; payload returned
+```
+
+External input while halted: the lane surface stays live in manual mode. `steer()`, `abort()`, and view writes run their jobs immediately; the current unexecuted action does not change behind the caller's back. Conditional actions revalidate when executed, so a stale decision commits nothing.
+
+### Race catalog
+
+The complete list. Each row names the two legal histories and the jobs that force them. Tier C (section 20) tests both orders of every row.
+
+| # | race | histories | mechanism |
+|---|---|---|---|
+| 1 | `prompt()` vs `prompt()` | one accepted; other `busy`, no write | acceptance job |
+| 2 | `steer`/`followUp` vs run finish | consumed at a checkpoint · `no_active_run` | queue acceptance + `try_finish_run` |
+| 3 | deferred write vs run finish | applied before close · idle direct append | write acceptance + `try_finish_run` |
+| 4 | abort vs run finish | reconciliation, outcome `aborted` · `no_active_operation` | abort job + `try_finish_run` |
+| 5 | abort vs queue consumption | entry appended, not in abort payload · returned by abort, skipped | `consume_queue_item` + abort drain |
+| 6 | abort vs `before_run_end` follow-up | committed then drained by abort · dropped, nothing behind the marker | `commit_follow_up` |
+| 7 | `nextRun` vs acceptance | captured by this run · belongs to the next | capture inside acceptance |
+| 8 | deferred write vs abort close | applied during reconciliation · applied before it | `finish_operation("aborted")` loops |
+| 9 | config/tree write vs acceptance snapshot | committed before the run's first request · deferred write | both are line jobs; snapshots read after acceptance |
+| 10 | abort vs in-flight provider/tool effect | effect settles · effect interrupted | irreducible: signal cancellation; only the machine commits results (abort machine owns synthetics) |
+| 11 | cross-lane writes | any interleaving | storage `seq` linearization (section 13); lanes share no state |
+| 12 | `cancelQueued` vs consumption | consumed first: `already_consumed` · cancelled first: consumption skips, the model never sees it | cancel job + `consume_queue_item` |
+
+Row 10 is the one race no ordering can remove: an external effect may have happened even though its result never arrived. The design's answer is the section 5 intent record plus the replay policy — the same answer as for a crash.
+
+### Drive modes
+
+`drive: "automatic"`: the operation method calls `runToCompletion()`. `drive: "manual"`: the method leaves the execution at its first action and awaits `execution.result`; the lane's `peekAction()`, `executeAction()`, and `runToCompletion()` delegate to the execution and project actions through `ActionInfo`.
+
+- `peekAction()` has no side effect and is stable until `executeAction()`; it returns `undefined` when no operation exists or the operation has settled.
+- `executeAction()` executes exactly the peeked action, awaits its effect, and returns the next action or `undefined`.
+- Two concurrent drivers are a programmer defect, as is calling the controls in automatic mode.
+- Granularity: a parallel batch is one `execute_tools` action — a test stops before or after the batch, not between two concurrent executions. Sequential mode (`toolExecution: "sequential"`, or any called tool declaring it) yields per-call stepping. This is the one stepping-granularity difference from the effects variant.
+- Automatic and manual modes produce the same durable log and outcome for the same scripted provider.
+
+### Live lane state
 
 ```ts
 /** In-memory state per lane. Always equal to the reduction of the lane's
-    records (section 7): live appends update it; restore recomputes it. */
+    records and own entries (section 7): live commits update it; restore
+    recomputes it. */
 interface LaneState {
   leafId: string | null;
   operation: null | {
@@ -1431,264 +1821,497 @@ interface LaneState {
     kind: "run" | "compaction" | "navigation";
     intent: OperationStarted["intent"];
     aborting: boolean;
-    attempts: number;                       // current task
-    toolBatch: null | ToolBatchState;       // calls × { started?, resultExists }
+    task: null | {                          // unfinished task: attempts newer than newest own entry
+      kind: "step" | "compaction" | "branch_summary";
+      attempts: number;
+      compactionReason?: "manual" | "threshold" | "overflow";
+    };
+    toolBatch: null | ToolBatchState;
     missingInitialMessages: ProvisionedEntry[];
     pendingSteer: ProvisionedEntry[];
     pendingFollowUp: ProvisionedEntry[];
     pendingWrites: ProvisionedEntry[];
     deferred: DeferredHandle | null;        // unredeemed handle
+    /** Newest entry this operation appended; pure predicates read it. */
+    newestOwn: null | { entryId: string; type: Entry["type"];
+                        role?: AgentMessage["role"]; stopReason?: StopReason };
     targets: { result?: boolean; summary?: boolean };   // structural ops
   };
   pendingNextRun: ProvisionedEntry[];
 }
 
-/** Append a provisioned entry unless it already exists. Recovery-safe
-    re-entry everywhere. Appends go through this lane's view. */
-async function appendIfMissing(target: ProvisionedEntry): Promise<void> {
-  if (!(await session.getEntry(target.id))) await view.append(target);
-}
-
-// ── dispatch ────────────────────────────────────────────────────────────
-
-async function resume(): Promise<ResumeResult> {
-  if (missing.tools.length || missing.models.length) return rejected("missing_identities");
-  emit({ type: "run_resume", runId: op.id, recovery: true });
-  switch (op.kind) {
-    case "run":        return { kind: "run",        ...await runProcedure() };
-    case "compaction": return { kind: "compaction", ...await compactionProcedure() };
-    case "navigation": return { kind: "navigation", ...await navigationProcedure() };
-  }
-}
-
-async function runProcedure(): Promise<RunResult> {
-  try {
-    for (const m of op.missingInitialMessages) await appendIfMissing(m);  // never dropped
-    if (op.aborting) return await abortPath();
-    if (op.deferred) await redeemDeferred();                              // may Park again
-    if (op.toolBatch?.unresolved) await reconcileToolBatch(op.toolBatch);
-    return await driverLoop();
-  } catch (e) {
-    return await handleRunError(e);   // RunFailed → finished failed; Park → suspended; else fault
-  }
-}
-
-// ── the loop ────────────────────────────────────────────────────────────
-
-async function driverLoop(): Promise<RunResult> {
-  while (true) {
-    // checkpoint
-    for (const w of op.pendingWrites) await appendIfMissing(w);
-    for (const m of takeSteering()) await appendIfMissing(m);
-    if (await contextOverLimit()) await autoCompact();          // may throw RunFailed
-
-    // step
-    if (needsAssistant()) {                                     // newest own entry is user/tool result
-      const assistant = await stepTask();                       // may throw RunFailed, Park
-      if (hasToolCalls(assistant) && assistant.stopReason !== "aborted") {
-        await runToolBatch(assistant);
-      }
-      continue;                                                 // fresh checkpoint
-    }
-
-    // follow-ups
-    const followUps = takeFollowUps();
-    if (followUps.length) { for (const m of followUps) await appendIfMissing(m); continue; }
-
-    // finish boundary
-    const r = await hooks.run("before_run_end", { runId: op.id, messages: runMessages() });
-    if (r?.followUp) await lane.followUp(r.followUp);
-    if (hasPendingWork()) continue;
-
-    await appendRecord({ type: "operation_finished", outcome: "completed" });
-    return finished("completed");
-  }
-}
-
-// ── steps: streamAssistant with durability around it ────────────────────
-
-async function stepTask(): Promise<AssistantMessage> {
-  while (true) {
-    const attempt = op.attempts + 1;
-    if (attempt > retry.maxAttempts) {
-      await view.append(errorAssistantEntry());                 // transcript records the give-up
-      throw new RunFailed("retries_exhausted");
-    }
-    const options = await hooks.run("before_request", { model, task: "step", attempt, streamOptions });
-
-    await appendRecord({ type: "task_attempt", task: "step", attempt });
-    try {
-      const final0 = await streamAssistant(await contextMessages(), {
-        model,
-        systemPrompt: op.intent.systemPromptOverride ?? await evalSystemPrompt(),
-        tools: activeTools(),
-        transformContext: (m, s) => hooks.run("transform_context", { messages: m }, s),
-        toProviderMessages,
-        models,
-        streamOptions: {
-          ...options.streamOptions,
-          onPayload:  (p, m) => hooks.run("before_payload", { model: m, payload: p }),
-          onResponse: (r, m) => captureForAfterResponse(r),     // status/headers for after_response
-        },
-        signal: abortSignal,
-      }, emitLaneEvents);
-
-      const final = (await hooks.run("after_response", final0))?.message ?? final0;
-      await view.append(assistantEntry(final));
-      if (final.stopReason === "deferred") {
-        emit({ type: "run_suspend", runId: op.id, deferred: final.deferred });
-        throw new Park(final.deferred);                         // unwind; lane suspends
-      }
-      if (final.stopReason === "error" && isRetryable(final)) {
-        await backoff(attempt);                                 // retry events around this
-        continue;
-      }
-      return final;                                             // incl. terminal error, aborted:
-    } catch (e) {                                               // the loop closes the run normally
-      if (e instanceof Park || e instanceof RunFailed) throw e;
-      throw new AppendFailed(e);                                // only appends throw here
-    }
-  }
-}
-
-async function redeemDeferred(): Promise<void> {
-  const stream = provider.fetchDeferred(model, op.deferred);    // effect-free; no records
-  const final = await stream.result();
-  if (final.stopReason === "deferred") throw new Park(op.deferred);   // still pending; re-suspend
-  if (final.stopReason === "error") return;                     // attempt failed; loop retries
-  await view.append(assistantEntry(final));                     // redeemed
-}
-
-// ── tools: executeToolBatch with durability callbacks ───────────────────
-
-/** The live path. tool_started records and result entries are written by
-    the callbacks, in source order in both execution modes. */
-async function runToolBatch(assistant: AssistantMessage): Promise<void> {
-  const resultIds = new Map<string, string>();                  // toolCallId → provisioned id
-
-  const { messages } = await executeToolBatch(assistant, activeTools(), {
-    beforeToolCall: async (call, args, signal) => {
-      const r = await hooks.run("before_tool", { toolCallId: call.id, toolName: call.name, args });
-      return r?.block ? { block: r.block } : undefined;         // hook may also patch args
-    },
-    onToolStart: async (call, effectiveArgs) => {
-      const resultEntryId = createEntryId();
-      resultIds.set(call.id, resultEntryId);
-      await appendRecord({ type: "tool_started",
-        assistantEntryId: op.newestAssistantId, toolIndex: indexOf(call),
-        toolCallId: call.id, toolName: call.name,
-        effectiveArgs, resultEntryId, replay: declaredReplay(call) });
-    },
-    afterToolCall: (call, result, isError, signal) =>
-      hooks.run("after_tool", { toolCallId: call.id, toolName: call.name, ...result, isError }),
-    onToolResult: async (message) => {
-      // Blocked/invalid calls have no tool_started and no provisioned id;
-      // their error result entry gets a fresh id (section 5).
-      await appendIfMissing(resultEntry(resultIds.get(message.toolCallId) ?? createEntryId(), message));
-    },
-  }, { toolExecution: config.toolExecution }, emitLaneEvents, abortSignal);
-  // messages are already persisted via onToolResult; terminate feeds hasPendingWork()
-}
-
-/** The recovery path: per call, at its crash site. Uses phases 2 and 3
-    directly — phase 1 already happened; its outcome is the tool_started
-    record or its absence. */
-async function reconcileToolBatch(batch: ToolBatchState): Promise<void> {
-  for (const call of batch.calls) {                             // source order
-    if (call.resultExists) continue;
-    if (call.started) {
-      if (call.started.replay === "safe" && currentDeclaration(call) === "safe") {
-        const prepared = { kind: "prepared", toolCall: call.toolCall,
-                           tool: toolByName(call.started.toolName),
-                           args: call.started.effectiveArgs };   // persisted, not re-derived
-        const executed  = await executeToolCall(prepared, emitLaneEvents, abortSignal);
-        const finalized = await finalizeToolCall(prepared, executed, { afterToolCall }, abortSignal);
-        await appendIfMissing(resultEntry(call.started.resultEntryId, createToolResultMessage(finalized)));
-      } else {
-        await appendIfMissing(syntheticResult(call.started.resultEntryId, "interrupted"));
-      }
-    } else {
-      await runToolBatchForSingleCall(call);   // full path: phase 1 → record → 2 → 3
-    }
-  }
-}
-
-// ── abort ───────────────────────────────────────────────────────────────
-
-async function abortPath(): Promise<RunResult> {
-  if (op.deferred) await provider.cancelDeferred?.(model, op.deferred);   // best effort
-  for (const call of op.toolBatch?.calls ?? []) {
-    if (call.resultExists) continue;
-    await appendIfMissing(syntheticResult(idFor(call), call.started ? "interrupted" : "aborted"));
-  }
-  for (const w of op.pendingWrites) await appendIfMissing(w);   // facts survive abort
-  if (!newestOwnAssistantIsAborted()) await view.append(abortClosureEntry());
-  await appendRecord({ type: "operation_finished", outcome: "aborted" });
-  return finished("aborted");
-}
-
-// ── structural operations ───────────────────────────────────────────────
-
-async function compactionProcedure(): Promise<CompactionResult> {
-  try {
-    if (!op.persisted) await appendRecord(operationStarted());
-    emit({ type: "compaction_start", runId: op.id, reason });    // re-emitted on resume
-    if (!op.targets.result) {
-      const hook = await hooks.run("before_compaction", { reason, preparation });
-      if (hook?.decline) {
-        await appendRecord({ type: "operation_finished", outcome: "declined" });
-        return declined();
-      }
-      const result = hook?.compaction ?? await summaryTask("compaction");   // task_attempt records
-      await appendIfMissing(compactionEntry(op.intent.resultEntryId, result));
-    }
-    await appendRecord({ type: "operation_finished", outcome: "completed" });
-    return completed();
-  } catch (e) { return await handleStructuralError(e); }
-}
-
-async function navigationProcedure(): Promise<NavigationResult> {
-  try {
-    if (!op.persisted) await appendRecord(operationStarted());
-    emit({ type: "navigation_start", runId: op.id, targetId });
-    let summary;
-    if (op.intent.summarize && !op.targets.summary) {
-      const hook = await hooks.run("before_navigation", { targetId, preparation });
-      if (hook?.decline) {
-        await appendRecord({ type: "operation_finished", outcome: "declined" });
-        return declined();
-      }
-      summary = hook?.summary ?? await summaryTask("branch_summary");
-      await appendIfMissing(summaryEntry(op.intent.summaryEntryId, summary));
-    }
-    if (op.intent.label !== undefined) await session.setLabel(targetId, op.intent.label);
-    await appendRecord({ type: "operation_finished", outcome: "completed" },
-                       { moveLane: { lane: lane.name, to: targetId } });   // atomic move
-    return completed();
-  } catch (e) { return await handleStructuralError(e); }
+interface ToolBatchState {
+  assistantEntryId: string;
+  calls: {                                  // original source order and ordinals
+    toolIndex: number;
+    toolCall: AgentToolCall;
+    started?: ToolStarted;
+    resultExists: boolean;
+    terminate?: boolean;                    // persisted on the result entry
+  }[];
+  truncated: boolean;                       // assistant stopReason was "length"
+  unresolved: boolean;
 }
 ```
 
+Machines communicate through returned result values, not exceptions; a thrown error is a defect and faults the harness. Two helpers recur:
+
+```ts
+const newId = (): string => session.idGenerator.next();   // sync machine computation
+
+/** Recovery-safe re-entry everywhere: skip a provisioned id that already
+    exists (verify equal content; different content is corruption). */
+function* appendIfMissing(target: ProvisionedEntry): Machine<void> {
+  yield { kind: "append_entry", entry: target, ifExists: "verify" };
+}
+```
+
+### Machines
+
+The operation intent selects one machine; live execution and resume use the same one.
+
+```ts
+function* operationMachine(state: LaneState): Machine<OperationOutcome> {
+  switch (state.operation!.intent.kind) {
+    case "run":        return yield* runMachine(state);
+    case "compaction": return yield* compactionMachine(state);
+    case "navigation": return yield* navigationMachine(state);
+  }
+}
+
+function* runMachine(state: LaneState): Machine<RunOutcome> {
+  const op = state.operation!;
+
+  for (const m of [...op.missingInitialMessages]) yield* appendIfMissing(m);  // never dropped
+  if (op.aborting) return yield* abortRunMachine(state);
+
+  if (op.deferred) {
+    const redeemed = yield* redeemDeferredMachine(state);
+    if (redeemed.outcome) return redeemed.outcome;
+    if (hasToolCalls(redeemed.message!)) yield* toolBatchMachine(state, redeemed.message!);
+  }
+  if (op.toolBatch?.unresolved) yield* reconcileToolBatchMachine(state, op.toolBatch);
+
+  // A crash mid-task resumes that exact task before new checkpoint input
+  // is consumed (section 7). Live retry and recovery consume identically.
+  if (op.task?.kind === "step") {
+    const outcome = yield* stepAndToolsMachine(state);
+    if (outcome) return outcome;
+  } else if (op.task?.kind === "compaction") {
+    const failed = yield* autoCompactionMachine(state, requireAutoReason(op.task));
+    if (failed) return failed;
+  } else if (op.task) {
+    throw new Error("Run has a branch-summary task");        // corruption
+  }
+
+  if (newestOwnMessageIsTaskError(state)) {                  // terminal-failure marker (section 7)
+    return yield* drainAndFailMachine(state, existingFailure(state));
+  }
+  return yield* driverLoopMachine(state);
+}
+```
+
+The loop:
+
+```ts
+function* driverLoopMachine(state: LaneState): Machine<RunOutcome> {
+  const op = state.operation!;
+  while (true) {
+    // checkpoint — each consumption is a conditional mutation-line job
+    for (const w of [...op.pendingWrites])           yield { kind: "apply_pending_write", runId: op.id, entryId: w.id };
+    for (const m of steeringForThisCheckpoint(op))   yield { kind: "consume_queue_item", runId: op.id, queue: "steer", entryId: m.id };
+    if (op.aborting) return yield* abortRunMachine(state);
+
+    const pressure = yield { kind: "check_context" };
+    if (pressure) {
+      const failed = yield* autoCompactionMachine(state, pressure.reason);
+      if (failed) return failed;
+    }
+
+    if (needsAssistant(state)) {
+      const outcome = yield* stepAndToolsMachine(state);
+      if (outcome) return outcome;
+      continue;                                              // fresh checkpoint
+    }
+
+    for (const m of followUpsForThisCheckpoint(op))  yield { kind: "consume_queue_item", runId: op.id, queue: "followUp", entryId: m.id };
+    if (needsAssistant(state) || hasPendingWork(op)) continue;
+
+    // finish boundary
+    const r = yield { kind: "run_hook", name: "before_run_end",
+                      event: { runId: op.id, messages: runMessages(state) } };   // skipped while aborting
+    if (r?.followUp) {
+      yield { kind: "commit_follow_up", runId: op.id, item: provisionUserMessage(newId(), r.followUp) };
+    }
+    if (hasPendingWork(op)) continue;
+
+    const done = yield { kind: "try_finish_run", runId: op.id, outcome: "completed" };
+    if (done === "finished") return finished(state, "completed");
+    // "continue": accepted input or abort won the ordering — loop
+  }
+}
+
+function* stepAndToolsMachine(state: LaneState): Machine<RunOutcome | undefined> {
+  const r = yield* stepTaskMachine(state);
+  if (r.kind === "deferred") return suspendedOutcome(state, r.handle);
+  if (r.kind === "aborted")  return yield* abortRunMachine(state);
+  if (r.kind === "failed")   return yield* drainAndFailMachine(state, r.error);
+  if (r.message.stopReason === "aborted" || state.operation!.aborting) {
+    return yield* abortRunMachine(state);
+  }
+  if (hasToolCalls(r.message)) yield* toolBatchMachine(state, r.message);
+  return undefined;
+}
+
+function* drainAndFailMachine(state: LaneState, error: ErrorInfo): Machine<RunOutcome> {
+  const op = state.operation!;
+  // Drain accepted input. No before_run_end, no further model work unless
+  // consumed conversational input restarts the loop.
+  while (true) {
+    for (const w of [...op.pendingWrites]) yield { kind: "apply_pending_write", runId: op.id, entryId: w.id };
+    let consumed = 0;
+    for (const m of steeringForThisCheckpoint(op)) {
+      if ((yield { kind: "consume_queue_item", runId: op.id, queue: "steer", entryId: m.id }) === "consumed") consumed++;
+    }
+    if (consumed === 0) {
+      for (const m of followUpsForThisCheckpoint(op)) {
+        if ((yield { kind: "consume_queue_item", runId: op.id, queue: "followUp", entryId: m.id }) === "consumed") consumed++;
+      }
+    }
+    if (op.aborting) return yield* abortRunMachine(state);
+    if (consumed > 0) return yield* driverLoopMachine(state); // input clears the failure
+    const done = yield { kind: "try_finish_run", runId: op.id, outcome: "failed", error };
+    if (done === "finished") return finished(state, "failed", error);
+  }
+}
+```
+
+`needsAssistant()` and `hasPendingWork()` are pure over `LaneState`, exactly as in the effects variant.
+
+Tasks — a failed attempt appends nothing; only a deferred handle, a terminal message, or the final give-up error enters the tree (section 6, retry trace):
+
+```ts
+type TaskResult =
+  | { kind: "message"; message: AssistantMessage }
+  | { kind: "deferred"; handle: DeferredHandle }
+  | { kind: "failed"; error: ErrorInfo }              // terminal entry already appended
+  | { kind: "aborted" };
+
+function* stepTaskMachine(state: LaneState): Machine<TaskResult> {
+  const op = state.operation!;
+  while (true) {
+    if (op.aborting) return { kind: "aborted" };
+    const attempt = (op.task?.kind === "step" ? op.task.attempts : 0) + 1;
+    if (attempt > retry.maxAttempts) {
+      yield { kind: "append_entry", entry: giveUpAssistantEntry(newId(), state) };
+      return { kind: "failed", error: retriesExhausted() };
+    }
+
+    const options = yield { kind: "run_hook", name: "before_request",
+      event: { model: laneModel(state), task: "step", attempt, streamOptions } };
+    yield { kind: "append_record", record: taskAttempt(op.id, "step", attempt) };
+
+    const final = yield { kind: "stream_assistant", task: "step", attempt,
+                          streamOptions: options?.streamOptions };
+
+    if (final.stopReason === "deferred") {
+      yield { kind: "append_entry", entry: assistantEntry(newId(), final) };
+      return { kind: "deferred", handle: final.deferred };
+    }
+    if (final.stopReason === "error" && isRetryable(final)) {
+      if ((yield { kind: "sleep", delayMs: retryDelay(attempt) }) === "aborted") {
+        return { kind: "aborted" };
+      }
+      continue;                                              // durable count already advanced
+    }
+
+    yield { kind: "append_entry", entry: assistantEntry(newId(), final) };
+    if (final.stopReason === "error") return { kind: "failed", error: messageError(final) };
+    return { kind: "message", message: final };              // stop, toolUse, length, aborted
+  }
+}
+```
+
+`summaryTaskMachine(state, task, reason?)` has the same shape: `task_attempt` before each attempt (`compactionReason` for compaction tasks), `before_request`, one non-deferred request, durable cap. It returns `{ kind: "value" | "failed" | "aborted" }`; the caller appends the result entry. A hook-supplied summary makes no attempt.
+
+Deferred redemption — one fetch per `resume()`; pending re-parks without a write; a terminal answer lands as the error entry and fails the run through the drain path:
+
+```ts
+function* redeemDeferredMachine(state: LaneState):
+    Machine<{ message?: AssistantMessage; outcome?: RunOutcome }> {
+  const op = state.operation!;
+  const final = yield { kind: "fetch_deferred", handle: op.deferred! };
+  if (op.aborting) return { outcome: yield* abortRunMachine(state) };
+  if (final.stopReason === "deferred") return { outcome: suspendedOutcome(state, op.deferred!) };
+  if (final.stopReason === "aborted")  return { outcome: yield* abortRunMachine(state) };
+
+  yield { kind: "append_entry", entry: assistantEntry(newId(), final) };
+  if (final.stopReason === "error") {
+    return { outcome: yield* drainAndFailMachine(state, messageError(final)) };
+  }
+  return { message: final };
+}
+```
+
+Tools — phase 1 splits into pure machine computation (lookup, `prepareArguments`, schema validation, revalidation of replacement args) and the `before_tool` hook action. Phase 2 is one `execute_tools` action. Phase 3 applies the `after_tool` patch purely and appends the result entry with its `terminate` decision. Section 14's `executeToolBatch` itself is used only by the compatibility wrapper in this variant.
+
+```ts
+function* toolBatchMachine(state: LaneState, assistant: AssistantMessage): Machine<void> {
+  const op = state.operation!;
+
+  if (assistant.stopReason === "length") {                   // truncated: never execute
+    for (const toolCall of toolCalls(assistant)) {
+      yield { kind: "append_entry", entry: truncatedToolResult(newId(), toolCall) };
+    }
+    return;
+  }
+
+  const open: { prepared: PreparedToolCall; started: ToolStarted }[] = [];
+  for (const [toolIndex, toolCall] of toolCalls(assistant).entries()) {
+    const prepared = prepareToolCallPure(toolCall, activeTools(state));   // pure phase 1
+    if (prepared.kind === "immediate") {                     // unknown tool, invalid args
+      yield { kind: "append_entry",
+              entry: resultEntry(newId(), createToolResultMessage(prepared), false) };
+      continue;
+    }
+
+    const decision = yield { kind: "run_hook", name: "before_tool",
+      event: { toolCallId: toolCall.id, toolName: toolCall.name, args: prepared.args } };
+    if (decision?.block) {
+      yield { kind: "append_entry",
+              entry: resultEntry(newId(), blockedToolResult(toolCall, decision.block.reason), false) };
+      continue;
+    }
+    const args = decision?.args ? revalidateArgs(prepared, decision.args) : prepared.args;
+
+    const started = yield { kind: "append_record", record: toolStarted(op.id, {
+      assistantEntryId: newestAssistantEntryId(state),
+      toolIndex, toolCallId: toolCall.id, toolName: toolCall.name,
+      effectiveArgs: args, resultEntryId: newId(),
+      replay: prepared.tool.replay ?? "never",
+    }) };
+    open.push({ prepared: withArgs(prepared, args), started });
+  }
+  if (open.length === 0) return;
+
+  const outcomes = yield { kind: "execute_tools",
+    calls: open.map((c) => c.prepared), mode: toolExecutionMode(open.map((c) => c.prepared)) };
+
+  for (let index = 0; index < open.length; index++) {
+    const { prepared, started } = open[index]!;
+    const executed = outcomes[index]!;
+    if (executed.kind === "interrupted") {
+      yield* appendIfMissing(syntheticResult(started.resultEntryId, "interrupted"));
+      continue;
+    }
+    const patch = yield { kind: "run_hook", name: "after_tool",
+      event: { toolCallId: prepared.toolCall.id, toolName: prepared.toolCall.name,
+               args: prepared.args, ...executed.result, isError: executed.isError } };
+    const finalized = applyAfterToolPatch(executed, patch);  // pure; section 14 semantics
+    yield* appendIfMissing(resultEntry(started.resultEntryId,
+      createToolResultMessage({ toolCall: prepared.toolCall, ...finalized }),
+      finalized.terminate === true));
+  }
+}
+```
+
+Recovery handles each call at its crash site, in source order, keeping original ordinals:
+
+```ts
+function* reconcileToolBatchMachine(state: LaneState, batch: ToolBatchState): Machine<void> {
+  if (batch.truncated) {                                     // stopReason "length": never execute
+    for (const call of batch.calls) {
+      if (!call.resultExists) yield* appendIfMissing(truncatedToolResult(newId(), call.toolCall));
+    }
+    return;
+  }
+
+  for (const call of batch.calls) {
+    if (call.resultExists) continue;
+
+    if (call.started) {                                      // X3: effect outcome unknown
+      const tool = toolByName(call.started.toolName);
+      if (call.started.replay === "safe" && tool?.replay === "safe") {
+        const prepared = { kind: "prepared", toolCall: call.toolCall, tool,
+                           args: call.started.effectiveArgs };   // persisted, not re-derived
+        const outcomes = yield { kind: "execute_tools", calls: [prepared], mode: "sequential" };
+        const executed = outcomes[0]!;
+        if (executed.kind === "interrupted") {
+          yield* appendIfMissing(syntheticResult(call.started.resultEntryId, "interrupted"));
+          continue;
+        }
+        const patch = yield { kind: "run_hook", name: "after_tool",
+          event: { toolCallId: call.toolCall.id, toolName: call.toolCall.name,
+                   args: prepared.args, ...executed.result, isError: executed.isError } };
+        const finalized = applyAfterToolPatch(executed, patch);
+        yield* appendIfMissing(resultEntry(call.started.resultEntryId,
+          createToolResultMessage({ toolCall: call.toolCall, ...finalized }),
+          finalized.terminate === true));
+      } else {
+        yield* appendIfMissing(syntheticResult(call.started.resultEntryId, "interrupted"));
+      }
+    } else {                                                 // X1/X2: full path, original ordinal
+      yield* toolBatchMachineForSingleCall(state, batch, call);
+    }
+  }
+}
+```
+
+Abort — `abort()` itself is a lane-surface job (mutation line, above): marker, queue drain, signal, resolve. Reconciliation is machine work. If the operation was suspended with no execution, `abort()` starts one at the abort machine; manual mode leaves it parked at its first action.
+
+```ts
+function* abortRunMachine(state: LaneState): Machine<RunOutcome> {
+  const op = state.operation!;
+  if (op.deferred) yield { kind: "cancel_deferred", handle: op.deferred };   // best effort
+
+  while (true) {
+    for (const call of op.toolBatch?.calls ?? []) {
+      if (call.resultExists) continue;
+      yield* appendIfMissing(syntheticResult(idFor(call), call.started ? "interrupted" : "aborted"));
+    }
+    for (const w of [...op.pendingWrites]) yield { kind: "apply_pending_write", runId: op.id, entryId: w.id };
+    if (!newestOwnMessageIsAborted(state)) yield* appendIfMissing(abortClosureEntry(newId(), state));
+
+    const done = yield { kind: "finish_operation", runId: op.id, outcome: "aborted" };
+    if (done === "finished") return finished(state, "aborted");
+    // "continue": a deferred write landed meanwhile — apply it before closing
+  }
+}
+```
+
+Structural operations:
+
+```ts
+function* compactionMachine(state: LaneState): Machine<CompactionOutcome> {
+  const op = state.operation!;
+  if (op.aborting) return yield* abortStructuralMachine(state);
+
+  if (!op.targets.result) {
+    let result: CompactResult | undefined;
+    if (!op.task) {          // no attempt yet: the decision hook may still run
+      const hook = yield { kind: "run_hook", name: "before_compaction",
+        event: { reason: "manual", preparation: preparation(state),
+                 customInstructions: op.intent.customInstructions } };
+      if (hook?.decline) return yield* finishStructuralMachine(state, "declined");
+      result = hook?.compaction;
+    }
+    if (!result) {
+      const generated = yield* summaryTaskMachine(state, "compaction", "manual");
+      if (generated.kind === "aborted") return yield* abortStructuralMachine(state);
+      if (generated.kind === "failed")  return yield* failStructuralMachine(state, generated.error);
+      result = generated.value;
+    }
+    yield* appendIfMissing(compactionEntry(op.intent.resultEntryId, result));
+  }
+  return yield* finishStructuralMachine(state, "completed");
+}
+
+/** Inside a run, at a checkpoint. Same hook, same durable attempts and cap
+    as manual compaction; no nested operation records. Exhausted retries
+    route into drainAndFailMachine — the run finishes failed, without
+    before_run_end (section 11). Returns undefined on success or decline. */
+function* autoCompactionMachine(state: LaneState,
+    reason: "threshold" | "overflow"): Machine<RunOutcome | undefined> {
+  const op = state.operation!;
+  if (!op.task) {
+    const hook = yield { kind: "run_hook", name: "before_compaction",
+      event: { reason, preparation: preparation(state) } };
+    if (hook?.decline) return undefined;
+    if (hook?.compaction) {
+      yield* appendIfMissing(compactionEntry(newId(), hook.compaction));
+      return undefined;
+    }
+  }
+  const generated = yield* summaryTaskMachine(state, "compaction", reason);
+  if (generated.kind === "aborted") return yield* abortRunMachine(state);
+  if (generated.kind === "failed")  return yield* drainAndFailMachine(state, generated.error);
+  yield* appendIfMissing(compactionEntry(newId(), generated.value));
+  return undefined;
+}
+
+function* navigationMachine(state: LaneState): Machine<NavigationOutcome> {
+  const op = state.operation!;
+  if (op.aborting) return yield* abortStructuralMachine(state);
+
+  const intent = op.intent;                                  // kind navigation
+  const moved = state.leafId === intent.targetId;            // acceptance rejected target == source
+  let summary: SummaryValue | undefined;
+
+  if (intent.summarize && !op.targets.summary) {
+    if (!moved && !op.task) {                                // decision hook: once, pre-move
+      const hook = yield { kind: "run_hook", name: "before_navigation",
+        event: { targetId: intent.targetId, preparation: preparation(state) } };
+        // preparation derives from intent.sourceLeafId — valid pre- and post-move
+      if (hook?.decline) return yield* finishStructuralMachine(state, "declined");
+      summary = hook?.summary;
+    }
+    if (!summary) {
+      const generated = yield* summaryTaskMachine(state, "branch_summary");
+      if (generated.kind === "aborted") return yield* abortStructuralMachine(state);
+      if (generated.kind === "failed")  return yield* failStructuralMachine(state, generated.error);
+      summary = generated.value;                             // regenerated after a post-move crash
+    }
+  }
+
+  if (!moved) yield { kind: "move_lane", to: intent.targetId };   // the commit point (section 6)
+  if (intent.summarize && !op.targets.summary) {
+    yield* appendIfMissing(summaryEntry(intent.summaryEntryId!, summary!));  // chains to the target
+  }
+  if (intent.label !== undefined) {
+    yield { kind: "set_fact", fact: labelFact(intent.targetId, intent.label) };   // idempotent
+  }
+  return yield* finishStructuralMachine(state, "completed");
+}
+
+function* finishStructuralMachine(state: LaneState, outcome: "completed" | "declined") {
+  const done = yield { kind: "finish_operation", runId: state.operation!.id, outcome };
+  if (done === "continue") return yield* abortStructuralMachine(state);   // abort won
+  return structuralOutcome(state, outcome);
+}
+
+function* failStructuralMachine(state: LaneState, error: ErrorInfo) {
+  const done = yield { kind: "finish_operation", runId: state.operation!.id,
+                       outcome: "failed", error };
+  if (done === "continue") return yield* abortStructuralMachine(state);
+  return structuralOutcome(state, "failed", error);
+}
+
+function* abortStructuralMachine(state: LaneState) {
+  // Nothing to reconcile: structural operations own no tool batch, and
+  // lane-view writes wait for them (section 12).
+  yield { kind: "finish_operation", runId: state.operation!.id, outcome: "aborted" };
+  return structuralOutcome(state, "aborted");
+}
+```
+
+### Events, streaming, and generator lifetime
+
+- The executor relays progress produced inside a running action: `message_update` during `stream_assistant`, `tool_update` during `execute_tools`. `message_end` is emitted after the machine commits the entry, as section 10 requires. The compatibility wrapper keeps the existing `agent-loop.ts` event order.
+- Event delivery is passive; it never changes an action result or the next transition.
+- A generator is process-local and disposable. A deferred suspension returns its outcome and discards the generator; in-process `resume()` — or `abort()` when no execution exists — creates a new one from the lane's current in-memory reduction. Process restart reduces the section 7 reads and does the same. Restore itself reads only and starts no machine.
+- Generator locals may hold a completed provider or tool result only until its next durable action. If the process dies first, that transient result is lost and section 7 chooses retry, replay, or synthesis.
+
 Hook-to-block wiring, in one table:
 
-| harness hook | block insertion point |
+| harness hook | insertion point |
 |---|---|
-| `transform_context` | `StreamAssistantConfig.transformContext` |
-| `before_request` | before `streamAssistant`, patches stream options |
+| `transform_context` | inside the `stream_assistant` action (`StreamAssistantConfig.transformContext`) |
+| `before_request` | `run_hook` action before `stream_assistant`, patches stream options |
 | `before_payload` | inside the stream function, provider level |
-| `after_response` | on `streamAssistant`'s return value, before the entry is appended |
-| `before_tool` | `ToolCallbacks.beforeToolCall` (phase 1) |
-| `after_tool` | `ToolCallbacks.afterToolCall` (phase 3) |
-| — (record write) | `ToolCallbacks.onToolStart` / `onToolResult` |
+| `after_response` | on the stream result, before the entry is appended |
+| `before_tool` | `run_hook` action in phase 1 |
+| `after_tool` | `run_hook` action in phase 3 |
+| `before_run_end` | conditional `run_hook` action at the finish boundary; result committed via `commit_follow_up` |
+| — (record/entry writes) | machine actions |
 
 Notes:
 
-- Auto-compaction inside a run is `summaryTask("compaction")` plus the compaction entry, under the run's own records; no nested operation.
-- There is no "crashed mid-task" case in the code: an interrupted attempt is simply an attempt without a result entry, and the loop's cap check decides retry versus `RunFailed`.
-- Parallel batches and crash sites compose: `tool_started` records are written in source order during the sequential phase 1 pass, so a crash mid-batch leaves a source-order prefix of records — some with results (their executions finished), some without (section 6 table applies per call).
-- An aborted assistant message (`stopReason: "aborted"`) skips tool execution; `abortPath()` owns the synthetic results.
-- `before_run_end` fires at every finish boundary actually reached, including a boundary re-reached after a crash. Handlers that must not double-fire keep their own durable marker.
-- One policy knob deferred to implementation: whether `resume()` waits inside `fetchDeferred` when the provider is not ready (`wait` option) or re-parks immediately.
+- Auto-compaction inside a run runs under the run's own records; no nested operation.
+- There is no "crashed mid-task" case in the code: an interrupted attempt is an attempt without a result entry, and the cap check decides retry versus failure.
+- Parallel batches and crash sites compose: `tool_started` records are written in source order during the sequential phase-1 pass, so a crash mid-batch leaves a source-order prefix of records — some with results, some without (section 6 table applies per call).
+- An aborted assistant message (`stopReason: "aborted"`) skips tool execution; `abortRunMachine()` owns the synthetic results.
+- A crash between the navigation move and its summary entry loses the in-memory summary text; recovery regenerates it under the same attempt cap. A hook-supplied summary lost in that window is regenerated rather than re-asked: the hook's decline authority ended at the move.
+- One policy knob deferred to implementation: whether `resume()` waits inside `fetch_deferred` when the provider is not ready (`wait` option) or re-parks immediately.
 
 ## 16. pi-ai: deferred requests
 
@@ -1743,6 +2366,10 @@ export interface ProviderStreams {
 }
 ```
 
+`Models.fetchDeferred(model, handle, options?)` and `Models.cancelDeferred(model, handle, options?)` delegate to these provider methods with normal model resolution and authentication (credential store, expiring tokens, header merge); the harness never talks to a provider object directly. A provider that returns `stopReason: "deferred"` must implement fetch; cancellation is best effort.
+
+A terminal fetch answer is final for the run: the harness appends the error message and fails the operation (section 6). It never starts an automatic replacement request. The executor converts a rejected fetch promise into the same `stopReason: "error"` message form, so expected provider and authentication failures stay in-band. On a returned pending message the harness requires the complete handle to equal the persisted handle: a provider cannot replace durable handle data without a write, so a mismatch is a defect.
+
 Deferred assistant messages carry a handle, not content: they project to nothing in provider context, and the default `toProviderMessages` drops them.
 
 ## 17. Forks and subagents
@@ -1759,7 +2386,7 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 ```
 
 - Entries only. No records, no queues: a fork starts idle, every lane question answers "no open operation".
-- Lanes: `scope: "branch"` → the fork has only `main`, at the fork point. `scope: "tree"` → TBD: current proposal copies all lanes as-is.
+- Lanes: `scope: "branch"` → the fork has only `main`, at the fork point. `scope: "tree"` → every lane name and leaf pointer is copied. No operation logs or queues are copied either way, so every forked lane is idle.
 - Facts: `scope: "tree"` copies all; `scope: "branch"` copies the name always, labels only when their target entry was copied.
 - The fork point may be any message entry. A copy whose tip sits mid-tool-batch is still promptable: pi-ai's transformMessages inserts synthetic empty results for orphaned tool calls at request build time.
 - The source is untouched; copying while it runs reads the committed prefix.
@@ -1770,6 +2397,8 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 ## 18. Telemetry
 
 In-process diagnostics, separate from events (public observation) and hooks (control). Vendor-neutral: pi emits structured span events; subscribers convert to OTel, logs, or metrics. Core packages never import OTel or Node-only APIs. Mechanism and adapters: `packages/agent/docs/observability.md`; its event names are superseded by this document's vocabulary.
+
+Context propagation is explicit: the telemetry context flows as an ordinary argument — harness to procedure, procedure to `Effects` implementation, effect to the work it performs. No `AsyncLocalStorage`, no global current-span state. A context object is process-local capability data and is never persisted in a record, entry, snapshot, event, or deferred handle.
 
 Span tree, aligned to the execution model; every span carries `lane` plus the ids public events carry (`runId`, `stepId`, `toolCallId`), so traces, events, and records correlate without translation:
 
@@ -1794,28 +2423,103 @@ Safety: default payloads carry identifiers, counts, durations, stop reasons, sta
 
 1. **Per-lane hooks and events.** Registration is harness-global; every payload carries `lane`, handlers scope themselves. Enough, or do we want `lane.hooks.on(...)` with scoped delivery — for example a `before_tool` policy for one Slack thread? Global-with-lane is more general but pushes filtering onto every scoped consumer.
 2. **Records and replication.** Lane operation logs are flat sequences without parent links, because a single writer per lane makes order equal causality (section 2). Replicating or merging diverged copies of a session would need explicit causality — parent links or equivalent. Out of scope (section 1); recorded here so the flat encoding is a known, deliberate bet.
-3. **Fork × lanes.** `scope: "tree"` lane handling is TBD (section 17).
 
 ## 20. Testing strategy
 
-TODO after the document is reviewed end to end. Fixed points: the in-memory backend is the reference; the parity suite runs against all three backends; crash-site tests follow the section 6 traces.
+Three tiers. Each tests a different claim; none replaces another.
+
+### Tier A — reduction and resume
+
+Prefill a session with the records and entries of one section 6 crash state through the public `Session` API (`appendRecord`, low-level `appendEntry`), open the harness, call `resume()`, assert the durable result.
+
+```ts
+await session.appendRecord(opStarted("run", { originalPrompt, initialMessages: [userEntry] }));
+await session.appendEntry(userEntry, "main");
+await session.appendRecord(taskAttempt("step", 1));
+await session.appendEntry(assistantWithToolCall, "main");
+await session.appendRecord(toolStarted({ replay: "safe", resultEntryId: "result-1" }));
+// This durable prefix is X3.
+
+const { harness, suspended } = await AgentHarness.create(options);
+expect(suspended).toHaveLength(1);
+expect((await harness.resume()).ok).toBe(true);
+```
+
+Coverage: every X1–X5 tool state, replay safe/never/changed declarations, every source-order position in a batch, truncated (`length`) batches proving no execution, abort before and after each durable point, the terminal-failure marker with and without later consumed input, missing initial messages, pending, cancelled, and abort-killed queue items, deferred writes, deferred handles (pending, ready, terminal, rejected fetch, abort), unfinished tasks and attempt caps across restart including auto-compaction exhaustion, post-move navigation states from the section 6 table, section 5 validity rejections, and half-completed recovery (run the same prefix through recovery twice).
+
+The in-memory backend is the reference. The parity suite runs the same setups against memory, JSONL, and SQLite; one case runs concurrent writes on two lanes and asserts unique increasing `seq` and identical `getLog()` order; another asserts every backend rejects the same non-JSON payloads.
+
+### Tier B — writer conformance
+
+Tier A assumes live execution writes the correct prefix; Tier B verifies it. Run the public harness against an instrumented `Session` recording every entry (`E`), record (`R`), fact (`G`), and hook (`H`). Assert exact order against the section 6 traces: one-tool run, retry, terminal failure, steering during a tool, finish-boundary orders, deferred write mid-step, abort during a tool, auto-compaction, manual compaction, navigation (move-first), deferred suspension and every fetch outcome. This tier catches the critical regression class: an effect starting before its intent record.
+
+### Tier C — deterministic interleavings
+
+`drive: "manual"` against the real `AgentHarness`, the faux provider, and a real backend. The action controller is the only test hook; the machine under test is the production machine.
+
+```ts
+const { harness } = await AgentHarness.create({ session, models, model, tools: [calc], drive: "manual" });
+const promptResult = harness.prompt("calculate");
+
+while ((await harness.peekAction())?.kind !== "execute_tools") await harness.executeAction();
+
+// X3: intent durable, effect not started
+const started = await session.findRecords({ lane: "main", type: "tool_started" });
+expect(await session.getEntry(started[0]!.resultEntryId)).toBeUndefined();
+
+expect((await harness.steer("focus on tests")).ok).toBe(true);   // surface stays live
+await harness.runToCompletion();
+expect((await promptResult).ok).toBe(true);
+```
+
+Crash simulation is `close()` at a chosen boundary, then reopening the same backend and resuming. Coverage: **both orders of every race-catalog row (section 15)**, input injected between arbitrary actions, abort while a cancellable effect is parked and while it runs, process loss at every action of the section 6 traces, and automatic versus manual drive producing identical durable logs and outcomes for the same scripted provider.
+
+Machine invariants, asserted across Tier C:
+
+- `peekAction()` has no side effect and is stable until `executeAction()`.
+- `executeAction()` releases exactly the peeked action, never a later one.
+- Stopping before an action leaves exactly the preceding durable prefix.
+- While halted, zero storage writes and zero provider or tool calls happen (the generator performs no I/O; section 15).
+- A conditional action that lost its ordering commits nothing.
+- Every accepted operation gets exactly one `operation_finished` unless it suspends.
+- A faulted append leaves a valid prefix and faults the whole harness.
+
+### Other suites
+
+- The existing `agent-loop` and `agent` suites pass unchanged — the section 14 compatibility criterion.
+- Event ordering per section 10, including `message_end` after commit.
+- Hooks: registration-id `resumeData` round trips, duplicate-id rejection, aggregation order, fail-closed `before_tool`.
+- v3 fixtures: labels, session info, and `leaf` entries mid-chain and at end of file, old `firstKeptEntryId` compactions — all open as one normalized idle `main` lane.
 
 ## 21. Implementation sequence
 
-TODO after the document is reviewed end to end.
+Keep each stage passing before starting the next.
+
+1. v4 `Session` and in-memory storage: entries, records, lanes, facts, shared `seq`. Backend-neutral parity suite.
+2. JSONL v4 with the v3 read path; greenfield SQLite with the branch cache. Parity suite against all three.
+3. Section 7 reduction and validity checks. Tier A before any live procedure exists.
+4. Split `agent-loop.ts` into the section 14 blocks; existing `agent-loop`/`agent` tests pass unchanged.
+5. `MachineAction`, the executor, `OperationExecution`, and the lane mutation line. Automatic/manual equivalence for a no-tool run.
+6. The run machine: acceptance with capture, checkpoints, tasks and retries, queues, deferred writes, terminal failure, conditional finish, abort. Tier B traces as they land.
+7. Tool batches through the machine's phase split (pure phase 1, one `execute_tools` action, pure phase 3), `terminate` persistence, replay and reconciliation. The full tool crash matrix in Tier A and C.
+8. Deferred provider requests through `Models`; faux-provider support for pending, ready, terminal, and cancellation outcomes.
+9. Manual and auto compaction; navigation with the move-first commit.
+10. Events, hooks, snapshots, telemetry context. Tier C race-catalog completion.
+11. Adapt coding-agent to the new result and session APIs; run its non-e2e suites on the faux provider.
+12. `npm run check` clean.
 
 ## 22. Required reading
 
-For a fresh implementation session, in this order. This document wins over anything older; `harness.md` (v1 of this design) is superseded and must not be followed where they disagree.
+For a fresh implementation session, in this order. This document wins over anything older; `harness.md` (v1 of this design) is superseded and must not be followed where they disagree. `harness-v2-effects.md` is the competing variant of Part III — read it only to compare, never to implement from both.
 
-1. `packages/agent/docs/harness-v2.md` — this document.
+1. `packages/agent/docs/harness-v2-generator.md` — this document.
 2. `packages/agent/src/agent-loop.ts` — the loop to split into the section 14 building blocks.
 3. `packages/agent/src/agent.ts` — queues, continuation, abort, settlement to preserve in spirit.
 4. `packages/agent/src/harness/agent-harness.ts` — the harness being replaced.
 5. `packages/agent/src/harness/types.ts` — current entry union and storage contract.
 6. `packages/agent/src/harness/session/session.ts` — context build, projectors, entry creation.
-7. `packages/agent/src/harness/session/jsonl-storage.ts` — v3 format and reload.
-8. `packages/agent/src/harness/session/memory-storage.ts` — in-memory parity.
+7. `packages/agent/src/harness/session/jsonl-repo.ts` — v3 format and reload.
+8. `packages/agent/src/harness/session/memory-repo.ts` — in-memory parity.
 9. `packages/agent/src/harness/messages.ts` — message conversion (toProviderMessages default).
 10. `packages/agent/src/harness/compaction/compaction.ts` — preparation, split-turn summaries.
 11. `packages/ai/src/utils/transform-messages.ts` — orphaned-tool-call healing.
@@ -1825,3 +2529,4 @@ For a fresh implementation session, in this order. This document wins over anyth
 15. `packages/storage/sqlite-node/src/sqlite/storage/branch-entries.ts` — the branch cache being generalized.
 16. `packages/storage/sqlite-node/src/sqlite/repo.ts` — create/open/fork.
 17. `packages/coding-agent/docs/session-format.md` — v3 JSONL, the compatibility target.
+18. `packages/agent/docs/observability.md` — telemetry background; section 18 defines context propagation.

@@ -281,7 +281,10 @@ export function compositeTuiLine(
 	return visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
 }
 
+export type TuiMode = "regular" | "fullscreen";
+
 export interface TUI extends Component {
+	readonly mode: TuiMode;
 	children: Component[];
 	terminal: Terminal;
 	onDebug?: () => void;
@@ -320,6 +323,7 @@ export function isViewportTUI(tui: TUI): tui is ViewportTUI {
 }
 
 export abstract class TuiBase extends Container implements TUI {
+	abstract readonly mode: TuiMode;
 	public terminal: Terminal;
 	private focusedComponent: Component | null = null;
 	private inputListeners = new Set<TuiInputListener>();

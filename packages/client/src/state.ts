@@ -30,6 +30,14 @@ export class ClientState {
 		this.#attachedSessionIds.clear();
 	}
 
+	dispose(): void {
+		this.reset();
+		this.#snapshotListeners.clear();
+		this.#eventListeners.clear();
+		this.#sessionSnapshotListeners.clear();
+		this.#sessionEventListeners.clear();
+	}
+
 	getSessionSnapshot(sessionId: string): SessionSnapshot | undefined {
 		return this.#sessionSnapshots.get(sessionId);
 	}

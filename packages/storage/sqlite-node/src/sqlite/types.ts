@@ -44,4 +44,4 @@ export interface SqliteSessionListOptions {
 	cwd?: string;
 }
 
-export type SqliteSessionStoreEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;
+export type SqliteSessionRepositoryEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;

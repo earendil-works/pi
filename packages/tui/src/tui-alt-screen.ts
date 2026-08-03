@@ -13,7 +13,10 @@ import {
 import type { Terminal } from "./terminal.ts";
 import {
 	deleteAllKittyImages,
+	deleteAllKittyPlacements,
+	deleteKittyImage,
 	getCapabilities,
+	getKittyImagePlacement,
 	type ImageProtocol,
 	isImageLine,
 	setCapabilities,
@@ -83,6 +86,7 @@ export interface TuiAltScreenOptions {
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
 export class TuiAltScreen extends TuiBase implements ViewportTUI {
+	readonly mode = "fullscreen" as const;
 	readonly [VIEWPORT_TUI] = true as const;
 	private previousScreen: string[] = [];
 	private lastDocument: string[] = [];
@@ -96,6 +100,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private altScreenActive = false;
 	private imageProtocol: ImageProtocol = null;
 	private savedCapabilities?: TerminalCapabilities;
+	private readonly uploadedKittyImages = new Map<number, number>();
 	private selectionAnchor?: SelectionPoint;
 	private selectionFocus?: SelectionPoint;
 	private selectionDragPointer?: { x: number; y: number };
@@ -172,6 +177,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.altScreenActive = true;
 		const capabilities = getCapabilities();
 		this.imageProtocol = capabilities.images;
+		this.uploadedKittyImages.clear();
 		if (capabilities.images === "iterm2") {
 			this.savedCapabilities = capabilities;
 			setCapabilities({ ...capabilities, images: null });
@@ -198,6 +204,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.terminal.write(
 			`${BEGIN_SYNCHRONIZED_OUTPUT}${this.deleteKittyImages()}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${END_SYNCHRONIZED_OUTPUT}`,
 		);
+		this.uploadedKittyImages.clear();
 	}
 
 	protected override afterTerminalStop(): void {
@@ -223,6 +230,28 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private deleteKittyImages(): string {
 		return this.imageProtocol === "kitty" ? deleteAllKittyImages() : "";
+	}
+
+	private prepareKittyScreen(screen: string[]): { lines: string[]; staleImageDeletion: string } {
+		const visibleImageIds = new Set<number>();
+		const lines = screen.map((line) => {
+			const placement = getKittyImagePlacement(line);
+			if (!placement) return line;
+			visibleImageIds.add(placement.imageId);
+			if (this.uploadedKittyImages.get(placement.imageId) === placement.transmissionGeneration) {
+				return placement.replacementLine;
+			}
+			this.uploadedKittyImages.set(placement.imageId, placement.transmissionGeneration);
+			return line;
+		});
+
+		let staleImageDeletion = "";
+		for (const imageId of this.uploadedKittyImages.keys()) {
+			if (visibleImageIds.has(imageId)) continue;
+			staleImageDeletion += deleteKittyImage(imageId);
+			this.uploadedKittyImages.delete(imageId);
+		}
+		return { lines, staleImageDeletion };
 	}
 
 	protected override resetRenderState(): void {
@@ -774,18 +803,30 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			(line, row) =>
 				line !== this.previousScreen[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")),
 		);
+		const redrawImages = fullRedraw || imagesNeedRedraw;
+		const hadUploadedKittyImages = this.uploadedKittyImages.size > 0;
+		const preparedKittyScreen =
+			redrawImages && this.imageProtocol === "kitty"
+				? this.prepareKittyScreen(screen)
+				: { lines: screen, staleImageDeletion: "" };
 
 		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
 		if (fullRedraw) {
 			this.fullRedrawCount += 1;
-			buffer += `${this.deleteKittyImages()}\x1b[2J`;
+			const clearImages =
+				this.imageProtocol === "kitty" && hadUploadedKittyImages
+					? deleteAllKittyPlacements()
+					: this.deleteKittyImages();
+			buffer += `${clearImages}\x1b[2J`;
 		} else if (imagesNeedRedraw) {
-			buffer += this.imageProtocol === "iterm2" ? "\x1b[2J" : this.deleteKittyImages();
+			if (this.imageProtocol === "iterm2") buffer += "\x1b[2J";
+			else if (this.imageProtocol === "kitty") buffer += deleteAllKittyPlacements();
 		}
+		buffer += preparedKittyScreen.staleImageDeletion;
 
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
-			buffer += `\x1b[${row + 1};1H\x1b[2K${screen[row] ?? ""}`;
+			buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
 		}
 
 		if (cursorPos) {

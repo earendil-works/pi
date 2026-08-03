@@ -1,102 +1,172 @@
-import {
-	type LeafEntry,
-	type SessionEntryCursorOptions,
-	SessionError,
-	type SessionMetadata,
-	type SessionSnapshot,
-	type SessionStorage,
-	type SessionStore,
-	type SessionTreeEntry,
+import type {
+	SessionForkOptions,
+	SessionForkSelection,
+	SessionMetadata,
+	SessionStorage,
+	SessionTreeEntry,
 } from "../types.ts";
-import { InMemorySessionStorage } from "./memory-storage.ts";
+import { SessionError } from "../types.ts";
+import { ArraySessionIndex } from "./array-session-index.ts";
+import { KeyedOperationQueue } from "./keyed-operation-queue.ts";
 import {
+	createSessionForkSelection,
 	createSessionId,
-	createSessionRepository,
 	createTimestamp,
-	getEntriesToFork,
+	readSessionEntriesForFork,
 	type SessionRepository,
-} from "./repo-utils.ts";
-import { createScanningSessionSearch } from "./search-backend.ts";
+} from "./repository.ts";
+import { createSession, type Session, type SessionContextBuildOptions } from "./session.ts";
 
 export type InMemorySessionCreateOptions = { id?: string };
 
-class InMemorySessionStore implements SessionStore<SessionMetadata, InMemorySessionCreateOptions, void> {
-	private sessions = new Map<string, InMemorySessionStorage<SessionMetadata>>();
+interface InMemorySessionState {
+	metadata: SessionMetadata;
+	entries: ArraySessionIndex;
+}
 
-	async create(options: InMemorySessionCreateOptions = {}): Promise<SessionMetadata> {
-		const metadata: SessionMetadata = {
-			id: options.id ?? createSessionId(),
-			createdAt: createTimestamp(),
+export class InMemorySessionBackend {
+	private readonly sessions = new Map<string, InMemorySessionState>();
+	private readonly operations = new KeyedOperationQueue<string>();
+	private disposed = false;
+	private disposePromise: Promise<void> | undefined;
+
+	create(options: InMemorySessionCreateOptions = {}): Promise<SessionStorage<SessionMetadata>> {
+		this.assertOpen();
+		const id = options.id ?? createSessionId();
+		return this.operations.enqueue(id, () => {
+			const state: InMemorySessionState = {
+				metadata: { id, createdAt: createTimestamp() },
+				entries: new ArraySessionIndex(),
+			};
+			this.sessions.set(id, state);
+			return this.storage(state);
+		});
+	}
+
+	open(metadata: SessionMetadata): Promise<SessionStorage<SessionMetadata>> {
+		this.assertOpen();
+		return this.operations.enqueue(metadata.id, () => this.storage(this.getState(metadata)));
+	}
+
+	list(): Promise<SessionMetadata[]> {
+		this.assertOpen();
+		return this.operations.enqueueBarrier(() => [...this.sessions.values()].map((state) => state.metadata));
+	}
+
+	delete(metadata: SessionMetadata): Promise<void> {
+		this.assertOpen();
+		return this.operations.enqueue(metadata.id, () => {
+			this.sessions.delete(metadata.id);
+		});
+	}
+
+	fork(
+		source: SessionMetadata,
+		options: InMemorySessionCreateOptions,
+		selection: SessionForkSelection,
+	): Promise<SessionStorage<SessionMetadata>> {
+		this.assertOpen();
+		const id = options.id ?? createSessionId();
+		const sourceEntries = this.operations.enqueue(source.id, () =>
+			readSessionEntriesForFork(this.getState(source).entries, selection),
+		);
+		return this.operations.enqueue(id, async () => {
+			const state: InMemorySessionState = {
+				metadata: { id, createdAt: createTimestamp() },
+				entries: new ArraySessionIndex(await sourceEntries),
+			};
+			this.sessions.set(id, state);
+			return this.storage(state);
+		});
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		if (!this.disposePromise) {
+			this.disposed = true;
+			this.disposePromise = this.operations.drain();
+		}
+		await this.disposePromise;
+	}
+
+	private storage(state: InMemorySessionState): SessionStorage<SessionMetadata> {
+		const read = <T>(operation: (entries: ArraySessionIndex) => T): Promise<T> => {
+			this.assertOpen();
+			return this.operations.enqueue(state.metadata.id, () => operation(this.getState(state.metadata).entries));
 		};
-		const storage = new InMemorySessionStorage({ metadata });
-		this.sessions.set(metadata.id, storage);
-		return metadata;
-	}
-
-	async open(metadata: SessionMetadata): Promise<SessionStorage<SessionMetadata>> {
-		const storage = this.sessions.get(metadata.id);
-		if (!storage) throw new SessionError("not_found", `Session not found: ${metadata.id}`);
-		return storage;
-	}
-
-	async load(metadata: SessionMetadata): Promise<SessionSnapshot<SessionMetadata>> {
-		const storage = await this.open(metadata);
 		return {
-			metadata: await storage.getMetadata(),
-			leafId: await storage.getLeafId(),
-			entries: await storage.getEntries(),
+			metadata: state.metadata,
+			readHead: () => read((entries) => entries.readHead()),
+			readEntry: (id) => read((entries) => entries.readEntry(id)),
+			readEntries: (options) => read((entries) => entries.readEntries(options)),
+			appendEntry: (entry) => this.appendEntry(state.metadata, entry),
+			findEntriesOnBranch: (query) => read((entries) => entries.findEntriesOnBranch(query)),
+			readPathToRootOrCompaction: (leafId) => read((entries) => entries.readPathToRootOrCompaction(leafId)),
+			getLabel: (id) => read((entries) => entries.getLabel(id)),
+			getName: () => read((entries) => entries.getName()),
+			getStats: () => read((entries) => entries.getStats()),
 		};
+	}
+
+	private appendEntry(metadata: SessionMetadata, entry: SessionTreeEntry): Promise<void> {
+		this.assertOpen();
+		return this.operations.enqueue(metadata.id, () => {
+			this.getState(metadata).entries.append(entry);
+		});
+	}
+
+	private assertOpen(): void {
+		if (this.disposed) throw new SessionError("storage", "In-memory session repository is disposed");
+	}
+
+	private getState(metadata: SessionMetadata): InMemorySessionState {
+		const state = this.sessions.get(metadata.id);
+		if (!state) throw new SessionError("not_found", `Session not found: ${metadata.id}`);
+		return state;
+	}
+}
+
+export interface InMemorySessionRepositoryOptions {
+	contextBuildOptions?: SessionContextBuildOptions;
+}
+
+export class InMemorySessionRepository
+	implements SessionRepository<SessionMetadata, InMemorySessionCreateOptions, void>
+{
+	private readonly backend = new InMemorySessionBackend();
+	private readonly contextBuildOptions: SessionContextBuildOptions;
+
+	constructor(options: InMemorySessionRepositoryOptions = {}) {
+		this.contextBuildOptions = options.contextBuildOptions ?? {};
+	}
+
+	async create(options: InMemorySessionCreateOptions = {}): Promise<Session<SessionMetadata>> {
+		return createSession(await this.backend.create(options), this.contextBuildOptions);
+	}
+
+	async open(metadata: SessionMetadata): Promise<Session<SessionMetadata>> {
+		return createSession(await this.backend.open(metadata), this.contextBuildOptions);
 	}
 
 	async list(): Promise<SessionMetadata[]> {
-		return Promise.all([...this.sessions.values()].map((storage) => storage.getMetadata()));
-	}
-
-	async getEntries(metadata: SessionMetadata, options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		return await (await this.open(metadata)).getEntries(options);
-	}
-
-	async createEntryId(metadata: SessionMetadata): Promise<string> {
-		return (await this.open(metadata)).createEntryId();
-	}
-
-	async appendEntry(metadata: SessionMetadata, entry: SessionTreeEntry): Promise<void> {
-		await (await this.open(metadata)).appendEntry(entry);
-	}
-
-	async setLeafId(metadata: SessionMetadata, leafId: string | null): Promise<LeafEntry> {
-		return await (await this.open(metadata)).setLeafId(leafId);
+		return await this.backend.list();
 	}
 
 	async delete(metadata: SessionMetadata): Promise<void> {
-		this.sessions.delete(metadata.id);
+		await this.backend.delete(metadata);
 	}
 
 	async fork(
-		sourceMetadata: SessionMetadata,
-		options: { entryId?: string; position?: "before" | "at"; id?: string },
-	): Promise<SessionMetadata> {
-		const source = await this.open(sourceMetadata);
-		const forkedEntries = await getEntriesToFork(source, options);
-		const metadata: SessionMetadata = {
-			id: options.id ?? createSessionId(),
-			createdAt: createTimestamp(),
-		};
-		const storage = new InMemorySessionStorage({ metadata, entries: forkedEntries });
-		this.sessions.set(metadata.id, storage);
-		return metadata;
+		source: SessionMetadata,
+		options: SessionForkOptions & InMemorySessionCreateOptions,
+	): Promise<Session<SessionMetadata>> {
+		const { entryId: _entryId, position: _position, ...createOptions } = options;
+		return createSession(
+			await this.backend.fork(source, createOptions, createSessionForkSelection(options)),
+			this.contextBuildOptions,
+		);
 	}
-}
 
-export function createInMemorySessionStore(): SessionStore<SessionMetadata, InMemorySessionCreateOptions, void> {
-	return new InMemorySessionStore();
-}
-
-export function createInMemorySessionRepository(): SessionRepository<
-	SessionMetadata,
-	InMemorySessionCreateOptions,
-	void
-> {
-	const store = createInMemorySessionStore();
-	return createSessionRepository({ store, search: createScanningSessionSearch(store) });
+	async [Symbol.asyncDispose](): Promise<void> {
+		await this.backend[Symbol.asyncDispose]();
+	}
 }

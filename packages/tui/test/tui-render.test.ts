@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -14,6 +13,7 @@ import {
 	setCellDimensions,
 } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {

@@ -1,22 +1,22 @@
 import type {
-	LeafEntry,
-	SessionEntryCursorOptions,
-	SessionSnapshot,
+	SessionForkOptions,
+	SessionForkSelection,
+	SessionRepository,
 	SessionStorage,
 	SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
 import {
+	createSession,
+	createSessionForkSelection,
 	createSessionId,
-	createSessionRepository,
-	getEntriesToFork,
 	getFileSystemResultOrThrow,
+	readSessionEntriesForFork,
+	type Session,
+	type SessionContextBuildOptions,
 	SessionError,
-	type SessionRepository,
-	type SessionStore,
 } from "@earendil-works/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
-import { createSqliteSessionSearch } from "./search-backend.ts";
-import { SqliteSessionStorage } from "./storage/index.ts";
+import { SqliteSessionConnection } from "./storage/index.ts";
 import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
 import type {
 	SqliteDatabase,
@@ -24,7 +24,7 @@ import type {
 	SqliteSessionCreateOptions,
 	SqliteSessionListOptions,
 	SqliteSessionMetadata,
-	SqliteSessionStoreEnv,
+	SqliteSessionRepositoryEnv,
 } from "./types.ts";
 
 function getParentPath(path: string): string {
@@ -41,53 +41,232 @@ async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 	await db.exec("PRAGMA busy_timeout=5000");
 }
 
-async function cleanupSessionStorage(storage: SessionStorage): Promise<void> {
-	const maybeClosable = storage as SessionStorage & { cleanup?: () => Promise<void> };
-	if (typeof maybeClosable.cleanup === "function") await maybeClosable.cleanup();
-}
-
-export type SqliteSessionStoreOptions = {
-	env: SqliteSessionStoreEnv;
+export type SqliteSessionBackendOptions = {
+	env: SqliteSessionRepositoryEnv;
 	sqlite: SqliteDatabaseFactory;
 	databasePath: string;
 };
 
-class SqliteSessionStore
-	implements SessionStore<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>
-{
-	private readonly env: SqliteSessionStoreEnv;
+class SerialOperationQueue {
+	private tail: Promise<void> = Promise.resolve();
+
+	enqueue<T>(operation: () => Promise<T> | T): Promise<T> {
+		const result = this.tail.then(operation);
+		this.tail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	async drain(): Promise<void> {
+		await this.tail;
+	}
+}
+
+class SqliteSessionBackend {
+	private readonly env: SqliteSessionRepositoryEnv;
 	private readonly sqlite: SqliteDatabaseFactory;
 	private readonly databasePathInput: string;
 	private databasePath: string | undefined;
+	private databasePromise: Promise<SqliteDatabase> | undefined;
+	private database: SqliteDatabase | undefined;
+	private disposed = false;
+	private disposePromise: Promise<void> | undefined;
+	private readonly operations = new SerialOperationQueue();
+	private readonly writers = new Map<string, SqliteSessionConnection>();
 
-	constructor(options: SqliteSessionStoreOptions) {
+	constructor(options: SqliteSessionBackendOptions) {
 		this.env = options.env;
 		this.sqlite = options.sqlite;
 		this.databasePathInput = options.databasePath;
 	}
 
-	private async getDatabasePath(): Promise<string> {
-		if (!this.databasePath) {
-			this.databasePath = getFileSystemResultOrThrow(
-				await this.env.absolutePath(this.databasePathInput),
-				`Failed to resolve SQLite sessions database ${this.databasePathInput}`,
+	create(options: SqliteSessionCreateOptions): Promise<SessionStorage<SqliteSessionMetadata>> {
+		this.assertOpen();
+		return this.operations.enqueue(async () => {
+			const db = await this.getDatabase();
+			const path = await this.getDatabasePath();
+			const connection = await db.transaction(() =>
+				SqliteSessionConnection.create(db, path, {
+					cwd: options.cwd,
+					sessionId: options.id ?? createSessionId(),
+					parentSessionId: options.parentSessionId,
+					metadata: options.metadata,
+				}),
 			);
+			this.writers.set(connection.metadata.id, connection);
+			return this.storage(connection);
+		});
+	}
+
+	open(metadata: SqliteSessionMetadata): Promise<SessionStorage<SqliteSessionMetadata>> {
+		this.assertOpen();
+		return this.operations.enqueue(() => this.loadSession(metadata));
+	}
+
+	private async loadSession(metadata: SqliteSessionMetadata): Promise<SessionStorage<SqliteSessionMetadata>> {
+		if (
+			!getFileSystemResultOrThrow(await this.env.exists(metadata.path), `Failed to check database ${metadata.path}`)
+		) {
+			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 		}
+		const connection =
+			this.writers.get(metadata.id) ?? (await SqliteSessionConnection.open(await this.getDatabase(), metadata));
+		this.writers.set(metadata.id, connection);
+		return this.storage(connection);
+	}
+
+	list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {
+		this.assertOpen();
+		return this.operations.enqueue(() => this.listSessions(options));
+	}
+
+	private async listSessions(options: SqliteSessionListOptions): Promise<SqliteSessionMetadata[]> {
+		const path = await this.getDatabasePath();
+		if (!getFileSystemResultOrThrow(await this.env.exists(path), `Failed to check database ${path}`)) return [];
+		const db = await this.getDatabase();
+		const rows = options.cwd
+			? await db
+					.prepare(
+						"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
+					)
+					.all<SessionRow>(options.cwd)
+			: await db
+					.prepare(
+						"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions ORDER BY created_at DESC",
+					)
+					.all<SessionRow>();
+		return rows.map((row) => rowToMetadata(row, path));
+	}
+
+	private appendEntry(metadata: SqliteSessionMetadata, entry: SessionTreeEntry): Promise<void> {
+		this.assertOpen();
+		return this.operations.enqueue(async () => {
+			const connection =
+				this.writers.get(metadata.id) ?? (await SqliteSessionConnection.open(await this.getDatabase(), metadata));
+			this.writers.set(metadata.id, connection);
+			await connection.appendEntry(entry);
+		});
+	}
+
+	delete(metadata: SqliteSessionMetadata): Promise<void> {
+		this.assertOpen();
+		return this.operations.enqueue(async () => {
+			const db = await this.getDatabase();
+			await db.transaction(async () => {
+				await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run(metadata.id);
+				await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run(metadata.id);
+				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run(metadata.id);
+				if (result.changes === 0) throw new SessionError("not_found", `Session not found: ${metadata.id}`);
+			});
+			this.writers.delete(metadata.id);
+		});
+	}
+
+	fork(
+		source: SqliteSessionMetadata,
+		options: SqliteSessionCreateOptions,
+		selection: SessionForkSelection,
+	): Promise<SessionStorage<SqliteSessionMetadata>> {
+		this.assertOpen();
+		return this.operations.enqueue(async () => {
+			const db = await this.getDatabase();
+			const connection = await db.transaction(async () => {
+				const sourceConnection = this.writers.get(source.id) ?? (await SqliteSessionConnection.open(db, source));
+				this.writers.set(source.id, sourceConnection);
+				const entries = await readSessionEntriesForFork(sourceConnection, selection);
+				const connection = await SqliteSessionConnection.create(db, await this.getDatabasePath(), {
+					cwd: options.cwd,
+					sessionId: options.id ?? createSessionId(),
+					parentSessionId: options.parentSessionId ?? source.id,
+					metadata: options.metadata ?? source.metadata,
+				});
+				for (const entry of entries) await connection.appendEntry(entry, { transaction: false });
+				return connection;
+			});
+			this.writers.set(connection.metadata.id, connection);
+			return this.storage(connection);
+		});
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		if (!this.disposePromise) {
+			this.disposed = true;
+			this.disposePromise = this.finishDisposal();
+		}
+		await this.disposePromise;
+	}
+
+	private async finishDisposal(): Promise<void> {
+		await this.operations.drain();
+		const db = this.database ?? (this.databasePromise ? await this.databasePromise : undefined);
+		this.database = undefined;
+		this.databasePromise = undefined;
+		this.writers.clear();
+		if (db) await db.close();
+	}
+
+	private assertOpen(): void {
+		if (this.disposed) throw new SessionError("storage", "SQLite session repository is disposed");
+	}
+
+	private storage(connection: SqliteSessionConnection): SessionStorage<SqliteSessionMetadata> {
+		const metadata = connection.metadata;
+		return {
+			metadata,
+			readHead: () => this.read(metadata, (current) => current.readHead()),
+			readEntry: (id) => this.read(metadata, (current) => current.readEntry(id)),
+			readEntries: (options) => this.read(metadata, (current) => current.readEntries(options)),
+			appendEntry: (entry) => this.appendEntry(metadata, entry),
+			findEntriesOnBranch: (query) => this.read(metadata, (current) => current.findEntriesOnBranch(query)),
+			readPathToRootOrCompaction: (leafId) =>
+				this.read(metadata, (current) => current.readPathToRootOrCompaction(leafId)),
+			getLabel: (id) => this.read(metadata, (current) => current.getLabel(id)),
+			getName: () => this.read(metadata, (current) => current.getName()),
+			getStats: () => this.read(metadata, (current) => current.getStats()),
+		};
+	}
+
+	private read<T>(
+		metadata: SqliteSessionMetadata,
+		read: (connection: SqliteSessionConnection) => Promise<T>,
+	): Promise<T> {
+		this.assertOpen();
+		return this.operations.enqueue(async () => {
+			const connection =
+				this.writers.get(metadata.id) ?? (await SqliteSessionConnection.open(await this.getDatabase(), metadata));
+			this.writers.set(metadata.id, connection);
+			return read(connection);
+		});
+	}
+
+	private async getDatabasePath(): Promise<string> {
+		this.databasePath ??= getFileSystemResultOrThrow(
+			await this.env.absolutePath(this.databasePathInput),
+			`Failed to resolve SQLite sessions database ${this.databasePathInput}`,
+		);
 		return this.databasePath;
 	}
 
-	private async ensureDatabaseDir(): Promise<void> {
+	private async getDatabase(): Promise<SqliteDatabase> {
+		if (!this.databasePromise) this.databasePromise = this.openDatabase();
+		this.database = await this.databasePromise;
+		return this.database;
+	}
+
+	private async openDatabase(): Promise<SqliteDatabase> {
 		const path = await this.getDatabasePath();
 		const directory = getParentPath(path);
 		getFileSystemResultOrThrow(
 			await this.env.createDir(directory, { recursive: true }),
 			`Failed to create SQLite sessions directory ${directory}`,
 		);
-	}
-
-	private async openDatabase(): Promise<SqliteDatabase> {
-		await this.ensureDatabaseDir();
-		const db = await this.sqlite.open(await this.getDatabasePath());
+		const db = await this.sqlite.open(path);
 		try {
 			await configureSqliteDatabase(db);
 			await applyMigrations(db);
@@ -97,166 +276,52 @@ class SqliteSessionStore
 			throw error;
 		}
 	}
+}
 
-	async create(options: SqliteSessionCreateOptions): Promise<SqliteSessionMetadata> {
-		const db = await this.openDatabase();
-		try {
-			const id = options.id ?? createSessionId();
-			const storage = await SqliteSessionStorage.create(db, await this.getDatabasePath(), {
-				cwd: options.cwd,
-				sessionId: id,
-				parentSessionId: options.parentSessionId,
-				metadata: options.metadata,
-			});
-			return await storage.getMetadata();
-		} finally {
-			await db.close();
-		}
+export interface SqliteSessionRepositoryOptions extends SqliteSessionBackendOptions {
+	contextBuildOptions?: SessionContextBuildOptions;
+}
+
+export class SqliteSessionRepository
+	implements SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>
+{
+	private readonly backend: SqliteSessionBackend;
+	private readonly contextBuildOptions: SessionContextBuildOptions;
+
+	constructor(options: SqliteSessionRepositoryOptions) {
+		const { contextBuildOptions, ...backendOptions } = options;
+		this.backend = new SqliteSessionBackend(backendOptions);
+		this.contextBuildOptions = contextBuildOptions ?? {};
 	}
 
-	async open(metadata: SqliteSessionMetadata): Promise<SessionStorage<SqliteSessionMetadata>> {
-		if (
-			!getFileSystemResultOrThrow(await this.env.exists(metadata.path), `Failed to check database ${metadata.path}`)
-		) {
-			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
-		}
-		const db = await this.openDatabase();
-		try {
-			return await SqliteSessionStorage.open(db, metadata);
-		} catch (error) {
-			await db.close();
-			throw error;
-		}
+	async create(options: SqliteSessionCreateOptions): Promise<Session<SqliteSessionMetadata>> {
+		return createSession(await this.backend.create(options), this.contextBuildOptions);
 	}
 
-	async load(metadata: SqliteSessionMetadata): Promise<SessionSnapshot<SqliteSessionMetadata>> {
-		const storage = await this.open(metadata);
-		try {
-			return {
-				metadata: await storage.getMetadata(),
-				leafId: await storage.getLeafId(),
-				entries: await storage.getEntries(),
-			};
-		} finally {
-			await cleanupSessionStorage(storage);
-		}
+	async open(metadata: SqliteSessionMetadata): Promise<Session<SqliteSessionMetadata>> {
+		return createSession(await this.backend.open(metadata), this.contextBuildOptions);
 	}
 
-	async list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {
-		const path = await this.getDatabasePath();
-		if (!getFileSystemResultOrThrow(await this.env.exists(path), `Failed to check database ${path}`)) return [];
-		const db = await this.openDatabase();
-		try {
-			const rows = options.cwd
-				? await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
-						)
-						.all<SessionRow>(options.cwd)
-				: await db
-						.prepare(
-							"SELECT id, created_at, metadata, cwd, parent_session_id, active_leaf_id FROM sessions ORDER BY created_at DESC",
-						)
-						.all<SessionRow>();
-			return rows.map((row) => rowToMetadata(row, path));
-		} finally {
-			await db.close();
-		}
-	}
-
-	async getEntries(metadata: SqliteSessionMetadata, options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		const storage = await this.open(metadata);
-		try {
-			return await storage.getEntries(options);
-		} finally {
-			await cleanupSessionStorage(storage);
-		}
-	}
-
-	async createEntryId(metadata: SqliteSessionMetadata): Promise<string> {
-		const storage = await this.open(metadata);
-		try {
-			return await storage.createEntryId();
-		} finally {
-			await cleanupSessionStorage(storage);
-		}
-	}
-
-	async appendEntry(metadata: SqliteSessionMetadata, entry: SessionTreeEntry): Promise<void> {
-		const storage = await this.open(metadata);
-		try {
-			await storage.appendEntry(entry);
-		} finally {
-			await cleanupSessionStorage(storage);
-		}
-	}
-
-	async setLeafId(metadata: SqliteSessionMetadata, leafId: string | null): Promise<LeafEntry> {
-		const storage = await this.open(metadata);
-		try {
-			return await storage.setLeafId(leafId);
-		} finally {
-			await cleanupSessionStorage(storage);
-		}
+	async list(options?: SqliteSessionListOptions): Promise<SqliteSessionMetadata[]> {
+		return await this.backend.list(options);
 	}
 
 	async delete(metadata: SqliteSessionMetadata): Promise<void> {
-		const db = await this.openDatabase();
-		try {
-			await db.transaction(async () => {
-				await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(metadata.id);
-				await db.prepare("DELETE FROM session_entries WHERE session_id = ?").run(metadata.id);
-				await db.prepare("DELETE FROM entry_materialized WHERE session_id = ?").run(metadata.id);
-				await db.prepare("DELETE FROM session_materialized WHERE session_id = ?").run(metadata.id);
-				await db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run(metadata.id);
-				const result = await db.prepare("DELETE FROM sessions WHERE id = ?").run(metadata.id);
-				if (result.changes === 0) throw new SessionError("not_found", `Session not found: ${metadata.id}`);
-			});
-		} finally {
-			await db.close();
-		}
+		await this.backend.delete(metadata);
 	}
 
 	async fork(
-		sourceMetadata: SqliteSessionMetadata,
-		options: SqliteSessionCreateOptions & { entryId?: string; position?: "before" | "at"; id?: string },
-	): Promise<SqliteSessionMetadata> {
-		const source = await this.open(sourceMetadata);
-		let forkedEntries: SessionTreeEntry[];
-		try {
-			forkedEntries = await getEntriesToFork(source, options);
-		} finally {
-			await cleanupSessionStorage(source);
-		}
-		const db = await this.openDatabase();
-		try {
-			const id = options.id ?? createSessionId();
-			const storage = await SqliteSessionStorage.create(db, await this.getDatabasePath(), {
-				cwd: options.cwd,
-				sessionId: id,
-				parentSessionId: options.parentSessionId ?? sourceMetadata.id,
-				metadata: options.metadata ?? sourceMetadata.metadata,
-			});
-			for (const entry of forkedEntries) await storage.appendEntry(entry);
-			return await storage.getMetadata();
-		} finally {
-			await db.close();
-		}
+		source: SqliteSessionMetadata,
+		options: SessionForkOptions & SqliteSessionCreateOptions,
+	): Promise<Session<SqliteSessionMetadata>> {
+		const { entryId: _entryId, position: _position, ...createOptions } = options;
+		return createSession(
+			await this.backend.fork(source, createOptions, createSessionForkSelection(options)),
+			this.contextBuildOptions,
+		);
 	}
-}
 
-export function createSqliteSessionStore(
-	options: SqliteSessionStoreOptions,
-): SessionStore<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions> {
-	return new SqliteSessionStore(options);
-}
-
-export function createSqliteSessionRepository(
-	options: SqliteSessionStoreOptions,
-): SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions> {
-	const store = createSqliteSessionStore(options);
-	return createSessionRepository({
-		store,
-		search: createSqliteSessionSearch<SqliteSessionMetadata>({ ...options, mode: "canonical" }),
-	});
+	async [Symbol.asyncDispose](): Promise<void> {
+		await this.backend[Symbol.asyncDispose]();
+	}
 }

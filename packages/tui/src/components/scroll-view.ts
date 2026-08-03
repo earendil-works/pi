@@ -1,12 +1,14 @@
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
 import { type Component, Container } from "../tui.ts";
 
+export type ScrollViewScrollbar = "hidden" | "auto" | "always";
+
 export interface ScrollViewOptions {
 	axis?: "vertical";
 	follow?: "none" | "end";
 	primary?: boolean;
 	overscroll?: "chain" | "contain";
-	scrollbar?: "hidden" | "auto" | "always";
+	scrollbar?: ScrollViewScrollbar;
 	scrollbarStyle?: (text: string) => string;
 	scrollbarHideDelayMs?: number;
 }
@@ -16,8 +18,8 @@ export class ScrollView extends Container {
 	private readonly followEnd: boolean;
 	readonly primary: boolean;
 	readonly overscroll: "chain" | "contain";
-	readonly scrollbar: "hidden" | "auto" | "always";
 	readonly scrollbarStyle: (text: string) => string;
+	private currentScrollbar: ScrollViewScrollbar;
 	private readonly scrollbarHideDelayMs: number;
 	private currentScrollTop = 0;
 	private contentHeight = 0;
@@ -39,7 +41,7 @@ export class ScrollView extends Container {
 		this.followingEnd = this.followEnd;
 		this.primary = options.primary ?? false;
 		this.overscroll = options.overscroll ?? "chain";
-		this.scrollbar = options.scrollbar ?? "hidden";
+		this.currentScrollbar = options.scrollbar ?? "hidden";
 		this.scrollbarStyle = options.scrollbarStyle ?? ((text) => `\x1b[100m${text}\x1b[49m`);
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
 	}
@@ -56,11 +58,27 @@ export class ScrollView extends Container {
 		return this.currentViewportHeight;
 	}
 
+	get scrollbar(): ScrollViewScrollbar {
+		return this.currentScrollbar;
+	}
+
 	get isScrollbarVisible(): boolean {
+		if (this.scrollbar === "always") return this.currentViewportHeight > 0;
 		return (
-			this.contentHeight > this.currentViewportHeight &&
-			(this.scrollbar === "always" || this.transientScrollbarVisible)
+			this.scrollbar === "auto" && this.contentHeight > this.currentViewportHeight && this.transientScrollbarVisible
 		);
+	}
+
+	setScrollbar(scrollbar: ScrollViewScrollbar): void {
+		if (scrollbar === this.currentScrollbar) return;
+		this.currentScrollbar = scrollbar;
+		if (scrollbar !== "auto") this.hideTransientScrollbar();
+		else if (this.scrollbarActive) this.markScrollbarActivity();
+		this.requestRenderCallback?.();
+	}
+
+	getContentWidth(width: number): number {
+		return this.scrollbar === "always" && width > 1 ? width - 1 : width;
 	}
 
 	private markScrollbarActivity(): void {
@@ -166,7 +184,9 @@ export class ScrollView extends Container {
 	}
 
 	override render(width: number): string[] {
-		return this.child.render(width);
+		const contentWidth = this.getContentWidth(width);
+		const lines = this.child.render(contentWidth);
+		return contentWidth === width ? lines : lines.map((line) => `${line} `);
 	}
 
 	[LAYOUT_NODE](): ScrollLayoutNode {

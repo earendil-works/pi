@@ -1,13 +1,23 @@
 import type {
-	LeafEntry,
+	SessionBranchQuery,
 	SessionEntryCursorOptions,
-	SessionStorage,
+	SessionStats,
 	SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
-import { SessionError } from "@earendil-works/pi-agent-core";
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { SessionError, toError } from "@earendil-works/pi-agent-core";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
-import { getMaterializedBranchPathOrCompaction } from "./branch-entries.ts";
+import {
+	appendEntryToBranchCache,
+	type CachedBranch,
+	isCachedBranchValid,
+	queryCachedBranchRows,
+	readCachedBranch,
+	readCachedBranchRows,
+	readCachedEntryRowsByType,
+	readCachedEntrySeq,
+	readNewestCachedStopSeq,
+	rebuildCachedBranch,
+} from "./branch-cache.ts";
 import { decodeEntry, encodeEntry, type SessionEntryRow } from "./session-entries.ts";
 import {
 	applyEntryToMaterializedState,
@@ -19,75 +29,29 @@ import {
 	type SessionMaterializedRow,
 	type SessionMaterializedState,
 	serializeSummary,
-	sessionStatsFromMaterializedState,
 } from "./session-materialized.ts";
 import { advanceSequence, getNextSequence } from "./session-sequences.ts";
 import { rowToMetadata, type SessionRow } from "./sessions.ts";
-import { generateEntryId, invalidSession, leafIdAfterEntry } from "./shared.ts";
+import { invalidEntry, invalidSession, leafIdAfterEntry } from "./shared.ts";
 
-async function decodeEntryRows(entryRows: SessionEntryRow[]): Promise<{
-	entries: SessionTreeEntry[];
-	leafId: string | null;
-}> {
+function decodeEntryRows(entryRows: SessionEntryRow[]): SessionTreeEntry[] {
 	const entries: SessionTreeEntry[] = [];
-	let leafId: string | null = null;
 	for (const entryRow of entryRows) {
 		try {
 			const entry = decodeEntry(entryRow);
 			entries.push(entry);
-			leafId = leafIdAfterEntry(entry);
-		} catch {
-			// Keep JSONL-like permissive resume behavior: skip malformed entries.
+		} catch (error) {
+			throw invalidEntry(`failed to decode entry ${entryRow.id}`, toError(error));
 		}
 	}
-	return { entries, leafId };
+	return entries;
 }
 
-async function loadEntryRowsByIds(
-	db: SqliteDatabase,
-	sessionId: string,
-	entryIds: string[],
-): Promise<Map<string, SessionEntryRow>> {
-	if (entryIds.length === 0) return new Map<string, SessionEntryRow>();
-	const placeholders = entryIds.map(() => "?").join(", ");
-	const rows = await db
-		.prepare(
-			`SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND id IN (${placeholders})`,
-		)
-		.all<SessionEntryRow>(sessionId, ...entryIds);
-	return new Map(rows.map((row) => [row.id, row]));
-}
-
-async function loadActiveBranchId(db: SqliteDatabase, sessionId: string): Promise<string | null> {
-	// branch_entries includes leaf navigation entries for the active branch, so the
-	// newest branch_entries row identifies the branch that was most recently made active.
-	const row = await db
-		.prepare(
-			"SELECT branch_id FROM branch_entries WHERE session_id = ? ORDER BY entry_seq DESC, branch_id DESC LIMIT 1",
-		)
-		.get<{ branch_id: string }>(sessionId);
-	return row?.branch_id ?? null;
-}
-
-async function hasExistingChild(db: SqliteDatabase, sessionId: string, parentId: string | null): Promise<boolean> {
-	const row =
-		parentId === null
-			? await db
-					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id IS NULL LIMIT 1")
-					.get<{ found: number }>(sessionId)
-			: await db
-					.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND parent_id = ? LIMIT 1")
-					.get<{ found: number }>(sessionId, parentId);
-	return row !== undefined;
-}
-
-async function loadSqliteStorage(
+async function loadSqliteSession(
 	db: SqliteDatabase,
 	sessionId: string,
 ): Promise<{
 	row: SessionRow;
-	leafId: string | null;
-	activeBranchId: string | null;
 	materializedState: SessionMaterializedState;
 }> {
 	const row = await db
@@ -95,7 +59,6 @@ async function loadSqliteStorage(
 		.get<SessionRow>(sessionId);
 	if (!row) throw new SessionError("not_found", `Session not found: ${sessionId}`);
 
-	const leafId = row.active_leaf_id;
 	const materializedRow = await db
 		.prepare("SELECT session_id, payload FROM session_materialized WHERE session_id = ?")
 		.get<SessionMaterializedRow>(sessionId);
@@ -107,108 +70,225 @@ async function loadSqliteStorage(
 		.all<EntryMaterializedRow>(sessionId);
 	return {
 		row,
-		leafId,
-		activeBranchId: await loadActiveBranchId(db, sessionId),
 		materializedState: materializedStateFromRows(materializedRow, entryMaterializedRows),
 	};
 }
 
-export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
+export class SqliteSessionConnection {
 	private readonly db: SqliteDatabase;
-	private readonly metadata: SqliteSessionMetadata;
+	readonly metadata: SqliteSessionMetadata;
 	private byId: Map<string, SessionTreeEntry>;
-	private labelsById: Map<string, string>;
-	private currentLeafId: string | null;
-	private activeBranchId: string | null;
 	private materializedState: SessionMaterializedState;
 
-	private async getPathToRootOrCompactionEntries(leafId: string | null): Promise<SessionTreeEntry[]> {
-		if (leafId === null) return [];
-		const path: SessionTreeEntry[] = [];
-		let stopAtEntryId: string | null = null;
-		let current = await this.getEntry(leafId);
-		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
-		while (current) {
-			path.unshift(current);
-			if (stopAtEntryId !== null && current.id === stopAtEntryId) break;
-			if (current.type === "compaction") {
-				if (current.retainedTail) break;
-				stopAtEntryId = current.firstKeptEntryId ?? null;
+	async findEntriesOnBranch(query: SessionBranchQuery & { start: string | null }): Promise<SessionTreeEntry[]> {
+		if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit <= 0)) {
+			throw new RangeError("Session branch query limit must be a positive integer");
+		}
+		if (query.start === null) return [];
+		const startId = query.start;
+		let cached = await readCachedBranch(this.db, this.metadata.id, startId);
+		const validationStartSeq =
+			cached && query.order !== "oldestFirst"
+				? await readNewestCachedStopSeq(this.db, this.metadata.id, cached, query.stopAtType, query.stopAtId)
+				: undefined;
+		if (!cached || !(await isCachedBranchValid(this.db, this.metadata.id, cached, startId, validationStartSeq))) {
+			if (query.order !== "oldestFirst" && (query.stopAtId !== undefined || query.stopAtType !== undefined)) {
+				return this.findEntriesOnCanonicalBranch({ ...query, start: startId });
 			}
+			cached = await this.repairBranchCacheForQuery(startId, cached?.branchId);
+		}
+		const decoded = decodeEntryRows(await queryCachedBranchRows(this.db, this.metadata.id, cached, query));
+		const filtered = decoded.filter(
+			(entry) =>
+				(query.type === undefined || entry.type === query.type) &&
+				(query.customType === undefined || (entry.type === "custom" && entry.customType === query.customType)),
+		);
+		const entries = query.limit === undefined ? filtered : filtered.slice(0, query.limit);
+		for (const entry of entries) this.byId.set(entry.id, entry);
+		return entries;
+	}
+
+	private async findEntriesOnCanonicalBranch(
+		query: SessionBranchQuery & { start: string },
+	): Promise<SessionTreeEntry[]> {
+		const rows: SessionEntryRow[] = [];
+		const visited = new Set<string>();
+		let currentId: string | null = query.start;
+		while (currentId !== null) {
+			if (visited.has(currentId)) throw invalidSession(`cycle in parent chain at entry ${currentId}`);
+			visited.add(currentId);
+			const row: SessionEntryRow | undefined = await this.db
+				.prepare(
+					"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND id = ?",
+				)
+				.get<SessionEntryRow>(this.metadata.id, currentId);
+			if (!row) {
+				if (currentId === query.start) throw new SessionError("not_found", `Entry ${query.start} not found`);
+				throw invalidSession(`Entry ${currentId} not found`);
+			}
+			rows.push(row);
+			if (row.id === query.stopAtId || row.type === query.stopAtType) break;
+			currentId = row.parent_id;
+		}
+		const entries = decodeEntryRows(rows).filter(
+			(entry) =>
+				(query.type === undefined || entry.type === query.type) &&
+				(query.customType === undefined || (entry.type === "custom" && entry.customType === query.customType)),
+		);
+		const limited = query.limit === undefined ? entries : entries.slice(0, query.limit);
+		for (const entry of limited) this.byId.set(entry.id, entry);
+		return limited;
+	}
+
+	private async repairBranchCacheForQuery(leafId: string, branchIdToReplace?: string): Promise<CachedBranch> {
+		const visited = new Set<string>();
+		let currentId: string | null = leafId;
+		while (currentId !== null) {
+			if (visited.has(currentId)) throw invalidSession(`cycle in parent chain at entry ${currentId}`);
+			visited.add(currentId);
+			const row: { parent_id: string | null } | undefined = await this.db
+				.prepare("SELECT parent_id FROM session_entries WHERE session_id = ? AND id = ?")
+				.get<{ parent_id: string | null }>(this.metadata.id, currentId);
+			if (!row) {
+				if (currentId === leafId) throw new SessionError("not_found", `Entry ${leafId} not found`);
+				throw invalidSession(`Entry ${currentId} not found`);
+			}
+			currentId = row.parent_id;
+		}
+		try {
+			await rebuildCachedBranch(this.db, this.metadata.id, leafId, branchIdToReplace);
+		} catch (error) {
+			if (error instanceof SessionError) throw error;
+			throw new SessionError("storage", `Failed to rebuild SQLite branch cache at entry ${leafId}`, toError(error));
+		}
+		const cached = await readCachedBranch(this.db, this.metadata.id, leafId);
+		if (!cached || !(await isCachedBranchValid(this.db, this.metadata.id, cached, leafId))) {
+			throw invalidSession(`branch cache repair did not produce a valid path to entry ${leafId}`);
+		}
+		return cached;
+	}
+
+	async readPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
+		if (leafId === null) return [];
+		const cached = await readCachedBranch(this.db, this.metadata.id, leafId);
+		if (cached) {
+			const compactionRows = await readCachedEntryRowsByType(this.db, this.metadata.id, cached, "compaction");
+			let startSeq = 0;
+			let expectedStartId: string | null = null;
+			let pendingStop: { id: string; seq: number } | undefined;
+			for (const compactionRow of compactionRows) {
+				if (pendingStop && pendingStop.seq >= compactionRow.entry_seq) {
+					startSeq = pendingStop.seq;
+					expectedStartId = pendingStop.id;
+					break;
+				}
+				const compaction = decodeEntryRows([compactionRow])[0]!;
+				if (compaction.type !== "compaction") throw invalidSession(`entry ${compaction.id} is not a compaction`);
+				if (compaction.retainedTail) {
+					startSeq = compactionRow.entry_seq;
+					expectedStartId = compaction.id;
+					pendingStop = undefined;
+					break;
+				} else if (compaction.firstKeptEntryId !== undefined) {
+					const firstKeptSeq = await readCachedEntrySeq(
+						this.db,
+						this.metadata.id,
+						cached.branchId,
+						compaction.firstKeptEntryId,
+					);
+					pendingStop =
+						firstKeptSeq !== undefined && firstKeptSeq < compactionRow.entry_seq
+							? { id: compaction.firstKeptEntryId, seq: firstKeptSeq }
+							: undefined;
+				} else {
+					pendingStop = undefined;
+				}
+			}
+			if (startSeq === 0 && pendingStop) {
+				startSeq = pendingStop.seq;
+				expectedStartId = pendingStop.id;
+			}
+			const entries = decodeEntryRows(await readCachedBranchRows(this.db, this.metadata.id, cached, startSeq));
+			if (this.isValidCachedPath(entries, leafId, expectedStartId)) {
+				for (const entry of entries) this.byId.set(entry.id, entry);
+				return entries;
+			}
+		}
+
+		const entries = await this.repairBranchCache(leafId, cached?.branchId);
+		return this.trimPathToRootOrCompaction(entries);
+	}
+
+	private async repairBranchCache(leafId: string, branchIdToReplace?: string): Promise<SessionTreeEntry[]> {
+		const entries = await this.readCanonicalPathToRoot(leafId);
+		try {
+			await rebuildCachedBranch(this.db, this.metadata.id, leafId, branchIdToReplace);
+		} catch (error) {
+			if (error instanceof SessionError) throw error;
+			throw new SessionError("storage", `Failed to rebuild SQLite branch cache at entry ${leafId}`, toError(error));
+		}
+		return entries;
+	}
+
+	private async readCanonicalPathToRoot(leafId: string): Promise<SessionTreeEntry[]> {
+		const path: SessionTreeEntry[] = [];
+		let current = await this.readEntry(leafId);
+		if (!current) throw new SessionError("not_found", `Entry ${leafId} not found`);
+		const visited = new Set<string>();
+		while (current) {
+			if (visited.has(current.id)) throw invalidSession(`cycle in parent chain at entry ${current.id}`);
+			visited.add(current.id);
+			path.push(current);
 			if (!current.parentId) break;
-			const parent = await this.getEntry(current.parentId);
+			const parent = await this.readEntry(current.parentId);
 			if (!parent) throw new SessionError("invalid_session", `Entry ${current.parentId} not found`);
 			current = parent;
 		}
-		return path;
+		return path.reverse();
 	}
 
-	private async materializeBranch(leafId: string | null): Promise<void> {
-		const branchId = uuidv7();
-		// Rebuild the branch path only when branch membership changes: branch switch
-		// (leaf navigation) or a new fork from a parent that already has a child.
-		// Linear appends stay cheap and extend the active branch incrementally.
-		const path = await this.getPathToRootOrCompactionEntries(leafId);
-		const entryRowsById = await loadEntryRowsByIds(
-			this.db,
-			this.metadata.id,
-			path.map((entry) => entry.id),
-		);
-		for (const entry of path) {
-			const entryRow = entryRowsById.get(entry.id);
-			if (!entryRow) throw invalidSession(`missing entry row for session ${this.metadata.id} entry ${entry.id}`);
-			await this.db
-				.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-				.run(this.metadata.id, branchId, entry.id, entryRow.entry_seq);
+	private isValidCachedPath(
+		entries: readonly SessionTreeEntry[],
+		leafId: string,
+		expectedStartId: string | null,
+	): boolean {
+		if (entries.length === 0 || entries.at(-1)!.id !== leafId) return false;
+		if (expectedStartId === null ? entries[0]!.parentId !== null : entries[0]!.id !== expectedStartId) return false;
+		for (let index = 1; index < entries.length; index++) {
+			if (entries[index]!.parentId !== entries[index - 1]!.id) return false;
 		}
-		this.activeBranchId = branchId;
+		return true;
 	}
 
-	private async appendToActiveBranch(entryId: string, parentId: string | null): Promise<void> {
-		if (!this.activeBranchId) {
-			await this.materializeBranch(parentId);
+	private trimPathToRootOrCompaction(entries: readonly SessionTreeEntry[]): SessionTreeEntry[] {
+		const path: SessionTreeEntry[] = [];
+		let stopAtEntryId: string | null = null;
+		for (let index = entries.length - 1; index >= 0; index--) {
+			const entry = entries[index]!;
+			path.push(entry);
+			if (stopAtEntryId !== null && entry.id === stopAtEntryId) break;
+			if (entry.type === "compaction") {
+				if (entry.retainedTail) break;
+				stopAtEntryId = entry.firstKeptEntryId ?? null;
+			}
 		}
-		// After a branch is materialized/resynced, subsequent linear appends only add the
-		// new tip entry. We do not rebuild the full branch on every append.
-		if (!this.activeBranchId) {
-			throw invalidSession(`active branch missing for session ${this.metadata.id}`);
-		}
-		const entryRow = await this.db
-			.prepare("SELECT entry_seq FROM session_entries WHERE session_id = ? AND id = ?")
-			.get<{ entry_seq: number }>(this.metadata.id, entryId);
-		if (!entryRow) throw invalidSession(`missing entry row for session ${this.metadata.id} entry ${entryId}`);
-		await this.db
-			.prepare("INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq) VALUES (?, ?, ?, ?)")
-			.run(this.metadata.id, this.activeBranchId, entryId, entryRow.entry_seq);
+		return path.reverse();
 	}
 
 	private constructor(
 		db: SqliteDatabase,
 		metadata: SqliteSessionMetadata,
-		entries: SessionTreeEntry[] | null,
-		leafId: string | null,
-		activeBranchId: string | null,
 		materializedState: SessionMaterializedState,
 	) {
 		this.db = db;
 		this.metadata = metadata;
-		this.byId = new Map((entries ?? []).map((entry) => [entry.id, entry]));
+		this.byId = new Map<string, SessionTreeEntry>();
 		this.materializedState = materializedState;
-		this.labelsById = materializedState.labelsById;
-		this.currentLeafId = leafId;
-		this.activeBranchId = activeBranchId;
 	}
 
-	static async open(db: SqliteDatabase, metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
-		const loaded = await loadSqliteStorage(db, metadata.id);
-		return new SqliteSessionStorage(
-			db,
-			rowToMetadata(loaded.row, metadata.path),
-			null,
-			loaded.leafId,
-			loaded.activeBranchId,
-			loaded.materializedState,
-		);
+	static async open(db: SqliteDatabase, metadata: SqliteSessionMetadata): Promise<SqliteSessionConnection> {
+		const loaded = await loadSqliteSession(db, metadata.id);
+		return new SqliteSessionConnection(db, rowToMetadata(loaded.row, metadata.path), loaded.materializedState);
 	}
 
 	static async create(
@@ -220,7 +300,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			parentSessionId?: string;
 			metadata?: Record<string, unknown>;
 		},
-	): Promise<SqliteSessionStorage> {
+	): Promise<SqliteSessionConnection> {
 		const createdAt = new Date().toISOString();
 		await db
 			.prepare(
@@ -238,7 +318,7 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 		await db
 			.prepare("INSERT INTO session_materialized (session_id, payload) VALUES (?, ?)")
 			.run(...materializedStateValues(options.sessionId, createEmptyMaterializedState()));
-		return new SqliteSessionStorage(
+		return new SqliteSessionConnection(
 			db,
 			{
 				id: options.sessionId,
@@ -248,62 +328,57 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				parentSessionId: options.parentSessionId,
 				metadata: options.metadata,
 			},
-			[],
-			null,
-			null,
 			createEmptyMaterializedState(),
 		);
 	}
 
-	async getMetadata(): Promise<SqliteSessionMetadata> {
-		return this.metadata;
+	async getLabel(id: string): Promise<string | undefined> {
+		return this.materializedState.labelsById.get(id);
 	}
 
-	async getLeafId(): Promise<string | null> {
-		return this.currentLeafId;
+	async getName(): Promise<string | undefined> {
+		return this.materializedState.name;
 	}
 
-	async setLeafId(leafId: string | null): Promise<LeafEntry> {
-		if (leafId !== null && !(await this.getEntry(leafId))) {
-			throw new SessionError("not_found", `Entry ${leafId} not found`);
+	async getStats(): Promise<SessionStats> {
+		const { messageCount, cachedTokens, uncachedTokens, totalTokens, costTotal } = this.materializedState;
+		return { messageCount, cachedTokens, uncachedTokens, totalTokens, costTotal };
+	}
+
+	async readHead(): Promise<{ leafId: string | null }> {
+		const row = await this.db
+			.prepare(
+				`SELECT
+					s.active_leaf_id,
+					(s.active_leaf_id IS NULL OR EXISTS (
+						SELECT 1 FROM session_entries AS e WHERE e.session_id = s.id AND e.id = s.active_leaf_id
+					)) AS active_leaf_exists
+				FROM sessions AS s
+				WHERE s.id = ?`,
+			)
+			.get<{ active_leaf_id: string | null; active_leaf_exists: number }>(this.metadata.id);
+		if (!row) throw new SessionError("not_found", `Session not found: ${this.metadata.id}`);
+		if (row.active_leaf_exists === 0) {
+			throw new SessionError("invalid_session", `Entry ${row.active_leaf_id} not found`);
 		}
-		const entry: LeafEntry = {
-			type: "leaf",
-			id: await this.createEntryId(),
-			parentId: this.currentLeafId,
-			timestamp: new Date().toISOString(),
-			targetId: leafId,
-		};
-		await this.appendEntry(entry);
-		return entry;
+		return { leafId: row.active_leaf_id };
 	}
 
-	async createEntryId(): Promise<string> {
-		for (let i = 0; i < 100; i++) {
-			const id = generateEntryId(this.byId);
-			const existing = await this.db
-				.prepare("SELECT 1 AS found FROM session_entries WHERE session_id = ? AND id = ? LIMIT 1")
-				.get<{ found: number }>(this.metadata.id, id);
-			if (!existing) return id;
+	async appendEntry(entry: SessionTreeEntry, options: { transaction?: boolean } = {}): Promise<void> {
+		if (entry.type === "leaf" && entry.targetId !== null && !(await this.readEntry(entry.targetId))) {
+			throw new SessionError("not_found", `Entry ${entry.targetId} not found`);
 		}
-		return uuidv7();
-	}
-
-	async appendEntry(entry: SessionTreeEntry): Promise<void> {
 		const encoded = encodeEntry(entry);
-		const previousMaterializedState: SessionMaterializedState = {
+		const nextMaterializedState: SessionMaterializedState = {
 			...this.materializedState,
 			labelsById: new Map(this.materializedState.labelsById),
 			modelThinkingConfigs: [...this.materializedState.modelThinkingConfigs],
 			currentModel: this.materializedState.currentModel ? { ...this.materializedState.currentModel } : null,
 		};
-		const previousById = new Map(this.byId);
-		const previousLeafId = this.currentLeafId;
-		const previousActiveBranchId = this.activeBranchId;
+		const nextLeafId = leafIdAfterEntry(entry);
 		try {
-			applyEntryToMaterializedState(this.materializedState, entry);
-			await this.db.transaction(async () => {
-				const parentHadExistingChild = await hasExistingChild(this.db, this.metadata.id, entry.parentId);
+			applyEntryToMaterializedState(nextMaterializedState, entry);
+			const write = async () => {
 				const nextSeq = await getNextSequence(this.db, this.metadata.id);
 				await this.db
 					.prepare(
@@ -313,40 +388,37 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 				await advanceSequence(this.db, this.metadata.id, nextSeq);
 				await this.db
 					.prepare("UPDATE session_materialized SET payload = ? WHERE session_id = ?")
-					.run(serializeSummary(this.materializedState), this.metadata.id);
+					.run(serializeSummary(nextMaterializedState), this.metadata.id);
 				for (const materializedEntry of entryMaterializedValues(entry)) {
 					await this.db
 						.prepare("INSERT INTO entry_materialized (session_id, entry_seq, type, payload) VALUES (?, ?, ?, ?)")
 						.run(this.metadata.id, nextSeq, materializedEntry.type, materializedEntry.payload);
 				}
-				this.byId.set(entry.id, entry);
-				this.currentLeafId = leafIdAfterEntry(entry);
 				await this.db
 					.prepare("UPDATE sessions SET active_leaf_id = ? WHERE id = ?")
-					.run(this.currentLeafId, this.metadata.id);
-				if (entry.type === "leaf") {
-					this.activeBranchId = null;
-					await this.materializeBranch(entry.targetId);
-					await this.appendToActiveBranch(entry.id, entry.parentId);
-				} else {
-					if (parentHadExistingChild) {
-						await this.materializeBranch(entry.parentId);
-					}
-					await this.appendToActiveBranch(entry.id, entry.parentId);
-				}
-			});
+					.run(nextLeafId, this.metadata.id);
+				await appendEntryToBranchCache(
+					this.db,
+					this.metadata.id,
+					entry.id,
+					nextSeq,
+					entry.parentId,
+					async (parentId) => {
+						await this.repairBranchCache(parentId);
+					},
+				);
+			};
+			if (options.transaction === false) await write();
+			else await this.db.transaction(write);
+			this.materializedState = nextMaterializedState;
+			this.byId.set(entry.id, entry);
 		} catch (error) {
-			this.materializedState = previousMaterializedState;
-			this.labelsById = previousMaterializedState.labelsById;
-			this.byId = previousById;
-			this.currentLeafId = previousLeafId;
-			this.activeBranchId = previousActiveBranchId;
 			if (error instanceof SessionError) throw error;
-			throw new SessionError("storage", `Failed to append SQLite session entry ${entry.id}`);
+			throw new SessionError("storage", `Failed to append SQLite session entry ${entry.id}`, toError(error));
 		}
 	}
 
-	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {
+	async readEntry(id: string): Promise<SessionTreeEntry | undefined> {
 		const cached = this.byId.get(id);
 		if (cached) return cached;
 		const row = await this.db
@@ -359,92 +431,29 @@ export class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadat
 			const entry = decodeEntry(row);
 			this.byId.set(entry.id, entry);
 			return entry;
-		} catch {
-			return undefined;
+		} catch (error) {
+			throw invalidEntry(`failed to decode entry ${row.id}`, toError(error));
 		}
 	}
 
-	async findEntries<TType extends SessionTreeEntry["type"]>(
-		type: TType,
-	): Promise<Array<Extract<SessionTreeEntry, { type: TType }>>> {
-		const rows = await this.db
-			.prepare(
-				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND type = ? ORDER BY entry_seq",
-			)
-			.all<SessionEntryRow>(this.metadata.id, type);
-		const entries: Array<Extract<SessionTreeEntry, { type: TType }>> = [];
-		for (const row of rows) {
-			try {
-				const entry = decodeEntry(row) as Extract<SessionTreeEntry, { type: TType }>;
-				this.byId.set(entry.id, entry);
-				entries.push(entry);
-			} catch {
-				// Keep JSONL-like permissive resume behavior: skip malformed entries.
-			}
-		}
-		return entries;
-	}
-
-	async getLabel(id: string): Promise<string | undefined> {
-		return this.labelsById.get(id);
-	}
-
-	async getSessionName(): Promise<string | undefined> {
-		return this.materializedState.name;
-	}
-
-	async getSessionStats() {
-		return sessionStatsFromMaterializedState(this.materializedState);
-	}
-
-	async getPathToRootOrCompaction(leafId: string | null): Promise<SessionTreeEntry[]> {
-		if (leafId === null) return [];
-		if (leafId === this.currentLeafId) {
-			if (!this.activeBranchId) {
-				throw invalidSession(`missing active branch for session ${this.metadata.id} leaf ${leafId}`);
-			}
-			return getMaterializedBranchPathOrCompaction(this.db, this.metadata.id, this.activeBranchId, this.byId);
-		}
-		return this.getPathToRootOrCompactionEntries(leafId);
-	}
-
-	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		const limit = options?.limit;
-		if (limit !== undefined) {
-			const beforeOrAtEntrySeq =
-				options?.afterEntrySeq ??
-				(
-					await this.db
-						.prepare("SELECT entry_seq FROM session_entries WHERE session_id = ? ORDER BY entry_seq DESC LIMIT 1")
-						.get<{ entry_seq: number }>(this.metadata.id)
-				)?.entry_seq;
-			if (beforeOrAtEntrySeq === undefined) {
-				return [];
-			}
-			const rows = await this.db
-				.prepare(
-					"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq <= ? ORDER BY entry_seq DESC LIMIT ?",
-				)
-				.all<SessionEntryRow>(this.metadata.id, beforeOrAtEntrySeq, limit);
-			const entries = (await decodeEntryRows(rows)).entries;
-			for (const entry of entries) {
-				this.byId.set(entry.id, entry);
-			}
-			return entries.reverse();
-		}
-		const rows = await this.db
-			.prepare(
-				"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? ORDER BY entry_seq",
-			)
-			.all<SessionEntryRow>(this.metadata.id);
-		const entries = (await decodeEntryRows(rows)).entries;
+	async readEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		const afterEntrySeq = options?.afterEntrySeq ?? 0;
+		const rows =
+			options?.limit === undefined
+				? await this.db
+						.prepare(
+							"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq > ? ORDER BY entry_seq",
+						)
+						.all<SessionEntryRow>(this.metadata.id, afterEntrySeq)
+				: await this.db
+						.prepare(
+							"SELECT session_id, id, entry_seq, parent_id, type, timestamp, payload FROM session_entries WHERE session_id = ? AND entry_seq > ? ORDER BY entry_seq LIMIT ?",
+						)
+						.all<SessionEntryRow>(this.metadata.id, afterEntrySeq, options.limit);
+		const entries = decodeEntryRows(rows);
 		for (const entry of entries) {
 			this.byId.set(entry.id, entry);
 		}
 		return entries;
-	}
-
-	async cleanup(): Promise<void> {
-		await this.db.close();
 	}
 }

@@ -5,6 +5,7 @@ import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { renderLayoutFrame } from "../src/layout.ts";
+import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
 
 function visibleLines(lines: string[]): string[] {
@@ -28,6 +29,43 @@ describe("viewport layout", () => {
 			[1, 3],
 		);
 		assert.deepStrictEqual(visibleLines(frame.lines), ["top", "body", "", ""]);
+	});
+
+	it("does not render fixed-basis scroll content during stack measurement", () => {
+		let renderCount = 0;
+		const transcript = new ScrollView({
+			render: () => {
+				renderCount += 1;
+				return ["one", "two", "three"];
+			},
+			invalidate: () => {},
+		});
+		const root = new VStack([
+			{ component: transcript, basis: 0, grow: 1 },
+			{ component: new Text("dock", 0, 0), basis: "auto" },
+		]);
+		renderLayoutFrame(root, 10, 3, () => {});
+		assert.strictEqual(renderCount, 1);
+	});
+
+	it("paints only clipped rows from very large scroll content", () => {
+		const lineCount = 1_000_000_000;
+		const lines: string[] = [];
+		lines.length = lineCount;
+		lines[lineCount - 4] = "before";
+		lines[lineCount - 3] = "visible 1";
+		lines[lineCount - 2] = "visible 2";
+		lines[lineCount - 1] = "visible 3";
+		const transcript = new ScrollView(
+			{
+				render: () => lines,
+				invalidate: () => {},
+			},
+			{ follow: "end" },
+		);
+
+		const frame = renderLayoutFrame(transcript, 10, 3, () => {});
+		assert.deepStrictEqual(visibleLines(frame.lines), ["visible 1", "visible 2", "visible 3"]);
 	});
 
 	it("shrinks entries to their minimum sizes", () => {
@@ -57,6 +95,24 @@ describe("viewport layout", () => {
 			stack.render(10).map((line) => line.trimEnd()),
 			["one", "", "two"],
 		);
+	});
+
+	it("crops Kitty images at a scroll view's lower boundary", () => {
+		const imageId = 124;
+		const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+		registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+		const transcript = new ScrollView({
+			render: () => ["one", "two", imageLine, "", ""],
+			invalidate: () => {},
+		});
+		const frame = renderLayoutFrame(
+			new VStack([{ component: transcript, basis: 0, grow: 1 }, new Text("dock", 0, 0)]),
+			20,
+			4,
+			() => {},
+		);
+
+		assert.ok(frame.lines[2]?.includes("y=0,h=34,r=1"));
 	});
 
 	it("composes horizontal children at allocated widths", () => {
@@ -159,16 +215,14 @@ describe("viewport layout", () => {
 		);
 
 		const alwaysFitting = new ScrollView(fittingContent, { scrollbar: "always", scrollbarStyle });
-		assert.ok(
-			renderLayoutFrame(alwaysFitting, 6, 4, () => {}).lines.every((line) => !line.includes(scrollbarBackground)),
-		);
+		const alwaysFittingFrame = renderLayoutFrame(alwaysFitting, 6, 4, () => {});
+		assert.strictEqual(alwaysFittingFrame.root.children[0]?.rect.width, 5);
+		assert.ok(alwaysFittingFrame.lines.every((line) => line.includes(scrollbarBackground)));
 
 		const alwaysOverflowing = new ScrollView(content, { scrollbar: "always", scrollbarStyle });
-		assert.strictEqual(
-			renderLayoutFrame(alwaysOverflowing, 6, 4, () => {}).lines.filter((line) => line.includes(scrollbarBackground))
-				.length,
-			2,
-		);
+		const alwaysOverflowingFrame = renderLayoutFrame(alwaysOverflowing, 6, 4, () => {});
+		assert.strictEqual(alwaysOverflowingFrame.root.children[0]?.rect.width, 5);
+		assert.strictEqual(alwaysOverflowingFrame.lines.filter((line) => line.includes(scrollbarBackground)).length, 2);
 
 		const thumbHeightFor = (contentHeight: number) => {
 			const sized = new ScrollView(new Text(Array.from({ length: contentHeight }, () => "x").join("\n"), 0, 0), {
@@ -184,6 +238,19 @@ describe("viewport layout", () => {
 		assert.strictEqual(thumbHeightFor(40), 10);
 		assert.strictEqual(thumbHeightFor(100), 4);
 		assert.strictEqual(thumbHeightFor(400), 2);
+	});
+
+	it("updates reserved scrollbar layout at runtime", () => {
+		const scrollView = new ScrollView(new Text("123456", 0, 0), { scrollbar: "always" });
+		const render = () => renderLayoutFrame(new HStack([scrollView], { align: "start" }), 6, 2, () => {});
+		const always = render();
+		assert.deepStrictEqual(visibleLines(always.lines), ["12345", "6"]);
+		assert.strictEqual(always.root.children[0]?.rect.width, 6);
+		assert.strictEqual(always.root.children[0]?.children[0]?.rect.width, 5);
+
+		scrollView.setScrollbar("hidden");
+		assert.strictEqual(render().root.children[0]?.children[0]?.rect.width, 6);
+		assert.strictEqual(scrollView.isScrollbarVisible, false);
 	});
 
 	it("measures nested scroll content from constrained child geometry", () => {

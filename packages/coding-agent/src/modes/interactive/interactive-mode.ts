@@ -337,7 +337,7 @@ interface InteractiveTuiOptions {
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
-export function createInteractiveTui(options: InteractiveTuiOptions): TUI {
+export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
 	const terminal = options.terminal ?? new ProcessTerminal();
 	if (options.uiMode === "fullscreen") {
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, { openUrl: openBrowser });
@@ -347,10 +347,11 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TUI {
 
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
-	private ui: TUI;
+	private ui: TuiMainScreen | TuiAltScreen;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
 	private documentContainer: Container;
+	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
@@ -745,12 +746,12 @@ export class InteractiveMode {
 		// Populate stable regions before selecting the renderer-specific composition.
 		this.renderWidgets(); // Initialize with default spacer
 		if (TuiLayouts.isViewportTUI(this.ui)) {
-			const transcript = new TuiLayouts.ScrollView(this.documentContainer, {
+			this.transcriptScrollView = new TuiLayouts.ScrollView(this.documentContainer, {
 				follow: "end",
 				primary: true,
 				overscroll: "chain",
-				scrollbar: "auto",
-				scrollbarStyle: (text) => theme.bg("selectedBg", text),
+				scrollbar: this.settingsManager.getFullscreenScrollbar(),
+				scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
 			});
 			const dock = new TuiLayouts.VStack([
 				{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
@@ -762,7 +763,7 @@ export class InteractiveMode {
 			]);
 			this.ui.setLayoutRoot(
 				new TuiLayouts.VStack([
-					{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+					{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
 					{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 				]),
 			);
@@ -1769,8 +1770,13 @@ export class InteractiveMode {
 		this.showStartupNoticesIfNeeded();
 	}
 
+	private applyFullscreenScrollbarSetting(): void {
+		this.transcriptScrollView?.setScrollbar(this.settingsManager.getFullscreenScrollbar());
+	}
+
 	private applyRuntimeSettings(): void {
 		configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
+		this.applyFullscreenScrollbarSetting();
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
@@ -2668,7 +2674,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
-		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand());
+		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand({ flashConfirmation: true }));
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
@@ -4237,6 +4243,7 @@ export class InteractiveMode {
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					uiMode: this.settingsManager.getUiMode(),
+					fullscreenScrollbar: this.settingsManager.getFullscreenScrollbar(),
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
@@ -4380,6 +4387,10 @@ export class InteractiveMode {
 					onUiModeChange: (mode) => {
 						this.settingsManager.setUiMode(mode);
 						this.showStatus(`UI mode: ${mode} (restart required)`);
+					},
+					onFullscreenScrollbarChange: (mode) => {
+						this.settingsManager.setFullscreenScrollbar(mode);
+						this.applyFullscreenScrollbarSetting();
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -5452,7 +5463,6 @@ export class InteractiveMode {
 		try {
 			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
 			restoreChatBeforeSessionStart();
-			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {
@@ -5460,20 +5470,7 @@ export class InteractiveMode {
 			}
 			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 			await this.themeController.applyFromSettings();
-			const editorPaddingX = this.settingsManager.getEditorPaddingX();
-			const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
-			this.defaultEditor.setPaddingX(editorPaddingX);
-			this.defaultEditor.setAutocompleteMaxVisible(autocompleteMaxVisible);
-			if (this.editor !== this.defaultEditor) {
-				this.editor.setPaddingX?.(editorPaddingX);
-				this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
-			}
-			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
-			const clearOnShrink = this.settingsManager.getClearOnShrink();
-			this.ui.setClearOnShrink(clearOnShrink);
-			if (!clearOnShrink && !this.activeStatusIndicator) {
-				this.statusContainer.clear();
-			}
+			this.applyRuntimeSettings();
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
@@ -5684,7 +5681,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleCopyCommand(): Promise<void> {
+	private async handleCopyCommand(options: { flashConfirmation?: boolean } = {}): Promise<void> {
 		const text = this.session.getLastAssistantText();
 		if (!text) {
 			this.showError("No agent messages to copy yet.");
@@ -5693,7 +5690,11 @@ export class InteractiveMode {
 
 		try {
 			await copyToClipboard(text);
-			this.showStatus("Copied last agent message to clipboard");
+			if (options.flashConfirmation && this.ui.mode === "fullscreen") {
+				this.ui.flash("Copied!");
+			} else {
+				this.showStatus("Copied last agent message to clipboard");
+			}
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}

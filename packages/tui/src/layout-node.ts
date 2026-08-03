@@ -29,6 +29,7 @@ export interface ScrollLayoutState {
 	readonly primary: boolean;
 	readonly overscroll: "chain" | "contain";
 	readonly viewportHeight: number;
+	getContentWidth(width: number): number;
 	updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void;
 }
 

@@ -34,7 +34,7 @@
 		},
 		"colors": {
 			"type": "object",
-			"description": "Theme color definitions (thinkingMax is optional and falls back to thinkingXhigh)",
+			"description": "Theme color definitions (thinkingMax and scrollbarThumb are optional and use compatible fallbacks)",
 			"required": [
 				"accent",
 				"border",
@@ -136,6 +136,10 @@
 				"selectedBg": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Selected item background"
+				},
+				"scrollbarThumb": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Fullscreen scrollbar thumb background (falls back to selectedBg when omitted)"
 				},
 				"userMessageBg": {
 					"$ref": "#/$defs/colorValue",
