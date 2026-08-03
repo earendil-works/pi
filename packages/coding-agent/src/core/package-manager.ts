@@ -1745,9 +1745,11 @@ export class DefaultPackageManager implements PackageManager {
 	private getGitDependencyInstallArgs(): string[] {
 		const configuredCommand = this.settingsManager.getNpmCommand();
 		if (configuredCommand && configuredCommand.length > 0) {
-			return ["install"];
+			// Lifecycle scripts of untrusted dependency trees can run arbitrary code
+			// with the user's environment; skip them for managed installs.
+			return ["install", "--ignore-scripts"];
 		}
-		return ["install", "--omit=dev"];
+		return ["install", "--omit=dev", "--ignore-scripts"];
 	}
 
 	private runNpmCommandSync(args: string[]): string {
@@ -1761,8 +1763,10 @@ export class DefaultPackageManager implements PackageManager {
 		// Disable peer dependency resolution for managed installs (npm's --legacy-peer-deps, and
 		// equivalent bun/pnpm settings) so package managers do not install or solve host-provided
 		// @earendil-works/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
+		// Lifecycle scripts of untrusted dependency trees can run arbitrary code with the user's
+		// environment; skip them for managed installs.
 		if (packageManagerName === "bun") {
-			return ["install", ...specs, "--cwd", installRoot, "--omit=peer"];
+			return ["install", ...specs, "--cwd", installRoot, "--omit=peer", "--ignore-scripts"];
 		}
 		if (packageManagerName === "pnpm") {
 			return [
@@ -1773,9 +1777,10 @@ export class DefaultPackageManager implements PackageManager {
 				"--config.auto-install-peers=false",
 				"--config.strict-peer-dependencies=false",
 				"--config.strict-dep-builds=false",
+				"--ignore-scripts",
 			];
 		}
-		return ["install", ...specs, "--prefix", installRoot, "--legacy-peer-deps"];
+		return ["install", ...specs, "--prefix", installRoot, "--legacy-peer-deps", "--ignore-scripts"];
 	}
 
 	private async installNpm(source: NpmSource, scope: SourceScope, temporary: boolean): Promise<void> {
