@@ -103,6 +103,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		fireworks: "FIREWORKS_API_KEY",
 		together: "TOGETHER_API_KEY",
 		baseten: "BASETEN_API_KEY",
+		cortecs: "CORTECS_API_KEY",
 		opencode: "OPENCODE_API_KEY",
 		"opencode-go": "OPENCODE_API_KEY",
 		"kimi-coding": "KIMI_API_KEY",

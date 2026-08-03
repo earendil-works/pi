@@ -93,6 +93,7 @@ pi
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Baseten | `BASETEN_API_KEY` | `baseten` |
+| Cortecs | `CORTECS_API_KEY` | `cortecs` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
@@ -120,6 +121,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." },
   "together": { "type": "api_key", "key": "..." },
+  "cortecs": { "type": "api_key", "key": "..." },
   "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },
   "xiaomi": { "type": "api_key", "key": "..." },
@@ -178,6 +180,17 @@ The `key` field supports command execution, environment interpolation, and liter
 OAuth credentials are also stored here after `/login` and managed automatically.
 
 ## Cloud Providers
+
+### Cortecs
+
+Create an API key in the [Cortecs console](https://cortecs.ai), then authenticate with `/login cortecs` or set the environment variable:
+
+```bash
+export CORTECS_API_KEY=...
+pi --provider cortecs --model glm-5.2
+```
+
+Cortecs uses its OpenAI Responses-compatible endpoint. Pi includes the tool-capable models published by the Cortecs model catalog.
 
 ### Azure OpenAI
 

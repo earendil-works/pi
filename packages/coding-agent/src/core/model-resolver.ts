@@ -40,6 +40,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	fireworks: "accounts/fireworks/models/kimi-k2p6",
 	together: "moonshotai/Kimi-K2.6",
 	baseten: "zai-org/GLM-5.2",
+	cortecs: "glm-5.2",
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k2.6",
 	"kimi-coding": "kimi-for-coding",

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Cortecs as a built-in OpenAI Responses-compatible provider with `CORTECS_API_KEY` authentication and models.dev catalog generation.
 - Added Baseten as a built-in OpenAI-compatible provider with models.dev catalog generation and native `chat_template_args` reasoning controls.
 
 ### Fixed

@@ -9,6 +9,7 @@
 
 ### Added
 
+- Added built-in Cortecs provider support with `CORTECS_API_KEY` authentication and `kimi-k2.6` as the default model.
 - Added built-in Baseten provider support with `BASETEN_API_KEY` authentication and `zai-org/GLM-5.2` as the default model.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).

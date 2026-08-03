@@ -1185,6 +1185,38 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	return models;
 }
 
+function processCortecsModels(provider: ModelsDevProvider | undefined): Model<"openai-responses">[] {
+	if (!provider?.models) return [];
+
+	const models: Model<"openai-responses">[] = [];
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		if (model.tool_call !== true || model.status === "deprecated") continue;
+		if (!model.modalities?.input?.includes("text") || !model.modalities.output?.includes("text")) continue;
+
+		models.push({
+			id: modelId,
+			name: model.name || modelId,
+			api: "openai-responses",
+			provider: "cortecs",
+			baseUrl: "https://api.cortecs.ai/v1",
+			reasoning: model.reasoning === true,
+			input: model.modalities.input.includes("image") ? ["text", "image"] : ["text"],
+			cost: {
+				input: model.cost?.input || 0,
+				output: model.cost?.output || 0,
+				cacheRead: model.cost?.cache_read || 0,
+				cacheWrite: model.cost?.cache_write || 0,
+			},
+			contextWindow: model.limit?.context || 4096,
+			maxTokens: model.limit?.output || 4096,
+			compat: { supportsLongCacheRetention: false },
+		});
+		recordModelsDevReasoningOptions("cortecs", modelId, model);
+	}
+
+	return models;
+}
+
 async function loadModelsDevData(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from models.dev API...");
@@ -1744,6 +1776,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		models.push(...processBasetenModels(data.baseten));
+		models.push(...processCortecsModels(data.cortecs));
 
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:
