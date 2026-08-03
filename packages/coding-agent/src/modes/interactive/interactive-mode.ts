@@ -3048,9 +3048,14 @@ export class InteractiveMode {
 				// before reaching InteractiveMode; skip here so only the chat tool card stops
 				// consuming these structured progress updates, while plain partial content
 				// (and the input-area widget fed by the links event handler) is unaffected.
+				const gls = event.partialResult?.details?.graphLoopStep;
 				const isGraphProgressUpdate =
 					event.toolName === "graph_compose" &&
-					typeof event.partialResult?.details?.progress === "string";
+					(typeof event.partialResult?.details?.progress === "string" ||
+						(gls != null &&
+							typeof gls === "object" &&
+							typeof (gls as any).step === "number" &&
+							typeof (gls as any).total === "number"));
 				if (component && !isGraphProgressUpdate) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
 					this.ui.requestRender();
