@@ -40,7 +40,7 @@ export interface ActiveToolsChangeEntry extends EntryBase {
 export interface CompactionEntry extends EntryBase {
 	type: "compaction";
 	summary: string;
-	firstKeptEntryId?: string;
+	retainedTail: AgentMessage[];
 	tokensBefore: number;
 	details?: unknown;
 	usage?: Usage;

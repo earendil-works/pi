@@ -137,7 +137,10 @@ describe("InMemorySessionStorage", () => {
 		const storage = createStorage();
 		await storage.appendEntry({ type: "message", id: "root", message: createUserMessage("root") }, "main");
 		await storage.appendEntry({ type: "custom", id: "old-note", customType: "note", data: 1 }, "main");
-		await storage.appendEntry({ type: "compaction", id: "compact", summary: "summary", tokensBefore: 10 }, "main");
+		await storage.appendEntry(
+			{ type: "compaction", id: "compact", summary: "summary", retainedTail: [], tokensBefore: 10 },
+			"main",
+		);
 		await storage.appendEntry({ type: "custom", id: "new-note", customType: "note", data: 2 }, "main");
 		await storage.appendEntry({ type: "message", id: "tail", message: createAssistantMessage("tail") }, "main");
 
