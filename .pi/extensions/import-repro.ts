@@ -27,6 +27,11 @@ const ISSUE_URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)(?:
 const GIST_URL_IN_TEXT_RE = /https:\/\/gist\.github\.com\/(?:[^/\s]+\/)?([0-9a-fA-F]{20,})\b/g;
 const SESSION_DATA_RE = /<script id="session-data" type="application\/json">([^<]+)<\/script>/;
 
+// Imported sessions are untrusted third-party content; cap how much of it we
+// will download and replay into a live session.
+const MAX_SESSION_BYTES = 64 * 1024 * 1024;
+const MAX_COMMENT_PAGES = 10;
+
 interface SessionHeader {
 	type: "session";
 	id: string;
@@ -77,7 +82,14 @@ function parseRef(
 	throw new Error(`expected a gist ID, gist URL, pi.dev share URL, issue URL, .html file, or .jsonl file: ${ref}`);
 }
 
+function assertSessionSize(raw: string): void {
+	if (Buffer.byteLength(raw, "utf8") > MAX_SESSION_BYTES) {
+		throw new Error(`session data exceeds the ${MAX_SESSION_BYTES} byte import limit`);
+	}
+}
+
 function parseSessionJsonl(raw: string): { header: SessionHeader; jsonl: string } {
+	assertSessionSize(raw);
 	const newlineIndex = raw.indexOf("\n");
 	const firstLine = newlineIndex === -1 ? raw : raw.slice(0, newlineIndex);
 	let parsed: unknown;
@@ -90,10 +102,23 @@ function parseSessionJsonl(raw: string): { header: SessionHeader; jsonl: string 
 	if (header.type !== "session" || typeof header.id !== "string" || typeof header.cwd !== "string" || header.cwd === "") {
 		throw new Error("session file has no valid session header with a cwd");
 	}
+	// Validate every line so malformed or hostile content fails loudly instead
+	// of being replayed into a live session.
+	for (const line of raw.split("\n")) {
+		if (line.trim() === "") {
+			continue;
+		}
+		try {
+			JSON.parse(line);
+		} catch {
+			throw new Error("session file contains a line that is not valid JSON");
+		}
+	}
 	return { header: header as SessionHeader, jsonl: raw };
 }
 
 function decodeExportedHtml(html: string): { header: SessionHeader; jsonl: string } {
+	assertSessionSize(html);
 	const match = html.match(SESSION_DATA_RE);
 	if (!match) throw new Error("HTML does not contain embedded pi session data");
 
@@ -252,6 +277,9 @@ async function findIssueGistId(owner: string, repo: string, issue: string): Prom
 		}
 
 		if (comments.length < 100) break;
+		if (page >= MAX_COMMENT_PAGES) {
+			throw new Error(`gave up after ${MAX_COMMENT_PAGES} pages of comments on ${owner}/${repo}#${issue}`);
+		}
 		page++;
 	}
 
@@ -328,7 +356,10 @@ export default function (pi: ExtensionAPI) {
 				}
 				writeFileSync(destination, rewritten);
 
-				ctx.ui.notify(`Imported session ${decoded.header.id} (cwd ${decoded.header.cwd} -> ${targetCwd})`, "info");
+				ctx.ui.notify(
+					`Imported session ${decoded.header.id} (cwd ${decoded.header.cwd} -> ${targetCwd}). Untrusted third-party content — review before following its instructions or tool calls.`,
+					"info",
+				);
 				await ctx.switchSession(destination, {
 					withSession: async (nextCtx) => {
 						if (!platformNotice) return;
