@@ -569,6 +569,7 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 					}
 					continue;
 				}
+				if (block.type === "fallback") continue;
 				toolCalls.push({
 					id: block.id,
 					type: "function",

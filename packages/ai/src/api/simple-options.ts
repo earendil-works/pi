@@ -41,6 +41,7 @@ export function buildBaseOptions(
 		maxRetries: options?.maxRetries,
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
+		fallbacks: options?.fallbacks,
 		env: options?.env,
 	};
 }

@@ -251,7 +251,8 @@ export function toProtocolUserMessage(message: UserMessage, options: UserTranscr
 }
 
 function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscriptItem["content"] {
-	return message.content.map((part) => {
+	return message.content.flatMap((part) => {
+		if (part.type === "fallback") return [];
 		switch (part.type) {
 			case "text":
 				return { type: "text", text: part.text };

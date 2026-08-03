@@ -191,6 +191,12 @@ export interface StreamOptions {
 	 */
 	metadata?: Record<string, unknown>;
 	/**
+	 * Opt in to Anthropic server-side fallback (beta `server-side-fallback-2026-07-01`).
+	 * `"default"` lets Anthropic pick an eligible model by refusal category; an explicit
+	 * array names the allowed models in order. Anthropic-only; other providers ignore it.
+	 */
+	fallbacks?: "default" | string[];
+	/**
 	 * Provider-scoped environment values. These take precedence over process.env for
 	 * provider configuration such as regional settings, endpoint placeholders, and
 	 * proxy variables.
@@ -366,6 +372,14 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+/** Anthropic server-side fallback transition in an assistant response. */
+export interface FallbackContent {
+	type: "fallback";
+	from: { model: string };
+	to: { model: string };
+	trigger: { type: "refusal"; category: string };
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -399,7 +413,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | FallbackContent)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
