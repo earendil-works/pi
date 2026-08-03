@@ -6,7 +6,6 @@ import {
 	type EntryOrder,
 	type EntryQuery,
 	type ForkOptions,
-	type LaneMove,
 	type LanePointer,
 	type LaneRecord,
 	type LogItem,
@@ -148,22 +147,14 @@ export class InMemorySessionStorage implements SessionStorage {
 		return structuredClone(entry);
 	}
 
-	async appendRecord(newRecord: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord> {
+	async appendRecord(newRecord: NewRecord): Promise<LaneRecord> {
 		this.requireLane(newRecord.lane);
 		this.validateUnusedId(newRecord.id);
-		const moveLane = options?.moveLane;
-		if (moveLane !== undefined) {
-			if (moveLane.lane !== newRecord.lane) {
-				throw new SessionError("invalid_lane", "A record can only move its own lane");
-			}
-			this.validateTarget(moveLane.to);
-		}
 		const clonedRecord = structuredClone(newRecord);
 		const record = provisionRecord(clonedRecord, this.nextSequence());
 		this.usedIds.add(record.id);
 		this.records.push(record);
-		if (moveLane !== undefined) this.lanes.set(moveLane.lane, moveLane.to);
-		this.log.push({ kind: "record", seq: record.seq, record, moveLane: structuredClone(moveLane) });
+		this.log.push({ kind: "record", seq: record.seq, record });
 		return structuredClone(record);
 	}
 

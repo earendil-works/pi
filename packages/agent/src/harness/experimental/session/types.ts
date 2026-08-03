@@ -246,14 +246,9 @@ export interface LanePointer {
 	leafId: string | null;
 }
 
-export interface LaneMove {
-	lane: string;
-	to: string | null;
-}
-
 export type LogItem =
 	| { kind: "entry"; seq: number; lane: string; entry: Entry }
-	| { kind: "record"; seq: number; record: LaneRecord; moveLane?: LaneMove }
+	| { kind: "record"; seq: number; record: LaneRecord }
 	| { kind: "lane"; seq: number; lane: string; action: "create" | "move"; leafId: string | null }
 	| { kind: "fact"; seq: number; fact: "name"; name: string }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
@@ -273,7 +268,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 
 	// Entries and Records
 	appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry>;
-	appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord>;
+	appendRecord(record: NewRecord): Promise<LaneRecord>;
 
 	// Reads
 	getEntry(id: string): Promise<Entry | undefined>;

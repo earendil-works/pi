@@ -71,32 +71,33 @@ describe("InMemorySessionStorage", () => {
 		]);
 	});
 
-	it("atomically appends a record and moves a lane", async () => {
+	it("commits records and lane moves as separate mutations", async () => {
 		const storage = createStorage();
-		await storage.appendEntry({ type: "message", id: "root", message: createUserMessage("root") }, "main");
-		const finished = await storage.appendRecord(
-			{
-				type: "operation_finished",
-				id: "finish",
-				lane: "main",
-				runId: "run",
-				outcome: "completed",
-			},
-			{ moveLane: { lane: "main", to: null } },
+		const root = await storage.appendEntry(
+			{ type: "message", id: "root", message: createUserMessage("root") },
+			"main",
 		);
+		const finished = await storage.appendRecord({
+			type: "operation_finished",
+			id: "finish",
+			lane: "main",
+			runId: "run",
+			outcome: "completed",
+		});
 
 		expect(finished.seq).toBe(2);
+		expect(await storage.getLanes()).toEqual([{ lane: "main", leafId: "root" }]);
+		await storage.moveLane("main", null);
 		expect(await storage.getLanes()).toEqual([{ lane: "main", leafId: null }]);
 		expect(await storage.getLog()).toEqual([
-			expect.objectContaining({ kind: "entry", seq: 1 }),
-			expect.objectContaining({ kind: "record", seq: 2, moveLane: { lane: "main", to: null } }),
+			{ kind: "entry", seq: 1, lane: "main", entry: root },
+			{ kind: "record", seq: 2, record: finished },
+			{ kind: "lane", seq: 3, lane: "main", action: "move", leafId: null },
 		]);
 
-		await expect(
-			storage.appendRecord(operationStarted("bad"), { moveLane: { lane: "main", to: "missing" } }),
-		).rejects.toMatchObject({ code: "not_found" });
+		await expect(storage.moveLane("main", "missing")).rejects.toMatchObject({ code: "not_found" });
 		expect(await storage.findRecords()).toHaveLength(1);
-		expect((await storage.getLog()).map((item) => item.seq)).toEqual([1, 2]);
+		expect((await storage.getLog()).map((item) => item.seq)).toEqual([1, 2, 3]);
 	});
 
 	it("rejects duplicate ids across entries and records without changing state", async () => {

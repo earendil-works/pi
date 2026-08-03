@@ -5,7 +5,6 @@ import type {
 	Entry,
 	EntryQuery,
 	IdGenerator,
-	LaneMove,
 	LanePointer,
 	LaneRecord,
 	LogItem,
@@ -186,8 +185,8 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return this.storage.appendEntry(entry, lane);
 	}
 
-	async appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord> {
-		return this.storage.appendRecord(record, options);
+	async appendRecord(record: NewRecord): Promise<LaneRecord> {
+		return this.storage.appendRecord(record);
 	}
 
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
