@@ -16,7 +16,7 @@ import {
 	type SessionCreateOptions,
 	SessionError,
 	type SessionMetadata,
-	type SessionRepository,
+	type SessionRepo,
 	type SessionStats,
 	type SessionStorage,
 } from "./types.ts";
@@ -323,7 +323,7 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 }
 
-export class InMemorySessionRepository implements SessionRepository {
+export class InMemorySessionRepo implements SessionRepo {
 	private readonly sessions = new Map<string, InMemorySessionStorage>();
 
 	async create(options: SessionCreateOptions = {}): Promise<Session> {

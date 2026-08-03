@@ -1,8 +1,8 @@
-import type { SessionRepository } from "../types.ts";
+import type { SessionRepo } from "../types.ts";
 
 /** A fresh backend instance owned by one conformance case. */
 export interface SessionBackendFixture extends AsyncDisposable {
-	readonly repository: SessionRepository;
+	readonly repository: SessionRepo;
 }
 
 /** Creates an isolated fixture for one conformance case. */

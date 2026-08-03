@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemorySessionRepository, InMemorySessionStorage, Session } from "../../../../src/experimental.ts";
+import { InMemorySessionRepo, InMemorySessionStorage, Session } from "../../../../src/experimental.ts";
 import {
 	createSessionBackendConformance,
 	type SessionBackendFixture,
@@ -7,12 +7,12 @@ import {
 
 const conformance = createSessionBackendConformance(() =>
 	Promise.resolve<SessionBackendFixture>({
-		repository: new InMemorySessionRepository(),
+		repository: new InMemorySessionRepo(),
 		[Symbol.asyncDispose]: () => Promise.resolve(),
 	}),
 );
 
-describe("InMemorySessionRepository conformance", () => {
+describe("InMemorySessionRepo conformance", () => {
 	for (const group of new Set(conformance.map((testCase) => testCase.group))) {
 		describe(group, () => {
 			for (const testCase of conformance.filter((candidate) => candidate.group === group)) {

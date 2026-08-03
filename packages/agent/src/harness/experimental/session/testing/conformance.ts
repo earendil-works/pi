@@ -1,6 +1,6 @@
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import type { AgentMessage } from "../../../../types.ts";
-import type { CustomEntry, Entry, MessageEntry, NewRecord, SessionErrorCode, SessionRepository } from "../types.ts";
+import type { CustomEntry, Entry, MessageEntry, NewRecord, SessionErrorCode, SessionRepo } from "../types.ts";
 import type { SessionBackendConformanceCase, SessionBackendFixtureFactory } from "./types.ts";
 
 function createUserMessage(text: string): AgentMessage {
@@ -53,7 +53,7 @@ async function rejectsWithCode(operation: Promise<unknown>, code: SessionErrorCo
 	);
 }
 
-type ConformanceTest = (repository: SessionRepository) => Promise<void>;
+type ConformanceTest = (repository: SessionRepo) => Promise<void>;
 
 function createCase(
 	factory: SessionBackendFixtureFactory,

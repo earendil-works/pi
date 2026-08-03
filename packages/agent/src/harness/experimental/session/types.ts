@@ -309,7 +309,7 @@ export interface SessionCreateOptions {
 
 export type ForkOptions = { scope?: "branch"; entryId?: string; position?: "before" | "at" } | { scope: "tree" };
 
-export interface SessionRepository<
+export interface SessionRepo<
 	TMetadata extends SessionMetadata = SessionMetadata,
 	TCreateOptions extends SessionCreateOptions = SessionCreateOptions,
 	TListOptions = void,
