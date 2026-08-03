@@ -4,6 +4,7 @@ import {
 	type Entry,
 	InMemorySessionRepository,
 	InMemorySessionStorage,
+	type MessageEntry,
 	type NewRecord,
 	Session,
 	type SessionMetadata,
@@ -329,6 +330,33 @@ describe("Session", () => {
 		expect(entry.customType).toBe("note");
 		expect(entry).toMatchObject({ id: "provisioned", parentId: null, seq: 1 });
 		expect(await session.getLeafId()).toBe("provisioned");
+	});
+
+	it("persists tool-result termination decisions", async () => {
+		const session = new Session(createStorage());
+		const entry = await session.appendEntry<MessageEntry>(
+			{
+				type: "message",
+				id: "tool-result",
+				message: {
+					role: "toolResult",
+					toolCallId: "call-1",
+					toolName: "example",
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+					timestamp: 1,
+				},
+				terminate: true,
+			},
+			"main",
+		);
+
+		expect(entry.terminate).toBe(true);
+		const stored = await session.getEntry(entry.id);
+		if (stored?.type !== "message") throw new Error("Expected message entry");
+		expect(stored.terminate).toBe(true);
+		expect(await session.findEntries()).toEqual([entry]);
+		expect(await session.getLog()).toEqual([{ kind: "entry", seq: entry.seq, lane: "main", entry }]);
 	});
 
 	it("serializes concurrent lane writes through storage-owned parents", async () => {

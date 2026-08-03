@@ -19,6 +19,7 @@ export interface EntryBase {
 export interface MessageEntry extends EntryBase {
 	type: "message";
 	message: AgentMessage;
+	terminate?: true;
 }
 
 export interface ModelChangeEntry extends EntryBase {
