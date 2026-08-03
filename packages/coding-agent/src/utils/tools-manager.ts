@@ -1,6 +1,16 @@
+import { createHash } from "node:crypto";
 import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
-import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
+import {
+	chmodSync,
+	createReadStream,
+	createWriteStream,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+} from "fs";
 import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
@@ -24,6 +34,12 @@ interface ToolConfig {
 	systemBinaryNames?: string[]; // Alternative system command names to try before downloading
 	tagPrefix: string; // Prefix for tags (e.g., "v" for v1.0.0, "" for 1.0.0)
 	getAssetName: (version: string, plat: string, architecture: string) => string | null;
+	/** Fixed version to download instead of resolving "latest" (reproducibility). */
+	pinnedVersion?: string;
+	/** SHA-256 of the release archive per `${plat}/${architecture}` (verification). */
+	checksums?: Record<string, string>;
+	/** If the release ships `<asset><checksumSuffix>` checksum files, verify against them. */
+	checksumSuffix?: string;
 }
 
 const TOOLS: Record<string, ToolConfig> = {
@@ -33,6 +49,17 @@ const TOOLS: Record<string, ToolConfig> = {
 		binaryName: "fd",
 		systemBinaryNames: ["fd", "fdfind"],
 		tagPrefix: "v",
+		// fd dropped x86_64 darwin builds after 10.3.0, so the version is pinned to
+		// a release that covers every platform with a known SHA-256.
+		pinnedVersion: "10.3.0",
+		checksums: {
+			"darwin/aarch64": "0570263812089120bc2a5d84f9e65cd0c25e4a4d724c80075c357239c74ae904",
+			"darwin/x64": "50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3",
+			"linux/aarch64": "66f297e404400a3358e9a0c0b2f3f4725956e7e4435427a9ae56e22adbe73a68",
+			"linux/x64": "c3c2bc79f838e780173fc8f18b337ec273e7ba17c7ff8f551be29fc3c19b7916",
+			"win32/aarch64": "bf9b1e31bcac71c1e95d49c56f0d872f525b95d03854e94b1d4dd6786f825cc5",
+			"win32/x64": "318aa2a6fa664325933e81fda60d523fff29444129e91ebf0726b5b3bcd8b059",
+		},
 		getAssetName: (version, plat, architecture) => {
 			if (plat === "darwin") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
@@ -52,6 +79,8 @@ const TOOLS: Record<string, ToolConfig> = {
 		repo: "BurntSushi/ripgrep",
 		binaryName: "rg",
 		tagPrefix: "",
+		// ripgrep ships a `<asset>.sha256` file next to every release asset.
+		checksumSuffix: ".sha256",
 		getAssetName: (version, plat, architecture) => {
 			if (plat === "darwin") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
@@ -127,13 +156,26 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 	if (!response.ok) {
 		throw new Error(`Failed to download: ${response.status}`);
 	}
-
 	if (!response.body) {
 		throw new Error("No response body");
 	}
 
 	const fileStream = createWriteStream(dest);
 	await pipeline(Readable.fromWeb(response.body as any), fileStream);
+}
+
+async function verifySha256(filePath: string, expectedHex: string, assetName: string): Promise<void> {
+	const hash = createHash("sha256");
+	await new Promise<void>((resolve, reject) => {
+		const stream = createReadStream(filePath);
+		stream.on("data", (chunk) => hash.update(chunk));
+		stream.on("end", () => resolve());
+		stream.on("error", reject);
+	});
+	const actualHex = hash.digest("hex");
+	if (actualHex !== expectedHex.toLowerCase()) {
+		throw new Error(`Checksum mismatch for ${assetName}: expected ${expectedHex}, got ${actualHex}`);
+	}
 }
 
 function findBinaryRecursively(rootDir: string, binaryFileName: string): string | null {
@@ -245,11 +287,8 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	const plat = platform();
 	const architecture = arch();
 
-	// Get latest version
-	let version = await getLatestVersion(config.repo);
-	if (tool === "fd" && plat === "darwin" && architecture === "x64") {
-		version = "10.3.0";
-	}
+	// Get latest version (or the pinned one for reproducible downloads)
+	const version = config.pinnedVersion ?? (await getLatestVersion(config.repo));
 
 	// Get asset name for this platform
 	const assetName = config.getAssetName(version, plat, architecture);
@@ -267,6 +306,32 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 
 	// Download
 	await downloadFile(downloadUrl, archivePath);
+
+	// Verify the archive's SHA-256 before extraction so a tampered or
+	// misdirected download is never executed.
+	if (config.checksums) {
+		const expectedHex = config.checksums[`${plat}/${architecture}`];
+		if (!expectedHex) {
+			rmSync(archivePath, { force: true });
+			throw new Error(`No checksum configured for ${tool} on ${plat}/${architecture}`);
+		}
+		await verifySha256(archivePath, expectedHex, assetName);
+	} else if (config.checksumSuffix) {
+		const checksumUrl = `${downloadUrl}${config.checksumSuffix}`;
+		const checksumResponse = await fetch(checksumUrl, {
+			signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+		});
+		if (!checksumResponse.ok) {
+			rmSync(archivePath, { force: true });
+			throw new Error(`Failed to fetch checksum (${checksumResponse.status}): ${checksumUrl}`);
+		}
+		const expectedHex = (await checksumResponse.text()).trim().split(/\s+/)[0];
+		if (!expectedHex) {
+			rmSync(archivePath, { force: true });
+			throw new Error(`Empty checksum from ${checksumUrl}`);
+		}
+		await verifySha256(archivePath, expectedHex, assetName);
+	}
 
 	// Extract into a unique temp directory. fd and rg downloads can run concurrently
 	// during startup, so sharing a fixed directory causes races.
