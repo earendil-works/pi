@@ -8,6 +8,7 @@ import {
 	type ForkOptions,
 	type LaneMove,
 	type LanePointer,
+	type LaneRecord,
 	type LogItem,
 	type LogOptions,
 	type NewRecord,
@@ -16,7 +17,6 @@ import {
 	type SessionCreateOptions,
 	SessionError,
 	type SessionMetadata,
-	type SessionRecord,
 	type SessionRepository,
 	type SessionStats,
 	type SessionStorage,
@@ -45,9 +45,9 @@ function provisionEntry<TEntry extends Entry>(
 	return { ...newEntry, parentId, seq, timestamp: Date.now() } as unknown as TEntry;
 }
 
-function provisionRecord(newRecord: NewRecord, seq: number): SessionRecord {
+function provisionRecord(newRecord: NewRecord, seq: number): LaneRecord {
 	// Object spread does not preserve the correlation between a discriminant and the rest of a union member.
-	return { ...newRecord, seq, timestamp: Date.now() } as SessionRecord;
+	return { ...newRecord, seq, timestamp: Date.now() } as LaneRecord;
 }
 
 export class InMemorySessionStorage implements SessionStorage {
@@ -57,7 +57,7 @@ export class InMemorySessionStorage implements SessionStorage {
 	private readonly entries: Entry[] = [];
 	private readonly entriesById = new Map<string, Entry>();
 	private readonly laneByEntryId = new Map<string, string>();
-	private readonly records: SessionRecord[] = [];
+	private readonly records: LaneRecord[] = [];
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
 	private name: string | undefined;
@@ -148,7 +148,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		return structuredClone(entry);
 	}
 
-	async appendRecord(newRecord: NewRecord, options?: { moveLane?: LaneMove }): Promise<SessionRecord> {
+	async appendRecord(newRecord: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord> {
 		this.requireLane(newRecord.lane);
 		this.validateUnusedId(newRecord.id);
 		const moveLane = options?.moveLane;
@@ -203,10 +203,10 @@ export class InMemorySessionStorage implements SessionStorage {
 		return structuredClone(results);
 	}
 
-	async findRecords(query: RecordQuery = {}): Promise<SessionRecord[]> {
+	async findRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
 		assertValidLimit(query.limit);
 		if (query.afterSeq !== undefined) this.validateCursor(query.afterSeq);
-		const results: SessionRecord[] = [];
+		const results: LaneRecord[] = [];
 		for (const record of ordered(this.records, query.order)) {
 			if (!this.matchesRecordQuery(record, query)) continue;
 			results.push(record);
@@ -339,7 +339,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		);
 	}
 
-	private matchesRecordQuery(record: SessionRecord, query: RecordQuery): boolean {
+	private matchesRecordQuery(record: LaneRecord, query: RecordQuery): boolean {
 		return (
 			(query.lane === undefined || record.lane === query.lane) &&
 			(query.type === undefined || record.type === query.type) &&

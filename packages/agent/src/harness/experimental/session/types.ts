@@ -81,7 +81,7 @@ export interface RecordBase {
 	timestamp: number;
 }
 
-export interface OperationStartedRecord extends RecordBase {
+export interface OperationStarted extends RecordBase {
 	type: "operation_started";
 	sourceLeafId: string | null;
 	intent:
@@ -109,13 +109,13 @@ export interface OperationStartedRecord extends RecordBase {
 		  };
 }
 
-export interface AbortRequestedRecord extends RecordBase {
+export interface AbortRequested extends RecordBase {
 	type: "abort_requested";
 	runId: string;
 	reason: "user" | "shutdown";
 }
 
-export interface OperationFinishedRecord extends RecordBase {
+export interface OperationFinished extends RecordBase {
 	type: "operation_finished";
 	runId: string;
 	outcome: "completed" | "aborted" | "failed" | "declined";
@@ -124,7 +124,7 @@ export interface OperationFinishedRecord extends RecordBase {
 
 export type CompactionReason = "manual" | "threshold" | "overflow";
 
-export type TaskAttemptRecord = RecordBase &
+export type TaskAttempt = RecordBase &
 	(
 		| {
 				type: "task_attempt";
@@ -143,7 +143,7 @@ export type TaskAttemptRecord = RecordBase &
 		  }
 	);
 
-export interface ToolStartedRecord extends RecordBase {
+export interface ToolStarted extends RecordBase {
 	type: "tool_started";
 	runId: string;
 	assistantEntryId: string;
@@ -155,7 +155,7 @@ export interface ToolStartedRecord extends RecordBase {
 	replay: "never" | "safe";
 }
 
-export type QueueEnqueuedRecord = RecordBase &
+export type QueueEnqueued = RecordBase &
 	(
 		| {
 				type: "queue_enqueued";
@@ -171,23 +171,29 @@ export type QueueEnqueuedRecord = RecordBase &
 		  }
 	);
 
-export interface WriteDeferredRecord extends RecordBase {
+export interface QueueCancelled extends RecordBase {
+	type: "queue_cancelled";
+	runId?: string;
+	entryId: string;
+}
+
+export interface WriteDeferred extends RecordBase {
 	type: "write_deferred";
 	runId: string;
 	target: ProvisionedEntry;
 }
 
-export type SessionRecord =
-	| OperationStartedRecord
-	| AbortRequestedRecord
-	| OperationFinishedRecord
-	| TaskAttemptRecord
-	| ToolStartedRecord
-	| QueueEnqueuedRecord
-	| WriteDeferredRecord;
-export type Record = SessionRecord;
-export type NewRecord = SessionRecord extends infer TRecord
-	? TRecord extends SessionRecord
+export type LaneRecord =
+	| OperationStarted
+	| AbortRequested
+	| OperationFinished
+	| TaskAttempt
+	| ToolStarted
+	| QueueEnqueued
+	| QueueCancelled
+	| WriteDeferred;
+export type NewRecord = LaneRecord extends infer TRecord
+	? TRecord extends LaneRecord
 		? Omit<TRecord, "seq" | "timestamp">
 		: never
 	: never;
@@ -214,7 +220,7 @@ export interface BranchBounds {
 
 export interface RecordQuery {
 	lane?: string;
-	type?: SessionRecord["type"];
+	type?: LaneRecord["type"];
 	runId?: string;
 	afterSeq?: number;
 	order?: EntryOrder;
@@ -247,7 +253,7 @@ export interface LaneMove {
 
 export type LogItem =
 	| { kind: "entry"; seq: number; lane: string; entry: Entry }
-	| { kind: "record"; seq: number; record: SessionRecord; moveLane?: LaneMove }
+	| { kind: "record"; seq: number; record: LaneRecord; moveLane?: LaneMove }
 	| { kind: "lane"; seq: number; lane: string; action: "create" | "move"; leafId: string | null }
 	| { kind: "fact"; seq: number; fact: "name"; name: string }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
@@ -267,14 +273,14 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 
 	// Entries and Records
 	appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry>;
-	appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<Record>;
+	appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord>;
 
 	// Reads
 	getEntry(id: string): Promise<Entry | undefined>;
 	findEntries(query?: EntryQuery): Promise<Entry[]>;
 	/** start is mandatory here; defaulting to a lane's leaf is view sugar. */
 	findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]>;
-	findRecords(query?: RecordQuery): Promise<Record[]>;
+	findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
 	getLog(options?: { afterSeq?: number; limit?: number }): Promise<LogItem[]>;
 
 	// Global facts

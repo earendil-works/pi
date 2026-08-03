@@ -197,6 +197,31 @@ describe("InMemorySessionStorage", () => {
 		await expect(storage.createLane("thread", null)).rejects.toMatchObject({ code: "already_exists" });
 	});
 
+	it("persists queue cancellation records without consuming their targets", async () => {
+		const session = new Session(createStorage());
+		const enqueued = await session.appendRecord({
+			type: "queue_enqueued",
+			id: "enqueue",
+			lane: "main",
+			queue: "nextRun",
+			target: { type: "message", id: "queued-message", message: createUserMessage("queued") },
+		});
+		const cancelled = await session.appendRecord({
+			type: "queue_cancelled",
+			id: "cancel",
+			lane: "main",
+			entryId: "queued-message",
+		});
+
+		expect(cancelled).toMatchObject({ seq: 2, entryId: "queued-message" });
+		expect(await session.getEntry("queued-message")).toBeUndefined();
+		expect(await session.findRecords({ type: "queue_cancelled" })).toEqual([cancelled]);
+		expect(await session.getLog()).toEqual([
+			{ kind: "record", seq: enqueued.seq, record: enqueued },
+			{ kind: "record", seq: cancelled.seq, record: cancelled },
+		]);
+	});
+
 	it("filters operation records by lane, type, run, sequence, and order", async () => {
 		const storage = createStorage();
 		await storage.appendRecord(operationStarted("run-1"));

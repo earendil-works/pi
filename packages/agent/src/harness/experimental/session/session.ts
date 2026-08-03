@@ -7,13 +7,13 @@ import type {
 	IdGenerator,
 	LaneMove,
 	LanePointer,
+	LaneRecord,
 	LogItem,
 	LogOptions,
 	NewRecord,
 	ProvisionedEntry,
 	RecordQuery,
 	SessionMetadata,
-	SessionRecord,
 	SessionStats,
 	SessionStorage,
 	SessionTree,
@@ -186,11 +186,11 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return this.storage.appendEntry(entry, lane);
 	}
 
-	async appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<SessionRecord> {
+	async appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<LaneRecord> {
 		return this.storage.appendRecord(record, options);
 	}
 
-	async findRecords(query?: RecordQuery): Promise<SessionRecord[]> {
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
 		return this.storage.findRecords(query);
 	}
 
