@@ -517,7 +517,13 @@ export function createSessionBackendConformance(
 				const cyclic: { self?: unknown } = {};
 				cyclic.self = cyclic;
 
-				for (const data of [{ value: 1n }, { value: Number.NaN }, { value: new Map() }, cyclic]) {
+				for (const data of [
+					{ value: undefined },
+					{ value: 1n },
+					{ value: Number.NaN },
+					{ value: new Map() },
+					cyclic,
+				]) {
 					await rejectsWithCode(session.appendCustomEntry("invalid", data), "invalid_payload");
 				}
 
