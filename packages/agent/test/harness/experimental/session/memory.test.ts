@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	type CustomEntry,
 	type Entry,
 	InMemorySessionRepository,
 	InMemorySessionStorage,
@@ -302,6 +303,29 @@ describe("Session", () => {
 		expect(await entryIds(session.findEntriesOnBranch({ order: "oldestFirst" }))).toEqual([root, mainChild]);
 		expect(await entryIds(thread.findEntriesOnBranch({ order: "oldestFirst" }))).toEqual([root, threadChild]);
 		expect(await new Session(createStorage("empty")).findEntriesOnBranch()).toEqual([]);
+	});
+
+	it("uses one injectable id generator across lane views", async () => {
+		let nextId = 0;
+		const session = new Session(createStorage(), { idGenerator: { next: () => `generated-${++nextId}` } });
+		const mainId = await session.appendMessage(createUserMessage("main"));
+		await session.createLane("thread", mainId);
+		const threadId = await session.view("thread").appendCustomEntry("note");
+
+		expect(mainId).toBe("generated-1");
+		expect(threadId).toBe("generated-2");
+	});
+
+	it("appends provisioned entries with their existing ids", async () => {
+		const session = new Session(createStorage());
+		const entry = await session.appendEntry<CustomEntry>(
+			{ type: "custom", id: "provisioned", customType: "note", data: { value: 1 } },
+			"main",
+		);
+
+		expect(entry.customType).toBe("note");
+		expect(entry).toMatchObject({ id: "provisioned", parentId: null, seq: 1 });
+		expect(await session.getLeafId()).toBe("provisioned");
 	});
 
 	it("serializes concurrent lane writes through storage-owned parents", async () => {

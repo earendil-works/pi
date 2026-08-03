@@ -10,8 +10,8 @@ import {
 	type LanePointer,
 	type LogItem,
 	type LogOptions,
-	type NewEntry,
 	type NewRecord,
+	type ProvisionedEntry,
 	type RecordQuery,
 	type SessionCreateOptions,
 	SessionError,
@@ -36,9 +36,13 @@ function* ordered<T>(items: readonly T[], order: EntryOrder | undefined): Iterab
 	for (let index = items.length - 1; index >= 0; index--) yield items[index]!;
 }
 
-function provisionEntry(newEntry: NewEntry, parentId: string | null, seq: number): Entry {
+function provisionEntry<TEntry extends Entry>(
+	newEntry: ProvisionedEntry<TEntry>,
+	parentId: string | null,
+	seq: number,
+): TEntry {
 	// Object spread does not preserve the correlation between a discriminant and the rest of a union member.
-	return { ...newEntry, parentId, seq, timestamp: Date.now() } as Entry;
+	return { ...newEntry, parentId, seq, timestamp: Date.now() } as unknown as TEntry;
 }
 
 function provisionRecord(newRecord: NewRecord, seq: number): SessionRecord {
@@ -138,7 +142,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, action: "move", leafId: to });
 	}
 
-	async appendEntry(newEntry: NewEntry, lane: string): Promise<Entry> {
+	async appendEntry<TEntry extends Entry>(newEntry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
 		const parentId = this.requireLane(lane);
 		this.validateUnusedId(newEntry.id);
 		const clonedEntry = structuredClone(newEntry);
@@ -169,14 +173,6 @@ export class InMemorySessionStorage implements SessionStorage {
 		if (moveLane !== undefined) this.lanes.set(moveLane.lane, moveLane.to);
 		this.log.push({ kind: "record", seq: record.seq, record, moveLane: structuredClone(moveLane) });
 		return structuredClone(record);
-	}
-
-	async createEntryId(): Promise<string> {
-		for (let attempt = 0; attempt < 100; attempt++) {
-			const id = uuidv7();
-			if (!this.usedIds.has(id)) return id;
-		}
-		throw new SessionError("storage", "Failed to allocate a unique session id");
 	}
 
 	async getEntry(id: string): Promise<Entry | undefined> {

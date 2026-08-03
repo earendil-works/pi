@@ -1,13 +1,16 @@
+import { uuidv7 } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../../types.ts";
 import type {
 	BranchBounds,
 	Entry,
 	EntryQuery,
+	IdGenerator,
 	LaneMove,
 	LanePointer,
 	LogItem,
 	LogOptions,
 	NewRecord,
+	ProvisionedEntry,
 	RecordQuery,
 	SessionMetadata,
 	SessionRecord,
@@ -20,10 +23,12 @@ import { SessionError } from "./types.ts";
 class LaneSessionTree implements SessionTree {
 	private readonly storage: SessionStorage;
 	private readonly lane: string;
+	private readonly idGenerator: IdGenerator;
 
-	constructor(storage: SessionStorage, lane: string) {
+	constructor(storage: SessionStorage, lane: string, idGenerator: IdGenerator) {
 		this.storage = storage;
 		this.lane = lane;
+		this.idGenerator = idGenerator;
 	}
 
 	async getLeafId(): Promise<string | null> {
@@ -79,7 +84,7 @@ class LaneSessionTree implements SessionTree {
 
 	async appendMessage(message: AgentMessage): Promise<string> {
 		const entry = await this.storage.appendEntry(
-			{ type: "message", id: await this.storage.createEntryId(), message },
+			{ type: "message", id: this.idGenerator.next(), message },
 			this.lane,
 		);
 		return entry.id;
@@ -87,7 +92,7 @@ class LaneSessionTree implements SessionTree {
 
 	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
 		const entry = await this.storage.appendEntry(
-			{ type: "custom", id: await this.storage.createEntryId(), customType, data },
+			{ type: "custom", id: this.idGenerator.next(), customType, data },
 			this.lane,
 		);
 		return entry.id;
@@ -97,10 +102,12 @@ class LaneSessionTree implements SessionTree {
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
 	private readonly storage: SessionStorage<TMetadata>;
 	private readonly main: LaneSessionTree;
+	readonly idGenerator: IdGenerator;
 
-	constructor(storage: SessionStorage<TMetadata>) {
+	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
 		this.storage = storage;
-		this.main = new LaneSessionTree(storage, "main");
+		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
+		this.main = new LaneSessionTree(storage, "main", this.idGenerator);
 	}
 
 	async getMetadata(): Promise<TMetadata> {
@@ -108,7 +115,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	view(lane: string): SessionTree {
-		return lane === "main" ? this.main : new LaneSessionTree(this.storage, lane);
+		return lane === "main" ? this.main : new LaneSessionTree(this.storage, lane, this.idGenerator);
 	}
 
 	async getLeafId(): Promise<string | null> {
@@ -177,6 +184,10 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 
 	async moveLane(lane: string, to: string | null): Promise<void> {
 		await this.storage.moveLane(lane, to);
+	}
+
+	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		return this.storage.appendEntry(entry, lane);
 	}
 
 	async appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<SessionRecord> {

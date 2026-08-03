@@ -4,6 +4,10 @@ import type { Session } from "./session.ts";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+export interface IdGenerator {
+	next(): string;
+}
+
 export interface EntryBase {
 	type: string;
 	id: string;
@@ -65,11 +69,6 @@ export type Entry =
 	| BranchSummaryEntry
 	| CustomEntry;
 
-export type NewEntry = Entry extends infer TEntry
-	? TEntry extends Entry
-		? Omit<TEntry, "parentId" | "seq" | "timestamp">
-		: never
-	: never;
 export type ProvisionedEntry<TEntry extends Entry = Entry> = TEntry extends Entry
 	? Omit<TEntry, "parentId" | "seq" | "timestamp">
 	: never;
@@ -250,9 +249,8 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	moveLane(lane: string, to: string | null): Promise<void>;
 
 	// Entries and Records
-	appendEntry(entry: NewEntry, lane: string): Promise<Entry>;
+	appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry>;
 	appendRecord(record: NewRecord, options?: { moveLane?: LaneMove }): Promise<Record>;
-	createEntryId(): Promise<string>;
 
 	// Reads
 	getEntry(id: string): Promise<Entry | undefined>;
