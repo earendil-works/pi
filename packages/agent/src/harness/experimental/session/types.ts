@@ -81,7 +81,7 @@ export interface RecordBase {
 	timestamp: number;
 }
 
-export interface OperationStarted extends RecordBase {
+export interface OperationStartedRecord extends RecordBase {
 	type: "operation_started";
 	sourceLeafId: string | null;
 	intent:
@@ -109,13 +109,13 @@ export interface OperationStarted extends RecordBase {
 		  };
 }
 
-export interface AbortRequested extends RecordBase {
+export interface AbortRequestedRecord extends RecordBase {
 	type: "abort_requested";
 	runId: string;
 	reason: "user" | "shutdown";
 }
 
-export interface OperationFinished extends RecordBase {
+export interface OperationFinishedRecord extends RecordBase {
 	type: "operation_finished";
 	runId: string;
 	outcome: "completed" | "aborted" | "failed" | "declined";
@@ -124,7 +124,7 @@ export interface OperationFinished extends RecordBase {
 
 export type CompactionReason = "manual" | "threshold" | "overflow";
 
-export type TaskAttempt = RecordBase &
+export type TaskAttemptRecord = RecordBase &
 	(
 		| {
 				type: "task_attempt";
@@ -143,7 +143,7 @@ export type TaskAttempt = RecordBase &
 		  }
 	);
 
-export interface ToolStarted extends RecordBase {
+export interface ToolStartedRecord extends RecordBase {
 	type: "tool_started";
 	runId: string;
 	assistantEntryId: string;
@@ -155,7 +155,7 @@ export interface ToolStarted extends RecordBase {
 	replay: "never" | "safe";
 }
 
-export type QueueEnqueued = RecordBase &
+export type QueueEnqueuedRecord = RecordBase &
 	(
 		| {
 				type: "queue_enqueued";
@@ -171,27 +171,27 @@ export type QueueEnqueued = RecordBase &
 		  }
 	);
 
-export interface QueueCancelled extends RecordBase {
+export interface QueueCancelledRecord extends RecordBase {
 	type: "queue_cancelled";
 	runId?: string;
 	entryId: string;
 }
 
-export interface WriteDeferred extends RecordBase {
+export interface WriteDeferredRecord extends RecordBase {
 	type: "write_deferred";
 	runId: string;
 	target: ProvisionedEntry;
 }
 
 export type LaneRecord =
-	| OperationStarted
-	| AbortRequested
-	| OperationFinished
-	| TaskAttempt
-	| ToolStarted
-	| QueueEnqueued
-	| QueueCancelled
-	| WriteDeferred;
+	| OperationStartedRecord
+	| AbortRequestedRecord
+	| OperationFinishedRecord
+	| TaskAttemptRecord
+	| ToolStartedRecord
+	| QueueEnqueuedRecord
+	| QueueCancelledRecord
+	| WriteDeferredRecord;
 export type NewRecord = LaneRecord extends infer TRecord
 	? TRecord extends LaneRecord
 		? Omit<TRecord, "seq" | "timestamp">
