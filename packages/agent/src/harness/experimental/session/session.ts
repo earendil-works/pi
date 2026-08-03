@@ -178,10 +178,6 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		await this.storage.createLane(lane, at);
 	}
 
-	async deleteLane(lane: string): Promise<void> {
-		await this.storage.deleteLane(lane);
-	}
-
 	async moveLane(lane: string, to: string | null): Promise<void> {
 		await this.storage.moveLane(lane, to);
 	}

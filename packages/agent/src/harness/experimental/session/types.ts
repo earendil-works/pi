@@ -248,7 +248,7 @@ export interface LaneMove {
 export type LogItem =
 	| { kind: "entry"; seq: number; lane: string; entry: Entry }
 	| { kind: "record"; seq: number; record: SessionRecord; moveLane?: LaneMove }
-	| { kind: "lane"; seq: number; lane: string; action: "create" | "move" | "delete"; leafId: string | null }
+	| { kind: "lane"; seq: number; lane: string; action: "create" | "move"; leafId: string | null }
 	| { kind: "fact"; seq: number; fact: "name"; name: string }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
 
@@ -263,7 +263,6 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	// Lanes
 	getLanes(): Promise<{ lane: string; leafId: string | null }[]>;
 	createLane(lane: string, at: string | null): Promise<void>;
-	deleteLane(lane: string): Promise<void>;
 	moveLane(lane: string, to: string | null): Promise<void>;
 
 	// Entries and Records

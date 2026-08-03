@@ -52,7 +52,6 @@ describe("InMemorySessionStorage", () => {
 		await storage.setName("Example");
 		await storage.setLabel(root.id, "checkpoint");
 		await storage.moveLane("main", child.id);
-		await storage.deleteLane("thread");
 
 		expect(root).toMatchObject({ parentId: null, seq: 1, timestamp: 1000 });
 		expect(child).toMatchObject({ parentId: "root", seq: 3, timestamp: 2000 });
@@ -65,9 +64,11 @@ describe("InMemorySessionStorage", () => {
 			["fact", 5],
 			["fact", 6],
 			["lane", 7],
-			["lane", 8],
 		]);
-		expect(await storage.getLanes()).toEqual([{ lane: "main", leafId: "child" }]);
+		expect(await storage.getLanes()).toEqual([
+			{ lane: "main", leafId: "child" },
+			{ lane: "thread", leafId: "child" },
+		]);
 	});
 
 	it("atomically appends a record and moves a lane", async () => {
@@ -173,7 +174,7 @@ describe("InMemorySessionStorage", () => {
 		await expect(storage.findEntriesOnBranch({ start: "missing" })).rejects.toMatchObject({ code: "not_found" });
 	});
 
-	it("retires a deleted lane's records before its name is reused", async () => {
+	it("keeps lane names permanent with their recovery records", async () => {
 		const storage = createStorage();
 		await storage.createLane("thread", null);
 		await storage.appendRecord(operationStarted("old-run", "thread"));
@@ -185,16 +186,15 @@ describe("InMemorySessionStorage", () => {
 			target: { type: "message", id: "queued-message", message: createUserMessage("queued") },
 		});
 
-		await storage.deleteLane("thread");
-		expect(await storage.findRecords({ lane: "thread" })).toEqual([]);
+		expect((await storage.findRecords({ lane: "thread" })).map((record) => record.id)).toEqual([
+			"old-next-run",
+			"old-run",
+		]);
 		expect((await storage.getLog()).flatMap((item) => (item.kind === "record" ? [item.record.id] : []))).toEqual([
 			"old-run",
 			"old-next-run",
 		]);
-
-		await storage.createLane("thread", null);
-		await storage.appendRecord(operationStarted("new-run", "thread"));
-		expect((await storage.findRecords({ lane: "thread" })).map((record) => record.id)).toEqual(["new-run"]);
+		await expect(storage.createLane("thread", null)).rejects.toMatchObject({ code: "already_exists" });
 	});
 
 	it("filters operation records by lane, type, run, sequence, and order", async () => {
@@ -287,7 +287,6 @@ describe("InMemorySessionStorage", () => {
 		await expect(storage.createLane("main", null)).rejects.toMatchObject({ code: "already_exists" });
 		await expect(storage.createLane("thread", "missing")).rejects.toMatchObject({ code: "not_found" });
 		await expect(storage.moveLane("missing", null)).rejects.toMatchObject({ code: "invalid_lane" });
-		await expect(storage.deleteLane("main")).rejects.toMatchObject({ code: "invalid_lane" });
 	});
 });
 

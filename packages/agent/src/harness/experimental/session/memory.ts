@@ -57,7 +57,7 @@ export class InMemorySessionStorage implements SessionStorage {
 	private readonly entries: Entry[] = [];
 	private readonly entriesById = new Map<string, Entry>();
 	private readonly laneByEntryId = new Map<string, string>();
-	private records: SessionRecord[] = [];
+	private readonly records: SessionRecord[] = [];
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
 	private name: string | undefined;
@@ -125,14 +125,6 @@ export class InMemorySessionStorage implements SessionStorage {
 		this.validateTarget(at);
 		this.lanes.set(lane, at);
 		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, action: "create", leafId: at });
-	}
-
-	async deleteLane(lane: string): Promise<void> {
-		if (lane === "main") throw new SessionError("invalid_lane", "The main lane cannot be deleted");
-		this.requireLane(lane);
-		this.records = this.records.filter((record) => record.lane !== lane);
-		this.lanes.delete(lane);
-		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, action: "delete", leafId: null });
 	}
 
 	async moveLane(lane: string, to: string | null): Promise<void> {
