@@ -18,13 +18,12 @@ import {
 	type SessionStats,
 	type SessionStorage,
 } from "@earendil-works/pi-agent-core/experimental";
-import { type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { appendEntryToBranchCache, buildCachedBranch, deleteBranchCache, rebuildBranchCache } from "./branch-cache.ts";
 import { applyMigrations } from "./migrations.ts";
 import { type CachedBranchEntryRow, queryCachedBranchRows, readCachedBranch } from "./storage/branch-entries.ts";
 import { readBranchTipIds } from "./storage/branch-tips.ts";
 import {
-	countMessageEntries,
 	deleteEntryRows,
 	type EntryRow,
 	entryPayload,
@@ -54,6 +53,13 @@ import {
 	getNextSequence,
 	setNextSequence,
 } from "./storage/session-sequences.ts";
+import {
+	addUsageToStats,
+	createStats,
+	deleteStats,
+	incrementMessageCount,
+	readStats,
+} from "./storage/session-stats.ts";
 import {
 	deleteSessionRow,
 	insertSessionRow,
@@ -277,17 +283,6 @@ function matchesEntryQuery(entry: Entry, query: EntryQuery): boolean {
 	);
 }
 
-function addUsage(stats: SessionStats, usage: Usage): void {
-	stats.cachedTokens += usage.cacheRead;
-	stats.uncachedTokens += usage.input + usage.cacheWrite;
-	stats.totalTokens += usage.totalTokens;
-	stats.costTotal += usage.cost.total;
-}
-
-function emptyStats(): SessionStats {
-	return { messageCount: 0, cachedTokens: 0, uncachedTokens: 0, totalTokens: 0, costTotal: 0 };
-}
-
 async function assertUnusedId(db: SqliteDatabase, sessionId: string, id: string): Promise<void> {
 	if ((await idExistsInEntries(db, sessionId, id)) || (await idExistsInRecords(db, sessionId, id))) {
 		throw new SessionError("already_exists", `ID already exists: ${id}`);
@@ -371,6 +366,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 					committed.type === "custom" ? committed.customType : null,
 					committed.parentId,
 				);
+				if (committed.type === "message") await incrementMessageCount(this.db, this.metadata.id);
 				await advanceSequence(this.db, this.metadata.id, seq);
 			});
 			return structuredClone(committed as TEntry);
@@ -398,6 +394,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 					timestamp: timestampToText(committed.timestamp),
 					payload: JSON.stringify(record),
 				});
+				if (record.type === "usage") await addUsageToStats(this.db, this.metadata.id, record.usage);
 				await advanceSequence(this.db, this.metadata.id, seq);
 			});
 			if (!committed) throw new SessionError("storage", "SQLite record append did not commit");
@@ -507,12 +504,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async getStats(): Promise<SessionStats> {
-		const stats = emptyStats();
-		stats.messageCount = await countMessageEntries(this.db, this.metadata.id);
-		for (const record of await this.findRecords({ type: "usage", order: "oldestFirst" })) {
-			if (record.type === "usage") addUsage(stats, record.usage);
-		}
-		return stats;
+		return readStats(this.db, this.metadata.id);
 	}
 }
 
@@ -557,6 +549,7 @@ export class SqliteSessionRepository
 					metadata: options.metadata,
 				});
 				await createSequence(db, id);
+				await createStats(db, id);
 				await createInitialLane(db, id);
 			});
 			return new Session(
@@ -607,6 +600,7 @@ export class SqliteSessionRepository
 				await deleteRecordRows(db, metadata.id);
 				await deleteEntryRows(db, metadata.id);
 				await deleteLease(db, metadata.id);
+				await deleteStats(db, metadata.id);
 				await deleteSequence(db, metadata.id);
 				await deleteSessionRow(db, metadata.id);
 			});
@@ -682,6 +676,7 @@ export class SqliteSessionRepository
 						metadata,
 					});
 					await createSequence(db, id);
+					await createStats(db, id);
 
 					let nextSeq = 1;
 					const allocateSeq = () => nextSeq++;

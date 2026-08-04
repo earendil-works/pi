@@ -125,7 +125,7 @@ describe("SQLite migrations", () => {
 			const sessionColumns = await db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();
 			expect(sessionColumns.map((column) => column.name)).not.toContain("leaf_id");
 			expect(tables.map((row) => row.name)).toEqual(
-				expect.arrayContaining(["lanes", "records", "lane_moves", "facts", "leases"]),
+				expect.arrayContaining(["lanes", "records", "lane_moves", "facts", "leases", "session_stats"]),
 			);
 			const branchIndexes = await db
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'branch_entries'")
@@ -135,6 +135,7 @@ describe("SQLite migrations", () => {
 			for (const tableName of [
 				"sessions",
 				"session_sequences",
+				"session_stats",
 				"branch_entries",
 				"branch_tips",
 				"lanes",
@@ -588,6 +589,21 @@ END;
 					.prepare("SELECT type, COUNT(*) AS count FROM records WHERE session_id = ? AND type = ? GROUP BY type")
 					.get<{ type: string; count: number }>("session-1", "usage"),
 			).toEqual({ type: "usage", count: 3 });
+			expect(
+				await db
+					.prepare(
+						`SELECT message_count, cached_tokens, uncached_tokens, total_tokens, cost_total
+						FROM session_stats
+						WHERE session_id = ?`,
+					)
+					.get("session-1"),
+			).toEqual({
+				message_count: 2,
+				cached_tokens: 50,
+				uncached_tokens: 128,
+				total_tokens: 211,
+				cost_total: 0.73,
+			});
 			const nameFact = await db
 				.prepare("SELECT value FROM facts WHERE session_id = ? AND kind = 'name' ORDER BY seq DESC LIMIT 1")
 				.get<{ value: string }>("session-1");

@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS session_sequences (
 	next_seq INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS session_stats (
+	session_id TEXT PRIMARY KEY,
+	message_count INTEGER NOT NULL,
+	cached_tokens REAL NOT NULL,
+	uncached_tokens REAL NOT NULL,
+	total_tokens REAL NOT NULL,
+	cost_total REAL NOT NULL
+) WITHOUT ROWID;
+
 -- Derived branch cache. Parent links in entries remain canonical; this cache
 -- exists only to make branch scans cheap.
 CREATE TABLE IF NOT EXISTS branch_entries (
