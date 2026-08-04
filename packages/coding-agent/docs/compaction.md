@@ -397,22 +397,4 @@ See `SessionBeforeTreeEvent` and `TreePreparation` in the types file.
 
 ## Settings
 
-Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`:
-
-```json
-{
-  "compaction": {
-    "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 20000
-  }
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `enabled` | `true` | Enable auto-compaction |
-| `reserveTokens` | `16384` | Tokens to reserve for LLM response |
-| `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
-
-Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
+See [Settings: Compaction](settings.md#compaction) and [Settings: Branch Summary](settings.md#branch-summary) for configuration options.

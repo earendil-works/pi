@@ -475,6 +475,36 @@ export class AgentSession {
 		}
 	}
 
+	private _getSummarizationModel(
+		settings: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel },
+		fallbackModel: Model<string> | undefined,
+		settingsKey: "compaction" | "branchSummary",
+	): { model: Model<string>; thinkingLevel: ThinkingLevel } {
+		const hasModelOverride = settings.provider !== undefined || settings.model !== undefined;
+		const provider = settings.provider ?? fallbackModel?.provider;
+		const modelId = settings.model ?? fallbackModel?.id;
+		if (!provider || !modelId) {
+			if (hasModelOverride) {
+				throw new Error(
+					`Unable to resolve summarization model. Check ${settingsKey}.provider and ${settingsKey}.model in your settings.`,
+				);
+			}
+			throw new Error(formatNoModelSelectedMessage());
+		}
+
+		const model = hasModelOverride ? this._modelRuntime.getModel(provider, modelId) : fallbackModel;
+		if (!model) {
+			throw new Error(
+				`Summarization model not found: ${provider}/${modelId}. Check ${settingsKey}.provider and ${settingsKey}.model in your settings.`,
+			);
+		}
+
+		return {
+			model,
+			thinkingLevel: clampThinkingLevel(model, settings.thinkingLevel ?? this.thinkingLevel) as ThinkingLevel,
+		};
+	}
+
 	/**
 	 * Install tool hooks once on the Agent instance.
 	 *
@@ -1904,6 +1934,7 @@ export class AgentSession {
 		headers: Record<string, string> | undefined,
 		customInstructions: string | undefined,
 		signal: AbortSignal,
+		thinkingLevel: ThinkingLevel,
 		env: Record<string, string> | undefined,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
@@ -1914,7 +1945,7 @@ export class AgentSession {
 			headers,
 			customInstructions,
 			signal,
-			this.thinkingLevel,
+			thinkingLevel,
 			this.agent.streamFunction,
 			env,
 			this.settingsManager.getRetrySettings(),
@@ -1950,14 +1981,20 @@ export class AgentSession {
 		let fromExtension = false;
 
 		try {
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
+			const settings = this.settingsManager.getCompactionSettings();
+			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } = this._getSummarizationModel(
+				settings,
+				this.model,
+				"compaction",
+			);
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(summarizationModel);
 
 			const pathEntries = this.sessionManager.getBranch();
-			const settings = this.settingsManager.getCompactionSettings();
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
@@ -2014,6 +2051,7 @@ export class AgentSession {
 					headers,
 					customInstructions,
 					this._compactionAbortController.signal,
+					summarizationThinkingLevel,
 					env,
 					"manual",
 				);
@@ -2251,11 +2289,17 @@ export class AgentSession {
 		let fromExtension = false;
 
 		try {
-			if (!this.model) {
-				return false;
-			}
-
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
+			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } = this._getSummarizationModel(
+				settings,
+				this.model,
+				"compaction",
+			);
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(summarizationModel);
 
 			const pathEntries = this.sessionManager.getBranch();
 
@@ -2326,6 +2370,7 @@ export class AgentSession {
 					headers,
 					undefined,
 					this._autoCompactionAbortController.signal,
+					summarizationThinkingLevel,
 					env,
 					reason,
 				);
@@ -3125,8 +3170,15 @@ export class AgentSession {
 			return { cancelled: false };
 		}
 
+		const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
+
 		// Model required for summarization
-		if (options.summarize && !this.model) {
+		if (
+			options.summarize &&
+			!this.model &&
+			branchSummarySettings.provider === undefined &&
+			branchSummarySettings.model === undefined
+		) {
 			throw new Error("No model available for summarization");
 		}
 
@@ -3199,9 +3251,12 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const model = this.model!;
+				const { model, thinkingLevel } = this._getSummarizationModel(
+					branchSummarySettings,
+					this.model,
+					"branchSummary",
+				);
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
-				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model: requestModel,
 					apiKey,
@@ -3211,6 +3266,7 @@ export class AgentSession {
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
+					thinkingLevel,
 					streamFn: this.agent.streamFunction,
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
