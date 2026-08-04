@@ -70,7 +70,13 @@ export type RpcCommand =
 	| { id?: string; type: "get_messages" }
 
 	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" };
+	| { id?: string; type: "get_commands" }
+	| {
+			id?: string;
+			type: "get_argument_completions";
+			commandName: string;
+			argumentPrefix?: string;
+	  };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -86,6 +92,20 @@ export interface RpcSlashCommand {
 	source: "extension" | "prompt" | "skill";
 	/** Source metadata for the owning resource */
 	sourceInfo: SourceInfo;
+}
+
+// ============================================================================
+// RPC Argument Completion (for get_argument_completions response)
+// ============================================================================
+
+/** A subcommand or argument option offered by a slash command's completion provider. */
+export interface RpcArgumentCompletion {
+	/** Value inserted into the prompt when chosen */
+	value: string;
+	/** Human-readable label shown in the completion menu */
+	label: string;
+	/** Optional description shown alongside the label */
+	description?: string;
 }
 
 // ============================================================================
@@ -225,6 +245,13 @@ export type RpcResponse =
 			command: "get_commands";
 			success: true;
 			data: { commands: RpcSlashCommand[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_argument_completions";
+			success: true;
+			data: { items: RpcArgumentCompletion[] };
 	  }
 
 	// Error response (any command can fail)
