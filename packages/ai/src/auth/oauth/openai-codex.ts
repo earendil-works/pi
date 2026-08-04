@@ -125,18 +125,19 @@ async function fetchWithLoginCancellation(input: string, init: RequestInit): Pro
 
 async function readTokenResponse(response: Response, operation: TokenOperation): Promise<OAuthToken> {
 	if (!response.ok) {
-		const text = await response.text().catch(() => "");
-		throw new Error(`OpenAI Codex token ${operation} failed (${response.status}): ${text || response.statusText}`);
+		throw new Error(`OpenAI Codex token ${operation} failed (${response.status}: ${response.statusText})`);
 	}
 
-	const rawJson = await response.json();
+	const rawJson = await response.json().catch(() => {
+		throw new Error(`OpenAI Codex token ${operation} returned invalid JSON`);
+	});
 	const json = rawJson as {
 		access_token?: string;
 		refresh_token?: string;
 		expires_in?: number;
 	} | null;
 	if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-		throw new Error(`OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`);
+		throw new Error(`OpenAI Codex token ${operation} response missing fields`);
 	}
 
 	return {
@@ -202,10 +203,7 @@ async function startOpenAICodexDeviceAuth(signal: AbortSignal): Promise<DeviceAu
 				"OpenAI Codex device code login is not enabled for this server. Use browser login or verify the server URL.",
 			);
 		}
-		const responseBody = await response.text().catch(() => "");
-		throw new Error(
-			`OpenAI Codex device code request failed with status ${response.status}${responseBody ? `: ${responseBody}` : ""}`,
-		);
+		throw new Error(`OpenAI Codex device code request failed with status ${response.status}`);
 	}
 
 	const rawJson = await response.json();
@@ -222,7 +220,7 @@ async function startOpenAICodexDeviceAuth(signal: AbortSignal): Promise<DeviceAu
 		!Number.isFinite(intervalSeconds) ||
 		intervalSeconds < 0
 	) {
-		throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
+		throw new Error("Invalid OpenAI Codex device code response");
 	}
 
 	return {
@@ -254,7 +252,7 @@ async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal: AbortSi
 				if (!json?.authorization_code || !json.code_verifier) {
 					return {
 						status: "failed",
-						message: `Invalid OpenAI Codex device auth token response: ${JSON.stringify(json)}`,
+						message: "Invalid OpenAI Codex device auth token response",
 					};
 				}
 				return {
@@ -284,7 +282,7 @@ async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal: AbortSi
 
 			return {
 				status: "failed",
-				message: `OpenAI Codex device auth failed with status ${response.status}${responseBody ? `: ${responseBody}` : ""}`,
+				message: `OpenAI Codex device auth failed with status ${response.status}`,
 			};
 		},
 	});
