@@ -285,6 +285,19 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway Provider Abort", () => {
+		const llm = getModel("llmgateway", "glm-4.5v");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, options);
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.AI_GATEWAY_API_KEY)("Vercel AI Gateway Provider Abort", () => {
 		const llm = getModel("vercel-ai-gateway", "google/gemini-2.5-flash");
 

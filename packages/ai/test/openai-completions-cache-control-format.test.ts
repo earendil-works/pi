@@ -159,6 +159,21 @@ describe("openai-completions cacheControlFormat", () => {
 		expectAnthropicCacheMarkers(params);
 	});
 
+	it("applies Anthropic-style cache markers to LLM Gateway claude models", async () => {
+		const model = getModel("llmgateway", "claude-haiku-4-5");
+		const params = await capturePayload(model);
+		expectAnthropicCacheMarkers(params);
+	});
+
+	it("omits Anthropic-style cache markers for non-claude LLM Gateway models", async () => {
+		const model = getModel("llmgateway", "glm-4.5v");
+		const params = await capturePayload(model);
+
+		const instructionMessage = getInstructionMessage(params);
+		expect(instructionMessage?.content).toBe("System prompt");
+		expect(params.tools?.[0]?.cache_control).toBeUndefined();
+	});
+
 	it("moves the conversation cache marker to a tool result", async () => {
 		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
 		const timestamp = Date.now();

@@ -636,6 +636,28 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// LLM Gateway
+	// =========================================================================
+
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway", () => {
+		it("glm-4.5v - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("llmgateway", "glm-4.5v");
+
+			console.log(`\nLLM Gateway / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.LLMGATEWAY_API_KEY,
+				reasoningEffort: "high",
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// Vercel AI Gateway
 	// =========================================================================
 

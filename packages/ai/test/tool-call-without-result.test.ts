@@ -278,6 +278,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway Provider", () => {
+		const model = getModel("llmgateway", "glm-4.5v");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model, { reasoningEffort: "high" });
+		});
+	});
+
 	describe.skipIf(!process.env.AI_GATEWAY_API_KEY)("Vercel AI Gateway Provider", () => {
 		const model = getModel("vercel-ai-gateway", "google/gemini-2.5-flash");
 

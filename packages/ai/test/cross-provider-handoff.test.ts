@@ -108,6 +108,9 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "huggingface", model: "moonshotai/Kimi-K2.5", label: "huggingface-kimi-k2.5" },
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
+	// LLM Gateway
+	{ provider: "llmgateway", model: "glm-4.5v", label: "llmgateway-glm-4.5v" },
+	{ provider: "llmgateway-devpass", model: "glm-4.6", label: "llmgateway-devpass-glm-4.6" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral

@@ -417,6 +417,19 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway Provider (glm-4.5v)", () => {
+		const llm = getModel("llmgateway", "glm-4.5v");
+		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithImageResult(llm, options);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleToolWithTextAndImageResult(llm, options);
+		});
+	});
+
 	describe.skipIf(!process.env.AI_GATEWAY_API_KEY)("Vercel AI Gateway Provider (google/gemini-2.5-flash)", () => {
 		const llm = getModel("vercel-ai-gateway", "google/gemini-2.5-flash");
 
