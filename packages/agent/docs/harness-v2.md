@@ -1622,7 +1622,7 @@ Plain structures: entry map, record list, lane map, fact lists, one seq counter,
 One file per session: a header line, then one JSON object per line, in `seq` order. Every logical mutation is exactly one line; a line is the atomic unit.
 
 ```text
-{"kind":"header", "version":4, id, createdAt, cwd, parentSessionId?}
+{"kind":"header", "version":4, id, createdAt, cwd, parentSessionId?, forkImportThroughSeq?}
 {"kind":"entry",  "lane":"main", id, parentId, type, timestamp, ...}
 {"kind":"record", "lane":"main", id, runId?, type, timestamp, ...}
 {"kind":"lane",   "lane":"slack:t1", "leafId":"e42"}        // create or move
@@ -1632,6 +1632,7 @@ One file per session: a header line, then one JSON object per line, in `seq` ord
 
 - Open reads the whole file into memory; all queries run against that state. One session-wide append queue serializes writes from every lane, one line each; the queue allocates `seq`, and its order is the line order. Every storage mutation in this section is exactly one line — nothing in the design needs a multi-line atomic write.
 - The `lane` field on entry lines is envelope metadata: replay derives each lane's leaf from it (last entry line per lane, overridden by later `lane` lines). It dies at decode; entries expose `seq` but no lane.
+- A fork header stores `forkImportThroughSeq`, the last entry sequence in its copied prefix. Message entries at or below that boundary do not contribute to the fork's `messageCount`; later messages do. Entry lines carry no stats flags.
 - Torn tail: a malformed final line is the append that died mid-write. Open truncates it; the write was never acknowledged, nothing is lost. A malformed line anywhere else is corruption; open rejects.
 - Durability is process-crash level: a resolved append call. No fsync promise; if power-loss durability is ever needed, it becomes an explicit capability.
 - v3 files: entries only, no `kind` tags. Open builds the normalized logical tree from section 12; every entry belongs to `main`, and `main`'s leaf resolves through the last `leaf` entry to its nearest retained ancestor. Before the first v4 append, the file is rewritten once with a v4 header (write temp, rename). This is the single conversion the compatibility policy allows. Read-only opens never rewrite.
