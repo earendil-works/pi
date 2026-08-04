@@ -329,6 +329,19 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--listen flag", () => {
+		test("parses --listen with TCP or Unix socket address", () => {
+			expect(parseArgs(["--listen", "0.0.0.0:4001"]).listen).toBe("0.0.0.0:4001");
+			expect(parseArgs(["--listen", "/tmp/pi-rpc.sock"]).listen).toBe("/tmp/pi-rpc.sock");
+		});
+
+		test("works with --mode rpc", () => {
+			const result = parseArgs(["--mode", "rpc", "--listen", "0.0.0.0:4001"]);
+			expect(result.mode).toBe("rpc");
+			expect(result.listen).toBe("0.0.0.0:4001");
+		});
+	});
+
 	describe("--ui-mode flag", () => {
 		test.each(["regular", "fullscreen"] as const)("parses %s mode", (mode) => {
 			const result = parseArgs(["--ui-mode", mode]);

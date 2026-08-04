@@ -1,17 +1,22 @@
 /**
- * RPC mode: Headless operation with JSON stdin/stdout protocol.
+ * RPC mode: Headless operation with JSON stdin/stdout or TCP/Unix socket protocol.
  *
  * Used for embedding the agent in other applications.
- * Receives commands as JSON on stdin, outputs events and responses as JSON on stdout.
+ * Receives commands as JSON, outputs events and responses as JSON.
  *
  * Protocol:
  * - Commands: JSON objects with `type` field, optional `id` for correlation
  * - Responses: JSON objects with `type: "response"`, `command`, `success`, and optional `data`/`error`
  * - Events: AgentSessionEvent objects streamed as they occur
  * - Extension UI: Extension UI requests are emitted, client responds with extension_ui_response
+ *
+ * Two transport modes:
+ * - stdin/stdout (default): JSON lines on stdin, responses/events on stdout
+ * - listen: TCP or Unix socket server, JSON lines over socket
  */
 
 import * as crypto from "node:crypto";
+import * as net from "node:net";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	ExtensionUIContext,
@@ -47,19 +52,76 @@ export type {
 	RpcSessionState,
 } from "./rpc-types.ts";
 
+export interface RpcModeOptions {
+	/** Listen address for socket mode (e.g. "0.0.0.0:4001" or "/tmp/pi-rpc.sock") */
+	listenAddress?: string;
+}
+
+/**
+ * Transport abstraction shared by the stdin/stdout and socket RPC modes.
+ */
+interface RpcTransport {
+	/** Broadcast a JSON message to all connected clients. */
+	broadcast(obj: object): void;
+	/** Wait for output backpressure to clear (stdout only). */
+	waitForBackpressure?(): Promise<void>;
+	/** Flush buffered output before exit (stdout only). */
+	flush?(): Promise<void>;
+	close(): void;
+	/** Attach the JSONL input handler. `reply` targets only the client that sent the line. */
+	attachInput(
+		onLine: (line: string, reply: (obj: object) => void) => void,
+		onEnd: () => void,
+		onError: (err: Error) => void,
+	): () => void;
+}
+
 /**
  * Run in RPC mode.
- * Listens for JSON commands on stdin, outputs events and responses on stdout.
+ * Listens for JSON commands on stdin or a socket, outputs events and responses accordingly.
  */
-export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
+export async function runRpcMode(runtimeHost: AgentSessionRuntime, options?: RpcModeOptions): Promise<never> {
+	const listenAddress = options?.listenAddress;
+
+	if (listenAddress) {
+		return runRpcListenMode(runtimeHost, listenAddress);
+	}
+
 	takeOverStdout();
+
+	const transport: RpcTransport = {
+		broadcast: (obj) => writeRawStdout(serializeJsonLine(obj)),
+		waitForBackpressure: () => waitForRawStdoutBackpressure(),
+		flush: () => flushRawStdout(),
+		close: () => {
+			process.stdin.pause();
+		},
+		attachInput: (onLine, onEnd) => {
+			process.stdin.on("end", onEnd);
+			const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
+				onLine(line, transport.broadcast);
+			});
+			return () => {
+				detachJsonl();
+				process.stdin.off("end", onEnd);
+			};
+		},
+	};
+
+	return runRpcSession(runtimeHost, transport);
+}
+
+/**
+ * Shared RPC session handling: binds extensions, dispatches commands, and
+ * streams events over the given transport.
+ */
+async function runRpcSession(runtimeHost: AgentSessionRuntime, transport: RpcTransport): Promise<never> {
+	const output = transport.broadcast;
+	const waitForBackpressure = transport.waitForBackpressure;
+
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
-
-	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		writeRawStdout(serializeJsonLine(obj));
-	};
 
 	const success = <T extends RpcCommand["type"]>(
 		id: string | undefined,
@@ -358,9 +420,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				void checkShutdownRequested();
 			}
 		});
-		unsubscribeBackpressure = session.agent.subscribe(async () => {
-			await waitForRawStdoutBackpressure();
-		});
+		if (waitForBackpressure) {
+			unsubscribeBackpressure = session.agent.subscribe(async () => {
+				await waitForBackpressure();
+			});
+		}
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -715,10 +779,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 	};
 
-	/**
-	 * Check if shutdown was requested and perform shutdown if so.
-	 * Called after handling each command when waiting for the next command.
-	 */
 	let detachInput = () => {};
 
 	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
@@ -733,9 +793,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
 		detachInput();
-		process.stdin.pause();
+		transport.close();
 		if (signal !== "SIGTERM") {
-			await flushRawStdout();
+			await transport.flush?.();
 		}
 		process.exit(exitCode);
 	}
@@ -745,19 +805,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		await shutdown();
 	}
 
-	const handleInputLine = async (line: string) => {
+	const handleInputLine = async (line: string, clientReply: (obj: object) => void) => {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
 		} catch (parseError: unknown) {
-			output(
+			clientReply(
 				error(
 					undefined,
 					"parse",
 					`Failed to parse command: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
 				),
 			);
-			await waitForRawStdoutBackpressure();
+			await waitForBackpressure?.();
 			return;
 		}
 
@@ -781,37 +841,141 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		try {
 			const response = await handleCommand(command);
 			if (response) {
-				output(response);
-				await waitForRawStdoutBackpressure();
+				clientReply(response);
+				await waitForBackpressure?.();
 			}
 			await checkShutdownRequested();
 		} catch (commandError: unknown) {
-			output(
+			clientReply(
 				error(
 					command.id,
 					command.type,
 					commandError instanceof Error ? commandError.message : String(commandError),
 				),
 			);
-			await waitForRawStdoutBackpressure();
+			await waitForBackpressure?.();
 		}
 	};
 
 	const onInputEnd = () => {
 		void shutdown();
 	};
-	process.stdin.on("end", onInputEnd);
 
-	detachInput = (() => {
-		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
-		});
-		return () => {
-			detachJsonl();
-			process.stdin.off("end", onInputEnd);
-		};
-	})();
+	let rejectOnError: (err: Error) => void = () => {};
 
-	// Keep process alive forever
-	return new Promise(() => {});
+	detachInput = transport.attachInput(
+		(line, clientReply) => {
+			void handleInputLine(line, clientReply);
+		},
+		onInputEnd,
+		(err) => {
+			rejectOnError(err);
+		},
+	);
+
+	// Keep process alive forever (socket server errors reject to surface listen failures)
+	return new Promise<never>((_resolve, reject) => {
+		rejectOnError = reject;
+	});
+}
+
+/**
+ * Parse a listen address string into a TCP or Unix socket configuration.
+ */
+function parseListenAddress(
+	address: string,
+): { type: "tcp"; host: string; port: number } | { type: "unix"; path: string } {
+	// Unix socket path: absolute, or relative if it starts with "." (no port)
+	if (address.startsWith("/") || (address.startsWith(".") && !address.includes(":"))) {
+		return { type: "unix", path: address };
+	}
+
+	const lastColon = address.lastIndexOf(":");
+	if (lastColon === -1) {
+		throw new Error(`Invalid listen address: ${address}. Use host:port (e.g. 0.0.0.0:4001) or /path/to/socket`);
+	}
+
+	const host = address.slice(0, lastColon);
+	const portStr = address.slice(lastColon + 1);
+	const port = parseInt(portStr, 10);
+
+	if (Number.isNaN(port) || port < 0 || port > 65535) {
+		throw new Error(`Invalid port in listen address: ${portStr}`);
+	}
+
+	return { type: "tcp", host, port };
+}
+
+/**
+ * Run in RPC listen mode.
+ * Creates a TCP or Unix socket server and handles connections.
+ * Each connection gets access to the same shared agent session.
+ */
+async function runRpcListenMode(runtimeHost: AgentSessionRuntime, listenAddress: string): Promise<never> {
+	const parsedAddress = parseListenAddress(listenAddress);
+
+	const activeSockets = new Set<net.Socket>();
+	let server: net.Server | undefined;
+
+	const transport: RpcTransport = {
+		broadcast: (obj) => {
+			const data = serializeJsonLine(obj);
+			for (const socket of activeSockets) {
+				if (!socket.destroyed) {
+					socket.write(data);
+				}
+			}
+		},
+		close: () => {
+			for (const socket of activeSockets) {
+				socket.destroy();
+			}
+			activeSockets.clear();
+			server?.close();
+			server = undefined;
+		},
+		attachInput: (onLine, _onEnd, onError) => {
+			server = net.createServer((socket: net.Socket) => {
+				activeSockets.add(socket);
+
+				const reply = (obj: object) => {
+					if (!socket.destroyed) {
+						socket.write(serializeJsonLine(obj));
+					}
+				};
+
+				const detachJsonl = attachJsonlLineReader(socket, (line) => {
+					onLine(line, reply);
+				});
+
+				socket.on("close", () => {
+					activeSockets.delete(socket);
+					detachJsonl();
+				});
+
+				socket.on("error", () => {
+					activeSockets.delete(socket);
+				});
+			});
+
+			server.on("error", (err) => {
+				console.error(`RPC listen error: ${err.message}`);
+				onError(err);
+			});
+
+			if (parsedAddress.type === "tcp") {
+				server.listen(parsedAddress.port, parsedAddress.host, () => {
+					console.error(`RPC server listening on ${parsedAddress.host}:${parsedAddress.port}`);
+				});
+			} else {
+				server.listen(parsedAddress.path, () => {
+					console.error(`RPC server listening on Unix socket: ${parsedAddress.path}`);
+				});
+			}
+
+			return () => {};
+		},
+	};
+
+	return runRpcSession(runtimeHost, transport);
 }

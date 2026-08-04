@@ -49,6 +49,7 @@ export interface Args {
 	uiMode?: UiMode;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
+	listen?: string;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -199,6 +200,8 @@ export function parseArgs(args: string[]): Args {
 			result.projectTrustOverride = false;
 		} else if (arg === "--offline") {
 			result.offline = true;
+		} else if (arg === "--listen" && i + 1 < args.length) {
+			result.listen = args[++i];
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -292,6 +295,8 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --listen <address>             Listen on TCP or Unix socket for RPC connections (e.g. 0.0.0.0:4001 or /tmp/pi-rpc.sock)
+                                 Requires --mode rpc. Uses socket I/O instead of stdin/stdout.
   --help, -h                     Show this help
   --version, -v                  Show version number
 

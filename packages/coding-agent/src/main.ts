@@ -107,7 +107,7 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === "rpc") {
+	if (parsed.mode === "rpc" || parsed.listen) {
 		return "rpc";
 	}
 	if (parsed.mode === "json") {
@@ -607,6 +607,16 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	if (parsed.listen && parsed.mode !== "rpc") {
+		console.error(chalk.red("Error: --listen requires --mode rpc"));
+		process.exit(1);
+	}
+
+	if (parsed.listen && parsed.print) {
+		console.error(chalk.red("Error: --listen cannot be combined with --print"));
+		process.exit(1);
+	}
+
 	validateForkFlags(parsed);
 	validateSessionIdFlags(parsed);
 
@@ -881,7 +891,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (appMode === "rpc") {
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, { listenAddress: parsed.listen });
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
