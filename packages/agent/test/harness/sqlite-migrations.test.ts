@@ -399,7 +399,7 @@ END;
 		expect(counts).toEqual({ opens: 1, closes: 1 });
 	});
 
-	it("rejects a missing lane leaf when appending", async () => {
+	it("rejects a missing lane leaf when listing lanes and opening", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -417,10 +417,13 @@ END;
 			await db.close();
 		}
 
-		const reopened = await repo.open(metadata);
-		await expect(reopened.appendMessage(createUserMessage("after corruption"))).rejects.toMatchObject({
+		await expect(session.getLanes()).rejects.toMatchObject({
 			code: "storage",
-			message: expect.stringContaining("Entry missing not found"),
+			message: expect.stringContaining("Lane main points at missing entry missing"),
+		});
+		await expect(repo.open(metadata)).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("Lane main points at missing entry missing"),
 		});
 	});
 

@@ -24,9 +24,26 @@ export async function createInitialLane(
 }
 
 export async function readLanes(db: SqliteDatabase, sessionId: string): Promise<LaneRow[]> {
-	return db
-		.prepare("SELECT session_id, lane, leaf_id FROM lanes WHERE session_id = ? ORDER BY lane")
-		.all<LaneRow>(sessionId);
+	const rows = await db
+		.prepare(
+			`SELECT
+				l.session_id,
+				l.lane,
+				l.leaf_id,
+				(l.leaf_id IS NULL OR EXISTS (
+					SELECT 1 FROM entries AS e WHERE e.session_id = l.session_id AND e.id = l.leaf_id
+				)) AS leaf_exists
+			FROM lanes AS l
+			WHERE l.session_id = ?
+			ORDER BY l.lane`,
+		)
+		.all<LaneRow & { leaf_exists: number }>(sessionId);
+	for (const row of rows) {
+		if (row.leaf_exists === 0) {
+			throw new SessionError("storage", `Lane ${row.lane} points at missing entry ${row.leaf_id}`);
+		}
+	}
+	return rows.map(({ session_id, lane, leaf_id }) => ({ session_id, lane, leaf_id }));
 }
 
 export async function readLane(db: SqliteDatabase, sessionId: string, lane: string): Promise<LaneRow | undefined> {

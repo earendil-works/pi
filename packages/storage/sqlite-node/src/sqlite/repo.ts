@@ -524,6 +524,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 async function loadStorage(db: SqliteDatabase, metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
 	const row = await requireSessionRow(db, metadata.id);
+	await readLanes(db, metadata.id);
 	return new SqliteSessionStorage(db, metadataFromRow(row, metadata.path));
 }
 
