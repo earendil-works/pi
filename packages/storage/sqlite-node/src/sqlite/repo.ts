@@ -44,7 +44,14 @@ import {
 	setLaneLeaf,
 	moveLane as updateLane,
 } from "./storage/lanes.ts";
-import { deleteLease } from "./storage/leases.ts";
+import {
+	acquireLease,
+	assertNoActiveConflictingLease,
+	deleteLease,
+	deleteLeaseForOwner,
+	deleteLeasesForOwner,
+	updateLeaseHeartbeats,
+} from "./storage/leases.ts";
 import { appendRecordRow, deleteRecordRows, idExistsInRecords, readRecordRows } from "./storage/records.ts";
 import {
 	advanceSequence,
@@ -126,6 +133,9 @@ function getParentPath(path: string): string {
 	if (lastSlash === 0) return normalized.slice(0, 1);
 	return normalized.slice(0, lastSlash);
 }
+
+const LEASE_TIMEOUT_MS = 30_000;
+const LEASE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 	await db.exec("PRAGMA journal_mode=WAL");
@@ -525,7 +535,10 @@ export class SqliteSessionRepository
 	private databasePath: string | undefined;
 	private database: SqliteDatabase | undefined;
 	private databasePromise: Promise<SqliteDatabase> | undefined;
+	private leaseHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+	private readonly leaseOwner = uuidv7();
 	private readonly operations = new SerialOperationQueue();
+	private readonly storages = new Map<string, SqliteSessionStorage>();
 
 	private readonly options: SqliteSessionRepositoryOptions;
 
@@ -551,22 +564,24 @@ export class SqliteSessionRepository
 				await createSequence(db, id);
 				await createStats(db, id);
 				await createInitialLane(db, id);
+				await acquireLease(db, id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
 			});
-			return new Session(
-				await loadStorage(db, {
-					id,
-					createdAt,
-					cwd: options.cwd,
-					path,
-					parentSessionId: options.parentSessionId,
-					metadata: options.metadata,
-				}),
-			);
+			this.startLeaseHeartbeat();
+			const storage = await loadStorage(db, {
+				id,
+				createdAt,
+				cwd: options.cwd,
+				path,
+				parentSessionId: options.parentSessionId,
+				metadata: options.metadata,
+			});
+			this.storages.set(id, storage);
+			return new Session(storage);
 		});
 	}
 
 	async open(metadata: SqliteSessionMetadata): Promise<Session<SqliteSessionMetadata>> {
-		return new Session(await this.operations.enqueue(async () => loadStorage(await this.getDatabase(), metadata)));
+		return new Session(await this.operations.enqueue(async () => this.openStorage(metadata)));
 	}
 
 	/** Rebuilds this session's private branch-read cache from canonical entry parent links. */
@@ -593,6 +608,7 @@ export class SqliteSessionRepository
 	async delete(metadata: SqliteSessionMetadata): Promise<void> {
 		return this.operations.enqueue(async () => {
 			const db = await this.getDatabase();
+			await assertNoActiveConflictingLease(db, metadata.id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
 			await db.transaction(async () => {
 				await deleteBranchCache(db, metadata.id);
 				await deleteFactRows(db, metadata.id);
@@ -604,6 +620,7 @@ export class SqliteSessionRepository
 				await deleteSequence(db, metadata.id);
 				await deleteSessionRow(db, metadata.id);
 			});
+			this.storages.delete(metadata.id);
 		});
 	}
 
@@ -705,6 +722,7 @@ export class SqliteSessionRepository
 
 					await setNextSequence(db, id, nextSeq);
 					for (const tip of branchTips) await buildCachedBranch(db, id, tip);
+					await acquireLease(db, id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
 				});
 			} catch (error) {
 				if (error instanceof SessionError) throw error;
@@ -715,28 +733,68 @@ export class SqliteSessionRepository
 				);
 			}
 
-			return new Session(
-				await loadStorage(db, {
-					id,
-					createdAt,
-					cwd: options.cwd,
-					path,
-					parentSessionId: options.parentSessionId ?? source.id,
-					metadata,
-				}),
-			);
+			this.startLeaseHeartbeat();
+			const storage = await loadStorage(db, {
+				id,
+				createdAt,
+				cwd: options.cwd,
+				path,
+				parentSessionId: options.parentSessionId ?? source.id,
+				metadata,
+			});
+			this.storages.set(id, storage);
+			return new Session(storage);
 		});
 	}
 
 	async close(): Promise<void> {
 		await this.operations.drain();
-		if (this.database) await this.database.close();
+		if (this.leaseHeartbeatTimer) clearInterval(this.leaseHeartbeatTimer);
+		this.leaseHeartbeatTimer = undefined;
+		if (this.database) {
+			await deleteLeasesForOwner(this.database, this.leaseOwner);
+			await this.database.close();
+		}
+		this.storages.clear();
 		this.database = undefined;
 		this.databasePromise = undefined;
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
 		await this.close();
+	}
+
+	private async openStorage(metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
+		const db = await this.getDatabase();
+		const existing = this.storages.get(metadata.id);
+		if (existing) {
+			await readLanes(db, metadata.id);
+			return existing;
+		}
+		await requireSessionRow(db, metadata.id);
+		await acquireLease(db, metadata.id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
+		this.startLeaseHeartbeat();
+		try {
+			const storage = await loadStorage(db, metadata);
+			this.storages.set(metadata.id, storage);
+			return storage;
+		} catch (error) {
+			await deleteLeaseForOwner(db, metadata.id, this.leaseOwner);
+			throw error;
+		}
+	}
+
+	private startLeaseHeartbeat(): void {
+		if (this.leaseHeartbeatTimer) return;
+		this.leaseHeartbeatTimer = setInterval(() => {
+			void this.refreshLeaseHeartbeats();
+		}, LEASE_HEARTBEAT_INTERVAL_MS);
+		this.leaseHeartbeatTimer.unref?.();
+	}
+
+	private async refreshLeaseHeartbeats(): Promise<void> {
+		if (!this.database) return;
+		await updateLeaseHeartbeats(this.database, this.leaseOwner, Date.now());
 	}
 
 	private async getDatabasePath(): Promise<string> {

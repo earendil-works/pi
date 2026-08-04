@@ -46,6 +46,42 @@ describe("JsonlSessionBackend with scanning search", () => {
 	});
 });
 
+describe("SqliteSessionRepository writer leases", () => {
+	it("shares one storage queue for repeated opens in the same repository", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		const { repository: repo } = createSqliteFixture({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session" });
+		const reopened = await repo.open(await session.getMetadata());
+
+		const [first, second] = await Promise.all([
+			session.appendMessage(createUserMessage("first")),
+			reopened.appendMessage(createUserMessage("second")),
+		]);
+
+		expect((await getSqliteEntries(session)).map((entry) => entry.id)).toEqual([first, second]);
+	});
+
+	it("rejects a second repository while a session lease is active", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		const { repository: firstRepo } = createSqliteFixture({ env, sqlite, databasePath });
+		const session = await firstRepo.create({ cwd: root, id: "session" });
+		const metadata = await session.getMetadata();
+		const secondRepo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		ownedRepositories.push(secondRepo);
+
+		await expect(secondRepo.open(metadata)).rejects.toMatchObject({ code: "storage" });
+
+		await firstRepo.close();
+		await expect(secondRepo.open(metadata)).resolves.toBeDefined();
+	});
+});
+
 describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
 	it("uses SQLite FTS5 when composed with its search implementation", async () => {
 		const root = createTempDir();
