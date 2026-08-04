@@ -466,6 +466,7 @@ export function createSessionBackendConformance(
 				await session.setName("Second");
 				await session.setLabel("user", "keep");
 				await session.setLabel("user", undefined);
+				await rejectsWithCode(session.setLabel("missing", "checkpoint"), "not_found");
 
 				strictEqual(await session.getName(), "Second");
 				strictEqual(await session.getLabel("user"), undefined);

@@ -1,17 +1,13 @@
 import { join } from "node:path";
 import type { SessionMetadata, SessionRepo } from "@earendil-works/pi-agent-core";
-import { describe, it } from "vitest";
-import {
-	createNodeSqliteFactory,
-	type SqliteSessionMetadata,
-	SqliteSessionRepository,
-} from "../../../../storage/sqlite-node/src/index.ts";
-import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
 	createSessionBackendConformance,
 	type SessionBackendFixture,
-} from "../../../src/harness/session/testing/index.ts";
-import { createTempDir } from "../session-test-utils.ts";
+} from "@earendil-works/pi-agent-core/session/testing";
+import { describe, it } from "vitest";
+import { createNodeSqliteFactory, type SqliteSessionMetadata, SqliteSessionRepository } from "../src/index.ts";
+import { createTempDir, ownRepository } from "./test-utils.ts";
 
 function requireSqliteMetadata(metadata: SessionMetadata): SqliteSessionMetadata {
 	const cwd = "cwd" in metadata ? metadata.cwd : undefined;
@@ -27,11 +23,13 @@ function requireSqliteMetadata(metadata: SessionMetadata): SqliteSessionMetadata
 
 const conformance = createSessionBackendConformance(async () => {
 	const root = createTempDir();
-	const sqliteRepository = new SqliteSessionRepository({
-		env: new NodeExecutionEnv({ cwd: root }),
-		sqlite: createNodeSqliteFactory(),
-		databasePath: join(root, "sessions.sqlite"),
-	});
+	const sqliteRepository = ownRepository(
+		new SqliteSessionRepository({
+			env: new NodeExecutionEnv({ cwd: root }),
+			sqlite: createNodeSqliteFactory(),
+			databasePath: join(root, "sessions.sqlite"),
+		}),
+	);
 	const repository: SessionRepo = {
 		create: (options = {}) => sqliteRepository.create({ ...options, cwd: root }),
 		open: (metadata) => sqliteRepository.open(requireSqliteMetadata(metadata)),
