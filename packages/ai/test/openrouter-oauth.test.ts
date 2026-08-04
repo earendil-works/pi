@@ -8,6 +8,7 @@ import { openrouterImagesProvider } from "../src/providers/openrouter-images.ts"
 
 const TOKEN_URL = "https://openrouter.ai/api/v1/auth/keys";
 const nativeFetch = globalThis.fetch;
+const neverAbortedSignal = new AbortController().signal;
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -65,6 +66,7 @@ describe.sequential("OpenRouter OAuth", () => {
 		let callbackResponse: Promise<Response> | undefined;
 		let manualSignal: AbortSignal | undefined;
 		const credential = await openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: (prompt) => {
 				manualSignal = prompt.signal;
 				return new Promise<string>(() => {});
@@ -113,6 +115,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let callbackResponse: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -141,6 +144,7 @@ describe.sequential("OpenRouter OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let firstCallback: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -168,6 +172,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let callbackResponse: Promise<Response> | undefined;
 		const login = openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -193,6 +198,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		let callbackUrl: string | undefined;
 		const credential = await openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: async (prompt) => {
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				return `${callbackUrl}?code=manual-code`;
@@ -224,6 +230,7 @@ describe.sequential("OpenRouter OAuth", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const credential = await openRouterOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: async () => "  manual-code  ",
 			notify: () => {},
 		});
@@ -238,6 +245,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		await expect(
 			openRouterOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async () => {
 					throw new Error("Login cancelled");
 				},
@@ -253,6 +261,7 @@ describe.sequential("OpenRouter OAuth", () => {
 
 		await expect(
 			openRouterOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async () => "   ",
 				notify: () => {},
 			}),

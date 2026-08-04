@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent, Usage } from "@earendil-works/pi-ai";
+import { type ImageContent, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
@@ -8,8 +8,10 @@ import type {
 	CustomEntry,
 	CustomMessageEntry,
 	LabelEntry,
+	LeafEntry,
 	MessageEntry,
 	ModelChangeEntry,
+	SessionBranchQuery,
 	SessionContext,
 	SessionEntryCursorOptions,
 	SessionInfoEntry,
@@ -148,37 +150,52 @@ export function buildSessionContext(
 }
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
-	private storage: SessionStorage<TMetadata>;
-	private contextBuildOptions: SessionContextBuildOptions;
+	private readonly storage: SessionStorage<TMetadata>;
+	private readonly metadata: TMetadata;
+	private leafId: string | null;
+	private readonly contextBuildOptions: SessionContextBuildOptions;
+	private appendTail: Promise<void> = Promise.resolve();
 
-	constructor(storage: SessionStorage<TMetadata>, contextBuildOptions: SessionContextBuildOptions = {}) {
+	/** @internal Construct sessions through SessionRepository. */
+	constructor(
+		storage: SessionStorage<TMetadata>,
+		leafId: string | null,
+		contextBuildOptions: SessionContextBuildOptions = {},
+	) {
 		this.storage = storage;
+		this.metadata = storage.metadata;
+		this.leafId = leafId;
 		this.contextBuildOptions = contextBuildOptions;
 	}
 
-	getMetadata(): Promise<TMetadata> {
-		return this.storage.getMetadata();
+	async getMetadata(): Promise<TMetadata> {
+		return this.metadata;
+	}
+	async getLeafId(): Promise<string | null> {
+		return this.leafId;
+	}
+	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {
+		return this.storage.readEntry(id);
+	}
+	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
+		return [...(await this.storage.readEntries(options))];
 	}
 
-	getStorage(): SessionStorage<TMetadata> {
-		return this.storage;
+	async getBranch(fromId?: string | null): Promise<SessionTreeEntry[]> {
+		return [...(await this.storage.readPathToRootOrCompaction(fromId === undefined ? this.leafId : fromId))];
 	}
 
-	getLeafId(): Promise<string | null> {
-		return this.storage.getLeafId();
+	async findEntriesOnBranch(query: SessionBranchQuery = {}): Promise<SessionTreeEntry[]> {
+		return [
+			...(await this.storage.findEntriesOnBranch({
+				...query,
+				start: query.start === undefined ? this.leafId : query.start,
+			})),
+		];
 	}
 
-	getEntry(id: string): Promise<SessionTreeEntry | undefined> {
-		return this.storage.getEntry(id);
-	}
-
-	getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		return this.storage.getEntries(options);
-	}
-
-	async getBranch(fromId?: string): Promise<SessionTreeEntry[]> {
-		const leafId = fromId ?? (await this.storage.getLeafId());
-		return this.storage.getPathToRootOrCompaction(leafId);
+	async findEntryOnBranch(query: SessionBranchQuery = {}): Promise<SessionTreeEntry | undefined> {
+		return (await this.findEntriesOnBranch({ ...query, limit: 1 }))[0];
 	}
 
 	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {
@@ -199,62 +216,102 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		};
 	}
 
-	getLabel(id: string): Promise<string | undefined> {
+	async getLabel(id: string): Promise<string | undefined> {
 		return this.storage.getLabel(id);
 	}
-
-	getSessionStats(): Promise<SessionStats> {
-		return this.storage.getSessionStats();
+	async getSessionStats(): Promise<SessionStats> {
+		return this.storage.getStats();
 	}
-
 	async getSessionName(): Promise<string | undefined> {
-		return this.storage.getSessionName();
+		return this.storage.getName();
 	}
 
-	private async appendTypedEntry<TEntry extends SessionTreeEntry>(entry: TEntry): Promise<string> {
-		await this.storage.appendEntry(entry);
-		return entry.id;
+	private async createEntryId(): Promise<string> {
+		for (let i = 0; i < 100; i++) {
+			const id = uuidv7().slice(-8);
+			if (!(await this.getEntry(id))) return id;
+		}
+		return uuidv7();
+	}
+
+	private enqueueAppend<TEntry extends SessionTreeEntry>(
+		createEntry: (base: Pick<SessionTreeEntry, "id" | "parentId" | "timestamp">) => TEntry,
+	): Promise<TEntry> {
+		const commit = this.appendTail.then(async () => {
+			const entry = createEntry({
+				id: await this.createEntryId(),
+				parentId: this.leafId,
+				timestamp: new Date().toISOString(),
+			});
+			await this.storage.appendEntry(entry);
+			this.leafId = entry.type === "leaf" ? entry.targetId : entry.id;
+			return entry;
+		});
+		this.appendTail = commit.then(
+			() => undefined,
+			() => undefined,
+		);
+		return commit;
+	}
+
+	private async setLeafId(leafId: string | null): Promise<LeafEntry> {
+		if (leafId !== null && !(await this.getEntry(leafId))) {
+			throw new SessionError("not_found", `Entry ${leafId} not found`);
+		}
+		return this.enqueueAppend((base) => {
+			return { ...base, type: "leaf", targetId: leafId };
+		});
+	}
+
+	private async appendTypedEntry<TEntry extends SessionTreeEntry>(
+		createEntry: (base: Pick<SessionTreeEntry, "id" | "parentId" | "timestamp">) => TEntry,
+	): Promise<string> {
+		return (await this.enqueueAppend(createEntry)).id;
 	}
 
 	async appendMessage(message: AgentMessage): Promise<string> {
-		return this.appendTypedEntry({
-			type: "message",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			message,
-		} satisfies MessageEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "message",
+					message,
+				}) satisfies MessageEntry,
+		);
 	}
 
 	async appendThinkingLevelChange(thinkingLevel: string): Promise<string> {
-		return this.appendTypedEntry({
-			type: "thinking_level_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			thinkingLevel,
-		} satisfies ThinkingLevelChangeEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "thinking_level_change",
+					thinkingLevel,
+				}) satisfies ThinkingLevelChangeEntry,
+		);
 	}
 
 	async appendModelChange(provider: string, modelId: string): Promise<string> {
-		return this.appendTypedEntry({
-			type: "model_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			provider,
-			modelId,
-		} satisfies ModelChangeEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "model_change",
+					provider,
+					modelId,
+				}) satisfies ModelChangeEntry,
+		);
 	}
 
 	async appendActiveToolsChange(activeToolNames: string[]): Promise<string> {
-		return this.appendTypedEntry({
-			type: "active_tools_change",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			activeToolNames: [...activeToolNames],
-		} satisfies ActiveToolsChangeEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "active_tools_change",
+					activeToolNames: [...activeToolNames],
+				}) satisfies ActiveToolsChangeEntry,
+		);
 	}
 
 	async appendCompaction<T = unknown>(
@@ -266,30 +323,32 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		usage?: Usage,
 		retainedTail?: AgentMessage[],
 	): Promise<string> {
-		return this.appendTypedEntry({
-			type: "compaction",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			summary,
-			firstKeptEntryId,
-			tokensBefore,
-			retainedTail,
-			details,
-			usage,
-			fromHook,
-		} satisfies CompactionEntry<T>);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "compaction",
+					summary,
+					firstKeptEntryId,
+					tokensBefore,
+					retainedTail,
+					details,
+					usage,
+					fromHook,
+				}) satisfies CompactionEntry<T>,
+		);
 	}
 
 	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		return this.appendTypedEntry({
-			type: "custom",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			customType,
-			data,
-		} satisfies CustomEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "custom",
+					customType,
+					data,
+				}) satisfies CustomEntry,
+		);
 	}
 
 	async appendCustomMessageEntry<T = unknown>(
@@ -298,62 +357,74 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		display: boolean,
 		details?: T,
 	): Promise<string> {
-		return this.appendTypedEntry({
-			type: "custom_message",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			customType,
-			content,
-			display,
-			details,
-		} satisfies CustomMessageEntry<T>);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "custom_message",
+					customType,
+					content,
+					display,
+					details,
+				}) satisfies CustomMessageEntry<T>,
+		);
 	}
 
 	async appendLabel(targetId: string, label: string | undefined): Promise<string> {
-		if (!(await this.storage.getEntry(targetId))) {
+		if (!(await this.getEntry(targetId))) {
 			throw new SessionError("not_found", `Entry ${targetId} not found`);
 		}
-		return this.appendTypedEntry({
-			type: "label",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			targetId,
-			label,
-		} satisfies LabelEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "label",
+					targetId,
+					label,
+				}) satisfies LabelEntry,
+		);
 	}
 
 	async appendSessionName(name: string): Promise<string> {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
-		return this.appendTypedEntry({
-			type: "session_info",
-			id: await this.storage.createEntryId(),
-			parentId: await this.storage.getLeafId(),
-			timestamp: new Date().toISOString(),
-			name: sanitizedName,
-		} satisfies SessionInfoEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "session_info",
+					name: sanitizedName,
+				}) satisfies SessionInfoEntry,
+		);
 	}
 
 	async moveTo(
 		entryId: string | null,
 		summary?: { summary: string; details?: unknown; usage?: Usage; fromHook?: boolean },
 	): Promise<string | undefined> {
-		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
+		if (entryId !== null && !(await this.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
 		}
-		await this.storage.setLeafId(entryId);
+		await this.setLeafId(entryId);
 		if (!summary) return undefined;
-		return this.appendTypedEntry({
-			type: "branch_summary",
-			id: await this.storage.createEntryId(),
-			parentId: entryId,
-			timestamp: new Date().toISOString(),
-			fromId: entryId ?? "root",
-			summary: summary.summary,
-			details: summary.details,
-			usage: summary.usage,
-			fromHook: summary.fromHook,
-		} satisfies BranchSummaryEntry);
+		return this.appendTypedEntry(
+			(base) =>
+				({
+					...base,
+					type: "branch_summary",
+					fromId: entryId ?? "root",
+					summary: summary.summary,
+					details: summary.details,
+					usage: summary.usage,
+					fromHook: summary.fromHook,
+				}) satisfies BranchSummaryEntry,
+		);
 	}
+}
+
+/** Wraps an opened storage connection for a SessionRepository implementation. */
+export async function createSession<TMetadata extends SessionMetadata>(
+	storage: SessionStorage<TMetadata>,
+	contextBuildOptions: SessionContextBuildOptions = {},
+): Promise<Session<TMetadata>> {
+	return new Session(storage, (await storage.readHead()).leafId, contextBuildOptions);
 }

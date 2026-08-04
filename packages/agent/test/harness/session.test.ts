@@ -2,11 +2,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { JsonlSessionStorage } from "../../src/harness/session/jsonl-storage.ts";
-import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
-import { type ContextEntryTransform, Session } from "../../src/harness/session/session.ts";
-import type { SessionStorage } from "../../src/harness/types.ts";
-import { createAssistantMessage, createTempDir, createUserMessage, getLatestTempDir } from "./session-test-utils.ts";
+import { JsonlSessionBackend } from "../../src/harness/session/jsonl-repo.ts";
+import { InMemorySessionBackend } from "../../src/harness/session/memory-repo.ts";
+import {
+	type ContextEntryTransform,
+	createSession,
+	type Session,
+	type SessionContextBuildOptions,
+} from "../../src/harness/session/session.ts";
+import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
 
 function getTextData(data: unknown): string {
 	if (typeof data !== "object" || data === null || !("text" in data)) {
@@ -16,22 +20,40 @@ function getTextData(data: unknown): string {
 	return typeof value === "string" ? value : "";
 }
 
-async function runSessionSuite(
-	name: string,
-	createStorage: () => SessionStorage | Promise<SessionStorage>,
-	inspect?: () => void,
-) {
+interface SessionFixture {
+	createSession(options?: SessionContextBuildOptions): Promise<Session>;
+	reloadSession(options?: SessionContextBuildOptions): Promise<Session>;
+}
+
+async function runSessionSuite(name: string, createFixture: () => Promise<SessionFixture>, inspect?: () => void) {
 	describe(name, () => {
 		it("appends messages and builds context in order", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendMessage(createAssistantMessage("two"));
 			const context = await session.buildContext();
 			expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		});
 
+		it("reads entries forward from the requested sequence", async () => {
+			const session = await (await createFixture()).createSession();
+			const ids = [
+				await session.appendMessage(createUserMessage("one")),
+				await session.appendMessage(createUserMessage("two")),
+				await session.appendMessage(createUserMessage("three")),
+			];
+
+			expect((await session.getEntries({ afterEntrySeq: 0, limit: 2 })).map((entry) => entry.id)).toEqual(
+				ids.slice(0, 2),
+			);
+			expect((await session.getEntries({ afterEntrySeq: 1, limit: 2 })).map((entry) => entry.id)).toEqual(
+				ids.slice(1),
+			);
+			expect((await session.getEntries({ afterEntrySeq: 2 })).map((entry) => entry.id)).toEqual(ids.slice(2));
+		});
+
 		it("tracks model and thinking level changes", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendModelChange("openai", "gpt-4.1");
 			await session.appendThinkingLevelChange("high");
@@ -41,21 +63,21 @@ async function runSessionSuite(
 		});
 
 		it("supports branching by moving the leaf and appending a new branch", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			const user1 = await session.appendMessage(createUserMessage("one"));
 			const assistant1 = await session.appendMessage(createAssistantMessage("two"));
 			await session.appendMessage(createUserMessage("three"));
 			await session.moveTo(user1);
-			await session.appendMessage(createAssistantMessage("branched"));
+			const branched = await session.appendMessage(createAssistantMessage("branched"));
 			const branch = await session.getBranch();
-			expect(branch.map((entry) => entry.id)).toContain(user1);
+			expect(branch.map((entry) => entry.id)).toEqual([user1, branched]);
 			expect(branch.map((entry) => entry.id)).not.toContain(assistant1);
 			const context = await session.buildContext();
 			expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		});
 
 		it("supports moving the leaf to root", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.moveTo(null);
 			expect(await session.getLeafId()).toBeNull();
@@ -63,7 +85,7 @@ async function runSessionSuite(
 		});
 
 		it("reconstructs compaction summaries in context", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendMessage(createAssistantMessage("two"));
 			const user2 = await session.appendMessage(createUserMessage("three"));
@@ -85,7 +107,7 @@ async function runSessionSuite(
 		});
 
 		it("supports moving with branch summary entries in context", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			const user1 = await session.appendMessage(createUserMessage("one"));
 			const summaryId = await session.moveTo(user1, { summary: "summary text" });
 			expect(summaryId).toBeTruthy();
@@ -96,7 +118,7 @@ async function runSessionSuite(
 		});
 
 		it("persists compaction usage", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			const firstKeptEntryId = await session.appendMessage(createUserMessage("one"));
 			const usage = {
 				input: 1,
@@ -121,7 +143,7 @@ async function runSessionSuite(
 		});
 
 		it("persists branch summary usage", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			const user1 = await session.appendMessage(createUserMessage("one"));
 			const usage = {
 				input: 1,
@@ -139,7 +161,7 @@ async function runSessionSuite(
 		});
 
 		it("supports custom message entries in context", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendCustomMessageEntry("custom", "hello", true, { ok: true });
 			const context = await session.buildContext();
@@ -147,7 +169,7 @@ async function runSessionSuite(
 		});
 
 		it("keeps custom entries in context entries but omits them from messages by default", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendMessage(createUserMessage("one"));
 			await session.appendCustomEntry("chat_message", { text: "hello" });
 			const contextEntries = await session.buildContextEntries();
@@ -157,7 +179,7 @@ async function runSessionSuite(
 		});
 
 		it("projects custom entries with configured custom-entry projectors", async () => {
-			const session = new Session(await createStorage(), {
+			const session = await (await createFixture()).createSession({
 				entryProjectors: {
 					chat_message: (entry) => [createUserMessage(`chat: ${getTextData(entry.data)}`)],
 				},
@@ -175,7 +197,7 @@ async function runSessionSuite(
 				observedFirstEntryType = entries[0]?.type;
 				return entries.filter((entry) => entry.type !== "compaction");
 			};
-			const session = new Session(await createStorage(), { entryTransforms: [dropCompaction] });
+			const session = await (await createFixture()).createSession({ entryTransforms: [dropCompaction] });
 			await session.appendMessage(createUserMessage("one"));
 			const kept = await session.appendMessage(createUserMessage("two"));
 			await session.appendCompaction("summary", kept, 1234);
@@ -186,13 +208,13 @@ async function runSessionSuite(
 		});
 
 		it("normalizes session names", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await session.appendSessionName(" hello\nworld\r\nagain ");
 			expect(await session.getSessionName()).toBe("hello world again");
 		});
 
 		it("supports labels and session info entries without affecting context", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			const user1 = await session.appendMessage(createUserMessage("one"));
 			await session.appendLabel(user1, "checkpoint");
 			await session.appendSessionName("name");
@@ -205,20 +227,20 @@ async function runSessionSuite(
 		});
 
 		it("rejects labels for missing entries", async () => {
-			const session = new Session(await createStorage());
+			const session = await (await createFixture()).createSession();
 			await expect(session.appendLabel("missing", "checkpoint")).rejects.toThrow("Entry missing not found");
 		});
 
-		it("persists leaf changes and appended entries via storage", async () => {
-			const storage = await createStorage();
-			const session = new Session(storage);
+		it("persists leaf changes and appended entries through the backend", async () => {
+			const fixture = await createFixture();
+			const session = await fixture.createSession();
 			const user1 = await session.appendMessage(createUserMessage("one"));
 			await session.appendMessage(createAssistantMessage("two"));
 			await session.appendLabel(user1, "checkpoint");
 			await session.appendSessionName("name");
 			await session.moveTo(user1);
 			await session.appendMessage(createAssistantMessage("branched"));
-			const session2 = new Session(storage);
+			const session2 = await fixture.reloadSession();
 			const context = await session2.buildContext();
 			expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 			expect(await session2.getLabel(user1)).toBe("checkpoint");
@@ -228,19 +250,33 @@ async function runSessionSuite(
 	});
 }
 
-runSessionSuite("Session with in-memory storage", () => new InMemorySessionStorage());
+runSessionSuite("Session with in-memory backend", async () => {
+	const backend = new InMemorySessionBackend();
+	const created = await createSession(await backend.create({}));
+	const metadata = await created.getMetadata();
+	return {
+		createSession: async (contextBuildOptions) => createSession(await backend.open(metadata), contextBuildOptions),
+		reloadSession: async (contextBuildOptions) => createSession(await backend.open(metadata), contextBuildOptions),
+	};
+});
 
+let jsonlSessionPath = "";
 runSessionSuite(
-	"Session with JSONL storage",
+	"Session with JSONL backend",
 	async () => {
 		const dir = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: dir });
-		return await JsonlSessionStorage.create(env, join(dir, "session.jsonl"), { cwd: dir, sessionId: "session-1" });
+		const backend = new JsonlSessionBackend({ fs: env, sessionsRoot: join(dir, "sessions") });
+		const created = await createSession(await backend.create({ cwd: dir, id: "session-1" }));
+		const metadata = await created.getMetadata();
+		jsonlSessionPath = metadata.path;
+		return {
+			createSession: async (contextBuildOptions) => createSession(await backend.open(metadata), contextBuildOptions),
+			reloadSession: async (contextBuildOptions) => createSession(await backend.open(metadata), contextBuildOptions),
+		};
 	},
 	() => {
-		const dir = getLatestTempDir();
-		const filePath = join(dir, "session.jsonl");
-		const lines = readFileSync(filePath, "utf8").trim().split("\n");
+		const lines = readFileSync(jsonlSessionPath, "utf8").trim().split("\n");
 		expect(lines.length).toBeGreaterThan(1);
 		const header = JSON.parse(lines[0]!);
 		expect(header.type).toBe("session");

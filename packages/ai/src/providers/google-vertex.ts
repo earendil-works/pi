@@ -13,6 +13,7 @@ const VERTEX_ADC_PATH = "~/.config/gcloud/application_default_credentials.json";
 const vertexAuth: ApiKeyAuth = {
 	name: "Google Cloud credentials",
 	login: async (interaction) => {
+		interaction.signal.throwIfAborted();
 		const method = await interaction.prompt({
 			type: "select",
 			message: "Select Google Vertex AI authentication method:",
@@ -22,6 +23,7 @@ const vertexAuth: ApiKeyAuth = {
 				{ id: "service-account", label: "Service account credentials file" },
 			],
 		});
+		interaction.signal.throwIfAborted();
 		if (method === "api-key") {
 			return {
 				type: "api_key",
@@ -59,18 +61,23 @@ const vertexAuth: ApiKeyAuth = {
 			},
 		};
 	},
-	resolve: async ({ ctx, credential }) => {
-		const key = credential?.key ?? (await ctx.env("GOOGLE_CLOUD_API_KEY"));
+	resolve: async ({ ctx, credential, signal }) => {
+		const env = async (name: string) => {
+			signal.throwIfAborted();
+			const value = await ctx.env(name);
+			signal.throwIfAborted();
+			return value;
+		};
+		const key = credential?.key ?? (await env("GOOGLE_CLOUD_API_KEY"));
 		if (key) return { auth: { apiKey: key }, source: credential?.key ? "stored credential" : "GOOGLE_CLOUD_API_KEY" };
 
-		const adcPath =
-			credential?.env?.GOOGLE_APPLICATION_CREDENTIALS ?? (await ctx.env("GOOGLE_APPLICATION_CREDENTIALS"));
+		const adcPath = credential?.env?.GOOGLE_APPLICATION_CREDENTIALS ?? (await env("GOOGLE_APPLICATION_CREDENTIALS"));
+		signal.throwIfAborted();
 		const hasCredentials = await ctx.fileExists(adcPath ?? VERTEX_ADC_PATH);
+		signal.throwIfAborted();
 		const project =
-			credential?.env?.GOOGLE_CLOUD_PROJECT ??
-			(await ctx.env("GOOGLE_CLOUD_PROJECT")) ??
-			(await ctx.env("GCLOUD_PROJECT"));
-		const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? (await ctx.env("GOOGLE_CLOUD_LOCATION"));
+			credential?.env?.GOOGLE_CLOUD_PROJECT ?? (await env("GOOGLE_CLOUD_PROJECT")) ?? (await env("GCLOUD_PROJECT"));
+		const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? (await env("GOOGLE_CLOUD_LOCATION"));
 		if (hasCredentials && project && location) {
 			return {
 				auth: {},

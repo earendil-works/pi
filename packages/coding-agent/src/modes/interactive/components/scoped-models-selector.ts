@@ -74,6 +74,7 @@ interface ModelItem {
 export interface ModelsConfig {
 	allModels: Model<any>[];
 	enabledModelIds: string[] | null;
+	refreshStatus?: string;
 }
 
 export interface ModelsCallbacks {
@@ -110,6 +111,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private callbacks: ModelsCallbacks;
 	private maxVisible = 8;
 	private isDirty = false;
+	private refreshStatusText?: Text;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
 		super();
@@ -144,11 +146,37 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 		// Footer hint
 		this.addChild(new Spacer(1));
+		if (config.refreshStatus) {
+			this.refreshStatusText = new Text(theme.fg("muted", `  ${config.refreshStatus}`), 0, 0);
+			this.addChild(this.refreshStatusText);
+		}
 		this.footerText = new Text(this.getFooterText(), 0, 0);
 		this.addChild(this.footerText);
 
 		this.addChild(new DynamicBorder());
 		this.updateList();
+	}
+
+	updateModels(models: readonly Model<any>[], enabledModelIds?: string[] | null): void {
+		const selectedId = this.filteredItems[this.selectedIndex]?.fullId;
+		if (enabledModelIds !== undefined) this.enabledIds = enabledModelIds === null ? null : [...enabledModelIds];
+		this.modelsById.clear();
+		this.allIds = [];
+		for (const model of models) {
+			const fullId = `${model.provider}/${model.id}`;
+			this.modelsById.set(fullId, model);
+			this.allIds.push(fullId);
+		}
+		this.refresh();
+		const refreshedIndex = selectedId ? this.filteredItems.findIndex((item) => item.fullId === selectedId) : -1;
+		if (refreshedIndex >= 0) {
+			this.selectedIndex = refreshedIndex;
+			this.updateList();
+		}
+	}
+
+	setRefreshStatus(message: string, kind: "muted" | "success" | "warning"): void {
+		this.refreshStatusText?.setText(theme.fg(kind, `  ${message}`));
 	}
 
 	private buildItems(): ModelItem[] {

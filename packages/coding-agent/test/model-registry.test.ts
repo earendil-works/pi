@@ -477,7 +477,7 @@ describe("ModelRegistry", () => {
 					api: "openai-completions",
 					models: [
 						{
-							id: "demo-model",
+							id: "kwargs-model",
 							reasoning: true,
 							input: ["text"],
 							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -491,18 +491,37 @@ describe("ModelRegistry", () => {
 								},
 							},
 						},
+						{
+							id: "args-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+							compat: {
+								thinkingFormat: "baseten",
+								chatTemplateArgs: {
+									enable_thinking: { $var: "thinking.enabled" },
+								},
+							},
+						},
 					],
 				},
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const compat = registry.find("demo", "demo-model")?.compat as OpenAICompletionsCompat | undefined;
+			const kwargsCompat = registry.find("demo", "kwargs-model")?.compat as OpenAICompletionsCompat | undefined;
+			const argsCompat = registry.find("demo", "args-model")?.compat as OpenAICompletionsCompat | undefined;
 
 			expect(registry.getError()).toBeUndefined();
-			expect(compat?.thinkingFormat).toBe("chat-template");
-			expect(compat?.chatTemplateKwargs).toEqual({
+			expect(kwargsCompat?.thinkingFormat).toBe("chat-template");
+			expect(kwargsCompat?.chatTemplateKwargs).toEqual({
 				preserve_thinking: true,
 				thinking: { $var: "thinking.enabled" },
+			});
+			expect(argsCompat?.thinkingFormat).toBe("baseten");
+			expect(argsCompat?.chatTemplateArgs).toEqual({
+				enable_thinking: { $var: "thinking.enabled" },
 			});
 		});
 
@@ -692,6 +711,39 @@ describe("ModelRegistry", () => {
 			// Other models should be unchanged
 			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
 			expect(opus?.name).not.toBe("Custom Sonnet Name");
+		});
+
+		test("custom model and model override carry sampling params", async () => {
+			writeRawModelsJson({
+				openrouter: {
+					baseUrl: "https://my-proxy.example.com/v1",
+					api: "openai-completions",
+					models: [
+						{
+							id: "custom/sampling-model",
+							samplingParams: { temperature: 1, top_p: 0.95, top_k: 0 },
+						},
+					],
+					modelOverrides: {
+						"anthropic/claude-sonnet-4": {
+							samplingParams: { top_p: 0.9 },
+						},
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const models = getModelsForProvider(registry, "openrouter");
+
+			const custom = models.find((m) => m.id === "custom/sampling-model");
+			expect(custom?.samplingParams).toEqual({ temperature: 1, top_p: 0.95, top_k: 0 });
+
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			expect(sonnet?.samplingParams).toEqual({ top_p: 0.9 });
+
+			// Models without sampling config keep it unset.
+			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
+			expect(opus?.samplingParams).toBeUndefined();
 		});
 
 		test("model override with compat.openRouterRouting", async () => {
@@ -1050,6 +1102,8 @@ describe("ModelRegistry", () => {
 				apiKey: undefined,
 				headers: {
 					"cf-aig-authorization": "Bearer stored-cf-token",
+					Authorization: null,
+					"x-api-key": null,
 					"x-account": "stored-account",
 				},
 				env: {
@@ -1123,7 +1177,7 @@ describe("ModelRegistry", () => {
 				}),
 			).toThrow('Provider broken-provider: "api" is required when registering streamSimple.');
 
-			await expect(registry.refresh()).resolves.toBeUndefined();
+			await expect(registry.refresh()).resolves.toMatchObject({ aborted: false });
 		});
 
 		test("failed registerProvider does not remove existing provider models", async () => {
@@ -1167,7 +1221,7 @@ describe("ModelRegistry", () => {
 			).toThrow('Provider demo-provider, model broken-model: no "api" specified.');
 
 			expect(registry.find("demo-provider", "demo-model")).toBeDefined();
-			await expect(registry.refresh()).resolves.toBeUndefined();
+			await expect(registry.refresh()).resolves.toMatchObject({ aborted: false });
 			expect(registry.find("demo-provider", "demo-model")).toBeDefined();
 		});
 

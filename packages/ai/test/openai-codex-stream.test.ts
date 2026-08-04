@@ -28,9 +28,9 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function mockToken(): string {
+function mockToken(accountId = "acc_test"): string {
 	const payload = Buffer.from(
-		JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_test" } }),
+		JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } }),
 		"utf8",
 	).toString("base64");
 	return `aaa.${payload}.bbb`;
@@ -1331,6 +1331,97 @@ describe("openai-codex streaming", () => {
 		expect(getOpenAICodexWebSocketDebugStats("session-auto")).toMatchObject({
 			cachedContextRequests: 1,
 			fullContextRequests: 1,
+		});
+	});
+
+	it("scopes cached websockets to the authenticated account", async () => {
+		// Regression for #7284: rotating accounts must not reuse a socket authenticated by another account.
+		const connectedHeaders: Record<string, string>[] = [];
+		let responseId = 0;
+
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+				const headers =
+					protocols && typeof protocols === "object" && !Array.isArray(protocols) ? protocols.headers : undefined;
+				connectedHeaders.push(headers ?? {});
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let listeners = this.listeners.get(type);
+				if (!listeners) {
+					listeners = new Set();
+					this.listeners.set(type, listeners);
+				}
+				listeners.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(): void {
+				queueMicrotask(() => {
+					this.dispatch("message", {
+						data: JSON.stringify({
+							type: "response.completed",
+							response: {
+								id: `resp_${++responseId}`,
+								status: "completed",
+								usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+							},
+						}),
+					});
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("unexpected fetch", { status: 500 })),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = { systemPrompt: "", messages: [] };
+		const options = { sessionId: "shared-session", transport: "websocket-cached" as const };
+
+		await streamOpenAICodexResponses(model, context, { ...options, apiKey: mockToken("account-a") }).result();
+		await streamOpenAICodexResponses(model, context, { ...options, apiKey: mockToken("account-b") }).result();
+		await streamOpenAICodexResponses(model, context, { ...options, apiKey: mockToken("account-a") }).result();
+
+		expect(connectedHeaders.map((headers) => headers["chatgpt-account-id"])).toEqual(["account-a", "account-b"]);
+		expect(connectedHeaders.map((headers) => headers.authorization)).toEqual([
+			`Bearer ${mockToken("account-a")}`,
+			`Bearer ${mockToken("account-b")}`,
+		]);
+		expect(global.fetch).not.toHaveBeenCalled();
+		expect(getOpenAICodexWebSocketDebugStats("shared-session")).toMatchObject({
+			connectionsCreated: 2,
+			connectionsReused: 1,
 		});
 	});
 

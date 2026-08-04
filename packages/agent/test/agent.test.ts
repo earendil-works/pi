@@ -704,6 +704,50 @@ describe("Agent", () => {
 		expect(sawAbortSignal).toBe(true);
 	});
 
+	it("forwards shouldStopAfterTurn through AgentOptions", async () => {
+		const schema = Type.Object({});
+		const tool: AgentTool<typeof schema> = {
+			name: "noop",
+			label: "Noop",
+			description: "Noop tool",
+			parameters: schema,
+			execute: async () => ({ content: [{ type: "text", text: "tool complete" }], details: {} }),
+		};
+		let requestCount = 0;
+		let sawAbortSignal = false;
+		let callbackContextRoles: string[] = [];
+		const agent = new Agent({
+			initialState: { tools: [tool] },
+			shouldStopAfterTurn: (context, signal) => {
+				sawAbortSignal = signal instanceof AbortSignal;
+				callbackContextRoles = context.context.messages.map((message) => message.role);
+				return true;
+			},
+			streamFn: () => {
+				requestCount++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (requestCount === 1) {
+						const message = createAssistantToolUseMessage([
+							{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+						]);
+						stream.push({ type: "done", reason: "toolUse", message });
+						return;
+					}
+					const message = createAssistantMessage("should not run");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("start");
+
+		expect(requestCount).toBe(1);
+		expect(sawAbortSignal).toBe(true);
+		expect(callbackContextRoles).toEqual(["user", "assistant", "toolResult"]);
+	});
+
 	it("forwards sessionId to streamFunction options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({

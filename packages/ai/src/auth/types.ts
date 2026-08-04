@@ -42,6 +42,11 @@ export interface CredentialInfo {
 	type: Credential["type"];
 }
 
+/** Optional cancellation for public auth and credential operations. */
+export interface AuthOperationOptions {
+	signal?: AbortSignal;
+}
+
 /**
  * App-owned credential storage, keyed by `Provider.id`, one credential per
  * provider. `modify` is the only write path, so every mutation is a
@@ -62,13 +67,13 @@ export interface CredentialStore {
 	 * Read the stored credential, possibly expired. Display/status use;
 	 * resolved request auth comes from `Models.getAuth()`.
 	 */
-	read(providerId: string): Promise<Credential | undefined>;
+	read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
 
 	/**
 	 * List stored credential metadata without resolving or exposing secrets.
 	 * Implementations must not execute configured API-key commands while listing.
 	 */
-	list(): Promise<readonly CredentialInfo[]>;
+	list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]>;
 
 	/**
 	 * Serialized write — the only write path. `fn` sees the current credential
@@ -81,10 +86,11 @@ export interface CredentialStore {
 	modify(
 		providerId: string,
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+		options?: AuthOperationOptions,
 	): Promise<Credential | undefined>;
 
 	/** Remove a credential (logout). Implementations serialize this against `modify`. */
-	delete(providerId: string): Promise<void>;
+	delete(providerId: string, options?: AuthOperationOptions): Promise<void>;
 }
 
 /** Environment access for auth resolution. Injectable for tests and browsers. */
@@ -154,6 +160,9 @@ export interface AuthInteraction {
 	notify(event: AuthEvent): void;
 }
 
+/** Normalized interaction passed to provider login implementations. */
+export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
+
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS
  * profiles, ADC files). Ambient-only providers omit `login`.
@@ -163,14 +172,18 @@ export interface ApiKeyAuth {
 	name: string;
 
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
-	login?(interaction: AuthInteraction): Promise<ApiKeyCredential>;
+	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
 
 	/**
 	 * Optional side-effect-free availability check. Use this when `resolve()` may
 	 * execute commands or perform other request-time work. Missing means Models
 	 * checks availability by resolving auth.
 	 */
-	check?(input: { ctx: AuthContext; credential?: ApiKeyCredential }): Promise<AuthCheck | undefined>;
+	check?(input: {
+		ctx: AuthContext;
+		credential?: ApiKeyCredential;
+		signal: AbortSignal;
+	}): Promise<AuthCheck | undefined>;
 
 	/**
 	 * Resolve auth from the stored credential and/or ambient sources, merging
@@ -178,7 +191,11 @@ export interface ApiKeyAuth {
 	 * undefined = not configured. Resolution is provider-scoped; model-specific
 	 * endpoint preparation happens after auth has been resolved.
 	 */
-	resolve(input: { ctx: AuthContext; credential?: ApiKeyCredential }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		credential?: ApiKeyCredential;
+		signal: AbortSignal;
+	}): Promise<AuthResult | undefined>;
 }
 
 /**
@@ -193,13 +210,13 @@ export interface OAuthAuth {
 	/** Selector label for the subscription login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
-	login(interaction: AuthInteraction): Promise<OAuthCredential>;
+	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure
 	 * (invalid_grant etc.). `Models` runs this under the store lock.
 	 */
-	refresh(credential: OAuthCredential, signal?: AbortSignal): Promise<OAuthCredential>;
+	refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
 
 	/**
 	 * Side-effect-free derivation of request auth from a valid credential.

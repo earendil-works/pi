@@ -329,6 +329,25 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--ui-mode flag", () => {
+		test.each(["regular", "fullscreen"] as const)("parses %s mode", (mode) => {
+			const result = parseArgs(["--ui-mode", mode]);
+			expect(result.uiMode).toBe(mode);
+		});
+
+		test("rejects invalid modes", () => {
+			const result = parseArgs(["--ui-mode", "other"]);
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: 'Invalid UI mode "other". Valid values: regular, fullscreen' },
+			]);
+		});
+
+		test("requires a mode", () => {
+			const result = parseArgs(["--ui-mode"]);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--ui-mode requires regular or fullscreen" }]);
+		});
+	});
+
 	describe("tool flags", () => {
 		test("parses --no-tools flag", () => {
 			const result = parseArgs(["--no-tools"]);

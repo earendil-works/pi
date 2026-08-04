@@ -60,6 +60,49 @@ describe("visibleWidth", () => {
 		assert.strictEqual(visibleWidth("\t\x1b[31m界\x1b[0m"), 5);
 	});
 
+	it("counts Indic conjunct spacing code points within grapheme clusters", () => {
+		assert.strictEqual(visibleWidth("र्क"), 2);
+		assert.strictEqual(visibleWidth("नेटवर्क"), 5);
+		assert.strictEqual(visibleWidth("सर्वाधिकार सुरक्षित। ऑर्डर पर क्लिक करें"), 33);
+		assert.strictEqual(visibleWidth("র্ক"), 2);
+		assert.strictEqual(visibleWidth("ર્ક"), 2);
+		assert.strictEqual(visibleWidth("ର୍କ"), 2);
+		assert.strictEqual(visibleWidth("ర్క"), 2);
+		assert.strictEqual(visibleWidth("ര്‍ക"), 2);
+	});
+
+	it("keeps ordinary combining marks zero-width", () => {
+		assert.strictEqual(visibleWidth("e\u0301"), 1);
+		assert.strictEqual(visibleWidth("čřžůú"), 5);
+		assert.strictEqual(visibleWidth("שָׁ"), 1);
+		assert.strictEqual(visibleWidth("بّ"), 1);
+		assert.strictEqual(visibleWidth("རྐ"), 1);
+		assert.strictEqual(visibleWidth("ᜠ᜴"), 1);
+		assert.strictEqual(visibleWidth("가〮"), 2);
+		assert.strictEqual(visibleWidth("가〯"), 2);
+	});
+
+	it("keeps CJK and Japanese width accounting unchanged", () => {
+		assert.strictEqual(visibleWidth("网络"), 4);
+		assert.strictEqual(visibleWidth("ネットワーク"), 12);
+		assert.strictEqual(visibleWidth("が"), 2);
+		assert.strictEqual(visibleWidth("か\u3099"), 2);
+	});
+
+	it("counts Myanmar marks that terminals allocate cells for", () => {
+		assert.strictEqual(visibleWidth("ကာ"), 2);
+		assert.strictEqual(visibleWidth("ကေ"), 2);
+		assert.strictEqual(visibleWidth("က်"), 2);
+		assert.strictEqual(visibleWidth("ကျ"), 2);
+		assert.strictEqual(visibleWidth("ကြ"), 2);
+		assert.strictEqual(visibleWidth("ကဳ"), 2);
+		assert.strictEqual(visibleWidth("ကဴ"), 2);
+		assert.strictEqual(visibleWidth("ကဵ"), 2);
+		assert.strictEqual(visibleWidth("ကး"), 2);
+		assert.strictEqual(visibleWidth("ကို"), 1);
+		assert.strictEqual(visibleWidth("က္"), 1);
+	});
+
 	it("keeps Thai and Lao AM clusters at their normal cell width", () => {
 		assert.strictEqual(visibleWidth("ำ"), 1);
 		assert.strictEqual(visibleWidth("ຳ"), 1);

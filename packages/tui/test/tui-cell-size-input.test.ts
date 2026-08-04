@@ -1,7 +1,8 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { getCellDimensions, resetCapabilitiesCache, setCellDimensions } from "../src/terminal-image.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class InputRecorder implements Component {
@@ -45,7 +46,7 @@ describe("TUI cell size responses", () => {
 	it("forwards bare escape even when a cell size query was sent at startup", () => {
 		withImageTerminal(() => {
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const recorder = new InputRecorder();
 
 			tui.setFocus(recorder);
@@ -63,7 +64,7 @@ describe("TUI cell size responses", () => {
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
 
 			const terminal = new VirtualTerminal(80, 24);
-			const tui = new TUI(terminal);
+			const tui: TUI = new TuiMainScreen(terminal);
 			const recorder = new InputRecorder();
 
 			tui.setFocus(recorder);

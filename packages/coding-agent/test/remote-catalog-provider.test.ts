@@ -1,13 +1,17 @@
 import {
+	createModels,
 	createProvider,
 	InMemoryModelsStore,
 	type Model,
-	type ModelsStoreEntry,
-	type ProviderModelsStore,
+	type ModelsPublication,
+	type Provider,
+	type RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
+
+const neverAbortedSignal = new AbortController().signal;
 
 function model(id: string): Model<"openai-completions"> {
 	return {
@@ -44,12 +48,25 @@ function testProvider(localGeneratedAt?: number) {
 	);
 }
 
-function scopedStore(store: InMemoryModelsStore): ProviderModelsStore {
-	return {
-		read: () => store.read("test-provider"),
-		write: (entry: ModelsStoreEntry) => store.write("test-provider", entry),
-		delete: () => store.delete("test-provider"),
+async function refreshProvider(
+	provider: Provider,
+	store: InMemoryModelsStore,
+	overrides: Partial<Pick<RefreshModelsContext, "allowNetwork" | "force" | "signal">> = {},
+): Promise<void> {
+	const publish = async (publication: ModelsPublication): Promise<boolean> => {
+		if (publication.persist === null) await store.delete(provider.id);
+		else if (publication.persist !== undefined) await store.write(provider.id, publication.persist);
+		publication.update?.();
+		return true;
 	};
+	await provider.refreshModels?.({
+		credential: { type: "api_key" },
+		stored: await store.read(provider.id),
+		publish,
+		allowNetwork: overrides.allowNetwork ?? true,
+		force: overrides.force,
+		signal: overrides.signal ?? neverAbortedSignal,
+	});
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -65,10 +82,9 @@ describe("remote catalog provider", () => {
 		);
 		const provider = testProvider();
 		const store = new InMemoryModelsStore();
-		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
-		await provider.refreshModels?.(refresh);
-		await provider.refreshModels?.(refresh);
-		await provider.refreshModels?.({ ...refresh, force: true });
+		await refreshProvider(provider, store);
+		await refreshProvider(provider, store);
+		await refreshProvider(provider, store, { force: true });
 
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
 		expect((await store.read(provider.id))?.models.map((entry) => entry.id)).toEqual(["dynamic"]);
@@ -92,12 +108,11 @@ describe("remote catalog provider", () => {
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
 		const provider = testProvider(localGeneratedAt);
 		const store = new InMemoryModelsStore();
-		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
 
-		await provider.refreshModels?.(refresh);
+		await refreshProvider(provider, store);
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
 
-		await provider.refreshModels?.({ ...refresh, force: true });
+		await refreshProvider(provider, store, { force: true });
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "newer"]);
 		expect(await store.read(provider.id)).toMatchObject({ lastModified: Date.parse(newerHeader) });
 	});
@@ -112,14 +127,13 @@ describe("remote catalog provider", () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
 		const provider = testProvider();
 		const store = new InMemoryModelsStore();
-		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
 
-		await provider.refreshModels?.(refresh);
+		await refreshProvider(provider, store);
 		expect(fetchSpy.mock.calls[0]?.[1]?.headers).not.toHaveProperty("if-none-match");
 		expect(await store.read(provider.id)).toMatchObject({ etag: '"catalog-1"' });
 
 		const checkedAt = (await store.read(provider.id))?.checkedAt;
-		await provider.refreshModels?.({ ...refresh, force: true });
+		await refreshProvider(provider, store, { force: true });
 
 		expect(fetchSpy.mock.calls[1]?.[1]?.headers).toMatchObject({ "if-none-match": '"catalog-1"' });
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
@@ -139,10 +153,9 @@ describe("remote catalog provider", () => {
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
 		const provider = testProvider();
 		const store = new InMemoryModelsStore();
-		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
 
-		await provider.refreshModels?.(refresh);
-		await provider.refreshModels?.({ ...refresh, force: true });
+		await refreshProvider(provider, store);
+		await refreshProvider(provider, store, { force: true });
 
 		expect((await store.read(provider.id))?.etag).toBeUndefined();
 	});
@@ -158,18 +171,60 @@ describe("remote catalog provider", () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift() as Response);
 		const provider = testProvider();
 		const store = new InMemoryModelsStore();
-		const refresh = { credential: { type: "api_key" } as const, store: scopedStore(store), allowNetwork: true };
 
-		await provider.refreshModels?.(refresh);
-		await expect(provider.refreshModels?.({ ...refresh, force: true })).rejects.toThrow(/429/);
+		await refreshProvider(provider, store);
+		await expect(refreshProvider(provider, store, { force: true })).rejects.toThrow(/429/);
 
 		const stored = await store.read(provider.id);
 		expect(stored?.etag).toBe('"catalog-1"');
 		expect(stored?.models.map((entry) => entry.id)).toEqual(["dynamic"]);
 
-		await provider.refreshModels?.({ ...refresh, force: true });
+		await refreshProvider(provider, store, { force: true });
 		expect(fetchSpy.mock.calls[2]?.[1]?.headers).toMatchObject({ "if-none-match": '"catalog-1"' });
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "dynamic"]);
+	});
+
+	it("lets a newer catalog request bypass a stalled older request without stale publication", async () => {
+		let calls = 0;
+		let markFirstStarted: (() => void) | undefined;
+		let finishFirst: ((response: Response) => void) | undefined;
+		const firstStarted = new Promise<void>((resolve) => {
+			markFirstStarted = resolve;
+		});
+		const firstResponse = new Promise<Response>((resolve) => {
+			finishFirst = resolve;
+		});
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+			calls++;
+			if (calls === 1) {
+				markFirstStarted?.();
+				return firstResponse;
+			}
+			return new Response(JSON.stringify({ newer: model("newer") }), {
+				headers: { "content-type": "application/json" },
+			});
+		});
+		const provider = testProvider();
+		const store = new InMemoryModelsStore();
+		const models = createModels({ modelsStore: store });
+		models.setProvider(provider);
+
+		const first = models.refresh({ providers: [provider.id], force: true });
+		await firstStarted;
+		const second = models.refresh({ providers: [provider.id], force: true });
+		await second;
+		await first;
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "newer"]);
+
+		finishFirst?.(
+			new Response(JSON.stringify({ older: model("older") }), {
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "newer"]);
+		expect((await store.read(provider.id))?.models.map((entry) => entry.id)).toEqual(["newer"]);
 	});
 
 	it("treats unimplemented pi.dev catalog routes as an unavailable overlay", async () => {
@@ -177,13 +232,7 @@ describe("remote catalog provider", () => {
 		const provider = testProvider();
 		const store = new InMemoryModelsStore();
 
-		await expect(
-			provider.refreshModels?.({
-				credential: { type: "api_key" },
-				store: scopedStore(store),
-				allowNetwork: true,
-			}),
-		).resolves.toBeUndefined();
+		await expect(refreshProvider(provider, store)).resolves.toBeUndefined();
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
 		expect(await store.read(provider.id)).toMatchObject({ models: [], checkedAt: expect.any(Number) });
 	});

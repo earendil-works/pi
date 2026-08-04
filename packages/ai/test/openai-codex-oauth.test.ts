@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -51,7 +53,7 @@ function loginOpenAICodexDeviceCodeForTest(options: {
 	signal?: AbortSignal;
 }) {
 	return openaiCodexOAuth.login({
-		signal: options.signal,
+		signal: options.signal ?? neverAbortedSignal,
 		prompt: async (prompt) => {
 			if (prompt.type !== "select") throw new Error(`Unexpected prompt: ${prompt.type}`);
 			return "device_code";
@@ -220,6 +222,7 @@ describe("OpenAI Codex OAuth", () => {
 
 		await expect(
 			openaiCodexOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async (prompt) => {
 					if (prompt.type !== "select") throw new Error("Text prompt should not be used");
 					selectPrompts.push(prompt);
@@ -263,6 +266,7 @@ describe("OpenAI Codex OAuth", () => {
 	it("cancels when OpenAI Codex login method selection is cancelled", async () => {
 		await expect(
 			openaiCodexOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async () => {
 					throw new Error("Login cancelled");
 				},
@@ -467,12 +471,15 @@ describe("OpenAI Codex OAuth", () => {
 		);
 
 		await expect(
-			openaiCodexOAuth.refresh({
-				type: "oauth",
-				access: "invalid-access-token",
-				refresh: "invalid-refresh-token",
-				expires: 0,
-			}),
+			openaiCodexOAuth.refresh(
+				{
+					type: "oauth",
+					access: "invalid-access-token",
+					refresh: "invalid-refresh-token",
+					expires: 0,
+				},
+				neverAbortedSignal,
+			),
 		).rejects.toThrow(/OpenAI Codex token refresh failed \(401\).*Could not validate your token/);
 		expect(consoleError).not.toHaveBeenCalled();
 	});

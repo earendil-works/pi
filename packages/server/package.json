@@ -9,10 +9,22 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		},
+		"./unix": {
+			"types": "./dist/transports/unix/index.d.ts",
+			"import": "./dist/transports/unix/index.js"
+		},
+		"./legacy": {
+			"types": "./dist/legacy/index.d.ts",
+			"import": "./dist/legacy/index.js"
 		}
 	},
 	"bin": {
-		"server": "./dist/cli.js"
+		"server": "./dist/legacy/cli.js"
 	},
 	"files": [
 		"dist",
@@ -22,7 +34,9 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/legacy/cli.js",
+		"test": "vitest --run",
+		"typecheck": "tsgo -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
@@ -40,9 +54,12 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "^0.83.0"
+		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-coding-agent": "^0.83.0",
+		"@earendil-works/pi-protocol": "^0.83.0"
 	},
 	"devDependencies": {
-		"shx": "0.4.0"
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
 	}
 }

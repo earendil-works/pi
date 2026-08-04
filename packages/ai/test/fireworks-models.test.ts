@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel, getModels } from "../src/compat.ts";
+import { getModel, getModels, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
@@ -56,6 +56,55 @@ describe("Fireworks models", () => {
 		expect(fast.baseUrl).toBe(base.baseUrl);
 		expect(fast.compat).toEqual(base.compat);
 		expect(fast.thinkingLevelMap).toEqual(base.thinkingLevelMap);
+	});
+
+	it("routes Kimi K3 through the OpenAI-compatible API with native effort controls", async () => {
+		const base = getModel("fireworks", "accounts/fireworks/models/kimi-k3");
+		const fast = getModel("fireworks", "accounts/fireworks/routers/kimi-k3-fast");
+		const compat = {
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			requiresReasoningContentOnAssistantMessages: true,
+			thinkingFormat: "openai",
+			deferredToolsMode: "kimi",
+			sendSessionAffinityHeaders: true,
+			supportsLongCacheRetention: false,
+		};
+		const thinkingLevelMap = {
+			off: null,
+			minimal: null,
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: null,
+			max: "max",
+		};
+
+		expect(base.api).toBe("openai-completions");
+		expect(base.baseUrl).toBe("https://api.fireworks.ai/inference/v1");
+		expect(base.compat).toEqual(compat);
+		expect(base.thinkingLevelMap).toEqual(thinkingLevelMap);
+		expect(fast.api).toBe(base.api);
+		expect(fast.baseUrl).toBe(base.baseUrl);
+		expect(fast.compat).toEqual(compat);
+		expect(fast.thinkingLevelMap).toEqual(thinkingLevelMap);
+
+		let payload: Record<string, unknown> | undefined;
+		const response = streamSimple(
+			base,
+			{ messages: [{ role: "user", content: "test", timestamp: 0 }] },
+			{
+				apiKey: "test-fireworks-key",
+				reasoning: "max",
+				onPayload: (value) => {
+					payload = value as Record<string, unknown>;
+					throw new Error("payload captured");
+				},
+			},
+		);
+		await response.result();
+
+		expect(payload?.reasoning_effort).toBe("max");
 	});
 
 	it("resolves FIREWORKS_API_KEY from the environment", () => {

@@ -3,7 +3,7 @@ import { lazyApi } from "../src/api/lazy.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext, AuthEvent } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
-import { InMemoryModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
+import { InMemoryModelsStore } from "../src/models-store.ts";
 import { builtinModels, builtinProviders, getBuiltinModel } from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
@@ -20,6 +20,8 @@ function fakeAuthContext(env: Record<string, string>, files: string[] = []): Aut
 		fileExists: async (path) => files.includes(path),
 	};
 }
+
+const neverAbortedSignal = new AbortController().signal;
 
 const context: Context = { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] };
 
@@ -112,6 +114,7 @@ describe("builtin providers", () => {
 		const bearerAnswers = ["bearer-token", "bedrock-token"];
 		expect(
 			await auth.login?.({
+				signal: neverAbortedSignal,
 				prompt: async () => bearerAnswers.shift()!,
 				notify: () => {},
 			}),
@@ -121,6 +124,7 @@ describe("builtin providers", () => {
 		const events: AuthEvent[] = [];
 		expect(
 			await auth.login?.({
+				signal: neverAbortedSignal,
 				prompt: async () => profileAnswers.shift()!,
 				notify: (event) => events.push(event),
 			}),
@@ -135,6 +139,7 @@ describe("builtin providers", () => {
 			await auth.resolve({
 				ctx: fakeAuthContext({}),
 				credential: { type: "api_key", env: { AWS_PROFILE: "work" } },
+				signal: neverAbortedSignal,
 			}),
 		).toMatchObject({ auth: {}, env: { AWS_PROFILE: "work" } });
 	});
@@ -203,6 +208,7 @@ describe("builtin providers", () => {
 		const keyAnswers = ["api-key", "vertex-key"];
 		expect(
 			await auth.login?.({
+				signal: neverAbortedSignal,
 				prompt: async () => keyAnswers.shift()!,
 				notify: () => {},
 			}),
@@ -212,6 +218,7 @@ describe("builtin providers", () => {
 		const events: AuthEvent[] = [];
 		expect(
 			await auth.login?.({
+				signal: neverAbortedSignal,
 				prompt: async () => adcAnswers.shift()!,
 				notify: (event) => events.push(event),
 			}),
@@ -232,6 +239,7 @@ describe("builtin providers", () => {
 					type: "api_key",
 					env: { GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "us-central1" },
 				},
+				signal: neverAbortedSignal,
 			}),
 		).toMatchObject({
 			auth: {},
@@ -270,20 +278,22 @@ describe("envApiKeyAuth", () => {
 		const stored = await auth.resolve({
 			ctx: fakeAuthContext({ FIRST_KEY: "env" }),
 			credential: { type: "api_key", key: "stored" },
+			signal: neverAbortedSignal,
 		});
 		expect(stored?.auth.apiKey).toBe("stored");
 		expect(stored?.source).toBe("stored credential");
 
-		const second = await auth.resolve({ ctx: fakeAuthContext({ SECOND_KEY: "second" }) });
+		const second = await auth.resolve({ ctx: fakeAuthContext({ SECOND_KEY: "second" }), signal: neverAbortedSignal });
 		expect(second?.auth.apiKey).toBe("second");
 		expect(second?.source).toBe("SECOND_KEY");
 
-		expect(await auth.resolve({ ctx: fakeAuthContext({}) })).toBeUndefined();
+		expect(await auth.resolve({ ctx: fakeAuthContext({}), signal: neverAbortedSignal })).toBeUndefined();
 	});
 
 	it("login prompts for a secret and returns an api-key credential", async () => {
 		const auth = envApiKeyAuth("Test key", ["TEST_KEY"]);
 		const credential = await auth.login?.({
+			signal: neverAbortedSignal,
 			prompt: async (prompt) => {
 				expect(prompt.type).toBe("secret");
 				return "entered-key";
@@ -417,38 +427,50 @@ describe("createProvider", () => {
 		expect(result.errorMessage).toContain("no API implementation");
 	});
 
-	it("supports dynamic providers: empty until refreshed, in-flight refreshes deduped", async () => {
+	it("lets a newer dynamic refresh bypass and supersede older network work", async () => {
 		let fetches = 0;
+		let markFirstStarted: (() => void) | undefined;
+		let finishFirst: (() => void) | undefined;
+		const firstStarted = new Promise<void>((resolve) => {
+			markFirstStarted = resolve;
+		});
+		const firstBlocked = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
 		const provider = createProvider({
 			id: "dynamic",
 			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
 			models: [],
 			fetchModels: async () => {
 				fetches++;
-				await new Promise((resolve) => setTimeout(resolve, 5));
-				return [testModel("api-a", "listed")];
+				const current = fetches;
+				if (current === 1) {
+					markFirstStarted?.();
+					await firstBlocked;
+				}
+				return [testModel("api-a", `listed-${current}`)];
 			},
 			api: recordingStreams("a", []),
 		});
 
 		const store = new InMemoryModelsStore();
-		const refreshContext = {
-			credential: { type: "api_key" as const },
-			store: {
-				read: () => store.read("dynamic"),
-				write: (entry: ModelsStoreEntry) => store.write("dynamic", entry),
-				delete: () => store.delete("dynamic"),
-			},
-			allowNetwork: true,
-		};
+		const models = createModels({ modelsStore: store });
+		models.setProvider(provider);
 		expect(provider.getModels()).toEqual([]);
-		await Promise.all([provider.refreshModels?.(refreshContext), provider.refreshModels?.(refreshContext)]);
-		expect(fetches).toBe(1);
-		expect(provider.getModels().map((m) => m.id)).toEqual(["listed"]);
 
-		// a later refresh fetches again
-		await provider.refreshModels?.(refreshContext);
+		const first = models.refresh({ providers: ["dynamic"] });
+		await firstStarted;
+		const second = models.refresh({ providers: ["dynamic"] });
+		await expect(second).resolves.toMatchObject({ aborted: false });
+		await expect(first).resolves.toMatchObject({ aborted: false });
 		expect(fetches).toBe(2);
+		expect(provider.getModels().map((model) => model.id)).toEqual(["listed-2"]);
+		expect((await store.read("dynamic"))?.models.map((model) => model.id)).toEqual(["listed-2"]);
+
+		finishFirst?.();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(provider.getModels().map((model) => model.id)).toEqual(["listed-2"]);
+		expect((await store.read("dynamic"))?.models.map((model) => model.id)).toEqual(["listed-2"]);
 	});
 });
 

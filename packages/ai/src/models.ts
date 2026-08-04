@@ -6,13 +6,14 @@ import type {
 	AuthCheck,
 	AuthContext,
 	AuthInteraction,
+	AuthOperationOptions,
 	AuthResult,
 	AuthType,
 	Credential,
 	CredentialStore,
 	ProviderAuth,
 } from "./auth/types.ts";
-import { InMemoryModelsStore, type ModelsStore, type ProviderModelsStore } from "./models-store.ts";
+import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	Api,
 	ApiStreamOptions,
@@ -30,23 +31,39 @@ import type {
 	StreamOptions,
 	Usage,
 } from "./types.ts";
+import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+
+export interface ModelsPublication {
+	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
+	persist?: ModelsStoreEntry | null;
+	/** Optional synchronous update of provider-private in-memory catalog state. */
+	update?: () => void;
+}
 
 export interface RefreshModelsContext {
 	/** Effective configured credential. OAuth credentials are refreshed before network access. */
 	credential?: Credential;
-	/** Persistent model storage scoped to this provider ID. */
-	store: ProviderModelsStore;
+	/** Immutable provider-scoped catalog snapshot captured before this refresh phase. */
+	stored?: Readonly<ModelsStoreEntry>;
+	/**
+	 * Generation-checked publication. Persistence policy remains provider-owned;
+	 * the update runs synchronously only after the selected persistence mutation.
+	 */
+	publish(publication: ModelsPublication): Promise<boolean>;
 	/** False during offline/cache-only initialization. */
 	allowNetwork: boolean;
 	/** Bypass provider freshness checks and fetch immediately when network access is allowed. */
 	force?: boolean;
-	signal?: AbortSignal;
+	/** Always present, including when the public refresh caller omits its optional signal. */
+	signal: AbortSignal;
 }
 
 export interface ModelsRefreshOptions {
 	allowNetwork?: boolean;
+	/** Restrict refresh to these provider IDs. Unknown and static providers are ignored. */
+	providers?: readonly string[];
 	/** Bypass provider freshness checks and fetch immediately when network access is allowed. */
 	force?: boolean;
 	signal?: AbortSignal;
@@ -100,9 +117,10 @@ export interface Provider<TApi extends Api = Api> {
 	getModels(): readonly Model<TApi>[];
 
 	/**
-	 * Dynamic providers only: restore the provider-scoped stored catalog and optionally fetch
-	 * a newer list using the effective credential. Implementations must retain their previous
-	 * list on failure and honor the shared abort signal for network requests.
+	 * Dynamic providers only: restore `context.stored` and optionally fetch a newer list using
+	 * the effective credential. Implementations retain their previous list on failure, publish
+	 * persistence and synchronous state changes through `context.publish()`, and honor the
+	 * shared abort signal for blocking work.
 	 */
 	refreshModels?(context: RefreshModelsContext): Promise<void>;
 
@@ -150,16 +168,17 @@ export interface Models {
 	getModel(provider: string, id: string): Model<Api> | undefined;
 
 	/**
-	 * Refresh every configured dynamic provider concurrently. Provider errors and cancellation
-	 * are returned without rejecting; static and unconfigured providers are skipped.
+	 * Refresh selected configured dynamic providers concurrently (all when `providers` is omitted).
+	 * Provider errors and cancellation are returned without rejecting; static, unknown, and
+	 * unconfigured providers are skipped.
 	 */
 	refresh(options?: ModelsRefreshOptions): Promise<ModelsRefreshResult>;
 
 	/** Check whether a provider has complete auth configuration without refreshing OAuth. */
-	checkAuth(providerId: string): Promise<AuthCheck | undefined>;
+	checkAuth(providerId: string, options?: AuthOperationOptions): Promise<AuthCheck | undefined>;
 
 	/** Return models whose providers have complete auth configuration. */
-	getAvailable(providerId?: string): Promise<readonly Model<Api>[]>;
+	getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]>;
 
 	/**
 	 * Resolve provider-scoped auth by provider id, or provider auth plus static
@@ -177,7 +196,7 @@ export interface Models {
 	login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
 
 	/** Remove the stored credential for a provider. */
-	logout(providerId: string): Promise<void>;
+	logout(providerId: string, options?: AuthOperationOptions): Promise<void>;
 
 	stream<TApi extends Api>(
 		model: Model<TApi>,
@@ -231,6 +250,9 @@ class ModelsImpl implements MutableModels {
 	private credentials: CredentialStore;
 	private modelsStore: ModelsStore;
 	private authContext: AuthContext;
+	private refreshGenerations = new Map<string, number>();
+	private refreshControllers = new Map<string, AbortController>();
+	private publicationChains = new Map<string, Promise<unknown>>();
 
 	constructor(options?: CreateModelsOptions) {
 		this.credentials = options?.credentials ?? new InMemoryCredentialStore();
@@ -239,14 +261,19 @@ class ModelsImpl implements MutableModels {
 	}
 
 	setProvider(provider: Provider): void {
+		this.supersedeProviderRefresh(provider.id);
 		this.providers.set(provider.id, provider);
 	}
 
 	deleteProvider(id: string): void {
+		this.supersedeProviderRefresh(id);
 		this.providers.delete(id);
 	}
 
 	clearProviders(): void {
+		for (const id of new Set([...this.providers.keys(), ...this.refreshControllers.keys()])) {
+			this.supersedeProviderRefresh(id);
+		}
 		this.providers.clear();
 	}
 
@@ -284,36 +311,110 @@ class ModelsImpl implements MutableModels {
 		return this.getModels(provider).find((model) => model.id === id);
 	}
 
+	private supersedeProviderRefresh(providerId: string): number {
+		const generation = (this.refreshGenerations.get(providerId) ?? 0) + 1;
+		this.refreshGenerations.set(providerId, generation);
+		const previous = this.refreshControllers.get(providerId);
+		if (previous) {
+			this.refreshControllers.delete(providerId);
+			previous.abort();
+		}
+		return generation;
+	}
+
+	private beginProviderRefresh(providerId: string): { generation: number; controller: AbortController } {
+		const generation = this.supersedeProviderRefresh(providerId);
+		const controller = new AbortController();
+		this.refreshControllers.set(providerId, controller);
+		return { generation, controller };
+	}
+
+	private publishProviderModels(
+		providerId: string,
+		generation: number,
+		signal: AbortSignal,
+		publication: ModelsPublication,
+	): Promise<boolean> {
+		const previous = this.publicationChains.get(providerId) ?? Promise.resolve();
+		const queued = (async () => {
+			await previous.catch(() => {});
+			if (signal.aborted || this.refreshGenerations.get(providerId) !== generation) return false;
+
+			if (publication.persist === null) {
+				await this.modelsStore.delete(providerId, { signal });
+			} else if (publication.persist !== undefined) {
+				await this.modelsStore.write(providerId, structuredClone(publication.persist), { signal });
+			}
+
+			if (signal.aborted || this.refreshGenerations.get(providerId) !== generation) return false;
+			publication.update?.();
+			return true;
+		})();
+		const tail = queued.catch(() => {});
+		this.publicationChains.set(providerId, tail);
+		void tail.then(() => {
+			if (this.publicationChains.get(providerId) === tail) this.publicationChains.delete(providerId);
+		});
+		return raceWithAbortSignal(queued, signal);
+	}
+
+	private async runProviderRefreshPhase(
+		provider: Provider & Required<Pick<Provider, "refreshModels">>,
+		credential: Credential | undefined,
+		allowNetwork: boolean,
+		force: boolean | undefined,
+		generation: number,
+		signal: AbortSignal,
+	): Promise<void> {
+		const stored = await this.modelsStore.read(provider.id, { signal });
+		await provider.refreshModels({
+			credential,
+			stored: stored ? structuredClone(stored) : undefined,
+			publish: (publication) => this.publishProviderModels(provider.id, generation, signal, publication),
+			allowNetwork,
+			force: allowNetwork ? force : undefined,
+			signal,
+		});
+	}
+
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const allowNetwork = options.allowNetwork ?? true;
+		const callerSignal = operationSignal(options.signal);
 		const errors = new Map<string, Error>();
+		if (callerSignal.aborted) return { aborted: true, errors };
+		const selected = options.providers ? new Set(options.providers) : undefined;
 		const refreshable = Array.from(this.providers.values()).filter(
 			(provider): provider is Provider & Required<Pick<Provider, "refreshModels">> =>
-				provider.refreshModels !== undefined,
+				provider.refreshModels !== undefined && (!selected || selected.has(provider.id)),
 		);
 
-		await Promise.all(
+		const refresh = Promise.all(
 			refreshable.map(async (provider) => {
-				if (options.signal?.aborted) return;
-				const store: ProviderModelsStore = {
-					read: () => this.modelsStore.read(provider.id),
-					write: (entry) => this.modelsStore.write(provider.id, entry),
-					delete: () => this.modelsStore.delete(provider.id),
-				};
-				let stored: Credential | undefined;
-				try {
-					stored = await this.readCredential(provider.id);
-					const credential = await this.resolveRefreshCredential(provider, stored, allowNetwork, options.signal);
+				const { generation, controller } = this.beginProviderRefresh(provider.id);
+				const signal = AbortSignal.any([callerSignal, controller.signal]);
+				const operation = (async () => {
+					let storedCredential: Credential | undefined;
+					let credentialError: unknown;
+					try {
+						storedCredential = await this.readCredential(provider.id, signal);
+					} catch (error) {
+						credentialError = error;
+					}
+
+					// Restore cached provider state before auth resolution or network access.
+					await this.runProviderRefreshPhase(provider, storedCredential, false, undefined, generation, signal);
+					if (credentialError !== undefined) throw credentialError;
+					if (!allowNetwork || signal.aborted) return;
+
+					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
 					if (!credential) return;
-					await provider.refreshModels({
-						credential,
-						store,
-						allowNetwork,
-						force: options.force,
-						signal: options.signal,
-					});
+					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
+				})();
+
+				try {
+					await raceWithAbortSignal(operation, signal);
 				} catch (error) {
-					if (!options.signal?.aborted) {
+					if (!signal.aborted) {
 						errors.set(
 							provider.id,
 							error instanceof Error
@@ -321,52 +422,55 @@ class ModelsImpl implements MutableModels {
 								: new ModelsError("model_source", `Model refresh failed for ${provider.id}`, { cause: error }),
 						);
 					}
-					try {
-						await provider.refreshModels({
-							credential: stored,
-							store,
-							allowNetwork: false,
-							signal: options.signal,
-						});
-					} catch {
-						// Preserve the original auth/network error; cache restoration is best-effort here.
+				} finally {
+					if (this.refreshControllers.get(provider.id) === controller) {
+						this.refreshControllers.delete(provider.id);
 					}
 				}
 			}),
 		);
 
-		return { aborted: options.signal?.aborted ?? false, errors };
+		try {
+			await raceWithAbortSignal(refresh, callerSignal);
+		} catch (error) {
+			if (!callerSignal.aborted) throw error;
+		}
+
+		return { aborted: callerSignal.aborted, errors: new Map(errors) };
 	}
 
 	private async resolveRefreshCredential(
 		provider: Provider,
 		stored: Credential | undefined,
-		allowNetwork: boolean,
-		signal?: AbortSignal,
+		signal: AbortSignal,
 	): Promise<Credential | undefined> {
 		if (stored?.type === "oauth") {
 			const oauth = provider.auth.oauth;
 			if (!oauth) return undefined;
-			if (!allowNetwork || Date.now() < stored.expires) return stored;
-			if (signal?.aborted) return undefined;
-			const post = await this.credentials.modify(provider.id, async (current) => {
-				if (current?.type !== "oauth" || Date.now() < current.expires) return undefined;
-				return oauth.refresh(current, signal);
-			});
+			if (Date.now() < stored.expires) return stored;
+			if (signal.aborted) return undefined;
+			const post = await this.credentials.modify(
+				provider.id,
+				async (current) => {
+					if (current?.type !== "oauth" || Date.now() < current.expires) return undefined;
+					return oauth.refresh(current, signal);
+				},
+				{ signal },
+			);
 			return post?.type === "oauth" ? post : undefined;
 		}
 
 		const apiKey = provider.auth.apiKey;
 		if (!apiKey) return undefined;
 		const credential = stored?.type === "api_key" ? stored : undefined;
-		const result = await apiKey.resolve({ ctx: this.authContext, credential });
+		const result = await apiKey.resolve({ ctx: this.authContext, credential, signal });
 		if (!result) return undefined;
 		return { type: "api_key", key: result.auth.apiKey, env: result.env };
 	}
 
-	private async readCredential(providerId: string): Promise<Credential | undefined> {
+	private async readCredential(providerId: string, signal: AbortSignal): Promise<Credential | undefined> {
 		try {
-			return await this.credentials.read(providerId);
+			return await this.credentials.read(providerId, { signal });
 		} catch (error) {
 			throw new ModelsError("auth", `Credential store read failed for ${providerId}`, { cause: error });
 		}
@@ -375,6 +479,7 @@ class ModelsImpl implements MutableModels {
 	private async checkProviderAuth(
 		provider: Provider,
 		credential: Credential | undefined,
+		signal: AbortSignal,
 	): Promise<AuthCheck | undefined> {
 		if (credential?.type === "oauth") {
 			return provider.auth.oauth ? { source: "OAuth", type: "oauth" } : undefined;
@@ -386,37 +491,48 @@ class ModelsImpl implements MutableModels {
 				return await apiKey.check({
 					ctx: this.authContext,
 					credential: credential?.type === "api_key" ? credential : undefined,
+					signal,
 				});
 			} catch (error) {
 				throw new ModelsError("auth", `API key auth check failed for provider ${provider.id}`, { cause: error });
 			}
 		}
 
-		const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext);
+		const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext, { signal });
 		return resolution ? { source: resolution.source, type: "api_key" } : undefined;
 	}
 
-	async checkAuth(providerId: string): Promise<AuthCheck | undefined> {
-		const provider = this.providers.get(providerId);
-		if (!provider) return undefined;
-		return this.checkProviderAuth(provider, await this.readCredential(providerId));
+	checkAuth(providerId: string, options?: AuthOperationOptions): Promise<AuthCheck | undefined> {
+		const signal = operationSignal(options?.signal);
+		const check = (async () => {
+			signal.throwIfAborted();
+			const provider = this.providers.get(providerId);
+			if (!provider) return undefined;
+			return this.checkProviderAuth(provider, await this.readCredential(providerId, signal), signal);
+		})();
+		return raceWithAbortSignal(check, signal);
 	}
 
-	async getAvailable(providerId?: string): Promise<readonly Model<Api>[]> {
-		const providers = providerId
-			? [this.providers.get(providerId)].filter((entry) => entry !== undefined)
-			: this.getProviders();
-		const checks = await Promise.all(
-			providers.map(async (provider) => {
-				const credential = await this.readCredential(provider.id);
-				return { provider, credential, auth: await this.checkProviderAuth(provider, credential) };
-			}),
-		);
-		return checks.flatMap(({ provider, credential, auth }) => {
-			if (!auth) return [];
-			const models = provider.getModels();
-			return provider.filterModels?.(models, credential) ?? models;
-		});
+	getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]> {
+		const signal = operationSignal(options?.signal);
+		const available = (async () => {
+			signal.throwIfAborted();
+			const providers = providerId
+				? [this.providers.get(providerId)].filter((entry) => entry !== undefined)
+				: this.getProviders();
+			const checks = await Promise.all(
+				providers.map(async (provider) => {
+					const credential = await this.readCredential(provider.id, signal);
+					return { provider, credential, auth: await this.checkProviderAuth(provider, credential, signal) };
+				}),
+			);
+			return checks.flatMap(({ provider, credential, auth }) => {
+				if (!auth) return [];
+				const models = provider.getModels();
+				return provider.filterModels?.(models, credential) ?? models;
+			});
+		})();
+		return raceWithAbortSignal(available, signal);
 	}
 
 	getAuth(providerId: string, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
@@ -425,10 +541,11 @@ class ModelsImpl implements MutableModels {
 		providerOrModel: string | Model<Api>,
 		overrides?: AuthResolutionOverrides,
 	): Promise<AuthResult | undefined> {
+		const signal = operationSignal(overrides?.signal);
 		const providerId = typeof providerOrModel === "string" ? providerOrModel : providerOrModel.provider;
 		const provider = this.providers.get(providerId);
 		if (!provider) return undefined;
-		const result = await resolveProviderAuth(provider, this.credentials, this.authContext, overrides);
+		const result = await resolveProviderAuth(provider, this.credentials, this.authContext, { ...overrides, signal });
 		if (!result || typeof providerOrModel === "string" || !providerOrModel.headers) return result;
 		return {
 			...result,
@@ -440,25 +557,64 @@ class ModelsImpl implements MutableModels {
 	}
 
 	async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
+		const signal = operationSignal(interaction.signal);
+		signal.throwIfAborted();
 		const provider = this.providers.get(providerId);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${providerId}`);
 		const method = type === "oauth" ? provider.auth.oauth : provider.auth.apiKey;
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const credential = await method.login(interaction);
+		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let mutationStarted = false;
+		let markMutationStarted: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markMutationStarted = resolve;
+		});
+		const mutation = this.credentials.modify(
+			providerId,
+			async () => {
+				mutationStarted = true;
+				markMutationStarted?.();
+				return credential;
+			},
+			{ signal },
+		);
+		void mutation.catch(() => {});
 		try {
-			await this.credentials.modify(providerId, async () => credential);
+			await new Promise<void>((resolve, reject) => {
+				const onAbort = () => {
+					if (!mutationStarted) reject(signal.reason);
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+				void Promise.race([started, mutation]).then(
+					() => {
+						signal.removeEventListener("abort", onAbort);
+						resolve();
+					},
+					(error: unknown) => {
+						signal.removeEventListener("abort", onAbort);
+						reject(error);
+					},
+				);
+				if (signal.aborted) onAbort();
+			});
+			await mutation;
 		} catch (error) {
+			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
 		return credential;
 	}
 
-	async logout(providerId: string): Promise<void> {
+	async logout(providerId: string, options?: AuthOperationOptions): Promise<void> {
+		const signal = operationSignal(options?.signal);
+		signal.throwIfAborted();
 		try {
-			await this.credentials.delete(providerId);
+			await this.credentials.delete(providerId, { signal });
 		} catch (error) {
+			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store delete failed for ${providerId}`, { cause: error });
 		}
 	}
@@ -479,6 +635,7 @@ class ModelsImpl implements MutableModels {
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
 			env: options?.env,
+			signal: options?.signal,
 		});
 		if (!resolution) {
 			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
@@ -575,7 +732,7 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 	auth: ProviderAuth;
 	/** Static baseline model list (empty for purely dynamic providers). */
 	models: readonly Model<TApi>[];
-	/** Fetch a dynamic model overlay. createProvider restores/persists it through ModelsStore. */
+	/** Fetch a dynamic model overlay. createProvider restores and publishes it transactionally. */
 	fetchModels?: (context: RefreshModelsContext) => Promise<readonly Model<TApi>[]>;
 	filterModels?: (models: readonly Model<TApi>[], credential: Credential | undefined) => readonly Model<TApi>[];
 	/** Single implementation, or map keyed by `model.api` for mixed-API providers. */
@@ -591,7 +748,6 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 export function createProvider<TApi extends Api = Api>(input: CreateProviderOptions<TApi>): Provider<TApi> {
 	const baselineModels = input.models;
 	let dynamicModels: readonly Model<TApi>[] = [];
-	let inflightRefresh: Promise<void> | undefined;
 	const fetchModels = input.fetchModels;
 	const currentModels = (): readonly Model<TApi>[] => {
 		const merged = [...baselineModels];
@@ -629,25 +785,30 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		auth: input.auth,
 		getModels: currentModels,
 		refreshModels: fetchModels
-			? (context) => {
-					inflightRefresh ??= (async () => {
-						try {
-							const stored = await context.store.read();
-							if (stored) {
-								dynamicModels = stored.models
-									.filter((model) => model.provider === input.id)
-									.map((model) => model as Model<TApi>);
-							}
-							if (!context.allowNetwork || context.signal?.aborted) return;
-							const refreshed = await fetchModels(context);
-							if (context.signal?.aborted) return;
-							dynamicModels = refreshed;
-							await context.store.write({ models: refreshed, checkedAt: Date.now() });
-						} finally {
-							inflightRefresh = undefined;
+			? async (context) => {
+					if (context.stored) {
+						const restored = context.stored.models
+							.filter((model) => model.provider === input.id)
+							.map((model) => model as Model<TApi>);
+						if (
+							!(await context.publish({
+								update: () => {
+									dynamicModels = restored;
+								},
+							}))
+						) {
+							return;
 						}
-					})();
-					return inflightRefresh;
+					}
+					if (!context.allowNetwork || context.signal.aborted) return;
+					const refreshed = await fetchModels(context);
+					if (context.signal.aborted) return;
+					await context.publish({
+						persist: { models: refreshed, checkedAt: Date.now() },
+						update: () => {
+							dynamicModels = refreshed;
+						},
+					});
 				}
 			: undefined,
 		filterModels: input.filterModels,

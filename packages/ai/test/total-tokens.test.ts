@@ -396,26 +396,44 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Baseten
+	// =========================================================================
+
+	describe.skipIf(!process.env.BASETEN_API_KEY)("Baseten", () => {
+		it("GLM 5.2 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("baseten", "zai-org/GLM-5.2");
+
+			console.log(`\nBaseten / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.BASETEN_API_KEY,
+				reasoningEffort: "high",
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// z.ai
 	// =========================================================================
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
-		it(
-			"glm-4.5-air - should return totalTokens equal to sum of components",
-			{ retry: 3, timeout: 60000 },
-			async () => {
-				const llm = getModel("zai", "glm-4.5-air");
+		it("glm-5.2 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("zai", "glm-5.2");
 
-				console.log(`\nz.ai / ${llm.id}:`);
-				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.ZAI_API_KEY });
+			console.log(`\nz.ai / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.ZAI_API_KEY });
 
-				logUsage("First request", first);
-				logUsage("Second request", second);
+			logUsage("First request", first);
+			logUsage("Second request", second);
 
-				assertTotalTokensEqualsComponents(first);
-				assertTotalTokensEqualsComponents(second);
-			},
-		);
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
 	});
 
 	// =========================================================================

@@ -69,7 +69,9 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 		if (!oauth) return undefined;
 		let credential = entry;
 		try {
-			if (Date.now() >= credential.expires) credential = await oauth.refresh(credential);
+			if (Date.now() >= credential.expires) {
+				credential = await oauth.refresh(credential, new AbortController().signal);
+			}
 		} catch (error) {
 			console.log(JSON.stringify(error));
 			return undefined;

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -53,7 +55,7 @@ function loginXaiForTest(options: {
 	signal?: AbortSignal;
 }): Promise<OAuthCredential> {
 	return xaiOAuth.login({
-		signal: options.signal,
+		signal: options.signal ?? neverAbortedSignal,
 		prompt: () => {
 			throw new Error("Unexpected prompt");
 		},
@@ -67,7 +69,10 @@ function loginXaiForTest(options: {
 }
 
 function refreshXaiForTest(refreshToken: string): Promise<OAuthCredential> {
-	return xaiOAuth.refresh({ type: "oauth", access: "old-access", refresh: refreshToken, expires: 0 });
+	return xaiOAuth.refresh(
+		{ type: "oauth", access: "old-access", refresh: refreshToken, expires: 0 },
+		neverAbortedSignal,
+	);
 }
 
 describe("xAI OAuth device flow", () => {

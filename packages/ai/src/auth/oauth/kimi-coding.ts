@@ -7,7 +7,7 @@
  */
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
@@ -37,8 +37,8 @@ function getOauthHost(): string {
 	return (override || DEFAULT_OAUTH_HOST).replace(/\/+$/, "");
 }
 
-function requestSignal(signal?: AbortSignal): AbortSignal {
-	return AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(signal ? [signal] : [])]);
+function requestSignal(signal: AbortSignal): AbortSignal {
+	return AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]);
 }
 
 function formUrlEncode(fields: Record<string, string>): string {
@@ -66,7 +66,7 @@ function trustedHttpUrl(value: unknown): string | null {
 	}
 }
 
-async function startDeviceAuthorization(oauthHost: string, signal?: AbortSignal): Promise<DeviceAuthorization> {
+async function startDeviceAuthorization(oauthHost: string, signal: AbortSignal): Promise<DeviceAuthorization> {
 	const response = await fetch(`${oauthHost}/api/oauth/device_authorization`, {
 		method: "POST",
 		headers: {
@@ -141,7 +141,7 @@ function parseTokenResponse(json: Record<string, unknown> | null, operation: str
 async function pollForToken(
 	oauthHost: string,
 	device: DeviceAuthorization,
-	signal?: AbortSignal,
+	signal: AbortSignal,
 ): Promise<TokenResponse> {
 	return pollOAuthDeviceCodeFlow<TokenResponse>({
 		intervalSeconds: device.intervalSeconds,
@@ -206,25 +206,32 @@ async function pollForToken(
 	});
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		signal.throwIfAborted();
+		const onAbort = () => {
+			clearTimeout(timeout);
+			reject(signal.reason);
+		};
+		const timeout = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 function isRetryableRefreshFailure(response: Response): boolean {
 	return response.status === 429 || response.status >= 500;
 }
 
-async function refreshToken(
-	oauthHost: string,
-	refreshTokenValue: string,
-	signal?: AbortSignal,
-): Promise<TokenResponse> {
+async function refreshToken(oauthHost: string, refreshTokenValue: string, signal: AbortSignal): Promise<TokenResponse> {
 	let lastError: Error | undefined;
 	for (let attempt = 0; attempt <= REFRESH_MAX_RETRIES; attempt++) {
 		if (attempt > 0) {
-			await sleep(1000 * 2 ** (attempt - 1));
+			await sleep(1000 * 2 ** (attempt - 1), signal);
 		}
-		if (signal?.aborted) {
+		if (signal.aborted) {
 			throw new Error("Kimi Code token refresh aborted");
 		}
 
@@ -271,7 +278,7 @@ async function refreshToken(
 	throw lastError ?? new Error("Kimi Code token refresh failed");
 }
 
-async function loginKimiCoding(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginKimiCoding(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const oauthHost = getOauthHost();
 	const device = await startDeviceAuthorization(oauthHost, interaction.signal);
 	interaction.notify({

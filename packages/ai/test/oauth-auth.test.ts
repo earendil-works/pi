@@ -10,6 +10,8 @@ import * as extensionOAuthCompatibility from "../src/oauth.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -37,7 +39,7 @@ describe.sequential("OAuthAuth adapters", () => {
 	it("openrouter derives the api key and keeps the permanent credential on refresh", async () => {
 		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
 		expect(await openRouterOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
-		expect(await openRouterOAuth.refresh(credential)).toBe(credential);
+		expect(await openRouterOAuth.refresh(credential, neverAbortedSignal)).toBe(credential);
 	});
 
 	it("xAI toAuth derives the api key from the access token", async () => {
@@ -78,7 +80,10 @@ describe.sequential("OAuthAuth adapters", () => {
 			),
 		);
 
-		const refreshed = await anthropicOAuth.refresh({ type: "oauth", access: "old", refresh: "old-r", expires: 0 });
+		const refreshed = await anthropicOAuth.refresh(
+			{ type: "oauth", access: "old", refresh: "old-r", expires: 0 },
+			neverAbortedSignal,
+		);
 		expect(refreshed.type).toBe("oauth");
 		expect(refreshed.access).toBe("new-access");
 		expect(refreshed.refresh).toBe("new-refresh");
@@ -97,13 +102,16 @@ describe.sequential("OAuthAuth adapters", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const refreshed = await githubCopilotOAuth.refresh({
-			type: "oauth",
-			access: "old",
-			refresh: "gh-token",
-			expires: 0,
-			enterpriseUrl: "company.ghe.com",
-		});
+		const refreshed = await githubCopilotOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old",
+				refresh: "gh-token",
+				expires: 0,
+				enterpriseUrl: "company.ghe.com",
+			},
+			neverAbortedSignal,
+		);
 		expect(refreshed.access).toBe("new-token");
 		expect(refreshed.enterpriseUrl).toBe("company.ghe.com");
 		expect(fetchedUrls[0]).toContain("api.company.ghe.com");

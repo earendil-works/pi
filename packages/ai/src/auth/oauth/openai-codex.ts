@@ -18,7 +18,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 }
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
@@ -149,8 +149,8 @@ async function readTokenResponse(response: Response, operation: TokenOperation):
 async function exchangeAuthorizationCode(
 	code: string,
 	verifier: string,
-	redirectUri: string = REDIRECT_URI,
-	signal?: AbortSignal,
+	redirectUri: string,
+	signal: AbortSignal,
 ): Promise<OAuthToken> {
 	const response = await fetchWithLoginCancellation(TOKEN_URL, {
 		method: "POST",
@@ -168,7 +168,7 @@ async function exchangeAuthorizationCode(
 	return readTokenResponse(response, "exchange");
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<OAuthToken> {
+async function refreshAccessToken(refreshToken: string, signal: AbortSignal): Promise<OAuthToken> {
 	let response: Response;
 	try {
 		response = await fetch(TOKEN_URL, {
@@ -179,6 +179,7 @@ async function refreshAccessToken(refreshToken: string): Promise<OAuthToken> {
 				refresh_token: refreshToken,
 				client_id: CLIENT_ID,
 			}),
+			signal,
 		});
 	} catch (error) {
 		throw new Error(`OpenAI Codex token refresh error: ${error instanceof Error ? error.message : String(error)}`);
@@ -187,7 +188,7 @@ async function refreshAccessToken(refreshToken: string): Promise<OAuthToken> {
 	return readTokenResponse(response, "refresh");
 }
 
-async function startOpenAICodexDeviceAuth(signal?: AbortSignal): Promise<DeviceAuthInfo> {
+async function startOpenAICodexDeviceAuth(signal: AbortSignal): Promise<DeviceAuthInfo> {
 	const response = await fetchWithLoginCancellation(DEVICE_USER_CODE_URL, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -231,7 +232,7 @@ async function startOpenAICodexDeviceAuth(signal?: AbortSignal): Promise<DeviceA
 	};
 }
 
-async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal?: AbortSignal): Promise<DeviceTokenSuccess> {
+async function pollOpenAICodexDeviceAuth(device: DeviceAuthInfo, signal: AbortSignal): Promise<DeviceTokenSuccess> {
 	return pollOAuthDeviceCodeFlow<DeviceTokenSuccess>({
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: DEVICE_CODE_TIMEOUT_SECONDS,
@@ -418,12 +419,12 @@ async function exchangeAuthorizationCodeForCredentials(
 	code: string,
 	verifier: string,
 	redirectUri: string,
-	signal?: AbortSignal,
+	signal: AbortSignal,
 ): Promise<OAuthCredential> {
 	return credentialsFromToken(await exchangeAuthorizationCode(code, verifier, redirectUri, signal));
 }
 
-async function loginOpenAICodexDeviceCode(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginOpenAICodexDeviceCode(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const device = await startOpenAICodexDeviceAuth(interaction.signal);
 	interaction.notify({
 		type: "device_code",
@@ -441,10 +442,13 @@ async function loginOpenAICodexDeviceCode(interaction: AuthInteraction): Promise
 	);
 }
 
-async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginOpenAICodex(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const { verifier, state, url } = await createAuthorizationFlow();
 	const server = await startLocalOAuthServer(state);
 	const manualAbort = new AbortController();
+	const onAbort = () => server.cancelWait();
+	interaction.signal.addEventListener("abort", onAbort, { once: true });
+	if (interaction.signal.aborted) onAbort();
 	let code: string | undefined;
 	let manualCode: string | undefined;
 	let manualError: Error | undefined;
@@ -495,6 +499,7 @@ async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCred
 		if (!code) throw new Error("Missing authorization code");
 		return exchangeAuthorizationCodeForCredentials(code, verifier, REDIRECT_URI, interaction.signal);
 	} finally {
+		interaction.signal.removeEventListener("abort", onAbort);
 		manualAbort.abort();
 		server.close();
 	}
@@ -503,8 +508,8 @@ async function loginOpenAICodex(interaction: AuthInteraction): Promise<OAuthCred
 /**
  * Refresh OpenAI Codex OAuth token
  */
-async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredential> {
-	return credentialsFromToken(await refreshAccessToken(refreshToken));
+async function refreshOpenAICodexToken(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
+	return credentialsFromToken(await refreshAccessToken(refreshToken, signal));
 }
 
 export const openaiCodexOAuth: OAuthAuth = {
@@ -530,7 +535,7 @@ export const openaiCodexOAuth: OAuthAuth = {
 		return loginOpenAICodex(interaction);
 	},
 
-	refresh: (credential) => refreshOpenAICodexToken(credential.refresh),
+	refresh: (credential, signal) => refreshOpenAICodexToken(credential.refresh, signal),
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };

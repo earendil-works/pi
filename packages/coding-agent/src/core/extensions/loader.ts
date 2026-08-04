@@ -29,6 +29,7 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
+import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type {
@@ -38,6 +39,7 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	LoadExtensionsResult,
+	MarkdownTransformer,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
@@ -287,6 +289,11 @@ function createExtensionAPI(
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
 			runtime.assertActive();
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
+		},
+
+		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
+			runtime.assertActive();
+			extension.markdownTransformer = transformer;
 		},
 
 		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
@@ -561,26 +568,6 @@ export async function loadExtensionsCached(
 	runtime?: ExtensionRuntime,
 ): Promise<LoadExtensionsResult> {
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true);
-}
-
-interface PiManifest {
-	extensions?: string[];
-	themes?: string[];
-	skills?: string[];
-	prompts?: string[];
-}
-
-function readPiManifest(packageJsonPath: string): PiManifest | null {
-	try {
-		const content = fs.readFileSync(packageJsonPath, "utf-8");
-		const pkg = JSON.parse(content);
-		if (pkg.pi && typeof pkg.pi === "object") {
-			return pkg.pi as PiManifest;
-		}
-		return null;
-	} catch {
-		return null;
-	}
 }
 
 function isExtensionFile(name: string): boolean {

@@ -13,8 +13,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { uuidv7 } from "@earendil-works/pi-ai";
-import { complete, type Message } from "@earendil-works/pi-ai/compat";
+import { type Message, uuidv7 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
 
@@ -134,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 						timestamp: Date.now(),
 					};
 
-					const response = await complete(
+					const response = await ctx.modelRegistry.complete(
 						ctx.model!,
 						{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
 						{

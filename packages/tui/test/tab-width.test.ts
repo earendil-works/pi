@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { extractSegments, normalizeTerminalOutput, sliceWithWidth, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -71,7 +72,7 @@ describe("tab width accounting", () => {
 
 	it("keeps tab-containing overlays on one physical terminal row", async () => {
 		const terminal = new CapturingVirtualTerminal(16, 3);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.addChild(new FullViewportContent());
 		tui.showOverlay(new TabStatusOverlay(), { width: 4, row: 1, col: 4 });
 		tui.start();

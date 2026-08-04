@@ -10,15 +10,19 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 	return {
 		name,
 		login: async (interaction) => {
+			interaction.signal.throwIfAborted();
 			const key = await interaction.prompt({ type: "secret", message: `Enter ${name}` });
+			interaction.signal.throwIfAborted();
 			return { type: "api_key", key };
 		},
-		resolve: async ({ ctx, credential }) => {
+		resolve: async ({ ctx, credential, signal }) => {
+			signal.throwIfAborted();
 			if (credential?.key) {
 				return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
 			}
 			for (const envVar of envVars) {
 				const value = await ctx.env(envVar);
+				signal.throwIfAborted();
 				if (value) return { auth: { apiKey: value }, source: envVar };
 			}
 			return undefined;
@@ -43,7 +47,7 @@ export function lazyOAuth(input: { name: string; loginLabel?: string; load: () =
 		name: input.name,
 		loginLabel: input.loginLabel,
 		login: async (interaction) => (await loaded()).login(interaction),
-		refresh: async (credential) => (await loaded()).refresh(credential),
+		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};
 }

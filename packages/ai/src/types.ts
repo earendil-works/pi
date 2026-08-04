@@ -59,6 +59,7 @@ export type KnownProvider =
 	| "huggingface"
 	| "fireworks"
 	| "together"
+	| "baseten"
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
@@ -115,6 +116,14 @@ export interface ProviderResponse {
 
 export interface StreamOptions {
 	temperature?: number;
+	/**
+	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
+	 * fields, so keys here override them. Lets custom OpenAI-compatible servers (llama.cpp, vLLM,
+	 * SGLang, ...) receive parameters pi does not model, e.g. `top_p`, `top_k`, `min_p`,
+	 * `repetition_penalty`. Merged over `Model.samplingParams` per key. Only applied by
+	 * OpenAI-compatible adapters (completions, responses, Azure responses); other APIs ignore it.
+	 */
+	samplingParams?: Record<string, unknown>;
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
@@ -557,6 +566,8 @@ export interface OpenAICompletionsCompat {
 	supportsReasoningEffort?: boolean;
 	/** Whether the provider supports `stream_options: { include_usage: true }` for token usage in streaming responses. Default: true. */
 	supportsUsageInStreaming?: boolean;
+	/** Whether streamed responses include `finish_reason`. When false, pi infers `stop` or `toolUse` when the stream ends. Default: true. */
+	supportsFinishReason?: boolean;
 	/** Which field to use for max tokens. Default: auto-detected from URL. */
 	maxTokensField?: "max_completion_tokens" | "max_tokens";
 	/** Whether tool results require the `name` field. Default: auto-detected from URL. */
@@ -567,12 +578,13 @@ export interface OpenAICompletionsCompat {
 	requiresThinkingAsText?: boolean;
 	/** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
 	requiresReasoningContentOnAssistantMessages?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, "string-thinking" uses top-level thinking: string, and "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null. Default: "openai". */
+	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "baseten" uses configurable chat_template_args plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, "string-thinking" uses top-level thinking: string, and "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null. Default: "openai". */
 	thinkingFormat?:
 		| "openai"
 		| "openrouter"
 		| "deepseek"
 		| "together"
+		| "baseten"
 		| "zai"
 		| "qwen"
 		| "chat-template"
@@ -581,6 +593,8 @@ export interface OpenAICompletionsCompat {
 		| "ant-ling";
 	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
 	chatTemplateKwargs?: Record<string, ChatTemplateKwargValue>;
+	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
+	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
@@ -804,6 +818,8 @@ export interface Model<TApi extends Api> {
 	cost: ModelCost;
 	contextWindow: number;
 	maxTokens: number;
+	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
+	samplingParams?: Record<string, unknown>;
 	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"

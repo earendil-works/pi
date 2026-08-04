@@ -71,7 +71,7 @@ const customRuntime = await ModelRuntime.create({
   authPath: "/my/app/auth.json",
   modelsPath: "/my/app/models.json",
 });
-customRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
+await customRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
 
 const resourceLoader = new DefaultResourceLoader({
   systemPromptOverride: () => "You are helpful.",

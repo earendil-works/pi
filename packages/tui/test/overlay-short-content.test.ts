@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class SimpleContent implements Component {
@@ -27,7 +28,7 @@ describe("TUI overlay with short content", () => {
 	it("should render overlay when content is shorter than terminal height", async () => {
 		// Terminal has 24 rows, but content only has 3 lines
 		const terminal = new VirtualTerminal(80, 24);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 
 		// Only 3 lines of content
 		tui.addChild(new SimpleContent(["Line 1", "Line 2", "Line 3"]));

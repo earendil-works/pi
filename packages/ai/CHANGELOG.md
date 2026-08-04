@@ -2,9 +2,85 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Required dynamic model providers to accept a concrete `RefreshModelsContext.signal`; `Models.refresh()` remains unbounded when callers omit its optional signal.
+- Required provider login, API-key check/resolution, and OAuth refresh implementations to accept a concrete abort signal; public auth and credential operations remain unbounded when callers omit their optional signal.
+- Replaced raw `RefreshModelsContext.store` access with the read-only `context.stored` snapshot and generation-checked `context.publish()` transaction.
+
+  **`createProvider({ fetchModels })`:** no catalog-publication migration is required. Before and after, return the fetched list; `createProvider()` restores stored models and publishes and persists refreshed models itself. `signal` is now guaranteed to be present.
+
+  ```ts
+  // Before
+  const beforeProvider = createProvider({
+    // ...
+    fetchModels: async ({ signal }) => {
+      const response = await fetch(catalogUrl, { signal });
+      return parseModels(await response.json());
+    },
+  });
+
+  // After: unchanged
+  const afterProvider = createProvider({
+    // ...
+    fetchModels: async ({ signal }) => {
+      const response = await fetch(catalogUrl, { signal });
+      return parseModels(await response.json());
+    },
+  });
+  ```
+
+  **Handwritten `Provider.refreshModels()`:** replace direct store access and pre-publication mutation with generation-guarded publications.
+
+  ```ts
+  // Before
+  refreshModels: async (context) => {
+    const stored = await context.store.read();
+    if (stored) currentModels = stored.models;
+    if (!context.allowNetwork) return;
+
+    const refreshed = await fetchModels(context.signal);
+    currentModels = refreshed;
+    await context.store.write({ models: refreshed, checkedAt: Date.now() });
+  },
+
+  // After
+  refreshModels: async (context) => {
+    if (context.stored) {
+      const restored = context.stored.models;
+      if (!(await context.publish({
+        update: () => { currentModels = restored; },
+      }))) return;
+    }
+    if (!context.allowNetwork) return;
+
+    const refreshed = await fetchModels(context.signal);
+    if (context.signal.aborted) return;
+    await context.publish({
+      persist: { models: refreshed, checkedAt: Date.now() },
+      update: () => { currentModels = refreshed; },
+    });
+  },
+  ```
+
+  In `publish()`, omit `persist` to leave storage unchanged, pass a `ModelsStoreEntry` to write it, or pass `persist: null` to delete it. Omit `update` for metadata-only persistence; omit `persist` for an ephemeral in-memory publication.
+
 ### Added
 
-- Added provider-neutral deferred-response handles and authenticated redemption/cancellation dispatch, with deterministic faux-provider support for harness tests.
+- Added Baseten as a built-in OpenAI-compatible provider with models.dev catalog generation and native `chat_template_args` reasoning controls.
+
+### Changed
+
+- Added optional cancellation to `ModelsStore` reads, writes, and deletions; catalog orchestration binds these waits to the provider refresh signal.
+
+### Fixed
+
+- Fixed tool argument validation to preserve values that already match an `anyOf`/`oneOf` union arm before attempting coercion, avoiding nullable unions converting `null` to another primitive value ([#7328](https://github.com/earendil-works/pi/issues/7328)).
+- Fixed cancellation of model catalog refreshes so callers stop waiting even when a custom provider ignores its abort signal ([#7027](https://github.com/earendil-works/pi/issues/7027)).
+- Fixed auth resolution, availability checks, OAuth refreshes, provider login, and in-memory credential queue waits to honor caller cancellation.
+- Fixed newer provider refreshes being blocked by or overwritten by an older stalled generation, including persisted catalog publication.
+- Updated GPT-5.6 Terra and Luna pricing across OpenAI and passthrough model catalogs.
+- Fixed Fireworks Kimi K3 models to use the OpenAI-compatible API with native reasoning-effort levels and deferred tools ([#7199](https://github.com/earendil-works/pi/issues/7199), [#7230](https://github.com/earendil-works/pi/pull/7230) by [@XBeg9](https://github.com/XBeg9)).
 
 ## [0.83.0] - 2026-07-29
 

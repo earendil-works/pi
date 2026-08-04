@@ -379,6 +379,52 @@ describe("AgentSession prompt characterization", () => {
 		await promptPromise;
 	});
 
+	it("throws when prompted during manual compaction", async () => {
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "manual compacted",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+
+		const compactPromise = harness.session.compact();
+		await compactionStarted;
+
+		try {
+			await expect(harness.session.prompt("third")).rejects.toThrow(
+				"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
+			);
+		} finally {
+			releaseCompaction();
+			await compactPromise;
+		}
+	});
+
 	it("throws when prompting without a model", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

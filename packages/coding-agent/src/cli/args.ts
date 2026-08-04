@@ -6,6 +6,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
+import type { UiMode } from "../core/settings-manager.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -45,6 +46,7 @@ export interface Args {
 	noContextFiles?: boolean;
 	listModels?: string | true;
 	offline?: boolean;
+	uiMode?: UiMode;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
 	messages: string[];
@@ -175,6 +177,20 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.listModels = true;
 			}
+		} else if (arg === "--ui-mode") {
+			const mode = args[i + 1];
+			if (mode === "regular" || mode === "fullscreen") {
+				result.uiMode = mode;
+				i++;
+			} else if (mode === undefined || mode.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--ui-mode requires regular or fullscreen" });
+			} else {
+				i++;
+				result.diagnostics.push({
+					type: "error",
+					message: `Invalid UI mode "${mode}". Valid values: regular, fullscreen`,
+				});
+			}
 		} else if (arg === "--verbose") {
 			result.verbose = true;
 		} else if (arg === "--approve" || arg === "-a") {
@@ -272,6 +288,7 @@ ${chalk.bold("Options:")}
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
+  --ui-mode <mode>               UI mode: regular (default) or fullscreen
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
@@ -358,6 +375,7 @@ ${chalk.bold("Environment Variables:")}
   XAI_API_KEY                      - xAI Grok API key
   FIREWORKS_API_KEY                - Fireworks API key
   TOGETHER_API_KEY                 - Together AI API key
+  BASETEN_API_KEY                  - Baseten API key
   OPENROUTER_API_KEY               - OpenRouter API key
   AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
   ZAI_API_KEY                      - ZAI Coding Plan API key (Global)

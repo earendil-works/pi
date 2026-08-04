@@ -47,6 +47,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -219,6 +220,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			config.authSchemePreference = ["httpBearerAuth"];
 		}
 
+		// Kept outside the try so the catch can still correlate a mid-stream failure:
+		// exceptions delivered as stream events carry no HTTP metadata of their own.
+		let responseRequestId: string | undefined;
+
 		try {
 			const client = new BedrockRuntimeClient(config);
 			const customHeaders = providerHeadersToRecord(options.headers);
@@ -246,6 +251,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
+			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
 			if (response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
@@ -309,6 +315,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			if (output.stopReason === "error") {
+				appendBedrockFailureDiagnostic(output, error, responseRequestId);
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -362,6 +371,54 @@ function formatBedrockError(error: unknown): string {
 		return `${prefix}: ${core}${dataRetentionHint}`;
 	}
 	return `${core}${dataRetentionHint}`;
+}
+
+type SdkErrorMetadata = { $metadata?: { httpStatusCode?: unknown; requestId?: unknown } };
+
+/** Over-long header values are dropped rather than truncated: a truncated request id is not a request id. */
+const MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200;
+
+function normalizeDiagnosticValue(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	if (trimmed.length === 0 || trimmed.length > MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS) return undefined;
+	return trimmed;
+}
+
+/**
+ * The SDK puts the modeled code on `error.name` for service exceptions and unmodeled stream errors alike, so
+ * do not narrow to `BedrockRuntimeServiceException`. Modeled Bedrock errors all end in `Exception`, unlike
+ * transport names such as `TimeoutError`.
+ */
+function extractBedrockErrorCode(error: unknown): string | undefined {
+	if (!(error instanceof Error) || !error.name.endsWith("Exception")) return undefined;
+	return normalizeDiagnosticValue(error.name);
+}
+
+/**
+ * Structured metadata alongside `errorMessage`, which stays byte-identical because `isRetryableAssistantError`
+ * matches against it. Unknown fields are omitted, never guessed: a modeled mid-stream exception reaches us as
+ * a bare object literal, leaving only `fallbackRequestId`. `details` only, as the throw is not always `Error`.
+ */
+function appendBedrockFailureDiagnostic(
+	output: AssistantMessage,
+	error: unknown,
+	fallbackRequestId: string | undefined,
+): void {
+	const metadata = (error as SdkErrorMetadata)?.$metadata;
+	const details: Record<string, unknown> = {};
+
+	if (typeof metadata?.httpStatusCode === "number") details.status = metadata.httpStatusCode;
+
+	const errorCode = extractBedrockErrorCode(error);
+	if (errorCode !== undefined) details.errorCode = errorCode;
+
+	const requestId = normalizeDiagnosticValue(metadata?.requestId) ?? fallbackRequestId;
+	if (requestId !== undefined) details.requestId = requestId;
+
+	if (Object.keys(details).length === 0) return;
+
+	appendAssistantMessageDiagnostic(output, { type: "bedrock_response_failure", timestamp: Date.now(), details });
 }
 
 /**

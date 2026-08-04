@@ -86,11 +86,12 @@ export async function resolveCredentialForPrint(
 	modelRuntime: ModelRuntime,
 	kind: CredentialPrintKind,
 	minExpiryMs?: number,
+	signal?: AbortSignal,
 ): Promise<string> {
 	validateCredentialPrintArgs(args);
 
 	const credentialTypes = new Map<string, CredentialInfo["type"]>(
-		(await modelRuntime.listCredentials()).map((credential) => [credential.providerId, credential.type]),
+		(await modelRuntime.listCredentials({ signal })).map((credential) => [credential.providerId, credential.type]),
 	);
 	const models: Model<Api>[] = [];
 	if (args.provider) {
@@ -118,12 +119,10 @@ export async function resolveCredentialForPrint(
 		if (kind === "api_key" && type === "oauth") continue;
 		if (kind === "bearer_token" && type !== "oauth") continue;
 
-		const auth = await modelRuntime.getAuth(
-			model,
-			kind === "bearer_token"
-				? { minOAuthValidityMs: minExpiryMs ?? DEFAULT_BEARER_TOKEN_MIN_EXPIRY_MS }
-				: undefined,
-		);
+		const auth = await modelRuntime.getAuth(model, {
+			...(kind === "bearer_token" ? { minOAuthValidityMs: minExpiryMs ?? DEFAULT_BEARER_TOKEN_MIN_EXPIRY_MS } : {}),
+			signal,
+		});
 		const authorization = Object.entries(auth?.auth.headers ?? {}).find(
 			([name]) => name.toLowerCase() === "authorization",
 		)?.[1];

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
+- Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6124](https://github.com/earendil-works/pi/issues/6124) by [@petrroll](https://github.com/petrroll)).
+- Fixed phantom alternate-screen text selection from unmatched mouse events when changing terminal pane focus.
+- Fixed spaces in searchable settings queries changing the selected value instead of filtering multi-word labels.
+- Fixed alternate-screen Kitty images crossing vertical layout clip boundaries and overlapping sticky regions while scrolling.
+- Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
+
+### Added
+
+- Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
+- Added TUI lifecycle and render-state handoff APIs for replacing renderers without replaying main-screen content.
+- Exported the bundled `Marked` parser and token types.
+- Added width-aware source transforms to the `Markdown` component.
+- Added interface-compatible main-screen and alternate-screen TUI renderers with application-owned scrolling ([#7304](https://github.com/earendil-works/pi/issues/7304)).
+- Added alternate-screen `VStack`, `HStack`, and nested `ScrollView` layouts with constrained sizing, sticky regions, and pointer-targeted scrolling.
+- Added edge auto-scrolling for alternate-screen drag selection across off-screen scroll-view content.
+- Added proportional scrollbars with mouse dragging, Home/End document navigation, transient `auto` mode, and an `always` mode that reserves the rightmost column; scrollbar modes can be changed at runtime.
+- Added page scrolling and OSC 133 semantic prompt navigation to the alternate-screen viewport.
+
 ## [0.83.0] - 2026-07-29
 
 ### Fixed

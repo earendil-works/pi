@@ -11,6 +11,17 @@ describe("KeybindingsManager", () => {
 		assert.strictEqual(keybindings.matches("\x1b[106;5u", "tui.input.newLine"), true);
 	});
 
+	it("binds terminal viewport shortcuts to alternate-screen navigation", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.pageUp"), ["pageUp"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.pageDown"), ["pageDown"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.previousPrompt"), ["ctrl+shift+up"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.nextPrompt"), ["ctrl+shift+down"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.top"), ["home"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.bottom"), ["end"]);
+	});
+
 	it("does not evict selector confirm when input submit is rebound", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
 			"tui.input.submit": ["enter", "ctrl+enter"],

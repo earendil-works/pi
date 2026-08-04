@@ -1,11 +1,12 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 // Get the bundled WAD path (relative to this module)
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_WAD = join(__dirname, "doom1.wad");
-const WAD_URL = "https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad";
+const WAD_URL = "https://www.gamers.org/pub/idgames/idstuff/doom/doom-1.8.wad.gz";
 
 const DEFAULT_WAD_PATHS = ["./doom1.wad", "./DOOM1.WAD", "~/doom1.wad", "~/.doom/doom1.wad"];
 
@@ -42,8 +43,11 @@ export async function ensureWadFile(): Promise<string | null> {
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status}`);
 		}
-		const buffer = await response.arrayBuffer();
-		writeFileSync(BUNDLED_WAD, Buffer.from(buffer));
+		const wad = gunzipSync(Buffer.from(await response.arrayBuffer()));
+		if (wad.subarray(0, 4).toString("ascii") !== "IWAD") {
+			throw new Error("Downloaded file is not a valid IWAD");
+		}
+		writeFileSync(BUNDLED_WAD, wad);
 		return BUNDLED_WAD;
 	} catch {
 		return null;

@@ -1,7 +1,8 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class StaticLines implements Component {
@@ -54,7 +55,7 @@ describe("TUI overlay compositing", () => {
 		const baseLine = `\x1b[3m${"X".repeat(width)}\x1b[23m`;
 
 		const terminal = new VirtualTerminal(width, 6);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.addChild(new StaticLines([baseLine, "INPUT"]));
 		tui.start();
 		await renderAndFlush(tui, terminal);
@@ -67,7 +68,7 @@ describe("TUI overlay compositing", () => {
 		const baseLine = `\x1b[3m${"X".repeat(width)}\x1b[23m`;
 
 		const terminal = new VirtualTerminal(width, 6);
-		const tui = new TUI(terminal);
+		const tui: TUI = new TuiMainScreen(terminal);
 		tui.addChild(new StaticLines([baseLine, "INPUT"]));
 
 		tui.showOverlay(new StaticOverlay("OVR"), { row: 0, col: 5, width: 3 });

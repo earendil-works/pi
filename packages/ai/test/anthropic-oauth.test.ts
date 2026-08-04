@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -54,6 +56,7 @@ describe.sequential("Anthropic OAuth", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
 			notify: (event) => {
 				if (event.type === "auth_url") authUrl = event.url;
 			},
@@ -89,12 +92,15 @@ describe.sequential("Anthropic OAuth", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await anthropicOAuth.refresh({
-			type: "oauth",
-			access: "old-access-token",
-			refresh: "refresh-token",
-			expires: 0,
-		});
+		const credentials = await anthropicOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access-token",
+				refresh: "refresh-token",
+				expires: 0,
+			},
+			neverAbortedSignal,
+		);
 
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
@@ -116,6 +122,7 @@ describe.sequential("Anthropic OAuth", () => {
 		let manualSignal: AbortSignal | undefined;
 
 		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);

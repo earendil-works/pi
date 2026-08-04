@@ -395,14 +395,15 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 }
 
 async function refreshModelCatalogs(agentDir: string): Promise<void> {
-	const modelRuntime = await ModelRuntime.create({
-		authPath: join(agentDir, "auth.json"),
-		modelsPath: join(agentDir, "models.json"),
-		allowModelNetwork: false,
-	});
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15_000);
 	try {
+		const modelRuntime = await ModelRuntime.create({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			allowModelNetwork: false,
+			signal: controller.signal,
+		});
 		const result = await modelRuntime.refresh({
 			allowNetwork: true,
 			force: true,

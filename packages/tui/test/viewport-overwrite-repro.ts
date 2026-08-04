@@ -17,8 +17,10 @@
  * - When content exceeds the viewport and new lines arrive after a tool-call pause,
  *   some earlier PRE-TOOL lines near the bottom are overwritten by POST-TOOL lines.
  */
+
 import { ProcessTerminal } from "../src/terminal.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import type { Component, TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,7 +54,7 @@ async function streamLines(buffer: Lines, label: string, count: number, delayMs:
 }
 
 async function main(): Promise<void> {
-	const ui = new TUI(new ProcessTerminal());
+	const ui: TUI = new TuiMainScreen(new ProcessTerminal());
 	const buffer = new Lines();
 	ui.addChild(buffer);
 	ui.start();
@@ -96,7 +98,7 @@ async function main(): Promise<void> {
 main().catch((error) => {
 	// Ensure terminal is restored if something goes wrong.
 	try {
-		const ui = new TUI(new ProcessTerminal());
+		const ui: TUI = new TuiMainScreen(new ProcessTerminal());
 		ui.stop();
 	} catch {
 		// Ignore restore errors.

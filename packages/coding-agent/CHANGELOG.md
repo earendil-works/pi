@@ -2,9 +2,111 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Changed JSON and RPC `message_update` events to emit only `assistantMessageEvent` deltas, removing the cumulative `message` and `assistantMessageEvent.partial` fields that caused quadratic output growth. Clients that need partial messages must assemble deltas between `message_start` and `message_end`; the latter remains authoritative ([#7290](https://github.com/earendil-works/pi/issues/7290)).
+- `ModelRegistry.getApiKeyAndHeaders()` now returns `ProviderHeaders` with `string | null` values and preserves `null` header-deletion markers. Extensions that inspect returned headers must handle `null`; extensions forwarding them to pi-ai streams should pass them through unchanged. This prevents placeholder OpenAI credentials from being sent through Cloudflare AI Gateway ([#7030](https://github.com/earendil-works/pi/issues/7030)).
+- Changed `ModelRegistry.refresh()` to accept `ModelsRefreshOptions` and return `ModelsRefreshResult` instead of discarding cancellation and provider errors.
+- Changed `ModelRuntime.setRuntimeApiKey()` to accept auth cancellation options rather than catalog refresh options. Call `refresh({ providers: [providerId], signal })` separately when remote freshness is required.
+- Required config-form extension OAuth `refreshToken(credentials, signal)` callbacks to accept and honor a concrete abort signal.
+- Replaced dynamic provider refresh context store access with the read-only `context.stored` snapshot and generation-checked `context.publish()` transaction.
+
+  **Providers built with `createProvider({ fetchModels })`:** no catalog-publication migration is required. Before and after, return the fetched models and register the resulting provider; `createProvider()` owns restoration, persistence, and in-memory publication.
+
+  ```ts
+  // Before
+  const beforeProvider = createProvider({
+    // ...
+    fetchModels: async ({ signal }) => {
+      const response = await fetch(catalogUrl, { signal });
+      return parseModels(await response.json());
+    },
+  });
+  pi.registerProvider(beforeProvider);
+
+  // After: unchanged
+  const afterProvider = createProvider({
+    // ...
+    fetchModels: async ({ signal }) => {
+      const response = await fetch(catalogUrl, { signal });
+      return parseModels(await response.json());
+    },
+  });
+  pi.registerProvider(afterProvider);
+  ```
+
+  **Handwritten native `Provider.refreshModels()`:** replace direct store access and pre-publication mutation with generation-guarded publications.
+
+  ```ts
+  // Before
+  refreshModels: async (context) => {
+    const stored = await context.store.read();
+    if (stored) currentModels = stored.models;
+    if (!context.allowNetwork) return;
+
+    const refreshed = await fetchModels(context.signal);
+    currentModels = refreshed;
+    await context.store.write({ models: refreshed, checkedAt: Date.now() });
+  },
+
+  // After
+  refreshModels: async (context) => {
+    if (context.stored) {
+      const restored = context.stored.models;
+      if (!(await context.publish({
+        update: () => { currentModels = restored; },
+      }))) return;
+    }
+    if (!context.allowNetwork) return;
+
+    const refreshed = await fetchModels(context.signal);
+    if (context.signal.aborted) return;
+    await context.publish({
+      persist: { models: refreshed, checkedAt: Date.now() },
+      update: () => { currentModels = refreshed; },
+    });
+  },
+  ```
+
+  For the config-form `pi.registerProvider(name, { refreshModels })`, callbacks that only return models remain unchanged; pi publishes the returned list. If such a callback previously used `context.store` for custom persistence, read `context.stored` and call `context.publish({ persist: entry })`. In `publish()`, omit `persist` to leave storage unchanged, pass a `ModelsStoreEntry` to write it, or pass `persist: null` to delete it.
+
+### Added
+
+- Added built-in Baseten provider support with `BASETEN_API_KEY` authentication and `zai-org/GLM-5.2` as the default model.
+- Added `CredentialSynchronizationError` for credential changes that commit successfully but fail to synchronize local model state.
+- Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
+- Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
+- Added runtime switching between regular and fullscreen UI modes through `/settings`.
+- Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
+- Added a draggable transcript scrollbar to fullscreen mode with configurable `auto`, `always`, and `hidden` modes through `/settings`; `always` reserves the rightmost column.
+- Added page scrolling and marked-message navigation shortcuts to fullscreen mode.
+- Added an optional `scrollbarThumb` theme color for fullscreen scrollbar thumbs, falling back to `selectedBg`.
+
 ### Fixed
 
+- Fixed fullscreen shutdown leaking terminal capability-query replies into the parent shell prompt.
+- Fixed bare exact `--model` IDs shared by multiple providers choosing the first catalog entry instead of the sole authenticated provider or a clear ambiguity error ([#7327](https://github.com/earendil-works/pi/issues/7327)).
+- Fixed standalone x64 binaries requiring Haswell-era AVX2/BMI2 instructions by compiling release executables against Bun's baseline runtime ([#7149](https://github.com/earendil-works/pi/issues/7149)).
+- Fixed `Ctrl+X` copy confirmations in fullscreen mode adding a transcript status line instead of showing the transient `Copied!` marker.
+- Fixed Kitty image previews in fullscreen mode overlapping the sticky editor and footer dock while scrolling.
+- Fixed image-heavy fullscreen sessions lagging when layout changes retransmitted visible Kitty image payloads and rendered the transcript twice per frame.
+- Fixed spaces in `/settings` searches toggling the highlighted setting while typing multi-word queries such as **UI mode** or **Quiet startup**.
+- Fixed custom editors not inheriting the default editor's autocomplete dropdown item limit ([#7333](https://github.com/earendil-works/pi/issues/7333)).
+- Fixed malformed resource arrays in package manifests crashing session startup ([#7187](https://github.com/earendil-works/pi/issues/7187)).
+- Fixed the DOOM overlay example downloading its shareware WAD from a dead URL.
 - Fixed `setToolsExpanded(false)` to be a no-op when tool output is already collapsed, avoiding redundant `Tool output: collapsed` startup notices from extensions ([#7292](https://github.com/earendil-works/pi/issues/7292)).
+- Fixed extension-driven model calls in custom compaction, handoff, and Q&A examples to dispatch through the coding-agent model runtime so custom providers and resolved auth options are preserved ([#7325](https://github.com/earendil-works/pi/pull/7325)).
+- Fixed long-running sessions using stale credentials after another process updates `auth.json` without serializing concurrent credential reads and delaying startup ([#7319](https://github.com/earendil-works/pi/issues/7319)).
+- Updated the packaged `brace-expansion` dependency to 5.0.8 to address GHSA-mh99-v99m-4gvg ([#7316](https://github.com/earendil-works/pi/issues/7316)).
+- Fixed forced model availability refreshes remaining blocked behind a stalled earlier refresh ([#7301](https://github.com/earendil-works/pi/issues/7301), [#7421](https://github.com/earendil-works/pi/pull/7421) by [@a-yeyang](https://github.com/a-yeyang)).
+- Fixed `/model` catalog refresh failures to identify every catalog that failed.
+- Fixed provider login remaining stuck after saving credentials when a model catalog refresh stalls by separating local credential consistency from bounded background freshness ([#7027](https://github.com/earendil-works/pi/issues/7027), [#7113](https://github.com/earendil-works/pi/issues/7113), [#7418](https://github.com/earendil-works/pi/issues/7418)).
+- Fixed `/scoped-models` waiting for remote catalogs before rendering instead of showing cached models and cancelling refresh on close ([#7153](https://github.com/earendil-works/pi/issues/7153)).
+- Fixed `/model <name>` waiting for catalog refresh before checking cached model matches ([#7443](https://github.com/earendil-works/pi/issues/7443)).
+- Fixed stale availability snapshots and errors publishing after a newer availability pass.
+- Fixed stale pi.dev, Radius, llama.cpp, and extension catalog refreshes publishing after a newer provider refresh.
+- Fixed cancellation while waiting for file-backed credential or model-catalog locks, preventing cancelled mutations from running or committing later.
+- Fixed concurrent in-memory credential mutations losing unrelated provider updates by serializing their read-modify-write sections.
 
 ## [0.83.0] - 2026-07-29
 
@@ -675,6 +777,10 @@
 - Fixed `/fork` to keep session parent chains connected when the forked path contains labels ([#5669](https://github.com/earendil-works/pi/issues/5669)).
 - Fixed `/share` and `/export` HTML exports to use the active fallback theme when the configured custom theme no longer exists ([#5596](https://github.com/earendil-works/pi/issues/5596)).
 - Fixed custom fallback model IDs with `:<thinking>` suffixes to preserve the requested thinking level when the provider template model does not advertise reasoning ([#5560](https://github.com/earendil-works/pi/pull/5560) by [@haoqixu](https://github.com/haoqixu)).
+
+### Fixed
+
+- Fixed `find` results when searching from filesystem roots, including POSIX `/` and Windows bare drive roots, so relative paths preserve the first segment and directory matches use a single trailing slash ([#6104](https://github.com/earendil-works/pi/issues/6104)).
 
 ## [0.79.1] - 2026-06-09
 

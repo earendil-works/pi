@@ -26,13 +26,17 @@ function formatTokenCount(count: number): string {
 /**
  * List available models, optionally filtered by search pattern
  */
-export async function listModels(modelRuntime: ModelRuntime, searchPattern?: string): Promise<void> {
+export async function listModels(
+	modelRuntime: ModelRuntime,
+	searchPattern?: string,
+	signal?: AbortSignal,
+): Promise<void> {
 	const loadError = modelRuntime.getError();
 	if (loadError) {
 		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
 	}
 
-	const models = [...(await modelRuntime.getAvailable())];
+	const models = [...(await modelRuntime.getAvailable(undefined, { signal }))];
 
 	if (models.length === 0) {
 		console.log(formatNoModelsAvailableMessage());
