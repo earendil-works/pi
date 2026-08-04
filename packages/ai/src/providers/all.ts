@@ -1,7 +1,7 @@
 import { createImagesModels, type ImagesProvider, type MutableImagesModels } from "../images-models.ts";
-import { createMusicModels, type MutableMusicModels, type MusicProvider } from "../music-models.ts";
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
+import { createMusicModels, type MusicProvider, type MutableMusicModels } from "../music-models.ts";
 import type { Api, Model } from "../types.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";

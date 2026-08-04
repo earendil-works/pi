@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AuthContext } from "../src/auth/types.ts";
-import { builtinMusicModels } from "../src/providers/all.ts";
+import { createMusicModels } from "../src/music-models.ts";
+import { minimaxCnMusicProvider } from "../src/providers/minimax-cn-music.ts";
+import { minimaxMusicProvider } from "../src/providers/minimax-music.ts";
 
 function fakeAuthContext(env: Record<string, string>): AuthContext {
 	return {
@@ -9,11 +11,17 @@ function fakeAuthContext(env: Record<string, string>): AuthContext {
 	};
 }
 
+function builtinMusicModels(env: Record<string, string>) {
+	const models = createMusicModels({ authContext: fakeAuthContext(env) });
+	for (const provider of [minimaxMusicProvider(), minimaxCnMusicProvider()]) {
+		models.setProvider(provider);
+	}
+	return models;
+}
+
 describe("MusicModels", () => {
 	it("registers both regional providers and resolves their API keys", async () => {
-		const models = builtinMusicModels({
-			authContext: fakeAuthContext({ MINIMAX_API_KEY: "global-key", MINIMAX_CN_API_KEY: "cn-key" }),
-		});
+		const models = builtinMusicModels({ MINIMAX_API_KEY: "global-key", MINIMAX_CN_API_KEY: "cn-key" });
 		expect(models.getProviders().map((provider) => provider.id)).toEqual(["minimax", "minimax-cn"]);
 
 		const globalModel = models.getModel("minimax", "music-cover")!;
@@ -23,7 +31,7 @@ describe("MusicModels", () => {
 	});
 
 	it("injects resolved auth into cover requests and lets explicit options win", async () => {
-		const models = builtinMusicModels({ authContext: fakeAuthContext({ MINIMAX_API_KEY: "global-key" }) });
+		const models = builtinMusicModels({ MINIMAX_API_KEY: "global-key" });
 		const model = models.getModel("minimax", "music-cover")!;
 		const authHeaders: string[] = [];
 		const fetchMock: typeof fetch = async (_input, init) => {

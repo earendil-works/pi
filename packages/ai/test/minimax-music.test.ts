@@ -159,11 +159,7 @@ describe("MiniMax music generation and cover", () => {
 				{ status: 200 },
 			);
 
-		const result = await generateMusic(
-			model,
-			{ audioBase64: "ZmFrZQ==" },
-			{ apiKey: "test-key", fetch: fetchMock },
-		);
+		const result = await generateMusic(model, { audioBase64: "ZmFrZQ==" }, { apiKey: "test-key", fetch: fetchMock });
 		expect(result.stopReason).toBe("error");
 		expect(result.output).toEqual([]);
 		expect(result.errorMessage).toContain("MiniMax music API error (1001): request rejected");
