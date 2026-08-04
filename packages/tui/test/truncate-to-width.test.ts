@@ -53,6 +53,27 @@ describe("truncateToWidth", () => {
 		const truncated = truncateToWidth("🙂\t界 \x1b_abc\x07", 7, "…", true);
 		assert.strictEqual(truncated, "🙂\t\x1b[0m…\x1b[0m ");
 	});
+
+	it("closes a dangling OSC 8 hyperlink when truncating inside it", () => {
+		const link = (url: string, label: string) => `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
+		const truncated = truncateToWidth(link("https://example.com", "some-longer-label-here"), 15);
+
+		// One open, one close — no dangling hyperlink written to the terminal.
+		const opens = (truncated.match(/\x1b\]8;[^;]*;[^\x07\x1b]+\x07/g) ?? []).length;
+		const closes = (truncated.match(/\x1b\]8;;\x07/g) ?? []).length;
+		assert.strictEqual(opens, 1);
+		assert.strictEqual(closes, 1);
+		assert.ok(visibleWidth(truncated) <= 15);
+	});
+
+	it("does not add a spurious close when truncation lands outside the hyperlink", () => {
+		const link = (url: string, label: string) => `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
+		const fits = truncateToWidth(link("https://example.com", "short"), 40);
+		assert.strictEqual(fits, link("https://example.com", "short"));
+
+		const afterClose = truncateToWidth(link("https://example.com", "label") + "tail text", 30);
+		assert.ok(!afterClose.includes("\x1b]8;;\x07\x1b]8;;\x07")); // no double close
+	});
 });
 
 describe("visibleWidth", () => {

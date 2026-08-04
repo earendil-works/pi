@@ -166,6 +166,29 @@ function finalizeTruncatedResult(
 }
 
 /**
+ * If `text` ends inside an OSC 8 hyperlink (opened but not closed),
+ * return the close sequence so truncation cannot bleed the link into
+ * the ellipsis or subsequent terminal output.
+ */
+function closeDanglingHyperlink(text: string): string {
+	if (!text.includes("\x1b]8;")) return "";
+	let open: ActiveHyperlink | null = null;
+	let i = 0;
+	while (i < text.length) {
+		const ansi = extractAnsiCode(text, i);
+		if (ansi) {
+			const hyperlink = parseOsc8Hyperlink(ansi.code);
+			// undefined = not OSC 8; null = close (empty url); otherwise open.
+			if (hyperlink !== undefined) open = hyperlink;
+			i += ansi.length;
+		} else {
+			i++;
+		}
+	}
+	return open ? formatOsc8Close(open.terminator) : "";
+}
+
+/**
  * Calculate the terminal width of a single grapheme cluster.
  * Based on code from the string-width library, but includes a possible-emoji
  * check to avoid running the RGI_Emoji regex unnecessarily.
@@ -1161,6 +1184,10 @@ export function truncateToWidth(
 	if (!overflowed && exhaustedInput) {
 		return pad ? text + " ".repeat(Math.max(0, maxWidth - visibleSoFar)) : text;
 	}
+
+	// Close an OSC 8 hyperlink if truncation lands inside it, so the link
+	// does not bleed into the ellipsis or subsequent terminal output.
+	result += closeDanglingHyperlink(result);
 
 	return finalizeTruncatedResult(result, keptWidth, ellipsis, ellipsisWidth, maxWidth, pad);
 }

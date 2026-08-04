@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed `truncateToWidth()` leaving a dangling OSC 8 hyperlink when truncation lands inside a hyperlink, which bled the link into the ellipsis and subsequent terminal output ([#7399](https://github.com/earendil-works/pi/issues/7399)).
 - Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
 - Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6124](https://github.com/earendil-works/pi/issues/6124) by [@petrroll](https://github.com/petrroll)).
 - Fixed phantom alternate-screen text selection from unmatched mouse events when changing terminal pane focus.
