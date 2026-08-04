@@ -91,6 +91,7 @@ type _AiAssistantMessageFieldsAccountedFor = Assert<
 		| "diagnostics"
 		| "usage"
 		| "stopReason"
+		| "deferred"
 		| "errorMessage"
 		| "rawStopReason"
 		| "timestamp"
@@ -308,6 +309,8 @@ export function toProtocolAssistantMessage(
 				status: "complete",
 				stopReason: message.stopReason,
 			} satisfies AssistantTranscriptItem;
+		case "deferred":
+			throw new TypeError("Deferred assistant messages are not supported by protocol v1");
 		case "error":
 			if (message.errorMessage?.length === 0) {
 				throw new TypeError("Assistant error messages must not be empty");

@@ -117,6 +117,7 @@ function overlayEnvAuthContext(base: AuthContext, env: ProviderEnv): AuthContext
 }
 
 const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
+const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
 
 /**
  * OAuth resolution with double-checked locking: tokens with less than five
@@ -145,7 +146,11 @@ async function resolveStoredOAuth(
 					if (current?.type !== "oauth") return undefined; // logged out meanwhile
 					if (!expiresSoon(current)) return undefined; // another process/request refreshed
 					try {
-						return await oauth.refresh(current, signal);
+						const refreshSignal = AbortSignal.any([
+							signal,
+							AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS),
+						]);
+						return await oauth.refresh(current, refreshSignal);
 					} catch (error) {
 						throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
 					}

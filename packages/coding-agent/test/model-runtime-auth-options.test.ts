@@ -259,7 +259,11 @@ describe("ModelRuntime auth options", () => {
 		const controller = new AbortController();
 
 		await runtime.getAuth("extension-oauth", { signal: controller.signal });
-		expect(refreshSignal).toBe(controller.signal);
+		expect(refreshSignal).toBeInstanceOf(AbortSignal);
+		const reason = new Error("cancelled");
+		controller.abort(reason);
+		expect(refreshSignal?.aborted).toBe(true);
+		expect(refreshSignal?.reason).toBe(reason);
 	});
 
 	it("does not fabricate an API key method for an extension OAuth-only provider", async () => {

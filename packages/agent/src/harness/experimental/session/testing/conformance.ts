@@ -155,9 +155,9 @@ export function createSessionBackendConformance(
 				await session.moveLane("main", null);
 				deepStrictEqual(await session.getLanes(), [{ lane: "main", leafId: null }]);
 				deepStrictEqual(await session.getLog(), [
-					{ kind: "entry", seq: 1, lane: "main", entry: root },
+					{ kind: "entry", seq: 1, entry: root },
 					{ kind: "record", seq: 2, record: finished },
-					{ kind: "lane", seq: 3, lane: "main", action: "move", leafId: null },
+					{ kind: "lane", seq: 3, lane: "main", leafId: null },
 				]);
 
 				await rejectsWithCode(session.moveLane("main", "missing"), "not_found");
@@ -583,7 +583,7 @@ export function createSessionBackendConformance(
 			if (stored?.type !== "message") throw new Error("Expected message entry");
 			strictEqual(stored.terminate, true);
 			deepStrictEqual(await session.findEntries(), [entry]);
-			deepStrictEqual(await session.getLog(), [{ kind: "entry", seq: entry.seq, lane: "main", entry }]);
+			deepStrictEqual(await session.getLog(), [{ kind: "entry", seq: entry.seq, entry }]);
 		}),
 
 		createCase(
@@ -781,8 +781,8 @@ export function createSessionBackendConformance(
 			deepStrictEqual(
 				(await fork.getLog()).filter((item) => item.kind === "lane"),
 				[
-					{ kind: "lane", seq: 4, lane: "main", action: "move", leafId: mainChild },
-					{ kind: "lane", seq: 5, lane: "thread", action: "create", leafId: threadChild },
+					{ kind: "lane", seq: 4, lane: "main", leafId: mainChild },
+					{ kind: "lane", seq: 5, lane: "thread", leafId: threadChild },
 				],
 			);
 		}),

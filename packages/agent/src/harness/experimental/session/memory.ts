@@ -49,7 +49,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	private readonly usedIds = new Set<string>();
 	private readonly entries: Entry[] = [];
 	private readonly entriesById = new Map<string, Entry>();
-	private readonly laneByEntryId = new Map<string, string>();
 	private readonly records: LaneRecord[] = [];
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
@@ -93,21 +92,13 @@ export class InMemorySessionStorage implements SessionStorage {
 		for (const sourceEntry of copiedEntries) {
 			const entry = structuredClone(sourceEntry);
 			entry.seq = storage.nextSequence();
-			const lane = options.scope === "tree" ? this.requireEntryLane(sourceEntry.id) : "main";
 			storage.entries.push(entry);
 			storage.entriesById.set(entry.id, entry);
-			storage.laneByEntryId.set(entry.id, lane);
 			storage.usedIds.add(entry.id);
-			storage.log.push({ kind: "entry", seq: entry.seq, lane, entry });
+			storage.log.push({ kind: "entry", seq: entry.seq, entry });
 		}
 		for (const [lane, leafId] of options.scope === "tree" ? this.lanes : []) {
-			storage.log.push({
-				kind: "lane",
-				seq: storage.nextSequence(),
-				lane,
-				action: lane === "main" ? "move" : "create",
-				leafId,
-			});
+			storage.log.push({ kind: "lane", seq: storage.nextSequence(), lane, leafId });
 		}
 		if (this.name !== undefined) {
 			storage.name = this.name;
@@ -133,14 +124,14 @@ export class InMemorySessionStorage implements SessionStorage {
 		if (this.lanes.has(lane)) throw new SessionError("already_exists", `Lane already exists: ${lane}`);
 		this.validateTarget(at);
 		this.lanes.set(lane, at);
-		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, action: "create", leafId: at });
+		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, leafId: at });
 	}
 
 	async moveLane(lane: string, to: string | null): Promise<void> {
 		this.requireLane(lane);
 		this.validateTarget(to);
 		this.lanes.set(lane, to);
-		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, action: "move", leafId: to });
+		this.log.push({ kind: "lane", seq: this.nextSequence(), lane, leafId: to });
 	}
 
 	async appendEntry<TEntry extends Entry>(newEntry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
@@ -151,9 +142,8 @@ export class InMemorySessionStorage implements SessionStorage {
 		this.usedIds.add(entry.id);
 		this.entries.push(entry);
 		this.entriesById.set(entry.id, entry);
-		this.laneByEntryId.set(entry.id, lane);
 		this.lanes.set(lane, entry.id);
-		this.log.push({ kind: "entry", seq: entry.seq, lane, entry });
+		this.log.push({ kind: "entry", seq: entry.seq, entry });
 		if (entry.type === "message") this.stats.messageCount += 1;
 		return structuredClone(entry);
 	}
@@ -263,14 +253,6 @@ export class InMemorySessionStorage implements SessionStorage {
 		const leafId = this.lanes.get(lane);
 		if (leafId === undefined) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 		return leafId;
-	}
-
-	private requireEntryLane(entryId: string): string {
-		const lane = this.laneByEntryId.get(entryId);
-		if (lane === undefined) {
-			throw new SessionError("invalid_entry", `Entry has no originating lane: ${entryId}`);
-		}
-		return lane;
 	}
 
 	private validateTarget(targetId: string | null): void {

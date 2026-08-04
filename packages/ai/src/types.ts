@@ -114,7 +114,66 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
-export interface StreamOptions {
+/** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
+export interface ProviderRequestOptions<TModel = Model<Api>> {
+	signal?: AbortSignal;
+	apiKey?: string;
+	/**
+	 * Optional fetch implementation for provider HTTP requests.
+	 * Defaults to `globalThis.fetch`. Provider adapters that cannot inject a custom implementation may reject it.
+	 * This does not affect WebSocket transports.
+	 */
+	fetch?: FetchFunction;
+	/**
+	 * Provider-scoped environment values. These take precedence over process.env for
+	 * provider configuration such as regional settings, endpoint placeholders, and
+	 * proxy variables.
+	 */
+	env?: ProviderEnv;
+	/**
+	 * Optional callback for inspecting or replacing provider payloads before sending.
+	 * Return undefined to keep the payload unchanged.
+	 */
+	onPayload?: (payload: unknown, model: TModel) => unknown | undefined | Promise<unknown | undefined>;
+	/**
+	 * Optional callback invoked after an HTTP response is received.
+	 */
+	onResponse?: (response: ProviderResponse, model: TModel) => void | Promise<void>;
+	/**
+	 * Optional custom HTTP headers to include in API requests.
+	 * Merged with provider defaults; caller values override default headers.
+	 * On AWS Bedrock these are injected via a Smithy `build`-step middleware so
+	 * they are covered by SigV4 signing; reserved headers (`x-amz-*`,
+	 * `authorization`, `host`) are silently ignored to preserve SigV4 / bearer auth.
+	 * A null value suppresses a provider/API default header with the same name.
+	 */
+	headers?: ProviderHeaders;
+	/**
+	 * HTTP request timeout in milliseconds for providers/SDKs that support it.
+	 * For example, OpenAI and Anthropic SDK clients default to 10 minutes.
+	 */
+	timeoutMs?: number;
+	/**
+	 * Maximum retry attempts for providers/SDKs that support client-side retries.
+	 * For example, OpenAI and Anthropic SDK clients default to 2.
+	 */
+	maxRetries?: number;
+	/**
+	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
+	 * If the server's requested delay exceeds this value, the request fails immediately
+	 * with an error containing the requested delay, allowing higher-level retry logic
+	 * to handle it with user visibility.
+	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
+	 */
+	maxRetryDelayMs?: number;
+}
+
+export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
+	/**
+	 * Optional callback invoked after an HTTP response is received and before
+	 * its body stream is consumed.
+	 */
+	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
@@ -125,14 +184,6 @@ export interface StreamOptions {
 	 */
 	samplingParams?: Record<string, unknown>;
 	maxTokens?: number;
-	signal?: AbortSignal;
-	apiKey?: string;
-	/**
-	 * Optional fetch implementation for provider HTTP requests.
-	 * Defaults to `globalThis.fetch`. Provider adapters that cannot inject a custom implementation may reject it.
-	 * This does not affect WebSocket transports.
-	 */
-	fetch?: FetchFunction;
 	/**
 	 * Preferred transport for providers that support multiple transports.
 	 * Providers that do not support this option ignore it.
@@ -150,63 +201,31 @@ export interface StreamOptions {
 	 */
 	sessionId?: string;
 	/**
-	 * Optional callback for inspecting or replacing provider payloads before sending.
-	 * Return undefined to keep the payload unchanged.
-	 */
-	onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
-	/**
-	 * Optional callback invoked after an HTTP response is received and before
-	 * its body stream is consumed.
-	 */
-	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
-	/**
-	 * Optional custom HTTP headers to include in API requests.
-	 * Merged with provider defaults; caller values override default headers.
-	 * On AWS Bedrock these are injected via a Smithy `build`-step middleware so
-	 * they are covered by SigV4 signing; reserved headers (`x-amz-*`,
-	 * `authorization`, `host`) are silently ignored to preserve SigV4 / bearer auth.
-	 * A null value suppresses a provider/API default header with the same name.
-	 */
-	headers?: ProviderHeaders;
-	/**
-	 * HTTP request timeout in milliseconds for providers/SDKs that support it.
-	 * For example, OpenAI and Anthropic SDK clients default to 10 minutes.
-	 */
-	timeoutMs?: number;
-	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.
 	 */
 	websocketConnectTimeoutMs?: number;
 	/**
-	 * Maximum retry attempts for providers/SDKs that support client-side retries.
-	 * For example, OpenAI and Anthropic SDK clients default to 2.
-	 */
-	maxRetries?: number;
-	/**
-	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
-	 * If the server's requested delay exceeds this value, the request fails immediately
-	 * with an error containing the requested delay, allowing higher-level retry logic
-	 * to handle it with user visibility.
-	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
-	 */
-	maxRetryDelayMs?: number;
-	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
-	/**
-	 * Provider-scoped environment values. These take precedence over process.env for
-	 * provider configuration such as regional settings, endpoint placeholders, and
-	 * proxy variables.
-	 */
-	env?: ProviderEnv;
 }
 
 export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;
+
+export interface DeferredFetchOptions extends ProviderRequestOptions<Model<Api>> {
+	/**
+	 * Maximum provider long-poll duration in milliseconds.
+	 * Defaults to 0, which performs one status check.
+	 */
+	wait?: number;
+}
+
+/** Request options for best-effort deferred-response cancellation. */
+export type DeferredCancelOptions = ProviderRequestOptions<Model<Api>>;
 
 /**
  * Maps known APIs to their full provider-specific stream option types.
@@ -236,8 +255,8 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
 
 /**
  * The uniform stream contract of an API implementation module: every module
- * under `src/api/` exports exactly `stream` and `streamSimple`, so the module
- * itself satisfies this interface. Lazy wrappers (`lazyApi()`) and provider
+ * under `src/api/` exports `stream` and `streamSimple`; capable modules may also
+ * export deferred-response methods. Lazy wrappers (`lazyApi()`) and provider
  * factories pass these around as values. This is the untyped dispatch shape;
  * per-API option typing lives on the implementation modules themselves and on
  * `Provider.stream()` via `ApiStreamOptions`.
@@ -245,6 +264,12 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
 export interface ProviderStreams {
 	stream(model: Model<Api>, context: Context, options?: StreamOptions): AssistantMessageEventStream;
 	streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	fetchDeferred?(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: DeferredFetchOptions,
+	): AssistantMessageEventStream;
+	cancelDeferred?(model: Model<Api>, handle: DeferredHandle, options?: DeferredCancelOptions): Promise<void>;
 }
 
 /**
@@ -261,47 +286,7 @@ export interface ProviderImages {
 	): Promise<AssistantImages>;
 }
 
-export interface ImagesOptions {
-	signal?: AbortSignal;
-	apiKey?: string;
-	/** Optional fetch implementation for provider HTTP requests. Defaults to `globalThis.fetch`. */
-	fetch?: FetchFunction;
-	/**
-	 * Provider-scoped environment values. These take precedence over process.env for
-	 * provider configuration such as endpoint placeholders and proxy variables.
-	 */
-	env?: ProviderEnv;
-	/**
-	 * Optional callback for inspecting or replacing provider payloads before sending.
-	 * Return undefined to keep the payload unchanged.
-	 */
-	onPayload?: (payload: unknown, model: ImagesModel<ImagesApi>) => unknown | undefined | Promise<unknown | undefined>;
-	/**
-	 * Optional callback invoked after an HTTP response is received.
-	 */
-	onResponse?: (response: ProviderResponse, model: ImagesModel<ImagesApi>) => void | Promise<void>;
-	/**
-	 * Optional custom HTTP headers to include in API requests.
-	 * Merged with provider defaults; can override default headers.
-	 * A null value suppresses a provider/API default header with the same name.
-	 */
-	headers?: ProviderHeaders;
-	/**
-	 * HTTP request timeout in milliseconds for providers/SDKs that support it.
-	 */
-	timeoutMs?: number;
-	/**
-	 * Maximum retry attempts for providers/SDKs that support client-side retries.
-	 */
-	maxRetries?: number;
-	/**
-	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
-	 * If the server's requested delay exceeds this value, the request fails immediately
-	 * with an error containing the requested delay, allowing higher-level retry logic
-	 * to handle it with user visibility.
-	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
-	 */
-	maxRetryDelayMs?: number;
+export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<ImagesApi>> {
 	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
@@ -314,6 +299,8 @@ export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
+	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
+	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
 }
@@ -397,7 +384,21 @@ export interface Usage {
 	};
 }
 
-export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted";
+export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+export interface DeferredHandle {
+	provider: string;
+	modelId: string;
+	api: string;
+	/** Provider token, such as a response id or batch id plus row id. */
+	id: string;
+	expiresAt?: number;
+	pollAfterMs?: number;
+	/** Provider conversion data required to reconstruct the final assistant message. */
+	data?: JsonValue;
+}
 
 export interface UserMessage {
 	role: "user";
@@ -416,6 +417,7 @@ export interface AssistantMessage {
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
+	deferred?: DeferredHandle;
 	errorMessage?: string;
 	rawStopReason?: string;
 	timestamp: number; // Unix timestamp in milliseconds
@@ -518,7 +520,11 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
-	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
+	| {
+			type: "done";
+			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
+			message: AssistantMessage;
+	  }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
 /**

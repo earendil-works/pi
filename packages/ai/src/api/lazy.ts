@@ -65,11 +65,34 @@ export function lazyStream(
  * The module loads on first stream call; the host's import cache deduplicates
  * loads. Load failures terminate the returned stream with an error event.
  */
-export function lazyApi(load: () => Promise<ProviderStreams>): ProviderStreams {
-	return {
+export interface LazyApiCapabilities {
+	fetchDeferred?: boolean;
+	cancelDeferred?: boolean;
+}
+
+export function lazyApi(load: () => Promise<ProviderStreams>, capabilities?: LazyApiCapabilities): ProviderStreams {
+	const api: ProviderStreams = {
 		stream: (model, context, options) =>
 			lazyStream(model, async () => (await load()).stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			lazyStream(model, async () => (await load()).streamSimple(model, context, options)),
 	};
+
+	if (capabilities?.fetchDeferred) {
+		api.fetchDeferred = (model, handle, options) =>
+			lazyStream(model, async () => {
+				const implementation = await load();
+				if (!implementation.fetchDeferred) throw new Error("API does not support deferred responses");
+				return implementation.fetchDeferred(model, handle, options);
+			});
+	}
+	if (capabilities?.cancelDeferred) {
+		api.cancelDeferred = async (model, handle, options) => {
+			const implementation = await load();
+			if (!implementation.cancelDeferred) throw new Error("API cannot cancel deferred responses");
+			await implementation.cancelDeferred(model, handle, options);
+		};
+	}
+
+	return api;
 }

@@ -39,7 +39,7 @@ The harness executes runs against one session. The session holds four kinds of s
 - **Exactly-once hook side effects.** A hook result becomes durable when the record or entry that consumes it commits. A crash before that commit can run the hook again (section 11 replay table). Side effects a hook makes on its own are invisible to the harness: HTTP calls, file writes. A hook that needs crash-safe external effects must be idempotent, for example keyed by operation id.
 - **Provider stream resumption.** Partial streams are never persisted. An interrupted streaming request is retried or abandoned. Deferred requests are different and in scope: the provider returns a handle at once and serves the result later (e.g. `background: true` on a Responses API, batch APIs). pi-ai returns an assistant message with stop reason `deferred` that carries the handle; it is persisted like any assistant message. Redeeming the handle appends a normal assistant message. Recovery sees the unredeemed handle and fetches instead of paying for a new request.
 - **Multiple writers.** Two processes on one session are out of scope. The serving layer routes all traffic for a session to the process that holds its harness. Lanes cover the workloads that look like multi-writer: parallel threads over shared history.
-- **Replication.** A session lives in one place. Coordination-free sync of diverging copies is a different design. Parked; see open questions.
+- **Replication.** A session lives in one place. Coordination-free sync of diverging copies is a different design. Nothing forecloses it later; section 19 records why.
 
 ## 2. What a session is
 
@@ -114,7 +114,7 @@ An operation is accepted before it executes. Acceptance is durable: after a cras
 
 A run is a sequence of turns. A turn is one assistant step plus the complete tool batch requested by that assistant message.
 
-A step is a retryable unit of work inside an operation: produce an assistant message, a compaction summary, or a branch summary. A step may make zero, one, or several provider requests. A failed attempt retries the same step; the attempt count is durable and survives restarts. A deferred provider request suspends an assistant step: the handle arrives inside a persisted assistant message, the lane suspends, and redemption later appends the real result (section 1).
+A step is a retryable unit of work inside an operation: produce an assistant message, a compaction summary, or a branch summary. A step may make zero, one, or several provider requests. A failed attempt retries the same step; the attempt count is durable and survives restarts. A deferred provider request ends an assistant step: the handle arrives inside a persisted assistant message that closes the step, the operation suspends, and redemption later appends the real result (section 1).
 
 Each tool call that starts an effect is also a step. `tool_started` opens it; its tool-result entry closes it. A parallel batch holds several open tool steps at once; their effects run concurrently and finalize in source order (section 14).
 
@@ -178,7 +178,7 @@ Part II is backend-neutral. It defines the records a lane writes, when it writes
 
 > Before an effect: write an intent record that names what will happen and the ids it will produce. After the effect: append the result as an entry with exactly those ids.
 
-There is no multi-record atomicity and none is needed. Each record and each entry is durable alone. A crash between intent and result leaves the intent unfulfilled; recovery decides per intent type: complete it, retry it, or close it with a synthetic result. An intent is fulfilled if and only if an entry with its provisioned id exists. The entry can itself name the next durable state: an assistant entry with `stopReason: "deferred"` fulfills its attempt's provisioned append but suspends the step rather than closing it. A provisioned id that exists with different content is corruption.
+There is no multi-record atomicity and none is needed. Each record and each entry is durable alone. A crash between intent and result leaves the intent unfulfilled; recovery decides per intent type: complete it, retry it, or close it with a synthetic result. An intent is fulfilled if and only if an entry with its provisioned id exists. The entry can itself name the next durable state: an assistant entry with `stopReason: "deferred"` fulfills its attempt's provisioned append and closes the step; what stays outstanding is the operation — the persisted handle awaits redemption (section 6). A provisioned id that exists with different content is corruption.
 
 ### Provisioned ids
 
@@ -194,7 +194,7 @@ type ProvisionedEntry<T extends Entry = Entry> =
 
 ### Record catalog
 
-Every record belongs to one lane's operation log. Records that belong to an operation carry `runId`: the id of that operation's `operation_started` record. `queue_enqueued` for the next-run queue is the one record without `runId`; it is consumed by the lane's next run.
+Every record belongs to one lane's operation log. Records that belong to an operation carry `runId`: the id of that operation's `operation_started` record. Next-run queue records (`queue_enqueued` and their `queue_cancelled`) and standalone `adjustment` usage records carry no `runId`.
 
 ```ts
 interface RecordBase {
@@ -249,7 +249,6 @@ interface OperationStartedRecord extends RecordBase {
 interface AbortRequestedRecord extends RecordBase {
   type: "abort_requested";
   runId: string;
-  reason: "user" | "shutdown";
 }
 
 // Closes the operation. failed = orderly durable failure (for example,
@@ -263,11 +262,11 @@ interface OperationFinishedRecord extends RecordBase {
 }
 
 // Written before each attempt at a retryable step. Marks: we are about to
-// do this, for the n-th time. Steps are logged only because they are
+// do this, for the n-th time. Steps are logged because they are
 // retryable: the durable count caps retries across restarts — a
 // crash-restart loop cannot reset it. One record per attempt; one attempt
-// may make zero or several provider requests (hook-supplied summaries make
-// none, split-turn compaction makes two). Deferred results need no extra
+// may make zero or several provider requests (split-turn compaction
+// makes two). Deferred results need no extra
 // record: the handle lives in the persisted assistant entry (section 1).
 interface StepAttemptRecord extends RecordBase {
   type: "step_attempt";
@@ -432,7 +431,7 @@ R   usage
 E   assistant message
 ```
 
-Every provider request settles with a `usage` record (section 5); the other traces omit them for brevity.
+Every provider request settles with a `usage` record (section 5); the other traces omit them for brevity. Per-request hooks (`transform_context`, `before_request`, `after_response`) run inside every request and are omitted everywhere; Tier B records them (section 20).
 
 Crash during backoff: restore counts two attempts; resume starts attempt 3. The count never resets. Retryable errors below the cap are never appended as entries. Attempts exhausted — or a non-retryable terminal error — appends an assistant message with the error, then `operation_finished` failed:
 
@@ -474,7 +473,7 @@ R   step_attempt                      step assistant, attempt 1 — new step
 E   assistant message
 ```
 
-**One recovery per conversational input.** An overflow compaction may start only when no overflow-reason compaction `step_attempt` is newer than this run's newest consumed conversational message (prompt, steering, or follow-up). A second recoverable response inside that window appends the give-up error entry and fails the run through the drain path — a `length` response never resets the guard; only consumed conversational input does. This bounds the compact-and-retry loop at one attempt per user action. A `before_compaction` decline or an empty compaction preparation for reason `overflow` is equally terminal: without compaction the request cannot fit.
+**One recovery per conversational input.** An overflow compaction may start only when no overflow-reason compaction `step_attempt` is newer than this run's newest consumed conversational message (prompt, steering, or follow-up). A second recoverable response inside that window appends the give-up error entry and fails the run through the drain path — a `length` response never resets the guard; only consumed conversational input does. This bounds the compact-and-retry loop at one attempt per user action. A `before_compaction` decline or an empty compaction preparation for reason `overflow` is equally terminal: without compaction the request cannot fit. A hook-supplied overflow compaction writes its compaction `step_attempt` before the entry so the guard counts it — the one hook-supplied summary that writes an attempt record.
 
 Per crash site:
 
@@ -623,7 +622,7 @@ E   assistant message                 stop reason deferred, carries the handle
     ... hours pass, maybe a different process ...
     resume()                          newest entry on the lane's path is a deferred
                                       assistant message with no successor
-                                      → the attempt is outstanding, redeem it
+                                      → the handle is unredeemed, redeem it
     fetchDeferred(model, handle)      model and handle from that entry
 E   assistant message                 the real result
     run continues normally
@@ -633,7 +632,7 @@ The suspended lane is indistinguishable from a crashed one in storage: an open o
 
 Each `resume()` performs one fetch. Three outcomes:
 
-- **pending** — the provider returns stop reason `deferred` again. Nothing is written; the lane re-suspends. Poll cadence is application policy.
+- **pending** — the provider returns stop reason `deferred` again. Nothing but a possible `usage` record is written (section 15); the lane re-suspends. Poll cadence is application policy.
 - **ready** — a normal assistant message. It is appended as the successor and the run continues.
 - **terminal** — the provider returns stop reason `error` (expired, unknown, consumed), or the fetch itself rejects; the harness converts a rejection to the same error-message form. The message is appended and the run finishes failed. Redemption failure never starts an automatic replacement request; steering or follow-up input already accepted for this run can still start a later turn.
 
@@ -659,10 +658,11 @@ Both reads are bounded by the size of the open operation, not by the size of the
 From those two reads, the lane's state:
 
 - **aborting** — an `abort_requested` record exists.
-- **attempts used** — `step_attempt` records whose `resultEntryId` has no entry. A step is closed exactly when its provisioned result exists — a point lookup, not adjacency inference; attempts whose result landed belong to finished work.
+- **attempts used** — the newest `step_attempt`, when its `resultEntryId` has no entry, is the unfinished step; its `attempt` field is the durable count, its kind and `compactionReason` select the resume path. Closure is a point lookup, not adjacency inference: a step is closed exactly when the newest attempt's provisioned result exists. Earlier attempts' unfulfilled ids belong to finished work and need no inspection.
 - **overflow recovery used** — a compaction `step_attempt` with reason `overflow` is newer than the newest consumed conversational message of this run (section 6, overflow guard).
 - **tool batch** — the newest assistant entry with tool calls, each call matched against `tool_started` records and result entries (section 6, crash-site table). The assistant stop reason is retained: a `length` batch is truncated and never executes on recovery. Persisted `terminate` values on result entries decide whether the completed batch forces another turn.
 - **deferred handle** — the newest own entry is a deferred assistant message with no successor.
+- **newest own entry** — the last entry of the second read; the pure predicates (`needsAssistant()`, terminal failure, abort closure) read it.
 - **pending queue items** — `queue_enqueued` records whose provisioned entry does not exist, excluding items retracted by `queue_cancelled` and steer/follow-up items killed by this run's `abort_requested`.
 - **pending writes** — `write_deferred` records whose provisioned entry does not exist.
 - **missing initial messages** — provisioned ids from the run intent without entries.
@@ -834,6 +834,9 @@ interface AgentHarnessOptions {
   compaction?: CompactionSettings;
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
+  /** Batch default; a called tool declaring executionMode "sequential"
+      forces sequential regardless (section 14). */
+  toolExecution?: "sequential" | "parallel";   // default parallel
   /** automatic: operation methods drive their procedures to completion.
       manual: the operation's effects park at the gate; peekAction() /
       executeAction() / runToCompletion() drive them. Deterministic tests
@@ -1034,6 +1037,8 @@ Calls on a faulted harness reject with the same `HarnessFault` instance until th
 
 `finalMessage` is the run's newest entry that projects to an assistant message; `finalEntryId` is that entry's id. `leafId` is the lane's leaf when the operation finished — the race-free anchor for branch queries (`findEntriesOnBranch({ start: leafId })`). The two differ when a deferred write was applied after the final assistant message. Full transcripts are not duplicated into results; they are in the session and were delivered as events.
 
+**Type provenance.** Types this document uses but does not redefine — `QueueMode`, `RetryPolicy`, `CompactionSettings`, `CompactionPreparation`, `NavigationPreparation` (today's `TreePreparation`, renamed), `CompactResult`, `ToolResultPatch`, `SessionStats`, `SessionMetadata`, `NavigateOptions`, `EntryCursor`, `LogItem`, `StreamOptionsPatch` — keep their existing `harness/types.ts` shapes. Lowercase helpers in section 15 pseudocode without a definition (`preparation`, `runToolBatchForSingleCall`, request/option bags such as `AssistantRequest` and `FactWrite`) are constructive implementation detail, not contract.
+
 ### Suspended operations
 
 ```ts
@@ -1170,14 +1175,14 @@ Guarantees:
 - Events that report durable facts fire after the fact is committed; what an event announces is already queryable.
 - Events report final values, after hook transformation.
 - Payloads are JSON-serializable and secret-free; a server can proxy them verbatim. Live objects (models, tools) are referenced by name, never embedded.
-- Lane-scoped events carry `lane: string` (omitted below); harness-global events such as `fault` omit it. Operation-scoped events carry `runId`; turn-scoped events carry `turnId`; recovered work carries `recovery: true`.
+- Lane-scoped events carry `lane: string` (omitted below); harness-global events omit it — except `usage`, which is delivered harness-globally and carries the record's lane in its payload. Operation-scoped events carry `runId`; turn-scoped events carry `turnId`; recovered work carries `recovery: true`.
 
 ### Catalog
 
 ```ts
 // Run lifecycle
 { type: "run_start";   runId }
-{ type: "run_resume";  runId }                       // resume() entered
+{ type: "run_resume";  runId }                       // resume() entered (any operation kind)
 { type: "run_suspend"; runId; deferred: DeferredHandle }   // lane parked
 { type: "run_abort";   runId; steer: AgentMessage[]; followUp: AgentMessage[] }  // abort accepted; cleared payloads
 { type: "run_end";     runId; outcome: "completed" | "aborted" | "failed";
@@ -1274,7 +1279,7 @@ harness.hooks.on("before_run", async () => ({
 
 Semantics, uniform across all hooks:
 
-- Registration is harness-global. Every hook event carries `lane` (omitted below); a handler scopes itself. Per-lane registration is an open question (section 19).
+- Registration is harness-global. Every hook event carries `lane` (omitted below); a handler scopes itself. Per-lane registration was considered and rejected (section 19).
 - `before_run` and `before_resume` registrations require a stable `id`. An id is unique within one hook name; duplicate registration rejects synchronously. The same extension uses the same id for both hooks across restarts. The runner stores each `before_run` handler's `resumeData` under its id and hands each `before_resume` handler only the value under the same id.
 - `before_run` runs on the normalized caller prompt, outside the lane mutation line, before acceptance. It does not see captured nextRun items; the acceptance mutation captures those afterwards (section 15). A rejected acceptance (busy lane) discards the hook output.
 - Handlers run sequentially in registration order. Each transformation handler sees the output of the previous one; returned `messages` append and a returned `systemPrompt` replaces the current value.
@@ -1368,8 +1373,9 @@ after_tool: {
 // Structural operations ------------------------------------------------
 
 // Decline, adjust, or supply the summary. Runs after operation_started,
-// live and on resume alike. Not re-run when the result entry exists or a
-// step_attempt already durably selected generated-summary work.
+// live and on resume alike. Not re-run when the result entry exists or
+// any step_attempt for this work already exists (hook-written or generated
+// — records cannot distinguish them, and neither needs the hook again).
 before_compaction: {
   event:  { reason: "manual" | "threshold" | "overflow"; preparation: CompactionPreparation; customInstructions? };
   result: { decline?: boolean; compaction?: CompactResult } | undefined;
@@ -1377,12 +1383,7 @@ before_compaction: {
 
 before_navigation: {
   event:  { targetId; preparation: NavigationPreparation };
-  result: {
-    decline?: boolean;
-    summary?: { summary: string; details?; usage? };
-    customInstructions?: string;
-    label?: string;
-  } | undefined;
+  result: { decline?: boolean; summary?: { summary: string; details?; usage? } } | undefined;
 }
 ```
 
@@ -1398,7 +1399,7 @@ Hooks re-run only where the work itself re-runs. Persisted outputs are never rec
 | `after_response` | per response | per response | per response |
 | `before_tool` | per call | — | not when `tool_started` exists |
 | `after_tool` | per executed result | — | on safe replay only |
-| `before_compaction`, `before_navigation` | per operation | no | not when a result entry or a generated-summary `step_attempt` exists |
+| `before_compaction`, `before_navigation` | per operation | no | not when a result entry or any `step_attempt` for this work exists |
 | `before_run_end` | per normal finish boundary | — | at the boundary resume reaches (may repeat); never for abort, terminal failure, or exhausted auto-compaction |
 
 ## 12. Session and SessionTree
@@ -1416,7 +1417,8 @@ interface EntryBase {
   timestamp: number;           // Unix ms, storage-assigned
 }
 
-interface MessageEntry           extends EntryBase { type: "message"; message: AgentMessage }
+interface MessageEntry           extends EntryBase { type: "message"; message: AgentMessage;
+                                                     terminate?: true }
 interface ModelChangeEntry       extends EntryBase { type: "model_change"; provider: string; modelId: string }
 interface ThinkingLevelEntry     extends EntryBase { type: "thinking_level_change"; thinkingLevel: string }
 interface ActiveToolsEntry       extends EntryBase { type: "active_tools_change"; activeToolNames: string[] }
@@ -1647,13 +1649,15 @@ lane_moves     (session_id, seq, lane, leaf_id)     -- history; getLog parity
 facts          (session_id, seq, kind, key, value)  -- name, labels; latest by seq
 branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
 branch_tips    (session_id, branch_id, tip_id)      -- PRIMARY KEY (session_id, tip_id)
-leases         (session_id, owner, heartbeat)       -- writer claim
+leases (session_id, owner_id, fence, expires_at_ms)  -- writer claim
 
 -- indexes
 records:        (session_id, lane, type, seq), (session_id, lane, type, op_kind, seq)
 branch_entries: (session_id, branch_id, entry_type, entry_seq)
                 (session_id, entry_id)              -- reverse lookup: entry → branches
 ```
+
+`leases` enforces one writer per session with expiring, fenced claims. Storage renews the claim inside every write transaction and while idle. Repository-owned cleanup releases only its matching owner and fence.
 
 `branch_entries` and `branch_tips` are a private read cache. No interface exposes them; no other backend has them; rebuilding them from parent pointers is an explicit repair operation, never a runtime fallback.
 
@@ -1804,7 +1808,7 @@ export interface ToolCallbacks {
     args?: Record<string, unknown>;
     block?: { reason: string };
   } | undefined>;
-  afterToolCall?(call, result, isError, signal): Promise<ToolResultPatch | undefined>;
+  afterToolCall?(call, args, result, isError, signal): Promise<ToolResultPatch | undefined>;
   /** Between phases 1 and 2: the durability point. The harness writes its
       tool_started record here. Called in source order in both modes —
       preparation is always sequential. */
@@ -1906,7 +1910,7 @@ The jobs, by caller:
 - **Lane surface** (ungated, enqueue directly):
   - *Operation acceptance* — validate idle, capture the pending `nextRun` items into `initialMessages`, write `operation_started`, set `state.operation`. The second of two concurrent acceptances sees the first and rejects `busy` with no write. `before_run` ran before this job, outside the line, on the prompt only.
   - *Queue acceptance* (`steer`, `followUp`) — validate an active, non-aborting run; write `queue_enqueued`. `nextRun` validates nothing and always accepts.
-  - *Queue cancellation* (`cancelQueued`) — target entry exists: `already_consumed`; not pending (abort-drained or already cancelled): `already_cleared`; else write `queue_cancelled` and remove the item from its pending set.
+  - *Queue cancellation* (`cancelQueued`) — no `queue_enqueued` for the id: `Err(UnknownQueueItem)`; target entry exists: `already_consumed`; not pending (abort-drained or already cancelled): `already_cleared`; else write `queue_cancelled` and remove the item from its pending set.
   - *Deferred-write acceptance* (lane-view writes, config setters) — run open: write `write_deferred`; structural operation open: wait for it to end, then re-enter; idle: append the entry directly.
   - *Abort* — write `abort_requested`, set `aborting`, drain `pendingSteer`/`pendingFollowUp` (payloads return to the abort caller and in the `run_abort` event), signal the active effect's `AbortController`.
   - *Resume admission* — reserve the lane's single execution slot; no write.
@@ -2013,6 +2017,7 @@ Semantics that make tests deterministic:
     records and own entries (section 7): live commits update it; restore
     recomputes it. */
 interface LaneState {
+  lane: string;
   leafId: string | null;
   operation: null | {
     id: string;
@@ -2076,14 +2081,17 @@ async function appendIfMissing(target: ProvisionedEntry): Promise<void> {
 ```ts
 async function resume(): Promise<ResumeResult> {
   if (missing.tools.length || missing.models.length) {
-    return Result.err(new MissingIdentities({ lane: laneName(state), ...missing,
+    return Result.err(new MissingIdentities({ lane: state.lane, ...missing,
                                               message: "Missing tools or models" }));
   }
+  await fx.runHook("before_resume", beforeResumeEvent(state));  // per registration id (section 11)
   emit({ type: "run_resume", runId: op.id, recovery: true });
+  // tagResume re-tags an operation Result as a ResumeResult: Ok gains
+  // { operation }, Err passes through unchanged.
   switch (op.kind) {
-    case "run":        return { kind: "run",        ...await runProcedure() };
-    case "compaction": return { kind: "compaction", ...await compactionProcedure() };
-    case "navigation": return { kind: "navigation", ...await navigationProcedure() };
+    case "run":        return tagResume("run",        await runProcedure());
+    case "compaction": return tagResume("compaction", await compactionProcedure());
+    case "navigation": return tagResume("navigation", await navigationProcedure());
   }
 }
 
@@ -2125,6 +2133,9 @@ async function handleRunSignal(e: unknown): Promise<RunResult> {
   throw e;                                                   // storage/defect → faulted harness
 }
 ```
+
+
+**Fixed-point self-check.** When `resume()` completes, parks, or closes its operation, the harness recomputes the section 7 reduction from storage and compares it to the live `LaneState`. A mismatch is corruption and faults the harness — writer/reducer drift is caught the moment it happens instead of one crash later. The check is cheap (the same two bounded reads restore performs) and runs in production, not only under test.
 
 ### The loop
 
@@ -2212,7 +2223,7 @@ async function handleRunFailed(error: OperationError): Promise<RunResult> {
 
 ### Steps
 
-A failed attempt appends nothing; only a deferred handle, a terminal message, or the final give-up error enters the tree (section 6, retry trace).
+A failed attempt appends nothing. Besides the successful response, only a deferred handle, a terminal message, or the final give-up error enters the tree (section 6, retry trace).
 
 ```ts
 async function assistantStep(): Promise<AssistantMessage> {
@@ -2220,9 +2231,10 @@ async function assistantStep(): Promise<AssistantMessage> {
     if (op.aborting) throw new Aborted();
     const attempt = (op.step?.kind === "assistant" ? op.step.attempts : 0) + 1;
     if (attempt > retry.maxAttempts) {
+      const error = retriesExhausted();
       // The give-up entry fulfills the last attempt's provisioned id.
-      await fx.appendEntry(giveUpAssistantEntry(lastAttemptResultId(op), state));
-      throw new RunFailed(retriesExhausted());
+      await fx.appendEntry(giveUpAssistantEntry(lastAttemptResultId(op), state, error));
+      throw new RunFailed(error);
     }
 
     const options = await fx.runHook("before_request",
@@ -2255,7 +2267,7 @@ async function assistantStep(): Promise<AssistantMessage> {
 
 `isRecoverableOverflow(final, state)` is `isContextOverflow(final)` — overflow-pattern errors and silent overflow — or `isRecoverableLength(final, desiredMaxOutput(state))` from section 6, where `desiredMaxOutput(state)` is the caller-supplied `maxTokens` when set, else the lane model's `maxTokens`. The check runs before the retryable-error branch: an overflow-form error compacts instead of retrying the same oversized request.
 
-`summaryStep(step, reason, resultEntryId)` has the same shape: `step_attempt` before each attempt (`compactionReason` for compaction steps) carrying the step's single result id, `before_request`, one or two non-deferred requests — each followed by its `usage` record bound to that id — durable cap. It returns the summary value; the caller appends the result entry under that id. A hook-supplied summary makes no request and no request record; if it carries usage the hook measured itself, the appending procedure writes a `hook` usage record beside the entry.
+`summaryStep(step, reason, resultEntryId)` has the same shape: `step_attempt` before each attempt (`compactionReason` for compaction steps) carrying the step's single result id, `before_request`, one or two non-deferred requests — each followed by its `usage` record bound to that id — durable cap. It returns the summary value; the caller appends the result entry under that id. A hook-supplied summary makes no request and no request record; if it carries usage the hook measured itself, the appending procedure writes a `hook` usage record beside the entry. For reason `overflow` the appending procedure also writes the compaction `step_attempt`, so the once-per-input guard counts the recovery (section 6).
 
 ### Deferred redemption
 
@@ -2267,7 +2279,10 @@ async function redeemDeferred(): Promise<AssistantMessage> {
     await fx.appendRecord(usageRecord("deferred_fetch", op.id, resultEntryId, 1, final));
   }
   if (op.aborting) throw new Aborted();
-  if (final.stopReason === "deferred") throw new Park(op.deferred!);   // pending; no other write
+  if (final.stopReason === "deferred") {
+    requireSameHandle(final.deferred, op.deferred!);           // mismatch is a defect (section 16)
+    throw new Park(op.deferred!);                              // pending; no other write
+  }
   if (final.stopReason === "aborted")  throw new Aborted();
 
   await fx.appendEntry(assistantEntry(resultEntryId, final));  // ready or terminal
@@ -2302,8 +2317,8 @@ async function runToolBatch(assistant: AssistantMessage): Promise<void> {
         replay: declaredReplay(call),
       }));
     },
-    afterToolCall: (call, result, isError) =>
-      fx.runHook("after_tool", { toolCallId: call.id, toolName: call.name, ...result, isError }),
+    afterToolCall: (call, args, result, isError) =>
+      fx.runHook("after_tool", { toolCallId: call.id, toolName: call.name, args, ...result, isError }),
     onToolResult: async (message, terminate) => {
       // Blocked/invalid calls have no tool_started and no provisioned id;
       // their error result entry gets a fresh id (section 5).
@@ -2337,7 +2352,8 @@ async function reconcileToolBatch(batch: ToolBatchState): Promise<void> {
                            tool: toolByName(call.started.toolName),
                            args: call.started.effectiveArgs };   // persisted, not re-derived
         const executed  = await fx.executeTool(prepared);
-        const finalized = await finalizeToolCall(prepared, executed, { afterToolCall }, abortSignal);
+        const finalized = await finalizeToolCall(prepared, executed,
+          { afterToolCall }, toolContext, abortSignal);   // the fx-wired hook callback (runToolBatch)
         if (finalized.result.usage) {
           await fx.appendRecord(toolUsageRecord(op.id, call.started.resultEntryId,
             call.toolCall.id, finalized.result.usage));   // the replay's own record
@@ -2387,9 +2403,13 @@ async function compactionProcedure(): Promise<CompactionResult> {
       let result: CompactResult | undefined;
       if (!op.step) {          // no attempt yet: the decision hook may still run
         const hook = await fx.runHook("before_compaction",
-          { reason: "manual", preparation, customInstructions: op.intent.customInstructions });
+          { reason: "manual", preparation: preparation(state),
+            customInstructions: op.intent.customInstructions });
         if (hook?.decline) return await finishStructural("declined");
         result = hook?.compaction;
+        if (result?.usage) {
+          await fx.appendRecord(hookUsageRecord(op.id, op.intent.resultEntryId, result.usage));
+        }
       }
       result ??= await summaryStep("compaction", "manual", op.intent.resultEntryId);
       await appendIfMissing(compactionEntry(op.intent.resultEntryId, result));
@@ -2406,14 +2426,25 @@ async function compactionProcedure(): Promise<CompactionResult> {
     RunFailed: without compaction the request cannot fit (section 6). */
 async function autoCompact(reason: "threshold" | "overflow"): Promise<void> {
   const resultEntryId = op.step?.kind === "compaction" ? op.step.resultEntryId : newId();
-  if (!op.step) {
-    const hook = await fx.runHook("before_compaction",
-      { reason, preparation: preparation(state) });
+  if (op.step?.kind !== "compaction") {   // no durable compaction decision yet; on the overflow
+                                          // path op.step is the abandoned assistant step
+    const prep = preparation(state);
+    if (nothingToCompact(prep)) {
+      if (reason === "overflow") throw new RunFailed(truncationError());
+      return;
+    }
+    const hook = await fx.runHook("before_compaction", { reason, preparation: prep });
     if (hook?.decline) {
       if (reason === "overflow") throw new RunFailed(truncationError());
       return;
     }
     if (hook?.compaction) {
+      if (reason === "overflow") {        // the once-per-input guard counts this attempt
+        await fx.appendRecord(stepAttempt(op.id, "compaction", 1, resultEntryId, reason));
+      }
+      if (hook.compaction.usage) {
+        await fx.appendRecord(hookUsageRecord(op.id, resultEntryId, hook.compaction.usage));
+      }
       await appendIfMissing(compactionEntry(resultEntryId, hook.compaction));
       return;
     }
@@ -2431,10 +2462,14 @@ async function navigationProcedure(): Promise<NavigationResult> {
     if (op.intent.summarize && !op.targets.summary) {
       if (!moved && !op.step) {                              // decision hook: once, pre-move
         const hook = await fx.runHook("before_navigation",
-          { targetId: op.intent.targetId, preparation });    // preparation derives from
+          { targetId: op.intent.targetId,
+            preparation: preparation(state) });                // preparation derives from
                                                              // intent.sourceLeafId — valid pre- and post-move
         if (hook?.decline) return await finishStructural("declined");
         summary = hook?.summary;
+        if (summary?.usage) {
+          await fx.appendRecord(hookUsageRecord(op.id, op.intent.summaryEntryId!, summary.usage));
+        }
       }
       summary ??= await summaryStep("branch_summary", undefined,
                                     op.intent.summaryEntryId!);   // regenerates after a post-move crash
@@ -2485,6 +2520,7 @@ Hook-to-block wiring, in one table:
 | `before_tool` | `ToolCallbacks.beforeToolCall` (phase 1) |
 | `after_tool` | `ToolCallbacks.afterToolCall` (phase 3) |
 | `before_run_end` | `driverLoop` finish boundary; result committed via `fx.commitRunEndFollowUp` |
+| `before_resume` | `resume()` dispatch, before any effect |
 | — (record/entry writes) | `ToolCallbacks.onToolStart` / `onToolResult` via `fx` |
 
 Notes:
@@ -2529,6 +2565,30 @@ interface AssistantMessage {
   deferred?: DeferredHandle;     // present iff stopReason === "deferred"
 }
 
+// Authenticated HTTP request plumbing shared by stream, image, and deferred
+// provider operations. Generation and streaming-transport controls are not
+// part of this interface.
+interface ProviderRequestOptions {
+  signal?: AbortSignal;
+  apiKey?: string;
+  fetch?: FetchFunction;
+  env?: ProviderEnv;
+  onPayload?: (payload: unknown, model: Model<Api>) =>
+    unknown | undefined | Promise<unknown | undefined>;
+  onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
+  headers?: ProviderHeaders;
+  timeoutMs?: number;
+  maxRetries?: number;
+  maxRetryDelayMs?: number;
+}
+
+interface DeferredFetchOptions extends ProviderRequestOptions {
+  /** Maximum provider long-poll duration. Omitted or zero checks once. */
+  wait?: number;
+}
+
+type DeferredCancelOptions = ProviderRequestOptions;
+
 // Redemption lives on the provider. The two methods are optional: their
 // presence is the capability signal. A provider without them never returns
 // stopReason "deferred" and ignores the deferred request option.
@@ -2544,28 +2604,30 @@ export interface ProviderStreams {
                         `wait` expires; wait: 0 checks once)
       - terminal:       stopReason "error" (expired, unknown, consumed)     */
   fetchDeferred?(model: Model<Api>, handle: DeferredHandle,
-                 options?: { wait?: number; signal?: AbortSignal }): AssistantMessageEventStream;
+                 options?: DeferredFetchOptions): AssistantMessageEventStream;
 
   /** Best effort; providers without cancellation omit it. */
-  cancelDeferred?(model: Model<Api>, handle: DeferredHandle): Promise<void>;
+  cancelDeferred?(model: Model<Api>, handle: DeferredHandle,
+                  options?: DeferredCancelOptions): Promise<void>;
 }
 ```
 
 The harness never talks to a provider object directly; it uses the same authenticated dispatch surface as ordinary requests:
 
 ```ts
-type ModelsDeferredOptions = StreamOptions & ModelsStreamTransforms;
+type ModelsDeferredFetchOptions = DeferredFetchOptions & ModelsRequestTransforms;
+type ModelsDeferredCancelOptions = DeferredCancelOptions & ModelsRequestTransforms;
 
 interface Models {
   // existing methods
   fetchDeferred(model: Model<Api>, handle: DeferredHandle,
-                options?: ModelsDeferredOptions): Promise<AssistantMessage>;
+                options?: ModelsDeferredFetchOptions): Promise<AssistantMessage>;
   cancelDeferred(model: Model<Api>, handle: DeferredHandle,
-                 options?: ModelsDeferredOptions): Promise<void>;
+                 options?: ModelsDeferredCancelOptions): Promise<void>;
 }
 ```
 
-`Models.fetchDeferred` and `Models.cancelDeferred` delegate to the provider methods with normal model resolution and authentication (credential store, expiring tokens, header merge); `ModelsDeferredOptions` carries the normal `AbortSignal`, transport, response callbacks, and model transforms. A provider that returns `stopReason: "deferred"` must implement fetch; cancellation is best effort.
+`Models.fetchDeferred` and `Models.cancelDeferred` delegate to the provider methods with normal model resolution and authentication (credential store, expiring tokens, header merge). Their options carry the normal HTTP request settings, lifecycle callbacks, and model transforms; fetch options additionally carry the provider long-poll duration. A provider that returns `stopReason: "deferred"` must implement fetch; cancellation is best effort.
 
 A terminal fetch answer is final for the run: the harness appends the error message and fails the operation (section 6). It never starts an automatic replacement request. The executor converts a rejected fetch promise into the same `stopReason: "error"` message form, so expected provider and authentication failures stay in-band. On a returned pending message the harness requires the complete handle to equal the persisted handle: a provider cannot replace durable handle data without a write, so a mismatch is a defect.
 
@@ -2597,7 +2659,9 @@ repo.create({ id?, parentSessionId? }): Promise<Session>;
 
 ## 18. Telemetry
 
-Telemetry uses explicit context propagation. Core code does not use `AsyncLocalStorage`, global current-span state, or runtime-specific context APIs. This section defines the harness telemetry mechanism; `packages/agent/docs/observability.md` provides background only.
+Telemetry uses explicit context propagation. Core code does not use `AsyncLocalStorage`, global current-span state, or runtime-specific context APIs: pi runs in Node, Bun, browsers, and workers, so no runtime's ambient-context mechanism can be the core abstraction, and explicit arguments are the only portable one. This section is the complete telemetry design; no other document defines any of it.
+
+Pi ships no exporter and depends on no telemetry vendor. The application supplies the `ExecutionContext` below; an **adapter** is such an implementation that bridges spans into OTel, Sentry, logs, or metrics. The contract passes live span objects, not span/trace ids — an adapter that needs ids (every OTel-shaped backend does) allocates and correlates them internally, so core never carries id plumbing. An adapter may use `AsyncLocalStorage` inside its own implementation on runtimes that have it; core will never require it.
 
 ### Context contract
 
@@ -2684,7 +2748,6 @@ pi.harness.run                 runId, lane, recovery
 
 pi.harness.compaction          manual operation
 pi.harness.navigation
-pi.harness.resume
 ```
 
 The harness owns the operation and turn spans. The `fx` implementation owns checkpoint, step, request, tool, hook, and append spans: `fx.streamAssistant` creates the retryable step span and its request children, and each tool step gets its own tool span. This split follows ownership of the corresponding work.
@@ -2699,10 +2762,12 @@ Telemetry is separate from events and hooks:
 - Hooks can change execution.
 - Telemetry is passive process-local diagnostics.
 
-## 19. Open questions
+## 19. Resolved questions
 
-1. **Per-lane hooks and events.** Registration is harness-global; every payload carries `lane`, handlers scope themselves. Enough, or do we want `lane.hooks.on(...)` with scoped delivery — for example a `before_tool` policy for one Slack thread? Global-with-lane is more general but pushes filtering onto every scoped consumer.
-2. **Records and replication.** Lane operation logs are flat sequences without parent links, because a single writer per lane makes order equal causality (section 2). Replicating or merging diverged copies of a session would need explicit causality — parent links or equivalent. Out of scope (section 1); recorded here so the flat encoding is a known, deliberate bet.
+Formerly open; both answered during review.
+
+1. **Per-lane hooks and events — no.** Registration stays harness-global; every payload carries `lane` and handlers scope themselves. Scoped registration would add API surface without new capability.
+2. **Records and replication — stays out of scope, and nothing forecloses it.** Lane operation logs are flat sequences without parent links because a single writer per lane makes order equal causality (section 2). If replication is ever wanted, it falls out of the design as-is — append-only logs under one writer with a shared `seq` replicate by log shipping; no parent links or schema change needed now.
 
 ## 20. Testing strategy
 
@@ -2731,7 +2796,9 @@ The in-memory backend is the reference. The parity suite runs the same setups ag
 
 ### Tier B — writer conformance
 
-Tier A assumes live execution writes the correct prefix; Tier B verifies it. Run the public harness against an instrumented `Session` recording every entry (`E`), record (`R`), fact (`G`), and hook (`H`). Assert exact order against the section 6 traces: one-tool run, retry, terminal failure, steering during a tool, finish-boundary orders, deferred write mid-turn, abort during a tool, auto-compaction, manual compaction, navigation (move-first), deferred suspension and every fetch outcome. This tier catches the critical regression class: an effect starting before its intent record.
+Tier A assumes live execution writes the correct prefix; Tier B verifies it. Run the public harness against an instrumented `Session` recording every entry (`E`), record (`R`), lane move (`L`), fact (`G`), and hook (`H`). Assert exact order against the section 6 traces: one-tool run, retry, terminal failure, steering during a tool, queue cancellation, finish-boundary orders, deferred write mid-turn, abort during a tool, auto-compaction, context overflow (discard, guard, hook-supplied), manual compaction, navigation (move-first), deferred suspension and every fetch outcome. This tier catches the critical regression class: an effect starting before its intent record.
+
+Tier B also asserts the append-only-context invariant (section 4) executably: within a run, every faux-provider request's message list extends the previous request's as an exact prefix — except across a compaction entry, the one sanctioned invalidation. This turns the KV-cache discipline from prose into a failing test whenever a write path inserts before the tail.
 
 ### Tier C — deterministic interleavings
 
@@ -2752,10 +2819,11 @@ await harness.runToCompletion();
 expect((await promptResult).ok).toBe(true);
 ```
 
-Crash simulation is `close()` at a chosen boundary, then reopening the same backend and resuming. Coverage: **both orders of every race-catalog row (section 15)**, input injected between arbitrary actions, abort while a cancellable effect is parked and while it runs, process loss at every action of the section 6 traces, and automatic versus manual drive producing identical durable logs and outcomes for the same scripted provider.
+Crash simulation is `close()` at a chosen boundary, then reopening the same backend and resuming. Crash sites are derived mechanically, not hand-picked: drive each section 6 trace in manual mode, snapshot the backend after **every** `executeAction()`, then reopen every snapshot and `resume()` — and run recovery twice per snapshot, proving half-completed recovery is safe. New effects added to a trace get crash coverage automatically. Coverage: **both orders of every race-catalog row (section 15)**, input injected between arbitrary actions, abort while a cancellable effect is parked and while it runs, and automatic versus manual drive producing identical durable logs and outcomes for the same scripted provider.
 
 Gate invariants, asserted across Tier C:
 
+- After every `resume()` outcome, the recomputed reduction equals live `LaneState` (the section 15 fixed-point self-check fired and passed).
 - `peekAction()` has no side effect and is stable until `executeAction()`.
 - `executeAction()` releases exactly the peeked action, never a later one.
 - Stopping before an action leaves exactly the preceding durable prefix.
@@ -2768,11 +2836,13 @@ Gate invariants, asserted across Tier C:
 - The existing `agent-loop` and `agent` suites pass unchanged — the section 14 compatibility criterion.
 - Event ordering per section 10, including `message_end` after commit.
 - Hooks: registration-id `resumeData` round trips, duplicate-id rejection, aggregation order, fail-closed `before_tool`.
-- Ledger completeness and the match invariant: every provider request leaves exactly one `usage` record per physical request (split-turn: two per attempt); failed compaction series and discarded overflow responses lose no recorded cost; each usage-bearing entry's snapshot equals the newest non-adjustment record(s) bound to its id; a replayed tool records both executions; adjustments never alter entries and sum into read-time effective cost; `getStats()` equals the ledger sum and the `usage` event's totals after every commit; forks start at zero; v3 conversion preserves totals through the aggregate import adjustment.
+- Ledger completeness and the match invariant: every provider request leaves exactly one `usage` record per physical request (split-turn: two per attempt; a pending deferred fetch that reports no usage writes none); failed compaction series and discarded overflow responses lose no recorded cost; each usage-bearing entry's snapshot equals the newest non-adjustment record(s) bound to its id; a replayed tool records both executions; adjustments never alter entries and sum into read-time effective cost; `getStats()` equals the ledger sum and the `usage` event's totals after every commit; forks start at zero; v3 conversion preserves totals through the aggregate import adjustment.
 - Overflow classification against the reported provider shapes: prompt 268,009 of a 272,000 window and 81,217 of 84,500 (recoverable), non-zero reasoning-only output, cache-write-heavy usage, a Codex-style provider that rejects `max_output_tokens`, a genuine 1,024-token cap fully used (not recoverable), and `length → length` stopping after exactly one recovery per conversational input.
 - v3 fixtures: labels, session info, and `leaf` entries mid-chain and at end of file, old `firstKeptEntryId` compactions — all open as one normalized idle `main` lane.
 
 ## 21. Implementation sequence
+
+Implementation lives in `packages/agent/src/harness/experimental/`, tests in `packages/agent/test/harness/experimental/`. Nothing outside `experimental/` is modified in place; when the experimental implementation is complete and green, **everything currently under `src/harness/` outside `experimental/` is removed** and the experimental code replaces it wholesale.
 
 Keep each stage passing before starting the next.
 
@@ -2810,4 +2880,3 @@ For a fresh implementation session, in this order. This document wins over anyth
 15. `packages/storage/sqlite-node/src/sqlite/storage/branch-entries.ts` — the branch cache being generalized.
 16. `packages/storage/sqlite-node/src/sqlite/repo.ts` — create/open/fork.
 17. `packages/coding-agent/docs/session-format.md` — v3 JSONL, the compatibility target.
-18. `packages/agent/docs/observability.md` — telemetry background; section 18 defines context propagation.

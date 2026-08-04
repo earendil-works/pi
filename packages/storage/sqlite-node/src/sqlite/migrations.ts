@@ -19,16 +19,11 @@ export async function loadMigrations(): Promise<SqliteMigration[]> {
 			order: 1,
 			sql: await loadMigrationSql("./migrations/001_initial.sql"),
 		},
-		{
-			id: "002_branch_tips.sql",
-			order: 2,
-			sql: await loadMigrationSql("./migrations/002_branch_tips.sql"),
-		},
 	];
 }
 
-async function ensureMigrationsTable(db: SqliteDatabase): Promise<void> {
-	await db.exec(`
+function ensureMigrationsTable(db: SqliteDatabase): void {
+	db.exec(`
 CREATE TABLE IF NOT EXISTS migrations (
 	id TEXT PRIMARY KEY,
 	applied_at TEXT NOT NULL
@@ -37,18 +32,19 @@ CREATE TABLE IF NOT EXISTS migrations (
 }
 
 export async function applyMigrations(db: SqliteDatabase): Promise<void> {
-	await ensureMigrationsTable(db);
+	ensureMigrationsTable(db);
 	const migrations = await loadMigrations();
-	const appliedRows = await db.prepare("SELECT id FROM migrations ORDER BY applied_at, id").all<{ id: string }>();
+	const appliedRows = db.prepare("SELECT id FROM migrations ORDER BY applied_at, id").all<{ id: string }>();
 	const applied = new Set(appliedRows.map((row) => row.id));
 
 	for (const migration of migrations) {
 		if (applied.has(migration.id)) continue;
-		await db.transaction(async () => {
-			await db.exec(migration.sql);
-			await db
-				.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
-				.run(migration.id, new Date().toISOString());
+		db.transaction(() => {
+			db.exec(migration.sql);
+			db.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)").run(
+				migration.id,
+				new Date().toISOString(),
+			);
 		});
 		applied.add(migration.id);
 	}

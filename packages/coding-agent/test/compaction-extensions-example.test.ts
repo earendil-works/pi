@@ -109,7 +109,6 @@ describe("Documentation example", () => {
 				ui: { notify: vi.fn() },
 				modelRegistry: {
 					find: vi.fn(() => model),
-					getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "fake-key" })),
 					complete,
 				},
 			},
@@ -118,7 +117,12 @@ describe("Documentation example", () => {
 		expect(complete).toHaveBeenCalledWith(
 			model,
 			expect.objectContaining({ messages: expect.any(Array) }),
-			expect.objectContaining({ apiKey: "fake-key", maxTokens: 8192 }),
+			expect.objectContaining({ maxTokens: 8192 }),
+		);
+		expect(complete).not.toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.objectContaining({ apiKey: expect.anything() }),
 		);
 		expect(result).toMatchObject({
 			compaction: {

@@ -20,13 +20,16 @@ import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
+	DeferredCancelOptions,
+	DeferredFetchOptions,
+	DeferredHandle,
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
 	ProviderHeaders,
+	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
-	StreamOptions,
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
@@ -72,13 +75,15 @@ export interface ModelsRefreshResult {
 	errors: ReadonlyMap<string, Error>;
 }
 
-export interface ModelsStreamTransforms {
+export interface ModelsRequestTransforms {
 	/** Transform fully assembled model/auth/request headers before provider dispatch. */
 	transformHeaders?: (headers: ProviderHeaders) => ProviderHeaders | Promise<ProviderHeaders>;
 }
 
-export type ModelsApiStreamOptions<TApi extends Api> = ApiStreamOptions<TApi> & ModelsStreamTransforms;
-export type ModelsSimpleStreamOptions = SimpleStreamOptions & ModelsStreamTransforms;
+export type ModelsApiStreamOptions<TApi extends Api> = ApiStreamOptions<TApi> & ModelsRequestTransforms;
+export type ModelsSimpleStreamOptions = SimpleStreamOptions & ModelsRequestTransforms;
+export type ModelsDeferredFetchOptions = DeferredFetchOptions & ModelsRequestTransforms;
+export type ModelsDeferredCancelOptions = DeferredCancelOptions & ModelsRequestTransforms;
 
 /**
  * A provider is the concrete runtime unit. It owns id/name/base metadata,
@@ -135,6 +140,12 @@ export interface Provider<TApi extends Api = Api> {
 	): AssistantMessageEventStream;
 
 	streamSimple(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	fetchDeferred?(
+		model: Model<TApi>,
+		handle: DeferredHandle,
+		options?: DeferredFetchOptions,
+	): AssistantMessageEventStream;
+	cancelDeferred?(model: Model<TApi>, handle: DeferredHandle, options?: DeferredCancelOptions): Promise<void>;
 }
 
 /**
@@ -203,6 +214,12 @@ export interface Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream;
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage>;
+	fetchDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): Promise<AssistantMessage>;
+	cancelDeferred(model: Model<Api>, handle: DeferredHandle, options?: ModelsDeferredCancelOptions): Promise<void>;
 }
 
 export interface MutableModels extends Models {
@@ -616,10 +633,13 @@ class ModelsImpl implements MutableModels {
 		return provider;
 	}
 
-	private async applyAuth<TOptions extends StreamOptions & ModelsStreamTransforms>(
+	private async applyAuth<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
 		model: Model<Api>,
 		options: TOptions | undefined,
-	): Promise<{ requestModel: Model<Api>; requestOptions: StreamOptions | undefined }> {
+	): Promise<{
+		requestModel: Model<Api>;
+		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
+	}> {
 		this.requireProvider(model);
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
@@ -638,7 +658,8 @@ class ModelsImpl implements MutableModels {
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
 		const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};
-		const requestOptions = { ...providerOptions, apiKey, headers, env } as StreamOptions;
+		const requestOptions = { ...providerOptions, apiKey, headers, env } as Omit<TOptions, "transformHeaders"> &
+			ProviderRequestOptions;
 
 		return { requestModel, requestOptions };
 	}
@@ -680,6 +701,34 @@ class ModelsImpl implements MutableModels {
 		options?: ModelsSimpleStreamOptions,
 	): Promise<AssistantMessage> {
 		return this.streamSimple(model, context, options).result();
+	}
+
+	async fetchDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): Promise<AssistantMessage> {
+		return lazyStream(model, async () => {
+			const provider = this.requireProvider(model);
+			if (!provider.fetchDeferred) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+			}
+			const { requestModel, requestOptions } = await this.applyAuth(model, options);
+			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
+		}).result();
+	}
+
+	async cancelDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredCancelOptions,
+	): Promise<void> {
+		const provider = this.requireProvider(model);
+		if (!provider.cancelDeferred) {
+			throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+		}
+		const { requestModel, requestOptions } = await this.applyAuth(model, options);
+		await provider.cancelDeferred(requestModel, handle, requestOptions);
 	}
 }
 
@@ -742,7 +791,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		return run(streams);
 	};
 
-	return {
+	const provider: Provider<TApi> = {
 		id: input.id,
 		name: input.name ?? input.id,
 		baseUrl: input.baseUrl,
@@ -781,6 +830,35 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		streamSimple: (model, context, options) =>
 			dispatch(model, (streams) => streams.streamSimple(model, context, options)),
 	};
+
+	const streams = single ? [single] : Object.values(byApi ?? {}).filter((entry) => entry !== undefined);
+	if (streams.some((entry) => entry.fetchDeferred !== undefined)) {
+		provider.fetchDeferred = (model, handle, options) =>
+			lazyStream(model, async () => {
+				const implementation = apiFor(model);
+				if (!implementation?.fetchDeferred) {
+					throw new ModelsError(
+						"provider",
+						`Provider ${input.id} does not support deferred responses for "${model.api}"`,
+					);
+				}
+				return implementation.fetchDeferred(model, handle, options);
+			});
+	}
+	if (streams.some((entry) => entry.cancelDeferred !== undefined)) {
+		provider.cancelDeferred = async (model, handle, options) => {
+			const implementation = apiFor(model);
+			if (!implementation?.cancelDeferred) {
+				throw new ModelsError(
+					"provider",
+					`Provider ${input.id} cannot cancel deferred responses for "${model.api}"`,
+				);
+			}
+			await implementation.cancelDeferred(model, handle, options);
+		};
+	}
+
+	return provider;
 }
 
 /**

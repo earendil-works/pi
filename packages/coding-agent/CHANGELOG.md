@@ -84,6 +84,8 @@
 
 ### Fixed
 
+- Fixed project-level nested provider retry settings replacing unmodified global provider retry settings ([#7572](https://github.com/earendil-works/pi/issues/7572)).
+- Fixed inherited GitHub Copilot Grok 4.5 requests to use the supported Responses API ([#7560](https://github.com/earendil-works/pi/issues/7560)).
 - Fixed fullscreen shutdown leaking terminal capability-query replies into the parent shell prompt.
 - Fixed bare exact `--model` IDs shared by multiple providers choosing the first catalog entry instead of the sole authenticated provider or a clear ambiguity error ([#7327](https://github.com/earendil-works/pi/issues/7327)).
 - Fixed standalone x64 binaries requiring Haswell-era AVX2/BMI2 instructions by compiling release executables against Bun's baseline runtime ([#7149](https://github.com/earendil-works/pi/issues/7149)).
@@ -107,6 +109,9 @@
 - Fixed stale pi.dev, Radius, llama.cpp, and extension catalog refreshes publishing after a newer provider refresh.
 - Fixed cancellation while waiting for file-backed credential or model-catalog locks, preventing cancelled mutations from running or committing later.
 - Fixed concurrent in-memory credential mutations losing unrelated provider updates by serializing their read-modify-write sections.
+- Updated `undici` to 8.9.0 and the packaged `brace-expansion` to 5.0.9 to address GHSA-8xcm-r25x-g524, GHSA-4cwx-7wf7-3272, GHSA-m8rv-5g2x-5cg5, GHSA-jr45-8vmc-qm54, GHSA-v3r7-h72x-cjcm, and GHSA-rgw5-rvv9-x895.
+- Fixed GitHub Copilot compaction and branch summaries using the Individual endpoint instead of the credential-resolved Business or Enterprise endpoint ([#6768](https://github.com/earendil-works/pi/issues/6768)).
+- Fixed extension model calls dropping credential-resolved endpoints when forwarding request authentication, including custom compaction with GitHub Copilot Business and Enterprise accounts ([#7579](https://github.com/earendil-works/pi/issues/7579)).
 
 ## [0.83.0] - 2026-07-29
 

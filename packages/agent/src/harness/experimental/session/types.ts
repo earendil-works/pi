@@ -1,4 +1,5 @@
 import type { StopReason, Usage } from "@earendil-works/pi-ai";
+import "../../messages.ts";
 import type { AgentMessage } from "../../../types.ts";
 import type { Session } from "./session.ts";
 
@@ -263,9 +264,9 @@ export interface LanePointer {
 }
 
 export type LogItem =
-	| { kind: "entry"; seq: number; lane: string; entry: Entry }
+	| { kind: "entry"; seq: number; entry: Entry }
 	| { kind: "record"; seq: number; record: LaneRecord }
-	| { kind: "lane"; seq: number; lane: string; action: "create" | "move"; leafId: string | null }
+	| { kind: "lane"; seq: number; lane: string; leafId: string | null }
 	| { kind: "fact"; seq: number; fact: "name"; name: string }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
 

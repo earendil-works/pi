@@ -37,7 +37,7 @@ function assertValidCursor(afterSeq: number | undefined): void {
 	}
 }
 
-function assertJsonSerializable(value: unknown): void {
+export function assertJsonSerializable(value: unknown): void {
 	const active = new WeakSet<object>();
 	const stack: JsonValidationFrame[] = [{ value }];
 	while (stack.length > 0) {

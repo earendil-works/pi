@@ -766,7 +766,9 @@ describe("Models runtime", () => {
 		controller.abort();
 
 		await expect(auth).rejects.toMatchObject({ name: "AbortError" });
-		expect(receivedSignal).toBe(controller.signal);
+		expect(receivedSignal).toBeInstanceOf(AbortSignal);
+		expect(receivedSignal?.aborted).toBe(true);
+		expect(receivedSignal?.reason).toBe(controller.signal.reason);
 		finishRefresh?.({ ...previous, access: "new", expires: Date.now() + 60_000 });
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(await credentials.read("p1")).toEqual(previous);

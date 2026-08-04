@@ -9,8 +9,8 @@ import {
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionRepository } from "../../src/harness/session/jsonl-repo.ts";
 import { createScanningSessionSearch } from "../../src/harness/session/search.ts";
-import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "../../src/harness/types.ts";
-import { createTempDir, createUserMessage } from "./session-test-utils.ts";
+import type { SessionSearchOptions } from "../../src/harness/types.ts";
+import { createTempDir, createUserMessage, getSqliteEntries } from "./session-test-utils.ts";
 
 const ownedRepositories: AsyncDisposable[] = [];
 
@@ -43,6 +43,42 @@ describe("JsonlSessionBackend with scanning search", () => {
 		await expect(search.search({ text: "AUTH", cwd: root })).resolves.toEqual([
 			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
 		]);
+	});
+});
+
+describe("SqliteSessionRepository writer leases", () => {
+	it("shares one storage queue for repeated opens in the same repository", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		const { repository: repo } = createSqliteFixture({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session" });
+		const reopened = await repo.open(await session.getMetadata());
+
+		const [first, second] = await Promise.all([
+			session.appendMessage(createUserMessage("first")),
+			reopened.appendMessage(createUserMessage("second")),
+		]);
+
+		expect((await getSqliteEntries(session)).map((entry) => entry.id)).toEqual([first, second]);
+	});
+
+	it("rejects a second repository while a session lease is active", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		const { repository: firstRepo } = createSqliteFixture({ env, sqlite, databasePath });
+		const session = await firstRepo.create({ cwd: root, id: "session" });
+		const metadata = await session.getMetadata();
+		const secondRepo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		ownedRepositories.push(secondRepo);
+
+		await expect(secondRepo.open(metadata)).rejects.toMatchObject({ code: "storage" });
+
+		await firstRepo.close();
+		await expect(secondRepo.open(metadata)).resolves.toBeDefined();
 	});
 });
 
@@ -118,7 +154,7 @@ describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
 		}
 
 		await expect(session.appendMessage(createUserMessage("must roll back"))).rejects.toThrow();
-		await expect(session.getEntries()).resolves.toEqual([]);
+		await expect(getSqliteEntries(session)).resolves.toEqual([]);
 	});
 
 	it("rolls back canonical deletion when co-located FTS cleanup fails", async () => {
@@ -141,7 +177,7 @@ describe("SqliteSessionBackend with explicit SQLite FTS5 search", () => {
 
 		await expect(repo.delete(metadata)).rejects.toThrow();
 		const reopened = await repo.open(metadata);
-		await expect(reopened.getEntries()).resolves.toHaveLength(1);
+		await expect(getSqliteEntries(reopened)).resolves.toHaveLength(1);
 	});
 
 	it("initializes canonical storage when searched before the first session is created", async () => {
@@ -168,8 +204,10 @@ describe("SqliteSessionRepository with custom search", () => {
 	it("uses an independently supplied search implementation", async () => {
 		const root = createTempDir();
 		const searches: SessionSearchOptions[] = [];
-		const search: SessionSearch<SqliteSessionMetadata> = {
-			async search(options): Promise<SessionSearchHit<SqliteSessionMetadata>[]> {
+		const search: {
+			search(options: SessionSearchOptions): Promise<{ metadata: SqliteSessionMetadata; entryId: string }[]>;
+		} = {
+			async search(options) {
 				searches.push(options);
 				return [];
 			},
