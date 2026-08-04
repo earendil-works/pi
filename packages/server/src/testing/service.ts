@@ -10,7 +10,7 @@ import type {
 import { PiServerError } from "../errors.ts";
 import type {
 	CreateSessionOptions,
-	PiSessionBackend,
+	PiServerService,
 	PiSessionRuntime,
 	PiSessionRuntimeEvent,
 	PromptInput,
@@ -195,7 +195,7 @@ interface ListDelay {
 	release: Deferred<void>;
 }
 
-export class TestSessionBackend implements PiSessionBackend {
+export class TestServerService implements PiServerService {
 	readonly sessions = new Map<string, StoredSession>();
 	readonly runtimes = new Map<string, TestSessionRuntime[]>();
 	readonly locked = new Set<string>();

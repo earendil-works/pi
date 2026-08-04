@@ -1,27 +1,27 @@
 import { PiServer } from "../server.ts";
-import type { PiServerOptions, PiSessionBackend } from "../types.ts";
-import { TestSessionBackend } from "./backend.ts";
+import type { PiServerOptions, PiServerService } from "../types.ts";
+import { TestServerService } from "./service.ts";
 
 export interface TestServerOptions extends PiServerOptions {
-	backend?: PiSessionBackend;
+	service?: PiServerService;
 }
 
 export interface TestServer {
 	server: PiServer;
-	backend: PiSessionBackend;
+	service: PiServerService;
 }
 
 /** Create an unstarted PiServer with deterministic defaults for transport conformance tests. */
 export function createTestServer(options: TestServerOptions): TestServer {
-	const backend = options.backend ?? new TestSessionBackend();
+	const service = options.service ?? new TestServerService();
 	return {
-		server: new PiServer(backend, {
+		server: new PiServer(service, {
 			listeners: options.listeners,
 			maxFrameLength: options.maxFrameLength,
 			handshakeTimeoutMs: options.handshakeTimeoutMs,
 			serverId: options.serverId,
 			onError: options.onError,
 		}),
-		backend,
+		service,
 	};
 }

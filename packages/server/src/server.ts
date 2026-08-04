@@ -25,7 +25,7 @@ import { PiServerError } from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import { LiveSessionManager } from "./sessions.ts";
 import { ServerSnapshotPublisher } from "./snapshots.ts";
-import type { PiServerOptions, PiSessionBackend } from "./types.ts";
+import type { PiServerOptions, PiServerService } from "./types.ts";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_UINT32 = 0xffff_ffff;
@@ -46,7 +46,7 @@ export class PiServer {
 	private startPromise?: Promise<this>;
 	private started = false;
 
-	constructor(backend: PiSessionBackend, options: PiServerOptions) {
+	constructor(service: PiServerService, options: PiServerOptions) {
 		const resolved = resolveOptions(options);
 		this.listeners = options.listeners;
 		this.id = options.serverId ?? randomUUID();
@@ -54,7 +54,7 @@ export class PiServer {
 		this.handshakeTimeoutMs = resolved.handshakeTimeoutMs;
 		this.onError = options.onError;
 		this.sessions = new LiveSessionManager({
-			backend,
+			service,
 			isClosing: () => this.closing,
 			sendMessage: (connection, message) => this.sendMessage(connection, message),
 			closeConnection: (connection) => this.closeConnection(connection),
@@ -64,7 +64,7 @@ export class PiServer {
 		});
 		this.snapshots = new ServerSnapshotPublisher({
 			serverId: this.id,
-			backend,
+			service,
 			connections: this.connections,
 			isClosing: () => this.closing,
 			listSessions: (connection) => this.sessions.listSummaries(connection),
