@@ -71,6 +71,7 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
+	const isWindowsConsole = process.platform === "win32";
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
@@ -117,6 +118,13 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	}
 
 	if (terminalEmulator === "jetbrains-jediterm") {
+		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// Windows Terminal does not always set WT_SESSION, for example when it hosts
+	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
+	// truecolor; keep hyperlinks off unless we positively detected support above.
+	if (isWindowsConsole) {
 		return { images: null, trueColor: true, hyperlinks: false };
 	}
 
@@ -227,6 +235,11 @@ export function deleteAllKittyImages(): string {
 	return "\x1b_Ga=d,d=A,q=2\x1b\\";
 }
 
+/** Delete all visible Kitty placements while retaining their uploaded image data. */
+export function deleteAllKittyPlacements(): string {
+	return "\x1b_Ga=d,d=a,q=2\x1b\\";
+}
+
 export function encodeITerm2(
 	base64Data: string,
 	options: {
@@ -263,33 +276,117 @@ export interface KittyImageMetadata extends ImageCellSize {
 	heightPx: number;
 }
 
-const kittyImageMetadata = new Map<number, KittyImageMetadata>();
+interface RegisteredKittyImageMetadata extends KittyImageMetadata {
+	transmissionGeneration: number;
+}
+
+export interface KittyImagePlacement {
+	imageId: number;
+	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
+	sequence: string;
+	replacementLine: string;
+}
+
+const kittyImageMetadata = new Map<number, RegisteredKittyImageMetadata>();
+let kittyTransmissionGeneration = 0;
 
 export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
+	kittyTransmissionGeneration += 1;
 	kittyImageMetadata.delete(metadata.imageId);
-	kittyImageMetadata.set(metadata.imageId, metadata);
+	kittyImageMetadata.set(metadata.imageId, { ...metadata, transmissionGeneration: kittyTransmissionGeneration });
 	if (kittyImageMetadata.size > 1000) {
 		const oldestImageId = kittyImageMetadata.keys().next().value;
 		if (oldestImageId !== undefined) kittyImageMetadata.delete(oldestImageId);
 	}
 }
 
-export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
+function getRegisteredKittyImageMetadata(line: string): RegisteredKittyImageMetadata | undefined {
 	const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
 	if (!controls) return undefined;
 	const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
 	return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
 }
 
+export function getKittyImageMetadata(line: string): KittyImageMetadata | undefined {
+	const metadata = getRegisteredKittyImageMetadata(line);
+	if (!metadata) return undefined;
+	return {
+		imageId: metadata.imageId,
+		columns: metadata.columns,
+		rows: metadata.rows,
+		widthPx: metadata.widthPx,
+		heightPx: metadata.heightPx,
+	};
+}
+
+const KITTY_PLACEMENT_CONTROL_KEYS = new Set([
+	"i",
+	"p",
+	"x",
+	"y",
+	"w",
+	"h",
+	"X",
+	"Y",
+	"c",
+	"r",
+	"C",
+	"U",
+	"z",
+	"P",
+	"Q",
+	"H",
+	"V",
+]);
+
+/** Build a placement-only command for an image line emitted by {@link renderImage}. */
+export function getKittyImagePlacement(line: string): KittyImagePlacement | undefined {
+	const match = /\x1b_G([^;]*);/.exec(line);
+	const metadata = getRegisteredKittyImageMetadata(line);
+	if (!match || !metadata) return undefined;
+
+	let commandStart = match.index;
+	let commandControls = match[1];
+	let transmissionEnd: number;
+	while (true) {
+		const terminator = line.indexOf("\x1b\\", commandStart + KITTY_PREFIX.length);
+		if (terminator === -1) return undefined;
+		transmissionEnd = terminator + 2;
+		if (!/(?:^|,)m=1(?:,|$)/.test(commandControls)) break;
+		commandStart = transmissionEnd;
+		if (!line.startsWith(KITTY_PREFIX, commandStart)) return undefined;
+		const controlsEnd = line.indexOf(";", commandStart + KITTY_PREFIX.length);
+		if (controlsEnd === -1) return undefined;
+		commandControls = line.slice(commandStart + KITTY_PREFIX.length, controlsEnd);
+	}
+
+	const controls = match[1]
+		.split(",")
+		.filter((control) => KITTY_PLACEMENT_CONTROL_KEYS.has(control.split("=", 1)[0] ?? ""));
+	const sequence = `\x1b_Ga=p,q=2,${controls.join(",")}\x1b\\`;
+	return {
+		imageId: metadata.imageId,
+		transmissionGeneration: metadata.transmissionGeneration,
+		transmissionBytes: transmissionEnd - match.index,
+		estimatedDecodedBytes: metadata.widthPx * metadata.heightPx * 4,
+		sequence,
+		replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`,
+	};
+}
+
 export function cropKittyImageLine(line: string, hiddenRows: number, visibleRows: number): string {
 	const metadata = getKittyImageMetadata(line);
 	const match = /\x1b_G([^;]*);/.exec(line);
-	if (!metadata || !match || hiddenRows <= 0 || visibleRows <= 0) return line;
+	if (!metadata || !match || hiddenRows < 0 || hiddenRows >= metadata.rows || visibleRows <= 0) return line;
+	const croppedRows = Math.min(visibleRows, metadata.rows - hiddenRows);
+	if (hiddenRows === 0 && croppedRows === metadata.rows) return line;
 	const sourceY = Math.floor((metadata.heightPx * hiddenRows) / metadata.rows);
-	const sourceEnd = Math.ceil((metadata.heightPx * (hiddenRows + visibleRows)) / metadata.rows);
+	const sourceEnd = Math.ceil((metadata.heightPx * (hiddenRows + croppedRows)) / metadata.rows);
 	const sourceHeight = Math.max(1, Math.min(metadata.heightPx, sourceEnd) - sourceY);
 	const controls = match[1].split(",").filter((control) => !/^[yhr]=/.test(control));
-	controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${visibleRows}`);
+	controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${croppedRows}`);
 	return `${line.slice(0, match.index)}\x1b_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
 }
 

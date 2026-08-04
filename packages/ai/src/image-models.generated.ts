@@ -92,7 +92,7 @@ export const IMAGE_MODELS = {
 				input: 0.3,
 				output: 2.5,
 				cacheRead: 0.03,
-				cacheWrite: 0.08333333333333334,
+				cacheWrite: 0.0833333333333333,
 			},
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3-pro-image": {

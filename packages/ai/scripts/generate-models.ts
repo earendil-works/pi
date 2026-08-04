@@ -88,6 +88,7 @@ interface ModelsDevModel {
 	structured_output?: boolean;
 	reasoning?: boolean;
 	reasoning_options?: ModelsDevReasoningOption[];
+	status?: string;
 	limit?: {
 		context?: number;
 		output?: number;
@@ -394,14 +395,22 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 		tiers: [
 			{
 				inputTokensAbove: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
-				input: cost.input * 2,
-				output: cost.output * 1.5,
-				cacheRead: cost.cacheRead * 2,
-				cacheWrite: cost.cacheWrite * 2,
+				input: roundCost(cost.input * 2),
+				output: roundCost(cost.output * 1.5),
+				cacheRead: roundCost(cost.cacheRead * 2),
+				cacheWrite: roundCost(cost.cacheWrite * 2),
 			},
 		],
 	};
 }
+
+// OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
+// authoritative values until models.dev and passthrough catalogs catch up.
+// https://developers.openai.com/api/docs/pricing
+const OPENAI_GPT_56_STANDARD_COSTS: Record<string, ModelCost> = {
+	"gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+	"gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
+};
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
@@ -583,6 +592,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
 	supportsUsageInStreaming: true,
+	supportsFinishReason: true,
 	maxTokensField: "max_completion_tokens",
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
@@ -592,6 +602,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
 	chatTemplateKwargs: {},
+	chatTemplateArgs: {},
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
@@ -673,6 +684,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
+		supportsFinishReason: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
@@ -692,6 +704,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
+		chatTemplateArgs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isLlmGateway,
 		supportsOpenAIGrammarTools: false,
@@ -1281,6 +1294,100 @@ async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 	}
 }
 
+function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
+	if (!provider?.models) return [];
+
+	const baseUrl = "https://inference.baseten.co/v1";
+	const baseCompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		supportsUsageInStreaming: true,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: true,
+		supportsLongCacheRetention: false,
+	};
+	const reasoningEffortCompat: OpenAICompletionsCompat = {
+		...baseCompat,
+		supportsReasoningEffort: true,
+		thinkingFormat: "openai",
+	};
+	const toggleReasoningCompat: OpenAICompletionsCompat = {
+		...baseCompat,
+		thinkingFormat: "baseten",
+		chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
+	};
+	const toggleReasoningEffortCompat: OpenAICompletionsCompat = {
+		...reasoningEffortCompat,
+		thinkingFormat: "baseten",
+		chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
+	};
+	const toggleThinkingLevelMap = {
+		off: "off",
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: null,
+	} as const;
+	const glm52ThinkingLevelMap = {
+		off: "none",
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: "max",
+	} as const;
+	const models: Model<Api>[] = [];
+
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		if (model.status === "deprecated") continue;
+
+		const reasoning = model.reasoning === true;
+		const reasoningOptions = model.reasoning_options ?? [];
+		const isGlm52 = modelId === "zai-org/GLM-5.2" || modelId === "zai-org/GLM-5.2-Fast";
+		const supportsToggle = reasoningOptions.some((option) => option.type === "toggle") || isGlm52;
+		const supportsEffort = reasoningOptions.some((option) => option.type === "effort") || isGlm52;
+		const compat =
+			supportsToggle && supportsEffort
+				? toggleReasoningEffortCompat
+				: supportsToggle
+					? toggleReasoningCompat
+					: supportsEffort
+						? reasoningEffortCompat
+						: baseCompat;
+		const thinkingLevelMap = isGlm52
+			? glm52ThinkingLevelMap
+			: supportsToggle
+				? toggleThinkingLevelMap
+				: getEffortThinkingLevelMap(reasoningOptions);
+
+		models.push({
+			id: modelId,
+			name: model.name || modelId,
+			api: "openai-completions",
+			provider: "baseten",
+			baseUrl,
+			reasoning,
+			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+			input: model.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			cost: {
+				input: model.cost?.input || 0,
+				output: model.cost?.output || 0,
+				cacheRead: model.cost?.cache_read || 0,
+				cacheWrite: model.cost?.cache_write || 0,
+			},
+			compat,
+			contextWindow: model.limit?.context || 4096,
+			maxTokens: model.limit?.output || 4096,
+		});
+	}
+
+	return models;
+}
+
 async function loadModelsDevData(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from models.dev API...");
@@ -1810,7 +1917,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		const togetherProvider = data.together ?? data.togetherai ?? data["together-ai"];
 		if (togetherProvider?.models) {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
@@ -1839,6 +1946,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		models.push(...processBasetenModels(data.baseten));
+
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:
 		// - @ai-sdk/openai → openai-responses
@@ -1854,7 +1963,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			if (!data[variant.key]?.models) continue;
 
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
@@ -1950,16 +2059,19 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// Process GitHub Copilot models
 		if (data["github-copilot"]?.models) {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
-				const m = model as ModelsDevModel & { status?: string };
+				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus)-[45]([.\-]|$)/.test(modelId);
-				// gpt-5, oswe, and MAI-Code models are only served through the
-				// Copilot /responses endpoint.
+				// Grok 4.5, gpt-5, oswe, and MAI-Code models are only served through
+				// the Copilot /responses endpoint.
 				const needsResponsesApi =
-					modelId.startsWith("gpt-5") || modelId.startsWith("oswe") || modelId.startsWith("mai-");
+					modelId === "grok-4.5" ||
+					modelId.startsWith("gpt-5") ||
+					modelId.startsWith("oswe") ||
+					modelId.startsWith("mai-");
 
 				const api: Api = isCopilotClaude
 					? "anthropic-messages"
@@ -2319,7 +2431,13 @@ async function generateModels() {
 			candidate.maxTokens = 128000;
 		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
-			candidate.cost = withOpenAiLongContextPricing(candidate.cost);
+			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
+			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
+		}
+		// Cloudflare AI Gateway passes OpenAI usage through at OpenAI list prices.
+		if (candidate.provider === "cloudflare-ai-gateway") {
+			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
+			if (standardCost) candidate.cost = withOpenAiLongContextPricing(standardCost);
 		}
 		// models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit);
 		// the actual max output is 128000. Also propagates to the derived Azure clone.
@@ -2357,6 +2475,19 @@ async function generateModels() {
 			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
 			candidate.compat = { supportsStore: false, supportsDeveloperRole: false };
 		}
+		if (candidate.provider === "fireworks" && candidate.id.includes("kimi-k3")) {
+			candidate.api = "openai-completions";
+			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
+			candidate.compat = {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				requiresReasoningContentOnAssistantMessages: true,
+				thinkingFormat: "openai",
+				deferredToolsMode: "kimi",
+				sendSessionAffinityHeaders: true,
+				supportsLongCacheRetention: false,
+			};
+		}
 	}
 
 
@@ -2382,7 +2513,7 @@ async function generateModels() {
 			provider: "openai",
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
 			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 			maxTokens: 128000,
 		},
@@ -2394,7 +2525,7 @@ async function generateModels() {
 			provider: "openai",
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
 			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
 			maxTokens: 128000,
 		},
@@ -2613,7 +2744,7 @@ async function generateModels() {
 			baseUrl: CODEX_BASE_URL,
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
@@ -2637,7 +2768,7 @@ async function generateModels() {
 			baseUrl: CODEX_BASE_URL,
 			reasoning: true,
 			input: ["text", "image"],
-			cost: withOpenAiLongContextPricing({ input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 }),
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},

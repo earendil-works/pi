@@ -111,6 +111,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// LLM Gateway
 	{ provider: "llmgateway", model: "glm-4.5v", label: "llmgateway-glm-4.5v" },
 	{ provider: "llmgateway-devpass", model: "glm-4.6", label: "llmgateway-devpass-glm-4.6" },
+	// Baseten
+	{ provider: "baseten", model: "zai-org/GLM-5.2", label: "baseten-glm-5.2" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-for-coding", label: "kimi-for-coding" },
 	// Mistral

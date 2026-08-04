@@ -1,17 +1,31 @@
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import { createModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
 
-function createFakeTui(): TUI {
+function observeRefreshRender(): { tui: TUI; renderedAfterRefresh: Promise<void> } {
+	let renderCount = 0;
+	let resolveRefreshRender = () => {};
+	const renderedAfterRefresh = new Promise<void>((resolve) => {
+		resolveRefreshRender = resolve;
+	});
 	return {
-		requestRender: () => {},
-	} as unknown as TUI;
+		tui: {
+			requestRender: () => {
+				renderCount++;
+				if (renderCount === 2) resolveRefreshRender();
+			},
+		} as unknown as TUI,
+		renderedAfterRefresh,
+	};
 }
 
 function modelsJson(provider: string, model: string): Record<string, unknown> {
@@ -28,7 +42,7 @@ function modelsJson(provider: string, model: string): Record<string, unknown> {
 }
 
 describe("issue #6999 models.json hot reload", () => {
-	let harness: Harness | undefined;
+	let tempDir: string | undefined;
 
 	beforeAll(() => {
 		initTheme("dark");
@@ -39,30 +53,32 @@ describe("issue #6999 models.json hot reload", () => {
 	});
 
 	afterEach(() => {
-		harness?.cleanup();
-		harness = undefined;
+		if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+		tempDir = undefined;
 	});
 
 	it("reloads models.json when opening /model", async () => {
-		harness = await createHarness({ modelsJson: modelsJson("old-provider", "old-model") });
-		expect(harness.session.modelRuntime.getModel("old-provider", "old-model")).toBeDefined();
+		tempDir = mkdtempSync(join(tmpdir(), "pi-models-json-hot-reload-"));
+		const modelsPath = join(tempDir, "models.json");
+		writeFileSync(modelsPath, JSON.stringify(modelsJson("old-provider", "old-model")));
+		const modelRuntime = getModelRuntime(await createModelRegistry(AuthStorage.inMemory(), modelsPath));
+		expect(modelRuntime.getModel("old-provider", "old-model")).toBeDefined();
 
-		writeFileSync(join(harness.tempDir, "models.json"), JSON.stringify(modelsJson("new-provider", "new-model")));
+		writeFileSync(modelsPath, JSON.stringify(modelsJson("new-provider", "new-model")));
+		const { tui, renderedAfterRefresh } = observeRefreshRender();
 		const selector = new ModelSelectorComponent(
-			createFakeTui(),
-			harness.getModel(),
-			harness.settingsManager,
-			harness.session.modelRuntime,
+			tui,
+			undefined,
+			SettingsManager.inMemory(),
+			modelRuntime,
 			[],
 			() => {},
 			() => {},
 		);
 
-		await vi.waitFor(() => {
-			const rendered = stripAnsi(selector.render(120).join("\n"));
-			expect(rendered).toContain("new-model [new-provider]");
-			expect(rendered).toContain("Model catalogs refreshed.");
-		});
-		expect(harness.session.modelRuntime.getModel("old-provider", "old-model")).toBeUndefined();
+		await renderedAfterRefresh;
+		const rendered = stripAnsi(selector.render(120).join("\n"));
+		expect(rendered).toContain("new-model [new-provider]");
+		expect(rendered).not.toContain("old-model [old-provider]");
 	});
 });

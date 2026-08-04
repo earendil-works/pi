@@ -374,6 +374,9 @@ describe("extensions discovery", () => {
 	it("registers message and entry renderers", async () => {
 		const extCode = `
 			export default function(pi) {
+				pi.registerMarkdownTransformer((markdown) => {
+					return markdown;
+				});
 				pi.registerMessageRenderer("my-custom-type", (message, options, theme) => {
 					return null; // Use default rendering
 				});
@@ -388,6 +391,7 @@ describe("extensions discovery", () => {
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0].markdownTransformer).toBeDefined();
 		expect(result.extensions[0].messageRenderers.has("my-custom-type")).toBe(true);
 		expect(result.extensions[0].entryRenderers?.has("my-entry-type")).toBe(true);
 	});

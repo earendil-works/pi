@@ -588,7 +588,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					if (event.content_block.type === "text") {
 						const block: Block = {
 							type: "text",
-							text: "",
+							text: event.content_block.text ?? "",
 							index: event.index,
 						};
 						output.content.push(block);
@@ -596,8 +596,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					} else if (event.content_block.type === "thinking") {
 						const block: Block = {
 							type: "thinking",
-							thinking: "",
-							thinkingSignature: "",
+							thinking: event.content_block.thinking ?? "",
+							thinkingSignature: event.content_block.signature ?? "",
 							index: event.index,
 						};
 						output.content.push(block);

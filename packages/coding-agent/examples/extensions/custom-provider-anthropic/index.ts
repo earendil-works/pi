@@ -124,7 +124,7 @@ async function loginAnthropic(callbacks: OAuthLoginCallbacks): Promise<OAuthCred
 	};
 }
 
-async function refreshAnthropicToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+async function refreshAnthropicToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials> {
 	const response = await fetch(TOKEN_URL, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -133,6 +133,7 @@ async function refreshAnthropicToken(credentials: OAuthCredentials): Promise<OAu
 			client_id: CLIENT_ID,
 			refresh_token: credentials.refresh,
 		}),
+		signal,
 	});
 
 	if (!response.ok) {

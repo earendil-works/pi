@@ -125,9 +125,10 @@ describe("Context overflow error handling", () => {
 	describe("GitHub Copilot (OAuth)", () => {
 		// Google model via Copilot
 		it.skipIf(!githubCopilotToken)(
-			"gemini-2.5-pro - should detect overflow via isContextOverflow",
+			"Google model - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getModel("github-copilot", "gemini-2.5-pro");
+				const model = getModels("github-copilot").find((candidate) => candidate.id.startsWith("gemini-"));
+				if (!model) throw new Error("No Google models available through GitHub Copilot");
 				const result = await testContextOverflow(model, githubCopilotToken!);
 				logResult(result);
 
@@ -354,8 +355,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
-		it("glm-4.5-air - should detect overflow via isContextOverflow when z.ai reports it", async () => {
-			const model = getModel("zai", "glm-4.5-air");
+		it("glm-5.2 - should detect overflow via isContextOverflow when z.ai reports it", async () => {
+			const model = getModel("zai", "glm-5.2");
 			const result = await testContextOverflow(model, process.env.ZAI_API_KEY!);
 			logResult(result);
 
@@ -586,7 +587,8 @@ describe("Context overflow error handling", () => {
 	// LLM Gateway - Multiple backend providers
 	// Expected pattern: "exceeds the configured context size (X) for model 'Y'"
 	// (gateway pre-flight check; anthropic-routed models may surface Anthropic's
-	// verbatim "prompt is too long" instead)
+	// verbatim "prompt is too long" instead). Models the gateway routes to z.ai
+	// inherit z.ai's silent overflow instead, so both shapes are accepted below.
 	// =============================================================================
 
 	describe.skipIf(!process.env.LLMGATEWAY_API_KEY)("LLM Gateway", () => {
@@ -595,8 +597,16 @@ describe("Context overflow error handling", () => {
 			const result = await testContextOverflow(model, process.env.LLMGATEWAY_API_KEY!);
 			logResult(result);
 
-			expect(result.stopReason).toBe("error");
-			expect(result.errorMessage).toMatch(/exceeds the configured context size/i);
+			// The gateway advertises context_length 131000 for glm-4.5 but does not
+			// pre-flight reject on the z.ai route: it forwards the oversized prompt
+			// and returns successfully with usage above the window. Either shape must
+			// still be detectable.
+			if (result.stopReason === "error") {
+				expect(result.errorMessage).toMatch(/exceeds the configured context size/i);
+			} else {
+				expect(result.stopReason).toBe("stop");
+				expect(result.usage.input + result.usage.cacheRead).toBeGreaterThan(model.contextWindow);
+			}
 			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
 		}, 120000);
 

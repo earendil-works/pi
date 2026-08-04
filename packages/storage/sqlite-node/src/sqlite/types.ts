@@ -1,4 +1,4 @@
-import type { FileSystem, SessionCreateOptions, SessionMetadata, SessionRepo } from "@earendil-works/pi-agent-core";
+import type { FileSystem, SessionCreateOptions, SessionMetadata } from "@earendil-works/pi-agent-core";
 
 /** Result of a prepared SQLite statement execution. */
 export interface SqliteRunResult {
@@ -10,17 +10,18 @@ export interface SqliteRunResult {
 
 /** Prepared SQLite statement capability used by the SQLite session backend. */
 export interface SqliteStatement {
-	run(...params: unknown[]): Promise<SqliteRunResult>;
-	get<TRow extends object>(...params: unknown[]): Promise<TRow | undefined>;
-	all<TRow extends object>(...params: unknown[]): Promise<TRow[]>;
+	run(...params: unknown[]): SqliteRunResult;
+	get<TRow extends object>(...params: unknown[]): TRow | undefined;
+	all<TRow extends object>(...params: unknown[]): TRow[];
 }
 
 /** SQLite database capability used by the SQLite session backend. */
 export interface SqliteDatabase {
-	exec(sql: string): Promise<void>;
+	exec(sql: string): void;
 	prepare(sql: string): SqliteStatement;
-	transaction<T>(fn: () => Promise<T>): Promise<T>;
-	close(): Promise<void>;
+	/** Runs a synchronous write transaction. The callback must not return a promise. */
+	transaction<T>(fn: () => T): T;
+	close(): void;
 }
 
 export interface SqliteDatabaseFactory {
@@ -44,12 +45,4 @@ export interface SqliteSessionListOptions {
 	cwd?: string;
 }
 
-export interface SqliteSessionBackendOptions {
-	kind: "sqlite";
-	databasePath: string;
-}
-
-export interface SqliteSessionRepoApi
-	extends SessionRepo<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions> {}
-
-export type SqliteSessionRepoEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;
+export type SqliteSessionRepositoryEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;

@@ -83,11 +83,11 @@ function extractBody(error: SdkErrorShape): string | undefined {
 
 function pickBodyText(error: SdkErrorShape): string | undefined {
 	if (typeof error.body === "string") return error.body;
-	if (isNonEmptyObject(error.error)) return safeJsonStringify(error.error);
+	if (isPlainNonEmptyObject(error.error)) return safeJsonStringify(error.error);
 	const responseBody = error.$response?.body;
 	if (typeof responseBody === "string") return responseBody;
 	if (isReadableStreamLike(responseBody)) return undefined;
-	if (isNonEmptyObject(responseBody)) return safeJsonStringify(responseBody);
+	if (isPlainNonEmptyObject(responseBody)) return safeJsonStringify(responseBody);
 	return undefined;
 }
 
@@ -95,8 +95,25 @@ function isReadableStreamLike(value: unknown): boolean {
 	return typeof value === "object" && value !== null && "pipe" in value && typeof value.pipe === "function";
 }
 
-function isNonEmptyObject(value: unknown): boolean {
-	return typeof value === "object" && value !== null && Object.keys(value).length > 0;
+/**
+ * Only a PLAIN object counts as an HTTP body. SDK error fields can hold class
+ * instances instead of parsed bodies — AWS SDK v3's `$response.body` is an
+ * HTTP stream/response wrapper object, and stringifying one produced garbage
+ * like `{"_events":...}` as the "body", which then REPLACED `error.message`
+ * in the composed display string. `error.message` is where the SDK puts the
+ * real deserialized exception text ("Input is too long...", schema validation
+ * details, ...), so the one useful string was discarded for noise. A class
+ * instance yields no body, `messageCarriesBody` stays true, and the real
+ * message survives. Complements the `pipe` sniffing above: web
+ * ReadableStreams (pipeTo/pipeThrough, no `pipe`) and non-stream SDK wrapper
+ * classes fail the prototype check, while parsed JSON bodies (plain objects
+ * by construction) still pass.
+ */
+function isPlainNonEmptyObject(value: unknown): boolean {
+	if (typeof value !== "object" || value === null) return false;
+	const proto = Object.getPrototypeOf(value);
+	if (proto !== Object.prototype && proto !== null) return false;
+	return Object.keys(value).length > 0;
 }
 
 /**

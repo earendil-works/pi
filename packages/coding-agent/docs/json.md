@@ -8,25 +8,25 @@ Outputs all session events as JSON lines to stdout. Useful for integrating pi in
 
 ## Event Types
 
-Events are defined in [`AgentSessionEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/agent-session.ts#L102):
+Wire events use `JsonAgentSessionEvent`. It matches
+[`AgentSessionEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/agent-session.ts)
+except that streaming message updates omit cumulative snapshots:
 
 ```typescript
-type AgentSessionEvent =
-  | AgentEvent
-  | { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
-  | { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
-  | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; errorMessage?: string }
-  | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-  | { type: "summarization_retry_scheduled"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-  | { type: "summarization_retry_attempt_start"; source: "branchSummary" }
-  | { type: "summarization_retry_attempt_start"; source: "compaction"; reason: "manual" | "threshold" | "overflow" }
-  | { type: "summarization_retry_finished" };
+type WithoutPartial<T> = T extends { partial: unknown } ? Omit<T, "partial"> : T;
+
+type JsonAgentSessionEvent =
+  | Exclude<AgentSessionEvent, { type: "message_update" }>
+  | {
+      type: "message_update";
+      assistantMessageEvent: WithoutPartial<AssistantMessageEvent>;
+    };
 ```
 
 `queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
 
-Base events from [`AgentEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts#L179):
+Other base events come from
+[`AgentEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts):
 
 ```typescript
 type AgentEvent =
@@ -73,11 +73,16 @@ Followed by events as they occur:
 {"type":"agent_start"}
 {"type":"turn_start"}
 {"type":"message_start","message":{"role":"assistant","content":[],...}}
-{"type":"message_update","message":{...},"assistantMessageEvent":{"type":"text_delta","delta":"Hello",...}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
 {"type":"message_end","message":{...}}
 {"type":"turn_end","message":{...},"toolResults":[]}
 {"type":"agent_end","messages":[...]}
 ```
+
+`message_update` records are delta-only. They omit both the cumulative `message` field and
+`assistantMessageEvent.partial` to keep stream size linear. Use `contentIndex` and `delta`
+to assemble live text, thinking, or tool-call arguments if needed. `message_end` contains
+the final authoritative message.
 
 ## Example
 

@@ -48,9 +48,16 @@ export default function llamaExtension(pi: ExtensionAPI): void {
 		client: LlamaClient,
 		catalog?: LlamaModelInfo[],
 	): Promise<LlamaModelInfo[]> => {
-		const current = catalog ?? (await client.list());
+		const signal = AbortSignal.timeout(15_000);
+		const current = catalog ?? (await client.list({ signal }));
 		provider.setCatalog(current, client.serverUrl);
-		await ctx.modelRegistry.refresh();
+		const result = await ctx.modelRegistry.refresh({
+			providers: [LLAMA_PROVIDER_ID],
+			signal,
+		});
+		if (result.aborted) throw new Error("Model catalog refresh timed out.");
+		const refreshError = result.errors.get(LLAMA_PROVIDER_ID);
+		if (refreshError) throw refreshError;
 		return current;
 	};
 

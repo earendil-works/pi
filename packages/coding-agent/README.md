@@ -128,6 +128,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Hugging Face
 - Fireworks
 - Together AI
+- Baseten
 - Kimi For Coding
 - MiniMax
 - Xiaomi MiMo
@@ -605,7 +606,7 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt (context files and skills still appended) |
 | `--append-system-prompt <text>` | Append to system prompt |
-| `--alt` | Use the alternate-screen TUI with application-owned scrolling in interactive mode |
+| `--ui-mode <mode>` | UI mode: `regular` (default) or experimental `fullscreen` |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
@@ -663,6 +664,7 @@ pi --thinking high "Solve this complex problem"
 
 | Variable | Description |
 |----------|-------------|
+| `AI_AGENT` | Set to `pi` by the CLI and RPC entry points so generic tooling can attribute child processes to Pi |
 | `PI_CODING_AGENT` | Set to `true` by the CLI and RPC entry points so child processes can detect that they run inside Pi |
 | `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |

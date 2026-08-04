@@ -571,10 +571,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (output.stopReason === "aborted") {
 				throw new Error("Request was aborted");
 			}
+			if (!hasFinishReason && !compat.supportsFinishReason) {
+				output.stopReason = output.content.some((block) => block.type === "toolCall") ? "toolUse" : "stop";
+			}
 			if (output.stopReason === "error") {
 				throw new Error(output.errorMessage || "Provider returned an error stop reason");
 			}
-			if (!hasFinishReason || output.stopReason === "pending") {
+			if ((compat.supportsFinishReason && !hasFinishReason) || output.stopReason === "pending") {
 				throw new Error("Stream ended without finish_reason");
 			}
 
@@ -764,9 +767,26 @@ function buildParams(
 			preserve_thinking: true,
 		};
 	} else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
-		const chatTemplateKwargs = buildChatTemplateKwargs(model, options, compat);
+		const chatTemplateKwargs = buildChatTemplateValues(model, options, compat.chatTemplateKwargs);
 		if (chatTemplateKwargs) {
 			(params as any).chat_template_kwargs = chatTemplateKwargs;
+		}
+	} else if (compat.thinkingFormat === "baseten" && model.reasoning) {
+		const basetenParams = params as Omit<typeof params, "reasoning_effort"> & {
+			chat_template_args?: Record<string, ResolvedChatTemplateKwargValue>;
+			reasoning_effort?: string;
+		};
+		const chatTemplateArgs = buildChatTemplateValues(model, options, compat.chatTemplateArgs);
+		if (chatTemplateArgs) {
+			basetenParams.chat_template_args = chatTemplateArgs;
+		}
+		if (compat.supportsReasoningEffort) {
+			const requestedEffort = options?.reasoningEffort;
+			const mappedEffort = requestedEffort ? model.thinkingLevelMap?.[requestedEffort] : model.thinkingLevelMap?.off;
+			const effort = mappedEffort === undefined ? requestedEffort : mappedEffort;
+			if (typeof effort === "string") {
+				basetenParams.reasoning_effort = effort;
+			}
 		}
 	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
 		if (options?.reasoningEffort) {
@@ -835,24 +855,29 @@ function buildParams(
 		}
 	}
 
+	// Last so custom keys override the named request fields.
+	if (options?.samplingParams) {
+		Object.assign(params, options.samplingParams);
+	}
+
 	return params;
 }
 
-function buildChatTemplateKwargs(
+function buildChatTemplateValues(
 	model: Model<"openai-completions">,
 	options: OpenAICompletionsOptions | undefined,
-	compat: ResolvedOpenAICompletionsCompat,
+	values: Record<string, ChatTemplateKwargValue>,
 ): Record<string, ResolvedChatTemplateKwargValue> | undefined {
-	const kwargs: Record<string, ResolvedChatTemplateKwargValue> = {};
+	const resolvedValues: Record<string, ResolvedChatTemplateKwargValue> = {};
 
-	for (const [key, value] of Object.entries(compat.chatTemplateKwargs)) {
+	for (const [key, value] of Object.entries(values)) {
 		const resolved = resolveChatTemplateKwargValue(model, options, value);
 		if (resolved !== undefined) {
-			kwargs[key] = resolved;
+			resolvedValues[key] = resolved;
 		}
 	}
 
-	return Object.keys(kwargs).length > 0 ? kwargs : undefined;
+	return Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined;
 }
 
 function resolveChatTemplateKwargValue(
@@ -1456,6 +1481,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		supportsReasoningEffort:
 			!isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		supportsUsageInStreaming: true,
+		supportsFinishReason: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
@@ -1475,6 +1501,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		chatTemplateKwargs: {},
+		chatTemplateArgs: {},
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isLlmGateway,
 		supportsOpenAIGrammarTools: false,
@@ -1508,6 +1535,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
 		supportsUsageInStreaming: model.compat.supportsUsageInStreaming ?? detected.supportsUsageInStreaming,
+		supportsFinishReason: model.compat.supportsFinishReason ?? detected.supportsFinishReason,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,
 		requiresAssistantAfterToolResult:
@@ -1520,6 +1548,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,
+		chatTemplateArgs: model.compat.chatTemplateArgs ?? detected.chatTemplateArgs,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,

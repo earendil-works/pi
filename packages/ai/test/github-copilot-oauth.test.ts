@@ -4,6 +4,8 @@ import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { createModels } from "../src/models.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
+const neverAbortedSignal = new AbortController().signal;
+
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -38,7 +40,7 @@ function loginGitHubCopilotForTest(options: {
 	signal?: AbortSignal;
 }) {
 	return githubCopilotOAuth.login({
-		signal: options.signal,
+		signal: options.signal ?? neverAbortedSignal,
 		prompt: (prompt) => {
 			if (prompt.type !== "text") throw new Error(`Unexpected prompt: ${prompt.type}`);
 			return options.onPrompt({ message: prompt.message, placeholder: prompt.placeholder, allowEmpty: true });
@@ -101,12 +103,15 @@ describe("GitHub Copilot OAuth device flow", () => {
 
 		vi.stubGlobal("fetch", fetchMock);
 
-		const credentials = await githubCopilotOAuth.refresh({
-			type: "oauth",
-			access: "old-access-token",
-			refresh: "ghu_refresh_token",
-			expires: 0,
-		});
+		const credentials = await githubCopilotOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access-token",
+				refresh: "ghu_refresh_token",
+				expires: 0,
+			},
+			neverAbortedSignal,
+		);
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 
 		const store = new InMemoryCredentialStore();

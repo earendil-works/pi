@@ -11,6 +11,7 @@ async function resolveValue(
 	name: string,
 	ctx: AuthContext,
 	credential: ApiKeyCredential | undefined,
+	signal: AbortSignal,
 ): Promise<string | undefined> {
 	// Per-field merge: prefer the credential value, fall back to ambient env.
 	// A credential carrying only the API key must still pick up the account /
@@ -20,17 +21,23 @@ async function resolveValue(
 			? credential.key
 			: credential.env?.[name]
 		: undefined;
-	return fromCredential ?? (await ctx.env(name));
+	if (fromCredential !== undefined) return fromCredential;
+	signal.throwIfAborted();
+	const value = await ctx.env(name);
+	signal.throwIfAborted();
+	return value;
 }
 
 async function resolveCloudflareEnv(
 	kind: CloudflareAuthKind,
 	ctx: AuthContext,
 	credential: ApiKeyCredential | undefined,
+	signal: AbortSignal,
 ): Promise<{ apiKey: string; env: ProviderEnv; source: string } | undefined> {
-	const apiKey = await resolveValue(CLOUDFLARE_API_KEY, ctx, credential);
-	const accountId = await resolveValue(CLOUDFLARE_ACCOUNT_ID, ctx, credential);
-	const gatewayId = kind === "ai-gateway" ? await resolveValue(CLOUDFLARE_GATEWAY_ID, ctx, credential) : undefined;
+	const apiKey = await resolveValue(CLOUDFLARE_API_KEY, ctx, credential, signal);
+	const accountId = await resolveValue(CLOUDFLARE_ACCOUNT_ID, ctx, credential, signal);
+	const gatewayId =
+		kind === "ai-gateway" ? await resolveValue(CLOUDFLARE_GATEWAY_ID, ctx, credential, signal) : undefined;
 
 	if (!apiKey || !accountId || (kind === "ai-gateway" && !gatewayId)) return undefined;
 
@@ -52,8 +59,8 @@ export function cloudflareWorkersAIAuth(): ApiKeyAuth {
 			const accountId = await interaction.prompt({ type: "text", message: "Enter Cloudflare account ID" });
 			return { type: "api_key", key, env: { CLOUDFLARE_ACCOUNT_ID: accountId } };
 		},
-		resolve: async ({ ctx, credential }) => {
-			const resolved = await resolveCloudflareEnv("workers-ai", ctx, credential);
+		resolve: async ({ ctx, credential, signal }) => {
+			const resolved = await resolveCloudflareEnv("workers-ai", ctx, credential, signal);
 			if (!resolved) return undefined;
 			return {
 				auth: { apiKey: resolved.apiKey },
@@ -77,8 +84,8 @@ export function cloudflareAIGatewayAuth(): ApiKeyAuth {
 				env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_GATEWAY_ID: gatewayId },
 			};
 		},
-		resolve: async ({ ctx, credential }) => {
-			const resolved = await resolveCloudflareEnv("ai-gateway", ctx, credential);
+		resolve: async ({ ctx, credential, signal }) => {
+			const resolved = await resolveCloudflareEnv("ai-gateway", ctx, credential, signal);
 			if (!resolved) return undefined;
 			return {
 				auth: {

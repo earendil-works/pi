@@ -230,6 +230,42 @@ describe("ModelRuntime auth options", () => {
 		});
 	});
 
+	it("forwards cancellation to extension OAuth refresh", async () => {
+		const credentials = AuthStorage.inMemory({
+			"extension-oauth": {
+				type: "oauth",
+				access: "expired",
+				refresh: "refresh",
+				expires: 0,
+			},
+		});
+		const runtime = await ModelRuntime.create({ credentials, modelsPath: null });
+		let refreshSignal: AbortSignal | undefined;
+		runtime.registerProvider("extension-oauth", {
+			name: "Extension OAuth",
+			baseUrl: "https://example.test/v1",
+			api: "openai-completions",
+			oauth: {
+				name: "Extension subscription",
+				login: async () => ({ access: "access", refresh: "refresh", expires: Date.now() + 60_000 }),
+				refreshToken: async (credential, signal) => {
+					refreshSignal = signal;
+					return { ...credential, expires: Date.now() + 60_000 };
+				},
+				getApiKey: (credential) => credential.access,
+			},
+			models: [testModel("extension-model")],
+		});
+		const controller = new AbortController();
+
+		await runtime.getAuth("extension-oauth", { signal: controller.signal });
+		expect(refreshSignal).toBeInstanceOf(AbortSignal);
+		const reason = new Error("cancelled");
+		controller.abort(reason);
+		expect(refreshSignal?.aborted).toBe(true);
+		expect(refreshSignal?.reason).toBe(reason);
+	});
+
 	it("does not fabricate an API key method for an extension OAuth-only provider", async () => {
 		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
 		runtime.registerProvider("extension-oauth", {

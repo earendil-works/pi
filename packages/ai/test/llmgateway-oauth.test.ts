@@ -6,6 +6,7 @@ import { llmgatewayProvider } from "../src/providers/llmgateway.ts";
 import { llmgatewayDevpassProvider } from "../src/providers/llmgateway-devpass.ts";
 
 const nativeFetch = globalThis.fetch;
+const neverAbortedSignal = new AbortController().signal;
 
 function callbackFromAuthorizeUrl(url: string): { callbackUrl: URL; state: string } {
 	const authorizeUrl = new URL(url);
@@ -52,6 +53,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackResponse: Promise<Response> | undefined;
 		let manualSignal: AbortSignal | undefined;
 		const credential = await llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: (prompt) => {
 				manualSignal = prompt.signal;
 				return new Promise<string>(() => {});
@@ -92,6 +94,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let state: string | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -116,6 +119,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 	it("fails login when the authorization is denied", async () => {
 		let callbackResponse: Promise<Response> | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -135,6 +139,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let state: string | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -159,6 +164,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let state: string | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -183,6 +189,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackUrl: URL | undefined;
 		let state: string | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -203,6 +210,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		let callbackUrl: string | undefined;
 		let state: string | undefined;
 		const credential = await llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: async (prompt) => {
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				return `${callbackUrl}?key=llmgtwy-manual&state=${state}`;
@@ -225,6 +233,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 
 	it("accepts a bare API key from the manual prompt", async () => {
 		const credential = await llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: async () => "  llmgtwy-bare  ",
 			notify: () => {},
 		});
@@ -235,6 +244,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 	it("rejects a pasted redirect URL with a mismatched state", async () => {
 		let callbackUrl: string | undefined;
 		const login = llmGatewayOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: async (prompt) => {
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				return `${callbackUrl}?key=llmgtwy-forged&state=wrong-state`;
@@ -251,6 +261,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 	it("fails login when the manual prompt is cancelled", async () => {
 		await expect(
 			llmGatewayOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async () => {
 					throw new Error("Login cancelled");
 				},
@@ -262,6 +273,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 	it("rejects empty manual input", async () => {
 		await expect(
 			llmGatewayOAuth.login({
+				signal: neverAbortedSignal,
 				prompt: async () => "   ",
 				notify: () => {},
 			}),
@@ -357,6 +369,7 @@ describe.sequential("LLM Gateway DevPass OAuth", () => {
 		let authorizeUrl: URL | undefined;
 		let callbackResponse: Promise<Response> | undefined;
 		const credential = await llmGatewayDevpassOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -378,6 +391,7 @@ describe.sequential("LLM Gateway DevPass OAuth", () => {
 
 	it("names the DevPass provider in authorization failures", async () => {
 		const login = llmGatewayDevpassOAuth.login({
+			signal: neverAbortedSignal,
 			prompt: () => new Promise<string>(() => {}),
 			notify: (event) => {
 				if (event.type !== "auth_url") return;
@@ -395,7 +409,7 @@ describe.sequential("LLM Gateway DevPass OAuth", () => {
 	it("derives the api key and keeps the minted credential on refresh", async () => {
 		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
 		expect(await llmGatewayDevpassOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
-		expect(await llmGatewayDevpassOAuth.refresh(credential)).toBe(credential);
+		expect(await llmGatewayDevpassOAuth.refresh(credential, neverAbortedSignal)).toBe(credential);
 	});
 
 	it("only carries models a coding plan covers", () => {

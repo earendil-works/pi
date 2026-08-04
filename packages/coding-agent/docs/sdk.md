@@ -452,7 +452,7 @@ for (const provider of modelRuntime.getProviders()) {
 }
 
 // Runtime API key override (not persisted to disk)
-modelRuntime.setRuntimeApiKey("anthropic", "sk-my-temp-key");
+await modelRuntime.setRuntimeApiKey("anthropic", "sk-my-temp-key");
 
 // Custom credential and model locations
 const customRuntime = await ModelRuntime.create({
@@ -468,6 +468,24 @@ const { session } = await createAgentSession({
   modelRuntime: customRuntime,
 });
 ```
+
+`login()`, `logout()`, `setRuntimeApiKey()`, and `removeRuntimeApiKey()` resolve after the affected provider's cached/built-in catalog, composition, and availability snapshot are locally consistent. They do not wait for remote catalog freshness. If credentials were committed but local synchronization fails, they reject with the exported `CredentialSynchronizationError`; inspect its `providerId`, `operation`, `credential`, and `cause` fields instead of retrying the credential mutation blindly.
+
+Public model/auth operations and `ModelRuntime.create({ signal })` accept optional abort signals and are unbounded when omitted. SDK applications own deadline policy for remote catalog freshness:
+
+```typescript
+const signal = AbortSignal.timeout(15_000);
+const result = await modelRuntime.refresh({
+  providers: ["anthropic"],
+  signal,
+});
+if (result.aborted) console.warn("Catalog refresh timed out; using cached models");
+for (const [providerId, error] of result.errors) {
+  console.warn(`Could not refresh ${providerId}:`, error);
+}
+```
+
+A failed or timed-out network refresh does not undo a successful credential operation. `refresh()` starts a new provider generation, so it does not wait behind an older stalled refresh and stale generations cannot publish afterward.
 
 > See [examples/sdk/09-api-keys-and-oauth.ts](../examples/sdk/09-api-keys-and-oauth.ts)
 
@@ -938,7 +956,7 @@ const modelRuntime = await ModelRuntime.create({
   modelsPath: "/custom/agent/models.json",
 });
 if (process.env.MY_KEY) {
-  modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY);
+  await modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY);
 }
 
 // Inline tool
@@ -1144,6 +1162,7 @@ AgentSessionRuntime
 // Auth and Models
 ModelRuntime // implements pi-ai Models and owns credential storage
 ModelRegistry // synchronous extension compatibility facade
+CredentialSynchronizationError
 resolveCliModel
 resolveModelScopeWithDiagnostics
 
