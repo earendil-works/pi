@@ -1327,6 +1327,7 @@ function parseChunkUsage(
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
+		reasoning_tokens?: number;
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1350,7 +1351,10 @@ function parseChunkUsage(
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
-		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		// LLM Gateway normalizes reasoning_tokens to the top level and omits
+		// completion_tokens_details entirely, so fall back to the flat field:
+		// https://github.com/theopenco/llmgateway/blob/787923760/apps/gateway/src/chat/tools/transform-openai-streaming.ts
+		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens ?? rawUsage.reasoning_tokens ?? 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
@@ -1402,7 +1406,8 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
-	const isLlmGateway = provider === "llmgateway" || baseUrl.includes("api.llmgateway.io");
+	const isLlmGateway =
+		provider === "llmgateway" || provider === "llmgateway-devpass" || baseUrl.includes("api.llmgateway.io");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -1474,9 +1479,12 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isLlmGateway,
 		supportsOpenAIGrammarTools: false,
 		cacheControlFormat,
-		sendSessionAffinityHeaders: false,
+		// LLM Gateway pins sticky-session routing on the x-session-id header
+		// (the "openrouter" affinity format), keeping upstream prompt caches warm:
+		// https://docs.llmgateway.io/features/routing#sticky-session-routing
+		sendSessionAffinityHeaders: isLlmGateway,
 		deferredToolsMode: undefined,
-		sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
+		sessionAffinityFormat: isOpenRouter || isLlmGateway ? "openrouter" : "openai",
 		supportsLongCacheRetention: !(
 			isTogether ||
 			isCloudflareWorkersAI ||

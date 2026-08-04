@@ -1,7 +1,7 @@
 import { anthropicOAuth } from "./auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "./auth/oauth/github-copilot.ts";
 import { kimiCodingOAuth } from "./auth/oauth/kimi-coding.ts";
-import { llmGatewayOAuth } from "./auth/oauth/llmgateway.ts";
+import { llmGatewayDevpassOAuth, llmGatewayOAuth } from "./auth/oauth/llmgateway.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
 import { openaiCodexOAuth } from "./auth/oauth/openai-codex.ts";
 import { openRouterOAuth } from "./auth/oauth/openrouter.ts";
@@ -16,6 +16,7 @@ export function registerBunOAuthFlows(): void {
 		githubCopilot: () => githubCopilotOAuth,
 		openrouter: () => openRouterOAuth,
 		llmgateway: () => llmGatewayOAuth,
+		llmgatewayDevpass: () => llmGatewayDevpassOAuth,
 		kimiCoding: () => kimiCodingOAuth,
 		xai: () => xaiOAuth,
 		radius: createRadiusOAuth,

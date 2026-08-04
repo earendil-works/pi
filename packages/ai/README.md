@@ -72,7 +72,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Cloudflare Workers AI**
 - **xAI**
 - **OpenRouter**
-- **LLM Gateway**
+- **LLM Gateway** (with separate DevPass coding-subscription provider)
 - **Vercel AI Gateway**
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
@@ -427,6 +427,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Together AI | `TOGETHER_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | LLM Gateway | `LLMGATEWAY_API_KEY` |
+| LLM Gateway DevPass | `LLMGATEWAY_DEVPASS_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` |
@@ -1464,8 +1465,9 @@ Several providers support OAuth authentication instead of static API keys:
 - **GitHub Copilot** (Copilot subscription)
 - **OpenRouter** (OAuth PKCE that mints a user-controlled API key)
 - **LLM Gateway** (browser sign-in that mints an API key with a 90-day lifetime)
+- **LLM Gateway DevPass** (the same browser sign-in against the DevPass coding subscription)
 
-Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential)` refreshes expiring credentials when applicable, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh. OpenRouter's OAuth flow instead returns a permanent API key, so its refresh operation is a no-op. LLM Gateway similarly mints a key with a no-op refresh; the key expires after 90 days, after which the API returns 401 and the user has to sign in again.
+Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential)` refreshes expiring credentials when applicable, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh. OpenRouter's OAuth flow instead returns a permanent API key, so its refresh operation is a no-op. Both LLM Gateway providers similarly mint a key with a no-op refresh; the key expires after 90 days, after which the API returns 401 and the user has to sign in again.
 
 ```typescript
 import { createModels } from '@earendil-works/pi-ai';

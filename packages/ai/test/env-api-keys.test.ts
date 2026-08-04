@@ -6,6 +6,7 @@ const originalGhToken = process.env.GH_TOKEN;
 const originalGitHubToken = process.env.GITHUB_TOKEN;
 const originalZaiCodingCnApiKey = process.env.ZAI_CODING_CN_API_KEY;
 const originalLlmGatewayApiKey = process.env.LLMGATEWAY_API_KEY;
+const originalLlmGatewayDevpassApiKey = process.env.LLMGATEWAY_DEVPASS_API_KEY;
 const originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
 const originalAnthropicOauthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
 const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -39,6 +40,12 @@ afterEach(() => {
 		delete process.env.LLMGATEWAY_API_KEY;
 	} else {
 		process.env.LLMGATEWAY_API_KEY = originalLlmGatewayApiKey;
+	}
+
+	if (originalLlmGatewayDevpassApiKey === undefined) {
+		delete process.env.LLMGATEWAY_DEVPASS_API_KEY;
+	} else {
+		process.env.LLMGATEWAY_DEVPASS_API_KEY = originalLlmGatewayDevpassApiKey;
 	}
 
 	if (originalAnthropicAuthToken === undefined) {
@@ -90,6 +97,15 @@ describe("environment API keys", () => {
 		process.env.LLMGATEWAY_API_KEY = "llmgtwy-token";
 
 		expect(findEnvKeys("llmgateway")).toEqual(["LLMGATEWAY_API_KEY"]);
+		expect(getEnvApiKey("llmgateway")).toBe("llmgtwy-token");
+	});
+
+	it("keeps LLM Gateway DevPass credentials on their own env var", () => {
+		process.env.LLMGATEWAY_API_KEY = "llmgtwy-token";
+		process.env.LLMGATEWAY_DEVPASS_API_KEY = "llmgtwy-devpass-token";
+
+		expect(findEnvKeys("llmgateway-devpass")).toEqual(["LLMGATEWAY_DEVPASS_API_KEY"]);
+		expect(getEnvApiKey("llmgateway-devpass")).toBe("llmgtwy-devpass-token");
 		expect(getEnvApiKey("llmgateway")).toBe("llmgtwy-token");
 	});
 

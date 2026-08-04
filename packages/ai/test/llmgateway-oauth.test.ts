@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import { llmGatewayOAuth } from "../src/auth/oauth/llmgateway.ts";
+import { llmGatewayDevpassOAuth, llmGatewayOAuth } from "../src/auth/oauth/llmgateway.ts";
 import { createModels } from "../src/models.ts";
 import { llmgatewayProvider } from "../src/providers/llmgateway.ts";
+import { llmgatewayDevpassProvider } from "../src/providers/llmgateway-devpass.ts";
 
 const nativeFetch = globalThis.fetch;
 
@@ -78,6 +79,7 @@ describe.sequential("LLM Gateway OAuth", () => {
 		expect(authorizeUrl?.origin).toBe("https://llmgateway.io");
 		expect(authorizeUrl?.pathname).toBe("/connect/cli");
 		expect(authorizeUrl?.searchParams.get("source")).toBe("pi-agent");
+		expect(authorizeUrl?.searchParams.get("org")).toBe("default");
 		expect(authorizeUrl?.searchParams.get("name")).toBe("Pi coding agent");
 		expect(authorizeUrl?.searchParams.get("state")).toBeTruthy();
 
@@ -315,5 +317,105 @@ describe.sequential("LLM Gateway OAuth", () => {
 
 		await expect(login).rejects.toThrow("Login cancelled");
 		expect(callbackUrl?.hostname).toBe("localhost");
+	});
+});
+
+describe.sequential("LLM Gateway DevPass OAuth", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
+	});
+
+	it("is exposed alongside API-key auth", () => {
+		const provider = llmgatewayDevpassProvider();
+		expect(provider.auth.apiKey).toBeDefined();
+		expect(provider.auth.oauth).toBeDefined();
+		expect(provider.auth.oauth?.loginLabel).toBe("Sign in with LLM Gateway DevPass");
+	});
+
+	it("stores credentials separately from the pay-as-you-go provider", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const storeKey = (providerId: string, access: string) =>
+			credentials.modify(providerId, async () => ({
+				type: "oauth",
+				access,
+				refresh: "",
+				expires: Number.MAX_SAFE_INTEGER,
+			}));
+		await storeKey("llmgateway", "llmgtwy-payg-stored");
+		await storeKey("llmgateway-devpass", "llmgtwy-devpass-stored");
+
+		const models = createModels({ credentials });
+		models.setProvider(llmgatewayProvider());
+		models.setProvider(llmgatewayDevpassProvider());
+
+		expect((await models.getAuth("llmgateway-devpass"))?.auth.apiKey).toBe("llmgtwy-devpass-stored");
+		expect((await models.getAuth("llmgateway"))?.auth.apiKey).toBe("llmgtwy-payg-stored");
+	});
+
+	it("mints the key in the DevPass organization", async () => {
+		let authorizeUrl: URL | undefined;
+		let callbackResponse: Promise<Response> | undefined;
+		const credential = await llmGatewayDevpassOAuth.login({
+			prompt: () => new Promise<string>(() => {}),
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				authorizeUrl = new URL(event.url);
+				const { callbackUrl, state } = callbackFromAuthorizeUrl(event.url);
+				callbackUrl.searchParams.set("key", "llmgtwy-devpass-test");
+				callbackUrl.searchParams.set("state", state);
+				callbackResponse = nativeFetch(callbackUrl);
+			},
+		});
+
+		expect(credential).toMatchObject({ access: "llmgtwy-devpass-test" });
+		expect((await callbackResponse)?.status).toBe(200);
+		expect(authorizeUrl?.origin).toBe("https://llmgateway.io");
+		expect(authorizeUrl?.pathname).toBe("/connect/cli");
+		expect(authorizeUrl?.searchParams.get("org")).toBe("devpass");
+		expect(authorizeUrl?.searchParams.get("source")).toBe("pi-agent");
+	});
+
+	it("names the DevPass provider in authorization failures", async () => {
+		const login = llmGatewayDevpassOAuth.login({
+			prompt: () => new Promise<string>(() => {}),
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				const { callbackUrl, state } = callbackFromAuthorizeUrl(event.url);
+				callbackUrl.searchParams.set("error", "access_denied");
+				callbackUrl.searchParams.set("error_description", "no active DevPass plan");
+				callbackUrl.searchParams.set("state", state);
+				void nativeFetch(callbackUrl);
+			},
+		});
+
+		await expect(login).rejects.toThrow("LLM Gateway DevPass authorization failed: no active DevPass plan");
+	});
+
+	it("derives the api key and keeps the minted credential on refresh", async () => {
+		const credential = { type: "oauth" as const, access: "token", refresh: "", expires: Number.MAX_SAFE_INTEGER };
+		expect(await llmGatewayDevpassOAuth.toAuth(credential)).toEqual({ apiKey: "token" });
+		expect(await llmGatewayDevpassOAuth.refresh(credential)).toBe(credential);
+	});
+
+	it("only carries models a coding plan covers", () => {
+		const devpassModelIds = new Set(
+			llmgatewayDevpassProvider()
+				.getModels()
+				.map((model) => model.id),
+		);
+		const paygModelIds = new Set(
+			llmgatewayProvider()
+				.getModels()
+				.map((model) => model.id),
+		);
+
+		expect(devpassModelIds.size).toBeGreaterThan(0);
+		expect(devpassModelIds.size).toBeLessThan(paygModelIds.size);
+		for (const id of devpassModelIds) {
+			expect(paygModelIds.has(id)).toBe(true);
+		}
+		// Free models are excluded from coding plans by the gateway.
+		expect(devpassModelIds.has("claude-haiku-4-5-free")).toBe(false);
 	});
 });

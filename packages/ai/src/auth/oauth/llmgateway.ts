@@ -1,5 +1,5 @@
 /**
- * LLM Gateway browser sign-in flow.
+ * LLM Gateway browser sign-in flow, shared by both LLM Gateway providers.
  *
  * LLM Gateway has no OAuth token endpoint; instead its dashboard mints an API
  * key and delivers it straight to a loopback callback
@@ -8,6 +8,11 @@
  * manual prompt so remote/headless sessions can paste the redirect URL (or the
  * key itself) when the browser cannot reach the loopback server. A `state`
  * parameter echoed by the dashboard guards against CSRF.
+ *
+ * The `org` parameter picks which organization mints the key, which is what
+ * separates the two providers: `default` mints in the user's dashboard
+ * organization (pay-as-you-go credits), `devpass` mints in their personal
+ * DevPass organization so usage bills the DevPass coding subscription.
  *
  * Minted keys are valid for 90 days and cannot be refreshed; when a key
  * expires the API returns 401 and the user has to sign in again.
@@ -23,6 +28,15 @@ import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 
 const AUTHORIZE_URL = "https://llmgateway.io/connect/cli";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Which LLM Gateway organization the browser flow mints the key in. */
+type LlmGatewayOrg = "default" | "devpass";
+
+type LlmGatewayFlow = {
+	/** Provider label used in prompts, callback pages and error messages. */
+	label: string;
+	org: LlmGatewayOrg;
+};
 
 function getCallbackHost(): string {
 	return getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
@@ -81,6 +95,7 @@ function parseManualKeyInput(input: string, expectedState: string): string | und
 }
 
 async function startCallbackServer(
+	flow: LlmGatewayFlow,
 	callbackPath: string,
 	expectedState: string,
 	signal?: AbortSignal,
@@ -135,18 +150,18 @@ async function startCallbackServer(
 		const oauthError = requestUrl.searchParams.get("error");
 		if (oauthError) {
 			const description = requestUrl.searchParams.get("error_description") ?? oauthError;
-			sendHtml(response, 400, oauthErrorHtml("LLM Gateway authorization was denied.", description));
-			finish({ error: new Error(`LLM Gateway authorization failed: ${description}`) });
+			sendHtml(response, 400, oauthErrorHtml(`${flow.label} authorization was denied.`, description));
+			finish({ error: new Error(`${flow.label} authorization failed: ${description}`) });
 			return;
 		}
 
 		const key = requestUrl.searchParams.get("key");
 		if (!key) {
-			sendHtml(response, 400, oauthErrorHtml("LLM Gateway returned no API key."));
+			sendHtml(response, 400, oauthErrorHtml(`${flow.label} returned no API key.`));
 			return;
 		}
 
-		sendHtml(response, 200, oauthSuccessHtml("Signed in to LLM Gateway. You may now close this page."));
+		sendHtml(response, 200, oauthSuccessHtml(`Signed in to ${flow.label}. You may now close this page.`));
 		finish({ credential: keyCredential(key) });
 	});
 
@@ -165,12 +180,12 @@ async function startCallbackServer(
 		close();
 		throw new Error("Login cancelled");
 	}
-	timeout = setTimeout(() => finish({ error: new Error("LLM Gateway login timed out") }), LOGIN_TIMEOUT_MS);
+	timeout = setTimeout(() => finish({ error: new Error(`${flow.label} login timed out`) }), LOGIN_TIMEOUT_MS);
 
 	const address = server.address();
 	if (!address || typeof address === "string") {
 		close();
-		throw new Error("Could not determine the LLM Gateway OAuth callback port");
+		throw new Error(`Could not determine the ${flow.label} OAuth callback port`);
 	}
 
 	return {
@@ -181,10 +196,10 @@ async function startCallbackServer(
 	};
 }
 
-async function loginLlmGateway(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginLlmGateway(flow: LlmGatewayFlow, interaction: AuthInteraction): Promise<OAuthCredential> {
 	const state = crypto.randomUUID();
 	const callbackPath = `/oauth/callback/${crypto.randomUUID()}`;
-	const callback = await startCallbackServer(callbackPath, state, interaction.signal);
+	const callback = await startCallbackServer(flow, callbackPath, state, interaction.signal);
 	const manualAbort = new AbortController();
 	let manualInput: string | undefined;
 	let manualError: Error | undefined;
@@ -195,12 +210,13 @@ async function loginLlmGateway(interaction: AuthInteraction): Promise<OAuthCrede
 			callback: callback.callbackUrl,
 			state,
 			source: "pi-agent",
+			org: flow.org,
 			name: "Pi coding agent",
 		}).toString();
 
 		interaction.notify({
 			type: "progress",
-			message: `Listening for LLM Gateway callback on ${callback.callbackUrl}`,
+			message: `Listening for ${flow.label} callback on ${callback.callbackUrl}`,
 		});
 		interaction.notify({
 			type: "auth_url",
@@ -240,16 +256,33 @@ async function loginLlmGateway(interaction: AuthInteraction): Promise<OAuthCrede
 	}
 }
 
-export const llmGatewayOAuth: OAuthAuth = {
+function createLlmGatewayOAuth(config: { name: string; loginLabel: string } & LlmGatewayFlow): OAuthAuth {
+	const flow: LlmGatewayFlow = { label: config.label, org: config.org };
+	return {
+		name: config.name,
+		loginLabel: config.loginLabel,
+		login: (interaction) => loginLlmGateway(flow, interaction),
+		// The minted key cannot be refreshed; it stays valid for 90 days and the
+		// user signs in again once the API starts returning 401.
+		async refresh(credential) {
+			return credential;
+		},
+		async toAuth(credential) {
+			return { apiKey: credential.access };
+		},
+	};
+}
+
+export const llmGatewayOAuth: OAuthAuth = createLlmGatewayOAuth({
 	name: "LLMGateway OAuth",
 	loginLabel: "Sign in with LLM Gateway",
-	login: loginLlmGateway,
-	// The minted key cannot be refreshed; it stays valid for 90 days and the
-	// user signs in again once the API starts returning 401.
-	async refresh(credential) {
-		return credential;
-	},
-	async toAuth(credential) {
-		return { apiKey: credential.access };
-	},
-};
+	label: "LLM Gateway",
+	org: "default",
+});
+
+export const llmGatewayDevpassOAuth: OAuthAuth = createLlmGatewayOAuth({
+	name: "LLMGateway DevPass OAuth",
+	loginLabel: "Sign in with LLM Gateway DevPass",
+	label: "LLM Gateway DevPass",
+	org: "devpass",
+});

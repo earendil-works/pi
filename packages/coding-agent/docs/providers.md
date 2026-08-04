@@ -22,6 +22,7 @@ Use `/login` in interactive mode, then select a provider:
 - xAI (Grok/X subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
 - LLM Gateway (browser sign-in mints a 90-day API key billed from your LLM Gateway account)
+- LLM Gateway DevPass (the same sign-in, billed by your DevPass coding subscription)
 - Radius
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically. LLM Gateway also mints an API key, but it expires after 90 days; sign in again when the API starts returning 401.
@@ -59,6 +60,15 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 - On remote/headless machines (e.g. over SSH) the browser cannot reach the loopback callback; paste the final redirect URL (or the `llmgtwy_...` key) into the login prompt instead
 - `LLMGATEWAY_API_KEY` remains available through **Use an API key**
 
+### LLM Gateway DevPass
+
+DevPass is LLM Gateway's flat-rate coding subscription. It uses the same endpoint and login flow as `llmgateway`; only the account behind the key differs, so pick the provider that matches how you want the usage billed.
+
+- Run `/login llmgateway-devpass`, then select **Sign in with LLM Gateway DevPass**; the browser flow mints the key in your DevPass organization so usage bills the subscription instead of pay-as-you-go credits
+- Requires an active DevPass plan — the authorization page fails without one
+- The catalog only lists models a coding plan covers; the gateway answers 403 for the rest
+- `LLMGATEWAY_DEVPASS_API_KEY` remains available through **Use an API key**
+
 ### Radius
 
 Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
@@ -92,6 +102,7 @@ pi
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | LLM Gateway | `LLMGATEWAY_API_KEY` | `llmgateway` |
+| LLM Gateway DevPass | `LLMGATEWAY_DEVPASS_API_KEY` | `llmgateway-devpass` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |

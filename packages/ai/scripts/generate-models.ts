@@ -145,6 +145,11 @@ interface LlmGatewayModelProvider {
 	tools?: boolean;
 	reasoning?: boolean;
 	reasoning_efforts?: string[];
+	stability?: string;
+	streaming?: boolean | "only";
+	pricing?: {
+		input_cache_read?: string | number;
+	};
 }
 
 interface LlmGatewayModel {
@@ -152,6 +157,8 @@ interface LlmGatewayModel {
 	name?: string;
 	context_length?: number;
 	max_output?: number;
+	free?: boolean;
+	stability?: string;
 	architecture?: {
 		input_modalities?: string[];
 		output_modalities?: string[];
@@ -616,7 +623,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		provider === "together" || baseUrl.includes("api.together.ai") || baseUrl.includes("api.together.xyz");
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isOpenRouter = provider === "openrouter" || baseUrl.includes("openrouter.ai");
-	const isLlmGateway = provider === "llmgateway" || baseUrl.includes("api.llmgateway.io");
+	const isLlmGateway =
+		provider === "llmgateway" || provider === "llmgateway-devpass" || baseUrl.includes("api.llmgateway.io");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
@@ -1129,8 +1137,10 @@ const LLMGATEWAY_THINKING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", 
  * routed mapping unchanged (unsupported values become provider errors), so a
  * level is only safe when every mapping that declares its accepted efforts
  * agrees on it; models whose mappings disagree, or declare nothing, keep Pi's
- * defaults. "off" stays available in every case because omitting
- * reasoning_effort disables reasoning gateway-side.
+ * defaults. Omitting reasoning_effort does NOT disable reasoning gateway-side
+ * (models like gpt-5.1 reason by default); the documented disabling value is
+ * "none", so "off" maps to it when every mapping accepts it and to null
+ * (omit the field) otherwise: https://docs.llmgateway.io/features/reasoning
  */
 function getLlmGatewayThinkingLevelMap(mappings: LlmGatewayModelProvider[]): ThinkingLevelMap | undefined {
 	const declared = mappings
@@ -1145,12 +1155,43 @@ function getLlmGatewayThinkingLevelMap(mappings: LlmGatewayModelProvider[]): Thi
 	if (!agree) return undefined;
 
 	const map: ThinkingLevelMap = {};
+	map.off = supported.has("none") ? "none" : null;
 	for (const level of LLMGATEWAY_THINKING_LEVELS) {
 		map[level] = supported.has(level) ? level : null;
 	}
 	return map;
 }
 
+/**
+ * Whether a mapping can serve DevPass (coding subscription) traffic. Mirrors
+ * the gateway's own `mappingSupportsCoding` predicate: stable, tool-calling,
+ * streaming, and priced for cached input — prompt caching is a hard
+ * requirement for a flat-rate plan.
+ */
+function llmGatewayMappingSupportsCoding(mapping: LlmGatewayModelProvider): boolean {
+	if (mapping.stability === "unstable" || mapping.stability === "experimental") return false;
+	// `streaming` may be "only" (streaming-only deployments), which qualifies.
+	return mapping.tools === true && mapping.streaming !== false && mapping.pricing?.input_cache_read != null;
+}
+
+/**
+ * Whether DevPass keys may call a model at all. The gateway answers 403 for
+ * models a coding plan does not cover, so the DevPass catalog has to be
+ * narrowed to the same set: paid, stable, and served by at least one mapping
+ * that {@link llmGatewayMappingSupportsCoding}.
+ */
+function isLlmGatewayCodingModel(model: LlmGatewayModel): boolean {
+	if (model.free) return false;
+	if (model.stability === "unstable" || model.stability === "experimental") return false;
+	return (model.providers ?? []).some(llmGatewayMappingSupportsCoding);
+}
+
+/**
+ * Builds both LLM Gateway catalogs from one fetch. `llmgateway` is billed
+ * pay-as-you-go from dashboard credits; `llmgateway-devpass` is billed by the
+ * DevPass coding subscription and therefore only carries coding-plan models.
+ * Requests are otherwise identical — same endpoint, same request shape.
+ */
 async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from LLM Gateway API...");
@@ -1158,6 +1199,7 @@ async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 		if (!response.ok) throw new Error(`LLM Gateway API returned ${response.status}`);
 		const data = await response.json();
 		const models: Model<any>[] = [];
+		let devpassCount = 0;
 
 		const toNumber = (value: string | number | undefined): number => {
 			if (typeof value === "number") {
@@ -1197,16 +1239,18 @@ async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 			const reasoning = toolMappings.some((p) => p.reasoning === true);
 			const thinkingLevelMap = reasoning ? getLlmGatewayThinkingLevelMap(toolMappings) : undefined;
 
-			models.push({
+			// One object per provider: the catalog post-processing below mutates
+			// models in place, so the two catalogs must not share instances.
+			const buildModel = (provider: KnownProvider): Model<any> => ({
 				id: model.id,
 				name: model.name || model.id,
 				api: "openai-completions",
 				baseUrl: LLMGATEWAY_BASE_URL,
-				provider: "llmgateway",
+				provider,
 				headers: { ...LLMGATEWAY_STATIC_HEADERS },
 				reasoning,
-				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-				input,
+				...(thinkingLevelMap ? { thinkingLevelMap: { ...thinkingLevelMap } } : {}),
+				input: [...input],
 				cost: {
 					input: inputCost,
 					output: outputCost,
@@ -1218,9 +1262,17 @@ async function fetchLlmGatewayModels(): Promise<Model<any>[]> {
 				// for models without a declared max_output must stay conservative.
 				maxTokens: model.max_output || 4096,
 			});
+
+			models.push(buildModel("llmgateway"));
+			if (isLlmGatewayCodingModel(model)) {
+				models.push(buildModel("llmgateway-devpass"));
+				devpassCount++;
+			}
 		}
 
-		console.log(`Fetched ${models.length} tool-capable models from LLM Gateway`);
+		console.log(
+			`Fetched ${models.length - devpassCount} tool-capable models from LLM Gateway (${devpassCount} covered by DevPass)`,
+		);
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch LLM Gateway models:", error);

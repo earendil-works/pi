@@ -49,6 +49,7 @@ export type KnownProvider =
 	| "cerebras"
 	| "openrouter"
 	| "llmgateway"
+	| "llmgateway-devpass"
 	| "vercel-ai-gateway"
 	| "zai"
 	| "zai-coding-cn"
