@@ -216,6 +216,20 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBeUndefined();
 	});
 
+	it("auto-detects sticky-session x-session-id header for LLM Gateway endpoints", async () => {
+		const model = createModel({
+			provider: "llmgateway",
+			baseUrl: "https://api.llmgateway.io/v1",
+		});
+		const { payload, headers } = await captureRequest({ sessionId: "session-llmgateway" }, model);
+
+		expect(payload?.session_id).toBeUndefined();
+		expect(headers["x-session-id"]).toBe("session-llmgateway");
+		expect(headers.session_id).toBeUndefined();
+		expect(headers["x-client-request-id"]).toBeUndefined();
+		expect(headers["x-session-affinity"]).toBeUndefined();
+	});
+
 	it("omits OpenRouter session-affinity data when disabled", async () => {
 		const model = createModel({
 			provider: "openrouter",
