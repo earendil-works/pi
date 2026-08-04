@@ -132,6 +132,8 @@ export interface AgentHarnessStreamOptions {
 	metadata?: SimpleStreamOptions["metadata"];
 	/** Provider cache retention hint. */
 	cacheRetention?: SimpleStreamOptions["cacheRetention"];
+	/** Optional override for the provider prompt cache key, replacing the session id as the cache routing key. */
+	promptCacheKey?: string;
 }
 
 /** Per-request stream option patch returned by provider hooks. */

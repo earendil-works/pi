@@ -93,6 +93,7 @@ describe("openai-completions prompt caching", () => {
 		options?: {
 			cacheRetention?: "none" | "short" | "long";
 			sessionId?: string;
+			promptCacheKey?: string;
 			headers?: Record<string, string>;
 		},
 		model: Model<"openai-completions"> = createModel(),
@@ -131,6 +132,23 @@ describe("openai-completions prompt caching", () => {
 		const { payload } = await captureRequest({ sessionId });
 
 		expect(payload?.prompt_cache_key).toBe("x".repeat(64));
+	});
+
+	it("prefers promptCacheKey over sessionId and clamps it", async () => {
+		const promptCacheKey = "k".repeat(67);
+		const { payload } = await captureRequest({ sessionId: "session-123", promptCacheKey });
+
+		expect(payload?.prompt_cache_key).toBe("k".repeat(64));
+	});
+
+	it("omits prompt_cache_key when cacheRetention is none even with promptCacheKey set", async () => {
+		const { payload } = await captureRequest({
+			cacheRetention: "none",
+			sessionId: "session-123",
+			promptCacheKey: "shared-key",
+		});
+
+		expect(payload?.prompt_cache_key).toBeUndefined();
 	});
 
 	it("omits prompt cache fields when cacheRetention is none", async () => {

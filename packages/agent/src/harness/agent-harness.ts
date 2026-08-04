@@ -103,6 +103,7 @@ function applyStreamOptionsPatch(
 	if (Object.hasOwn(patch, "maxRetries")) result.maxRetries = patch.maxRetries;
 	if (Object.hasOwn(patch, "maxRetryDelayMs")) result.maxRetryDelayMs = patch.maxRetryDelayMs;
 	if (Object.hasOwn(patch, "cacheRetention")) result.cacheRetention = patch.cacheRetention;
+	if (Object.hasOwn(patch, "promptCacheKey")) result.promptCacheKey = patch.promptCacheKey;
 
 	if (Object.hasOwn(patch, "headers")) {
 		if (patch.headers === undefined) {
@@ -463,6 +464,7 @@ export class AgentHarness<
 				reasoning: streamOptions?.reasoning,
 				signal: streamOptions?.signal,
 				sessionId: turnState.sessionId,
+				promptCacheKey: requestOptions.promptCacheKey,
 				timeoutMs: requestOptions.timeoutMs,
 				transport: requestOptions.transport,
 			});

@@ -150,6 +150,15 @@ export interface StreamOptions {
 	 */
 	sessionId?: string;
 	/**
+	 * Optional override for the provider prompt cache key, which defaults to
+	 * `sessionId`. Set one shared key on sessions with an identical prompt prefix
+	 * so their requests route to the same cache and hit each other's cached
+	 * prefix. OpenAI recommends roughly 15 requests per minute per key, so
+	 * callers shard the key when concurrency exceeds that. Session-affinity
+	 * headers remain tied to `sessionId`.
+	 */
+	promptCacheKey?: string;
+	/**
 	 * Optional callback for inspecting or replacing provider payloads before sending.
 	 * Return undefined to keep the payload unchanged.
 	 */

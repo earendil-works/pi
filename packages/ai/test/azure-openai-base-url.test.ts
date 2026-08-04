@@ -157,6 +157,18 @@ describe("azure-openai-responses base URL normalization", () => {
 		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
 	});
 
+	it("prefers promptCacheKey over sessionId for prompt_cache_key", async () => {
+		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		await streamAzureOpenAIResponses(model, context, {
+			apiKey: "test-api-key",
+			azureBaseUrl: "https://my-resource.openai.azure.com",
+			sessionId: "session-azure",
+			promptCacheKey: "shared-key",
+		}).result();
+
+		expect(azureMock.lastParams?.prompt_cache_key).toBe("shared-key");
+	});
+
 	it("disables server-side response storage", async () => {
 		const model = getModel("azure-openai-responses", "gpt-4o-mini");
 		await streamAzureOpenAIResponses(model, context, {

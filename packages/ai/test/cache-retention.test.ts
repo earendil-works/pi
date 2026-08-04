@@ -423,6 +423,31 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.prompt_cache_key).toBe("session-2");
 			expect(capturedPayload.prompt_cache_retention).toBe("24h");
 		});
+
+		it("should prefer promptCacheKey over sessionId for prompt_cache_key", async () => {
+			const model = getModel("openai", "gpt-4o-mini");
+			let capturedPayload: any = null;
+
+			try {
+				const s = streamOpenAIResponses(model, context, {
+					apiKey: "fake-key",
+					sessionId: "session-3",
+					promptCacheKey: "shared-key",
+					onPayload: stopAfterPayload((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail
+			}
+
+			expect(capturedPayload).not.toBeNull();
+			expect(capturedPayload.prompt_cache_key).toBe("shared-key");
+		});
 	});
 
 	describe("OpenAI Completions Provider", () => {

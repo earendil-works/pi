@@ -285,7 +285,7 @@ function buildParams(
 		model: deploymentName,
 		input: messages,
 		stream: true,
-		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key: clampOpenAIPromptCacheKey(options?.promptCacheKey ?? options?.sessionId),
 		store: false,
 	};
 
