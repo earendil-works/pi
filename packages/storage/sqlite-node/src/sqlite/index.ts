@@ -5,6 +5,7 @@ export {
 	type SqliteSessionMetadata,
 	SqliteSessionRepository,
 	type SqliteSessionRepositoryOptions,
+	type SqliteWriterLeaseOptions,
 } from "./repo.ts";
 export * from "./search-backend.ts";
 export type {

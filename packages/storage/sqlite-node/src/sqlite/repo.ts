@@ -45,12 +45,11 @@ import {
 	moveLane as updateLane,
 } from "./storage/lanes.ts";
 import {
-	acquireLease,
-	assertNoActiveConflictingLease,
-	deleteLease,
-	deleteLeaseForOwner,
-	deleteLeasesForOwner,
-	updateLeaseHeartbeats,
+	acquireSessionLease,
+	deleteSessionLease,
+	releaseSessionLease,
+	renewSessionLease,
+	type SessionLease,
 } from "./storage/leases.ts";
 import { appendRecordRow, deleteRecordRows, idExistsInRecords, readRecordRows } from "./storage/records.ts";
 import {
@@ -95,10 +94,50 @@ export interface SqliteSessionListOptions {
 
 export type SqliteSessionRepositoryEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;
 
+export interface SqliteWriterLeaseOptions {
+	ttlMs?: number;
+	heartbeatIntervalMs?: number;
+}
+
 export interface SqliteSessionRepositoryOptions {
 	env: SqliteSessionRepositoryEnv;
 	sqlite: SqliteDatabaseFactory;
 	databasePath: string;
+	writerLease?: SqliteWriterLeaseOptions;
+}
+
+interface ResolvedWriterLeaseOptions {
+	ttlMs: number;
+	heartbeatIntervalMs: number;
+}
+
+function resolveWriterLeaseOptions(options: SqliteWriterLeaseOptions | undefined): ResolvedWriterLeaseOptions {
+	const ttlMs = options?.ttlMs ?? 30_000;
+	const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? 10_000;
+	if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new RangeError("writerLease.ttlMs must be positive");
+	if (!Number.isSafeInteger(heartbeatIntervalMs) || heartbeatIntervalMs <= 0 || heartbeatIntervalMs >= ttlMs) {
+		throw new RangeError("writerLease.heartbeatIntervalMs must be positive and less than ttlMs");
+	}
+	return { ttlMs, heartbeatIntervalMs };
+}
+
+function activeWriterError(sessionId: string): SessionError {
+	return new SessionError("storage", `SQLite session ${sessionId} already has an active writer`);
+}
+
+function lostWriterError(sessionId: string): SessionError {
+	return new SessionError("storage", `SQLite session ${sessionId} writer lease was lost`);
+}
+
+async function acquireWriterLease(
+	db: SqliteDatabase,
+	sessionId: string,
+	options: ResolvedWriterLeaseOptions,
+): Promise<SessionLease> {
+	const now = Date.now();
+	const lease = await acquireSessionLease(db, sessionId, uuidv7(), now, now + options.ttlMs);
+	if (!lease) throw activeWriterError(sessionId);
+	return lease;
 }
 
 class SerialOperationQueue {
@@ -133,9 +172,6 @@ function getParentPath(path: string): string {
 	if (lastSlash === 0) return normalized.slice(0, 1);
 	return normalized.slice(0, lastSlash);
 }
-
-const LEASE_TIMEOUT_MS = 30_000;
-const LEASE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
 	await db.exec("PRAGMA journal_mode=WAL");
@@ -308,15 +344,102 @@ async function requireSessionRow(db: SqliteDatabase, sessionId: string): Promise
 class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	private readonly db: SqliteDatabase;
 	private readonly metadata: SqliteSessionMetadata;
+	private readonly lease: SessionLease;
+	private readonly leaseOptions: ResolvedWriterLeaseOptions;
+	private readonly onRelease: () => void;
 	private readonly operations = new SerialOperationQueue();
+	private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+	private leaseError: SessionError | undefined;
+	private closing = false;
+	private releasePromise: Promise<void> | undefined;
 
-	constructor(db: SqliteDatabase, metadata: SqliteSessionMetadata) {
+	constructor(
+		db: SqliteDatabase,
+		metadata: SqliteSessionMetadata,
+		lease: SessionLease,
+		leaseOptions: ResolvedWriterLeaseOptions,
+		onRelease: () => void,
+	) {
 		this.db = db;
 		this.metadata = metadata;
+		this.lease = lease;
+		this.leaseOptions = leaseOptions;
+		this.onRelease = onRelease;
+		this.scheduleHeartbeat();
+	}
+
+	async release(): Promise<void> {
+		this.releasePromise ??= this.finishRelease();
+		await this.releasePromise;
+	}
+
+	private async finishRelease(): Promise<void> {
+		this.closing = true;
+		if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+		try {
+			await this.operations.enqueue(() =>
+				this.db.transaction(() => releaseSessionLease(this.db, this.metadata.id, this.lease)),
+			);
+		} finally {
+			this.onRelease();
+		}
+	}
+
+	private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+		if (this.closing) {
+			return Promise.reject(new SessionError("storage", `SQLite session ${this.metadata.id} is closed`));
+		}
+		return this.operations.enqueue(async () => {
+			if (this.leaseError) throw this.leaseError;
+			return this.db.transaction(async () => {
+				const now = Date.now();
+				if (!(await renewSessionLease(this.db, this.metadata.id, this.lease, now, now + this.leaseOptions.ttlMs))) {
+					this.leaseError = lostWriterError(this.metadata.id);
+					if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
+					throw this.leaseError;
+				}
+				return operation();
+			});
+		});
+	}
+
+	private scheduleHeartbeat(): void {
+		if (this.closing || this.leaseError) return;
+		this.heartbeatTimer = setTimeout(async () => {
+			this.heartbeatTimer = undefined;
+			try {
+				await this.operations.enqueue(async () => {
+					if (this.closing || this.leaseError) return;
+					await this.db.transaction(async () => {
+						const now = Date.now();
+						if (
+							!(await renewSessionLease(
+								this.db,
+								this.metadata.id,
+								this.lease,
+								now,
+								now + this.leaseOptions.ttlMs,
+							))
+						) {
+							this.leaseError = lostWriterError(this.metadata.id);
+						}
+					});
+				});
+			} catch {
+				// A transient heartbeat failure is retried. Every write still verifies ownership transactionally.
+			} finally {
+				this.scheduleHeartbeat();
+			}
+		}, this.leaseOptions.heartbeatIntervalMs);
+		this.heartbeatTimer.unref();
 	}
 
 	async getMetadata(): Promise<SqliteSessionMetadata> {
 		return structuredClone(this.metadata);
+	}
+
+	isForSession(sessionId: string): boolean {
+		return this.metadata.id === sessionId;
 	}
 
 	async getLanes(): Promise<{ lane: string; leafId: string | null }[]> {
@@ -324,90 +447,79 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async createLane(lane: string, at: string | null): Promise<void> {
-		return this.operations.enqueue(async () => {
+		return this.enqueueWrite(async () => {
 			if (await readLane(this.db, this.metadata.id, lane)) {
 				throw new SessionError("already_exists", `Lane already exists: ${lane}`);
 			}
 			if (at !== null && !(await this.getEntry(at))) throw new SessionError("not_found", `Entry not found: ${at}`);
-			await this.db.transaction(async () => {
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				await insertLane(this.db, this.metadata.id, seq, lane, at);
-				await advanceSequence(this.db, this.metadata.id, seq);
-			});
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			await insertLane(this.db, this.metadata.id, seq, lane, at);
+			await advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}
 
 	async moveLane(lane: string, to: string | null): Promise<void> {
-		return this.operations.enqueue(async () => {
+		return this.enqueueWrite(async () => {
 			if (!(await readLane(this.db, this.metadata.id, lane)))
 				throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 			if (to !== null && !(await this.getEntry(to))) throw new SessionError("not_found", `Entry not found: ${to}`);
-			await this.db.transaction(async () => {
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				await updateLane(this.db, this.metadata.id, seq, lane, to);
-				await advanceSequence(this.db, this.metadata.id, seq);
-			});
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			await updateLane(this.db, this.metadata.id, seq, lane, to);
+			await advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}
 
 	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
-		return this.operations.enqueue(async () => {
-			let committed: Entry | undefined;
-			await this.db.transaction(async () => {
-				const parentId = (await readLaneHead(this.db, this.metadata.id, lane)).leafId;
-				await assertUnusedId(this.db, this.metadata.id, entry.id);
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				committed = { ...entry, parentId, seq, timestamp: Date.now() } as Entry;
-				await insertEntryRow(this.db, this.metadata.id, {
-					seq,
-					id: committed.id,
-					parentId: committed.parentId,
-					type: committed.type,
-					timestamp: timestampToText(committed.timestamp),
-					payload: JSON.stringify(entryPayload(committed)),
-				});
-				await setLaneLeaf(this.db, this.metadata.id, lane, committed.id);
-				await appendEntryToBranchCache(
-					this.db,
-					this.metadata.id,
-					committed.id,
-					seq,
-					committed.type,
-					committed.type === "custom" ? committed.customType : null,
-					committed.parentId,
-				);
-				if (committed.type === "message") await incrementMessageCount(this.db, this.metadata.id);
-				await advanceSequence(this.db, this.metadata.id, seq);
+		return this.enqueueWrite(async () => {
+			const parentId = (await readLaneHead(this.db, this.metadata.id, lane)).leafId;
+			await assertUnusedId(this.db, this.metadata.id, entry.id);
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			const committed = { ...entry, parentId, seq, timestamp: Date.now() } as Entry;
+			await insertEntryRow(this.db, this.metadata.id, {
+				seq,
+				id: committed.id,
+				parentId: committed.parentId,
+				type: committed.type,
+				timestamp: timestampToText(committed.timestamp),
+				payload: JSON.stringify(entryPayload(committed)),
 			});
+			await setLaneLeaf(this.db, this.metadata.id, lane, committed.id);
+			await appendEntryToBranchCache(
+				this.db,
+				this.metadata.id,
+				committed.id,
+				seq,
+				committed.type,
+				committed.type === "custom" ? committed.customType : null,
+				committed.parentId,
+			);
+			if (committed.type === "message") await incrementMessageCount(this.db, this.metadata.id);
+			await advanceSequence(this.db, this.metadata.id, seq);
 			return structuredClone(committed as TEntry);
 		});
 	}
 
 	async appendRecord<TRecord extends LaneRecord>(record: NewRecord<TRecord>): Promise<TRecord>;
 	async appendRecord(record: NewRecord): Promise<LaneRecord> {
-		return this.operations.enqueue(async () => {
-			let committed: LaneRecord | undefined;
-			await this.db.transaction(async () => {
-				if (!(await readLane(this.db, this.metadata.id, record.lane))) {
-					throw new SessionError("invalid_lane", `Lane not found: ${record.lane}`);
-				}
-				await assertUnusedId(this.db, this.metadata.id, record.id);
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				committed = { ...record, seq, timestamp: Date.now() };
-				await appendRecordRow(this.db, this.metadata.id, {
-					seq,
-					id: record.id,
-					lane: record.lane,
-					runId: recordRunId(record),
-					type: record.type,
-					opKind: recordOpKind(record),
-					timestamp: timestampToText(committed.timestamp),
-					payload: JSON.stringify(record),
-				});
-				if (record.type === "usage") await addUsageToStats(this.db, this.metadata.id, record.usage);
-				await advanceSequence(this.db, this.metadata.id, seq);
+		return this.enqueueWrite(async () => {
+			if (!(await readLane(this.db, this.metadata.id, record.lane))) {
+				throw new SessionError("invalid_lane", `Lane not found: ${record.lane}`);
+			}
+			await assertUnusedId(this.db, this.metadata.id, record.id);
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			const committed: LaneRecord = { ...record, seq, timestamp: Date.now() };
+			await appendRecordRow(this.db, this.metadata.id, {
+				seq,
+				id: record.id,
+				lane: record.lane,
+				runId: recordRunId(record),
+				type: record.type,
+				opKind: recordOpKind(record),
+				timestamp: timestampToText(committed.timestamp),
+				payload: JSON.stringify(record),
 			});
-			if (!committed) throw new SessionError("storage", "SQLite record append did not commit");
+			if (record.type === "usage") await addUsageToStats(this.db, this.metadata.id, record.usage);
+			await advanceSequence(this.db, this.metadata.id, seq);
 			return structuredClone(committed);
 		});
 	}
@@ -481,12 +593,10 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async setName(name: string): Promise<void> {
-		return this.operations.enqueue(async () => {
-			await this.db.transaction(async () => {
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				await appendFact(this.db, this.metadata.id, seq, "name", null, JSON.stringify(name));
-				await advanceSequence(this.db, this.metadata.id, seq);
-			});
+		return this.enqueueWrite(async () => {
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			await appendFact(this.db, this.metadata.id, seq, "name", null, JSON.stringify(name));
+			await advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}
 
@@ -496,20 +606,18 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async setLabel(id: string, label: string | undefined): Promise<void> {
-		return this.operations.enqueue(async () => {
+		return this.enqueueWrite(async () => {
 			if (!(await this.getEntry(id))) throw new SessionError("not_found", `Entry not found: ${id}`);
-			await this.db.transaction(async () => {
-				const seq = await getNextSequence(this.db, this.metadata.id);
-				await appendFact(
-					this.db,
-					this.metadata.id,
-					seq,
-					"label",
-					id,
-					label === undefined ? null : JSON.stringify(label),
-				);
-				await advanceSequence(this.db, this.metadata.id, seq);
-			});
+			const seq = await getNextSequence(this.db, this.metadata.id);
+			await appendFact(
+				this.db,
+				this.metadata.id,
+				seq,
+				"label",
+				id,
+				label === undefined ? null : JSON.stringify(label),
+			);
+			await advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}
 
@@ -518,10 +626,26 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 }
 
-async function loadStorage(db: SqliteDatabase, metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
-	const row = await requireSessionRow(db, metadata.id);
-	await readLanes(db, metadata.id);
-	return new SqliteSessionStorage(db, metadataFromRow(row, metadata.path));
+async function claimStorage(
+	db: SqliteDatabase,
+	metadata: SqliteSessionMetadata,
+	leaseOptions: ResolvedWriterLeaseOptions,
+	onRelease: () => void,
+): Promise<SqliteSessionStorage> {
+	await requireSessionRow(db, metadata.id);
+	const claimed = await db.transaction(async () => {
+		const lease = await acquireWriterLease(db, metadata.id, leaseOptions);
+		const row = await requireSessionRow(db, metadata.id);
+		await readLanes(db, metadata.id);
+		return { lease, row };
+	});
+	return new SqliteSessionStorage(
+		db,
+		metadataFromRow(claimed.row, metadata.path),
+		claimed.lease,
+		leaseOptions,
+		onRelease,
+	);
 }
 
 function metadataFromRow(row: SessionRow, path: string): SqliteSessionMetadata {
@@ -535,15 +659,50 @@ export class SqliteSessionRepository
 	private databasePath: string | undefined;
 	private database: SqliteDatabase | undefined;
 	private databasePromise: Promise<SqliteDatabase> | undefined;
-	private leaseHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
-	private readonly leaseOwner = uuidv7();
 	private readonly operations = new SerialOperationQueue();
-	private readonly storages = new Map<string, SqliteSessionStorage>();
-
+	private readonly activeStorages = new Set<SqliteSessionStorage>();
 	private readonly options: SqliteSessionRepositoryOptions;
+	private readonly leaseOptions: ResolvedWriterLeaseOptions;
 
 	constructor(options: SqliteSessionRepositoryOptions) {
 		this.options = options;
+		this.leaseOptions = resolveWriterLeaseOptions(options.writerLease);
+	}
+
+	private async releaseStoragesForSession(sessionId: string): Promise<void> {
+		for (const storage of [...this.activeStorages]) {
+			if (storage.isForSession(sessionId)) await storage.release();
+		}
+	}
+
+	private sessionFromLease(
+		db: SqliteDatabase,
+		metadata: SqliteSessionMetadata,
+		lease: SessionLease,
+	): Session<SqliteSessionMetadata> {
+		let storage: SqliteSessionStorage;
+		storage = new SqliteSessionStorage(db, metadata, lease, this.leaseOptions, () => {
+			this.activeStorages.delete(storage);
+		});
+		this.activeStorages.add(storage);
+		return new Session(storage);
+	}
+
+	private async claimSession(
+		db: SqliteDatabase,
+		metadata: SqliteSessionMetadata,
+	): Promise<Session<SqliteSessionMetadata>> {
+		const active = [...this.activeStorages].find((storage) => storage.isForSession(metadata.id));
+		if (active) {
+			await readLanes(db, metadata.id);
+			return new Session(active);
+		}
+		let storage: SqliteSessionStorage;
+		storage = await claimStorage(db, metadata, this.leaseOptions, () => {
+			this.activeStorages.delete(storage);
+		});
+		this.activeStorages.add(storage);
+		return new Session(storage);
 	}
 
 	async create(options: SqliteSessionCreateOptions): Promise<Session<SqliteSessionMetadata>> {
@@ -553,7 +712,7 @@ export class SqliteSessionRepository
 			const id = options.id ?? uuidv7();
 			if (await sessionExists(db, id)) throw new SessionError("already_exists", `Session already exists: ${id}`);
 			const createdAt = Date.now();
-			await db.transaction(async () => {
+			const lease = await db.transaction(async () => {
 				await insertSessionRow(db, {
 					id,
 					createdAt: timestampToText(createdAt),
@@ -564,33 +723,27 @@ export class SqliteSessionRepository
 				await createSequence(db, id);
 				await createStats(db, id);
 				await createInitialLane(db, id);
-				await acquireLease(db, id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
+				return acquireWriterLease(db, id, this.leaseOptions);
 			});
-			this.startLeaseHeartbeat();
-			const storage = await loadStorage(db, {
-				id,
-				createdAt,
-				cwd: options.cwd,
-				path,
-				parentSessionId: options.parentSessionId,
-				metadata: options.metadata,
-			});
-			this.storages.set(id, storage);
-			return new Session(storage);
+			const row = await requireSessionRow(db, id);
+			return this.sessionFromLease(db, metadataFromRow(row, path), lease);
 		});
 	}
 
 	async open(metadata: SqliteSessionMetadata): Promise<Session<SqliteSessionMetadata>> {
-		return new Session(await this.operations.enqueue(async () => this.openStorage(metadata)));
+		return this.operations.enqueue(async () => this.claimSession(await this.getDatabase(), metadata));
 	}
 
 	/** Rebuilds this session's private branch-read cache from canonical entry parent links. */
 	async repairBranchCache(metadata: SqliteSessionMetadata): Promise<void> {
 		return this.operations.enqueue(async () => {
+			await this.releaseStoragesForSession(metadata.id);
 			const db = await this.getDatabase();
-			await requireSessionRow(db, metadata.id);
 			await db.transaction(async () => {
+				const lease = await acquireWriterLease(db, metadata.id, this.leaseOptions);
+				await requireSessionRow(db, metadata.id);
 				await rebuildBranchCache(db, metadata.id);
+				await releaseSessionLease(db, metadata.id, lease);
 			});
 		});
 	}
@@ -607,20 +760,24 @@ export class SqliteSessionRepository
 
 	async delete(metadata: SqliteSessionMetadata): Promise<void> {
 		return this.operations.enqueue(async () => {
+			await this.releaseStoragesForSession(metadata.id);
 			const db = await this.getDatabase();
-			await assertNoActiveConflictingLease(db, metadata.id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
 			await db.transaction(async () => {
+				if (!(await sessionExists(db, metadata.id))) {
+					await deleteSessionLease(db, metadata.id);
+					return;
+				}
+				await acquireWriterLease(db, metadata.id, this.leaseOptions);
 				await deleteBranchCache(db, metadata.id);
 				await deleteFactRows(db, metadata.id);
 				await deleteLaneRows(db, metadata.id);
 				await deleteRecordRows(db, metadata.id);
 				await deleteEntryRows(db, metadata.id);
-				await deleteLease(db, metadata.id);
+				await deleteSessionLease(db, metadata.id);
 				await deleteStats(db, metadata.id);
 				await deleteSequence(db, metadata.id);
 				await deleteSessionRow(db, metadata.id);
 			});
-			this.storages.delete(metadata.id);
 		});
 	}
 
@@ -682,9 +839,10 @@ export class SqliteSessionRepository
 			);
 			const createdAt = Date.now();
 			const metadata = options.metadata ?? sourceMetadata.metadata;
+			let lease: SessionLease;
 
 			try {
-				await db.transaction(async () => {
+				lease = await db.transaction(async () => {
 					await insertSessionRow(db, {
 						id,
 						createdAt: timestampToText(createdAt),
@@ -722,7 +880,7 @@ export class SqliteSessionRepository
 
 					await setNextSequence(db, id, nextSeq);
 					for (const tip of branchTips) await buildCachedBranch(db, id, tip);
-					await acquireLease(db, id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
+					return acquireWriterLease(db, id, this.leaseOptions);
 				});
 			} catch (error) {
 				if (error instanceof SessionError) throw error;
@@ -733,68 +891,21 @@ export class SqliteSessionRepository
 				);
 			}
 
-			this.startLeaseHeartbeat();
-			const storage = await loadStorage(db, {
-				id,
-				createdAt,
-				cwd: options.cwd,
-				path,
-				parentSessionId: options.parentSessionId ?? source.id,
-				metadata,
-			});
-			this.storages.set(id, storage);
-			return new Session(storage);
+			const row = await requireSessionRow(db, id);
+			return this.sessionFromLease(db, metadataFromRow(row, path), lease);
 		});
 	}
 
 	async close(): Promise<void> {
 		await this.operations.drain();
-		if (this.leaseHeartbeatTimer) clearInterval(this.leaseHeartbeatTimer);
-		this.leaseHeartbeatTimer = undefined;
-		if (this.database) {
-			await deleteLeasesForOwner(this.database, this.leaseOwner);
-			await this.database.close();
-		}
-		this.storages.clear();
+		for (const storage of [...this.activeStorages]) await storage.release();
+		if (this.database) await this.database.close();
 		this.database = undefined;
 		this.databasePromise = undefined;
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
 		await this.close();
-	}
-
-	private async openStorage(metadata: SqliteSessionMetadata): Promise<SqliteSessionStorage> {
-		const db = await this.getDatabase();
-		const existing = this.storages.get(metadata.id);
-		if (existing) {
-			await readLanes(db, metadata.id);
-			return existing;
-		}
-		await requireSessionRow(db, metadata.id);
-		await acquireLease(db, metadata.id, this.leaseOwner, Date.now(), LEASE_TIMEOUT_MS);
-		this.startLeaseHeartbeat();
-		try {
-			const storage = await loadStorage(db, metadata);
-			this.storages.set(metadata.id, storage);
-			return storage;
-		} catch (error) {
-			await deleteLeaseForOwner(db, metadata.id, this.leaseOwner);
-			throw error;
-		}
-	}
-
-	private startLeaseHeartbeat(): void {
-		if (this.leaseHeartbeatTimer) return;
-		this.leaseHeartbeatTimer = setInterval(() => {
-			void this.refreshLeaseHeartbeats();
-		}, LEASE_HEARTBEAT_INTERVAL_MS);
-		this.leaseHeartbeatTimer.unref?.();
-	}
-
-	private async refreshLeaseHeartbeats(): Promise<void> {
-		if (!this.database) return;
-		await updateLeaseHeartbeats(this.database, this.leaseOwner, Date.now());
 	}
 
 	private async getDatabasePath(): Promise<string> {

@@ -114,10 +114,11 @@ CREATE TABLE IF NOT EXISTS branch_tips (
 	UNIQUE (session_id, branch_id)
 ) WITHOUT ROWID;
 
--- Writer claim. The serving layer owns policy; SQLite can still persist the
--- current owner/heartbeat for a session.
+-- Per-session writer claim. The fence prevents an expired owner from writing
+-- after a new owner takes over the session.
 CREATE TABLE IF NOT EXISTS leases (
 	session_id TEXT PRIMARY KEY,
-	owner TEXT NOT NULL,
-	heartbeat INTEGER NOT NULL
+	owner_id TEXT NOT NULL,
+	fence INTEGER NOT NULL,
+	expires_at_ms INTEGER NOT NULL
 ) WITHOUT ROWID;

@@ -47,6 +47,7 @@ class NodeSqliteStatement implements SqliteStatement {
 
 class NodeSqliteDatabase implements SqliteDatabase {
 	private readonly db: DatabaseSync;
+	private transactionTail: Promise<void> = Promise.resolve();
 
 	constructor(db: DatabaseSync) {
 		this.db = db;
@@ -61,8 +62,14 @@ class NodeSqliteDatabase implements SqliteDatabase {
 	}
 
 	async transaction<T>(fn: () => Promise<T>): Promise<T> {
-		this.db.exec("BEGIN");
+		const previous = this.transactionTail;
+		let release: () => void;
+		this.transactionTail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await previous;
 		try {
+			this.db.exec("BEGIN IMMEDIATE");
 			const result = await fn();
 			this.db.exec("COMMIT");
 			return result;
@@ -73,6 +80,8 @@ class NodeSqliteDatabase implements SqliteDatabase {
 				// Ignore rollback errors to rethrow original error.
 			}
 			throw error;
+		} finally {
+			release!();
 		}
 	}
 

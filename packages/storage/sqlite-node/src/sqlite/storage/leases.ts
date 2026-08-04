@@ -1,62 +1,63 @@
-import { SessionError } from "@earendil-works/pi-agent-core/experimental";
 import type { SqliteDatabase } from "../types.ts";
 
-export interface LeaseRow {
-	session_id: string;
-	owner: string;
-	heartbeat: number;
+export interface SessionLease {
+	ownerId: string;
+	fence: number;
+	expiresAtMs: number;
 }
 
-export async function readLease(db: SqliteDatabase, sessionId: string): Promise<LeaseRow | undefined> {
-	return db.prepare("SELECT session_id, owner, heartbeat FROM leases WHERE session_id = ?").get<LeaseRow>(sessionId);
+interface SessionLeaseRow {
+	owner_id: string;
+	fence: number;
+	expires_at_ms: number;
 }
 
-export async function acquireLease(
+export async function acquireSessionLease(
 	db: SqliteDatabase,
 	sessionId: string,
-	owner: string,
-	heartbeat: number,
-	timeoutMs: number,
-): Promise<void> {
+	ownerId: string,
+	now: number,
+	expiresAtMs: number,
+): Promise<SessionLease | undefined> {
+	const row = await db
+		.prepare(
+			`INSERT INTO leases (session_id, owner_id, fence, expires_at_ms)
+			VALUES (?, ?, 1, ?)
+			ON CONFLICT(session_id) DO UPDATE SET
+				owner_id = excluded.owner_id,
+				fence = leases.fence + 1,
+				expires_at_ms = excluded.expires_at_ms
+			WHERE leases.expires_at_ms <= ?
+			RETURNING owner_id, fence, expires_at_ms`,
+		)
+		.get<SessionLeaseRow>(sessionId, ownerId, expiresAtMs, now);
+	return row === undefined ? undefined : { ownerId: row.owner_id, fence: row.fence, expiresAtMs: row.expires_at_ms };
+}
+
+export async function renewSessionLease(
+	db: SqliteDatabase,
+	sessionId: string,
+	lease: SessionLease,
+	now: number,
+	expiresAtMs: number,
+): Promise<boolean> {
+	const result = await db
+		.prepare(
+			`UPDATE leases
+			SET expires_at_ms = ?
+			WHERE session_id = ? AND owner_id = ? AND fence = ? AND expires_at_ms > ?`,
+		)
+		.run(expiresAtMs, sessionId, lease.ownerId, lease.fence, now);
+	if (result.changes === 1) lease.expiresAtMs = expiresAtMs;
+	return result.changes === 1;
+}
+
+export async function releaseSessionLease(db: SqliteDatabase, sessionId: string, lease: SessionLease): Promise<void> {
 	await db
-		.prepare("INSERT INTO leases (session_id, owner, heartbeat) VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING")
-		.run(sessionId, owner, heartbeat);
-	const lease = await readLease(db, sessionId);
-	if (!lease) throw new SessionError("storage", `Failed to acquire SQLite session lease: ${sessionId}`);
-	if (lease.owner === owner) return;
-	if (lease.heartbeat <= heartbeat - timeoutMs) {
-		const result = await db
-			.prepare("UPDATE leases SET owner = ?, heartbeat = ? WHERE session_id = ? AND owner = ? AND heartbeat = ?")
-			.run(owner, heartbeat, sessionId, lease.owner, lease.heartbeat);
-		if (result.changes === 1) return;
-	}
-	throw new SessionError("storage", `SQLite session is already leased: ${sessionId}`);
+		.prepare("DELETE FROM leases WHERE session_id = ? AND owner_id = ? AND fence = ?")
+		.run(sessionId, lease.ownerId, lease.fence);
 }
 
-export async function assertNoActiveConflictingLease(
-	db: SqliteDatabase,
-	sessionId: string,
-	owner: string,
-	heartbeat: number,
-	timeoutMs: number,
-): Promise<void> {
-	const lease = await readLease(db, sessionId);
-	if (!lease || lease.owner === owner || lease.heartbeat <= heartbeat - timeoutMs) return;
-	throw new SessionError("storage", `SQLite session is already leased: ${sessionId}`);
-}
-
-export async function updateLeaseHeartbeats(db: SqliteDatabase, owner: string, heartbeat: number): Promise<void> {
-	await db.prepare("UPDATE leases SET heartbeat = ? WHERE owner = ?").run(heartbeat, owner);
-}
-
-export async function deleteLease(db: SqliteDatabase, sessionId: string): Promise<void> {
+export async function deleteSessionLease(db: SqliteDatabase, sessionId: string): Promise<void> {
 	await db.prepare("DELETE FROM leases WHERE session_id = ?").run(sessionId);
-}
-
-export async function deleteLeaseForOwner(db: SqliteDatabase, sessionId: string, owner: string): Promise<void> {
-	await db.prepare("DELETE FROM leases WHERE session_id = ? AND owner = ?").run(sessionId, owner);
-}
-
-export async function deleteLeasesForOwner(db: SqliteDatabase, owner: string): Promise<void> {
-	await db.prepare("DELETE FROM leases WHERE owner = ?").run(owner);
 }
