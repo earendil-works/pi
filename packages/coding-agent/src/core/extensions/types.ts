@@ -1444,7 +1444,12 @@ export interface ProviderConfig {
 	apiKey?: string;
 	/** API type. Required at provider or model level when defining models. */
 	api?: Api;
-	/** Optional streamSimple handler for custom APIs. */
+	/**
+	 * Optional streamSimple handler for custom APIs.
+	 * Implementations must invoke `options.onPayload` before sending the provider request and use any
+	 * returned replacement payload. They must invoke `options.onResponse` after receiving the response
+	 * and before consuming its body, matching built-in providers.
+	 */
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
