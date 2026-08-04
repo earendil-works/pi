@@ -2,17 +2,15 @@ import { join } from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { describe, expect, it } from "vitest";
 import { createNodeSqliteFactory, createSqliteSessionSearch, SqliteSessionRepository } from "../src/index.ts";
-import {
-	createSetupFailureSqlite,
-	createTempDir,
-	createUserMessage,
-	getSqliteEntries,
-	ownRepository,
-} from "./test-utils.ts";
+import { createSetupFailureSqlite, createTempDir, createUserMessage, getSqliteEntries } from "./test-utils.ts";
 
 function createSqliteFixture(options: ConstructorParameters<typeof SqliteSessionRepository>[0]) {
-	const repository = ownRepository(new SqliteSessionRepository(options));
-	return { repository, search: createSqliteSessionSearch(options) };
+	const repository = new SqliteSessionRepository(options);
+	return {
+		repository,
+		search: createSqliteSessionSearch(options),
+		[Symbol.asyncDispose]: () => repository[Symbol.asyncDispose](),
+	};
 }
 
 describe("SQLite FTS5 session search", () => {
@@ -21,7 +19,8 @@ describe("SQLite FTS5 session search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository: repo, search } = fixture;
 		const included = await repo.create({ cwd: root, id: "included" });
 		const excluded = await repo.create({ cwd: `${root}/other`, id: "excluded" });
 		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
@@ -37,11 +36,12 @@ describe("SQLite FTS5 session search", () => {
 
 	it("handles quoted search text without exposing FTS syntax", async () => {
 		const root = createTempDir();
-		const { search } = createSqliteFixture({
+		await using fixture = createSqliteFixture({
 			env: new NodeExecutionEnv({ cwd: root }),
 			sqlite: createNodeSqliteFactory(),
 			databasePath: join(root, "sessions.sqlite"),
 		});
+		const { search } = fixture;
 
 		await expect(search.search({ text: 'missing "phrase"' })).resolves.toEqual([]);
 	});
@@ -50,11 +50,12 @@ describe("SQLite FTS5 session search", () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const databasePath = join(root, "sessions.sqlite");
-		const { repository, search } = createSqliteFixture({
+		await using fixture = createSqliteFixture({
 			env,
 			sqlite: createNodeSqliteFactory(),
 			databasePath,
 		});
+		const { repository, search } = fixture;
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("Find the auth defect"));
 		await expect(search.search({ text: "auth" })).resolves.toHaveLength(1);
@@ -69,7 +70,8 @@ describe("SQLite FTS5 session search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository: repo, search } = fixture;
 		await expect(search.search({ text: "  " })).resolves.toEqual([]);
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
@@ -90,7 +92,8 @@ describe("SQLite FTS5 session search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository: repo, search } = fixture;
 		await search.search({ text: "initialize" });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 
@@ -110,7 +113,8 @@ describe("SQLite FTS5 session search", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
 		const databasePath = join(root, "sessions.sqlite");
-		const { repository: repo, search } = createSqliteFixture({ env, sqlite, databasePath });
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository: repo, search } = fixture;
 		await search.search({ text: "initialize" });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendMessage(createUserMessage("must remain"));
@@ -144,11 +148,12 @@ describe("SQLite FTS5 session search", () => {
 	it("initializes canonical storage when searched before the first session is created", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
-		const { repository: repo, search } = createSqliteFixture({
+		await using fixture = createSqliteFixture({
 			env,
 			sqlite: createNodeSqliteFactory(),
 			databasePath: join(root, "sessions.sqlite"),
 		});
+		const { repository: repo, search } = fixture;
 
 		await expect(search.search({ text: "auth" })).resolves.toEqual([]);
 		const session = await repo.create({ cwd: root, id: "session-1" });

@@ -17,7 +17,6 @@ import {
 	createUserMessage,
 	getSqliteEntries,
 	moveSqliteMainLane,
-	ownRepository,
 } from "./test-utils.ts";
 
 class ThrowingStatement implements SqliteStatement {
@@ -89,16 +88,12 @@ function createCloseCountingSqliteFactory(): {
 	};
 }
 
-function createRepository(options: ConstructorParameters<typeof SqliteSessionRepository>[0]) {
-	return ownRepository(new SqliteSessionRepository(options));
-}
-
 describe("SQLite session repository", () => {
 	it("persists session metadata through create, list, open, and fork", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const source = await repo.create({
 			cwd: root,
 			id: "session-1",
@@ -124,7 +119,7 @@ describe("SQLite session repository", () => {
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const source = await repo.create({ cwd: root, id: "source" });
 		await source.appendMessage(createUserMessage("one"));
 		await source.appendMessage(createAssistantMessage("two"));
@@ -172,7 +167,7 @@ END;
 			open: async () => db,
 		};
 		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = createRepository({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath: join(root, "sessions.sqlite") });
 
 		await expect(repo.create({ cwd: root, id: "session-1" })).rejects.toThrow("insert failed");
 		expect(db.closeCount).toBe(0);
@@ -183,7 +178,7 @@ END;
 	it("closes the database when repository setup fails", async () => {
 		const root = createTempDir();
 		const { sqlite, counts } = createSetupFailureSqlite();
-		const repository = createRepository({
+		await using repository = new SqliteSessionRepository({
 			env: new NodeExecutionEnv({ cwd: root }),
 			sqlite,
 			databasePath: join(root, "sessions.sqlite"),
@@ -198,7 +193,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const { sqlite, counts } = createCloseCountingSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		for (let i = 0; i < 10; i++) await session.appendMessage(createUserMessage(`message ${i}`));
@@ -215,7 +210,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const metadata = await session.getMetadata();
 
@@ -246,7 +241,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		await repo.create({ cwd: root, id: "session-1" });
 
 		const db = await sqlite.open(databasePath);
@@ -267,7 +262,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const entryId = await session.appendMessage(createUserMessage("message"));
 		const metadata = await session.getMetadata();
@@ -290,7 +285,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		await session.appendRecord({
 			type: "operation_finished",
@@ -320,7 +315,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const db = await sqlite.open(databasePath);
 		try {
@@ -352,7 +347,7 @@ END;
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
 		const sqlite = createNodeSqliteFactory();
-		const repo = createRepository({ env, sqlite, databasePath });
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const userId = await session.appendMessage(createUserMessage("one"));
 		const assistant = {

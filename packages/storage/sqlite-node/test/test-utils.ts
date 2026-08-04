@@ -11,25 +11,14 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { afterEach, vi } from "vitest";
-import type { SqliteDatabaseFactory, SqliteSessionMetadata, SqliteSessionRepository } from "../src/index.ts";
+import type { SqliteDatabaseFactory, SqliteSessionMetadata } from "../src/index.ts";
 
-const repositories = new Set<SqliteSessionRepository>();
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(() => {
 	vi.useRealTimers();
-	try {
-		for (const repository of repositories) await repository.close();
-	} finally {
-		repositories.clear();
-		while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
-	}
+	while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
 });
-
-export function ownRepository(repository: SqliteSessionRepository): SqliteSessionRepository {
-	repositories.add(repository);
-	return repository;
-}
 
 export function createTempDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-storage-sqlite-node-"));

@@ -629,7 +629,9 @@ function metadataFromRow(row: SessionRow, path: string): SqliteSessionMetadata {
 }
 
 export class SqliteSessionRepository
-	implements SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>
+	implements
+		SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>,
+		AsyncDisposable
 {
 	private databasePath: string | undefined;
 	private database: SqliteDatabase | undefined;
