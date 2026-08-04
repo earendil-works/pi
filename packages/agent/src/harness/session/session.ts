@@ -1,430 +1,285 @@
-import { type ImageContent, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
-import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
-	ActiveToolsChangeEntry,
-	BranchSummaryEntry,
-	CompactionEntry,
-	CustomEntry,
-	CustomMessageEntry,
-	LabelEntry,
-	LeafEntry,
-	MessageEntry,
-	ModelChangeEntry,
-	SessionBranchQuery,
-	SessionContext,
-	SessionEntryCursorOptions,
-	SessionInfoEntry,
+	BranchBounds,
+	Entry,
+	EntryQuery,
+	IdGenerator,
+	LanePointer,
+	LaneRecord,
+	LogItem,
+	LogOptions,
+	NewRecord,
+	ProvisionedEntry,
+	RecordBase,
+	RecordQuery,
 	SessionMetadata,
 	SessionStats,
 	SessionStorage,
-	SessionTreeEntry,
-	ThinkingLevelChangeEntry,
-} from "../types.ts";
-import { SessionError } from "../types.ts";
+	SessionTree,
+} from "./types.ts";
+import { SessionError } from "./types.ts";
 
-export type ContextEntryTransform = (entries: readonly SessionTreeEntry[]) => readonly SessionTreeEntry[];
+type JsonValidationFrame = { value: unknown } | { exit: object };
 
-export type CustomEntryContextMessageProjector = (
-	entry: CustomEntry,
-	index: number,
-	entries: readonly SessionTreeEntry[],
-) => readonly AgentMessage[] | undefined;
-
-export interface SessionContextBuildOptions {
-	/** Additional entry transforms applied after the default compaction transform. */
-	entryTransforms?: readonly ContextEntryTransform[];
-	/** Optional custom-entry projectors. Custom entries are omitted from model context by default. */
-	entryProjectors?: Readonly<Record<string, CustomEntryContextMessageProjector>>;
+function invalidPayload(reason: string): never {
+	throw new SessionError("invalid_payload", `Durable payload ${reason}`);
 }
 
-function deriveSessionContextState(pathEntries: readonly SessionTreeEntry[]): Omit<SessionContext, "messages"> {
-	let thinkingLevel = "off";
-	let model: { provider: string; modelId: string } | null = null;
-	let activeToolNames: string[] | null = null;
+function assertValidLimit(limit: number | undefined): void {
+	if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+		throw new SessionError("invalid_query", "limit must be a positive integer");
+	}
+}
 
-	for (const entry of pathEntries) {
-		if (entry.type === "thinking_level_change") {
-			thinkingLevel = entry.thinkingLevel;
-		} else if (entry.type === "model_change") {
-			model = { provider: entry.provider, modelId: entry.modelId };
-		} else if (entry.type === "message" && entry.message.role === "assistant") {
-			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "active_tools_change") {
-			activeToolNames = [...entry.activeToolNames];
+function assertValidCursor(afterSeq: number | undefined): void {
+	if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
+		throw new SessionError("invalid_query", "cursor sequence must be a non-negative integer");
+	}
+}
+
+export function assertJsonSerializable(value: unknown): void {
+	const active = new WeakSet<object>();
+	const stack: JsonValidationFrame[] = [{ value }];
+	while (stack.length > 0) {
+		const frame = stack.pop()!;
+		if ("exit" in frame) {
+			active.delete(frame.exit);
+			continue;
+		}
+		const candidate = frame.value;
+		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") {
+			continue;
+		}
+		if (typeof candidate === "number") {
+			if (!Number.isFinite(candidate)) invalidPayload("contains a non-finite number");
+			continue;
+		}
+		if (typeof candidate !== "object") invalidPayload(`contains ${typeof candidate}`);
+		if (active.has(candidate)) invalidPayload("contains a cycle");
+		active.add(candidate);
+		stack.push({ exit: candidate });
+
+		if (Array.isArray(candidate)) {
+			if (Object.getPrototypeOf(candidate) !== Array.prototype) {
+				invalidPayload("contains a non-standard array");
+			}
+			if (
+				Object.getOwnPropertySymbols(candidate).length > 0 ||
+				Object.getOwnPropertyNames(candidate).length !== candidate.length + 1
+			) {
+				invalidPayload("contains an array with unsupported properties");
+			}
+			for (let index = candidate.length - 1; index >= 0; index--) {
+				if (!Object.hasOwn(candidate, index)) invalidPayload("contains a sparse array");
+				const descriptor = Object.getOwnPropertyDescriptor(candidate, index)!;
+				if (!("value" in descriptor)) invalidPayload("contains an array accessor");
+				stack.push({ value: descriptor.value });
+			}
+			continue;
+		}
+
+		const prototype = Object.getPrototypeOf(candidate);
+		if (prototype !== Object.prototype && prototype !== null) {
+			invalidPayload("contains a non-plain object");
+		}
+		if (Object.getOwnPropertySymbols(candidate).length > 0) {
+			invalidPayload("contains a symbol-keyed property");
+		}
+		const keys = Object.keys(candidate);
+		if (Object.getOwnPropertyNames(candidate).length !== keys.length) {
+			invalidPayload("contains a non-enumerable property");
+		}
+		for (let index = keys.length - 1; index >= 0; index--) {
+			const descriptor = Object.getOwnPropertyDescriptor(candidate, keys[index]!)!;
+			if (!("value" in descriptor)) invalidPayload("contains an accessor");
+			stack.push({ value: descriptor.value });
 		}
 	}
-
-	return { thinkingLevel, model, activeToolNames };
 }
 
-export function defaultContextEntryTransform(pathEntries: readonly SessionTreeEntry[]): SessionTreeEntry[] {
-	let compaction: CompactionEntry | null = null;
-	for (const entry of pathEntries) {
-		if (entry.type === "compaction") {
-			compaction = entry;
-		}
-	}
-	if (!compaction) {
-		return [...pathEntries];
-	}
-
-	const entries: SessionTreeEntry[] = [compaction];
-	const compactionIdx = pathEntries.findIndex((entry) => entry.type === "compaction" && entry.id === compaction.id);
-	if (compaction.retainedTail) {
-		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
-			entries.push(pathEntries[i]!);
-		}
-		return entries;
-	}
-	if (compaction.firstKeptEntryId) {
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = pathEntries[i]!;
-			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-			if (foundFirstKept) entries.push(entry);
-		}
-	}
-	for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
-		entries.push(pathEntries[i]!);
-	}
-	return entries;
-}
-
-export function buildContextEntries(
-	pathEntries: readonly SessionTreeEntry[],
-	options: SessionContextBuildOptions = {},
-): SessionTreeEntry[] {
-	let entries = defaultContextEntryTransform(pathEntries);
-	for (const transform of options.entryTransforms ?? []) {
-		entries = [...transform(entries)];
-	}
-	return entries;
-}
-
-export function sessionEntryToContextMessages(
-	entry: SessionTreeEntry,
-	index: number,
-	entries: readonly SessionTreeEntry[],
-	options: SessionContextBuildOptions = {},
-): AgentMessage[] {
-	if (entry.type === "message") {
-		return [entry.message as AgentMessage];
-	}
-	if (entry.type === "custom_message") {
-		return [
-			createCustomMessage(
-				entry.customType,
-				entry.content as string | (TextContent | ImageContent)[],
-				entry.display,
-				entry.details,
-				entry.timestamp,
-			),
-		];
-	}
-	if (entry.type === "compaction") {
-		return [
-			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
-			...(entry.retainedTail ?? []),
-		];
-	}
-	if (entry.type === "branch_summary" && entry.summary) {
-		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
-	}
-	if (entry.type === "custom") {
-		return [...(options.entryProjectors?.[entry.customType]?.(entry, index, entries) ?? [])];
-	}
-	return [];
-}
-
-export function buildSessionContext(
-	pathEntries: readonly SessionTreeEntry[],
-	options: SessionContextBuildOptions = {},
-): SessionContext {
-	const state = deriveSessionContextState(pathEntries);
-	const contextEntries = buildContextEntries(pathEntries, options);
-	const messages = contextEntries.flatMap((entry, index) =>
-		sessionEntryToContextMessages(entry, index, contextEntries, options),
-	);
-	return { ...state, messages };
-}
-
-export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
+export class Session<TMetadata extends SessionMetadata = SessionMetadata> implements SessionTree {
 	private readonly storage: SessionStorage<TMetadata>;
-	private readonly metadata: TMetadata;
-	private leafId: string | null;
-	private readonly contextBuildOptions: SessionContextBuildOptions;
-	private appendTail: Promise<void> = Promise.resolve();
+	readonly idGenerator: IdGenerator;
 
-	/** @internal Construct sessions through SessionRepository. */
-	constructor(
-		storage: SessionStorage<TMetadata>,
-		leafId: string | null,
-		contextBuildOptions: SessionContextBuildOptions = {},
-	) {
+	constructor(storage: SessionStorage<TMetadata>, options: { idGenerator?: IdGenerator } = {}) {
 		this.storage = storage;
-		this.metadata = storage.metadata;
-		this.leafId = leafId;
-		this.contextBuildOptions = contextBuildOptions;
+		this.idGenerator = options.idGenerator ?? { next: () => uuidv7() };
 	}
 
 	async getMetadata(): Promise<TMetadata> {
-		return this.metadata;
-	}
-	async getLeafId(): Promise<string | null> {
-		return this.leafId;
-	}
-	async getEntry(id: string): Promise<SessionTreeEntry | undefined> {
-		return this.storage.readEntry(id);
-	}
-	async getEntries(options?: SessionEntryCursorOptions): Promise<SessionTreeEntry[]> {
-		return [...(await this.storage.readEntries(options))];
+		return this.storage.getMetadata();
 	}
 
-	async getBranch(fromId?: string | null): Promise<SessionTreeEntry[]> {
-		return [...(await this.storage.readPathToRootOrCompaction(fromId === undefined ? this.leafId : fromId))];
-	}
-
-	async findEntriesOnBranch(query: SessionBranchQuery = {}): Promise<SessionTreeEntry[]> {
-		return [
-			...(await this.storage.findEntriesOnBranch({
-				...query,
-				start: query.start === undefined ? this.leafId : query.start,
-			})),
-		];
-	}
-
-	async findEntryOnBranch(query: SessionBranchQuery = {}): Promise<SessionTreeEntry | undefined> {
-		return (await this.findEntriesOnBranch({ ...query, limit: 1 }))[0];
-	}
-
-	async buildContextEntries(options: SessionContextBuildOptions = {}): Promise<SessionTreeEntry[]> {
-		return buildContextEntries(await this.getBranch(), this.mergeContextBuildOptions(options));
-	}
-
-	async buildContext(options: SessionContextBuildOptions = {}): Promise<SessionContext> {
-		return buildSessionContext(await this.getBranch(), this.mergeContextBuildOptions(options));
-	}
-
-	private mergeContextBuildOptions(options: SessionContextBuildOptions): SessionContextBuildOptions {
+	view(lane: string): SessionTree {
+		if (lane === "main") return this;
 		return {
-			entryTransforms: [...(this.contextBuildOptions.entryTransforms ?? []), ...(options.entryTransforms ?? [])],
-			entryProjectors: {
-				...(this.contextBuildOptions.entryProjectors ?? {}),
-				...(options.entryProjectors ?? {}),
-			},
+			getLeafId: () => this.getLeafIdForLane(lane),
+			getEntry: (id) => this.getEntry(id),
+			getStats: () => this.getStats(),
+			getName: () => this.getName(),
+			setName: (name) => this.setName(name),
+			getLabel: (targetId) => this.getLabel(targetId),
+			setLabel: (targetId, label) => this.setLabel(targetId, label),
+			findEntries: (query) => this.queryEntries(query),
+			findEntry: async (query = {}) => (await this.queryEntries(query, 1))[0],
+			findEntriesOnBranch: (query) => this.queryBranchEntries(lane, query),
+			findEntryOnBranch: async (query = {}) => (await this.queryBranchEntries(lane, query, 1))[0],
+			appendMessage: (message) => this.appendMessageToLane(lane, message),
+			appendCustomEntry: (customType, data) => this.appendCustomEntryToLane(lane, customType, data),
 		};
 	}
 
-	async getLabel(id: string): Promise<string | undefined> {
-		return this.storage.getLabel(id);
+	async getLeafId(): Promise<string | null> {
+		return this.getLeafIdForLane("main");
 	}
-	async getSessionStats(): Promise<SessionStats> {
+
+	async getEntry(id: string): Promise<Entry | undefined> {
+		return this.storage.getEntry(id);
+	}
+
+	async getStats(): Promise<SessionStats> {
 		return this.storage.getStats();
 	}
-	async getSessionName(): Promise<string | undefined> {
+
+	async getName(): Promise<string | undefined> {
 		return this.storage.getName();
 	}
 
-	private async createEntryId(): Promise<string> {
-		for (let i = 0; i < 100; i++) {
-			const id = uuidv7().slice(-8);
-			if (!(await this.getEntry(id))) return id;
-		}
-		return uuidv7();
+	async setName(name: string): Promise<void> {
+		await this.storage.setName(name);
 	}
 
-	private enqueueAppend<TEntry extends SessionTreeEntry>(
-		createEntry: (base: Pick<SessionTreeEntry, "id" | "parentId" | "timestamp">) => TEntry,
-	): Promise<TEntry> {
-		const commit = this.appendTail.then(async () => {
-			const entry = createEntry({
-				id: await this.createEntryId(),
-				parentId: this.leafId,
-				timestamp: new Date().toISOString(),
-			});
-			await this.storage.appendEntry(entry);
-			this.leafId = entry.type === "leaf" ? entry.targetId : entry.id;
-			return entry;
-		});
-		this.appendTail = commit.then(
-			() => undefined,
-			() => undefined,
-		);
-		return commit;
+	async getLabel(targetId: string): Promise<string | undefined> {
+		return this.storage.getLabel(targetId);
 	}
 
-	private async setLeafId(leafId: string | null): Promise<LeafEntry> {
-		if (leafId !== null && !(await this.getEntry(leafId))) {
-			throw new SessionError("not_found", `Entry ${leafId} not found`);
-		}
-		return this.enqueueAppend((base) => {
-			return { ...base, type: "leaf", targetId: leafId };
-		});
+	async setLabel(targetId: string, label: string | undefined): Promise<void> {
+		await this.storage.setLabel(targetId, label);
 	}
 
-	private async appendTypedEntry<TEntry extends SessionTreeEntry>(
-		createEntry: (base: Pick<SessionTreeEntry, "id" | "parentId" | "timestamp">) => TEntry,
-	): Promise<string> {
-		return (await this.enqueueAppend(createEntry)).id;
+	async findEntries(query?: EntryQuery): Promise<Entry[]> {
+		return this.queryEntries(query);
+	}
+
+	async findEntry(query: EntryQuery = {}): Promise<Entry | undefined> {
+		return (await this.queryEntries(query, 1))[0];
+	}
+
+	async findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]> {
+		return this.queryBranchEntries("main", query);
+	}
+
+	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
+		return (await this.queryBranchEntries("main", query, 1))[0];
 	}
 
 	async appendMessage(message: AgentMessage): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "message",
-					message,
-				}) satisfies MessageEntry,
-		);
-	}
-
-	async appendThinkingLevelChange(thinkingLevel: string): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "thinking_level_change",
-					thinkingLevel,
-				}) satisfies ThinkingLevelChangeEntry,
-		);
-	}
-
-	async appendModelChange(provider: string, modelId: string): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "model_change",
-					provider,
-					modelId,
-				}) satisfies ModelChangeEntry,
-		);
-	}
-
-	async appendActiveToolsChange(activeToolNames: string[]): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "active_tools_change",
-					activeToolNames: [...activeToolNames],
-				}) satisfies ActiveToolsChangeEntry,
-		);
-	}
-
-	async appendCompaction<T = unknown>(
-		summary: string,
-		firstKeptEntryId: string | undefined,
-		tokensBefore: number,
-		details?: T,
-		fromHook?: boolean,
-		usage?: Usage,
-		retainedTail?: AgentMessage[],
-	): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "compaction",
-					summary,
-					firstKeptEntryId,
-					tokensBefore,
-					retainedTail,
-					details,
-					usage,
-					fromHook,
-				}) satisfies CompactionEntry<T>,
-		);
+		return this.appendMessageToLane("main", message);
 	}
 
 	async appendCustomEntry(customType: string, data?: unknown): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "custom",
-					customType,
-					data,
-				}) satisfies CustomEntry,
-		);
+		return this.appendCustomEntryToLane("main", customType, data);
 	}
 
-	async appendCustomMessageEntry<T = unknown>(
-		customType: string,
-		content: string | (TextContent | ImageContent)[],
-		display: boolean,
-		details?: T,
-	): Promise<string> {
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "custom_message",
-					customType,
-					content,
-					display,
-					details,
-				}) satisfies CustomMessageEntry<T>,
-		);
+	async getLanes(): Promise<LanePointer[]> {
+		return this.storage.getLanes();
 	}
 
-	async appendLabel(targetId: string, label: string | undefined): Promise<string> {
-		if (!(await this.getEntry(targetId))) {
-			throw new SessionError("not_found", `Entry ${targetId} not found`);
-		}
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "label",
-					targetId,
-					label,
-				}) satisfies LabelEntry,
-		);
+	async createLane(lane: string, at: string | null): Promise<void> {
+		await this.storage.createLane(lane, at);
 	}
 
-	async appendSessionName(name: string): Promise<string> {
-		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "session_info",
-					name: sanitizedName,
-				}) satisfies SessionInfoEntry,
-		);
+	async moveLane(lane: string, to: string | null): Promise<void> {
+		await this.storage.moveLane(lane, to);
 	}
 
-	async moveTo(
-		entryId: string | null,
-		summary?: { summary: string; details?: unknown; usage?: Usage; fromHook?: boolean },
-	): Promise<string | undefined> {
-		if (entryId !== null && !(await this.getEntry(entryId))) {
-			throw new SessionError("not_found", `Entry ${entryId} not found`);
-		}
-		await this.setLeafId(entryId);
-		if (!summary) return undefined;
-		return this.appendTypedEntry(
-			(base) =>
-				({
-					...base,
-					type: "branch_summary",
-					fromId: entryId ?? "root",
-					summary: summary.summary,
-					details: summary.details,
-					usage: summary.usage,
-					fromHook: summary.fromHook,
-				}) satisfies BranchSummaryEntry,
-		);
+	async appendEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		return this.commitEntry(entry, lane);
 	}
-}
 
-/** Wraps an opened storage connection for a SessionRepository implementation. */
-export async function createSession<TMetadata extends SessionMetadata>(
-	storage: SessionStorage<TMetadata>,
-	contextBuildOptions: SessionContextBuildOptions = {},
-): Promise<Session<TMetadata>> {
-	return new Session(storage, (await storage.readHead()).leafId, contextBuildOptions);
+	async appendRecord<TNewRecord extends NewRecord>(
+		record: TNewRecord,
+	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">>;
+	async appendRecord(record: NewRecord): Promise<LaneRecord> {
+		return this.commitRecord(record);
+	}
+
+	async findRecords<K extends LaneRecord["type"]>(
+		query: RecordQuery & { type: K },
+	): Promise<Extract<LaneRecord, { type: K }>[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
+		return this.queryRecords(query);
+	}
+
+	async getLog(options?: LogOptions): Promise<LogItem[]> {
+		return this.queryLog(options);
+	}
+
+	private async getLeafIdForLane(lane: string): Promise<string | null> {
+		const pointer = (await this.storage.getLanes()).find((candidate) => candidate.lane === lane);
+		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
+		return pointer.leafId;
+	}
+
+	private async queryEntries(query: EntryQuery = {}, resultLimit = query.limit): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		return this.storage.findEntries(resultLimit === query.limit ? query : { ...query, limit: resultLimit });
+	}
+
+	private async queryBranchEntries(
+		lane: string,
+		query: EntryQuery & BranchBounds = {},
+		resultLimit = query.limit,
+	): Promise<Entry[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.cursor?.afterSeq);
+		const start = query.start ?? (await this.getLeafIdForLane(lane));
+		if (start === null) return [];
+		const storageQuery = resultLimit === query.limit ? query : { ...query, limit: resultLimit };
+		return this.storage.findEntriesOnBranch({ ...storageQuery, start });
+	}
+
+	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
+		assertValidLimit(query.limit);
+		assertValidCursor(query.afterSeq);
+		return this.storage.findRecords(query);
+	}
+
+	private async queryLog(options: LogOptions = {}): Promise<LogItem[]> {
+		assertValidLimit(options.limit);
+		assertValidCursor(options.afterSeq);
+		return this.storage.getLog(options);
+	}
+
+	private async appendMessageToLane(lane: string, message: AgentMessage): Promise<string> {
+		const entry = await this.commitEntry({ type: "message", id: this.idGenerator.next(), message }, lane);
+		return entry.id;
+	}
+
+	private async appendCustomEntryToLane(lane: string, customType: string, data?: unknown): Promise<string> {
+		const entry = await this.commitEntry(
+			data === undefined
+				? { type: "custom", id: this.idGenerator.next(), customType }
+				: { type: "custom", id: this.idGenerator.next(), customType, data },
+			lane,
+		);
+		return entry.id;
+	}
+
+	private async commitEntry<TEntry extends Entry>(entry: ProvisionedEntry<TEntry>, lane: string): Promise<TEntry> {
+		assertJsonSerializable(entry);
+		return this.storage.appendEntry(entry, lane);
+	}
+
+	private async commitRecord<TNewRecord extends NewRecord>(
+		record: TNewRecord,
+	): Promise<TNewRecord & Pick<RecordBase, "seq" | "timestamp">> {
+		assertJsonSerializable(record);
+		return this.storage.appendRecord<LaneRecord>(record) as unknown as Promise<
+			TNewRecord & Pick<RecordBase, "seq" | "timestamp">
+		>;
+	}
 }

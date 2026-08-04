@@ -507,15 +507,7 @@ END;
 			totalTokens: 10,
 			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.04, total: 0.1 },
 		};
-		const compactionId = await appendSqliteCompaction(
-			session,
-			"summary",
-			userId,
-			200,
-			undefined,
-			false,
-			compactionUsage,
-		);
+		const compactionId = await appendSqliteCompaction(session, "summary", 200, undefined, compactionUsage);
 		await session.appendRecord({
 			type: "usage",
 			id: "compaction-usage",

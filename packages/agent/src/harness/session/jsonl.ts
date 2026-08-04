@@ -1,5 +1,5 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
-import type { FileError, FileSystem, Result } from "../../types.ts";
+import type { FileError, FileSystem, Result } from "../types.ts";
 import { Session } from "./session.ts";
 import {
 	type BranchBounds,
@@ -262,9 +262,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	private readonly usedIds = new Set<string>();
 	private readonly entries: Entry[] = [];
 	private readonly entriesById = new Map<string, Entry>();
+	private readonly entryLanes = new Map<string, string>();
 	private readonly records: LaneRecord[] = [];
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
-	private readonly declaredLanes = new Set<string>(["main"]);
 	private readonly log: LogItem[] = [];
 	private readonly stats: SessionStats = {
 		messageCount: 0,
@@ -406,6 +406,10 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return entry === undefined ? undefined : structuredClone(entry);
 	}
 
+	getEntryLane(id: string): string | undefined {
+		return this.entryLanes.get(id);
+	}
+
 	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
 		assertValidLimit(query.limit);
 		this.validateCursor(query.cursor?.afterSeq);
@@ -537,8 +541,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				this.usedIds.add(mutation.entry.id);
 				this.entries.push(mutation.entry);
 				this.entriesById.set(mutation.entry.id, mutation.entry);
+				this.entryLanes.set(mutation.entry.id, mutation.lane);
 				this.lanes.set(mutation.lane, mutation.entry.id);
-				this.log.push({ kind: "entry", seq, lane: mutation.lane, entry: mutation.entry });
+				this.log.push({ kind: "entry", seq, entry: mutation.entry });
 				if (mutation.counted && mutation.entry.type === "message") this.stats.messageCount += 1;
 				break;
 			}
@@ -560,11 +565,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				if (mutation.leafId !== null && !this.entriesById.has(mutation.leafId)) {
 					throw invalidFile(path, line, `references missing lane target ${mutation.leafId}`);
 				}
-				const action = this.declaredLanes.has(mutation.lane) ? "move" : "create";
 				this.sequence = seq;
-				this.declaredLanes.add(mutation.lane);
 				this.lanes.set(mutation.lane, mutation.leafId);
-				this.log.push({ kind: "lane", seq, lane: mutation.lane, action, leafId: mutation.leafId });
+				this.log.push({ kind: "lane", seq, lane: mutation.lane, leafId: mutation.leafId });
 				break;
 			}
 			case "fact":
@@ -769,10 +772,15 @@ export class JsonlSessionRepo implements SessionRepo<JsonlSessionMetadata, Jsonl
 			if (options.scope === "tree") {
 				copiedEntries = await sourceSession.findEntries({ order: "oldestFirst" });
 				sourceLanes = await sourceSession.getLanes();
+				const sourceStorage = this.storages.get(source.path)!;
 				laneByEntryId = new Map(
-					(await sourceSession.getLog()).flatMap((item) =>
-						item.kind === "entry" ? [[item.entry.id, item.lane] as const] : [],
-					),
+					copiedEntries.map((entry) => {
+						const lane = sourceStorage.getEntryLane(entry.id);
+						if (lane === undefined) {
+							throw new SessionError("invalid_entry", `Entry has no source lane: ${entry.id}`);
+						}
+						return [entry.id, lane] as const;
+					}),
 				);
 			} else {
 				const selectedEntryId = options.entryId ?? (await sourceSession.getLeafId());

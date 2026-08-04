@@ -1,5 +1,5 @@
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
-import type { AgentMessage } from "../../../../types.ts";
+import type { AgentMessage } from "../../../types.ts";
 import type {
 	CustomEntry,
 	Entry,

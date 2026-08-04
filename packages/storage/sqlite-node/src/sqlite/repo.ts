@@ -1,4 +1,4 @@
-import type { FileError, FileSystem, Result } from "@earendil-works/pi-agent-core";
+import type { FileError, Result } from "@earendil-works/pi-agent-core";
 import {
 	type BranchBounds,
 	type Entry,
@@ -11,13 +11,11 @@ import {
 	type ProvisionedEntry,
 	type RecordQuery,
 	Session,
-	type SessionCreateOptions,
 	SessionError,
-	type SessionMetadata,
 	type SessionRepo as SessionRepository,
 	type SessionStats,
 	type SessionStorage,
-} from "@earendil-works/pi-agent-core/experimental";
+} from "@earendil-works/pi-agent-core";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { appendEntryToBranchCache, buildCachedBranch, deleteBranchCache, rebuildBranchCache } from "./branch-cache.ts";
 import { applyMigrations } from "./migrations.ts";
@@ -75,22 +73,14 @@ import {
 	type SessionRow,
 	sessionExists,
 } from "./storage/sessions.ts";
-import type { SqliteDatabase, SqliteDatabaseFactory } from "./types.ts";
-
-export interface SqliteSessionMetadata extends SessionMetadata {
-	cwd: string;
-	path: string;
-	metadata?: Record<string, unknown>;
-}
-
-export interface SqliteSessionCreateOptions extends SessionCreateOptions {
-	cwd: string;
-	metadata?: Record<string, unknown>;
-}
-
-export interface SqliteSessionListOptions {
-	cwd?: string;
-}
+import type {
+	SqliteDatabase,
+	SqliteDatabaseFactory,
+	SqliteSessionCreateOptions,
+	SqliteSessionListOptions,
+	SqliteSessionMetadata,
+	SqliteSessionRepositoryEnv,
+} from "./types.ts";
 
 export interface SqliteWriterLeaseOptions {
 	/** Time without a successful heartbeat before another writer may take over. Default: 30 seconds. */
@@ -98,8 +88,6 @@ export interface SqliteWriterLeaseOptions {
 	/** Idle heartbeat cadence. Default: 10 seconds. Must be less than ttlMs. */
 	heartbeatIntervalMs?: number;
 }
-
-export type SqliteSessionRepositoryEnv = Pick<FileSystem, "absolutePath" | "createDir" | "exists">;
 
 export interface SqliteSessionRepositoryOptions {
 	env: SqliteSessionRepositoryEnv;
@@ -637,8 +625,7 @@ function claimStorage(
 }
 
 function metadataFromRow(row: SessionRow, path: string): SqliteSessionMetadata {
-	const base = rowToMetadata(row, path);
-	return { ...base, createdAt: Date.parse(base.createdAt) };
+	return rowToMetadata(row, path);
 }
 
 export class SqliteSessionRepository

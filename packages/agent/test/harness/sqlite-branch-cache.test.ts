@@ -26,7 +26,7 @@ describe("SQLite branch cache", () => {
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const rootId = await session.appendMessage(createUserMessage("root"));
 		const keptId = await session.appendMessage(createUserMessage("kept"));
-		const compactionId = await appendSqliteCompaction(session, "summary", keptId, 100);
+		const compactionId = await appendSqliteCompaction(session, "summary", 100);
 		await session.appendMessage(createAssistantMessage("first child"));
 		await moveSqliteMainLane(session, compactionId);
 		const branchedId = await session.appendMessage(createAssistantMessage("branched child"));
@@ -54,8 +54,8 @@ describe("SQLite branch cache", () => {
 		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
 		const oldId = await session.appendMessage(createUserMessage("old"));
-		const keptId = await session.appendMessage(createUserMessage("kept"));
-		const compactionId = await appendSqliteCompaction(session, "summary", keptId, 100);
+		await session.appendMessage(createUserMessage("kept"));
+		const compactionId = await appendSqliteCompaction(session, "summary", 100);
 		const leafId = await session.appendMessage(createAssistantMessage("new"));
 
 		const db = await sqlite.open(databasePath);
@@ -76,19 +76,10 @@ describe("SQLite branch cache", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
 		const session = await repo.create({ cwd: root, id: "session-1" });
-		const rootId = await session.appendMessage(createUserMessage("root"));
-		const firstCompactionId = await appendSqliteCompaction(
-			session,
-			"first summary",
-			rootId,
-			100,
-			undefined,
-			false,
-			undefined,
-			[],
-		);
+		await session.appendMessage(createUserMessage("root"));
+		const firstCompactionId = await appendSqliteCompaction(session, "first summary", 100, undefined, undefined, []);
 		const middleId = await session.appendMessage(createUserMessage("middle"));
-		const secondCompactionId = await appendSqliteCompaction(session, "second summary", rootId, 200);
+		const secondCompactionId = await appendSqliteCompaction(session, "second summary", 200);
 		const leafId = await session.appendMessage(createAssistantMessage("new"));
 
 		expect(firstCompactionId).not.toBe(secondCompactionId);

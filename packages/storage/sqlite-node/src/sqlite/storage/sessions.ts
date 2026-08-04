@@ -1,4 +1,4 @@
-import { assertJsonSerializable, SessionError } from "@earendil-works/pi-agent-core/experimental";
+import { assertJsonSerializable, SessionError } from "@earendil-works/pi-agent-core";
 import type { SqliteDatabase, SqliteSessionMetadata } from "../types.ts";
 
 export interface SessionRow {
@@ -83,7 +83,7 @@ export function deleteSessionRow(db: SqliteDatabase, sessionId: string) {
 export function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
 	return {
 		id: row.id,
-		createdAt: row.created_at,
+		createdAt: Date.parse(row.created_at),
 		cwd: row.cwd,
 		path,
 		parentSessionId: row.parent_session_id ?? undefined,

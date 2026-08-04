@@ -1,6 +1,6 @@
 import type { StopReason, Usage } from "@earendil-works/pi-ai";
-import "../../messages.ts";
-import type { AgentMessage } from "../../../types.ts";
+import "../messages.ts";
+import type { AgentMessage } from "../../types.ts";
 import type { Session } from "./session.ts";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -31,12 +31,12 @@ export interface ModelChangeEntry extends EntryBase {
 	modelId: string;
 }
 
-export interface ThinkingLevelChangeEntry extends EntryBase {
+export interface ThinkingLevelEntry extends EntryBase {
 	type: "thinking_level_change";
 	thinkingLevel: string;
 }
 
-export interface ActiveToolsChangeEntry extends EntryBase {
+export interface ActiveToolsEntry extends EntryBase {
 	type: "active_tools_change";
 	activeToolNames: string[];
 }
@@ -67,8 +67,8 @@ export interface CustomEntry extends EntryBase {
 export type Entry =
 	| MessageEntry
 	| ModelChangeEntry
-	| ThinkingLevelChangeEntry
-	| ActiveToolsChangeEntry
+	| ThinkingLevelEntry
+	| ActiveToolsEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry;
@@ -115,7 +115,6 @@ export interface OperationStartedRecord extends RecordBase {
 export interface AbortRequestedRecord extends RecordBase {
 	type: "abort_requested";
 	runId: string;
-	reason: "user" | "shutdown";
 }
 
 export interface OperationFinishedRecord extends RecordBase {

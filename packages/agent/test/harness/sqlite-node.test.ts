@@ -7,9 +7,7 @@ import {
 	SqliteSessionRepository,
 } from "../../../storage/sqlite-node/src/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { JsonlSessionRepository } from "../../src/harness/session/jsonl-repo.ts";
-import { createScanningSessionSearch } from "../../src/harness/session/search.ts";
-import type { SessionSearchOptions } from "../../src/harness/types.ts";
+import type { SessionSearchOptions } from "../../src/harness/session/search.ts";
 import { createTempDir, createUserMessage, getSqliteEntries } from "./session-test-utils.ts";
 
 const ownedRepositories: AsyncDisposable[] = [];
@@ -23,28 +21,6 @@ function createSqliteFixture(options: ConstructorParameters<typeof SqliteSession
 	ownedRepositories.push(repository);
 	return { repository, search: createSqliteSessionSearch(options) };
 }
-
-function createJsonlFixture(options: ConstructorParameters<typeof JsonlSessionRepository>[0]) {
-	const repository = new JsonlSessionRepository(options);
-	ownedRepositories.push(repository);
-	return { repository, search: createScanningSessionSearch(repository) };
-}
-
-describe("JsonlSessionBackend with scanning search", () => {
-	it("searches canonical session entries by scanning", async () => {
-		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
-		const { repository: repo, search } = createJsonlFixture({ fs: env, sessionsRoot: join(root, "sessions") });
-		const included = await repo.create({ cwd: root, id: "included" });
-		const excluded = await repo.create({ cwd: `${root}/other`, id: "excluded" });
-		const entryId = await included.appendMessage(createUserMessage("Find the auth defect"));
-		await excluded.appendMessage(createUserMessage("Find the auth defect"));
-
-		await expect(search.search({ text: "AUTH", cwd: root })).resolves.toEqual([
-			expect.objectContaining({ entryId, metadata: expect.objectContaining({ id: "included" }) }),
-		]);
-	});
-});
 
 describe("SqliteSessionRepository writer leases", () => {
 	it("shares one storage queue for repeated opens in the same repository", async () => {

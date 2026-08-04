@@ -1037,7 +1037,7 @@ Calls on a faulted harness reject with the same `HarnessFault` instance until th
 
 `finalMessage` is the run's newest entry that projects to an assistant message; `finalEntryId` is that entry's id. `leafId` is the lane's leaf when the operation finished — the race-free anchor for branch queries (`findEntriesOnBranch({ start: leafId })`). The two differ when a deferred write was applied after the final assistant message. Full transcripts are not duplicated into results; they are in the session and were delivered as events.
 
-**Type provenance.** Types this document uses but does not redefine — `QueueMode`, `RetryPolicy`, `CompactionSettings`, `CompactionPreparation`, `NavigationPreparation` (today's `TreePreparation`, renamed), `CompactResult`, `ToolResultPatch`, `SessionStats`, `SessionMetadata`, `NavigateOptions`, `EntryCursor`, `LogItem`, `StreamOptionsPatch` — keep their existing `harness/types.ts` shapes. Lowercase helpers in section 15 pseudocode without a definition (`preparation`, `runToolBatchForSingleCall`, request/option bags such as `AssistantRequest` and `FactWrite`) are constructive implementation detail, not contract.
+**Type provenance.** Core conversation and tool types (`AgentMessage`, `AgentTool`, `AgentToolResult`, `QueueMode`, `ThinkingLevel`) come from `packages/agent/src/types.ts`. Provider types (`Model`, `Models`, `Usage`, `RetryPolicy`, stream options, deferred handles) come from `packages/ai`. Session, harness, hook, event, result, snapshot, navigation, and durable-record types are defined by the v2 implementation under `packages/agent/src/harness/`. Lowercase helpers in section 15 pseudocode without a definition (`preparation`, `runToolBatchForSingleCall`, request/option bags such as `AssistantRequest` and `FactWrite`) are constructive implementation detail, not contract.
 
 ### Suspended operations
 
@@ -1611,7 +1611,7 @@ Contract rules, all backends:
 - One writer per session, enforced by the serving layer; SQLite additionally rejects a second writer itself. Per session, not per backend: one SQLite database hosts many sessions, each with its own single writer.
 - Any write failure faults the harness (section 4). The store is left a valid prefix.
 - Global-fact and lane-move history is kept, never rewritten: latest by `seq` wins. History is the cheaper implementation (insert, never update), and lane-move history is a reflog if anyone ever wants one.
-- `getStats()` for format-4 sessions is the sum of `usage` records across all lanes — one rule, nothing entry-derived, no double counting by construction. Backends maintain it as a running projection updated per record commit, so reads and the `usage` event's totals are O(1). Format-3 sessions have no records; their stats stay entry-derived. The one-time v4 conversion writes one aggregate `adjustment` record (`details: { source: "v3-import" }`) summing the v3 entries' usage, so totals survive conversion. Outside the ledger's claim: the settle-to-write crash window, unreported mid-stream billing, tools that die without reporting, and extension-private LLM calls (section 1 non-goal) — though `adjustment` records let an application close even those after the fact.
+- For format-4 sessions, the token and cost fields returned by `getStats()` are the sum of `usage` records across all lanes — one rule, no entry-derived billing, and no double counting by construction. `messageCount` counts message entries appended by this session; entries copied into a fork do not increment it. Backends maintain both as running projections, so reads and the `usage` event's totals are O(1). Format-3 sessions have no records; their usage stats stay entry-derived. The one-time v4 conversion writes one aggregate `adjustment` record (`details: { source: "v3-import" }`) summing the v3 entries' usage, so totals survive conversion. Outside the ledger's claim: the settle-to-write crash window, unreported mid-stream billing, tools that die without reporting, and extension-private LLM calls (section 1 non-goal) — though `adjustment` records let an application close even those after the fact.
 
 ### Memory
 
@@ -2840,43 +2840,51 @@ Gate invariants, asserted across Tier C:
 - Overflow classification against the reported provider shapes: prompt 268,009 of a 272,000 window and 81,217 of 84,500 (recoverable), non-zero reasoning-only output, cache-write-heavy usage, a Codex-style provider that rejects `max_output_tokens`, a genuine 1,024-token cap fully used (not recoverable), and `length → length` stopping after exactly one recovery per conversational input.
 - v3 fixtures: labels, session info, and `leaf` entries mid-chain and at end of file, old `firstKeptEntryId` compactions — all open as one normalized idle `main` lane.
 
-## 21. Implementation sequence
+## 21. Implementation status and remaining sequence
 
-Implementation lives in `packages/agent/src/harness/experimental/`, tests in `packages/agent/test/harness/experimental/`. Nothing outside `experimental/` is modified in place; when the experimental implementation is complete and green, **everything currently under `src/harness/` outside `experimental/` is removed** and the experimental code replaces it wholesale.
+Implementation lives directly in `packages/agent/src/harness/`, with v4 session tests in `packages/agent/test/harness/session/`. The v4 session and SQLite backend are the default package interfaces; there is no experimental package surface. Retained compaction, message projection, resource, tool, environment, and utility modules stay under `src/harness/` and are adapted in place.
 
-Keep each stage passing before starting the next.
+### Landed foundation
 
-1. v4 `Session` and in-memory storage: entries, records, lanes, facts, shared `seq`. Backend-neutral parity suite.
-2. JSONL v4 with the v3 read path; greenfield SQLite with the branch cache. Parity suite against all three.
-3. Section 7 reduction and validity checks. Tier A before any live procedure exists.
-4. Split `agent-loop.ts` into the section 14 blocks; existing `agent-loop`/`agent` tests pass unchanged.
-5. `Effects`, the lane mutation line, the conditional commits, and the gate. Automatic/manual equivalence for a no-tool run.
-6. The run procedure: acceptance with capture, checkpoints, steps and retries, overflow recovery, queues, deferred writes, terminal failure, conditional finish, abort. Tier B traces as they land.
-7. Tool batches through the section 14 callbacks, `terminate` persistence, replay and reconciliation. The full tool crash matrix in Tier A and C.
-8. Deferred provider requests through `Models`; faux-provider support for pending, ready, terminal, and cancellation outcomes.
-9. Manual and auto compaction; navigation with the move-first commit.
-10. Events, hooks, snapshots, telemetry context. Tier C race-catalog completion.
-11. Adapt coding-agent to the new result and session APIs; run its non-e2e suites on the faux provider.
-12. `npm run check` clean.
+- The v4 `Session`, in-memory storage, backend-neutral conformance suite, and test helpers are the default agent package API.
+- The v4 SQLite repository, branch cache, leases, forks, and conformance coverage are the default SQLite package API.
+- The old harness/session runtime and experimental export surface have been removed. `AgentHarness` now exposes a compile-complete scaffold; unfinished operations fail explicitly with `HarnessNotImplemented`.
+- Compaction preparation, context projection, and branch summarization use v4 `Entry` queries and no longer depend on the legacy `SessionTreeEntry` model. Reusable compaction tests and dedicated context tests cover this interim behavior.
+- `Session.getBranch()` is not part of v4 and must not be reintroduced. All branch callers use `findEntriesOnBranch()` with explicit bounds and order.
+
+### Remaining work
+
+Keep every stage passing before starting the next. Replace scaffold failures only when the corresponding procedure and tests land.
+
+1. **Finish session-level test reconstruction.** Audit the removed legacy session and branch-query suites case by case. Keep semantics already covered by backend conformance in one place; port uncovered v4 behavior, corruption, bounded-query, fork, validation, context, and configuration-state cases to dedicated tests. Do not restore tests of deleted APIs.
+2. **Implement JSONL v4 and v3 loading.** **In progress: @davidbrai.** Add the v4 backend, torn-tail handling, normalization of supported coding-agent v3 files, and first-write conversion. Run the same storage conformance suite against memory, JSONL, and SQLite, plus v3 fixtures and format-specific corruption tests.
+3. **Implement the section 7 reducer and validity checks.** Reconstruct idle/suspended lane state from bounded record and branch queries. Add Tier A recovery tests before adding live execution, including invalid logs and idempotent half-completed recovery.
+4. **Split `agent-loop.ts` into the section 14 blocks.** Preserve the existing public wrappers and behavior; keep the existing `agent-loop` and `agent` suites unchanged and passing.
+5. **Implement `Effects`, lane mutation lines, conditional commits, and manual gating.** Establish automatic/manual equivalence for a no-tool run and verify that parked procedures perform no effects.
+6. **Implement the run procedure.** Replace scaffold paths for acceptance, checkpoints, durable attempts and retries, overflow recovery, queues, cancellation, deferred writes, terminal failure, conditional finish, and abort. Add Tier B traces as each path lands.
+7. **Implement durable tool batches and recovery.** Wire section 14 callbacks, persist `terminate`, enforce replay policy, and complete the X1–X5 crash matrix in Tier A and Tier C.
+8. **Implement deferred provider requests.** Add `Models` dispatch and faux-provider support for pending, ready, terminal, rejected-fetch, mismatched-handle, and cancellation outcomes.
+9. **Integrate compaction and navigation into operations.** Reuse the v4 compaction/context helpers, persist complete `retainedTail`, implement manual and automatic compaction, and implement move-first navigation. Add operation, crash, hook, and usage-ledger tests; remove any remaining legacy declarations once no caller needs them.
+10. **Implement events, hooks, snapshots, and telemetry.** Complete Tier C for every race-catalog row and test event ordering, hook isolation, snapshot subscription gaps, and fixed-point reducer checks.
+11. **Adapt coding-agent to the new results and session APIs.** Restore its session behavior on the v4 harness, retain v3 session loading, and run its non-e2e suites with the faux provider.
+12. **Complete the cutover audit.** Remove dead legacy declarations and compatibility comments, verify public exports and declarations, run all non-e2e tests, then run `npm run check` clean.
 
 ## 22. Required reading
 
-For a fresh implementation session, in this order. This document wins over anything older; `harness.md` (v1 of this design) is superseded and must not be followed where they disagree.
+For a fresh implementation session, in this order. This document wins over older harness designs.
 
 1. `packages/agent/docs/harness-v2.md` — this document.
-2. `packages/agent/src/agent-loop.ts` — the loop to split into the section 14 building blocks.
-3. `packages/agent/src/agent.ts` — queues, continuation, abort, settlement to preserve in spirit.
-4. `packages/agent/src/harness/agent-harness.ts` — the harness being replaced.
-5. `packages/agent/src/harness/types.ts` — current entry union and storage contract.
-6. `packages/agent/src/harness/session/session.ts` — context build, projectors, entry creation.
-7. `packages/agent/src/harness/session/jsonl-repo.ts` — v3 format and reload.
-8. `packages/agent/src/harness/session/memory-repo.ts` — in-memory parity.
-9. `packages/agent/src/harness/messages.ts` — message conversion (toProviderMessages default).
-10. `packages/agent/src/harness/compaction/compaction.ts` — preparation, split-turn summaries.
-11. `packages/ai/src/utils/transform-messages.ts` — orphaned-tool-call healing.
-12. `packages/coding-agent/src/core/agent-session.ts` — old behavior to preserve in spirit.
-13. `packages/coding-agent/src/core/extensions/runner.ts` — old extension error isolation.
-14. `packages/storage/sqlite-node/src/sqlite/storage/index.ts` — current engine: transactions, sequences, branch materialization.
-15. `packages/storage/sqlite-node/src/sqlite/storage/branch-entries.ts` — the branch cache being generalized.
-16. `packages/storage/sqlite-node/src/sqlite/repo.ts` — create/open/fork.
-17. `packages/coding-agent/docs/session-format.md` — v3 JSONL, the compatibility target.
+2. `packages/agent/src/harness/session/types.ts` — v4 entries, records, storage, and repository contracts.
+3. `packages/agent/src/harness/session/session.ts` — session validation and lane-bound views.
+4. `packages/agent/src/harness/session/memory.ts` — reference backend.
+5. `packages/storage/sqlite-node/src/sqlite/repo.ts` — v4 SQLite repository, leases, and forks.
+6. `packages/storage/sqlite-node/src/sqlite/storage/branch-entries.ts` — branch cache queries.
+7. `packages/agent/src/harness/agent-harness.ts` — v2 public API scaffold.
+8. `packages/agent/src/agent-loop.ts` — the loop to split into the section 14 building blocks.
+9. `packages/agent/src/agent.ts` — queues, continuation, abort, settlement to preserve in spirit.
+10. `packages/agent/src/harness/messages.ts` — message conversion (`toProviderMessages` default).
+11. `packages/agent/src/harness/compaction/compaction.ts` — preparation and split-turn summaries.
+12. `packages/ai/src/utils/transform-messages.ts` — orphaned-tool-call healing.
+13. `packages/coding-agent/src/core/agent-session.ts` — old behavior to preserve in spirit.
+14. `packages/coding-agent/src/core/extensions/runner.ts` — old extension error isolation.
+15. `packages/coding-agent/docs/session-format.md` — v3 JSONL, the compatibility target.

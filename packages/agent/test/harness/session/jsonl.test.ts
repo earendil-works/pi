@@ -2,13 +2,13 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonlSessionRepo } from "../../../../src/experimental.ts";
-import { NodeExecutionEnv } from "../../../../src/harness/env/nodejs.ts";
+import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
+import { JsonlSessionRepo } from "../../../src/harness/session/index.ts";
 import {
 	createSessionBackendConformance,
 	type SessionBackendFixture,
-} from "../../../../src/harness/experimental/session/testing/index.ts";
-import { FileError } from "../../../../src/harness/types.ts";
+} from "../../../src/harness/session/testing/index.ts";
+import { FileError } from "../../../src/harness/types.ts";
 
 const tempDirs: string[] = [];
 

@@ -1,27 +1,22 @@
 import {
+	type Api,
 	type AssistantMessage,
 	type Context,
 	contentText,
-	type ImageContent,
 	type Model,
 	type Models,
 	type RetryCallbacks,
 	type RetryPolicy,
 	retryAssistantCall,
 	type SimpleStreamOptions,
-	type TextContent,
 	type Usage,
 	uuidv7,
 } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
-import {
-	convertToLlm,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "../messages.ts";
-import { buildSessionContext } from "../session/session.ts";
-import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../types.ts";
+import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
+import { buildSessionContext } from "../session/context.ts";
+import type { CompactionEntry, Entry } from "../session/types.ts";
+import { CompactionError, err, ok, type Result } from "../types.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -48,13 +43,13 @@ function safeJsonStringify(value: unknown): string {
 
 function extractFileOperations(
 	messages: AgentMessage[],
-	entries: SessionTreeEntry[],
+	entries: Entry[],
 	prevCompactionIndex: number,
 ): FileOperations {
 	const fileOps = createFileOps();
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = entries[prevCompactionIndex] as CompactionEntry;
-		if (!prevCompaction.fromHook && prevCompaction.details) {
+		if (prevCompaction.details) {
 			const details = prevCompaction.details as CompactionDetails;
 			if (Array.isArray(details.readFiles)) {
 				for (const f of details.readFiles) fileOps.read.add(f);
@@ -70,18 +65,9 @@ function extractFileOperations(
 
 	return fileOps;
 }
-function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined {
+function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 	if (entry.type === "message") {
 		return entry.message as AgentMessage;
-	}
-	if (entry.type === "custom_message") {
-		return createCustomMessage(
-			entry.customType,
-			entry.content as string | (TextContent | ImageContent)[],
-			entry.display,
-			entry.details,
-			entry.timestamp,
-		);
 	}
 	if (entry.type === "branch_summary") {
 		return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -92,7 +78,7 @@ function getMessageFromEntry(entry: SessionTreeEntry): AgentMessage | undefined 
 	return undefined;
 }
 
-function getMessageFromEntryForCompaction(entry: SessionTreeEntry): AgentMessage | undefined {
+function getMessageFromEntryForCompaction(entry: Entry): AgentMessage | undefined {
 	if (entry.type === "compaction") {
 		return undefined;
 	}
@@ -100,24 +86,22 @@ function getMessageFromEntryForCompaction(entry: SessionTreeEntry): AgentMessage
 }
 
 /** Generated compaction data ready to be persisted as a compaction entry. */
-export interface CompactionResult<T = unknown> {
+export interface CompactResult<T = unknown> {
 	/** Summary text that replaces compacted history in future context. */
 	summary: string;
-	/** Entry id where retained history starts. Optional during Pi 2.0 transition. */
-	firstKeptEntryId?: string;
 	/** Estimated context tokens before compaction. */
 	tokensBefore: number;
 	/** Usage from the LLM call(s) that generated this summary, if available. */
 	usage?: Usage;
-	/** Retained recent messages stored directly on the compaction entry. Optional during Pi 2.0 transition. */
-	retainedTail?: AgentMessage[];
+	/** Retained recent messages stored directly on the compaction entry. */
+	retainedTail: AgentMessage[];
 	/** Optional implementation-specific details stored with the compaction entry. */
 	details?: T;
 }
 
 export async function completeSimpleWithRetries(
 	models: Models,
-	model: Model<any>,
+	model: Model<Api>,
 	context: Context,
 	options: SimpleStreamOptions,
 	retry?: RetryPolicy,
@@ -197,7 +181,7 @@ function getAssistantUsage(msg: AgentMessage): Usage | undefined {
 }
 
 /** Return usage from the last valid assistant message in session entries. */
-export function getLastAssistantUsage(entries: SessionTreeEntry[]): Usage | undefined {
+export function getLastAssistantUsage(entries: Entry[]): Usage | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type === "message") {
@@ -325,7 +309,7 @@ export function estimateTokens(message: AgentMessage): number {
 
 	return 0;
 }
-function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, endIndex: number): number[] {
+function findValidCutPoints(entries: Entry[], startIndex: number, endIndex: number): number[] {
 	const cutPoints: number[] = [];
 	for (let i = startIndex; i < endIndex; i++) {
 		const entry = entries[i];
@@ -352,24 +336,18 @@ function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, end
 			case "compaction":
 			case "branch_summary":
 			case "custom":
-			case "custom_message":
-			case "label":
-			case "session_info":
-			case "leaf":
 				break;
 		}
-		if (entry.type === "branch_summary" || entry.type === "custom_message") {
-			cutPoints.push(i);
-		}
+		if (entry.type === "branch_summary") cutPoints.push(i);
 	}
 	return cutPoints;
 }
 
 /** Find the user-visible message that starts the turn containing an entry. */
-export function findTurnStartIndex(entries: SessionTreeEntry[], entryIndex: number, startIndex: number): number {
+export function findTurnStartIndex(entries: Entry[], entryIndex: number, startIndex: number): number {
 	for (let i = entryIndex; i >= startIndex; i--) {
 		const entry = entries[i];
-		if (entry.type === "branch_summary" || entry.type === "custom_message") {
+		if (entry.type === "branch_summary") {
 			return i;
 		}
 		if (entry.type === "message") {
@@ -394,7 +372,7 @@ export interface CutPointResult {
 
 /** Find the compaction cut point that keeps approximately the requested recent-token budget. */
 export function findCutPoint(
-	entries: SessionTreeEntry[],
+	entries: Entry[],
 	startIndex: number,
 	endIndex: number,
 	keepRecentTokens: number,
@@ -523,7 +501,7 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	models: Models,
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	signal?: AbortSignal,
 	customInstructions?: string,
@@ -551,7 +529,7 @@ export async function generateSummary(
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	models: Models,
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	signal?: AbortSignal,
 	customInstructions?: string,
@@ -616,8 +594,6 @@ export async function generateSummaryWithUsage(
 
 /** Prepared inputs for a compaction run. */
 export interface CompactionPreparation {
-	/** Entry id where retained history starts. */
-	firstKeptEntryId: string;
 	/** Messages summarized into the history summary. */
 	messagesToSummarize: AgentMessage[];
 	/** Prefix messages summarized separately when compaction splits a turn. */
@@ -638,7 +614,7 @@ export interface CompactionPreparation {
 
 /** Prepare session entries for compaction, or return undefined when compaction is not applicable. */
 export function prepareCompaction(
-	pathEntries: SessionTreeEntry[],
+	pathEntries: Entry[],
 	settings: CompactionSettings,
 ): Result<CompactionPreparation | undefined, CompactionError> {
 	if (pathEntries.length === 0 || pathEntries[pathEntries.length - 1].type === "compaction") {
@@ -654,42 +630,41 @@ export function prepareCompaction(
 	}
 
 	let previousSummary: string | undefined;
-	let boundaryStart = 0;
+	let compactableEntries = pathEntries;
 	if (prevCompactionIndex >= 0) {
 		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
 		previousSummary = prevCompaction.summary;
-		const firstKeptEntryIndex = prevCompaction.firstKeptEntryId
-			? pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId)
-			: -1;
-		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
+		const virtualRetainedEntries: Entry[] = prevCompaction.retainedTail.map((message, index) => ({
+			type: "message",
+			id: `${prevCompaction.id}:retained:${index}`,
+			parentId: index === 0 ? prevCompaction.id : `${prevCompaction.id}:retained:${index - 1}`,
+			seq: prevCompaction.seq,
+			timestamp: message.timestamp,
+			message,
+		}));
+		compactableEntries = [...virtualRetainedEntries, ...pathEntries.slice(prevCompactionIndex + 1)];
 	}
-	const boundaryEnd = pathEntries.length;
+	const boundaryEnd = compactableEntries.length;
 
 	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
 
-	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
-	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
-	if (!firstKeptEntry?.id) {
-		return err(new CompactionError("invalid_session", "First kept entry has no UUID - session may need migration"));
-	}
-	const firstKeptEntryId = firstKeptEntry.id;
-
+	const cutPoint = findCutPoint(compactableEntries, 0, boundaryEnd, settings.keepRecentTokens);
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 	const messagesToSummarize: AgentMessage[] = [];
-	for (let i = boundaryStart; i < historyEnd; i++) {
-		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+	for (let i = 0; i < historyEnd; i++) {
+		const msg = getMessageFromEntryForCompaction(compactableEntries[i]);
 		if (msg) messagesToSummarize.push(msg);
 	}
 	const turnPrefixMessages: AgentMessage[] = [];
 	if (cutPoint.isSplitTurn) {
 		for (let i = cutPoint.turnStartIndex; i < cutPoint.firstKeptEntryIndex; i++) {
-			const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+			const msg = getMessageFromEntryForCompaction(compactableEntries[i]);
 			if (msg) turnPrefixMessages.push(msg);
 		}
 	}
 	const retainedTail: AgentMessage[] = [];
 	for (let i = cutPoint.firstKeptEntryIndex; i < boundaryEnd; i++) {
-		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+		const msg = getMessageFromEntryForCompaction(compactableEntries[i]);
 		if (msg) retainedTail.push(msg);
 	}
 	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
@@ -700,7 +675,6 @@ export function prepareCompaction(
 	}
 
 	return ok({
-		firstKeptEntryId,
 		messagesToSummarize,
 		turnPrefixMessages,
 		retainedTail,
@@ -733,15 +707,14 @@ export { serializeConversation } from "./utils.ts";
 export async function compact(
 	preparation: CompactionPreparation,
 	models: Models,
-	model: Model<any>,
+	model: Model<Api>,
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
-): Promise<Result<CompactionResult, CompactionError>> {
+): Promise<Result<CompactResult, CompactionError>> {
 	const {
-		firstKeptEntryId,
 		messagesToSummarize,
 		turnPrefixMessages,
 		retainedTail,
@@ -751,10 +724,6 @@ export async function compact(
 		fileOps,
 		settings,
 	} = preparation;
-
-	if (!firstKeptEntryId) {
-		return err(new CompactionError("invalid_session", "First kept entry has no UUID - session may need migration"));
-	}
 
 	let summary: string;
 	let summaryUsage: Usage;
@@ -817,7 +786,6 @@ export async function compact(
 
 	return ok({
 		summary,
-		firstKeptEntryId,
 		tokensBefore,
 		usage: summaryUsage,
 		retainedTail,
@@ -827,7 +795,7 @@ export async function compact(
 async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	models: Models,
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,

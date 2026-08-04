@@ -1,4 +1,4 @@
-import { SessionError } from "@earendil-works/pi-agent-core/experimental";
+import { SessionError } from "@earendil-works/pi-agent-core";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import {
 	copyBranchEntriesThroughSeq,

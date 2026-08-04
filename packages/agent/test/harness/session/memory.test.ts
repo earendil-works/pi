@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { InMemorySessionRepo, InMemorySessionStorage, Session } from "../../../../src/experimental.ts";
+import { InMemorySessionRepo, InMemorySessionStorage, Session } from "../../../src/harness/session/index.ts";
 import {
 	createSessionBackendConformance,
 	type SessionBackendFixture,
-} from "../../../../src/harness/experimental/session/testing/index.ts";
+} from "../../../src/harness/session/testing/index.ts";
 
 const conformance = createSessionBackendConformance(() =>
 	Promise.resolve<SessionBackendFixture>({

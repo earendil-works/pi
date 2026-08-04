@@ -1,26 +1,17 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
+	AgentMessage,
 	BranchSummaryEntry,
 	CompactionEntry,
 	Session as CoreSession,
 	Entry,
 	MessageEntry,
-	ModelChangeEntry,
-	ThinkingLevelChangeEntry,
-} from "@earendil-works/pi-agent-core/experimental";
+} from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { afterEach } from "vitest";
 import type { SqliteSessionMetadata } from "../../../storage/sqlite-node/src/index.ts";
-import { InMemorySessionRepository } from "../../src/harness/session/memory-repo.ts";
-import type { Session } from "../../src/harness/session/session.ts";
-
-export async function createInMemorySession(id?: string): Promise<Session> {
-	return new InMemorySessionRepository().create({ id });
-}
-
 export function createUserMessage(text: string): AgentMessage {
 	return {
 		role: "user",
@@ -55,10 +46,8 @@ export type SqliteTestMessage = MessageEntry["message"];
 export async function appendSqliteCompaction(
 	session: SqliteTestSession,
 	summary: string,
-	_firstKeptEntryId: string | undefined,
 	tokensBefore: number,
 	details?: unknown,
-	_fromHook?: boolean,
 	usage?: Usage,
 	retainedTail: SqliteTestMessage[] = [],
 ): Promise<string> {
@@ -78,7 +67,7 @@ export async function appendSqliteCompaction(
 export async function moveSqliteMainLane(
 	session: SqliteTestSession,
 	entryId: string | null,
-	summary?: { summary: string; details?: unknown; usage?: Usage; fromHook?: boolean },
+	summary?: { summary: string; details?: unknown; usage?: Usage },
 ): Promise<string | undefined> {
 	await session.moveLane("main", entryId);
 	if (!summary) return undefined;
@@ -132,38 +121,6 @@ export async function buildSqliteContext(session: SqliteTestSession): Promise<{ 
 		return [];
 	});
 	return { messages };
-}
-
-export async function appendSqliteThinkingLevelChange(
-	session: SqliteTestSession,
-	thinkingLevel: string,
-): Promise<string> {
-	const entry = await session.appendEntry(
-		{
-			type: "thinking_level_change",
-			id: session.idGenerator.next(),
-			thinkingLevel,
-		} satisfies Omit<ThinkingLevelChangeEntry, "parentId" | "seq" | "timestamp">,
-		"main",
-	);
-	return entry.id;
-}
-
-export async function appendSqliteModelChange(
-	session: SqliteTestSession,
-	provider: string,
-	modelId: string,
-): Promise<string> {
-	const entry = await session.appendEntry(
-		{
-			type: "model_change",
-			id: session.idGenerator.next(),
-			provider,
-			modelId,
-		} satisfies Omit<ModelChangeEntry, "parentId" | "seq" | "timestamp">,
-		"main",
-	);
-	return entry.id;
 }
 
 const tempDirs: string[] = [];

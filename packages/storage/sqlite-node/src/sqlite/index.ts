@@ -1,8 +1,5 @@
 export * from "./migrations.ts";
 export {
-	type SqliteSessionCreateOptions,
-	type SqliteSessionListOptions,
-	type SqliteSessionMetadata,
 	SqliteSessionRepository,
 	type SqliteSessionRepositoryOptions,
 	type SqliteWriterLeaseOptions,
@@ -12,5 +9,9 @@ export type {
 	SqliteDatabase,
 	SqliteDatabaseFactory,
 	SqliteRunResult,
+	SqliteSessionCreateOptions,
+	SqliteSessionListOptions,
+	SqliteSessionMetadata,
+	SqliteSessionRepositoryEnv,
 	SqliteStatement,
 } from "./types.ts";

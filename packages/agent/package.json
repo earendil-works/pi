@@ -14,13 +14,9 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
-		"./experimental": {
-			"types": "./dist/experimental.d.ts",
-			"import": "./dist/experimental.js"
-		},
-		"./experimental/session/testing": {
-			"types": "./dist/harness/experimental/session/testing/index.d.ts",
-			"import": "./dist/harness/experimental/session/testing/index.js"
+		"./session/testing": {
+			"types": "./dist/harness/session/testing/index.d.ts",
+			"import": "./dist/harness/session/testing/index.js"
 		},
 		"./package.json": "./package.json"
 	},
