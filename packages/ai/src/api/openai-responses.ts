@@ -1,23 +1,15 @@
 import OpenAI from "openai";
-import type {
-	Response as OpenAIResponse,
-	ResponseCreateParamsBase,
-	ResponseCreateParamsNonStreaming,
-	ResponseCreateParamsStreaming,
-	ResponseStreamEvent,
-} from "openai/resources/responses/responses.js";
+import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
 	CacheRetention,
 	Context,
-	DeferredHandle,
 	Model,
 	OpenAIResponsesCompat,
 	ProviderEnv,
 	ProviderHeaders,
-	ProviderResponse,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -32,27 +24,12 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	type OpenAIResponsesStreamOptions,
-	processResponsesStream,
-} from "./openai-responses-shared.ts";
+import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
-const EMPTY_CONTEXT: Context = { messages: [] };
-
-type RequestMode = "streaming" | "deferred";
-type DeferredCreateParams = ResponseCreateParamsNonStreaming & { background: true; stream: false };
-type OpenAIResponseCreateParams = (ResponseCreateParamsStreaming | DeferredCreateParams) & {
-	prompt_cache_options?: { mode: "explicit" };
-};
-type CreatedResponse =
-	| { kind: "stream"; events: AsyncIterable<ResponseStreamEvent>; httpResponse: ProviderResponse }
-	| { kind: "response"; value: OpenAIResponse; httpResponse: ProviderResponse };
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -110,150 +87,12 @@ function formatOpenAIResponsesError(error: unknown): string {
 	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
 }
 
-function createOutput(model: Model<"openai-responses">): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [],
-		api: model.api as Api,
-		provider: model.provider,
-		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "pending",
-		timestamp: Date.now(),
-	};
-}
-
-function createRequestOptions(options: StreamOptions | undefined) {
-	return {
-		...(options?.signal ? { signal: options.signal } : {}),
-		...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-		maxRetries: 0,
-	};
-}
-
-function createRetryOptions(options: StreamOptions | undefined) {
-	return {
-		maxRetries: options?.maxRetries,
-		maxRetryDelayMs: options?.maxRetryDelayMs,
-		signal: options?.signal,
-	};
-}
-
-function validateDeferredRequest(model: Model<"openai-responses">): void {
-	if (model.provider !== "openai") {
-		throw new Error("Deferred Responses are currently supported only by the OpenAI provider");
-	}
-}
-
-function isPendingResponse(response: OpenAIResponse): boolean {
-	return response.status === "queued" || response.status === "in_progress";
-}
-
-async function executeCreateRequest(
-	client: OpenAI,
-	mode: RequestMode,
-	params: ResponseCreateParamsBase,
-	options: StreamOptions | undefined,
-): Promise<CreatedResponse> {
-	if (mode === "streaming") {
-		const { data, response } = await retryProviderRequest(
-			() =>
-				client.responses
-					.create(params as ResponseCreateParamsStreaming, createRequestOptions(options))
-					.withResponse(),
-			createRetryOptions(options),
-		);
-		return {
-			kind: "stream",
-			events: data,
-			httpResponse: { status: response.status, headers: headersToRecord(response.headers) },
-		};
-	}
-
-	const { data, response } = await retryProviderRequest(
-		() => client.responses.create(params as DeferredCreateParams, createRequestOptions(options)).withResponse(),
-		createRetryOptions(options),
-	);
-	return {
-		kind: "response",
-		value: data,
-		httpResponse: { status: response.status, headers: headersToRecord(response.headers) },
-	};
-}
-
-async function* responseToSyntheticStreamEvents(response: OpenAIResponse): AsyncIterable<ResponseStreamEvent> {
-	let sequenceNumber = 0;
-	for (const [outputIndex, item] of response.output.entries()) {
-		yield {
-			type: "response.output_item.done",
-			sequence_number: sequenceNumber++,
-			output_index: outputIndex,
-			item,
-		};
-	}
-
-	switch (response.status) {
-		case "completed":
-			yield { type: "response.completed", sequence_number: sequenceNumber, response };
-			return;
-		case "incomplete":
-			yield { type: "response.incomplete", sequence_number: sequenceNumber, response };
-			return;
-		case "failed":
-			yield { type: "response.failed", sequence_number: sequenceNumber, response };
-			return;
-		case "cancelled":
-			throw new Error("OpenAI background response was cancelled");
-		case "queued":
-		case "in_progress":
-			throw new Error(`OpenAI background response is still ${response.status}`);
-		case undefined:
-			throw new Error("OpenAI response omitted its status");
-		default: {
-			const _exhaustive: never = response.status;
-			throw new Error(`Unhandled OpenAI response status: ${_exhaustive}`);
-		}
-	}
-}
-
-function setDeferred(
-	output: AssistantMessage,
-	response: OpenAIResponse,
-	toolInputProperties: ReadonlyMap<string, string>,
-): void {
-	output.responseId = response.id;
-	output.rawStopReason = response.status;
-	output.stopReason = "deferred";
-	output.deferred = {
-		id: response.id,
-		...(toolInputProperties.size > 0 ? { toolInputProperties: Object.fromEntries(toolInputProperties) } : {}),
-	};
-}
-
-function cleanOutput(output: AssistantMessage): void {
-	for (const block of output.content) {
-		delete (block as { index?: number }).index;
-		// Streaming scratch buffers are only used during parsing; never persist them.
-		delete (block as { partialJson?: string }).partialJson;
-		delete (block as { customInput?: unknown }).customInput;
-	}
-}
-
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
-	/** Run this request using OpenAI Responses background mode. */
-	deferred?: boolean;
 }
 
 /**
@@ -266,13 +105,28 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
 
-	void (async () => {
-		const output = createOutput(model);
+	// Start async processing
+	(async () => {
+		const output: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api as Api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "pending",
+			timestamp: Date.now(),
+		};
 
 		try {
-			const mode: RequestMode = options?.deferred ? "deferred" : "streaming";
-			if (mode === "deferred") validateDeferredRequest(model);
-
+			// Create OpenAI client
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
@@ -282,40 +136,40 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
-			const processingOptions: OpenAIResponsesStreamOptions = {
-				serviceTier: options?.serviceTier,
-				grammarToolInputProperties,
-				applyServiceTierPricing: (usage: Usage, serviceTier: ResponseCreateParamsStreaming["service_tier"]) =>
-					applyServiceTierPricing(usage, serviceTier, model),
-			};
-
-			let params: ResponseCreateParamsBase = buildParams(
-				model,
-				context,
-				options,
-				mode,
-				compat,
-				grammarToolInputProperties,
-			);
+			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as ResponseCreateParamsBase;
+				params = nextParams as ResponseCreateParamsStreaming;
 			}
-
-			const created = await executeCreateRequest(client, mode, params, options);
-			await options?.onResponse?.(created.httpResponse, model);
+			const requestOptions = {
+				...(options?.signal ? { signal: options.signal } : {}),
+				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+				maxRetries: 0,
+			};
+			const { data: openaiStream, response } = await retryProviderRequest(
+				() => client.responses.create(params, requestOptions).withResponse(),
+				{
+					maxRetries: options?.maxRetries,
+					maxRetryDelayMs: options?.maxRetryDelayMs,
+					signal: options?.signal,
+				},
+			);
+			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			if (created.kind === "response" && isPendingResponse(created.value)) {
-				setDeferred(output, created.value, grammarToolInputProperties);
-			} else {
-				const responseEvents =
-					created.kind === "stream" ? created.events : responseToSyntheticStreamEvents(created.value);
-				await processResponsesStream(responseEvents, output, stream, model, processingOptions);
+			await processResponsesStream(openaiStream, output, stream, model, {
+				serviceTier: options?.serviceTier,
+				grammarToolInputProperties,
+				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+			});
+
+			if (options?.signal?.aborted) {
+				throw new Error("Request was aborted");
 			}
 
-			if (mode === "streaming" && options?.signal?.aborted) throw new Error("Request was aborted");
-			if (output.stopReason === "pending") throw new Error("OpenAI Responses request ended without a stop reason");
+			if (output.stopReason === "pending") {
+				throw new Error("OpenAI Responses stream ended without a stop reason");
+			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error("An unknown error occurred");
 			}
@@ -323,7 +177,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			cleanOutput(output);
+			for (const block of output.content) {
+				delete (block as { index?: number }).index;
+				// Streaming scratch buffers are only used during parsing; never persist them.
+				delete (block as { partialJson?: string }).partialJson;
+				delete (block as { customInput?: unknown }).customInput;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatOpenAIResponsesError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -348,63 +207,8 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
-		deferred: options?.deferred,
 	} satisfies OpenAIResponsesOptions);
 };
-
-export async function fetchDeferred(
-	model: Model<"openai-responses">,
-	handle: DeferredHandle,
-	options?: StreamOptions,
-): Promise<AssistantMessage> {
-	const output = createOutput(model);
-	try {
-		validateDeferredRequest(model);
-		const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
-		const client = createClient(model, EMPTY_CONTEXT, apiKey, options?.headers, options?.fetch);
-		const { data: responseData, response } = await retryProviderRequest(
-			() => client.responses.retrieve(handle.id, {}, createRequestOptions(options)).withResponse(),
-			createRetryOptions(options),
-		);
-		await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-		const toolInputProperties = new Map(Object.entries(handle.toolInputProperties ?? {}));
-		if (isPendingResponse(responseData)) {
-			setDeferred(output, responseData, toolInputProperties);
-			return output;
-		}
-		await processResponsesStream(
-			responseToSyntheticStreamEvents(responseData),
-			output,
-			new AssistantMessageEventStream(),
-			model,
-			{
-				grammarToolInputProperties: toolInputProperties,
-				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-			},
-		);
-		return output;
-	} catch (error) {
-		cleanOutput(output);
-		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-		output.errorMessage = formatOpenAIResponsesError(error);
-		return output;
-	}
-}
-
-export async function cancelDeferred(
-	model: Model<"openai-responses">,
-	handle: DeferredHandle,
-	options?: StreamOptions,
-): Promise<void> {
-	validateDeferredRequest(model);
-	const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
-	const client = createClient(model, EMPTY_CONTEXT, apiKey, options?.headers, options?.fetch);
-	const { response } = await retryProviderRequest(
-		() => client.responses.cancel(handle.id, createRequestOptions(options)).withResponse(),
-		createRetryOptions(options),
-	);
-	await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-}
 
 function createClient(
 	model: Model<"openai-responses">,
@@ -454,13 +258,12 @@ function buildParams(
 	model: Model<"openai-responses">,
 	context: Context,
 	options: OpenAIResponsesOptions | undefined,
-	mode: RequestMode,
 	compat: Required<OpenAIResponsesCompat> = getCompat(model),
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
 		compat.supportsOpenAIGrammarTools,
 	),
-): OpenAIResponseCreateParams {
+) {
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
@@ -473,16 +276,15 @@ function buildParams(
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const disableImplicitPromptCache = cacheRetention === "none" && compat.supportsExplicitPromptCacheMode;
-	const baseParams: ResponseCreateParamsBase & { prompt_cache_options?: { mode: "explicit" } } = {
+	const params: ResponseCreateParamsStreaming & { prompt_cache_options?: { mode: "explicit" } } = {
 		model: model.id,
 		input: messages,
+		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: disableImplicitPromptCache ? { mode: "explicit" } : undefined,
 		store: false,
 	};
-	const params: OpenAIResponseCreateParams =
-		mode === "streaming" ? { ...baseParams, stream: true } : { ...baseParams, background: true, stream: false };
 
 	if (options?.maxTokens) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);

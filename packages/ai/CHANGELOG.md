@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added provider-neutral deferred-response handles and authenticated redemption/cancellation dispatch, with deterministic faux-provider support for harness tests.
+
 ## [0.83.0] - 2026-07-29
 
 ### Breaking Changes

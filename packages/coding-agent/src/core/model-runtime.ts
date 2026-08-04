@@ -13,6 +13,7 @@ import {
 	type CredentialInfo,
 	type CredentialStore,
 	createModels,
+	type DeferredFetchOptions,
 	type DeferredHandle,
 	lazyStream,
 	type Model,
@@ -509,11 +510,13 @@ export class ModelRuntime implements Models {
 		handle: DeferredHandle,
 		options?: ModelsDeferredOptions,
 	): Promise<AssistantMessage> {
-		const prepared = await this.prepareRequest(model, options);
-		if (!prepared.provider.fetchDeferred) {
-			throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
-		}
-		return prepared.provider.fetchDeferred(prepared.model, handle, prepared.options);
+		return lazyStream(model, async () => {
+			const prepared = await this.prepareRequest(model, options);
+			if (!prepared.provider.fetchDeferred) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
+			}
+			return prepared.provider.fetchDeferred(prepared.model, handle, prepared.options as DeferredFetchOptions);
+		}).result();
 	}
 
 	async cancelDeferred(model: Model<Api>, handle: DeferredHandle, options?: ModelsDeferredOptions): Promise<void> {

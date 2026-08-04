@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/pi-ai";
+import {
+	createAssistantMessageEventStream,
+	InMemoryModelsStore,
+	type Model,
+	type Provider,
+} from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -125,10 +130,10 @@ describe("extension provider model lifecycle", () => {
 				streamSimple: () => {
 					throw new Error("unused");
 				},
-				fetchDeferred: async (requestModel) => {
+				fetchDeferred: (requestModel) => {
 					fetchedBaseUrl = requestModel.baseUrl;
-					return {
-						role: "assistant",
+					const message = {
+						role: "assistant" as const,
 						content: [],
 						api: requestModel.api,
 						provider: requestModel.provider,
@@ -141,9 +146,14 @@ describe("extension provider model lifecycle", () => {
 							totalTokens: 0,
 							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 						},
-						stopReason: "stop",
+						stopReason: "stop" as const,
 						timestamp: 0,
 					};
+					const stream = createAssistantMessageEventStream();
+					stream.push({ type: "start", partial: message });
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+					return stream;
 				},
 				cancelDeferred: async (_requestModel, handle) => {
 					cancelledId = handle.id;
@@ -154,8 +164,18 @@ describe("extension provider model lifecycle", () => {
 			const composedModel = runtime.getModel(provider.id, nativeModel.id);
 			expect(composedModel).toBeDefined();
 
-			await runtime.fetchDeferred(composedModel!, { id: "fetch-id" });
-			await runtime.cancelDeferred(composedModel!, { id: "cancel-id" });
+			await runtime.fetchDeferred(composedModel!, {
+				provider: provider.id,
+				modelId: nativeModel.id,
+				api: nativeModel.api,
+				id: "fetch-id",
+			});
+			await runtime.cancelDeferred(composedModel!, {
+				provider: provider.id,
+				modelId: nativeModel.id,
+				api: nativeModel.api,
+				id: "cancel-id",
+			});
 
 			expect(fetchedBaseUrl).toBe("https://overlay.test/v1");
 			expect(cancelledId).toBe("cancel-id");
