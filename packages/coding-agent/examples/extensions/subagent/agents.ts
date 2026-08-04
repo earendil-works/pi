@@ -23,6 +23,42 @@ export interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
+/**
+ * Raw agent frontmatter. Values are `unknown` because `parseFrontmatter` runs a
+ * real YAML parser, so any scalar or collection can appear here.
+ *
+ * A type alias rather than an interface: `parseFrontmatter` constrains its
+ * parameter to `Record<string, unknown>`, and only an alias picks up the
+ * implicit index signature that satisfies it.
+ */
+type AgentFrontmatter = {
+	name?: unknown;
+	description?: unknown;
+	tools?: unknown;
+	model?: unknown;
+};
+
+/**
+ * Normalize a frontmatter `tools` value to a list of tool names.
+ *
+ * Both spellings are valid YAML and both are in use:
+ *
+ *     tools: read, bash        # string
+ *     tools: [read, bash]      # array
+ *
+ * so accept either. Anything else (a number, a map, a nested list) yields no
+ * tools rather than throwing: this runs inside agent discovery, where a single
+ * bad file must not take down every other agent in the same directory.
+ */
+function parseToolList(value: unknown): string[] | undefined {
+	const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+	const tools = raw
+		.filter((t): t is string => typeof t === "string")
+		.map((t) => t.trim())
+		.filter(Boolean);
+	return tools.length > 0 ? tools : undefined;
+}
+
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
@@ -49,22 +85,17 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			continue;
 		}
 
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
+		const { frontmatter, body } = parseFrontmatter<AgentFrontmatter>(content);
 
-		if (!frontmatter.name || !frontmatter.description) {
+		if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string") {
 			continue;
 		}
-
-		const tools = frontmatter.tools
-			?.split(",")
-			.map((t: string) => t.trim())
-			.filter(Boolean);
 
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
-			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model,
+			tools: parseToolList(frontmatter.tools),
+			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 			systemPrompt: body,
 			source,
 			filePath,
