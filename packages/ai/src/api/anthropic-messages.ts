@@ -1296,11 +1296,15 @@ function convertTools(
 
 	return tools.map((tool, index) => {
 		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
-		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		const schema = tool.parameters as { $defs?: unknown; properties?: unknown; required?: string[] };
 		const legacyInputSchema = {
 			type: "object" as const,
 			properties: schema.properties ?? {},
 			required: schema.required ?? [],
+			// A schema that factors shared shapes into $defs references them via
+			// $ref from inside properties; dropping $defs leaves those pointers
+			// dangling in the request.
+			...(schema.$defs !== undefined ? { $defs: schema.$defs } : {}),
 		};
 		const inputSchema =
 			strict === true
