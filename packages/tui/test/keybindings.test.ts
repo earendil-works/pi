@@ -11,7 +11,16 @@ describe("KeybindingsManager", () => {
 		assert.strictEqual(keybindings.matches("\x1b[106;5u", "tui.input.newLine"), true);
 	});
 
-	it("binds terminal viewport shortcuts to alternate-screen navigation", () => {
+	it("binds modified and unmodified editor viewport navigation", () => {
+		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineStart"), ["home", "ctrl+home", "ctrl+a"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.cursorLineEnd"), ["end", "ctrl+end", "ctrl+e"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageUp"), ["pageUp", "ctrl+pageUp"]);
+		assert.deepStrictEqual(keybindings.getKeys("tui.editor.pageDown"), ["pageDown", "ctrl+pageDown"]);
+	});
+
+	it("binds unmodified terminal viewport shortcuts to alternate-screen navigation", () => {
 		const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 
 		assert.deepStrictEqual(keybindings.getKeys("tui.altScreen.pageUp"), ["pageUp"]);

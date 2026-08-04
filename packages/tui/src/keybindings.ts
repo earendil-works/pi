@@ -78,11 +78,11 @@ export const TUI_KEYBINDINGS = {
 		description: "Move cursor word right",
 	},
 	"tui.editor.cursorLineStart": {
-		defaultKeys: ["home", "ctrl+a"],
+		defaultKeys: ["home", "ctrl+home", "ctrl+a"],
 		description: "Move to line start",
 	},
 	"tui.editor.cursorLineEnd": {
-		defaultKeys: ["end", "ctrl+e"],
+		defaultKeys: ["end", "ctrl+end", "ctrl+e"],
 		description: "Move to line end",
 	},
 	"tui.editor.jumpForward": {
@@ -93,8 +93,8 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: "ctrl+alt+]",
 		description: "Jump backward to character",
 	},
-	"tui.editor.pageUp": { defaultKeys: "pageUp", description: "Page up" },
-	"tui.editor.pageDown": { defaultKeys: "pageDown", description: "Page down" },
+	"tui.editor.pageUp": { defaultKeys: ["pageUp", "ctrl+pageUp"], description: "Page up" },
+	"tui.editor.pageDown": { defaultKeys: ["pageDown", "ctrl+pageDown"], description: "Page down" },
 	"tui.editor.deleteCharBackward": {
 		defaultKeys: "backspace",
 		description: "Delete character backward",
@@ -138,6 +138,7 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["escape", "ctrl+c"],
 		description: "Cancel selection",
 	},
+	// These intentionally shadow the unmodified editor bindings in fullscreen mode.
 	"tui.altScreen.pageUp": {
 		defaultKeys: "pageUp",
 		description: "Scroll viewport up one page",
