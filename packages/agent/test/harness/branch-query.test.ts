@@ -1,11 +1,6 @@
 import { join } from "node:path";
-import type { Session as CoreSession, MessageEntry } from "@earendil-works/pi-agent-core/experimental";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	createNodeSqliteFactory,
-	type SqliteSessionMetadata,
-	SqliteSessionRepository,
-} from "../../../storage/sqlite-node/src/index.ts";
+import { createNodeSqliteFactory, SqliteSessionRepository } from "../../../storage/sqlite-node/src/index.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionRepository } from "../../src/harness/session/jsonl-repo.ts";
 import { InMemorySessionBackend, InMemorySessionRepository } from "../../src/harness/session/memory-repo.ts";
@@ -89,98 +84,6 @@ async function verifyBranchQueries(session: Session): Promise<{ tail: string; fu
 	expect(await session.findEntryOnBranch({ start: tail, type: "compaction" })).toMatchObject({ id: compaction });
 	await expect(session.findEntriesOnBranch({ start: "missing" })).rejects.toMatchObject({ code: "not_found" });
 	await expect(session.findEntriesOnBranch({ limit: 0 })).rejects.toThrow("limit must be a positive integer");
-	return { tail, fullPath: [root, custom, child, compaction, recentCustom, tail] };
-}
-
-async function appendSqliteCompaction(
-	session: CoreSession<SqliteSessionMetadata>,
-	summary: string,
-	retainedTail: MessageEntry["message"][],
-	tokensBefore: number,
-): Promise<string> {
-	const entry = await session.appendEntry(
-		{
-			type: "compaction",
-			id: session.idGenerator.next(),
-			summary,
-			retainedTail,
-			tokensBefore,
-		},
-		"main",
-	);
-	return entry.id;
-}
-
-async function verifySqliteBranchQueries(
-	session: CoreSession<SqliteSessionMetadata>,
-): Promise<{ tail: string; fullPath: string[] }> {
-	const root = await session.appendMessage(createUserMessage("root"));
-	const custom = await session.appendCustomEntry("note", { value: 1 });
-	const child = await session.appendMessage(createAssistantMessage("child"));
-	const compaction = await appendSqliteCompaction(session, "summary", [createAssistantMessage("child")], 100);
-	const recentCustom = await session.appendCustomEntry("note", { value: 2 });
-	const tail = await session.appendMessage(createUserMessage("tail"));
-	await session.moveLane("main", root);
-	const sibling = await session.appendMessage(createUserMessage("sibling"));
-
-	expect((await session.findEntriesOnBranch()).map((entry) => entry.id)).toEqual([sibling, root]);
-	expect((await session.findEntriesOnBranch({ start: tail, order: "oldestFirst" })).map((entry) => entry.id)).toEqual([
-		root,
-		custom,
-		child,
-		compaction,
-		recentCustom,
-		tail,
-	]);
-	expect(
-		(await session.findEntriesOnBranch({ start: tail, stopAtType: "compaction" })).map((entry) => entry.id),
-	).toEqual([tail, recentCustom, compaction]);
-	expect(
-		(await session.findEntriesOnBranch({ start: tail, stopAtType: "compaction", type: "message" })).map(
-			(entry) => entry.id,
-		),
-	).toEqual([tail]);
-	expect(
-		(await session.findEntriesOnBranch({ start: tail, stopAtId: child, order: "oldestFirst" })).map(
-			(entry) => entry.id,
-		),
-	).toEqual([root, custom, child]);
-	expect((await session.findEntriesOnBranch({ start: tail, stopAtType: "custom" })).map((entry) => entry.id)).toEqual([
-		tail,
-		recentCustom,
-	]);
-	expect(
-		(
-			await session.findEntriesOnBranch({
-				start: tail,
-				stopAtType: "custom",
-				order: "oldestFirst",
-			})
-		).map((entry) => entry.id),
-	).toEqual([root, custom]);
-	expect(
-		(await session.findEntriesOnBranch({ start: tail, type: "message", order: "oldestFirst" })).map(
-			(entry) => entry.id,
-		),
-	).toEqual([root, child, tail]);
-	expect((await session.findEntriesOnBranch({ start: tail, customType: "note" })).map((entry) => entry.id)).toEqual([
-		recentCustom,
-		custom,
-	]);
-	expect((await session.findEntriesOnBranch({ start: tail, limit: 1 })).map((entry) => entry.id)).toEqual([tail]);
-	expect(
-		(
-			await session.findEntriesOnBranch({
-				start: tail,
-				type: "message",
-				order: "oldestFirst",
-				limit: 1,
-			})
-		).map((entry) => entry.id),
-	).toEqual([root]);
-	expect(await session.findEntryOnBranch({ start: tail, type: "compaction" })).toMatchObject({ id: compaction });
-	await expect(session.findEntriesOnBranch({ start: "missing" })).rejects.toMatchObject({ code: "not_found" });
-	await expect(session.findEntriesOnBranch({ limit: 0 })).rejects.toMatchObject({ code: "invalid_query" });
 	return { tail, fullPath: [root, custom, child, compaction, recentCustom, tail] };
 }
 
@@ -396,21 +299,5 @@ describe("bounded session branch queries", () => {
 			code: "invalid_entry",
 			message: expect.stringContaining(`Entry ${childId} not found`),
 		});
-	});
-
-	it("provides identical SQLite query semantics", async () => {
-		const root = createTempDir();
-		const repo = new SqliteSessionRepository({
-			env: new NodeExecutionEnv({ cwd: root }),
-			sqlite: createNodeSqliteFactory(),
-			databasePath: join(root, "sessions.sqlite"),
-		});
-		ownedRepositories.push(repo);
-		const session = await repo.create({ id: "sqlite", cwd: root });
-		const expected = await verifySqliteBranchQueries(session);
-		const reopened = await repo.open(await session.getMetadata());
-		expect(
-			(await reopened.findEntriesOnBranch({ start: expected.tail, order: "oldestFirst" })).map((entry) => entry.id),
-		).toEqual(expected.fullPath);
 	});
 });

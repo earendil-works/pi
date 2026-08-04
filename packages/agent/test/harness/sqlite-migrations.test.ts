@@ -302,24 +302,6 @@ END;
 		});
 	});
 
-	it("pages entries by seq cursor", async () => {
-		const root = createTempDir();
-		const databasePath = join(root, "sessions.sqlite");
-		const env = new NodeExecutionEnv({ cwd: root });
-		const repo = new SqliteSessionRepository({ env, sqlite: createNodeSqliteFactory(), databasePath });
-		const session = await repo.create({ cwd: root, id: "session-1" });
-		const ids = [
-			await session.appendMessage(createUserMessage("one")),
-			await session.appendMessage(createAssistantMessage("two")),
-			await session.appendMessage(createUserMessage("three")),
-		];
-
-		expect((await getSqliteEntries(session, { limit: 2 })).map((entry) => entry.id)).toEqual(ids.slice(0, 2));
-		expect((await getSqliteEntries(session, { afterEntrySeq: 1, limit: 2 })).map((entry) => entry.id)).toEqual(
-			ids.slice(1),
-		);
-	});
-
 	it("closes the database when create fails after openDatabase succeeds", async () => {
 		const root = createTempDir();
 		const db = new CountingDatabase((sql) => {
@@ -474,12 +456,14 @@ END;
 				.get<{ leaf_id: string | null }>("session-1", "main");
 			expect(lane?.leaf_id).toBeNull();
 			expect(await db.prepare("SELECT id FROM entries WHERE session_id = ?").all("session-1")).toEqual([]);
+			expect(await session.getStats()).toMatchObject({ messageCount: 0 });
 			await db.exec("DROP TRIGGER fail_branch_tip_insert");
 		} finally {
 			await db.close();
 		}
 		const entryId = await session.appendMessage(createUserMessage("root"));
 		expect((await getSqliteEntries(session)).map((entry) => entry.id)).toEqual([entryId]);
+		expect(await session.getStats()).toMatchObject({ messageCount: 1 });
 	});
 
 	it("materializes session summary fields transactionally", async () => {

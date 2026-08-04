@@ -64,13 +64,6 @@ export function readEntryRows(
 		.all<EntryRow>(...params);
 }
 
-export function countMessageEntries(db: SqliteDatabase, sessionId: string) {
-	const row = db
-		.prepare("SELECT COUNT(*) AS count FROM entries WHERE session_id = ? AND type = 'message'")
-		.get<{ count: number }>(sessionId);
-	return row?.count ?? 0;
-}
-
 export function idExistsInEntries(db: SqliteDatabase, sessionId: string, id: string) {
 	return !!db
 		.prepare("SELECT 1 AS found FROM entries WHERE session_id = ? AND id = ? LIMIT 1")

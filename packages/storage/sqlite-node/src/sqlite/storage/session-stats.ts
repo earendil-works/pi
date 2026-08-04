@@ -11,18 +11,16 @@ export interface SessionStatsRow {
 	cost_total: number;
 }
 
-export async function createStats(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO session_stats
+export function createStats(db: SqliteDatabase, sessionId: string): void {
+	db.prepare(
+		`INSERT INTO session_stats
 			(session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total)
 			VALUES (?, 0, 0, 0, 0, 0)`,
-		)
-		.run(sessionId);
+	).run(sessionId);
 }
 
-export async function readStats(db: SqliteDatabase, sessionId: string): Promise<SessionStats> {
-	const row = await db
+export function readStats(db: SqliteDatabase, sessionId: string): SessionStats {
+	const row = db
 		.prepare(
 			`SELECT session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total
 			FROM session_stats
@@ -39,15 +37,15 @@ export async function readStats(db: SqliteDatabase, sessionId: string): Promise<
 	};
 }
 
-export async function incrementMessageCount(db: SqliteDatabase, sessionId: string): Promise<void> {
-	const result = await db
+export function incrementMessageCount(db: SqliteDatabase, sessionId: string): void {
+	const result = db
 		.prepare("UPDATE session_stats SET message_count = message_count + 1 WHERE session_id = ?")
 		.run(sessionId);
 	if (result.changes !== 1) throw new SessionError("storage", `Missing stats row for session ${sessionId}`);
 }
 
-export async function addUsageToStats(db: SqliteDatabase, sessionId: string, usage: Usage): Promise<void> {
-	const result = await db
+export function addUsageToStats(db: SqliteDatabase, sessionId: string, usage: Usage): void {
+	const result = db
 		.prepare(
 			`UPDATE session_stats
 			SET cached_tokens = cached_tokens + ?,
@@ -60,6 +58,6 @@ export async function addUsageToStats(db: SqliteDatabase, sessionId: string, usa
 	if (result.changes !== 1) throw new SessionError("storage", `Missing stats row for session ${sessionId}`);
 }
 
-export async function deleteStats(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM session_stats WHERE session_id = ?").run(sessionId);
+export function deleteStats(db: SqliteDatabase, sessionId: string): void {
+	db.prepare("DELETE FROM session_stats WHERE session_id = ?").run(sessionId);
 }
