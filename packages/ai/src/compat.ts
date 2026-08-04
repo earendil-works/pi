@@ -26,7 +26,11 @@ export * from "./images.ts";
 export * from "./images-api-registry.ts";
 export * from "./index.ts";
 export * from "./legacy-api-aliases.ts";
+export * from "./music.ts";
+export * from "./music-api-registry.ts";
+export * from "./music-model-catalog.ts";
 export * from "./providers/images/register-builtins.ts";
+export * from "./providers/music/register-builtins.ts";
 
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";

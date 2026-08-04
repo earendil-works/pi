@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added MiniMax music generation and cover generation providers for the global and CN regional endpoints, with URL and hexadecimal audio output and CN `aigc_watermark` support.
+
 ### Breaking Changes
 
 - Required dynamic model providers to accept a concrete `RefreshModelsContext.signal`; `Models.refresh()` remains unbounded when callers omit its optional signal.
