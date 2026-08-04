@@ -8,25 +8,24 @@ export interface FactRow {
 	value: string | null;
 }
 
-export async function appendFact(
+export function appendFact(
 	db: SqliteDatabase,
 	sessionId: string,
 	seq: number,
 	kind: string,
 	key: string | null,
 	value: string | null,
-): Promise<void> {
-	await db
-		.prepare("INSERT INTO facts (session_id, seq, kind, key, value) VALUES (?, ?, ?, ?, ?)")
-		.run(sessionId, seq, kind, key, value);
+) {
+	db.prepare("INSERT INTO facts (session_id, seq, kind, key, value) VALUES (?, ?, ?, ?, ?)").run(
+		sessionId,
+		seq,
+		kind,
+		key,
+		value,
+	);
 }
 
-export async function readLatestFact(
-	db: SqliteDatabase,
-	sessionId: string,
-	kind: string,
-	key: string | null,
-): Promise<FactRow | undefined> {
+export function readLatestFact(db: SqliteDatabase, sessionId: string, kind: string, key: string | null) {
 	return db
 		.prepare(
 			`SELECT session_id, seq, kind, key, value
@@ -38,10 +37,7 @@ export async function readLatestFact(
 		.get<FactRow>(sessionId, kind, key);
 }
 
-export async function readLatestLabelFacts(
-	db: SqliteDatabase,
-	sessionId: string,
-): Promise<Array<{ key: string; value: string }>> {
+export function readLatestLabelFacts(db: SqliteDatabase, sessionId: string) {
 	return db
 		.prepare(
 			`SELECT key, value FROM (
@@ -55,11 +51,7 @@ export async function readLatestLabelFacts(
 		.all<{ key: string; value: string }>(sessionId);
 }
 
-export async function readFactRows(
-	db: SqliteDatabase,
-	sessionId: string,
-	options: { afterSeq?: number } = {},
-): Promise<FactRow[]> {
+export function readFactRows(db: SqliteDatabase, sessionId: string, options: { afterSeq?: number } = {}) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
 	if (options.afterSeq !== undefined) {
@@ -76,6 +68,6 @@ export async function readFactRows(
 		.all<FactRow>(...params);
 }
 
-export async function deleteFactRows(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM facts WHERE session_id = ?").run(sessionId);
+export function deleteFactRows(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM facts WHERE session_id = ?").run(sessionId);
 }

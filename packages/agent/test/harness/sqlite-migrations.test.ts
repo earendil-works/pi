@@ -28,21 +28,21 @@ function createTempDir(): string {
 }
 
 class ThrowingStatement implements SqliteStatement {
-	private readonly onRun: () => Promise<SqliteRunResult>;
+	private readonly onRun: () => SqliteRunResult;
 
-	constructor(onRun: () => Promise<SqliteRunResult>) {
+	constructor(onRun: () => SqliteRunResult) {
 		this.onRun = onRun;
 	}
 
-	async run(..._params: unknown[]): Promise<SqliteRunResult> {
+	run(..._params: unknown[]): SqliteRunResult {
 		return this.onRun();
 	}
 
-	async get<TRow extends object>(..._params: unknown[]): Promise<TRow | undefined> {
+	get<TRow extends object>(..._params: unknown[]): TRow | undefined {
 		return undefined;
 	}
 
-	async all<TRow extends object>(..._params: unknown[]): Promise<TRow[]> {
+	all<TRow extends object>(..._params: unknown[]): TRow[] {
 		return [];
 	}
 }
@@ -55,17 +55,17 @@ class CountingDatabase implements SqliteDatabase {
 		this.statementFactory = statementFactory;
 	}
 
-	async exec(_sql: string): Promise<void> {}
+	exec(_sql: string): void {}
 
 	prepare(sql: string): SqliteStatement {
 		return this.statementFactory(sql);
 	}
 
-	async transaction<T>(fn: () => Promise<T>): Promise<T> {
+	transaction<T>(fn: () => T): T {
 		return fn();
 	}
 
-	async close(): Promise<void> {
+	close(): void {
 		this.closeCount += 1;
 	}
 }
@@ -86,9 +86,9 @@ function createCloseCountingSqliteFactory(): {
 					exec: (sql) => db.exec(sql),
 					prepare: (sql) => db.prepare(sql),
 					transaction: (fn) => db.transaction(fn),
-					async close() {
+					close() {
 						counts.closes += 1;
-						await db.close();
+						db.close();
 					},
 				};
 			},
@@ -164,7 +164,8 @@ describe("SQLite migrations", () => {
 		const sourceMetadata = await source.getMetadata();
 		expect(sourceMetadata.metadata).toEqual({ profile: "reviewer" });
 		expect((await repo.list({ cwd: root })).map((listed) => listed.metadata)).toEqual([{ profile: "reviewer" }]);
-		expect((await (await repo.open(sourceMetadata)).getMetadata()).metadata).toEqual({ profile: "reviewer" });
+		const reopened = await repo.open(sourceMetadata);
+		expect((await reopened.getMetadata()).metadata).toEqual({ profile: "reviewer" });
 		const fork = await repo.fork(sourceMetadata, { cwd: root, id: "session-2" });
 		expect((await fork.getMetadata()).metadata).toEqual({ profile: "reviewer" });
 		const overridden = await repo.fork(sourceMetadata, {
@@ -323,11 +324,11 @@ END;
 		const root = createTempDir();
 		const db = new CountingDatabase((sql) => {
 			if (sql.startsWith("INSERT INTO sessions")) {
-				return new ThrowingStatement(async () => {
+				return new ThrowingStatement(() => {
 					throw new Error("insert failed");
 				});
 			}
-			return new ThrowingStatement(async () => ({ changes: 1 }));
+			return new ThrowingStatement(() => ({ changes: 1 }));
 		});
 		const sqlite: SqliteDatabaseFactory = {
 			open: async () => db,
@@ -345,9 +346,9 @@ END;
 		const root = createTempDir();
 		const db = new CountingDatabase((sql) => {
 			if (sql.includes("FROM sessions WHERE id = ?")) {
-				return new ThrowingStatement(async () => ({ changes: 0 }));
+				return new ThrowingStatement(() => ({ changes: 0 }));
 			}
-			return new ThrowingStatement(async () => ({ changes: 1 }));
+			return new ThrowingStatement(() => ({ changes: 1 }));
 		});
 		const sqlite: SqliteDatabaseFactory = {
 			open: async () => db,

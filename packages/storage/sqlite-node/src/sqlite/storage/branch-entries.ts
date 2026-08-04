@@ -23,12 +23,8 @@ export interface CachedBranchQuery {
 	order?: "newestFirst" | "oldestFirst";
 }
 
-export async function readCachedBranch(
-	db: SqliteDatabase,
-	sessionId: string,
-	leafId: string,
-): Promise<CachedBranch | undefined> {
-	const membership = await db
+export function readCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string) {
+	const membership = db
 		.prepare(
 			"SELECT branch_id, entry_seq FROM branch_entries WHERE session_id = ? AND entry_id = ? ORDER BY branch_id LIMIT 1",
 		)
@@ -37,12 +33,12 @@ export async function readCachedBranch(
 	return { branchId: membership.branch_id, leafSeq: membership.entry_seq };
 }
 
-export async function queryCachedBranchRows(
+export function queryCachedBranchRows(
 	db: SqliteDatabase,
 	sessionId: string,
 	branch: CachedBranch,
 	query: CachedBranchQuery,
-): Promise<CachedBranchEntryRow[]> {
+) {
 	const oldestFirst = query.order === "oldestFirst";
 	const boundaryParams: unknown[] = [sessionId, branch.branchId, branch.leafSeq];
 	const stopPredicates: string[] = [];
@@ -82,11 +78,11 @@ export async function queryCachedBranchRows(
 	return db.prepare(sql).all<CachedBranchEntryRow>(...params);
 }
 
-export async function deleteBranchEntries(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
+export function deleteBranchEntries(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
 }
 
-export async function insertBranchEntry(
+export function insertBranchEntry(
 	db: SqliteDatabase,
 	sessionId: string,
 	branchId: string,
@@ -94,25 +90,17 @@ export async function insertBranchEntry(
 	entrySeq: number,
 	entryType: string,
 	customType: string | null,
-): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO branch_entries
+) {
+	db.prepare(
+		`INSERT INTO branch_entries
 			(session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-		)
-		.run(sessionId, branchId, entryId, entrySeq, entryType, customType);
+	).run(sessionId, branchId, entryId, entrySeq, entryType, customType);
 }
 
-export async function insertBranchEntriesForPath(
-	db: SqliteDatabase,
-	sessionId: string,
-	branchId: string,
-	leafId: string,
-): Promise<void> {
-	await db
-		.prepare(
-			`WITH RECURSIVE path(id, entry_seq, parent_id, type, custom_type) AS (
+export function insertBranchEntriesForPath(db: SqliteDatabase, sessionId: string, branchId: string, leafId: string) {
+	db.prepare(
+		`WITH RECURSIVE path(id, entry_seq, parent_id, type, custom_type) AS (
 				SELECT id, seq, parent_id, type,
 					CASE WHEN type = 'custom' THEN json_extract(payload, '$.customType') ELSE NULL END
 				FROM entries
@@ -126,16 +114,11 @@ export async function insertBranchEntriesForPath(
 			)
 			INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
 			SELECT ?, ?, id, entry_seq, type, custom_type FROM path`,
-		)
-		.run(sessionId, leafId, sessionId, sessionId, branchId);
+	).run(sessionId, leafId, sessionId, sessionId, branchId);
 }
 
-export async function readBranchContainingEntry(
-	db: SqliteDatabase,
-	sessionId: string,
-	entryId: string,
-): Promise<{ branchId: string; entrySeq: number } | undefined> {
-	const row = await db
+export function readBranchContainingEntry(db: SqliteDatabase, sessionId: string, entryId: string) {
+	const row = db
 		.prepare(
 			`SELECT b.branch_id, b.entry_seq
 			FROM branch_entries AS b
@@ -147,19 +130,17 @@ export async function readBranchContainingEntry(
 	return row === undefined ? undefined : { branchId: row.branch_id, entrySeq: row.entry_seq };
 }
 
-export async function copyBranchEntriesThroughSeq(
+export function copyBranchEntriesThroughSeq(
 	db: SqliteDatabase,
 	sessionId: string,
 	targetBranchId: string,
 	sourceBranchId: string,
 	throughSeq: number,
-): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
+) {
+	db.prepare(
+		`INSERT INTO branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
 			SELECT session_id, ?, entry_id, entry_seq, entry_type, custom_type
 			FROM branch_entries
 			WHERE session_id = ? AND branch_id = ? AND entry_seq <= ?`,
-		)
-		.run(targetBranchId, sessionId, sourceBranchId, throughSeq);
+	).run(targetBranchId, sessionId, sourceBranchId, throughSeq);
 }

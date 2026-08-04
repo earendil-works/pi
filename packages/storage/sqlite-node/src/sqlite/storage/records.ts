@@ -23,37 +23,35 @@ export interface NewRecordRow {
 	payload: string;
 }
 
-export async function appendRecordRow(db: SqliteDatabase, sessionId: string, record: NewRecordRow): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO records
+export function appendRecordRow(db: SqliteDatabase, sessionId: string, record: NewRecordRow) {
+	db.prepare(
+		`INSERT INTO records
 			(session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		)
-		.run(
-			sessionId,
-			record.seq,
-			record.id,
-			record.lane,
-			record.runId ?? null,
-			record.type,
-			record.opKind ?? null,
-			record.timestamp,
-			record.payload,
-		);
+	).run(
+		sessionId,
+		record.seq,
+		record.id,
+		record.lane,
+		record.runId ?? null,
+		record.type,
+		record.opKind ?? null,
+		record.timestamp,
+		record.payload,
+	);
 }
 
-export async function idExistsInRecords(db: SqliteDatabase, sessionId: string, id: string): Promise<boolean> {
-	return !!(await db
+export function idExistsInRecords(db: SqliteDatabase, sessionId: string, id: string) {
+	return !!db
 		.prepare("SELECT 1 AS found FROM records WHERE session_id = ? AND id = ? LIMIT 1")
-		.get<{ found: number }>(sessionId, id));
+		.get<{ found: number }>(sessionId, id);
 }
 
-export async function deleteRecordRows(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM records WHERE session_id = ?").run(sessionId);
+export function deleteRecordRows(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM records WHERE session_id = ?").run(sessionId);
 }
 
-export async function readRecordRows(
+export function readRecordRows(
 	db: SqliteDatabase,
 	sessionId: string,
 	query: {
@@ -64,7 +62,7 @@ export async function readRecordRows(
 		order?: "newestFirst" | "oldestFirst";
 		limit?: number;
 	} = {},
-): Promise<RecordRow[]> {
+) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
 	if (query.lane !== undefined) {

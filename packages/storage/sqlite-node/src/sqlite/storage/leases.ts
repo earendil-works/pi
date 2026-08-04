@@ -12,14 +12,14 @@ interface SessionLeaseRow {
 	expires_at_ms: number;
 }
 
-export async function acquireSessionLease(
+export function acquireSessionLease(
 	db: SqliteDatabase,
 	sessionId: string,
 	ownerId: string,
 	now: number,
 	expiresAtMs: number,
-): Promise<SessionLease | undefined> {
-	const row = await db
+) {
+	const row = db
 		.prepare(
 			`INSERT INTO leases (session_id, owner_id, fence, expires_at_ms)
 			VALUES (?, ?, 1, ?)
@@ -34,14 +34,14 @@ export async function acquireSessionLease(
 	return row === undefined ? undefined : { ownerId: row.owner_id, fence: row.fence, expiresAtMs: row.expires_at_ms };
 }
 
-export async function renewSessionLease(
+export function renewSessionLease(
 	db: SqliteDatabase,
 	sessionId: string,
 	lease: SessionLease,
 	now: number,
 	expiresAtMs: number,
-): Promise<boolean> {
-	const result = await db
+) {
+	const result = db
 		.prepare(
 			`UPDATE leases
 			SET expires_at_ms = ?
@@ -52,12 +52,14 @@ export async function renewSessionLease(
 	return result.changes === 1;
 }
 
-export async function releaseSessionLease(db: SqliteDatabase, sessionId: string, lease: SessionLease): Promise<void> {
-	await db
-		.prepare("DELETE FROM leases WHERE session_id = ? AND owner_id = ? AND fence = ?")
-		.run(sessionId, lease.ownerId, lease.fence);
+export function releaseSessionLease(db: SqliteDatabase, sessionId: string, lease: SessionLease) {
+	db.prepare("DELETE FROM leases WHERE session_id = ? AND owner_id = ? AND fence = ?").run(
+		sessionId,
+		lease.ownerId,
+		lease.fence,
+	);
 }
 
-export async function deleteSessionLease(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM leases WHERE session_id = ?").run(sessionId);
+export function deleteSessionLease(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM leases WHERE session_id = ?").run(sessionId);
 }

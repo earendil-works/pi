@@ -8,6 +8,10 @@ function isNamedParameters(value: unknown): value is Record<string, SQLInputValu
 	return true;
 }
 
+function isAsyncResult(value: unknown): boolean {
+	return value !== null && (typeof value === "object" || typeof value === "function") && "then" in value;
+}
+
 class NodeSqliteStatement implements SqliteStatement {
 	private readonly statement: ReturnType<DatabaseSync["prepare"]>;
 
@@ -15,7 +19,7 @@ class NodeSqliteStatement implements SqliteStatement {
 		this.statement = statement;
 	}
 
-	async run(...params: unknown[]): Promise<SqliteRunResult> {
+	run(...params: unknown[]): SqliteRunResult {
 		const [first, ...rest] = params;
 		const result = isNamedParameters(first)
 			? this.statement.run(first, ...(rest as SQLInputValue[]))
@@ -26,7 +30,7 @@ class NodeSqliteStatement implements SqliteStatement {
 		};
 	}
 
-	async get<TRow extends object>(...params: unknown[]): Promise<TRow | undefined> {
+	get<TRow extends object>(...params: unknown[]): TRow | undefined {
 		const [first, ...rest] = params;
 		return (
 			isNamedParameters(first)
@@ -35,7 +39,7 @@ class NodeSqliteStatement implements SqliteStatement {
 		) as TRow | undefined;
 	}
 
-	async all<TRow extends object>(...params: unknown[]): Promise<TRow[]> {
+	all<TRow extends object>(...params: unknown[]): TRow[] {
 		const [first, ...rest] = params;
 		return (
 			isNamedParameters(first)
@@ -47,13 +51,12 @@ class NodeSqliteStatement implements SqliteStatement {
 
 class NodeSqliteDatabase implements SqliteDatabase {
 	private readonly db: DatabaseSync;
-	private transactionTail: Promise<void> = Promise.resolve();
 
 	constructor(db: DatabaseSync) {
 		this.db = db;
 	}
 
-	async exec(sql: string): Promise<void> {
+	exec(sql: string): void {
 		this.db.exec(sql);
 	}
 
@@ -61,16 +64,13 @@ class NodeSqliteDatabase implements SqliteDatabase {
 		return new NodeSqliteStatement(this.db.prepare(sql));
 	}
 
-	async transaction<T>(fn: () => Promise<T>): Promise<T> {
-		const previous = this.transactionTail;
-		let release: () => void;
-		this.transactionTail = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await previous;
+	transaction<T>(fn: () => T): T {
+		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			this.db.exec("BEGIN IMMEDIATE");
-			const result = await fn();
+			const result = fn();
+			if (isAsyncResult(result)) {
+				throw new TypeError("SQLite transaction callbacks must be synchronous");
+			}
 			this.db.exec("COMMIT");
 			return result;
 		} catch (error) {
@@ -80,12 +80,10 @@ class NodeSqliteDatabase implements SqliteDatabase {
 				// Ignore rollback errors to rethrow original error.
 			}
 			throw error;
-		} finally {
-			release!();
 		}
 	}
 
-	async close(): Promise<void> {
+	close(): void {
 		this.db.close();
 	}
 }

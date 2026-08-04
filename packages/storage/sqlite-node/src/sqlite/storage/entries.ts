@@ -29,19 +29,13 @@ function orderedSql(order: EntryOrder | undefined): string {
 	return order === "oldestFirst" ? "ASC" : "DESC";
 }
 
-export async function insertEntryRow(db: SqliteDatabase, sessionId: string, entry: NewEntryRow): Promise<void> {
-	await db
-		.prepare(
-			"INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		)
-		.run(sessionId, entry.id, entry.seq, entry.parentId, entry.type, entry.timestamp, entry.payload);
+export function insertEntryRow(db: SqliteDatabase, sessionId: string, entry: NewEntryRow) {
+	db.prepare(
+		"INSERT INTO entries (session_id, id, seq, parent_id, type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+	).run(sessionId, entry.id, entry.seq, entry.parentId, entry.type, entry.timestamp, entry.payload);
 }
 
-export async function readEntryRow(
-	db: SqliteDatabase,
-	sessionId: string,
-	entryId: string,
-): Promise<EntryRow | undefined> {
+export function readEntryRow(db: SqliteDatabase, sessionId: string, entryId: string) {
 	return db
 		.prepare(
 			"SELECT session_id, seq, id, parent_id, type, timestamp, payload FROM entries WHERE session_id = ? AND id = ?",
@@ -49,11 +43,11 @@ export async function readEntryRow(
 		.get<EntryRow>(sessionId, entryId);
 }
 
-export async function readEntryRows(
+export function readEntryRows(
 	db: SqliteDatabase,
 	sessionId: string,
 	options: { afterSeq?: number; order?: EntryOrder } = {},
-): Promise<EntryRow[]> {
+) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
 	if (options.afterSeq !== undefined) {
@@ -70,19 +64,19 @@ export async function readEntryRows(
 		.all<EntryRow>(...params);
 }
 
-export async function countMessageEntries(db: SqliteDatabase, sessionId: string): Promise<number> {
-	const row = await db
+export function countMessageEntries(db: SqliteDatabase, sessionId: string) {
+	const row = db
 		.prepare("SELECT COUNT(*) AS count FROM entries WHERE session_id = ? AND type = 'message'")
 		.get<{ count: number }>(sessionId);
 	return row?.count ?? 0;
 }
 
-export async function idExistsInEntries(db: SqliteDatabase, sessionId: string, id: string): Promise<boolean> {
-	return !!(await db
+export function idExistsInEntries(db: SqliteDatabase, sessionId: string, id: string) {
+	return !!db
 		.prepare("SELECT 1 AS found FROM entries WHERE session_id = ? AND id = ? LIMIT 1")
-		.get<{ found: number }>(sessionId, id));
+		.get<{ found: number }>(sessionId, id);
 }
 
-export async function deleteEntryRows(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM entries WHERE session_id = ?").run(sessionId);
+export function deleteEntryRows(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM entries WHERE session_id = ?").run(sessionId);
 }

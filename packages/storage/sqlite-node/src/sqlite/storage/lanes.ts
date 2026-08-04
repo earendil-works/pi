@@ -14,17 +14,12 @@ export interface LaneMoveRow {
 	leaf_id: string | null;
 }
 
-export async function createInitialLane(
-	db: SqliteDatabase,
-	sessionId: string,
-	lane = "main",
-	leafId: string | null = null,
-): Promise<void> {
-	await db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
+export function createInitialLane(db: SqliteDatabase, sessionId: string, lane = "main", leafId: string | null = null) {
+	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
 }
 
-export async function readLanes(db: SqliteDatabase, sessionId: string): Promise<LaneRow[]> {
-	const rows = await db
+export function readLanes(db: SqliteDatabase, sessionId: string) {
+	const rows = db
 		.prepare(
 			`SELECT
 				l.session_id,
@@ -46,18 +41,14 @@ export async function readLanes(db: SqliteDatabase, sessionId: string): Promise<
 	return rows.map(({ session_id, lane, leaf_id }) => ({ session_id, lane, leaf_id }));
 }
 
-export async function readLane(db: SqliteDatabase, sessionId: string, lane: string): Promise<LaneRow | undefined> {
+export function readLane(db: SqliteDatabase, sessionId: string, lane: string) {
 	return db
 		.prepare("SELECT session_id, lane, leaf_id FROM lanes WHERE session_id = ? AND lane = ?")
 		.get<LaneRow>(sessionId, lane);
 }
 
-export async function readLaneHead(
-	db: SqliteDatabase,
-	sessionId: string,
-	lane: string,
-): Promise<{ leafId: string | null }> {
-	const row = await db
+export function readLaneHead(db: SqliteDatabase, sessionId: string, lane: string) {
+	const row = db
 		.prepare(
 			`SELECT
 				l.leaf_id,
@@ -73,48 +64,27 @@ export async function readLaneHead(
 	return { leafId: row.leaf_id };
 }
 
-export async function createLane(
-	db: SqliteDatabase,
-	sessionId: string,
-	seq: number,
-	lane: string,
-	leafId: string | null,
-): Promise<void> {
-	await db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
-	await appendLaneMove(db, sessionId, seq, lane, leafId);
+export function createLane(db: SqliteDatabase, sessionId: string, seq: number, lane: string, leafId: string | null) {
+	db.prepare("INSERT INTO lanes (session_id, lane, leaf_id) VALUES (?, ?, ?)").run(sessionId, lane, leafId);
+	appendLaneMove(db, sessionId, seq, lane, leafId);
 }
 
-export async function moveLane(
-	db: SqliteDatabase,
-	sessionId: string,
-	seq: number,
-	lane: string,
-	leafId: string | null,
-): Promise<void> {
-	const result = await db
+export function moveLane(db: SqliteDatabase, sessionId: string, seq: number, lane: string, leafId: string | null) {
+	const result = db
 		.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
 		.run(leafId, sessionId, lane);
 	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
-	await appendLaneMove(db, sessionId, seq, lane, leafId);
+	appendLaneMove(db, sessionId, seq, lane, leafId);
 }
 
-export async function setLaneLeaf(
-	db: SqliteDatabase,
-	sessionId: string,
-	lane: string,
-	leafId: string | null,
-): Promise<void> {
-	const result = await db
+export function setLaneLeaf(db: SqliteDatabase, sessionId: string, lane: string, leafId: string | null) {
+	const result = db
 		.prepare("UPDATE lanes SET leaf_id = ? WHERE session_id = ? AND lane = ?")
 		.run(leafId, sessionId, lane);
 	if (result.changes !== 1) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 }
 
-export async function readLaneMoveRows(
-	db: SqliteDatabase,
-	sessionId: string,
-	options: { afterSeq?: number } = {},
-): Promise<LaneMoveRow[]> {
+export function readLaneMoveRows(db: SqliteDatabase, sessionId: string, options: { afterSeq?: number } = {}) {
 	const predicates = ["session_id = ?"];
 	const params: unknown[] = [sessionId];
 	if (options.afterSeq !== undefined) {
@@ -131,19 +101,16 @@ export async function readLaneMoveRows(
 		.all<LaneMoveRow>(...params);
 }
 
-export async function deleteLaneRows(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM lane_moves WHERE session_id = ?").run(sessionId);
-	await db.prepare("DELETE FROM lanes WHERE session_id = ?").run(sessionId);
+export function deleteLaneRows(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM lane_moves WHERE session_id = ?").run(sessionId);
+	db.prepare("DELETE FROM lanes WHERE session_id = ?").run(sessionId);
 }
 
-async function appendLaneMove(
-	db: SqliteDatabase,
-	sessionId: string,
-	seq: number,
-	lane: string,
-	leafId: string | null,
-): Promise<void> {
-	await db
-		.prepare("INSERT INTO lane_moves (session_id, seq, lane, leaf_id) VALUES (?, ?, ?, ?)")
-		.run(sessionId, seq, lane, leafId);
+function appendLaneMove(db: SqliteDatabase, sessionId: string, seq: number, lane: string, leafId: string | null) {
+	db.prepare("INSERT INTO lane_moves (session_id, seq, lane, leaf_id) VALUES (?, ?, ?, ?)").run(
+		sessionId,
+		seq,
+		lane,
+		leafId,
+	);
 }

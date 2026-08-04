@@ -35,8 +35,8 @@ function parseMetadata(metadata: string | null, sessionId: string): Record<strin
 	return parsed as Record<string, unknown>;
 }
 
-export async function sessionExists(db: SqliteDatabase, sessionId: string): Promise<boolean> {
-	return !!(await db.prepare("SELECT 1 AS found FROM sessions WHERE id = ?").get<{ found: number }>(sessionId));
+export function sessionExists(db: SqliteDatabase, sessionId: string) {
+	return !!db.prepare("SELECT 1 AS found FROM sessions WHERE id = ?").get<{ found: number }>(sessionId);
 }
 
 function serializeMetadata(metadata: Record<string, unknown> | undefined): string | null {
@@ -48,25 +48,23 @@ function serializeMetadata(metadata: Record<string, unknown> | undefined): strin
 	return JSON.stringify(metadata);
 }
 
-export async function insertSessionRow(db: SqliteDatabase, session: NewSessionRow): Promise<void> {
-	await db
-		.prepare("INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)")
-		.run(
-			session.id,
-			session.createdAt,
-			serializeMetadata(session.metadata),
-			session.cwd,
-			session.parentSessionId ?? null,
-		);
+export function insertSessionRow(db: SqliteDatabase, session: NewSessionRow) {
+	db.prepare("INSERT INTO sessions (id, created_at, metadata, cwd, parent_session_id) VALUES (?, ?, ?, ?, ?)").run(
+		session.id,
+		session.createdAt,
+		serializeMetadata(session.metadata),
+		session.cwd,
+		session.parentSessionId ?? null,
+	);
 }
 
-export async function readSessionRow(db: SqliteDatabase, sessionId: string): Promise<SessionRow | undefined> {
+export function readSessionRow(db: SqliteDatabase, sessionId: string) {
 	return db
 		.prepare("SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions WHERE id = ?")
 		.get<SessionRow>(sessionId);
 }
 
-export async function readSessionRows(db: SqliteDatabase, options: { cwd?: string } = {}): Promise<SessionRow[]> {
+export function readSessionRows(db: SqliteDatabase, options: { cwd?: string } = {}) {
 	return options.cwd
 		? db
 				.prepare(
@@ -78,8 +76,8 @@ export async function readSessionRows(db: SqliteDatabase, options: { cwd?: strin
 				.all<SessionRow>();
 }
 
-export async function deleteSessionRow(db: SqliteDatabase, sessionId: string): Promise<void> {
-	await db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+export function deleteSessionRow(db: SqliteDatabase, sessionId: string) {
+	db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
 }
 
 export function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
