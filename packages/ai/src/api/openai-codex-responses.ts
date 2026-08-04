@@ -273,7 +273,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const accountId = extractAccountId(apiKey);
+			const accountId = resolveAccountId(options?.headers, apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
 				model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -1575,6 +1575,22 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 // ============================================================================
 // Auth & Headers
 // ============================================================================
+
+/**
+ * An explicitly provided chatgpt-account-id header wins over JWT extraction.
+ *
+ * Not every ChatGPT access token carries the chatgpt_account_id claim, so a
+ * caller that already knows the account (from the login exchange) must be able
+ * to state it instead of failing the request on a claim-less token.
+ */
+function resolveAccountId(headers: ProviderHeaders | undefined, token: string): string {
+	for (const [name, value] of Object.entries(headers || {})) {
+		if (name.toLowerCase() === "chatgpt-account-id" && typeof value === "string" && value.length > 0) {
+			return value;
+		}
+	}
+	return extractAccountId(token);
+}
 
 function extractAccountId(token: string): string {
 	try {
