@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
-import { type PiServer, PiServerError } from "../src/index.ts";
+import { InternalServerError, NotImplementedError, type PiServer, PiServerError } from "../src/index.ts";
 import { connectUnixTestClient, Deferred, type ProtocolTestClient, TestServerService } from "../src/testing/index.ts";
 import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
 
@@ -267,9 +267,53 @@ describe("Unix transport conformance", () => {
 		await client.hello();
 		expect(await client.request({ command: "list" })).toMatchObject({
 			ok: false,
-			error: { code: "invalid_request", message: "Internal server error" },
+			error: { code: "internal_error", message: "Internal server error" },
 		});
 		expect(errors).toContainEqual(expect.objectContaining({ message: "private service detail" }));
+	});
+
+	test("keeps not_implemented stable", async () => {
+		class IncompleteService extends TestServerService {
+			private listCount = 0;
+
+			override async listSessions() {
+				this.listCount += 1;
+				if (this.listCount > 1) throw new NotImplementedError();
+				return super.listSessions();
+			}
+		}
+		const { server } = await startServer(new IncompleteService());
+		const client = await connect(server);
+		await client.hello();
+		expect(await client.request({ command: "list" })).toMatchObject({
+			ok: false,
+			error: { code: "not_implemented", message: "Operation is not implemented" },
+		});
+	});
+
+	test("reports wrapped internal causes without exposing them", async () => {
+		const cause = new Error("private storage detail", { cause: new Error("private root cause") });
+		class WrappedFailureService extends TestServerService {
+			private listCount = 0;
+
+			override async listSessions() {
+				this.listCount += 1;
+				if (this.listCount > 1) throw new InternalServerError(cause);
+				return super.listSessions();
+			}
+		}
+		const errors: Error[] = [];
+		const { server } = await startServer(new WrappedFailureService(), { onError: (error) => errors.push(error) });
+		const client = await connect(server);
+		await client.hello();
+		const response = await client.request({ command: "list" });
+		expect(response).toMatchObject({
+			ok: false,
+			error: { code: "internal_error", message: "Internal server error" },
+		});
+		expect(JSON.stringify(response)).not.toContain("private");
+		expect(errors).toContain(cause);
+		expect(errors).not.toContainEqual(expect.objectContaining({ name: "InternalServerError" }));
 	});
 
 	test("can respond out of request order after the handshake", async () => {

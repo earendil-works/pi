@@ -21,7 +21,12 @@ import {
 	type ConnectionState,
 	isTerminalConnection,
 } from "./connection.ts";
-import { PiServerError } from "./errors.ts";
+import {
+	INTERNAL_SERVER_ERROR_MESSAGE,
+	InternalServerError,
+	NOT_IMPLEMENTED_MESSAGE,
+	PiServerError,
+} from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import { LiveSessionManager } from "./sessions.ts";
 import { ServerSnapshotPublisher } from "./snapshots.ts";
@@ -344,7 +349,14 @@ export class PiServer {
 	}
 
 	private toProtocolError(error: unknown): ProtocolError {
+		if (error instanceof InternalServerError) {
+			this.reportError(error.cause);
+			return { code: "internal_error", message: INTERNAL_SERVER_ERROR_MESSAGE };
+		}
 		if (error instanceof PiServerError) {
+			if (error.code === "not_implemented") {
+				return { code: "not_implemented", message: NOT_IMPLEMENTED_MESSAGE };
+			}
 			return error.details === undefined
 				? { code: error.code, message: error.message }
 				: { code: error.code, message: error.message, details: error.details };
@@ -353,7 +365,7 @@ export class PiServer {
 			return { code: "invalid_request", message: error.message };
 		}
 		this.reportError(error);
-		return { code: "invalid_request", message: "Internal server error" };
+		return { code: "internal_error", message: INTERNAL_SERVER_ERROR_MESSAGE };
 	}
 
 	private reportError(error: unknown): void {
