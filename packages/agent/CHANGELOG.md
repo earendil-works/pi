@@ -10,7 +10,6 @@
 ### Added
 
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
-- Added runner-independent experimental session backend conformance cases through `@earendil-works/pi-agent-core/experimental/session/testing`.
 
 ## [0.83.0] - 2026-07-29
 

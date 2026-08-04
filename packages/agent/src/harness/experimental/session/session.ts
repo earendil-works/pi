@@ -47,7 +47,9 @@ function assertJsonSerializable(value: unknown): void {
 			continue;
 		}
 		const candidate = frame.value;
-		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") continue;
+		if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") {
+			continue;
+		}
 		if (typeof candidate === "number") {
 			if (!Number.isFinite(candidate)) invalidPayload("contains a non-finite number");
 			continue;
@@ -195,10 +197,18 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return this.commitEntry(entry, lane);
 	}
 
+	async appendRecord<TNewRecord extends NewRecord>(
+		record: TNewRecord,
+	): Promise<Extract<LaneRecord, { type: TNewRecord["type"] }>>;
+	async appendRecord<TRecord extends LaneRecord>(record: NewRecord<TRecord>): Promise<TRecord>;
 	async appendRecord(record: NewRecord): Promise<LaneRecord> {
 		return this.commitRecord(record);
 	}
 
+	async findRecords<K extends LaneRecord["type"]>(
+		query: RecordQuery & { type: K },
+	): Promise<Extract<LaneRecord, { type: K }>[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
 		return this.queryRecords(query);
 	}
@@ -264,8 +274,8 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return this.storage.appendEntry(entry, lane);
 	}
 
-	private async commitRecord(record: NewRecord): Promise<LaneRecord> {
+	private async commitRecord<TRecord extends LaneRecord>(record: NewRecord<TRecord>): Promise<TRecord> {
 		assertJsonSerializable(record);
-		return this.storage.appendRecord(record);
+		return this.storage.appendRecord<TRecord>(record);
 	}
 }

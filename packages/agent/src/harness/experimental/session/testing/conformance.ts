@@ -1,6 +1,14 @@
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import type { AgentMessage } from "../../../../types.ts";
-import type { CustomEntry, Entry, MessageEntry, NewRecord, SessionErrorCode, SessionRepo } from "../types.ts";
+import type {
+	CustomEntry,
+	Entry,
+	MessageEntry,
+	NewRecord,
+	OperationStartedRecord,
+	SessionErrorCode,
+	SessionRepo,
+} from "../types.ts";
 import type { SessionBackendConformanceCase, SessionBackendFixtureFactory } from "./types.ts";
 
 function createUserMessage(text: string): AgentMessage {
@@ -31,7 +39,7 @@ function createAssistantMessage(text: string): AgentMessage {
 	};
 }
 
-function operationStarted(id: string, lane = "main"): NewRecord {
+function operationStarted(id: string, lane = "main"): NewRecord<OperationStartedRecord> {
 	return {
 		type: "operation_started",
 		id,
@@ -328,11 +336,12 @@ export function createSessionBackendConformance(
 					lane: "main",
 					entryId: "queued-message",
 				});
-				if (cancelled.type !== "queue_cancelled") throw new Error("Expected queue cancellation record");
-
 				deepStrictEqual({ seq: cancelled.seq, entryId: cancelled.entryId }, { seq: 2, entryId: "queued-message" });
+				strictEqual("runId" in cancelled, false);
 				strictEqual(await session.getEntry("queued-message"), undefined);
-				deepStrictEqual(await session.findRecords({ type: "queue_cancelled" }), [cancelled]);
+				const cancellations = await session.findRecords({ type: "queue_cancelled" });
+				strictEqual(cancellations[0]?.entryId, "queued-message");
+				deepStrictEqual(cancellations, [cancelled]);
 				deepStrictEqual(await session.getLog(), [
 					{ kind: "record", seq: enqueued.seq, record: enqueued },
 					{ kind: "record", seq: cancelled.seq, record: cancelled },
@@ -348,22 +357,24 @@ export function createSessionBackendConformance(
 				const session = await repository.create({ id: "session" });
 				await session.appendRecord(operationStarted("run-1"));
 				await session.appendRecord({
-					type: "task_attempt",
+					type: "step_attempt",
 					id: "attempt-1",
 					lane: "main",
 					runId: "run-1",
-					task: "step",
+					step: "assistant",
 					attempt: 1,
+					resultEntryId: "assistant-1",
 				});
 				await session.createLane("thread", null);
 				await session.appendRecord(operationStarted("run-2", "thread"));
 				await session.appendRecord({
-					type: "task_attempt",
+					type: "step_attempt",
 					id: "attempt-2",
 					lane: "thread",
 					runId: "run-2",
-					task: "step",
+					step: "assistant",
 					attempt: 1,
+					resultEntryId: "assistant-2",
 				});
 
 				deepStrictEqual(
@@ -371,7 +382,7 @@ export function createSessionBackendConformance(
 					["attempt-2", "run-2"],
 				);
 				deepStrictEqual(
-					(await session.findRecords({ type: "task_attempt", order: "oldestFirst" })).map((record) => record.id),
+					(await session.findRecords({ type: "step_attempt", order: "oldestFirst" })).map((record) => record.id),
 					["attempt-1", "attempt-2"],
 				);
 				deepStrictEqual(
@@ -388,7 +399,7 @@ export function createSessionBackendConformance(
 		createCase(
 			factory,
 			"queries and facts",
-			"keeps latest-value facts and computes statistics",
+			"keeps latest-value facts and computes ledger statistics across lanes",
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
 				const assistant = createAssistantMessage("answer");
@@ -406,6 +417,51 @@ export function createSessionBackendConformance(
 					"main",
 				);
 				await session.appendEntry<MessageEntry>({ type: "message", id: "assistant", message: assistant }, "main");
+				await session.appendRecord({
+					type: "usage",
+					id: "assistant-usage",
+					lane: "main",
+					cause: "assistant",
+					runId: "run",
+					entryId: "assistant",
+					attempt: 1,
+					stopReason: "stop",
+					usage: assistant.usage,
+				});
+				await session.appendRecord({
+					type: "usage",
+					id: "deferred-usage",
+					lane: "main",
+					cause: "deferred_fetch",
+					runId: "run",
+					entryId: "deferred-result",
+					attempt: 1,
+					stopReason: "deferred",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+				});
+				await session.createLane("thread", "assistant");
+				await session.appendRecord({
+					type: "usage",
+					id: "correction",
+					lane: "thread",
+					cause: "adjustment",
+					details: { reason: "provider correction" },
+					usage: {
+						input: -2,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: -2,
+						cost: { input: -0.5, output: 0, cacheRead: 0, cacheWrite: 0, total: -0.5 },
+					},
+				});
 				await session.setName("First");
 				await session.setName("Second");
 				await session.setLabel("user", "keep");
@@ -413,12 +469,20 @@ export function createSessionBackendConformance(
 
 				strictEqual(await session.getName(), "Second");
 				strictEqual(await session.getLabel("user"), undefined);
+				const usageRecords = await session.findRecords({ type: "usage", order: "oldestFirst" });
+				deepStrictEqual(
+					usageRecords.map((record) => record.cause),
+					["assistant", "deferred_fetch", "adjustment"],
+				);
+				const deferredUsage = usageRecords.find((record) => record.cause === "deferred_fetch");
+				if (deferredUsage?.cause !== "deferred_fetch") throw new Error("Expected deferred usage record");
+				strictEqual(deferredUsage.stopReason, "deferred");
 				deepStrictEqual(await session.getStats(), {
 					messageCount: 2,
 					cachedTokens: 3,
-					uncachedTokens: 12,
-					totalTokens: 20,
-					costTotal: 10,
+					uncachedTokens: 10,
+					totalTokens: 18,
+					costTotal: 9.5,
 				});
 			},
 		),
@@ -533,6 +597,7 @@ export function createSessionBackendConformance(
 
 				for (const data of [
 					{ value: undefined },
+					[undefined],
 					{ value: 1n },
 					{ value: Number.NaN },
 					{ value: new Map() },
@@ -555,22 +620,27 @@ export function createSessionBackendConformance(
 			"rejects non-JSON records before storage mutation",
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
-				await rejectsWithCode(
-					session.appendRecord({
-						type: "tool_started",
-						id: "invalid-record",
-						lane: "main",
-						runId: "run",
-						assistantEntryId: "assistant",
-						toolIndex: 0,
-						toolCallId: "call",
-						toolName: "example",
-						effectiveArgs: { value: 1n },
-						resultEntryId: "result",
-						replay: "never",
-					}),
-					"invalid_payload",
-				);
+				for (const [id, value] of [
+					["undefined-record", undefined],
+					["bigint-record", 1n],
+				] as const) {
+					await rejectsWithCode(
+						session.appendRecord({
+							type: "tool_started",
+							id,
+							lane: "main",
+							runId: "run",
+							assistantEntryId: "assistant",
+							toolIndex: 0,
+							toolCallId: "call",
+							toolName: "example",
+							effectiveArgs: { value },
+							resultEntryId: "result",
+							replay: "never",
+						}),
+						"invalid_payload",
+					);
+				}
 
 				deepStrictEqual(await session.findRecords(), []);
 				deepStrictEqual(await session.getLog(), []);
@@ -650,6 +720,20 @@ export function createSessionBackendConformance(
 				await source.setLabel(shared, "copied");
 				await source.setLabel(threadChild, "excluded");
 				await source.appendRecord(operationStarted("run"));
+				await source.appendRecord({
+					type: "usage",
+					id: "source-usage",
+					lane: "main",
+					cause: "adjustment",
+					usage: {
+						input: 10,
+						output: 5,
+						cacheRead: 3,
+						cacheWrite: 2,
+						totalTokens: 20,
+						cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+					},
+				});
 
 				const fork = await repository.fork(await source.getMetadata(), {
 					scope: "branch",
@@ -664,6 +748,13 @@ export function createSessionBackendConformance(
 				strictEqual(await fork.getLabel(shared), "copied");
 				strictEqual(await fork.getLabel(threadChild), undefined);
 				deepStrictEqual(await fork.findRecords(), []);
+				deepStrictEqual(await fork.getStats(), {
+					messageCount: 0,
+					cachedTokens: 0,
+					uncachedTokens: 0,
+					totalTokens: 0,
+					costTotal: 0,
+				});
 				const metadata = await fork.getMetadata();
 				deepStrictEqual(
 					{ id: metadata.id, parentSessionId: metadata.parentSessionId },
@@ -687,6 +778,13 @@ export function createSessionBackendConformance(
 				{ lane: "thread", leafId: threadChild },
 			]);
 			strictEqual(await fork.getLabel(threadChild), "thread-tip");
+			deepStrictEqual(
+				(await fork.getLog()).filter((item) => item.kind === "lane"),
+				[
+					{ kind: "lane", seq: 4, lane: "main", action: "move", leafId: mainChild },
+					{ kind: "lane", seq: 5, lane: "thread", action: "create", leafId: threadChild },
+				],
+			);
 		}),
 
 		createCase(
@@ -702,11 +800,31 @@ export function createSessionBackendConformance(
 				deepStrictEqual(await entryIds(fork.findEntries({ order: "oldestFirst" })), [root]);
 				strictEqual(await fork.getLeafId(), root);
 				strictEqual(await source.getLeafId(), tail);
+				const beforeDefaultTarget = await repository.fork(await source.getMetadata(), {
+					position: "before",
+					id: "before-default-target",
+				});
+				deepStrictEqual(await entryIds(beforeDefaultTarget.findEntries({ order: "oldestFirst" })), [root]);
+				strictEqual(await beforeDefaultTarget.getLeafId(), root);
+
+				const atDefaultTarget = await repository.fork(await source.getMetadata(), {
+					position: "at",
+					id: "at-default-target",
+				});
+				deepStrictEqual(await entryIds(atDefaultTarget.findEntries({ order: "oldestFirst" })), [root, tail]);
+				strictEqual(await atDefaultTarget.getLeafId(), tail);
 				await rejectsWithCode(
 					repository.fork(await source.getMetadata(), { entryId: "missing" }),
 					"invalid_fork_target",
 				);
 			},
 		),
+
+		createCase(factory, "repository and forks", "validates the default fork target", async (repository) => {
+			const source = await repository.create({ id: "source-with-custom-leaf" });
+			await source.appendCustomEntry("not-a-message");
+
+			await rejectsWithCode(repository.fork(await source.getMetadata(), { id: "fork" }), "invalid_fork_target");
+		}),
 	];
 }

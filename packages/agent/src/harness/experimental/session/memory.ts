@@ -38,9 +38,9 @@ function provisionEntry<TEntry extends Entry>(
 	return { ...newEntry, parentId, seq, timestamp: Date.now() } as unknown as TEntry;
 }
 
-function provisionRecord(newRecord: NewRecord, seq: number): LaneRecord {
+function provisionRecord<TRecord extends LaneRecord>(newRecord: NewRecord<TRecord>, seq: number): TRecord {
 	// Object spread does not preserve the correlation between a discriminant and the rest of a union member.
-	return { ...newRecord, seq, timestamp: Date.now() } as LaneRecord;
+	return { ...newRecord, seq, timestamp: Date.now() } as unknown as TRecord;
 }
 
 export class InMemorySessionStorage implements SessionStorage {
@@ -53,6 +53,13 @@ export class InMemorySessionStorage implements SessionStorage {
 	private readonly records: LaneRecord[] = [];
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
+	private readonly stats: SessionStats = {
+		messageCount: 0,
+		cachedTokens: 0,
+		uncachedTokens: 0,
+		totalTokens: 0,
+		costTotal: 0,
+	};
 	private name: string | undefined;
 	private readonly labels = new Map<string, string>();
 
@@ -68,15 +75,15 @@ export class InMemorySessionStorage implements SessionStorage {
 			storage.lanes.clear();
 			for (const [lane, leafId] of this.lanes) storage.lanes.set(lane, leafId);
 		} else {
-			let targetId: string | null;
-			if (options.entryId === undefined) {
-				targetId = this.lanes.get("main") ?? null;
-			} else {
-				const target = this.entriesById.get(options.entryId);
+			const selectedEntryId = options.entryId ?? this.lanes.get("main") ?? null;
+			let targetId: string | null = null;
+			if (selectedEntryId !== null) {
+				const target = this.entriesById.get(selectedEntryId);
 				if (!target || target.type !== "message") {
-					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${options.entryId}`);
+					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
 				}
-				targetId = (options.position ?? "before") === "at" ? target.id : target.parentId;
+				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
+				targetId = position === "at" ? target.id : target.parentId;
 			}
 			copiedEntries = [...this.walkToRoot(targetId)].reverse();
 			storage.lanes.set("main", targetId);
@@ -92,6 +99,15 @@ export class InMemorySessionStorage implements SessionStorage {
 			storage.laneByEntryId.set(entry.id, lane);
 			storage.usedIds.add(entry.id);
 			storage.log.push({ kind: "entry", seq: entry.seq, lane, entry });
+		}
+		for (const [lane, leafId] of options.scope === "tree" ? this.lanes : []) {
+			storage.log.push({
+				kind: "lane",
+				seq: storage.nextSequence(),
+				lane,
+				action: lane === "main" ? "move" : "create",
+				leafId,
+			});
 		}
 		if (this.name !== undefined) {
 			storage.name = this.name;
@@ -138,10 +154,11 @@ export class InMemorySessionStorage implements SessionStorage {
 		this.laneByEntryId.set(entry.id, lane);
 		this.lanes.set(lane, entry.id);
 		this.log.push({ kind: "entry", seq: entry.seq, lane, entry });
+		if (entry.type === "message") this.stats.messageCount += 1;
 		return structuredClone(entry);
 	}
 
-	async appendRecord(newRecord: NewRecord): Promise<LaneRecord> {
+	async appendRecord<TRecord extends LaneRecord>(newRecord: NewRecord<TRecord>): Promise<TRecord> {
 		this.requireLane(newRecord.lane);
 		this.validateUnusedId(newRecord.id);
 		const clonedRecord = structuredClone(newRecord);
@@ -149,6 +166,12 @@ export class InMemorySessionStorage implements SessionStorage {
 		this.usedIds.add(record.id);
 		this.records.push(record);
 		this.log.push({ kind: "record", seq: record.seq, record });
+		if (record.type === "usage") {
+			this.stats.cachedTokens += record.usage.cacheRead;
+			this.stats.uncachedTokens += record.usage.input + record.usage.cacheWrite;
+			this.stats.totalTokens += record.usage.totalTokens;
+			this.stats.costTotal += record.usage.cost.total;
+		}
 		return structuredClone(record);
 	}
 
@@ -184,6 +207,10 @@ export class InMemorySessionStorage implements SessionStorage {
 		return structuredClone(results);
 	}
 
+	async findRecords<K extends LaneRecord["type"]>(
+		query: RecordQuery & { type: K },
+	): Promise<Extract<LaneRecord, { type: K }>[]>;
+	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
 	async findRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
 		const results: LaneRecord[] = [];
 		for (const record of ordered(this.records, query.order)) {
@@ -225,30 +252,7 @@ export class InMemorySessionStorage implements SessionStorage {
 	}
 
 	async getStats(): Promise<SessionStats> {
-		const stats: SessionStats = {
-			messageCount: 0,
-			cachedTokens: 0,
-			uncachedTokens: 0,
-			totalTokens: 0,
-			costTotal: 0,
-		};
-		for (const entry of this.entries) {
-			if (entry.type === "message") stats.messageCount += 1;
-			const usage =
-				entry.type === "message"
-					? entry.message.role === "assistant"
-						? entry.message.usage
-						: undefined
-					: entry.type === "compaction" || entry.type === "branch_summary"
-						? entry.usage
-						: undefined;
-			if (!usage) continue;
-			stats.cachedTokens += usage.cacheRead;
-			stats.uncachedTokens += usage.input + usage.cacheWrite;
-			stats.totalTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-			stats.costTotal += usage.cost.total;
-		}
-		return stats;
+		return structuredClone(this.stats);
 	}
 
 	private nextSequence(): number {
