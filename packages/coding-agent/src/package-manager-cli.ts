@@ -24,7 +24,7 @@ import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess } from "./utils/child-process.ts";
-import { getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -476,10 +476,11 @@ interface SelfUpdatePlan {
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
 	try {
-		latestRelease = await getLatestPiRelease(VERSION);
+		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Could not determine latest ${APP_NAME} version: ${message}`);
+		throw new Error(`Could not determine latest ${APP_NAME} version: ${formatVersionCheckError(error)}`, {
+			cause: error,
+		});
 	}
 	if (!latestRelease) {
 		throw new Error(`Could not determine latest ${APP_NAME} version.`);
