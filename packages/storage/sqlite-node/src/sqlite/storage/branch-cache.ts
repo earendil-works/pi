@@ -96,6 +96,22 @@ export async function deleteBranchCache(db: SqliteDatabase, sessionId: string): 
 	await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run(sessionId);
 }
 
+export async function rebuildBranchCache(db: SqliteDatabase, sessionId: string): Promise<void> {
+	const tips = await db
+		.prepare(
+			`SELECT leaf.id
+			FROM entries AS leaf
+			WHERE leaf.session_id = ?
+				AND NOT EXISTS (
+					SELECT 1 FROM entries AS child WHERE child.session_id = leaf.session_id AND child.parent_id = leaf.id
+				)
+			ORDER BY leaf.seq`,
+		)
+		.all<{ id: string }>(sessionId);
+	await deleteBranchCache(db, sessionId);
+	for (const tip of tips) await buildCachedBranch(db, sessionId, tip.id);
+}
+
 export async function buildCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string): Promise<void> {
 	await db.exec("SAVEPOINT build_branch_cache");
 	try {

@@ -28,6 +28,7 @@ import {
 	queryCachedBranchRows,
 	readBranchTipIds,
 	readCachedBranch,
+	rebuildBranchCache,
 } from "./storage/branch-cache.ts";
 import {
 	countMessageEntries,
@@ -580,6 +581,17 @@ export class SqliteSessionRepository
 
 	async open(metadata: SqliteSessionMetadata): Promise<Session<SqliteSessionMetadata>> {
 		return new Session(await this.operations.enqueue(async () => loadStorage(await this.getDatabase(), metadata)));
+	}
+
+	/** Rebuilds this session's private branch-read cache from canonical entry parent links. */
+	async repairBranchCache(metadata: SqliteSessionMetadata): Promise<void> {
+		return this.operations.enqueue(async () => {
+			const db = await this.getDatabase();
+			await requireSessionRow(db, metadata.id);
+			await db.transaction(async () => {
+				await rebuildBranchCache(db, metadata.id);
+			});
+		});
 	}
 
 	async list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {

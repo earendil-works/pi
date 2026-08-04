@@ -147,6 +147,32 @@ describe("SQLite branch cache", () => {
 		}
 	});
 
+	it("repairs the private branch cache explicitly", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		const rootId = await session.appendMessage(createUserMessage("root"));
+		const childId = await session.appendMessage(createAssistantMessage("child"));
+		const metadata = await session.getMetadata();
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db.prepare("DELETE FROM branch_tips WHERE session_id = ?").run("session-1");
+			await db.prepare("DELETE FROM branch_entries WHERE session_id = ?").run("session-1");
+		} finally {
+			await db.close();
+		}
+
+		await expect(getSqliteBranch(session)).rejects.toMatchObject({ code: "invalid_entry" });
+
+		await repo.repairBranchCache(metadata);
+
+		expect((await getSqliteBranch(session)).map((entry) => entry.id)).toEqual([rootId, childId]);
+	});
+
 	it("fails when forking from a source with a missing branch cache", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
