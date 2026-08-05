@@ -9,7 +9,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import type { AssistantMessage, ImageContent, Message, Model, Usage } from "@earendil-works/pi-ai/compat";
+import {
+	type AssistantMessage,
+	clampThinkingLevel,
+	type ImageContent,
+	type Message,
+	type Model,
+	type Usage,
+} from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -115,6 +122,7 @@ import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { type BranchSummaryChoice, BranchSummarySelectorComponent } from "./components/branch-summary-selector.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -215,6 +223,8 @@ type CompactionCostNotice = {
 	kind: "compaction" | "branch_summary";
 	usage: Usage;
 };
+
+type BranchSummaryPromptResult = { type: "choice"; choice: BranchSummaryChoice } | { type: "selectModel" } | undefined;
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }> | CompactionCostNotice;
 
@@ -4970,6 +4980,57 @@ export class InteractiveMode {
 		});
 	}
 
+	private showBranchSummaryPrompt(
+		model: Model<string> | undefined,
+		thinkingLevel: ThinkingLevel,
+		onThinkingLevelChange: (level: ThinkingLevel) => void,
+	): Promise<BranchSummaryPromptResult> {
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const selector = new BranchSummarySelectorComponent(
+					model,
+					thinkingLevel,
+					(choice) => {
+						done();
+						resolve({ type: "choice", choice });
+					},
+					() => {
+						done();
+						resolve({ type: "selectModel" });
+					},
+					onThinkingLevelChange,
+					() => {
+						done();
+						resolve(undefined);
+					},
+				);
+				return { component: selector, focus: selector };
+			});
+		});
+	}
+
+	private showBranchSummaryModelSelector(currentModel: Model<string> | undefined): Promise<Model<string> | undefined> {
+		return new Promise((resolve) => {
+			this.showSelector((done) => {
+				const selector = new ModelSelectorComponent(
+					this.ui,
+					currentModel,
+					this.session.modelRuntime,
+					this.session.scopedModels,
+					(model) => {
+						done();
+						resolve(model);
+					},
+					() => {
+						done();
+						resolve(undefined);
+					},
+				);
+				return { component: selector, focus: selector, dispose: () => selector.dispose() };
+			});
+		});
+	}
+
 	private showModelsSelector(): void {
 		let availableModels = [...this.session.modelRuntime.getAvailableSnapshot()];
 		let availableModelIds = new Set(availableModels.map((model) => `${model.provider}/${model.id}`));
@@ -5180,22 +5241,46 @@ export class InteractiveMode {
 					// Loop until user makes a complete choice or cancels to tree
 					let wantsSummary = false;
 					let customInstructions: string | undefined;
+					let summaryModel: Model<string> | undefined;
+					let summaryThinkingLevel: ThinkingLevel = "off";
+					try {
+						const summaryConfig = this.session.resolveSummarizationConfig("branchSummary");
+						summaryModel = summaryConfig.model;
+						summaryThinkingLevel = summaryConfig.thinkingLevel;
+					} catch {
+						// Keep navigation available when the configured summary model cannot be resolved.
+					}
 
 					// Check if we should skip the prompt (user preference to always default to no summary)
 					if (!this.settingsManager.getBranchSummarySkipPrompt()) {
 						while (true) {
-							const summaryChoice = await this.showExtensionSelector("Summarize branch?", [
-								"No summary",
-								"Summarize",
-								"Summarize with custom prompt",
-							]);
+							const promptResult = await this.showBranchSummaryPrompt(
+								summaryModel,
+								summaryThinkingLevel,
+								(level) => {
+									summaryThinkingLevel = level;
+								},
+							);
 
-							if (summaryChoice === undefined) {
+							if (promptResult === undefined) {
 								// User pressed escape - re-show tree selector with same selection
 								this.showTreeSelector(entryId);
 								return;
 							}
 
+							if (promptResult.type === "selectModel") {
+								const selectedModel = await this.showBranchSummaryModelSelector(summaryModel);
+								if (selectedModel) {
+									summaryModel = selectedModel;
+									summaryThinkingLevel = clampThinkingLevel(
+										selectedModel,
+										summaryThinkingLevel,
+									) as ThinkingLevel;
+								}
+								continue;
+							}
+
+							const summaryChoice = promptResult.choice;
 							wantsSummary = summaryChoice !== "No summary";
 
 							if (summaryChoice === "Summarize with custom prompt") {
@@ -5235,6 +5320,8 @@ export class InteractiveMode {
 						const result = await this.session.navigateTree(entryId, {
 							summarize: wantsSummary,
 							customInstructions,
+							model: wantsSummary ? summaryModel : undefined,
+							thinkingLevel: wantsSummary ? summaryThinkingLevel : undefined,
 						});
 
 						if (result.aborted) {

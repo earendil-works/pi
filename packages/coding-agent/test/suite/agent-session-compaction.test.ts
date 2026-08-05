@@ -495,6 +495,80 @@ describe("AgentSession compaction characterization", () => {
 		expect(calls).toEqual([{ modelId: "faux-branch-summary", reasoning: "medium" }]);
 	});
 
+	it("uses one-off branch summary model and thinking overrides without changing the session or settings", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", reasoning: true },
+				{ id: "faux-configured", reasoning: true },
+				{ id: "faux-temporary", reasoning: true },
+			],
+			settings: {
+				branchSummary: { provider: "faux", model: "faux-configured", thinkingLevel: "medium" },
+			},
+		});
+		harnesses.push(harness);
+		const rootId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "root" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "branch work" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage(createAssistant(harness, { stopReason: "stop", totalTokens: 10 }));
+		const mainModel = harness.session.model;
+		const mainThinkingLevel = harness.session.thinkingLevel;
+		const settingsBefore = {
+			branchSummary: harness.settingsManager.getBranchSummarySettings(),
+			defaultProvider: harness.settingsManager.getDefaultProvider(),
+			defaultModel: harness.settingsManager.getDefaultModel(),
+			defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+		};
+		const calls: Array<{ modelId: string; reasoning: unknown }> = [];
+		harness.session.agent.streamFunction = (model, _context, options) => {
+			calls.push({ modelId: model.id, reasoning: options?.reasoning });
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "stop",
+					message: {
+						...fauxAssistantMessage("branch summary from temporary model"),
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						usage: createUsage(10),
+					},
+				});
+			});
+			return stream;
+		};
+
+		const result = await harness.session.navigateTree(rootId, {
+			summarize: true,
+			model: harness.getModel("faux-temporary"),
+			thinkingLevel: "high",
+		});
+
+		expect(result.summaryEntry?.summary).toContain("branch summary from temporary model");
+		expect(calls).toEqual([{ modelId: "faux-temporary", reasoning: "high" }]);
+		expect(harness.session.model).toBe(mainModel);
+		expect(harness.session.thinkingLevel).toBe(mainThinkingLevel);
+		expect({
+			branchSummary: harness.settingsManager.getBranchSummarySettings(),
+			defaultProvider: harness.settingsManager.getDefaultProvider(),
+			defaultModel: harness.settingsManager.getDefaultModel(),
+			defaultThinkingLevel: harness.settingsManager.getDefaultThinkingLevel(),
+		}).toEqual(settingsBefore);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "model_change" || entry.type === "thinking_level_change"),
+		).toHaveLength(0);
+	});
+
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],

@@ -475,14 +475,18 @@ export class AgentSession {
 		}
 	}
 
-	private _getSummarizationModel(
-		settings: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel },
-		fallbackModel: Model<string> | undefined,
-		settingsKey: "compaction" | "branchSummary",
-	): { model: Model<string>; thinkingLevel: ThinkingLevel } {
+	/** Resolve a configured summarization model and clamp its thinking level to supported values. */
+	resolveSummarizationConfig(settingsKey: "compaction" | "branchSummary"): {
+		model: Model<string>;
+		thinkingLevel: ThinkingLevel;
+	} {
+		const settings: { provider?: string; model?: string; thinkingLevel?: ThinkingLevel } =
+			settingsKey === "compaction"
+				? this.settingsManager.getCompactionSettings()
+				: this.settingsManager.getBranchSummarySettings();
 		const hasModelOverride = settings.provider !== undefined || settings.model !== undefined;
-		const provider = settings.provider ?? fallbackModel?.provider;
-		const modelId = settings.model ?? fallbackModel?.id;
+		const provider = settings.provider ?? this.model?.provider;
+		const modelId = settings.model ?? this.model?.id;
 		if (!provider || !modelId) {
 			if (hasModelOverride) {
 				throw new Error(
@@ -492,7 +496,7 @@ export class AgentSession {
 			throw new Error(formatNoModelSelectedMessage());
 		}
 
-		const model = hasModelOverride ? this._modelRuntime.getModel(provider, modelId) : fallbackModel;
+		const model = hasModelOverride ? this._modelRuntime.getModel(provider, modelId) : this.model;
 		if (!model) {
 			throw new Error(
 				`Summarization model not found: ${provider}/${modelId}. Check ${settingsKey}.provider and ${settingsKey}.model in your settings.`,
@@ -1982,11 +1986,8 @@ export class AgentSession {
 
 		try {
 			const settings = this.settingsManager.getCompactionSettings();
-			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } = this._getSummarizationModel(
-				settings,
-				this.model,
-				"compaction",
-			);
+			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } =
+				this.resolveSummarizationConfig("compaction");
 			const {
 				model: requestModel,
 				apiKey,
@@ -2289,11 +2290,8 @@ export class AgentSession {
 		let fromExtension = false;
 
 		try {
-			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } = this._getSummarizationModel(
-				settings,
-				this.model,
-				"compaction",
-			);
+			const { model: summarizationModel, thinkingLevel: summarizationThinkingLevel } =
+				this.resolveSummarizationConfig("compaction");
 			const {
 				model: requestModel,
 				apiKey,
@@ -3153,11 +3151,20 @@ export class AgentSession {
 	 * @param options.customInstructions Custom instructions for summarizer
 	 * @param options.replaceInstructions If true, customInstructions replaces the default prompt
 	 * @param options.label Label to attach to the branch summary entry
+	 * @param options.model One-off model for this summary only
+	 * @param options.thinkingLevel One-off thinking level for this summary only
 	 * @returns Result with editorText (if user message) and cancelled status
 	 */
 	async navigateTree(
 		targetId: string,
-		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
+		options: {
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+			model?: Model<string>;
+			thinkingLevel?: ThinkingLevel;
+		} = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
@@ -3175,6 +3182,7 @@ export class AgentSession {
 		// Model required for summarization
 		if (
 			options.summarize &&
+			!options.model &&
 			!this.model &&
 			branchSummarySettings.provider === undefined &&
 			branchSummarySettings.model === undefined
@@ -3251,11 +3259,22 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const { model, thinkingLevel } = this._getSummarizationModel(
-					branchSummarySettings,
-					this.model,
-					"branchSummary",
-				);
+				let model: Model<string>;
+				let thinkingLevel: ThinkingLevel;
+				if (options.model) {
+					model = options.model;
+					thinkingLevel = clampThinkingLevel(
+						model,
+						options.thinkingLevel ?? branchSummarySettings.thinkingLevel ?? this.thinkingLevel,
+					) as ThinkingLevel;
+				} else {
+					const configured = this.resolveSummarizationConfig("branchSummary");
+					model = configured.model;
+					thinkingLevel =
+						options.thinkingLevel === undefined
+							? configured.thinkingLevel
+							: (clampThinkingLevel(model, options.thinkingLevel) as ThinkingLevel);
+				}
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model: requestModel,
