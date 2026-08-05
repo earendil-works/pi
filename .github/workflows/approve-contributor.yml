@@ -30,7 +30,7 @@ jobs:
             const commenter = context.payload.comment.user.login;
             const commentBody = (context.payload.comment.body || '').trim();
 
-            const approvalAtStartPattern = /^[\s.]*(?:@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\s*,\s*|[.:]\s*|\s+))*(lgtmi|lgtm)(?=$|[\s.])/i;
+            const approvalAtStartPattern = /^[\s.]*(?:@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\s*,\s*|[.:]\s*|\s+))*(lgtmi|lgtm)(?=$|[\s.,])/i;
             const approvalAtEndPattern = /(?:^|[\s.])(lgtmi|lgtm)[\s.]*$/i;
             const approvalMatch = commentBody.match(approvalAtStartPattern) ?? commentBody.match(approvalAtEndPattern);
 
