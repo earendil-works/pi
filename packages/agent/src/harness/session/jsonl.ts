@@ -58,7 +58,6 @@ interface HeaderLine {
 	createdAt: number;
 	cwd: string;
 	parentSessionId?: string;
-	forkImportThroughSeq?: number;
 }
 
 type DecodedMutation =
@@ -149,8 +148,6 @@ function parseHeader(line: string, path: string): HeaderLine {
 	if (parentSessionId !== undefined && typeof parentSessionId !== "string") {
 		throw invalidFile(path, 1, "has invalid parentSessionId");
 	}
-	const forkImportThroughSeq =
-		value.forkImportThroughSeq === undefined ? undefined : requireSequence(value.forkImportThroughSeq, path, 1);
 	return {
 		kind: "header",
 		version: 4,
@@ -158,7 +155,6 @@ function parseHeader(line: string, path: string): HeaderLine {
 		createdAt: requireTimestamp(value.createdAt, path, 1),
 		cwd: requireString(value.cwd, path, 1, "cwd"),
 		parentSessionId,
-		forkImportThroughSeq,
 	};
 }
 
@@ -270,13 +266,11 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	};
 	private name: string | undefined;
 	private readonly labels = new Map<string, string>();
-	private readonly forkImportThroughSeq: number;
 	private tail: Promise<void> = Promise.resolve();
 
-	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata, forkImportThroughSeq = 0) {
+	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata) {
 		this.fs = fs;
 		this.metadata = structuredClone(metadata);
-		this.forkImportThroughSeq = forkImportThroughSeq;
 	}
 
 	static async load(fs: JsonlSessionRepoFileSystem, path: string): Promise<JsonlSessionStorage> {
@@ -285,17 +279,13 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		if (physicalLines.at(-1) === "") physicalLines.pop();
 		if (physicalLines.length === 0 || !physicalLines[0]) throw invalidFile(path, 1, "is missing a header");
 		const header = parseHeader(physicalLines[0], path);
-		const storage = new JsonlSessionStorage(
-			fs,
-			{
-				id: header.id,
-				createdAt: header.createdAt,
-				parentSessionId: header.parentSessionId,
-				path,
-				cwd: header.cwd,
-			},
-			header.forkImportThroughSeq,
-		);
+		const storage = new JsonlSessionStorage(fs, {
+			id: header.id,
+			createdAt: header.createdAt,
+			parentSessionId: header.parentSessionId,
+			path,
+			cwd: header.cwd,
+		});
 		for (let index = 1; index < physicalLines.length; index++) {
 			const line = physicalLines[index]!;
 			let mutation: DecodedMutation;
@@ -545,9 +535,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				this.entryLanes.set(mutation.entry.id, mutation.lane);
 				this.lanes.set(mutation.lane, mutation.entry.id);
 				this.log.push({ kind: "entry", seq, entry: mutation.entry });
-				if (mutation.entry.seq > this.forkImportThroughSeq && mutation.entry.type === "message") {
-					this.stats.messageCount += 1;
-				}
+				if (mutation.entry.type === "message") this.stats.messageCount += 1;
 				break;
 			}
 			case "record":
@@ -805,10 +793,10 @@ export class JsonlSessionRepo implements SessionRepo<JsonlSessionMetadata, Jsonl
 						: await sourceSession.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
 			}
 
-			const target = await this.createDirect(
-				{ ...options, parentSessionId: options.parentSessionId ?? source.id },
-				copiedEntries.length,
-			);
+			const target = await this.createDirect({
+				...options,
+				parentSessionId: options.parentSessionId ?? source.id,
+			});
 			const targetStorage = this.storages.get((await target.getMetadata()).path)!;
 			for (const entry of copiedEntries) {
 				await targetStorage.appendCopiedEntry(entry, laneByEntryId?.get(entry.id) ?? "main");
@@ -854,10 +842,7 @@ export class JsonlSessionRepo implements SessionRepo<JsonlSessionMetadata, Jsonl
 		return new Session(storage);
 	}
 
-	private async createDirect(
-		options: JsonlSessionCreateOptions,
-		forkImportThroughSeq: number,
-	): Promise<Session<JsonlSessionMetadata>> {
+	private async createDirect(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
 		const id = options.id ?? uuidv7();
 		const path = await this.pathForId(id);
 		if (fileResult(await this.fs.exists(path), `Failed to check session ${path}`)) {
@@ -871,24 +856,19 @@ export class JsonlSessionRepo implements SessionRepo<JsonlSessionMetadata, Jsonl
 			createdAt: Date.now(),
 			cwd,
 			parentSessionId: options.parentSessionId,
-			...(forkImportThroughSeq === 0 ? {} : { forkImportThroughSeq }),
 		};
 		fileResult(
 			await this.fs.createDir(await this.root(), { recursive: true }),
 			`Failed to create sessions directory`,
 		);
 		fileResult(await this.fs.writeFile(path, `${JSON.stringify(header)}\n`), `Failed to create session ${path}`);
-		const storage = new JsonlSessionStorage(
-			this.fs,
-			{
-				id,
-				createdAt: header.createdAt,
-				parentSessionId: header.parentSessionId,
-				path,
-				cwd,
-			},
-			forkImportThroughSeq,
-		);
+		const storage = new JsonlSessionStorage(this.fs, {
+			id,
+			createdAt: header.createdAt,
+			parentSessionId: header.parentSessionId,
+			path,
+			cwd,
+		});
 		this.storages.set(path, storage);
 		return new Session(storage);
 	}

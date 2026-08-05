@@ -98,7 +98,7 @@ describe("JSONL v4 persistence", () => {
 		).toBe(7);
 	});
 
-	it("persists a fork import boundary instead of per-entry count flags", async () => {
+	it("recomputes fork message counts when reopening", async () => {
 		const root = createTempDir();
 		const repository = createRepository(root);
 		const source = await repository.create({ id: "source" });
@@ -106,26 +106,18 @@ describe("JSONL v4 persistence", () => {
 		await source.appendMessage({ role: "user", content: [{ type: "text", text: "two" }], timestamp: 2 });
 		const fork = await repository.fork(await source.getMetadata(), { id: "fork" });
 		const metadata = await fork.getMetadata();
-		expect((await fork.getStats()).messageCount).toBe(0);
 		await repository[Symbol.asyncDispose]();
-
-		const lines = readFileSync(metadata.path, "utf8")
-			.trimEnd()
-			.split("\n")
-			.map((line) => JSON.parse(line));
-		expect(lines[0].forkImportThroughSeq).toBe(2);
-		expect(lines.filter((line) => line.kind === "entry").every((line) => !("counted" in line))).toBe(true);
 
 		const reopenedRepository = createRepository(root);
 		const reopened = await reopenedRepository.open(metadata);
-		expect((await reopened.getStats()).messageCount).toBe(0);
+		expect((await reopened.getStats()).messageCount).toBe(2);
 		await reopened.appendMessage({ role: "user", content: [{ type: "text", text: "three" }], timestamp: 3 });
-		expect((await reopened.getStats()).messageCount).toBe(1);
+		expect((await reopened.getStats()).messageCount).toBe(3);
 		await reopenedRepository[Symbol.asyncDispose]();
 
 		await using verificationRepository = createRepository(root);
 		const verified = await verificationRepository.open(metadata);
-		expect((await verified.getStats()).messageCount).toBe(1);
+		expect((await verified.getStats()).messageCount).toBe(3);
 	});
 
 	it("reopens a tree fork with its lanes and facts", async () => {
