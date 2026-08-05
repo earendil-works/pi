@@ -510,6 +510,8 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		return row ? decodeEntry(row) : undefined;
 	}
 
+	// TODO: Remove redundant structuredClone calls from findEntries, findEntriesOnBranch,
+	// findRecords, and getLog; SQLite row decoding already returns fresh object graphs.
 	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
 		const rows = readEntryRows(this.db, this.metadata.id, { order: query.order });
 		const entries = rows.map(decodeEntry).filter((entry) => matchesEntryQuery(entry, query));
