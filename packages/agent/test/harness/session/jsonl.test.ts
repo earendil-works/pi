@@ -84,6 +84,15 @@ describe("JSONL v4 persistence", () => {
 		expect(await reopened.getName()).toBe("Example");
 		expect(await reopened.getLabel(entryId)).toBe("checkpoint");
 		expect((await reopened.findRecords()).map((record) => record.id)).toEqual(["run"]);
+		expect(
+			(
+				await reopened.findRecords({
+					type: "operation_started",
+					operationKind: "run",
+				})
+			).map((record) => record.id),
+		).toEqual(["run"]);
+		expect((await reopened.findOpenOperations("thread", { limit: 2 })).map((record) => record.id)).toEqual(["run"]);
 		expect((await reopened.getLog()).map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6]);
 		expect(
 			(
@@ -96,6 +105,7 @@ describe("JSONL v4 persistence", () => {
 				})
 			).seq,
 		).toBe(7);
+		expect(await reopened.findOpenOperations("thread", { limit: 2 })).toEqual([]);
 	});
 
 	it("recomputes fork message counts when reopening", async () => {

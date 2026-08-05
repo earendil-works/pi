@@ -12,6 +12,7 @@ import {
 	type LogItem,
 	type LogOptions,
 	type NewRecord,
+	type OperationStartedRecord,
 	type ProvisionedEntry,
 	type RecordQuery,
 	type SessionCreateOptions,
@@ -255,6 +256,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	private readonly entriesById = new Map<string, Entry>();
 	private readonly entryLanes = new Map<string, string>();
 	private readonly records: LaneRecord[] = [];
+	private readonly openOperationsByLane = new Map<string, Map<string, OperationStartedRecord>>();
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
 	private readonly stats: SessionStats = {
@@ -448,6 +450,13 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return structuredClone(results);
 	}
 
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		assertValidLimit(options?.limit);
+		const openOperationsById = this.openOperationsByLane.get(lane);
+		const openOperations = openOperationsById ? [...openOperationsById.values()].reverse() : [];
+		return structuredClone(options?.limit === undefined ? openOperations : openOperations.slice(0, options.limit));
+	}
+
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
 		assertValidLimit(options.limit);
 		if (options.afterSeq !== undefined) this.validateCursor(options.afterSeq);
@@ -538,12 +547,22 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				if (mutation.entry.type === "message") this.stats.messageCount += 1;
 				break;
 			}
-			case "record":
+			case "record": {
 				this.requireLaneForReplay(mutation.record.lane, path, line);
 				this.validateUnusedIdForReplay(mutation.record.id, path, line);
 				this.sequence = seq;
 				this.usedIds.add(mutation.record.id);
 				this.records.push(mutation.record);
+				if (mutation.record.type === "operation_started") {
+					let openOperations = this.openOperationsByLane.get(mutation.record.lane);
+					if (!openOperations) {
+						openOperations = new Map();
+						this.openOperationsByLane.set(mutation.record.lane, openOperations);
+					}
+					openOperations.set(mutation.record.id, mutation.record);
+				} else if (mutation.record.type === "operation_finished") {
+					this.openOperationsByLane.get(mutation.record.lane)?.delete(mutation.record.runId);
+				}
 				this.log.push({ kind: "record", seq, record: mutation.record });
 				if (mutation.record.type === "usage") {
 					this.stats.cachedTokens += mutation.record.usage.cacheRead;
@@ -552,6 +571,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 					this.stats.costTotal += mutation.record.usage.cost.total;
 				}
 				break;
+			}
 			case "lane": {
 				if (mutation.leafId !== null && !this.entriesById.has(mutation.leafId)) {
 					throw invalidFile(path, line, `references missing lane target ${mutation.leafId}`);
@@ -645,6 +665,8 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				(record.type === "operation_started"
 					? record.id === query.runId
 					: "runId" in record && record.runId === query.runId)) &&
+			(query.operationKind === undefined ||
+				(record.type === "operation_started" && record.intent.kind === query.operationKind)) &&
 			(query.afterSeq === undefined || record.seq > query.afterSeq)
 		);
 	}
