@@ -297,6 +297,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		query: RecordQuery & { type: K },
 	): Promise<Extract<LaneRecord, { type: K }>[]>;
 	findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+	findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]>;
 	getLog(options?: { afterSeq?: number; limit?: number }): Promise<LogItem[]>;
 
 	// Global facts

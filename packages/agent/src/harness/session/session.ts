@@ -10,6 +10,7 @@ import type {
 	LogItem,
 	LogOptions,
 	NewRecord,
+	OperationStartedRecord,
 	ProvisionedEntry,
 	RecordBase,
 	RecordQuery,
@@ -211,6 +212,11 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
 	async findRecords(query?: RecordQuery): Promise<LaneRecord[]> {
 		return this.queryRecords(query);
+	}
+
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		assertValidLimit(options?.limit);
+		return this.storage.findOpenOperations(lane, options);
 	}
 
 	async getLog(options?: LogOptions): Promise<LogItem[]> {

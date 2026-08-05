@@ -39,14 +39,24 @@ function createAssistantMessage(text: string): AgentMessage {
 	};
 }
 
-function operationStarted(id: string, lane = "main"): NewRecord<OperationStartedRecord> {
-	return {
-		type: "operation_started",
-		id,
-		lane,
-		sourceLeafId: null,
-		intent: { kind: "run", originalPrompt: [], initialMessages: [] },
-	};
+function operationStarted(
+	id: string,
+	lane = "main",
+	kind: OperationStartedRecord["intent"]["kind"] = "run",
+): NewRecord<OperationStartedRecord> {
+	let intent: OperationStartedRecord["intent"];
+	switch (kind) {
+		case "run":
+			intent = { kind, originalPrompt: [], initialMessages: [] };
+			break;
+		case "compaction":
+			intent = { kind, resultEntryId: `${id}-result` };
+			break;
+		case "navigation":
+			intent = { kind, targetId: null, summarize: false };
+			break;
+	}
+	return { type: "operation_started", id, lane, sourceLeafId: null, intent };
 }
 
 async function entryIds(entries: Promise<Entry[]>): Promise<string[]> {
@@ -230,6 +240,8 @@ export function createSessionBackendConformance(
 			await rejectsWithCode(session.findRecords({ limit: 0 }), "invalid_query");
 			await rejectsWithCode(session.findRecords({ operationKind: "run" }), "invalid_query");
 			await rejectsWithCode(session.findRecords({ type: "step_attempt", operationKind: "run" }), "invalid_query");
+			await rejectsWithCode(session.findOpenOperations("main", { limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findOpenOperations("main", { limit: -1 }), "invalid_query");
 			await rejectsWithCode(session.getLog({ afterSeq: -1 }), "invalid_query");
 		}),
 
@@ -456,6 +468,69 @@ export function createSessionBackendConformance(
 				["run-new"],
 			);
 		}),
+
+		createCase(
+			factory,
+			"records and log",
+			"distinguishes zero one and multiple open operations",
+			async (repository) => {
+				const session = await repository.create({ id: "session" });
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), []);
+
+				const first = await session.appendRecord(operationStarted("first"));
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [first]);
+
+				const second = await session.appendRecord(operationStarted("second"));
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [second, first]);
+
+				await session.appendRecord({
+					type: "operation_finished",
+					id: "finish-first",
+					lane: "main",
+					runId: first.id,
+					outcome: "completed",
+				});
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [second]);
+
+				await session.appendRecord({
+					type: "operation_finished",
+					id: "finish-second",
+					lane: "main",
+					runId: second.id,
+					outcome: "failed",
+				});
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), []);
+			},
+		),
+
+		createCase(factory, "records and log", "scopes open operations by lane kind and limit", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			await session.createLane("thread", null);
+			const mainRun = await session.appendRecord(operationStarted("main-run"));
+			const mainCompaction = await session.appendRecord(operationStarted("main-compaction", "main", "compaction"));
+			const threadNavigation = await session.appendRecord(
+				operationStarted("thread-navigation", "thread", "navigation"),
+			);
+
+			deepStrictEqual(await session.findOpenOperations("main"), [mainCompaction, mainRun]);
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 1 }), [mainCompaction]);
+			deepStrictEqual(await session.findOpenOperations("thread", { limit: 2 }), [threadNavigation]);
+		}),
+
+		createCase(
+			factory,
+			"validation and immutability",
+			"returns immutable open-operation records",
+			async (repository) => {
+				const session = await repository.create({ id: "session" });
+				const committed = await session.appendRecord(operationStarted("run"));
+				const [read] = await session.findOpenOperations("main");
+				if (read?.intent.kind !== "run") throw new Error("Expected an open run operation");
+				read.intent.originalPrompt.push(createUserMessage("mutated"));
+
+				deepStrictEqual(await session.findOpenOperations("main"), [committed]);
+			},
+		),
 
 		createCase(
 			factory,
