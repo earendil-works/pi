@@ -79,3 +79,89 @@ describe("provider request retries", () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 });
+
+describe("provider request retry callbacks", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("reports each retry before its backoff sleep", async () => {
+		vi.useFakeTimers();
+		const onRetry = vi.fn();
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, { "retry-after-ms": "1000" }))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, { maxRetries: 2, onRetry });
+
+		// Emitted before the sleep, so a caller can attribute the wait to a retry
+		// rather than to a slow provider.
+		await vi.advanceTimersByTimeAsync(0);
+		expect(onRetry).toHaveBeenCalledTimes(1);
+		expect(onRetry).toHaveBeenCalledWith({
+			attempt: 1,
+			maxRetries: 2,
+			delayMs: 1000,
+			errorMessage: "Provider error: 429",
+			status: 429,
+		});
+
+		await vi.advanceTimersByTimeAsync(1000);
+		await expect(result).resolves.toBe("ok");
+	});
+
+	it("numbers attempts consecutively across several retries", async () => {
+		vi.useFakeTimers();
+		const attempts: number[] = [];
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(500))
+			.mockRejectedValueOnce(providerError(500))
+			.mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, {
+			maxRetries: 3,
+			onRetry: (info) => {
+				attempts.push(info.attempt);
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(result).resolves.toBe("ok");
+		expect(attempts).toEqual([1, 2]);
+	});
+
+	it("is not called when the request succeeds first time", async () => {
+		const onRetry = vi.fn();
+		const request = vi.fn<() => Promise<string>>().mockResolvedValue("ok");
+
+		await expect(retryProviderRequest(request, { maxRetries: 2, onRetry })).resolves.toBe("ok");
+		expect(onRetry).not.toHaveBeenCalled();
+	});
+
+	it("is not called for an error that is not retried", async () => {
+		const onRetry = vi.fn();
+		const error = providerError(400);
+		const request = vi.fn<() => Promise<string>>().mockRejectedValue(error);
+
+		await expect(retryProviderRequest(request, { maxRetries: 2, onRetry })).rejects.toBe(error);
+		expect(onRetry).not.toHaveBeenCalled();
+	});
+
+	it("does not let a throwing observer break the retry", async () => {
+		vi.useFakeTimers();
+		const request = vi.fn<() => Promise<string>>().mockRejectedValueOnce(providerError(500)).mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, {
+			maxRetries: 1,
+			onRetry: () => {
+				throw new Error("observer blew up");
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		// The recoverable provider error must still recover.
+		await expect(result).resolves.toBe("ok");
+	});
+});

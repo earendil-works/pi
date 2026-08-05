@@ -1,9 +1,33 @@
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 
+/** Details of a retry that is about to be slept on and then attempted. */
+export interface ProviderRetryInfo {
+	/** 1-indexed attempt number of the retry about to be made. */
+	attempt: number;
+	/** Total retries permitted for this request. */
+	maxRetries: number;
+	/** Backoff delay applied before the retry. */
+	delayMs: number;
+	/** Message of the error that triggered the retry. */
+	errorMessage: string;
+	/** HTTP status of the failed response, when the provider reported one. */
+	status: number | undefined;
+}
+
 interface ProviderRetryOptions {
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 	signal?: AbortSignal;
+	/**
+	 * Emitted before the backoff sleep of each retry.
+	 *
+	 * Provider retries are otherwise invisible to callers: a request that
+	 * succeeds on its third attempt is indistinguishable from one that succeeded
+	 * immediately but took longer, which makes latency impossible to attribute.
+	 * `retryAssistantCall` already exposes this through `RetryCallbacks`; this
+	 * brings the provider-request path in line.
+	 */
+	onRetry?: (info: ProviderRetryInfo) => void | Promise<void>;
 }
 
 interface ProviderError extends Error {
@@ -119,7 +143,24 @@ export async function retryProviderRequest<T>(
 
 			const retryIndex = maxRetries - retriesRemaining;
 			retriesRemaining--;
-			await abortableSleep(getRetryDelayMs(error, retryIndex, options.maxRetryDelayMs), options.signal);
+			const delayMs = getRetryDelayMs(error, retryIndex, options.maxRetryDelayMs);
+
+			if (options.onRetry) {
+				try {
+					await options.onRetry({
+						attempt: retryIndex + 1,
+						maxRetries,
+						delayMs,
+						errorMessage: error instanceof Error ? error.message : String(error),
+						status: isProviderError(error) ? error.status : undefined,
+					});
+				} catch {
+					// Observation must never change behaviour: a throwing observer
+					// would turn a recoverable provider error into a failed request.
+				}
+			}
+
+			await abortableSleep(delayMs, options.signal);
 		}
 	}
 }
