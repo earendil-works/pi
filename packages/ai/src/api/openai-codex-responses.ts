@@ -59,6 +59,7 @@ import { buildBaseOptions } from "./simple-options.ts";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth" as const;
 const DEFAULT_MAX_RETRIES = 0;
+const DEFAULT_WEBSOCKET_STREAM_ERROR_MAX_RETRIES = 1;
 const BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
@@ -69,6 +70,20 @@ const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
+const NON_RETRYABLE_CODEX_ERROR_CODES = new Set([
+	"authentication_error",
+	"bio_policy",
+	"context_length_exceeded",
+	"cyber_policy",
+	"insufficient_quota",
+	"invalid_prompt",
+	"invalid_request_error",
+	"permission_error",
+	"server_is_overloaded",
+	"slow_down",
+	"usage_limit_reached",
+	"usage_not_included",
+]);
 
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
@@ -297,6 +312,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
+			const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
+			const websocketStreamErrorMaxRetries = options?.maxRetries ?? DEFAULT_WEBSOCKET_STREAM_ERROR_MAX_RETRIES;
 			const transport = options?.transport || "auto";
 			let startEmitted = false;
 			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
@@ -308,6 +325,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				let websocketStarted = false;
 				let retriedWebSocketConnectionLimit = false;
 				let retriedMissingWebSocketContinuation = false;
+				let websocketRetryAttempts = 0;
 				while (true) {
 					websocketStarted = false;
 					try {
@@ -346,33 +364,51 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						return;
 					} catch (error) {
 						const aborted = options?.signal?.aborted;
-						const connectionLimitBeforeStart = !websocketStarted && isWebSocketConnectionLimitReachedError(error);
-						const previousResponseNotFound = isPreviousResponseNotFoundError(error);
-						if (!aborted && previousResponseNotFound && !retriedMissingWebSocketContinuation) {
-							retriedMissingWebSocketContinuation = true;
-							continue;
-						}
-						if (!aborted && connectionLimitBeforeStart && !retriedWebSocketConnectionLimit) {
-							retriedWebSocketConnectionLimit = true;
-							continue;
-						}
-						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
+						const websocketOutputStarted = output.content.length > 0;
+						const action = classifyCodexWebSocketFailure(error);
+						if (aborted || action === "terminal") {
 							throw error;
+						}
+						if (action === "retry-missing-continuation") {
+							if (!retriedMissingWebSocketContinuation) {
+								retriedMissingWebSocketContinuation = true;
+								resetCodexReplayState(output);
+								continue;
+							}
+							throw error;
+						}
+						if (action === "retry-connection-limit" && !websocketOutputStarted) {
+							if (!retriedWebSocketConnectionLimit) {
+								retriedWebSocketConnectionLimit = true;
+								resetCodexReplayState(output);
+								continue;
+							}
+						} else if (
+							action === "retryable" &&
+							!websocketOutputStarted &&
+							websocketRetryAttempts < websocketStreamErrorMaxRetries
+						) {
+							const delayMs = BASE_DELAY_MS * 2 ** websocketRetryAttempts;
+							websocketRetryAttempts++;
+							resetCodexReplayState(output);
+							await sleep(delayMs, options?.signal);
+							continue;
 						}
 						appendAssistantMessageDiagnostic(
 							output,
 							createAssistantMessageDiagnostic("provider_transport_failure", error, {
 								configuredTransport: transport,
-								fallbackTransport: websocketStarted ? undefined : "sse",
+								fallbackTransport: websocketOutputStarted ? undefined : "sse",
 								eventsEmitted: websocketStarted,
 								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
 							}),
 						);
 						recordWebSocketFailure(cacheSessionId, error);
-						if (websocketStarted) {
+						if (websocketOutputStarted) {
 							throw error;
 						}
+						resetCodexReplayState(output);
 						recordWebSocketSseFallback(cacheSessionId);
 						break;
 					}
@@ -391,7 +427,6 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			// Fetch with retry logic for rate limits and transient errors
 			let response: Response | undefined;
 			let lastError: Error | undefined;
-			const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
 
 			for (let attempt = 0; attempt <= maxRetries; attempt++) {
 				if (options?.signal?.aborted) {
@@ -672,12 +707,17 @@ async function processStream(
 
 class CodexApiError extends Error {
 	readonly code?: string;
+	readonly errorType?: string;
 	readonly payload?: Record<string, unknown>;
 
-	constructor(message: string, options?: { code?: string; payload?: Record<string, unknown>; cause?: unknown }) {
+	constructor(
+		message: string,
+		options?: { code?: string; errorType?: string; payload?: Record<string, unknown>; cause?: unknown },
+	) {
 		super(message);
 		this.name = "CodexApiError";
 		this.code = options?.code;
+		this.errorType = options?.errorType;
 		this.payload = options?.payload;
 		this.cause = options?.cause;
 	}
@@ -694,22 +734,36 @@ class CodexProtocolError extends Error {
 	}
 }
 
-function isCodexNonTransportError(error: unknown): boolean {
-	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+type CodexWebSocketFailureAction =
+	| "transport"
+	| "retry-missing-continuation"
+	| "retry-connection-limit"
+	| "retryable"
+	| "terminal";
+
+function classifyCodexWebSocketFailure(error: unknown): CodexWebSocketFailureAction {
+	if (error instanceof CodexProtocolError) return "terminal";
+	if (!(error instanceof CodexApiError)) return "transport";
+	if (error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE) return "retry-missing-continuation";
+	if (error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE) return "retry-connection-limit";
+	const semanticCode = error.code ?? error.errorType;
+	if (semanticCode !== undefined && NON_RETRYABLE_CODEX_ERROR_CODES.has(semanticCode)) return "terminal";
+	return "retryable";
 }
 
-function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
-	return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
+function resetCodexReplayState(output: AssistantMessage): void {
+	delete output.responseId;
 }
 
-function isPreviousResponseNotFoundError(error: unknown): boolean {
-	return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
-}
-
-function extractCodexEventError(event: Record<string, unknown>): { code?: string; message?: string } {
+function extractCodexEventError(event: Record<string, unknown>): {
+	code?: string;
+	errorType?: string;
+	message?: string;
+} {
 	const nested = event.error && typeof event.error === "object" ? (event.error as Record<string, unknown>) : undefined;
 	return {
 		code: typeof event.code === "string" ? event.code : typeof nested?.code === "string" ? nested.code : undefined,
+		errorType: typeof nested?.type === "string" ? nested.type : undefined,
 		message:
 			typeof event.message === "string"
 				? event.message
@@ -725,18 +779,25 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (!type) continue;
 
 		if (type === "error") {
-			const { code, message } = extractCodexEventError(event);
+			const { code, errorType, message } = extractCodexEventError(event);
 			throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, {
 				code,
+				errorType,
 				payload: event,
 			});
 		}
 
 		if (type === "response.failed") {
-			const response = (event as { response?: { error?: { code?: string; message?: string } } }).response;
-			const code = response?.error?.code;
-			const message = response?.error?.message;
-			throw new CodexApiError(message || "Codex response failed", { code, payload: event });
+			const response =
+				event.response && typeof event.response === "object"
+					? (event.response as Record<string, unknown>)
+					: undefined;
+			const { code, errorType, message } = extractCodexEventError(response ?? event);
+			throw new CodexApiError(message || "Codex response failed", {
+				code,
+				errorType,
+				payload: event,
+			});
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
