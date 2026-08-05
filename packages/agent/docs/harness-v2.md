@@ -2050,9 +2050,21 @@ Semantics that make tests deterministic:
 ### Live lane state
 
 ```ts
-/** In-memory state per lane. Always equal to the reduction of the lane's
-    records and own entries (section 7): live commits update it; restore
-    recomputes it. */
+interface EffectiveLaneConfiguration {
+  model: { provider: string; modelId: string };
+  thinkingLevel: ThinkingLevel;
+  activeToolNames: string[];
+}
+
+interface TerminalFailureState {
+  entryId: string;
+  source: "step" | "deferred_fetch";
+  message: AssistantMessage;
+}
+
+/** In-memory orchestration state per lane. Always equal to the laneState
+    produced by reducing the lane's records and own entries (section 7): live
+    commits update it; restore recomputes it. */
 interface LaneState {
   lane: string;
   leafId: string | null;
@@ -2094,6 +2106,27 @@ interface ToolBatchState {
   truncated: boolean;                       // assistant stopReason was "length"
   unresolved: boolean;
 }
+
+interface LaneReductionInput extends RecordLogSlice {
+  leafId: string | null;
+  /** Entries appended by the open operation, oldest first. Empty when idle. */
+  ownEntries: readonly Entry[];
+  /** Bounded effective-state lookups at the operation anchor or idle leaf,
+      oldest first. */
+  configurationEntries: readonly Entry[];
+  /** Harness option fallbacks used when no persisted value exists. */
+  defaults: EffectiveLaneConfiguration;
+}
+
+interface LaneReductionResult {
+  laneState: LaneState;
+  effectiveConfiguration: EffectiveLaneConfiguration;
+  /** Non-null only when newestOwn is an error produced by a step or deferred fetch,
+      never for an arbitrary error-shaped deferred write. */
+  terminalFailure: TerminalFailureState | null;
+}
+
+function reduceLaneState(input: LaneReductionInput): LaneReductionResult;
 ```
 
 Four control-flow signals travel by exception inside a procedure; none escapes to a caller. `RunFailed` carries a terminal failure into the drain-and-finish path. `Park` unwinds when a deferred handle was persisted; the lane suspends. `Aborted` unwinds to the abort path. `Overflow` routes a discarded recoverable response (section 6) into the compact-and-retry path. Any other rejection faults the harness.
@@ -2172,7 +2205,7 @@ async function handleRunSignal(e: unknown): Promise<RunResult> {
 ```
 
 
-**Fixed-point self-check.** When `resume()` completes, parks, or closes its operation, the harness recomputes the section 7 reduction from storage and compares it to the live `LaneState`. A mismatch is corruption and faults the harness — writer/reducer drift is caught the moment it happens instead of one crash later. The check is cheap (the same two bounded reads restore performs) and runs in production, not only under test.
+**Fixed-point self-check.** When `resume()` completes, parks, or closes its operation, the harness recomputes the section 7 reduction from storage and compares its `laneState` to the live `LaneState`. A mismatch is corruption and faults the harness — writer/reducer drift is caught the moment it happens instead of one crash later. The check is cheap (the same two bounded reads restore performs) and runs in production, not only under test.
 
 ### The loop
 
@@ -2860,7 +2893,7 @@ Crash simulation is `close()` at a chosen boundary, then reopening the same back
 
 Gate invariants, asserted across Tier C:
 
-- After every `resume()` outcome, the recomputed reduction equals live `LaneState` (the section 15 fixed-point self-check fired and passed).
+- After every `resume()` outcome, the recomputed reduction's `laneState` equals live `LaneState` (the section 15 fixed-point self-check fired and passed).
 - `peekAction()` has no side effect and is stable until `executeAction()`.
 - `executeAction()` releases exactly the peeked action, never a later one.
 - Stopping before an action leaves exactly the preceding durable prefix.
@@ -2989,9 +3022,9 @@ These packages merge R0 → R1 → R2 → R3. R1 and R2 add a reducer module ins
 
 - [ ] **R2 — pure lane-state reduction.** Dependencies: R1.
   - Primary files: `packages/agent/src/harness/reducer.ts`, `packages/agent/test/harness/reducer.test.ts`.
-  - Derive `LaneState`, pending queues/writes, attempts, tool batches, deferred handles, structural targets, terminal-failure state, idle next-run state, and effective configuration from the section 7 query inputs.
-  - Reduction exclusively owns state derivation; later recovery packages consume this state and do not re-reduce tool or operation records.
-  - Acceptance: table-driven tests cover idle and every suspended state; reduction is deterministic and performs no writes.
+  - Implement the section 15 `LaneReductionInput` → `LaneReductionResult` contract. Derive pending queues/writes, attempts, tool batches, deferred handles, structural targets, and idle next-run state into `laneState`; derive effective configuration and terminal-failure provenance beside it from the same section 7 query inputs.
+  - Keep `LaneState` limited to orchestration state. Reduction exclusively owns all three outputs; later recovery packages consume `LaneReductionResult` and do not re-reduce tool or operation records.
+  - Acceptance: table-driven tests cover idle and every suspended state, configuration fallback/override, and terminal-failure provenance; reduction is deterministic and performs no writes.
 - [ ] **R3 — harness restore inventory.** Dependencies: F0, R2.
   - Primary files: `packages/agent/src/harness/agent-harness.ts`, reducer integration helpers, and restore tests.
   - Wire `AgentHarness.create()` to use indexed open-operation discovery, bounded idle/open scans, explicit provisioned-id point lookups, and bounded configuration lookups. Return accurate `SuspendedOperation[]` without starting effects.
