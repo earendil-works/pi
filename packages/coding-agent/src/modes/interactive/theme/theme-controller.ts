@@ -17,20 +17,33 @@ type ThemeResult = { success: boolean; error?: string };
 
 export class InteractiveThemeController {
 	private readonly ui: TUI;
-	private readonly settingsManager: SettingsManager;
+	private readonly getSettingsManager: () => SettingsManager;
 	private readonly showError: (message: string) => void;
 	private readonly onChanged: () => void;
+	private currentThemeSetting: string | undefined;
 	private terminalTheme: TerminalTheme = detectTerminalBackgroundFromEnv().theme;
 	private activeThemeName: string | undefined;
 	private autoSyncEnabled = false;
 	private terminalColorSchemeUnsubscribe: (() => void) | undefined;
 
-	constructor(ui: TUI, settingsManager: SettingsManager, showError: (message: string) => void, onChanged: () => void) {
+	constructor(
+		ui: TUI,
+		options: {
+			getSettingsManager: () => SettingsManager;
+			showError: (message: string) => void;
+			onChanged: () => void;
+			initialThemeSetting?: string;
+		},
+	) {
 		this.ui = ui;
-		this.settingsManager = settingsManager;
-		this.showError = showError;
-		this.onChanged = onChanged;
-		this.activeThemeName = resolveThemeSetting(this.settingsManager.getThemeSetting(), this.terminalTheme);
+		this.getSettingsManager = options.getSettingsManager;
+		this.showError = options.showError;
+		this.onChanged = options.onChanged;
+		this.currentThemeSetting = options.initialThemeSetting;
+		this.activeThemeName = resolveThemeSetting(
+			this.currentThemeSetting ?? this.getSettingsManager().getThemeSetting(),
+			this.terminalTheme,
+		);
 		initTheme(this.activeThemeName, true);
 		this.bindTerminalColorSchemeListener();
 	}
@@ -42,7 +55,8 @@ export class InteractiveThemeController {
 	}
 
 	async applyFromSettings(): Promise<void> {
-		const themeSetting = this.settingsManager.getThemeSetting();
+		const settingsManager = this.getSettingsManager();
+		const themeSetting = this.currentThemeSetting ?? settingsManager.getThemeSetting();
 		const autoTheme = parseAutoThemeSetting(themeSetting);
 		if (autoTheme) {
 			this.terminalTheme = await detectTerminalThemeForAuto({ ui: this.ui, timeoutMs: 100 });
@@ -61,14 +75,27 @@ export class InteractiveThemeController {
 		this.terminalTheme = detection.theme;
 		if (!this.applyThemeName(detection.theme).success) return;
 		if (detection.confidence === "high") {
-			this.settingsManager.setTheme(detection.theme);
-			await this.settingsManager.flush();
+			settingsManager.setTheme(detection.theme);
+			await settingsManager.flush();
 		}
+	}
+
+	getThemeSelection(): string | undefined {
+		return this.currentThemeSetting ?? this.getSettingsManager().getThemeSetting() ?? this.activeThemeName;
 	}
 
 	setThemeName(themeName: string, showError = false): ThemeResult {
 		this.setAutoSync(false);
-		return this.applyThemeName(themeName, showError);
+		const result = this.applyThemeName(themeName, showError);
+		if (result.success) {
+			this.currentThemeSetting = themeName;
+		}
+		return result;
+	}
+
+	async setThemeSetting(themeSetting: string): Promise<void> {
+		this.currentThemeSetting = themeSetting;
+		await this.applyFromSettings();
 	}
 
 	setThemeInstance(themeInstance: Theme): ThemeResult {
@@ -126,7 +153,7 @@ export class InteractiveThemeController {
 	private applyTerminalTheme(terminalTheme: TerminalTheme): void {
 		if (!this.autoSyncEnabled) return;
 		this.terminalTheme = terminalTheme;
-		const autoTheme = parseAutoThemeSetting(this.settingsManager.getThemeSetting());
+		const autoTheme = parseAutoThemeSetting(this.currentThemeSetting ?? this.getSettingsManager().getThemeSetting());
 		if (!autoTheme) {
 			this.setAutoSync(false);
 			return;
