@@ -158,6 +158,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		const record = provisionRecord(clonedRecord, this.nextSequence());
 		this.usedIds.add(record.id);
 		this.records.push(record);
+		// Maintain the recovery projection incrementally so restore never scans the full record log.
 		if (record.type === "operation_started") {
 			let openOperations = this.openOperationsByLane.get(record.lane);
 			if (!openOperations) {
