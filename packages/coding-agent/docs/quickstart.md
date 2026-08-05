@@ -97,8 +97,10 @@ Pi loads context files at startup. Add an `AGENTS.md` file to tell it how to wor
 
 Pi loads:
 
-- `~/.pi/agent/AGENTS.md` for global instructions
-- `AGENTS.md` or `CLAUDE.md` from parent directories and the current directory
+- one context file from `~/.pi/agent/` for global instructions
+- one context file from each parent directory and the current directory
+
+Within a directory, `AGENTS.override.md` takes precedence over `AGENTS.md`, which takes precedence over `CLAUDE.md`. Use `AGENTS.override.md` for local replacement instructions without editing the checked-in `AGENTS.md`.
 
 Restart pi, or run `/reload`, after changing context files.
 

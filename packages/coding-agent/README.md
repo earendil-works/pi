@@ -150,7 +150,7 @@ See [docs/providers.md](docs/providers.md) for other provider setup instructions
 
 The interface from top to bottom:
 
-- **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
+- **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded context files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
 - **Editor** - Where you type; border color indicates thinking level
 - **Footer** - Working directory, session name, total token/cache usage (`↑` input, `↓` output, `R` cache read, `W` cache write, `CH` latest cache hit rate), cost, context usage, current model. Totals include assistant responses, usage reported by tools, and summary generation.
@@ -319,12 +319,12 @@ Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations desc
 
 ## Context Files
 
-Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
-- `~/.pi/agent/AGENTS.md` (global)
+Pi loads one context file per directory at startup from:
+- `~/.pi/agent/` (global)
 - Parent directories (walking up from cwd)
 - Current directory
 
-Use for project instructions (`AGENTS.md`/`CLAUDE.md`), conventions, common commands. All matching files are concatenated.
+Within each directory, Pi uses `AGENTS.override.md` when present; otherwise it falls back to `AGENTS.md`, then `CLAUDE.md`. Use the override file for local instructions that should replace a checked-in `AGENTS.md` without changing it. Context files from other directories continue to be concatenated.
 
 Disable context file loading with `--no-context-files` (or `-nc`).
 
@@ -596,7 +596,7 @@ Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 | `--no-prompt-templates` | Disable prompt template discovery |
 | `--theme <path>` | Load theme (repeatable) |
 | `--no-themes` | Disable theme discovery |
-| `--no-context-files`, `-nc` | Disable AGENTS.md and CLAUDE.md context file discovery |
+| `--no-context-files`, `-nc` | Disable context file discovery |
 
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings.json (e.g., `--no-extensions -e ./my-ext.ts`).
 

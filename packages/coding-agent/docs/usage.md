@@ -97,11 +97,13 @@ See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
 
 ## Context Files
 
-Pi loads `AGENTS.md` or `CLAUDE.md` at startup from:
+Pi loads one context file per directory at startup from:
 
-- `~/.pi/agent/AGENTS.md` for global instructions
+- `~/.pi/agent/` for global instructions
 - parent directories, walking up from the current working directory
 - the current directory
+
+Within each directory, `AGENTS.override.md` takes precedence over `AGENTS.md`, which takes precedence over `CLAUDE.md`. An override replaces only the context file in its own directory; files from other directories continue to layer normally.
 
 Use context files for project conventions, commands, safety rules, and preferences. Disable loading with `--no-context-files` or `-nc`.
 
@@ -225,7 +227,7 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 | `--no-prompt-templates` | Disable prompt template discovery |
 | `--theme <path>` | Load a theme; repeatable |
 | `--no-themes` | Disable theme discovery |
-| `--no-context-files`, `-nc` | Disable `AGENTS.md` and `CLAUDE.md` discovery |
+| `--no-context-files`, `-nc` | Disable context file discovery |
 
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings. Example:
 

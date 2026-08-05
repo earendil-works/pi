@@ -355,6 +355,46 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
+		it("should prefer AGENTS.override.md while preserving parent context", async () => {
+			const serviceDir = join(cwd, "service");
+			mkdirSync(serviceDir);
+			writeFileSync(join(cwd, "AGENTS.md"), "Parent instructions");
+			writeFileSync(join(serviceDir, "AGENTS.md"), "Checked-in service instructions");
+			writeFileSync(join(serviceDir, "AGENTS.override.md"), "Local service instructions");
+
+			const loader = new DefaultResourceLoader({ cwd: serviceDir, agentDir });
+			await loader.reload();
+
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: join(cwd, "AGENTS.md"), content: "Parent instructions" },
+				{ path: join(serviceDir, "AGENTS.override.md"), content: "Local service instructions" },
+			]);
+		});
+
+		it("should prefer AGENTS.override.md in the global agent directory", async () => {
+			writeFileSync(join(agentDir, "AGENTS.md"), "Global instructions");
+			writeFileSync(join(agentDir, "AGENTS.override.md"), "Global override");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: join(agentDir, "AGENTS.override.md"), content: "Global override" },
+			]);
+		});
+
+		it("should fall back when AGENTS.override.md is not a file", async () => {
+			mkdirSync(join(cwd, "AGENTS.override.md"));
+			writeFileSync(join(cwd, "AGENTS.md"), "Fallback instructions");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: join(cwd, "AGENTS.md"), content: "Fallback instructions" },
+			]);
+		});
+
 		it("should ignore context file candidates that are directories", async () => {
 			mkdirSync(join(cwd, "AGENTS.md"));
 			writeFileSync(join(cwd, "CLAUDE.md"), "Fallback instructions");
@@ -371,7 +411,8 @@ Content`,
 			consoleError.mockRestore();
 		});
 
-		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
+		it("should skip context file discovery when noContextFiles is true", async () => {
+			writeFileSync(join(cwd, "AGENTS.override.md"), "# Local Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");
 
@@ -971,6 +1012,26 @@ export default function(pi: ExtensionAPI) {
 			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
 
 			expect(files.map((f) => f.content)).toEqual(["worktree instructions"]);
+		});
+
+		it("should skip a duplicated AGENTS.override.md from the main repo", () => {
+			const { main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "AGENTS.override.md"), "main repo override");
+			writeFileSync(join(worktree, "AGENTS.override.md"), "worktree override");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["worktree override"]);
+		});
+
+		it("should keep a main repo AGENTS.md when the worktree uses AGENTS.override.md", () => {
+			const { main, worktree, worktreeSrc } = setupNestedWorktree();
+			writeFileSync(join(main, "AGENTS.md"), "main repo instructions");
+			writeFileSync(join(worktree, "AGENTS.override.md"), "worktree override");
+
+			const files = loadProjectContextFiles({ cwd: worktreeSrc, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["main repo instructions", "worktree override"]);
 		});
 
 		it("should still inherit the main repo's context when the worktree root has none", () => {
