@@ -20,6 +20,7 @@ import type {
 	OpenAIResponsesCompat,
 } from "../src/types.ts";
 import {
+	assertExactModelIds,
 	createModelDataManifest,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
@@ -295,6 +296,23 @@ const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 ]);
 // Retired preview id — models.dev may still list it after GA ships.
 const QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = new Set(["qwen3.8-max-preview"]);
+const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
+	"qwen-token-plan",
+	"qwen-token-plan-cn",
+	"qwen-token-plan-individual",
+]);
+// QwenCloud Token Plan Individual text-model allowlist, verified 2026-08-05.
+// Retired models remain excluded above even if the public catalog lags.
+// https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
+const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
+	"deepseek-v4-flash-0731",
+	"deepseek-v4-pro",
+	"glm-5.2",
+	"qwen3.6-flash",
+	"qwen3.7-max",
+	"qwen3.7-plus",
+	"qwen3.8-max",
+]);
 
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
@@ -2104,10 +2122,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Alibaba Cloud Model Studio Token Plan models
-		// Two regions (international / cn) with identical catalogs, separate
-		// endpoints and API keys (sk-sp- prefix). models.dev keys are
-		// "alibaba-token-plan[-cn]"; pi exposes them as "qwen-token-plan[-cn]".
+		// Process Alibaba Cloud Model Studio Token Plan models. International and
+		// China use separate endpoints and API keys (sk-sp- prefix). The Individual
+		// provider reuses the international source and endpoint with a narrower catalog.
+		// models.dev keys are "alibaba-token-plan[-cn]"; pi exposes them as
+		// "qwen-token-plan[-cn]" plus the Individual catalog view.
 		const qwenTokenPlanCompat: OpenAICompletionsCompat = {
 			thinkingFormat: "qwen",
 			supportsDeveloperRole: false,
@@ -2119,22 +2138,31 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				source: "alibaba-token-plan",
 				provider: "qwen-token-plan",
 				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+				modelIds: undefined,
+			},
+			{
+				source: "alibaba-token-plan",
+				provider: "qwen-token-plan-individual",
+				baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+				modelIds: QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS,
 			},
 			{
 				source: "alibaba-token-plan-cn",
 				provider: "qwen-token-plan-cn",
 				baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+				modelIds: undefined,
 			},
 		] as const;
 
-		for (const { source, provider, baseUrl } of qwenTokenPlanVariants) {
+		for (const { source, provider, baseUrl, modelIds } of qwenTokenPlanVariants) {
 			const providerModels = data[source]?.models;
-			if (!providerModels) continue;
+			const emittedModelIds = modelIds ? new Set<string>() : undefined;
 
-			for (const [modelId, model] of Object.entries(providerModels)) {
+			for (const [modelId, model] of Object.entries(providerModels ?? {})) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 				if (QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS.has(modelId)) continue;
+				if (modelIds && !modelIds.has(modelId)) continue;
 				const supportsReasoningEffort = !QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS.has(modelId);
 
 				models.push({
@@ -2165,7 +2193,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+				emittedModelIds?.add(modelId);
 				recordModelsDevReasoningOptions(provider, modelId, m);
+			}
+
+			if (modelIds && emittedModelIds && generatorOptions.strict) {
+				assertExactModelIds(provider, modelIds, emittedModelIds);
 			}
 		}
 
@@ -2288,7 +2321,6 @@ async function generateModels() {
 			};
 		}
 	}
-
 
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
@@ -2450,8 +2482,7 @@ async function generateModels() {
 		if (
 			candidate.api === "openai-completions" &&
 			candidate.id.includes("deepseek-v4") &&
-			candidate.provider !== "qwen-token-plan" &&
-			candidate.provider !== "qwen-token-plan-cn"
+			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
 		) {
 			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
 			candidate.compat = {
