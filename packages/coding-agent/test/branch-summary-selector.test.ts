@@ -30,7 +30,7 @@ describe("branch summary selector", () => {
 	});
 
 	it("shows the temporary summary model, thinking level, and controls", () => {
-		const selector = new BranchSummarySelectorComponent(model, "low", vi.fn(), vi.fn(), vi.fn(), vi.fn());
+		const selector = new BranchSummarySelectorComponent(model, "low", vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn());
 
 		const lines = selector.render(100);
 		const renderedLines = stripAnsi(lines.join("\n")).split("\n");
@@ -40,6 +40,7 @@ describe("branch summary selector", () => {
 		expect(summaryConfigIndex).toBeGreaterThan(
 			renderedLines.findIndex((line) => line.includes("shift+tab thinking")),
 		);
+		expect(renderedLines.join("\n")).toContain("ctrl+p/shift+ctrl+p cycle");
 		expect(lines.join("\n")).toContain(theme.getThinkingBorderColor("low")("low"));
 		expect(lines[0]).toBe(theme.getThinkingBorderColor("low")("─".repeat(100)));
 		expect(lines.at(-1)).toBe(theme.getThinkingBorderColor("low")("─".repeat(100)));
@@ -47,7 +48,7 @@ describe("branch summary selector", () => {
 	});
 
 	it("matches the footer wording when thinking is off", () => {
-		const selector = new BranchSummarySelectorComponent(model, "off", vi.fn(), vi.fn(), vi.fn(), vi.fn());
+		const selector = new BranchSummarySelectorComponent(model, "off", vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn());
 
 		expect(stripAnsi(selector.render(100).join("\n"))).toContain(
 			"summarize with: (anthropic) summary-model • thinking off",
@@ -56,21 +57,25 @@ describe("branch summary selector", () => {
 
 	it("cycles thinking locally and opens temporary model selection", () => {
 		const onSelectModel = vi.fn();
+		const onCycleModel = vi.fn();
 		const levels: ThinkingLevel[] = [];
 		const selector = new BranchSummarySelectorComponent(
 			model,
 			"low",
 			vi.fn(),
 			onSelectModel,
+			onCycleModel,
 			(level) => levels.push(level),
 			vi.fn(),
 		);
 
 		selector.handleInput("\x1b[Z");
 		selector.handleInput("\x0c");
+		selector.handleInput("\x10");
 
 		expect(levels).toEqual(["medium"]);
 		expect(onSelectModel).toHaveBeenCalledOnce();
+		expect(onCycleModel).toHaveBeenCalledWith("forward");
 		const lines = selector.render(100);
 		expect(stripAnsi(lines.join("\n"))).toContain("summarize with: (anthropic) summary-model • medium");
 		expect(lines[0]).toBe(theme.getThinkingBorderColor("medium")("─".repeat(100)));

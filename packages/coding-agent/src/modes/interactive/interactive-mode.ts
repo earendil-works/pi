@@ -224,7 +224,11 @@ type CompactionCostNotice = {
 	usage: Usage;
 };
 
-type BranchSummaryPromptResult = { type: "choice"; choice: BranchSummaryChoice } | { type: "selectModel" } | undefined;
+type BranchSummaryPromptResult =
+	| { type: "choice"; choice: BranchSummaryChoice }
+	| { type: "selectModel" }
+	| { type: "cycleModel"; direction: "forward" | "backward" }
+	| undefined;
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }> | CompactionCostNotice;
 
@@ -4998,6 +5002,10 @@ export class InteractiveMode {
 						done();
 						resolve({ type: "selectModel" });
 					},
+					(direction) => {
+						done();
+						resolve({ type: "cycleModel", direction });
+					},
 					onThinkingLevelChange,
 					() => {
 						done();
@@ -5275,6 +5283,34 @@ export class InteractiveMode {
 									summaryThinkingLevel = clampThinkingLevel(
 										selectedModel,
 										summaryThinkingLevel,
+									) as ThinkingLevel;
+								}
+								continue;
+							}
+
+							if (promptResult.type === "cycleModel") {
+								const availableModels = this.session.modelRuntime.getAvailableSnapshot();
+								const availableIds = new Set(availableModels.map((model) => `${model.provider}\0${model.id}`));
+								const cycleModels: ReadonlyArray<{
+									model: Model<string>;
+									thinkingLevel?: ThinkingLevel;
+								}> =
+									this.session.scopedModels.length > 0
+										? this.session.scopedModels.filter((scoped) =>
+												availableIds.has(`${scoped.model.provider}\0${scoped.model.id}`),
+											)
+										: availableModels.map((model) => ({ model }));
+								if (cycleModels.length > 1) {
+									let currentIndex = cycleModels.findIndex(
+										({ model }) => model.provider === summaryModel?.provider && model.id === summaryModel.id,
+									);
+									if (currentIndex === -1) currentIndex = 0;
+									const offset = promptResult.direction === "forward" ? 1 : -1;
+									const next = cycleModels[(currentIndex + offset + cycleModels.length) % cycleModels.length]!;
+									summaryModel = next.model;
+									summaryThinkingLevel = clampThinkingLevel(
+										next.model,
+										next.thinkingLevel ?? summaryThinkingLevel,
 									) as ThinkingLevel;
 								}
 								continue;

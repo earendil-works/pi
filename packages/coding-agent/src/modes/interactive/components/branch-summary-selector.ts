@@ -3,7 +3,7 @@ import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai/co
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
+import { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 
 export type BranchSummaryChoice = "No summary" | "Summarize" | "Summarize with custom prompt";
 
@@ -20,6 +20,7 @@ export class BranchSummarySelectorComponent extends Container {
 	private thinkingLevel: ThinkingLevel;
 	private readonly onSelect: (choice: BranchSummaryChoice) => void;
 	private readonly onSelectModel: () => void;
+	private readonly onCycleModel: (direction: "forward" | "backward") => void;
 	private readonly onThinkingLevelChange: (level: ThinkingLevel) => void;
 	private readonly onCancel: () => void;
 
@@ -28,6 +29,7 @@ export class BranchSummarySelectorComponent extends Container {
 		thinkingLevel: ThinkingLevel,
 		onSelect: (choice: BranchSummaryChoice) => void,
 		onSelectModel: () => void,
+		onCycleModel: (direction: "forward" | "backward") => void,
 		onThinkingLevelChange: (level: ThinkingLevel) => void,
 		onCancel: () => void,
 	) {
@@ -36,6 +38,7 @@ export class BranchSummarySelectorComponent extends Container {
 		this.thinkingLevel = thinkingLevel;
 		this.onSelect = onSelect;
 		this.onSelectModel = onSelectModel;
+		this.onCycleModel = onCycleModel;
 		this.onThinkingLevelChange = onThinkingLevelChange;
 		this.onCancel = onCancel;
 
@@ -77,6 +80,8 @@ export class BranchSummarySelectorComponent extends Container {
 			"  " +
 			keyHint("app.model.select", "model") +
 			"  " +
+			rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "cycle") +
+			"  " +
 			keyHint("app.thinking.cycle", "thinking") +
 			"  " +
 			keyHint("tui.select.cancel", "cancel")
@@ -117,6 +122,10 @@ export class BranchSummarySelectorComponent extends Container {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "app.model.select")) {
 			this.onSelectModel();
+		} else if (kb.matches(keyData, "app.model.cycleForward")) {
+			this.onCycleModel("forward");
+		} else if (kb.matches(keyData, "app.model.cycleBackward")) {
+			this.onCycleModel("backward");
 		} else if (kb.matches(keyData, "app.thinking.cycle")) {
 			this.cycleThinkingLevel();
 		} else if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
