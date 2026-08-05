@@ -100,6 +100,16 @@ describe("protocol validation", () => {
 		expect(parseServerMessage(serverHello)).toEqual(serverHello);
 	});
 
+	test.each(["not_implemented", "internal_error"] as const)("accepts the %s error code", (code) => {
+		const message: ServerMessage = {
+			type: "response",
+			id: "request-1",
+			ok: false,
+			error: { code, message: "safe" },
+		};
+		expect(parseServerMessage(message)).toEqual(message);
+	});
+
 	test.each([
 		{
 			type: "hello",

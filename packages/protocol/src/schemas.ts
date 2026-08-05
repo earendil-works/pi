@@ -269,6 +269,8 @@ export const ProtocolErrorCodeSchema = Type.Union([
 	Type.Literal("session_locked"),
 	Type.Literal("not_found"),
 	Type.Literal("invalid_request"),
+	Type.Literal("not_implemented"),
+	Type.Literal("internal_error"),
 ]);
 export const ProtocolErrorSchema = StrictObject({
 	code: ProtocolErrorCodeSchema,
