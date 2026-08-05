@@ -20,6 +20,58 @@ export interface ProcessFileOptions {
 	autoResizeImages?: boolean;
 }
 
+interface LineRange {
+	start: number;
+	end: number;
+}
+
+interface ResolvedFileArgument {
+	absolutePath: string;
+	lineRange?: LineRange;
+}
+
+const LINE_RANGE_SUFFIX = /#L(\d+)-L(\d+)$/;
+
+function exitWithError(message: string): never {
+	console.error(chalk.red(`Error: ${message}`));
+	process.exit(1);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function resolveFileArgument(fileArg: string): Promise<ResolvedFileArgument> {
+	const match = LINE_RANGE_SUFFIX.exec(fileArg);
+	const literalPath = resolve(resolveReadPath(fileArg, process.cwd()));
+	const hasFileUrlRange = fileArg.startsWith("file://") && match !== null;
+	if (!hasFileUrlRange && (await pathExists(literalPath))) {
+		return { absolutePath: literalPath };
+	}
+
+	if (!match || match.index === 0) {
+		exitWithError(`File not found: ${literalPath}`);
+	}
+
+	const start = Number(match[1]);
+	const end = Number(match[2]);
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
+		exitWithError(`Invalid line range: #L${match[1]}-L${match[2]}`);
+	}
+
+	const basePath = resolve(resolveReadPath(fileArg.slice(0, match.index), process.cwd()));
+	if (!(await pathExists(basePath))) {
+		exitWithError(`File not found: ${basePath}`);
+	}
+
+	return { absolutePath: basePath, lineRange: { start, end } };
+}
+
 /** Process @file arguments into text content and image attachments */
 export async function processFileArguments(fileArgs: string[], options?: ProcessFileOptions): Promise<ProcessedFiles> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
@@ -27,16 +79,7 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 	const images: ImageContent[] = [];
 
 	for (const fileArg of fileArgs) {
-		// Expand and resolve path (handles ~ expansion and macOS screenshot Unicode spaces)
-		const absolutePath = resolve(resolveReadPath(fileArg, process.cwd()));
-
-		// Check if file exists
-		try {
-			await access(absolutePath);
-		} catch {
-			console.error(chalk.red(`Error: File not found: ${absolutePath}`));
-			process.exit(1);
-		}
+		const { absolutePath, lineRange } = await resolveFileArgument(fileArg);
 
 		// Check if file is empty
 		const stats = await stat(absolutePath);
@@ -48,6 +91,10 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 		const mimeType = await detectSupportedImageMimeTypeFromFile(absolutePath);
 
 		if (mimeType) {
+			if (lineRange) {
+				exitWithError(`Line ranges are only supported for text files: ${absolutePath}`);
+			}
+
 			// Handle image file
 			const content = await readFile(absolutePath);
 			const processed = await processImage(content, mimeType, { autoResizeImages });
@@ -72,13 +119,26 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 			}
 		} else {
 			// Handle text file
+			let content: string;
 			try {
-				const content = await readFile(absolutePath, "utf-8");
-				text += `<file name="${absolutePath}">\n${content}\n</file>\n`;
+				content = await readFile(absolutePath, "utf-8");
 			} catch (error: unknown) {
 				const message = error instanceof Error ? error.message : String(error);
-				console.error(chalk.red(`Error: Could not read file ${absolutePath}: ${message}`));
-				process.exit(1);
+				exitWithError(`Could not read file ${absolutePath}: ${message}`);
+			}
+
+			if (lineRange) {
+				const lines = content.split("\n");
+				if (lineRange.start > lines.length) {
+					exitWithError(
+						`Line range start ${lineRange.start} is beyond end of file (${lines.length} lines total): ${absolutePath}`,
+					);
+				}
+				const effectiveEnd = Math.min(lineRange.end, lines.length);
+				const selectedContent = lines.slice(lineRange.start - 1, effectiveEnd).join("\n");
+				text += `<file name="${absolutePath}" lines="${lineRange.start}-${effectiveEnd}">\n${selectedContent}\n</file>\n`;
+			} else {
+				text += `<file name="${absolutePath}">\n${content}\n</file>\n`;
 			}
 		}
 	}

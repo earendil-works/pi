@@ -82,6 +82,7 @@
 - Added page scrolling and marked-message navigation shortcuts to fullscreen mode.
 - Added an optional `scrollbarThumb` theme color for fullscreen scrollbar thumbs, falling back to `selectedBg`.
 - Added configurable themed Unicode rendering for supported Mermaid diagrams in interactive messages, including optional rendering while streaming.
+- Added GitHub-style line ranges to CLI `@file` references, such as `@src/main.ts#L10-L20` ([#7673](https://github.com/earendil-works/pi/issues/7673)).
 
 ### Fixed
 
