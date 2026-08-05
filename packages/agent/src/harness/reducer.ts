@@ -30,7 +30,8 @@ export type RecordLogCorruptionReason =
 	| "inconsistent_step"
 	| "tool_call_mismatch"
 	| "duplicate_tool_invocation"
-	| "provisioned_entry_mismatch";
+	| "provisioned_entry_mismatch"
+	| "invalid_deferred_handle";
 
 export class RecordLogCorruption extends Error {
 	readonly reason: RecordLogCorruptionReason;
@@ -268,6 +269,19 @@ function validateToolStart(
 	);
 }
 
+function validateDeferredHandles(entries: Iterable<Entry>): void {
+	for (const entry of entries) {
+		if (
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			entry.message.stopReason === "deferred" &&
+			!entry.message.deferred
+		) {
+			corrupt("invalid_deferred_handle", `Deferred assistant entry ${entry.id} does not carry a handle`);
+		}
+	}
+}
+
 function validateOperationResult(entriesById: ReadonlyMap<string, Entry>, record: OperationStartedRecord): void {
 	switch (record.intent.kind) {
 		case "run":
@@ -301,6 +315,7 @@ export function validateRecordLog(input: RecordLogSlice): void {
 	}
 
 	const entriesById = new Map(input.entries.map((entry) => [entry.id, entry]));
+	validateDeferredHandles(entriesById.values());
 	const starts = new Map<string, OperationStartedRecord>();
 	const finishedAt = new Map<string, number>();
 	const abortedAt = new Map<string, number>();
@@ -432,6 +447,7 @@ function deriveToolBatch(
 	records: readonly LaneRecord[],
 	ownEntries: readonly Entry[],
 	entriesById: ReadonlyMap<string, Entry>,
+	deferredWriteIds: ReadonlySet<string>,
 ): ToolBatchState | null {
 	const assistantEntry = [...ownEntries]
 		.reverse()
@@ -463,6 +479,7 @@ function deriveToolBatch(
 		const blockedResult = ownEntries.find(
 			(entry) =>
 				entry.seq > assistantEntry.seq &&
+				!deferredWriteIds.has(entry.id) &&
 				entry.type === "message" &&
 				entry.message.role === "toolResult" &&
 				entry.message.toolCallId === toolCall.id,
@@ -606,9 +623,13 @@ export function reduceLaneState(input: LaneReductionInput): LaneReductionResult 
 		);
 		const previousOwnEntry = ownEntries.at(-2);
 		const producedByDeferredFetch =
-			previousOwnEntry?.type === "message" &&
-			previousOwnEntry.message.role === "assistant" &&
-			previousOwnEntry.message.stopReason === "deferred";
+			operationRecords.some(
+				(record) =>
+					record.type === "usage" && record.cause === "deferred_fetch" && record.entryId === newestOwnEntry.id,
+			) ||
+			(previousOwnEntry?.type === "message" &&
+				previousOwnEntry.message.role === "assistant" &&
+				previousOwnEntry.message.stopReason === "deferred");
 		if (producedByStep || producedByDeferredFetch) {
 			terminalFailure = {
 				entryId: newestOwnEntry.id,
@@ -628,7 +649,7 @@ export function reduceLaneState(input: LaneReductionInput): LaneReductionResult 
 				intent: clone(started.intent),
 				aborting,
 				step,
-				toolBatch: deriveToolBatch(started.id, operationRecords, ownEntries, entriesById),
+				toolBatch: deriveToolBatch(started.id, operationRecords, ownEntries, entriesById, deferredWriteIds),
 				missingInitialMessages,
 				pendingSteer,
 				pendingFollowUp,

@@ -424,6 +424,19 @@ const corruptionCases: CorruptionCase[] = [
 			[persistedEntry(messageTarget("prompt-1", userMessage("different")), 2)],
 		),
 	},
+	{
+		name: "a deferred assistant message has no handle",
+		reason: "invalid_deferred_handle",
+		input: recoverySlice(
+			[runStarted(1)],
+			[
+				persistedEntry(
+					messageTarget("assistant-deferred", { ...assistantMessage([], "deferred"), deferred: undefined }),
+					2,
+				),
+			],
+		),
+	},
 ];
 
 describe("record-log validity", () => {
@@ -895,6 +908,20 @@ describe("lane-state reduction", () => {
 		expect(call?.started !== undefined).toBe(records.some((record) => record.type === "tool_started"));
 	});
 
+	it("does not resolve a tool batch from a deferred-write tool result", () => {
+		const assistant = persistedEntry(assistantToolTarget, 3);
+		const writtenResult = messageTarget("written-tool-result", toolResultMessage());
+		const result = reduceLaneState(
+			reductionInput(
+				[runStarted(1), attempt(2, "run-1", "assistant", 1, assistant.id), writeDeferred(4, writtenResult)],
+				[assistant, persistedEntry(writtenResult, 5, assistant.id)],
+			),
+		);
+
+		expect(result.laneState.operation?.toolBatch?.calls[0]).toMatchObject({ resultExists: false });
+		expect(result.laneState.operation?.toolBatch?.unresolved).toBe(true);
+	});
+
 	it("matches blocked results without tool-start records and preserves source order", () => {
 		const assistant = persistedEntry(
 			messageTarget(
@@ -995,6 +1022,32 @@ describe("lane-state reduction", () => {
 					messageTarget("deferred-error", { ...assistantMessage([], "error"), errorMessage: "expired" }),
 					4,
 					"assistant-deferred",
+				),
+			],
+			expectedSource: "deferred_fetch",
+		},
+		{
+			name: "deferred fetch usage record",
+			records: [
+				runStarted(1),
+				{
+					type: "usage",
+					id: "deferred-usage",
+					lane: "main",
+					seq: 3,
+					timestamp: 3,
+					cause: "deferred_fetch",
+					runId: "run-1",
+					entryId: "deferred-error",
+					attempt: 1,
+					stopReason: "error",
+					usage,
+				} satisfies UsageRecord,
+			],
+			ownEntries: [
+				persistedEntry(
+					messageTarget("deferred-error", { ...assistantMessage([], "error"), errorMessage: "expired" }),
+					2,
 				),
 			],
 			expectedSource: "deferred_fetch",
