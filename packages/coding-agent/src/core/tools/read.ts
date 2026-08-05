@@ -23,6 +23,11 @@ const readSchema = Type.Object({
 	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
 });
 
+export const readToolSystemPromptContribution = {
+	snippet: "Read file contents",
+	guidelines: ["Use read to examine files instead of cat or sed."],
+} as const;
+
 export type ReadToolInput = Static<typeof readSchema>;
 
 export interface ReadToolDetails {
@@ -210,8 +215,8 @@ export function createReadToolDefinition(
 		name: "read",
 		label: "read",
 		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
-		promptSnippet: "Read file contents",
-		promptGuidelines: ["Use read to examine files instead of cat or sed."],
+		promptSnippet: readToolSystemPromptContribution.snippet,
+		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
 		async execute(
 			_toolCallId,
