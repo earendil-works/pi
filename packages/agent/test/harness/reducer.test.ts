@@ -739,6 +739,19 @@ describe("lane-state reduction", () => {
 		});
 	});
 
+	it("keeps captured next-run input with the open run instead of pending next-run", () => {
+		const captured = messageTarget("next-captured", userMessage("captured"));
+		const later = messageTarget("next-later", userMessage("later"));
+		const start = runStarted(2, { initialMessages: [captured] });
+
+		const result = reduceLaneState(
+			reductionInput([queueEnqueued(1, captured, "nextRun"), start, queueEnqueued(3, later, "nextRun")]),
+		);
+
+		expect(result.laneState.pendingNextRun).toEqual([later]);
+		expect(result.laneState.operation?.missingInitialMessages).toEqual([captured]);
+	});
+
 	it("derives missing input, queues, deferred writes, and the unfinished attempt", () => {
 		const missingPrompt = messageTarget("prompt-missing", userMessage("missing"));
 		const committedPrompt = messageTarget("prompt-committed", userMessage("committed"));

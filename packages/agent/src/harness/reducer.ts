@@ -502,11 +502,14 @@ export function reduceLaneState(input: LaneReductionInput): LaneReductionResult 
 			!entriesById.has(record.target.id) &&
 			!cancelledQueueIds.has(record.target.id),
 	);
+	const started = input.openOperations[0];
+	const capturedInitialMessageIds = new Set(
+		started?.intent.kind === "run" ? started.intent.initialMessages.map((target) => target.id) : [],
+	);
 	const pendingNextRun = pendingQueueRecords
-		.filter((record) => record.queue === "nextRun")
+		.filter((record) => record.queue === "nextRun" && !capturedInitialMessageIds.has(record.target.id))
 		.map((record) => clone(record.target));
 	const effectiveConfiguration = deriveEffectiveConfiguration(input);
-	const started = input.openOperations[0];
 
 	if (!started) {
 		return {
