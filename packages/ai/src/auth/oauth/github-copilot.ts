@@ -89,11 +89,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
 }
 
-function isSelectableCopilotModel(item: Record<string, unknown>): boolean {
-	const policy = asRecord(item.policy);
+function supportsCopilotToolCalls(item: Record<string, unknown>): boolean {
 	const capabilities = asRecord(item.capabilities);
 	const supports = asRecord(capabilities?.supports);
-	return item.model_picker_enabled === true && policy?.state !== "disabled" && supports?.tool_calls !== false;
+	return supports?.tool_calls !== false;
 }
 
 function parseAvailableCopilotModelIds(raw: unknown): string[] {
@@ -102,15 +101,18 @@ function parseAvailableCopilotModelIds(raw: unknown): string[] {
 		throw new Error("Invalid Copilot models response");
 	}
 
-	const ids: string[] = [];
+	const pickerIds: string[] = [];
+	const policyIds: string[] = [];
 	for (const rawItem of data) {
 		const item = asRecord(rawItem);
 		const id = item?.id;
-		if (typeof id === "string" && item && isSelectableCopilotModel(item)) {
-			ids.push(id);
-		}
+		if (typeof id !== "string" || !item || !supportsCopilotToolCalls(item)) continue;
+
+		const policy = asRecord(item.policy);
+		if (item.model_picker_enabled === true && policy?.state !== "disabled") pickerIds.push(id);
+		if (policy?.state === "enabled") policyIds.push(id);
 	}
-	return ids;
+	return pickerIds.length > 0 ? pickerIds : policyIds;
 }
 
 async function fetchAvailableGitHubCopilotModelIds(

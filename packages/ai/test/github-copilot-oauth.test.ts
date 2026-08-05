@@ -55,6 +55,39 @@ function loginGitHubCopilotForTest(options: {
 	});
 }
 
+async function refreshGitHubCopilotModelsForTest(data: readonly unknown[]) {
+	const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+		const url = getUrl(input);
+
+		if (url.includes("/copilot_internal/v2/token")) {
+			return jsonResponse({
+				token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+				expires_at: 9999999999,
+			});
+		}
+
+		if (url === "https://api.individual.githubcopilot.com/models") {
+			expect(init?.headers).toMatchObject({
+				Authorization: "Bearer tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+			});
+			return jsonResponse({ data });
+		}
+
+		throw new Error(`Unexpected fetch URL: ${url}`);
+	});
+
+	vi.stubGlobal("fetch", fetchMock);
+	return githubCopilotOAuth.refresh(
+		{
+			type: "oauth",
+			access: "old-access-token",
+			refresh: "ghu_refresh_token",
+			expires: 0,
+		},
+		neverAbortedSignal,
+	);
+}
+
 describe("GitHub Copilot OAuth device flow", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -62,56 +95,25 @@ describe("GitHub Copilot OAuth device flow", () => {
 	});
 
 	it("filters models to the authenticated account picker catalog", async () => {
-		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
-			const url = getUrl(input);
-
-			if (url.includes("/copilot_internal/v2/token")) {
-				return jsonResponse({
-					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
-					expires_at: 9999999999,
-				});
-			}
-
-			if (url === "https://api.individual.githubcopilot.com/models") {
-				expect(init?.headers).toMatchObject({
-					Authorization: "Bearer tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
-				});
-				return jsonResponse({
-					data: [
-						{
-							id: "gpt-4.1",
-							model_picker_enabled: true,
-							capabilities: { supports: { tool_calls: true } },
-						},
-						{
-							id: "claude-opus-4.7",
-							model_picker_enabled: true,
-							policy: { state: "disabled" },
-							capabilities: { supports: { tool_calls: true } },
-						},
-						{
-							id: "gpt-5.4-nano",
-							model_picker_enabled: false,
-							capabilities: { supports: { tool_calls: true } },
-						},
-					],
-				});
-			}
-
-			throw new Error(`Unexpected fetch URL: ${url}`);
-		});
-
-		vi.stubGlobal("fetch", fetchMock);
-
-		const credentials = await githubCopilotOAuth.refresh(
+		const credentials = await refreshGitHubCopilotModelsForTest([
 			{
-				type: "oauth",
-				access: "old-access-token",
-				refresh: "ghu_refresh_token",
-				expires: 0,
+				id: "gpt-4.1",
+				model_picker_enabled: true,
+				capabilities: { supports: { tool_calls: true } },
 			},
-			neverAbortedSignal,
-		);
+			{
+				id: "claude-opus-4.7",
+				model_picker_enabled: true,
+				policy: { state: "disabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-5.4-nano",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+		]);
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 
 		const store = new InMemoryCredentialStore();
@@ -119,6 +121,36 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const models = createModels({ credentials: store });
 		models.setProvider(githubCopilotProvider());
 		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+	});
+
+	it("falls back to explicitly enabled policy models when the picker catalog is empty", async () => {
+		const credentials = await refreshGitHubCopilotModelsForTest([
+			{
+				id: "gpt-4.1",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "claude-opus-4.7",
+				model_picker_enabled: false,
+				policy: { state: "disabled" },
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-5.4-nano",
+				model_picker_enabled: false,
+				capabilities: { supports: { tool_calls: true } },
+			},
+			{
+				id: "gpt-4o",
+				model_picker_enabled: false,
+				policy: { state: "enabled" },
+				capabilities: { supports: { tool_calls: false } },
+			},
+		]);
+
+		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
