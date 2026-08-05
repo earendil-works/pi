@@ -224,7 +224,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	private async getLeafIdForLane(lane: string): Promise<string | null> {
-		const pointer = (await this.storage.getLanes()).find((candidate) => candidate.lane === lane);
+		const pointer = (await this.getLanes()).find((candidate) => candidate.lane === lane);
 		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 		return pointer.leafId;
 	}
