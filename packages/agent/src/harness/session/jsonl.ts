@@ -247,7 +247,7 @@ function encodeMutation(mutation: DecodedMutation): string {
 	}
 }
 
-export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
+class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
 	private readonly fs: JsonlSessionRepoFileSystem;
 	private readonly metadata: JsonlSessionMetadata;
 	private sequence = 0;
