@@ -480,6 +480,10 @@ function formatOsc8Close(terminator: Osc8Terminator): string {
 }
 
 function getActiveOsc8Close(prefix: string): string {
+	if (!prefix.includes("\x1b]8;")) {
+		return "";
+	}
+
 	let activeHyperlink: ActiveHyperlink | null = null;
 	let i = 0;
 	while (i < prefix.length) {
