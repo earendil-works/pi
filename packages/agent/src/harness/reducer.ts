@@ -1,10 +1,15 @@
+import type { AssistantMessage, DeferredHandle, StopReason } from "@earendil-works/pi-ai";
 import { Guard } from "typebox/guard";
+import type { AgentMessage, AgentToolCall, ThinkingLevel } from "../types.ts";
 import type {
 	Entry,
 	LaneRecord,
 	OperationStartedRecord,
 	ProvisionedEntry,
+	QueueEnqueuedRecord,
 	StepAttemptRecord,
+	ToolStartedRecord,
+	WriteDeferredRecord,
 } from "./session/types.ts";
 
 /**
@@ -43,6 +48,79 @@ export interface RecordLogSlice {
 	records: readonly LaneRecord[];
 	/** Operation-owned entries plus entries fetched directly by provisioned or referenced ids. */
 	entries: readonly Entry[];
+}
+
+export interface EffectiveLaneConfiguration {
+	model: { provider: string; modelId: string };
+	thinkingLevel: ThinkingLevel;
+	activeToolNames: string[];
+}
+
+export interface TerminalFailureState {
+	entryId: string;
+	source: "step" | "deferred_fetch";
+	message: AssistantMessage;
+}
+
+export interface ToolBatchState {
+	assistantEntryId: string;
+	calls: {
+		toolIndex: number;
+		toolCall: AgentToolCall;
+		started?: ToolStartedRecord;
+		resultExists: boolean;
+		terminate?: boolean;
+	}[];
+	truncated: boolean;
+	unresolved: boolean;
+}
+
+export interface LaneState {
+	lane: string;
+	leafId: string | null;
+	operation: null | {
+		id: string;
+		kind: "run" | "compaction" | "navigation";
+		intent: OperationStartedRecord["intent"];
+		aborting: boolean;
+		step: null | {
+			kind: "assistant" | "compaction" | "branch_summary";
+			attempts: number;
+			resultEntryId: string;
+			compactionReason?: "manual" | "threshold" | "overflow";
+		};
+		toolBatch: ToolBatchState | null;
+		missingInitialMessages: ProvisionedEntry[];
+		pendingSteer: ProvisionedEntry[];
+		pendingFollowUp: ProvisionedEntry[];
+		pendingWrites: ProvisionedEntry[];
+		deferred: DeferredHandle | null;
+		overflowRecoveryUsed: boolean;
+		newestOwn: null | {
+			entryId: string;
+			type: Entry["type"];
+			role?: AgentMessage["role"];
+			stopReason?: StopReason;
+		};
+		targets: { result?: boolean; summary?: boolean };
+	};
+	pendingNextRun: ProvisionedEntry[];
+}
+
+export interface LaneReductionInput extends RecordLogSlice {
+	leafId: string | null;
+	/** Entries appended by the open operation, oldest first. Empty when idle. */
+	ownEntries: readonly Entry[];
+	/** Bounded effective-state lookups at the operation anchor or idle leaf, oldest first. */
+	configurationEntries: readonly Entry[];
+	/** Harness option fallbacks used when no persisted value exists. */
+	defaults: EffectiveLaneConfiguration;
+}
+
+export interface LaneReductionResult {
+	laneState: LaneState;
+	effectiveConfiguration: EffectiveLaneConfiguration;
+	terminalFailure: TerminalFailureState | null;
 }
 
 interface AttemptSeries {
@@ -294,4 +372,272 @@ export function validateRecordLog(input: RecordLogSlice): void {
 				break;
 		}
 	}
+}
+
+function clone<T>(value: T): T {
+	return structuredClone(value);
+}
+
+function bySequence<T extends { seq: number }>(values: readonly T[]): T[] {
+	return [...values].sort((left, right) => left.seq - right.seq);
+}
+
+function deriveEffectiveConfiguration(input: LaneReductionInput): EffectiveLaneConfiguration {
+	let configuration = clone(input.defaults);
+	const entriesById = new Map<string, Entry>();
+	for (const entry of [...input.configurationEntries, ...input.ownEntries]) entriesById.set(entry.id, entry);
+
+	for (const entry of bySequence([...entriesById.values()])) {
+		switch (entry.type) {
+			case "model_change":
+				configuration = { ...configuration, model: { provider: entry.provider, modelId: entry.modelId } };
+				break;
+			case "thinking_level_change":
+				configuration = { ...configuration, thinkingLevel: entry.thinkingLevel as ThinkingLevel };
+				break;
+			case "active_tools_change":
+				configuration = { ...configuration, activeToolNames: [...entry.activeToolNames] };
+				break;
+			case "message":
+				if (entry.message.role === "assistant") {
+					configuration = {
+						...configuration,
+						model: { provider: entry.message.provider, modelId: entry.message.model },
+					};
+				}
+				break;
+		}
+	}
+	return configuration;
+}
+
+function deriveNewestOwn(
+	entry: Entry | undefined,
+): NonNullable<NonNullable<LaneState["operation"]>["newestOwn"]> | null {
+	if (!entry) return null;
+	if (entry.type !== "message") return { entryId: entry.id, type: entry.type };
+	if (entry.message.role !== "assistant") {
+		return { entryId: entry.id, type: entry.type, role: entry.message.role };
+	}
+	return {
+		entryId: entry.id,
+		type: entry.type,
+		role: entry.message.role,
+		stopReason: entry.message.stopReason,
+	};
+}
+
+function deriveToolBatch(
+	operationId: string,
+	records: readonly LaneRecord[],
+	ownEntries: readonly Entry[],
+	entriesById: ReadonlyMap<string, Entry>,
+): ToolBatchState | null {
+	const assistantEntry = [...ownEntries]
+		.reverse()
+		.find(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "assistant" &&
+				entry.message.content.some((content) => content.type === "toolCall"),
+		);
+	if (!assistantEntry || assistantEntry.type !== "message" || assistantEntry.message.role !== "assistant") return null;
+
+	const toolCalls = assistantEntry.message.content.filter(
+		(content): content is AgentToolCall => content.type === "toolCall",
+	);
+	const starts = new Map<number, ToolStartedRecord>();
+	for (const record of records) {
+		if (
+			record.type === "tool_started" &&
+			record.runId === operationId &&
+			record.assistantEntryId === assistantEntry.id
+		) {
+			starts.set(record.toolIndex, record);
+		}
+	}
+
+	const calls = toolCalls.map((toolCall, toolIndex) => {
+		const started = starts.get(toolIndex);
+		const startedResult = started ? entriesById.get(started.resultEntryId) : undefined;
+		const blockedResult = ownEntries.find(
+			(entry) =>
+				entry.seq > assistantEntry.seq &&
+				entry.type === "message" &&
+				entry.message.role === "toolResult" &&
+				entry.message.toolCallId === toolCall.id,
+		);
+		const result = startedResult ?? blockedResult;
+		return {
+			toolIndex,
+			toolCall: clone(toolCall),
+			...(started ? { started: clone(started) } : {}),
+			resultExists: result !== undefined,
+			...(result?.type === "message" && result.terminate === true ? { terminate: true } : {}),
+		};
+	});
+
+	return {
+		assistantEntryId: assistantEntry.id,
+		calls,
+		truncated: assistantEntry.message.stopReason === "length",
+		unresolved: calls.some((call) => !call.resultExists),
+	};
+}
+
+/** Purely reconstructs one lane's orchestration state from its bounded recovery inputs. */
+export function reduceLaneState(input: LaneReductionInput): LaneReductionResult {
+	validateRecordLog(input);
+
+	const records = bySequence(input.records);
+	const ownEntries = bySequence(input.ownEntries);
+	const entriesById = new Map<string, Entry>();
+	for (const entry of [...input.entries, ...ownEntries]) entriesById.set(entry.id, entry);
+	const cancelledQueueIds = new Set(
+		records.filter((record) => record.type === "queue_cancelled").map((record) => record.entryId),
+	);
+	const pendingQueueRecords = records.filter(
+		(record): record is QueueEnqueuedRecord =>
+			record.type === "queue_enqueued" &&
+			!entriesById.has(record.target.id) &&
+			!cancelledQueueIds.has(record.target.id),
+	);
+	const pendingNextRun = pendingQueueRecords
+		.filter((record) => record.queue === "nextRun")
+		.map((record) => clone(record.target));
+	const effectiveConfiguration = deriveEffectiveConfiguration(input);
+	const started = input.openOperations[0];
+
+	if (!started) {
+		return {
+			laneState: { lane: input.lane, leafId: input.leafId, operation: null, pendingNextRun },
+			effectiveConfiguration,
+			terminalFailure: null,
+		};
+	}
+
+	const operationRecords = records.filter((record) =>
+		record.type === "operation_started" ? record.id === started.id : "runId" in record && record.runId === started.id,
+	);
+	const aborting = operationRecords.some((record) => record.type === "abort_requested");
+	const pendingSteer = aborting
+		? []
+		: pendingQueueRecords
+				.filter((record) => record.queue === "steer" && record.runId === started.id)
+				.map((record) => clone(record.target));
+	const pendingFollowUp = aborting
+		? []
+		: pendingQueueRecords
+				.filter((record) => record.queue === "followUp" && record.runId === started.id)
+				.map((record) => clone(record.target));
+	const pendingWrites = operationRecords
+		.filter(
+			(record): record is WriteDeferredRecord =>
+				record.type === "write_deferred" && !entriesById.has(record.target.id),
+		)
+		.map((record) => clone(record.target));
+	const missingInitialMessages =
+		started.intent.kind === "run"
+			? started.intent.initialMessages.filter((target) => !entriesById.has(target.id)).map(clone)
+			: [];
+
+	const newestAttempt = operationRecords.filter((record) => record.type === "step_attempt").at(-1);
+	const step =
+		newestAttempt && !entriesById.has(newestAttempt.resultEntryId)
+			? {
+					kind: newestAttempt.step,
+					attempts: newestAttempt.attempt,
+					resultEntryId: newestAttempt.resultEntryId,
+					...(newestAttempt.step === "compaction" ? { compactionReason: newestAttempt.compactionReason } : {}),
+				}
+			: null;
+
+	const consumedInputIds = new Set<string>();
+	if (started.intent.kind === "run") {
+		for (const target of started.intent.initialMessages) consumedInputIds.add(target.id);
+	}
+	for (const record of operationRecords) {
+		if (record.type === "queue_enqueued" && record.queue !== "nextRun") consumedInputIds.add(record.target.id);
+	}
+	let newestConsumedInputSequence = Number.NEGATIVE_INFINITY;
+	for (const id of consumedInputIds) {
+		const entry = entriesById.get(id);
+		if (entry?.type === "message") newestConsumedInputSequence = Math.max(newestConsumedInputSequence, entry.seq);
+	}
+	const overflowRecoveryUsed = operationRecords.some(
+		(record) =>
+			record.type === "step_attempt" &&
+			record.step === "compaction" &&
+			record.compactionReason === "overflow" &&
+			record.seq > newestConsumedInputSequence,
+	);
+
+	const newestOwnEntry = ownEntries.at(-1);
+	const newestOwn = deriveNewestOwn(newestOwnEntry);
+	const deferred =
+		newestOwnEntry?.type === "message" &&
+		newestOwnEntry.message.role === "assistant" &&
+		newestOwnEntry.message.stopReason === "deferred" &&
+		newestOwnEntry.message.deferred
+			? clone(newestOwnEntry.message.deferred)
+			: null;
+	const targets: { result?: boolean; summary?: boolean } = {};
+	if (started.intent.kind === "compaction") {
+		targets.result = entriesById.has(started.intent.resultEntryId);
+	} else if (started.intent.kind === "navigation" && started.intent.summaryEntryId) {
+		targets.summary = entriesById.has(started.intent.summaryEntryId);
+	}
+
+	const deferredWriteIds = new Set(
+		operationRecords.filter((record) => record.type === "write_deferred").map((record) => record.target.id),
+	);
+	let terminalFailure: TerminalFailureState | null = null;
+	if (
+		newestOwnEntry?.type === "message" &&
+		newestOwnEntry.message.role === "assistant" &&
+		newestOwnEntry.message.stopReason === "error" &&
+		!deferredWriteIds.has(newestOwnEntry.id)
+	) {
+		const producedByStep = operationRecords.some(
+			(record) => record.type === "step_attempt" && record.resultEntryId === newestOwnEntry.id,
+		);
+		const previousOwnEntry = ownEntries.at(-2);
+		const producedByDeferredFetch =
+			previousOwnEntry?.type === "message" &&
+			previousOwnEntry.message.role === "assistant" &&
+			previousOwnEntry.message.stopReason === "deferred";
+		if (producedByStep || producedByDeferredFetch) {
+			terminalFailure = {
+				entryId: newestOwnEntry.id,
+				source: producedByStep ? "step" : "deferred_fetch",
+				message: clone(newestOwnEntry.message),
+			};
+		}
+	}
+
+	return {
+		laneState: {
+			lane: input.lane,
+			leafId: input.leafId,
+			operation: {
+				id: started.id,
+				kind: started.intent.kind,
+				intent: clone(started.intent),
+				aborting,
+				step,
+				toolBatch: deriveToolBatch(started.id, operationRecords, ownEntries, entriesById),
+				missingInitialMessages,
+				pendingSteer,
+				pendingFollowUp,
+				pendingWrites,
+				deferred,
+				overflowRecoveryUsed,
+				newestOwn,
+				targets,
+			},
+			pendingNextRun,
+		},
+		effectiveConfiguration,
+		terminalFailure,
+	};
 }

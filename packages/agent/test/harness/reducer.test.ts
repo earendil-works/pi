@@ -1,9 +1,12 @@
 import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
+	type EffectiveLaneConfiguration,
+	type LaneReductionInput,
 	RecordLogCorruption,
 	type RecordLogCorruptionReason,
 	type RecordLogSlice,
+	reduceLaneState,
 	validateRecordLog,
 } from "../../src/harness/reducer.ts";
 import type {
@@ -264,6 +267,32 @@ function recoverySlice(records: readonly LaneRecord[], entries: readonly Entry[]
 		)
 		.sort((left, right) => right.seq - left.seq);
 	return { lane: "main", openOperations, records, entries };
+}
+
+const defaults: EffectiveLaneConfiguration = {
+	model: { provider: "default-provider", modelId: "default-model" },
+	thinkingLevel: "off",
+	activeToolNames: ["default-tool"],
+};
+
+function reductionInput(
+	records: readonly LaneRecord[],
+	ownEntries: readonly Entry[] = [],
+	options: {
+		entries?: readonly Entry[];
+		configurationEntries?: readonly Entry[];
+		leafId?: string | null;
+		defaults?: EffectiveLaneConfiguration;
+	} = {},
+): LaneReductionInput {
+	const slice = recoverySlice(records, [...ownEntries, ...(options.entries ?? [])]);
+	return {
+		...slice,
+		leafId: options.leafId === undefined ? (ownEntries.at(-1)?.id ?? null) : options.leafId,
+		ownEntries,
+		configurationEntries: options.configurationEntries ?? [],
+		defaults: options.defaults ?? defaults,
+	};
 }
 
 function expectCorruption(input: RecordLogSlice, reason: RecordLogCorruptionReason): void {
@@ -615,5 +644,418 @@ const validPrefixCases = [
 describe("valid section 6 durable prefixes", () => {
 	it.each(validPrefixCases)("accepts $name", ({ input }) => {
 		expect(validateRecordLog(input)).toBeUndefined();
+	});
+});
+
+describe("lane-state reduction", () => {
+	it("reduces an idle lane to pending next-run input and default configuration", () => {
+		const pending = messageTarget("next-pending", userMessage("pending"));
+		const cancelled = messageTarget("next-cancelled", userMessage("cancelled"));
+		const consumed = messageTarget("next-consumed", userMessage("consumed"));
+		const input = reductionInput(
+			[
+				queueEnqueued(1, pending, "nextRun"),
+				queueEnqueued(2, cancelled, "nextRun"),
+				queueCancelled(3, cancelled.id, null),
+				queueEnqueued(4, consumed, "nextRun"),
+			],
+			[],
+			{ entries: [persistedEntry(consumed, 5)], leafId: "idle-leaf" },
+		);
+
+		expect(reduceLaneState(input)).toEqual({
+			laneState: {
+				lane: "main",
+				leafId: "idle-leaf",
+				operation: null,
+				pendingNextRun: [pending],
+			},
+			effectiveConfiguration: defaults,
+			terminalFailure: null,
+		});
+	});
+
+	it("folds persisted configuration over copied defaults in sequence", () => {
+		const configurationEntries: Entry[] = [
+			{
+				type: "model_change",
+				id: "model-change",
+				parentId: null,
+				seq: 1,
+				timestamp: 1,
+				provider: "persisted-provider",
+				modelId: "persisted-model",
+			},
+			{
+				type: "thinking_level_change",
+				id: "thinking-change",
+				parentId: "model-change",
+				seq: 2,
+				timestamp: 2,
+				thinkingLevel: "high",
+			},
+			{
+				type: "active_tools_change",
+				id: "tools-change",
+				parentId: "thinking-change",
+				seq: 3,
+				timestamp: 3,
+				activeToolNames: ["persisted-tool"],
+			},
+		];
+		const input = reductionInput([], [], { configurationEntries });
+
+		expect(reduceLaneState(input).effectiveConfiguration).toEqual({
+			model: { provider: "persisted-provider", modelId: "persisted-model" },
+			thinkingLevel: "high",
+			activeToolNames: ["persisted-tool"],
+		});
+		expect(input.defaults).toEqual(defaults);
+	});
+
+	it("applies committed operation-owned configuration after the anchor", () => {
+		const assistant = persistedEntry(
+			messageTarget("assistant-config", {
+				...assistantMessage([{ type: "text", text: "response" }]),
+				provider: "response-provider",
+				model: "response-model",
+			}),
+			2,
+		);
+		const tools: Entry = {
+			type: "active_tools_change",
+			id: "operation-tools",
+			parentId: assistant.id,
+			seq: 3,
+			timestamp: 3,
+			activeToolNames: ["operation-tool"],
+		};
+		const result = reduceLaneState(reductionInput([runStarted(1)], [assistant, tools]));
+
+		expect(result.effectiveConfiguration).toEqual({
+			model: { provider: "response-provider", modelId: "response-model" },
+			thinkingLevel: "off",
+			activeToolNames: ["operation-tool"],
+		});
+	});
+
+	it("derives missing input, queues, deferred writes, and the unfinished attempt", () => {
+		const missingPrompt = messageTarget("prompt-missing", userMessage("missing"));
+		const committedPrompt = messageTarget("prompt-committed", userMessage("committed"));
+		const steer = messageTarget("steer-pending", userMessage("steer"));
+		const consumedFollowUp = messageTarget("follow-consumed", userMessage("follow"));
+		const nextRun = messageTarget("next-run", userMessage("next"));
+		const pendingWrite = messageTarget("write-pending", userMessage("write"));
+		const appliedWrite = messageTarget("write-applied", userMessage("applied"));
+		const start = runStarted(1, { initialMessages: [missingPrompt, committedPrompt] });
+		const committedPromptEntry = persistedEntry(committedPrompt, 2);
+		const consumedFollowUpEntry = persistedEntry(consumedFollowUp, 6, committedPrompt.id);
+		const appliedWriteEntry = persistedEntry(appliedWrite, 9, consumedFollowUp.id);
+		const input = reductionInput(
+			[
+				start,
+				queueEnqueued(3, steer),
+				queueEnqueued(4, consumedFollowUp, "followUp"),
+				queueEnqueued(5, nextRun, "nextRun"),
+				writeDeferred(7, pendingWrite),
+				writeDeferred(8, appliedWrite),
+				attempt(10, start.id, "assistant", 1, "assistant-pending"),
+			],
+			[committedPromptEntry, consumedFollowUpEntry, appliedWriteEntry],
+		);
+
+		const result = reduceLaneState(input);
+		expect(result.laneState.pendingNextRun).toEqual([nextRun]);
+		expect(result.laneState.operation).toMatchObject({
+			id: start.id,
+			kind: "run",
+			aborting: false,
+			missingInitialMessages: [missingPrompt],
+			pendingSteer: [steer],
+			pendingFollowUp: [],
+			pendingWrites: [pendingWrite],
+			step: { kind: "assistant", attempts: 1, resultEntryId: "assistant-pending" },
+			newestOwn: { entryId: appliedWrite.id, type: "message", role: "user" },
+		});
+	});
+
+	it("kills steer and follow-up queues on abort while preserving writes and next-run input", () => {
+		const steer = messageTarget("steer-aborted", userMessage("steer"));
+		const followUp = messageTarget("follow-aborted", userMessage("follow"));
+		const nextRun = messageTarget("next-after-abort", userMessage("next"));
+		const pendingWrite = messageTarget("write-after-abort", userMessage("write"));
+		const input = reductionInput([
+			runStarted(1),
+			queueEnqueued(2, steer),
+			queueEnqueued(3, followUp, "followUp"),
+			queueEnqueued(4, nextRun, "nextRun"),
+			writeDeferred(5, pendingWrite),
+			abortRequested(6),
+		]);
+
+		const result = reduceLaneState(input);
+		expect(result.laneState.pendingNextRun).toEqual([nextRun]);
+		expect(result.laneState.operation).toMatchObject({
+			aborting: true,
+			pendingSteer: [],
+			pendingFollowUp: [],
+			pendingWrites: [pendingWrite],
+		});
+	});
+
+	it.each([
+		{
+			name: "assistant",
+			record: attempt(2, "run-1", "assistant", 1, "result"),
+			expected: { kind: "assistant", attempts: 1, resultEntryId: "result" },
+		},
+		{
+			name: "compaction",
+			record: attempt(2, "run-1", "compaction", 1, "result", "overflow"),
+			expected: {
+				kind: "compaction",
+				attempts: 1,
+				resultEntryId: "result",
+				compactionReason: "overflow",
+			},
+		},
+		{
+			name: "branch summary",
+			record: attempt(2, "run-1", "branch_summary", 1, "result"),
+			expected: { kind: "branch_summary", attempts: 1, resultEntryId: "result" },
+		},
+	])("reduces an unfinished $name step", ({ record, expected }) => {
+		const result = reduceLaneState(reductionInput([runStarted(1), record]));
+		expect(result.laneState.operation?.step).toEqual(expected);
+	});
+
+	it("closes the newest attempt only when its provisioned result exists", () => {
+		const target = messageTarget("result", assistantMessage([{ type: "text", text: "done" }]));
+		const result = reduceLaneState(
+			reductionInput([runStarted(1), attempt(2, "run-1", "assistant", 1, target.id)], [persistedEntry(target, 3)]),
+		);
+		expect(result.laneState.operation?.step).toBeNull();
+	});
+
+	it("ignores unfulfilled result ids from earlier attempts", () => {
+		const target = messageTarget("attempt-2-result", assistantMessage([{ type: "text", text: "done" }]));
+		const result = reduceLaneState(
+			reductionInput(
+				[
+					runStarted(1),
+					attempt(2, "run-1", "assistant", 1, "attempt-1-result"),
+					attempt(3, "run-1", "assistant", 2, target.id),
+				],
+				[persistedEntry(target, 4)],
+			),
+		);
+		expect(result.laneState.operation?.step).toBeNull();
+	});
+
+	it.each([
+		{ name: "X1", records: [runStarted(1), attempt(2, "run-1", "assistant", 1, "assistant-tools")] },
+		{
+			name: "X3",
+			records: [runStarted(1), attempt(2, "run-1", "assistant", 1, "assistant-tools"), toolStarted(4)],
+		},
+		{
+			name: "X5",
+			records: [runStarted(1), attempt(2, "run-1", "assistant", 1, "assistant-tools"), toolStarted(4)],
+			result: { ...persistedEntry(toolResultTarget, 5, assistantToolsEntry.id), terminate: true as const },
+		},
+	])("reduces tool batch state at $name", ({ records, result }) => {
+		const ownEntries = result ? [assistantToolsEntry, result] : [assistantToolsEntry];
+		const reduction = reduceLaneState(reductionInput(records, ownEntries));
+		const call = reduction.laneState.operation?.toolBatch?.calls[0];
+
+		expect(reduction.laneState.operation?.toolBatch).toMatchObject({
+			assistantEntryId: assistantToolsEntry.id,
+			truncated: false,
+			unresolved: !result,
+		});
+		expect(call).toMatchObject({
+			toolIndex: 0,
+			toolCall: { id: "call-1", name: "tool-1" },
+			resultExists: result !== undefined,
+			...(result ? { terminate: true } : {}),
+		});
+		expect(call?.started !== undefined).toBe(records.some((record) => record.type === "tool_started"));
+	});
+
+	it("matches blocked results without tool-start records and preserves source order", () => {
+		const assistant = persistedEntry(
+			messageTarget(
+				"assistant-two-tools",
+				assistantMessage(
+					[
+						{ type: "toolCall", id: "call-1", name: "tool-1", arguments: {} },
+						{ type: "toolCall", id: "call-2", name: "tool-2", arguments: {} },
+					],
+					"toolUse",
+				),
+			),
+			3,
+		);
+		const blocked = persistedEntry(
+			messageTarget("blocked-result", {
+				...toolResultMessage("call-1", "tool-1"),
+				content: [{ type: "text", text: "blocked" }],
+				isError: true,
+			}),
+			4,
+			assistant.id,
+		);
+		const secondStart = toolStarted(5, {
+			assistantEntryId: assistant.id,
+			toolIndex: 1,
+			toolCallId: "call-2",
+			toolName: "tool-2",
+			resultEntryId: "call-2-result",
+		});
+		const result = reduceLaneState(
+			reductionInput(
+				[runStarted(1), attempt(2, "run-1", "assistant", 1, assistant.id), secondStart],
+				[assistant, blocked],
+			),
+		);
+
+		expect(result.laneState.operation?.toolBatch?.calls).toMatchObject([
+			{ toolIndex: 0, toolCall: { id: "call-1" }, resultExists: true },
+			{ toolIndex: 1, toolCall: { id: "call-2" }, started: secondStart, resultExists: false },
+		]);
+	});
+
+	it("marks a length-stopped tool batch as truncated without resolving it", () => {
+		const truncated = persistedEntry(
+			messageTarget(
+				"assistant-truncated",
+				assistantMessage([{ type: "toolCall", id: "call-1", name: "tool-1", arguments: {} }], "length"),
+			),
+			3,
+		);
+		const result = reduceLaneState(
+			reductionInput([runStarted(1), attempt(2, "run-1", "assistant", 1, truncated.id)], [truncated]),
+		);
+		expect(result.laneState.operation?.toolBatch).toMatchObject({ truncated: true, unresolved: true });
+	});
+
+	it("detects an unredeemed deferred handle only at the operation tail", () => {
+		const deferredMessage = assistantMessage([], "deferred");
+		const deferredEntry = persistedEntry(messageTarget("assistant-deferred", deferredMessage), 3);
+		const pending = reduceLaneState(
+			reductionInput([runStarted(1), attempt(2, "run-1", "assistant", 1, deferredEntry.id)], [deferredEntry]),
+		);
+		expect(pending.laneState.operation?.deferred).toEqual(deferredMessage.deferred);
+
+		const successor = persistedEntry(
+			messageTarget("assistant-ready", assistantMessage([{ type: "text", text: "ready" }])),
+			4,
+			deferredEntry.id,
+		);
+		const redeemed = reduceLaneState(
+			reductionInput(
+				[runStarted(1), attempt(2, "run-1", "assistant", 1, deferredEntry.id)],
+				[deferredEntry, successor],
+			),
+		);
+		expect(redeemed.laneState.operation?.deferred).toBeNull();
+	});
+
+	it.each([
+		{
+			name: "step",
+			records: [runStarted(1), attempt(2, "run-1", "assistant", 1, "assistant-error")],
+			ownEntries: [
+				persistedEntry(
+					messageTarget("assistant-error", { ...assistantMessage([], "error"), errorMessage: "failed" }),
+					3,
+				),
+			],
+			expectedSource: "step",
+		},
+		{
+			name: "deferred fetch",
+			records: [runStarted(1), attempt(2, "run-1", "assistant", 1, "assistant-deferred")],
+			ownEntries: [
+				persistedEntry(messageTarget("assistant-deferred", assistantMessage([], "deferred")), 3),
+				persistedEntry(
+					messageTarget("deferred-error", { ...assistantMessage([], "error"), errorMessage: "expired" }),
+					4,
+					"assistant-deferred",
+				),
+			],
+			expectedSource: "deferred_fetch",
+		},
+	])("derives $name terminal-failure provenance", ({ records, ownEntries, expectedSource }) => {
+		const result = reduceLaneState(reductionInput(records, ownEntries));
+		expect(result.terminalFailure).toMatchObject({ source: expectedSource });
+	});
+
+	it("does not classify an error-shaped deferred write as terminal failure", () => {
+		const target = messageTarget("written-error", { ...assistantMessage([], "error"), errorMessage: "note" });
+		const entry = persistedEntry(target, 3);
+		const result = reduceLaneState(reductionInput([runStarted(1), writeDeferred(2, target)], [entry]));
+		expect(result.terminalFailure).toBeNull();
+	});
+
+	it.each([
+		{
+			name: "manual compaction result",
+			records: [compactionStarted(1)],
+			entries: [] as Entry[],
+			expected: { result: false },
+		},
+		{
+			name: "completed manual compaction result",
+			records: [compactionStarted(1)],
+			entries: [compactionEntry("compaction-1", 2)],
+			expected: { result: true },
+		},
+		{
+			name: "missing navigation summary",
+			records: [navigationStarted(1)],
+			entries: [] as Entry[],
+			expected: { summary: false },
+		},
+		{
+			name: "navigation summary",
+			records: [navigationStarted(1)],
+			entries: [branchSummaryEntry("summary-1", 2)],
+			expected: { summary: true },
+		},
+	])("derives structural target state for $name", ({ records, entries, expected }) => {
+		const result = reduceLaneState(reductionInput(records, entries));
+		expect(result.laneState.operation?.targets).toEqual(expected);
+	});
+
+	it("resets the overflow guard only after newer conversational input is consumed", () => {
+		const initial = messageTarget("initial", userMessage("initial"));
+		const steer = messageTarget("steer", userMessage("steer"));
+		const start = runStarted(1, { initialMessages: [initial] });
+		const initialEntry = persistedEntry(initial, 2);
+		const records: LaneRecord[] = [
+			start,
+			attempt(3, start.id, "compaction", 1, "overflow-summary", "overflow"),
+			queueEnqueued(5, steer),
+		];
+
+		const used = reduceLaneState(reductionInput(records, [initialEntry]));
+		expect(used.laneState.operation?.overflowRecoveryUsed).toBe(true);
+
+		const reset = reduceLaneState(reductionInput(records, [initialEntry, persistedEntry(steer, 6, initial.id)]));
+		expect(reset.laneState.operation?.overflowRecoveryUsed).toBe(false);
+	});
+
+	it("is deterministic and does not mutate or alias its inputs", () => {
+		const pending = messageTarget("next", userMessage("next"));
+		const input = reductionInput([queueEnqueued(1, pending, "nextRun")]);
+		const before = structuredClone(input);
+		const first = reduceLaneState(input);
+		const second = reduceLaneState(input);
+
+		expect(first).toEqual(second);
+		expect(input).toEqual(before);
+		first.laneState.pendingNextRun[0]!.id = "mutated-output";
+		expect(input.records[0]).toMatchObject({ type: "queue_enqueued", target: { id: "next" } });
 	});
 });
