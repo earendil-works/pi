@@ -120,6 +120,9 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 
 			if (lineRange) {
 				const lines = content.split("\n");
+				if (lines.length > 1 && lines.at(-1) === "") {
+					lines.pop();
+				}
 				if (lineRange.start > lines.length) {
 					exitWithError(
 						`Line range start ${lineRange.start} is beyond end of file (${lines.length} lines total): ${absolutePath}`,

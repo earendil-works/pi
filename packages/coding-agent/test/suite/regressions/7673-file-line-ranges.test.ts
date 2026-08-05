@@ -93,13 +93,23 @@ describe("issue #7673 CLI file line ranges", () => {
 		expect(result.text).toBe(`<file name="${filePath}" lines="2-3">\ntwo\nthree\n</file>\n`);
 	});
 
-	it("preserves CRLF line endings within the selected content", async () => {
+	it("preserves CRLF line endings without counting the terminator as another line", async () => {
 		const filePath = join(testDir, "windows.txt");
-		writeFileSync(filePath, "one\r\ntwo\r\nthree\r\nfour");
+		writeFileSync(filePath, "one\r\ntwo\r\nthree\r\nfour\r\n");
 
-		const result = await processAndPrompt(`${filePath}#L2-L3`);
+		const result = await processAndPrompt(`${filePath}#L2-L99`);
 
-		expect(result.text).toBe(`<file name="${filePath}" lines="2-3">\ntwo\r\nthree\r\n</file>\n`);
+		expect(result.text).toBe(`<file name="${filePath}" lines="2-4">\ntwo\r\nthree\r\nfour\r\n</file>\n`);
+	});
+
+	it("does not count a terminating LF as an extra line", async () => {
+		const filePath = join(testDir, "terminated.txt");
+		writeFileSync(filePath, "one\ntwo\nthree\n");
+
+		const result = await processAndPrompt(`${filePath}#L2-L99`);
+
+		expect(result.text).toBe(`<file name="${filePath}" lines="2-3">\ntwo\nthree\n</file>\n`);
+		await expectFatal(`${filePath}#L4-L4`, "Line range start 4 is beyond end of file (3 lines total)");
 	});
 
 	it("leaves whole-file references unchanged", async () => {
