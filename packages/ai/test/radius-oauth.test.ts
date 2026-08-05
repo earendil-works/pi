@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRadiusOAuth } from "../src/auth/oauth/radius.ts";
-import type { AuthEvent, AuthInteraction } from "../src/auth/types.ts";
+import type { AuthEvent, ProviderAuthInteraction } from "../src/auth/types.ts";
 
 const GATEWAY = "https://radius.example";
 
@@ -18,8 +18,9 @@ function requestUrl(input: unknown): string {
 	throw new Error(`Unsupported request input: ${String(input)}`);
 }
 
-function interaction(loginMethod: "browser" | "device-code", events: AuthEvent[] = []): AuthInteraction {
+function interaction(loginMethod: "browser" | "device-code", events: AuthEvent[] = []): ProviderAuthInteraction {
 	return {
+		signal: new AbortController().signal,
 		prompt: async () => loginMethod,
 		notify: (event) => events.push(event),
 	};
@@ -106,7 +107,10 @@ describe("Radius OAuth", () => {
 
 		const oauth = createRadiusOAuth({ name: "Radius", gateway: GATEWAY });
 		await expect(
-			oauth.refresh({ type: "oauth", access: "old-access", refresh: "old-refresh", expires: 0 }),
+			oauth.refresh(
+				{ type: "oauth", access: "old-access", refresh: "old-refresh", expires: 0 },
+				new AbortController().signal,
+			),
 		).resolves.toMatchObject({ access: "new-access", refresh: "new-refresh" });
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});

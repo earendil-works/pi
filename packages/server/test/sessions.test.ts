@@ -9,12 +9,10 @@ import {
 	Deferred,
 	type ProtocolTestClient,
 	TEST_MODEL,
-	TEST_TOKEN,
 	TestSessionBackend,
 } from "../src/testing/index.ts";
 import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
 
-const TOKEN = TEST_TOKEN;
 const MODEL = TEST_MODEL;
 type Client = ProtocolTestClient;
 class MemoryBackend extends TestSessionBackend {}
@@ -49,7 +47,6 @@ async function startServer(backend = new MemoryBackend(), options: Partial<UnixS
 	const directory = await mkdtemp(join(tmpdir(), "pst-"));
 	tempDirectories.add(directory);
 	const server = createUnixServer(backend, {
-		token: TOKEN,
 		path: join(directory, "server.sock"),
 		...options,
 	});

@@ -16,7 +16,6 @@ import type {
 	PromptInput,
 } from "../types.ts";
 
-export const TEST_TOKEN = "server-conformance-token";
 export const TEST_MODEL: ModelMetadata = {
 	provider: "test",
 	id: "small",

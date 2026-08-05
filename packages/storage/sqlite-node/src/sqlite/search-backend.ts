@@ -17,10 +17,10 @@ function getParentPath(path: string): string {
 	return normalized.slice(0, lastSlash);
 }
 
-async function configureSqliteDatabase(db: SqliteDatabase): Promise<void> {
-	await db.exec("PRAGMA journal_mode=WAL");
-	await db.exec("PRAGMA synchronous=FULL");
-	await db.exec("PRAGMA busy_timeout=5000");
+function configureSqliteDatabase(db: SqliteDatabase): void {
+	db.exec("PRAGMA journal_mode=WAL");
+	db.exec("PRAGMA synchronous=FULL");
+	db.exec("PRAGMA busy_timeout=5000");
 }
 
 export interface SqliteSessionSearchOptions {
@@ -29,33 +29,33 @@ export interface SqliteSessionSearchOptions {
 	databasePath: string;
 }
 
-async function tableExists(db: SqliteDatabase, name: string): Promise<boolean> {
-	return !!(await db
+function tableExists(db: SqliteDatabase, name: string): boolean {
+	return !!db
 		.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-		.get<{ found: number }>(name));
+		.get<{ found: number }>(name);
 }
 
-async function ensureSearchSchema(db: SqliteDatabase): Promise<void> {
-	const ftsExists = await tableExists(db, "session_search_fts");
-	await db.exec(`
+function ensureSearchSchema(db: SqliteDatabase): void {
+	const ftsExists = tableExists(db, "session_search_fts");
+	db.exec(`
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
   payload,
-  content = 'session_entries',
+  content = 'entries',
   content_rowid = 'rowid',
   tokenize = 'trigram remove_diacritics 1'
 );
-CREATE TRIGGER IF NOT EXISTS session_search_fts_ai AFTER INSERT ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ai AFTER INSERT ON entries BEGIN
   INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
 END;
-CREATE TRIGGER IF NOT EXISTS session_search_fts_ad AFTER DELETE ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_ad AFTER DELETE ON entries BEGIN
   INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
 END;
-CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON session_entries BEGIN
+CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON entries BEGIN
   INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
   INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
 END;
 `);
-	if (!ftsExists) await db.exec("INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')");
+	if (!ftsExists) db.exec("INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')");
 }
 
 /** SQLite FTS search over a co-located canonical session database. */
@@ -86,12 +86,12 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 		);
 		const db = await this.options.sqlite.open(path);
 		try {
-			await configureSqliteDatabase(db);
+			configureSqliteDatabase(db);
 			await applyMigrations(db);
-			await ensureSearchSchema(db);
+			ensureSearchSchema(db);
 			return db;
 		} catch (error) {
-			await db.close();
+			db.close();
 			throw error;
 		}
 	}
@@ -102,9 +102,9 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 		const db = await this.openDatabase();
 		try {
 			const query = `"${text.replaceAll('"', '""')}"`;
-			const rows = await db
+			const rows = db
 				.prepare(
-					"SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, s.active_leaf_id, se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score FROM session_search_fts JOIN session_entries se ON se.rowid = session_search_fts.rowid JOIN sessions s ON s.id = se.session_id WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?) ORDER BY score",
+					"SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score FROM session_search_fts JOIN entries se ON se.rowid = session_search_fts.rowid JOIN sessions s ON s.id = se.session_id WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?) ORDER BY score",
 				)
 				.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(
 					query,
@@ -119,7 +119,7 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 				score: row.score,
 			}));
 		} finally {
-			await db.close();
+			db.close();
 		}
 	}
 }

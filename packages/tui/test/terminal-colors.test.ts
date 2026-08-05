@@ -115,6 +115,8 @@ describe("parseTerminalColorSchemeReport", () => {
 	it("parses color scheme reports", () => {
 		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;1n"), "dark");
 		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;2n"), "light");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;2n\x1b[?997;1n\x1b[?997;1n"), "dark");
+		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;1n\x1b[?997;2n\x1b[?997;2n"), "light");
 		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?997;3n"), undefined);
 		assert.strictEqual(parseTerminalColorSchemeReport("\x1b[?996n"), undefined);
 		assert.strictEqual(parseTerminalColorSchemeReport("x\x1b[?997;1n"), undefined);

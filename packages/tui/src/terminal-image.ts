@@ -71,6 +71,7 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
+	const isWindowsConsole = process.platform === "win32";
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
@@ -117,6 +118,13 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	}
 
 	if (terminalEmulator === "jetbrains-jediterm") {
+		return { images: null, trueColor: true, hyperlinks: false };
+	}
+
+	// Windows Terminal does not always set WT_SESSION, for example when it hosts
+	// a cmd.exe launched directly from Win+R. Modern Windows consoles support
+	// truecolor; keep hyperlinks off unless we positively detected support above.
+	if (isWindowsConsole) {
 		return { images: null, trueColor: true, hyperlinks: false };
 	}
 
@@ -275,6 +283,8 @@ interface RegisteredKittyImageMetadata extends KittyImageMetadata {
 export interface KittyImagePlacement {
 	imageId: number;
 	transmissionGeneration: number;
+	transmissionBytes: number;
+	estimatedDecodedBytes: number;
 	sequence: string;
 	replacementLine: string;
 }
@@ -359,6 +369,8 @@ export function getKittyImagePlacement(line: string): KittyImagePlacement | unde
 	return {
 		imageId: metadata.imageId,
 		transmissionGeneration: metadata.transmissionGeneration,
+		transmissionBytes: transmissionEnd - match.index,
+		estimatedDecodedBytes: metadata.widthPx * metadata.heightPx * 4,
 		sequence,
 		replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`,
 	};

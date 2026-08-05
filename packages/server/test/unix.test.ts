@@ -5,12 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { PiServer } from "../src/index.ts";
-import {
-	connectUnixTestClient,
-	type ProtocolTestClient,
-	TEST_TOKEN,
-	TestSessionBackend,
-} from "../src/testing/index.ts";
+import { connectUnixTestClient, type ProtocolTestClient, TestSessionBackend } from "../src/testing/index.ts";
 import { createUnixServer } from "../src/transports/unix/index.ts";
 
 const servers = new Set<PiServer>();
@@ -25,7 +20,7 @@ async function makeSocketPath(nested = false): Promise<string> {
 }
 
 function makeServer(path: string): PiServer {
-	const server = createUnixServer(new TestSessionBackend(), { token: TEST_TOKEN, path });
+	const server = createUnixServer(new TestSessionBackend(), { path });
 	servers.add(server);
 	return server;
 }

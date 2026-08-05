@@ -3,7 +3,8 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import type { Context, ImageContent, Model, StopReason, StreamOptions, TextContent, Tool } from "../types.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -69,7 +70,12 @@ function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: str
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
 export function requiresToolCallId(modelId: string): boolean {
-	return modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return (
+		modelId.startsWith("claude-") ||
+		modelId.startsWith("gpt-oss-") ||
+		(geminiMajorVersion !== undefined && geminiMajorVersion >= 3)
+	);
 }
 
 function getGeminiMajorVersion(modelId: string): number | undefined {
@@ -373,4 +379,36 @@ export function mapStopReasonString(reason: string): StopReason {
 		default:
 			return "error";
 	}
+}
+
+/**
+ * Run a Google GenAI SDK request with the shared provider retry policy
+ * (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
+ * Anthropic and OpenAI adapters wrap their initial request in
+ * retryProviderRequest. The SDK's ApiError has a `status` property but no
+ * `headers` property, and retryProviderRequest only retries errors that carry
+ * both, so normalize the error by adding the missing `headers` before
+ * rethrowing.
+ */
+export function retryGoogleRequest<T>(
+	request: () => Promise<T>,
+	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal">,
+): Promise<T> {
+	return retryProviderRequest(
+		async () => {
+			try {
+				return await request();
+			} catch (error) {
+				if (error instanceof Error && "status" in error && !("headers" in error)) {
+					(error as { headers?: Headers }).headers = undefined;
+				}
+				throw error;
+			}
+		},
+		{
+			maxRetries: options?.maxRetries,
+			maxRetryDelayMs: options?.maxRetryDelayMs,
+			signal: options?.signal,
+		},
+	);
 }

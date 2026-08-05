@@ -86,6 +86,36 @@ describe("viewport layout", () => {
 		assert.deepStrictEqual(visibleLines(frame.lines), ["a1", "b1", "b2", "b3"]);
 	});
 
+	it("includes nested minimum sizes in intrinsic stack measurement", () => {
+		const dock = new VStack([
+			new Text("top1\ntop2\ntop3", 0, 0),
+			{ component: new Text("selector", 0, 0), minSize: 3 },
+			new Text("below", 0, 0),
+			{ component: new Text("footer", 0, 0), minSize: 1 },
+		]);
+		const frame = renderLayoutFrame(
+			new VStack([
+				{ component: new Text("body", 0, 0), basis: 0, grow: 1, minSize: 1 },
+				{ component: dock, basis: "auto", minSize: 1 },
+			]),
+			10,
+			9,
+			() => {},
+		);
+
+		assert.deepStrictEqual(visibleLines(frame.lines), [
+			"body",
+			"top1",
+			"top2",
+			"top3",
+			"selector",
+			"",
+			"",
+			"below",
+			"footer",
+		]);
+	});
+
 	it("omits gaps around invisible entries", () => {
 		const stack = new VStack(
 			[new Text("one", 0, 0), { component: new Text("hidden", 0, 0), visible: () => false }, new Text("two", 0, 0)],

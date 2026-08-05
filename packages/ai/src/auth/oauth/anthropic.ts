@@ -7,7 +7,7 @@
 
 import type { Server } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -167,7 +167,7 @@ async function startCallbackServer(expectedState: string): Promise<CallbackServe
 	});
 }
 
-async function postJson(url: string, body: Record<string, string | number>): Promise<string> {
+async function postJson(url: string, body: Record<string, string | number>, signal: AbortSignal): Promise<string> {
 	const response = await fetch(url, {
 		method: "POST",
 		headers: {
@@ -175,7 +175,7 @@ async function postJson(url: string, body: Record<string, string | number>): Pro
 			Accept: "application/json",
 		},
 		body: JSON.stringify(body),
-		signal: AbortSignal.timeout(30_000),
+		signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
 	});
 
 	const responseBody = await response.text();
@@ -192,17 +192,22 @@ async function exchangeAuthorizationCode(
 	state: string,
 	verifier: string,
 	redirectUri: string,
+	signal: AbortSignal,
 ): Promise<OAuthCredential> {
 	let responseBody: string;
 	try {
-		responseBody = await postJson(TOKEN_URL, {
-			grant_type: "authorization_code",
-			client_id: CLIENT_ID,
-			code,
-			state,
-			redirect_uri: redirectUri,
-			code_verifier: verifier,
-		});
+		responseBody = await postJson(
+			TOKEN_URL,
+			{
+				grant_type: "authorization_code",
+				client_id: CLIENT_ID,
+				code,
+				state,
+				redirect_uri: redirectUri,
+				code_verifier: verifier,
+			},
+			signal,
+		);
 	} catch (error) {
 		throw new Error(
 			`Token exchange request failed. url=${TOKEN_URL}; redirect_uri=${redirectUri}; response_type=authorization_code; details=${formatErrorDetails(error)}`,
@@ -226,10 +231,13 @@ async function exchangeAuthorizationCode(
 	};
 }
 
-async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginAnthropic(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const server = await startCallbackServer(verifier);
 	const manualAbort = new AbortController();
+	const onAbort = () => server.cancelWait();
+	interaction.signal.addEventListener("abort", onAbort, { once: true });
+	if (interaction.signal.aborted) onAbort();
 	let code: string | undefined;
 	let state: string | undefined;
 	let manualInput: string | undefined;
@@ -295,8 +303,9 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 		if (!code) throw new Error("Missing authorization code");
 		if (!state) throw new Error("Missing OAuth state");
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI);
+		return exchangeAuthorizationCode(code, state, verifier, REDIRECT_URI, interaction.signal);
 	} finally {
+		interaction.signal.removeEventListener("abort", onAbort);
 		manualAbort.abort();
 		server.server.close();
 	}
@@ -305,14 +314,18 @@ async function loginAnthropic(interaction: AuthInteraction): Promise<OAuthCreden
 /**
  * Refresh Anthropic OAuth token
  */
-async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredential> {
+async function refreshAnthropicToken(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
 	let responseBody: string;
 	try {
-		responseBody = await postJson(TOKEN_URL, {
-			grant_type: "refresh_token",
-			client_id: CLIENT_ID,
-			refresh_token: refreshToken,
-		});
+		responseBody = await postJson(
+			TOKEN_URL,
+			{
+				grant_type: "refresh_token",
+				client_id: CLIENT_ID,
+				refresh_token: refreshToken,
+			},
+			signal,
+		);
 	} catch (error) {
 		throw new Error(`Anthropic token refresh request failed. url=${TOKEN_URL}; details=${formatErrorDetails(error)}`);
 	}
@@ -342,7 +355,7 @@ async function refreshAnthropicToken(refreshToken: string): Promise<OAuthCredent
 export const anthropicOAuth: OAuthAuth = {
 	name: "Anthropic (Claude Pro/Max)",
 	login: loginAnthropic,
-	refresh: (credential) => refreshAnthropicToken(credential.refresh),
+	refresh: (credential, signal) => refreshAnthropicToken(credential.refresh, signal),
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };

@@ -104,15 +104,14 @@ export function sessionSnapshot(id: string, overrides: Partial<SessionSnapshot> 
 	};
 }
 
-export function createClient(server: MemoryByteServer, token = "bearer-secret"): PiClient {
+export function createClient(server: MemoryByteServer): PiClient {
 	return new PiClient({
-		token,
 		transportFactory: (handlers) => server.connect(handlers),
 	});
 }
 
-export async function connectClient(server: MemoryByteServer, token = "bearer-secret"): Promise<PiClient> {
-	const client = createClient(server, token);
+export async function connectClient(server: MemoryByteServer): Promise<PiClient> {
+	const client = createClient(server);
 	server.onMessage((message) => {
 		if (message.type === "hello") {
 			server.send({

@@ -11,6 +11,7 @@ import { AMAZON_BEDROCK_MODELS } from "./amazon-bedrock.models.ts";
 const bedrockAuth: ApiKeyAuth = {
 	name: "AWS credentials or bearer token",
 	login: async (interaction) => {
+		interaction.signal.throwIfAborted();
 		const method = await interaction.prompt({
 			type: "select",
 			message: "Select Amazon Bedrock authentication method:",
@@ -20,6 +21,7 @@ const bedrockAuth: ApiKeyAuth = {
 				{ id: "credential-chain", label: "Existing AWS credential chain" },
 			],
 		});
+		interaction.signal.throwIfAborted();
 		if (method === "bearer-token") {
 			return {
 				type: "api_key",
@@ -49,24 +51,30 @@ const bedrockAuth: ApiKeyAuth = {
 		});
 		return { type: "api_key" };
 	},
-	resolve: async ({ ctx, credential }) => {
+	resolve: async ({ ctx, credential, signal }) => {
+		const env = async (name: string) => {
+			signal.throwIfAborted();
+			const value = await ctx.env(name);
+			signal.throwIfAborted();
+			return value;
+		};
 		if (credential?.key) {
 			return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
 		}
-		if (await ctx.env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };
-		if (credential?.env?.AWS_PROFILE ?? (await ctx.env("AWS_PROFILE"))) {
+		if (await env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };
+		if (credential?.env?.AWS_PROFILE ?? (await env("AWS_PROFILE"))) {
 			return {
 				auth: {},
 				env: credential?.env,
 				source: credential?.env?.AWS_PROFILE ? "stored credential" : "AWS_PROFILE",
 			};
 		}
-		if ((await ctx.env("AWS_ACCESS_KEY_ID")) && (await ctx.env("AWS_SECRET_ACCESS_KEY"))) {
+		if ((await env("AWS_ACCESS_KEY_ID")) && (await env("AWS_SECRET_ACCESS_KEY"))) {
 			return { auth: {}, source: "AWS access keys" };
 		}
-		if (await ctx.env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")) return { auth: {}, source: "ECS task role" };
-		if (await ctx.env("AWS_CONTAINER_CREDENTIALS_FULL_URI")) return { auth: {}, source: "ECS task role" };
-		if (await ctx.env("AWS_WEB_IDENTITY_TOKEN_FILE")) return { auth: {}, source: "web identity token" };
+		if (await env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")) return { auth: {}, source: "ECS task role" };
+		if (await env("AWS_CONTAINER_CREDENTIALS_FULL_URI")) return { auth: {}, source: "ECS task role" };
+		if (await env("AWS_WEB_IDENTITY_TOKEN_FILE")) return { auth: {}, source: "web identity token" };
 		return undefined;
 	},
 };

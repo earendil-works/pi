@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
-import type { AuthInteraction } from "../src/auth/types.ts";
+import type { ProviderAuthInteraction } from "../src/auth/types.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const OAUTH_HOST = "https://auth.kimi.com";
@@ -31,8 +31,9 @@ function deviceAuthorizationResponse(overrides?: Record<string, unknown>): Respo
 	});
 }
 
-function createInteraction(events: Array<Record<string, unknown>>): AuthInteraction {
+function createInteraction(events: Array<Record<string, unknown>>): ProviderAuthInteraction {
 	return {
+		signal: new AbortController().signal,
 		prompt: async () => {
 			throw new Error("Kimi Code login should not prompt");
 		},
@@ -205,12 +206,15 @@ describe("Kimi Code OAuth", () => {
 		);
 
 		const before = Date.now();
-		const credential = await kimiCodingOAuth.refresh({
-			type: "oauth",
-			access: "old-access",
-			refresh: "old-refresh",
-			expires: before,
-		});
+		const credential = await kimiCodingOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access",
+				refresh: "old-refresh",
+				expires: before,
+			},
+			new AbortController().signal,
+		);
 		expect(credential).toEqual({
 			type: "oauth",
 			access: "new-access",
@@ -238,12 +242,15 @@ describe("Kimi Code OAuth", () => {
 			}),
 		);
 
-		const refreshPromise = kimiCodingOAuth.refresh({
-			type: "oauth",
-			access: "old",
-			refresh: "old",
-			expires: 0,
-		});
+		const refreshPromise = kimiCodingOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old",
+				refresh: "old",
+				expires: 0,
+			},
+			new AbortController().signal,
+		);
 		await vi.advanceTimersByTimeAsync(1000);
 		await expect(refreshPromise).resolves.toMatchObject({ access: "a" });
 		expect(calls).toBe(2);
@@ -254,7 +261,10 @@ describe("Kimi Code OAuth", () => {
 			vi.fn(async (): Promise<Response> => jsonResponse({ error: "invalid_grant" }, 400)),
 		);
 		await expect(
-			kimiCodingOAuth.refresh({ type: "oauth", access: "old", refresh: "old", expires: 0 }),
+			kimiCodingOAuth.refresh(
+				{ type: "oauth", access: "old", refresh: "old", expires: 0 },
+				new AbortController().signal,
+			),
 		).rejects.toThrow("unauthorized");
 	});
 });

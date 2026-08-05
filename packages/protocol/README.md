@@ -2,12 +2,12 @@
 
 Runtime-neutral schemas, types, CBOR encoding, and byte-stream framing for the experimental pi protocol.
 
-Protocol version `2` uses binary messages with this wire layout:
+Protocol version `1` uses binary messages with this wire layout:
 
 1. A four-byte unsigned big-endian payload length.
 2. One definite-length CBOR item containing the message.
 
-The first client message is always `hello`, containing `PROTOCOL_VERSION` and a bearer token. Subsequent messages use correlated request/response envelopes and server event envelopes. Session and server snapshots are authoritative. Progress events are transient UI hints and must not be reduced into authoritative state.
+The first client message is always `hello`, containing `PROTOCOL_VERSION`. Subsequent messages use correlated request/response envelopes and server event envelopes. Session and server snapshots are authoritative. Progress events are transient UI hints and must not be reduced into authoritative state. Transports complete authentication before protocol bytes are exchanged.
 
 ## Validated message API
 
@@ -24,7 +24,6 @@ import {
 const hello: ClientHello = {
   type: "hello",
   version: PROTOCOL_VERSION,
-  token: bearerToken,
 };
 
 transport.send(encodeClientMessage(hello));
@@ -46,7 +45,7 @@ Every transport carries the same complete bytes: `[uint32-be CBOR length][CBOR p
 
 This package does not bundle a transport. Consumers provide a byte-stream transport that preserves byte order and reports stream closure. Custom transports must handle arbitrary frame fragmentation and coalescing.
 
-All transports are untrusted. Configure matching frame limits and enforce the authentication and access controls appropriate for the transport.
+All transports are untrusted. Configure matching frame limits and enforce access controls appropriate for the transport before exposing a connection to the protocol. Unix sockets can use filesystem permissions, while network transports can authenticate during connection establishment.
 
 ## Encoding and framing
 

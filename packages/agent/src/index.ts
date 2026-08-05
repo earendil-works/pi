@@ -7,12 +7,18 @@ export * from "./harness/agent-harness.ts";
 export {
 	type BranchPreparation,
 	type BranchSummaryDetails,
+	type BranchSummaryResult,
 	type CollectEntriesResult,
 	collectEntriesForBranchSummary,
+	type FileOperations,
+	type GenerateBranchSummaryOptions,
 	generateBranchSummary,
 	prepareBranchEntries,
 } from "./harness/compaction/branch-summarization.ts";
 export {
+	type CompactionPreparation,
+	type CompactionSettings,
+	type CompactResult,
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -29,34 +35,41 @@ export {
 } from "./harness/compaction/compaction.ts";
 export * from "./harness/messages.ts";
 export * from "./harness/prompt-templates.ts";
-export {
-	JsonlSessionRepository,
-	type JsonlSessionRepositoryFileSystem,
-	type JsonlSessionRepositoryOptions,
-	loadJsonlSessionMetadata,
-} from "./harness/session/jsonl-repo.ts";
-export {
-	type InMemorySessionCreateOptions,
-	InMemorySessionRepository,
-	type InMemorySessionRepositoryOptions,
-} from "./harness/session/memory-repo.ts";
-export * from "./harness/session/repository.ts";
+// Harness
+export * from "./harness/result.ts";
+export * from "./harness/session/index.ts";
 export * from "./harness/session/search.ts";
-export {
-	buildContextEntries,
-	buildSessionContext,
-	type ContextEntryTransform,
-	type CustomEntryContextMessageProjector,
-	createSession,
-	defaultContextEntryTransform,
-	type SessionContextBuildOptions,
-	sessionEntryToContextMessages,
-} from "./harness/session/session.ts";
 export * from "./harness/skills.ts";
 export * from "./harness/system-prompt.ts";
 export * from "./harness/tools/index.ts";
-// Harness
-export * from "./harness/types.ts";
+export {
+	type AgentHarnessResources,
+	type AgentHarnessStreamOptions,
+	type AgentHarnessStreamOptionsPatch,
+	type AgentHarnessTool,
+	type AgentHarnessToolContextSource,
+	BranchSummaryError,
+	type BranchSummaryErrorCode,
+	CompactionError,
+	type CompactionErrorCode,
+	type ExecutionEnv,
+	ExecutionError,
+	type ExecutionErrorCode,
+	err,
+	FileError,
+	type FileErrorCode,
+	type FileInfo,
+	type FileKind,
+	type FileSystem,
+	getOrThrow,
+	getOrUndefined,
+	ok,
+	type PromptTemplate,
+	type Shell,
+	type ShellExecOptions,
+	type Skill,
+	toError,
+} from "./harness/types.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
 // Proxy utilities

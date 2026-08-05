@@ -9,16 +9,20 @@ import { ANTHROPIC_MODELS } from "./anthropic.models.ts";
 function anthropicApiKeyAuth(): ApiKeyAuth {
 	return {
 		name: "Anthropic API key",
-		login: async (interaction) => ({
-			type: "api_key",
-			key: await interaction.prompt({ type: "secret", message: "Enter Anthropic API key" }),
-		}),
-		resolve: async ({ ctx, credential }) => {
+		login: async (interaction) => {
+			interaction.signal.throwIfAborted();
+			const key = await interaction.prompt({ type: "secret", message: "Enter Anthropic API key" });
+			interaction.signal.throwIfAborted();
+			return { type: "api_key", key };
+		},
+		resolve: async ({ ctx, credential, signal }) => {
+			signal.throwIfAborted();
 			if (credential?.key) {
 				return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
 			}
 
 			const authToken = await ctx.env(ANTHROPIC_AUTH_TOKEN_ENV);
+			signal.throwIfAborted();
 			if (authToken) {
 				return {
 					auth: { headers: { Authorization: `Bearer ${authToken}` } },
@@ -28,6 +32,7 @@ function anthropicApiKeyAuth(): ApiKeyAuth {
 
 			for (const envVar of [ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV]) {
 				const apiKey = await ctx.env(envVar);
+				signal.throwIfAborted();
 				if (apiKey) return { auth: { apiKey }, source: envVar };
 			}
 			return undefined;

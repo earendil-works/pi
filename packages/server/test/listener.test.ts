@@ -31,7 +31,7 @@ describe("PiServer listener composition", () => {
 	test("starts and closes every configured listener", async () => {
 		const first = new TestListener("first");
 		const second = new TestListener("second");
-		const { server } = createTestServer({ token: "secret", listeners: [first, second] });
+		const { server } = createTestServer({ listeners: [first, second] });
 
 		await server.start();
 		expect(server.addresses).toEqual(["first", "second"]);
@@ -48,7 +48,7 @@ describe("PiServer listener composition", () => {
 		const first = new TestListener("first");
 		const failure = new Error("listener failed");
 		const second = new TestListener("second", failure);
-		const { server } = createTestServer({ token: "secret", listeners: [first, second] });
+		const { server } = createTestServer({ listeners: [first, second] });
 
 		await expect(server.start()).rejects.toBe(failure);
 		expect(first.closeCount).toBe(1);

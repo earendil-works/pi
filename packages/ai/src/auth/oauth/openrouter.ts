@@ -13,7 +13,7 @@
 
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -80,12 +80,12 @@ function errorDetail(body: JsonObject): string | undefined {
 async function exchangeAuthorizationCode(
 	code: string,
 	verifier: string,
-	signal?: AbortSignal,
+	signal: AbortSignal,
 ): Promise<OAuthCredential> {
-	if (signal?.aborted) throw new Error("Login cancelled");
+	if (signal.aborted) throw new Error("Login cancelled");
 	const controller = new AbortController();
-	const onAbort = () => controller.abort(signal?.reason);
-	signal?.addEventListener("abort", onAbort, { once: true });
+	const onAbort = () => controller.abort(signal.reason);
+	signal.addEventListener("abort", onAbort, { once: true });
 	const timeout = setTimeout(
 		() => controller.abort(new Error("OpenRouter OAuth token exchange timed out")),
 		TOKEN_EXCHANGE_TIMEOUT_MS,
@@ -107,12 +107,12 @@ async function exchangeAuthorizationCode(
 			if (response.ok) throw new Error("OpenRouter OAuth returned invalid JSON");
 		}
 	} catch (error) {
-		if (signal?.aborted) throw new Error("Login cancelled");
+		if (signal.aborted) throw new Error("Login cancelled");
 		if (controller.signal.aborted) throw new Error("OpenRouter OAuth token exchange timed out");
 		throw error;
 	} finally {
 		clearTimeout(timeout);
-		signal?.removeEventListener("abort", onAbort);
+		signal.removeEventListener("abort", onAbort);
 	}
 
 	if (!response.ok) {
@@ -135,9 +135,9 @@ async function exchangeAuthorizationCode(
 async function startCallbackServer(
 	callbackPath: string,
 	verifier: string,
-	signal?: AbortSignal,
+	signal: AbortSignal,
 ): Promise<OpenRouterCallbackServer> {
-	if (signal?.aborted) throw new Error("Login cancelled");
+	if (signal.aborted) throw new Error("Login cancelled");
 	const callbackHost = getCallbackHost();
 	let resolveCredential: (credential: OAuthCredential | null) => void = () => {};
 	let rejectCredential: (error: Error) => void = () => {};
@@ -154,7 +154,7 @@ async function startCallbackServer(
 
 	const close = (): void => {
 		if (timeout) clearTimeout(timeout);
-		if (onAbort) signal?.removeEventListener("abort", onAbort);
+		if (onAbort) signal.removeEventListener("abort", onAbort);
 		server.close();
 	};
 
@@ -215,8 +215,8 @@ async function startCallbackServer(
 
 	server.on("error", (error) => finish({ error }));
 	onAbort = () => finish({ error: new Error("Login cancelled") });
-	signal?.addEventListener("abort", onAbort, { once: true });
-	if (signal?.aborted) {
+	signal.addEventListener("abort", onAbort, { once: true });
+	if (signal.aborted) {
 		close();
 		throw new Error("Login cancelled");
 	}
@@ -239,7 +239,7 @@ async function startCallbackServer(
 	};
 }
 
-async function loginOpenRouter(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginOpenRouter(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const { verifier, challenge } = await generatePKCE();
 	const callbackPath = `/oauth/callback/${crypto.randomUUID()}`;
 	const callback = await startCallbackServer(callbackPath, verifier, interaction.signal);
@@ -302,7 +302,7 @@ export const openRouterOAuth: OAuthAuth = {
 	name: "OpenRouter OAuth",
 	loginLabel: "Sign in with OpenRouter",
 	login: loginOpenRouter,
-	async refresh(credential) {
+	async refresh(credential, _signal) {
 		return credential;
 	},
 	async toAuth(credential) {

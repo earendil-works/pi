@@ -1817,6 +1817,7 @@ export class DefaultPackageManager implements PackageManager {
 			this.ensureGitIgnore(gitRoot);
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
+		rmSync(this.getGitUpdateMarkerPath(targetDir), { force: true });
 
 		try {
 			await this.runCommand("git", ["clone", source.repo, targetDir]);
@@ -1850,6 +1851,57 @@ export class DefaultPackageManager implements PackageManager {
 		await this.ensureGitRef(targetDir, target.fetchArgs, target.ref);
 	}
 
+	private hasMissingGitDependencies(targetDir: string): boolean {
+		const packageJsonPath = join(targetDir, "package.json");
+		if (!existsSync(packageJsonPath)) return false;
+
+		try {
+			const manifest = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { dependencies?: unknown };
+			if (
+				!manifest.dependencies ||
+				typeof manifest.dependencies !== "object" ||
+				Array.isArray(manifest.dependencies)
+			) {
+				return false;
+			}
+
+			const nodeModulesDir = resolve(targetDir, "node_modules");
+			return Object.keys(manifest.dependencies).some((name) => {
+				const dependencyPath = resolve(nodeModulesDir, name);
+				if (!dependencyPath.startsWith(`${nodeModulesDir}${sep}`)) return false;
+				return !existsSync(dependencyPath);
+			});
+		} catch {
+			return false;
+		}
+	}
+
+	private async repairMissingGitDependencies(targetDir: string): Promise<void> {
+		if (!this.hasMissingGitDependencies(targetDir)) return;
+		await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+	}
+
+	private getGitUpdateMarkerPath(targetDir: string): string {
+		return join(dirname(targetDir), `.${basename(targetDir)}.pi-update-incomplete`);
+	}
+
+	private async cleanAndInstallGitDependencies(targetDir: string, markerPath: string): Promise<void> {
+		// Clean untracked files (extensions should be pristine). If this fails after
+		// deleting dependencies, repair them so the existing extension still loads.
+		try {
+			await this.runCommand("git", ["clean", "-fdx"], { cwd: targetDir });
+		} catch (error) {
+			await this.repairMissingGitDependencies(targetDir).catch(() => {});
+			throw error;
+		}
+
+		const packageJsonPath = join(targetDir, "package.json");
+		if (existsSync(packageJsonPath)) {
+			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+		}
+		rmSync(markerPath, { force: true });
+	}
+
 	private async ensureGitRef(targetDir: string, fetchArgs: string[], ref: string): Promise<void> {
 		// Fetch only the ref we will reset to, avoiding unrelated branch/tag noise.
 		await this.runCommand("git", fetchArgs, { cwd: targetDir });
@@ -1863,19 +1915,19 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: targetDir,
 			timeoutMs: NETWORK_TIMEOUT_MS,
 		});
+		const markerPath = this.getGitUpdateMarkerPath(targetDir);
 		if (localHead.trim() === targetHead.trim()) {
+			if (existsSync(markerPath)) {
+				await this.cleanAndInstallGitDependencies(targetDir, markerPath);
+			} else {
+				await this.repairMissingGitDependencies(targetDir);
+			}
 			return;
 		}
 
+		writeFileSync(markerPath, "", "utf-8");
 		await this.runCommand("git", ["reset", "--hard", commitRef], { cwd: targetDir });
-
-		// Clean untracked files (extensions should be pristine)
-		await this.runCommand("git", ["clean", "-fdx"], { cwd: targetDir });
-
-		const packageJsonPath = join(targetDir, "package.json");
-		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
-		}
+		await this.cleanAndInstallGitDependencies(targetDir, markerPath);
 	}
 
 	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string): Promise<void> {
@@ -1893,8 +1945,8 @@ export class DefaultPackageManager implements PackageManager {
 
 	private async removeGit(source: GitSource, scope: SourceScope): Promise<void> {
 		const targetDir = this.getGitInstallPath(source, scope);
-		if (!existsSync(targetDir)) return;
 		rmSync(targetDir, { recursive: true, force: true });
+		rmSync(this.getGitUpdateMarkerPath(targetDir), { force: true });
 		this.pruneEmptyGitParents(targetDir, this.getGitInstallRoot(scope));
 	}
 

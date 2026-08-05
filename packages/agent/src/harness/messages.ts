@@ -78,25 +78,29 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 	return text;
 }
 
-export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
+export function createBranchSummaryMessage(
+	summary: string,
+	fromId: string,
+	timestamp: string | number,
+): BranchSummaryMessage {
 	return {
 		role: "branchSummary",
 		summary,
 		fromId,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 
 export function createCompactionSummaryMessage(
 	summary: string,
 	tokensBefore: number,
-	timestamp: string,
+	timestamp: string | number,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary,
 		tokensBefore,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 
@@ -105,7 +109,7 @@ export function createCustomMessage(
 	content: string | (TextContent | ImageContent)[],
 	display: boolean,
 	details: unknown | undefined,
-	timestamp: string,
+	timestamp: string | number,
 ): CustomMessage {
 	return {
 		role: "custom",
@@ -113,7 +117,7 @@ export function createCustomMessage(
 		content,
 		display,
 		details,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 

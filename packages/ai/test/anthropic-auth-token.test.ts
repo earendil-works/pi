@@ -51,6 +51,8 @@ vi.mock("@anthropic-ai/sdk", () => {
 	return { default: FakeAnthropic };
 });
 
+const neverAbortedSignal = new AbortController().signal;
+
 const context: Context = {
 	systemPrompt: "System prompt.",
 	messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
@@ -87,6 +89,7 @@ describe("Anthropic auth token env", () => {
 					})[name],
 				fileExists: async () => false,
 			},
+			signal: neverAbortedSignal,
 		});
 
 		expect(auth).toEqual({
@@ -106,6 +109,7 @@ describe("Anthropic auth token env", () => {
 					})[name],
 				fileExists: async () => false,
 			},
+			signal: neverAbortedSignal,
 		});
 
 		expect(auth).toEqual({

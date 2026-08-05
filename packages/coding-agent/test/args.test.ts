@@ -346,12 +346,6 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--ui-mode"]);
 			expect(result.diagnostics).toEqual([{ type: "error", message: "--ui-mode requires regular or fullscreen" }]);
 		});
-
-		test("accepts --alt as a hidden fullscreen shortcut", () => {
-			const result = parseArgs(["--alt"]);
-			expect(result.uiMode).toBe("fullscreen");
-			expect(result.unknownFlags.has("alt")).toBe(false);
-		});
 	});
 
 	describe("tool flags", () => {

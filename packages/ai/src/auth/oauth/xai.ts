@@ -2,7 +2,7 @@
  * xAI OAuth device-code flow.
  */
 
-import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
+import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -61,7 +61,7 @@ function validateVerificationUri(raw: string): string {
 	return url.href;
 }
 
-async function postForm(url: string, fields: Record<string, string>, signal?: AbortSignal): Promise<OAuthHttpResponse> {
+async function postForm(url: string, fields: Record<string, string>, signal: AbortSignal): Promise<OAuthHttpResponse> {
 	let response: Response;
 	try {
 		response = await fetch(url, {
@@ -74,7 +74,7 @@ async function postForm(url: string, fields: Record<string, string>, signal?: Ab
 			signal,
 		});
 	} catch (error) {
-		if (signal?.aborted) {
+		if (signal.aborted) {
 			throw new Error("Login cancelled");
 		}
 		throw error;
@@ -85,7 +85,7 @@ async function postForm(url: string, fields: Record<string, string>, signal?: Ab
 		const parsed = (await response.json()) as unknown;
 		body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
 	} catch {
-		if (signal?.aborted) {
+		if (signal.aborted) {
 			throw new Error("Login cancelled");
 		}
 		throw new Error(`xAI OAuth returned invalid JSON (HTTP ${response.status})`);
@@ -142,7 +142,7 @@ function credentialsFromTokenResponse(body: JsonObject, previousRefreshToken?: s
 	};
 }
 
-async function requestDeviceCode(signal?: AbortSignal): Promise<XaiDeviceCode> {
+async function requestDeviceCode(signal: AbortSignal): Promise<XaiDeviceCode> {
 	const response = await postForm(
 		XAI_DEVICE_CODE_URL,
 		{
@@ -158,7 +158,7 @@ async function requestDeviceCode(signal?: AbortSignal): Promise<XaiDeviceCode> {
 	return parseDeviceCode(response.body);
 }
 
-async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promise<OAuthCredential> {
+async function pollForTokens(device: XaiDeviceCode, signal: AbortSignal): Promise<OAuthCredential> {
 	return pollOAuthDeviceCodeFlow<OAuthCredential>({
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
@@ -198,7 +198,7 @@ async function pollForTokens(device: XaiDeviceCode, signal?: AbortSignal): Promi
 	});
 }
 
-async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> {
+async function loginXai(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const device = await requestDeviceCode(interaction.signal);
 	interaction.notify({
 		type: "device_code",
@@ -210,7 +210,7 @@ async function loginXai(interaction: AuthInteraction): Promise<OAuthCredential> 
 	return pollForTokens(device, interaction.signal);
 }
 
-async function refreshXaiToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredential> {
+async function refreshXaiToken(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
 	const response = await postForm(
 		XAI_TOKEN_URL,
 		{

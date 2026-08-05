@@ -1,3 +1,4 @@
+import type { Models } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -101,6 +102,32 @@ describe("issue #7301 stalled availability refresh", () => {
 
 		stalledList.fail(new Error("stale credential list failure"));
 		await expect(staleRefresh).rejects.toThrow("stale credential list failure");
+		expect(runtime.getError()).toBeUndefined();
+	});
+
+	it("does not let a stale provider-scoped failure overwrite a newer availability pass", async () => {
+		harness = await createHarness();
+		const runtime = harness.session.modelRuntime;
+		const models = Reflect.get(runtime, "models") as Models;
+		const originalGetAvailable = models.getAvailable.bind(models);
+		const started = createDeferred();
+		const gate = createDeferred();
+		let stall = true;
+		models.getAvailable = async (providerId, options) => {
+			if (!providerId || !stall) return originalGetAvailable(providerId, options);
+			stall = false;
+			started.resolve();
+			await gate.promise;
+			throw new Error("stale provider availability failure");
+		};
+
+		const staleRefresh = runtime.getAvailable(harness.getModel().provider);
+		await started.promise;
+		await runtime.getAvailable();
+		expect(runtime.getError()).toBeUndefined();
+
+		gate.resolve();
+		await expect(staleRefresh).rejects.toThrow("stale provider availability failure");
 		expect(runtime.getError()).toBeUndefined();
 	});
 });

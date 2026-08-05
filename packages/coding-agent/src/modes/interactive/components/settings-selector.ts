@@ -618,7 +618,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "ui-mode",
 				label: "UI mode",
-				description: "Interface layout used after restart; fullscreen mode is experimental",
+				description: "Interface layout; fullscreen mode is experimental",
 				currentValue: config.uiMode,
 				values: ["regular", "fullscreen"],
 			},

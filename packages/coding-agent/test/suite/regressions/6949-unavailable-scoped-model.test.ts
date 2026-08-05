@@ -15,12 +15,12 @@ function createInteractiveContext(options: {
 }) {
 	let selector: ScopedModelsSelectorComponent | undefined;
 	const setScopedModels = vi.fn();
-	const getAvailable = vi.fn().mockResolvedValue(options.allModels);
+	const getAvailableSnapshot = vi.fn(() => options.allModels);
 	const context = {
 		session: {
 			modelRuntime: {
-				refresh: vi.fn(),
-				getAvailable,
+				refresh: vi.fn().mockResolvedValue({ aborted: false, errors: new Map() }),
+				getAvailableSnapshot,
 			},
 			scopedModels: options.scopedModels ?? [],
 			setScopedModels,
@@ -36,7 +36,7 @@ function createInteractiveContext(options: {
 		updateAvailableProviderCount: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
-	return { context, getAvailable, getSelector: () => selector, setScopedModels };
+	return { context, getAvailableSnapshot, getSelector: () => selector, setScopedModels };
 }
 
 async function showModelsSelector(context: object): Promise<void> {
@@ -93,7 +93,7 @@ describe("issue #6949 unavailable scoped models", () => {
 		const harness = await createHarness({ models: [{ id: "available", name: "Available" }] });
 		harnesses.push(harness);
 		const unavailableIds = ["unavailable-one", "unavailable-two"].map((id) => `${harness.models[0].provider}/${id}`);
-		const { context, getAvailable, getSelector } = createInteractiveContext({
+		const { context, getAvailableSnapshot, getSelector } = createInteractiveContext({
 			allModels: [],
 			enabledModelIds: unavailableIds,
 		});
@@ -106,7 +106,7 @@ describe("issue #6949 unavailable scoped models", () => {
 		for (const unavailableId of unavailableIds) {
 			expect(rendered).toContain(`${unavailableId} [unavailable] ✗`);
 		}
-		expect(getAvailable).toHaveBeenCalledTimes(2);
+		expect(getAvailableSnapshot).toHaveBeenCalled();
 	});
 
 	it("opens when only a session-scoped model is unavailable", async () => {

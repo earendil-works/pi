@@ -194,6 +194,7 @@ class ImagesModelsImpl implements MutableImagesModels {
 			const resolution = await this.getAuth(model, {
 				apiKey: options?.apiKey,
 				env: options?.env,
+				signal: options?.signal,
 			});
 			const auth = resolution?.auth;
 			if (!auth) {

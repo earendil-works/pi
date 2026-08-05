@@ -66,11 +66,12 @@ describe("Radius provider", () => {
 	});
 
 	it("fetches and stores the catalog for configured Radius auth", async () => {
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(
-			new Response(JSON.stringify(radiusConfig("https://radius.example.com/v1")), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			}),
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response(JSON.stringify(radiusConfig("https://radius.example.com/v1")), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
 		);
 		const modelsStore = new InMemoryModelsStore();
 		const credentials = AuthStorage.inMemory({
@@ -90,7 +91,10 @@ describe("Radius provider", () => {
 
 		expect(runtime.getModel(RADIUS_PROVIDER_ID, "auto")).toBeDefined();
 		expect((await modelsStore.read(RADIUS_PROVIDER_ID))?.models).toHaveLength(1);
-		expect(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer access-token" });
+		const radiusRequest = vi
+			.mocked(fetch)
+			.mock.calls.find(([url]) => String(url) === "https://radius.pi.dev/v1/config");
+		expect(radiusRequest?.[1]?.headers).toMatchObject({ authorization: "Bearer access-token" });
 	});
 
 	it("does not refresh catalogs over the network by default", async () => {
@@ -121,8 +125,8 @@ describe("Radius provider", () => {
 	});
 
 	it("supports custom Radius gateways from models.json", async () => {
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(
-			new Response(JSON.stringify(radiusConfig("http://localhost:8788/v1")), { status: 200 }),
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async () => new Response(JSON.stringify(radiusConfig("http://localhost:8788/v1")), { status: 200 }),
 		);
 		const modelsPath = join(tempDir, "models.json");
 		writeFileSync(

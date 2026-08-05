@@ -4,12 +4,18 @@
 
 ### Breaking Changes
 
-- Changed `Session` into the sole opened-session aggregate and replaced `SessionStorage`, `SessionRepo`, and concrete per-session persistence classes with a non-owning `SessionRepository` and caller-owned, async-disposable `SessionStore` instances. Create stores with `createInMemorySessionStore()` or `createJsonlSessionStore()`, compose them with `createSessionRepository({ store, search: createScanningSessionSearch(store) })`, and dispose the store after draining harness and session work.
-- `Session` instances are now created by `SessionRepository`; direct construction from an independently supplied store and snapshot was removed.
+- Replaced the legacy harness session model with the v4 lane-based `Session`, `SessionStorage`, and `SessionRepo` APIs, including durable operation records, global facts, shared sequence numbers, and tree-scoped lane views.
+- Promoted the v2 session and `AgentHarness` API from the experimental entrypoint to the default package export and removed the experimental subpaths.
+- Removed the legacy JSONL and in-memory repository APIs. `InMemorySessionRepo` is the reference v4 repository; JSONL v4 support will use the new `SessionRepo` contract.
 
 ### Added
 
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
+- Added a compile-complete `AgentHarness` v2 scaffold; unfinished operation paths reject with `HarnessNotImplemented` while durable execution is implemented.
+
+### Fixed
+
+- Fixed Windows path handling for `NodeExecutionEnv` file basenames, recursive skill loading, and prompt template names.
 
 ## [0.83.0] - 2026-07-29
 

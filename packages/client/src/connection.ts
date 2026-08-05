@@ -30,7 +30,6 @@ type ConnectionLifecycle =
 	  } & ActiveConnection);
 
 interface ConnectionOptions {
-	token: string;
 	transportFactory: ByteTransportFactory;
 	maxFrameLength?: number;
 	onHandshake(snapshot: ServerSnapshot): void;
@@ -133,10 +132,7 @@ export class Connection {
 		this.#lifecycle = { ...lifecycle, transport };
 		try {
 			await transport.send(
-				encodeClientMessage(
-					{ type: "hello", version: PROTOCOL_VERSION, token: this.#options.token },
-					{ maxFrameLength: this.#maxFrameLength },
-				),
+				encodeClientMessage({ type: "hello", version: PROTOCOL_VERSION }, { maxFrameLength: this.#maxFrameLength }),
 			);
 		} catch (error) {
 			if (this.#isCurrent(id)) this.#failAndClose(toDisconnectedError(error));

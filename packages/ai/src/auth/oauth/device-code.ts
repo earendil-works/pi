@@ -20,12 +20,12 @@ export type OAuthDeviceCodePollOptions<T> = {
 	expiresInSeconds?: number;
 	waitBeforeFirstPoll?: boolean;
 	poll: () => Promise<OAuthDeviceCodePollResult<T>>;
-	signal?: AbortSignal;
+	signal: AbortSignal;
 };
 
-function abortableSleep(ms: number, signal: AbortSignal | undefined, cancelMessage: string): Promise<void> {
+function abortableSleep(ms: number, signal: AbortSignal, cancelMessage: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
+		if (signal.aborted) {
 			reject(new Error(cancelMessage));
 			return;
 		}
@@ -35,11 +35,11 @@ function abortableSleep(ms: number, signal: AbortSignal | undefined, cancelMessa
 			reject(new Error(cancelMessage));
 		};
 		const timeout = setTimeout(() => {
-			signal?.removeEventListener("abort", onAbort);
+			signal.removeEventListener("abort", onAbort);
 			resolve();
 		}, ms);
 
-		signal?.addEventListener("abort", onAbort, { once: true });
+		signal.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -62,7 +62,7 @@ export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOpt
 	}
 
 	while (Date.now() < deadline) {
-		if (options.signal?.aborted) {
+		if (options.signal.aborted) {
 			throw new Error(CANCEL_MESSAGE);
 		}
 

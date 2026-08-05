@@ -4,13 +4,7 @@ import { join } from "node:path";
 import { encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { type PiServer, PiServerError } from "../src/index.ts";
-import {
-	connectUnixTestClient,
-	Deferred,
-	type ProtocolTestClient,
-	TEST_TOKEN,
-	TestSessionBackend,
-} from "../src/testing/index.ts";
+import { connectUnixTestClient, Deferred, type ProtocolTestClient, TestSessionBackend } from "../src/testing/index.ts";
 import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
 
 const servers = new Set<PiServer>();
@@ -24,7 +18,6 @@ async function startServer(
 	const directory = await mkdtemp(join(tmpdir(), "pis-"));
 	tempDirectories.add(directory);
 	const server = createUnixServer(backend, {
-		token: TEST_TOKEN,
 		path: join(directory, "server.sock"),
 		...overrides,
 	});
@@ -53,22 +46,15 @@ describe("Unix transport conformance", () => {
 		const { server } = await startServer();
 		const client = await connect(server);
 		const response = client.next((message) => message.type === "hello");
-		await client.sendFragmentedMessage({ type: "hello", version: PROTOCOL_VERSION, token: TEST_TOKEN }, 2);
+		await client.sendFragmentedMessage({ type: "hello", version: PROTOCOL_VERSION }, 2);
 		expect(await response).toMatchObject({ type: "hello", version: PROTOCOL_VERSION });
 	});
 
-	test("enforces authentication, version, and exactly one first-message hello", async () => {
+	test("enforces version and exactly one first-message hello", async () => {
 		const { server } = await startServer();
 
-		const badToken = await connect(server);
-		expect(await badToken.hello("wrong-token")).toMatchObject({
-			type: "hello_error",
-			error: { code: "auth" },
-		});
-		await badToken.waitForClose();
-
 		const badVersion = await connect(server);
-		expect(await badVersion.hello(TEST_TOKEN, PROTOCOL_VERSION + 1)).toMatchObject({
+		expect(await badVersion.hello(PROTOCOL_VERSION + 1)).toMatchObject({
 			type: "hello_error",
 			error: { code: "version" },
 		});
@@ -83,7 +69,7 @@ describe("Unix transport conformance", () => {
 		const duplicate = await connect(server);
 		expect(await duplicate.hello()).toMatchObject({ type: "hello" });
 		const duplicateError = duplicate.next((message) => message.type === "hello_error");
-		await duplicate.sendMessage({ type: "hello", version: PROTOCOL_VERSION, token: TEST_TOKEN });
+		await duplicate.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
 		expect(await duplicateError).toMatchObject({ type: "hello_error", error: { code: "invalid_request" } });
 		await duplicate.waitForClose();
 	});
@@ -102,7 +88,7 @@ describe("Unix transport conformance", () => {
 		const delay = backend.delayNextList();
 		const { server } = await startServer(backend, { handshakeTimeoutMs: 20 });
 		const client = await connect(server);
-		await client.sendMessage({ type: "hello", version: PROTOCOL_VERSION, token: TEST_TOKEN });
+		await client.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
 		await delay.entered.promise;
 		await client.waitForClose();
 		delay.release.resolve(undefined);
@@ -132,7 +118,7 @@ describe("Unix transport conformance", () => {
 
 		const outboundServer = await startServer(new TestSessionBackend(), { maxFrameLength: 128 });
 		const outbound = await connect(outboundServer.server);
-		await outbound.sendMessage({ type: "hello", version: PROTOCOL_VERSION, token: TEST_TOKEN });
+		await outbound.sendMessage({ type: "hello", version: PROTOCOL_VERSION });
 		await outbound.waitForClose();
 		expect(outbound.messages).toEqual([]);
 	});

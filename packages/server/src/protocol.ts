@@ -32,7 +32,8 @@ type _ProtocolModelInputsFitAi = Assert<ProtocolModelInput extends AiModelInput 
 /**
  * Enumerate mapped and intentionally omitted pi-ai fields so additions fail compilation here.
  * Provider replay metadata, diagnostics, cache-write retention splits, model transport settings,
- * pricing tiers, and deferred-tool availability remain intentionally server-side.
+ * model sampling defaults, pricing tiers, and deferred-tool availability remain intentionally
+ * server-side.
  */
 type _AiTextContentFieldsAccountedFor = Assert<ExactKeys<AiTextContent, "type" | "text" | "textSignature">>;
 type _AiThinkingContentFieldsAccountedFor = Assert<
@@ -68,6 +69,7 @@ type _AiModelFieldsAccountedFor = Assert<
 		| "cost"
 		| "contextWindow"
 		| "maxTokens"
+		| "samplingParams"
 		| "headers"
 		| "compat"
 	>
@@ -89,6 +91,7 @@ type _AiAssistantMessageFieldsAccountedFor = Assert<
 		| "diagnostics"
 		| "usage"
 		| "stopReason"
+		| "deferred"
 		| "errorMessage"
 		| "rawStopReason"
 		| "timestamp"
@@ -306,6 +309,8 @@ export function toProtocolAssistantMessage(
 				status: "complete",
 				stopReason: message.stopReason,
 			} satisfies AssistantTranscriptItem;
+		case "deferred":
+			throw new TypeError("Deferred assistant messages are not supported by protocol v1");
 		case "error":
 			if (message.errorMessage?.length === 0) {
 				throw new TypeError("Assistant error messages must not be empty");

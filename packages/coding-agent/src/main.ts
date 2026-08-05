@@ -155,8 +155,15 @@ async function runCredentialPrintCommand(args: string[]): Promise<boolean> {
 
 	try {
 		validateCredentialPrintArgs(parsed);
-		const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-		const credential = await resolveCredentialForPrint(parsed, modelRuntime, command.kind, command.minExpiryMs);
+		const signal = AbortSignal.timeout(15_000);
+		const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, signal });
+		const credential = await resolveCredentialForPrint(
+			parsed,
+			modelRuntime,
+			command.kind,
+			command.minExpiryMs,
+			signal,
+		);
 		process.stdout.write(`${credential}\n`);
 	} catch (error) {
 		const message = error instanceof CredentialPrintError ? error.message : "Failed to resolve credential";
@@ -687,6 +694,7 @@ export async function main(args: string[], options?: MainOptions) {
 			cwd,
 			agentDir,
 			settingsManager: runtimeSettingsManager,
+			modelRuntimeSignal: AbortSignal.timeout(15_000),
 			extensionFlagValues: parsed.unknownFlags,
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
@@ -740,7 +748,9 @@ export async function main(args: string[], options?: MainOptions) {
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		const scopedModels =
-			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRuntime) : [];
+			modelPatterns && modelPatterns.length > 0
+				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
+				: [];
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
@@ -761,8 +771,7 @@ export async function main(args: string[], options?: MainOptions) {
 					message: "--api-key requires a model to be specified via --model, --provider/--model, or --models",
 				});
 			} else {
-				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey, { allowNetwork: false });
-				await services.modelRuntime.getAvailable();
+				await modelRuntime.setRuntimeApiKey(sessionOptions.model.provider, parsed.apiKey);
 			}
 		}
 
@@ -811,7 +820,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.listModels !== undefined) {
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
-		await listModels(modelRuntime, searchPattern);
+		await listModels(modelRuntime, searchPattern, AbortSignal.timeout(15_000));
 		process.exit(0);
 	}
 
@@ -862,7 +871,12 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
 	if (!offlineMode && appMode === "rpc") {
-		void modelRuntime.refresh().catch(() => {});
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 15_000);
+		void modelRuntime
+			.refresh({ signal: controller.signal })
+			.catch(() => {})
+			.finally(() => clearTimeout(timeout));
 	}
 
 	if (appMode === "rpc") {
