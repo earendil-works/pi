@@ -25,7 +25,7 @@ export type PromptInput = Omit<Extract<Command, { command: "prompt" }>, "command
 export type SteerInput = Omit<Extract<Command, { command: "steer" }>, "command" | "sessionId">;
 
 export interface CreateSessionOptions {
-	/** A collision-resistant ID assigned by PiServer. The backend must persist this exact ID. */
+	/** A collision-resistant ID assigned by PiServer. The service must persist this exact ID. */
 	id: string;
 	cwd?: string;
 	name?: string;
@@ -51,8 +51,8 @@ export interface PiSessionRuntime {
 	dispose(): Promise<void>;
 }
 
-/** Durable storage and exclusively acquired runtime boundary. */
-export interface PiSessionBackend {
+/** Service boundary for durable sessions and exclusively acquired runtimes. */
+export interface PiServerService {
 	listSessions(): Promise<SessionSummary[]>;
 	listModels(): Promise<ModelMetadata[]>;
 	createSession(options: CreateSessionOptions): Promise<PiSessionRuntime>;
@@ -60,5 +60,4 @@ export interface PiSessionBackend {
 }
 
 export type SessionRuntime = PiSessionRuntime;
-export type SessionBackend = PiSessionBackend;
 export type SessionRuntimeEvent = PiSessionRuntimeEvent;

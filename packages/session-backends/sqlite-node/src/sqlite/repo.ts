@@ -629,7 +629,9 @@ function metadataFromRow(row: SessionRow, path: string): SqliteSessionMetadata {
 }
 
 export class SqliteSessionRepository
-	implements SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>
+	implements
+		SessionRepository<SqliteSessionMetadata, SqliteSessionCreateOptions, SqliteSessionListOptions>,
+		AsyncDisposable
 {
 	private databasePath: string | undefined;
 	private database: SqliteDatabase | undefined;
@@ -823,7 +825,7 @@ export class SqliteSessionRepository
 						metadata,
 					});
 					createSequence(db, id);
-					createStats(db, id);
+					createStats(db, id, entries.filter((entry) => entry.type === "message").length);
 
 					let nextSeq = 1;
 					const allocateSeq = () => nextSeq++;

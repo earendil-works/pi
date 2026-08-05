@@ -11,7 +11,7 @@ const cjsRequire = createRequire(import.meta.url);
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0\x07";
-const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+const NATIVE_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
@@ -41,9 +41,17 @@ export function isAppleTerminalSession(): boolean {
 	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
 }
 
-export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
-	if (isAppleTerminal && data === "\r" && isShiftPressed) return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE;
+export function normalizeNativeShiftEnterInput(
+	data: string,
+	shouldDetectNativeShiftEnter: boolean,
+	isShiftPressed: boolean,
+): string {
+	if (shouldDetectNativeShiftEnter && data === "\r" && isShiftPressed) return NATIVE_SHIFT_ENTER_SEQUENCE;
 	return data;
+}
+
+export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
+	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
 /**
@@ -308,11 +316,12 @@ export class ProcessTerminal implements Terminal {
 
 	private forwardInputSequence(sequence: string): void {
 		if (!this.inputHandler) return;
-		const isAppleTerminal = sequence === "\r" && isAppleTerminalSession();
-		const input = normalizeAppleTerminalInput(
+		const shouldDetectNativeShiftEnter =
+			sequence === "\r" && (isAppleTerminalSession() || process.platform === "win32");
+		const input = normalizeNativeShiftEnterInput(
 			sequence,
-			isAppleTerminal,
-			isAppleTerminal && isNativeModifierPressed("shift"),
+			shouldDetectNativeShiftEnter,
+			shouldDetectNativeShiftEnter && isNativeModifierPressed("shift"),
 		);
 		this.inputHandler(input);
 	}

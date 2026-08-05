@@ -11,12 +11,12 @@ export interface SessionStatsRow {
 	cost_total: number;
 }
 
-export function createStats(db: SqliteDatabase, sessionId: string): void {
+export function createStats(db: SqliteDatabase, sessionId: string, messageCount = 0): void {
 	db.prepare(
 		`INSERT INTO session_stats
 			(session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total)
-			VALUES (?, 0, 0, 0, 0, 0)`,
-	).run(sessionId);
+			VALUES (?, ?, 0, 0, 0, 0)`,
+	).run(sessionId, messageCount);
 }
 
 export function readStats(db: SqliteDatabase, sessionId: string): SessionStats {

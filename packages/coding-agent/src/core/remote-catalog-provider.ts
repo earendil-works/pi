@@ -1,5 +1,6 @@
 import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
 import { VERSION } from "../config.ts";
+import { fetchWithRetry } from "../utils/management-http.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
@@ -77,7 +78,7 @@ export function withRemoteCatalog(
 			// leave the overlay empty.
 			const validator = stored?.models.length ? stored.etag : undefined;
 			const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
-			const response = await fetch(url, {
+			const response = await fetchWithRetry(url, {
 				headers: {
 					accept: "application/json",
 					"User-Agent": getPiUserAgent(VERSION),

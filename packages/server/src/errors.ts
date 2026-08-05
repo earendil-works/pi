@@ -5,7 +5,7 @@ export type PiServerOperationErrorCode = Extract<
 	"busy" | "session_locked" | "not_found" | "invalid_request"
 >;
 
-/** A backend/runtime error that can safely cross the protocol boundary. */
+/** A service/runtime error that can safely cross the protocol boundary. */
 export class PiServerError extends Error {
 	readonly code: PiServerOperationErrorCode;
 	readonly details: JsonValue | undefined;

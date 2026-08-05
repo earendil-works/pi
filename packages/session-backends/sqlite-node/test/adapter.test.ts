@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createNodeSqliteFactory } from "../../../storage/sqlite-node/src/index.ts";
+import { createNodeSqliteFactory } from "../src/index.ts";
 
 describe("node:sqlite adapter", () => {
-	it("runs transaction callbacks synchronously", async () => {
+	it("commits a synchronous transaction and returns its result", async () => {
 		const db = await createNodeSqliteFactory().open(":memory:");
 		try {
 			db.exec("CREATE TABLE values_table (value INTEGER NOT NULL)");
@@ -13,6 +13,27 @@ describe("node:sqlite adapter", () => {
 
 			expect(result).toBe("committed");
 			expect(db.prepare("SELECT value FROM values_table").get()).toEqual({ value: 42 });
+		} finally {
+			db.close();
+		}
+	});
+
+	it("forwards positional and named statement parameters", async () => {
+		const db = await createNodeSqliteFactory().open(":memory:");
+		try {
+			db.exec("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
+			expect(db.prepare("INSERT INTO values_table (value) VALUES (?)").run("positional")).toEqual({
+				changes: 1,
+				lastInsertRowid: 1,
+			});
+			expect(db.prepare("INSERT INTO values_table (value) VALUES (:value)").run({ value: "named" })).toEqual({
+				changes: 1,
+				lastInsertRowid: 2,
+			});
+			expect(db.prepare("SELECT value FROM values_table WHERE id = ?").get(1)).toEqual({ value: "positional" });
+			expect(db.prepare("SELECT value FROM values_table WHERE id >= :id ORDER BY id").all({ id: 2 })).toEqual([
+				{ value: "named" },
+			]);
 		} finally {
 			db.close();
 		}

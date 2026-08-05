@@ -96,6 +96,7 @@ export class InMemorySessionStorage implements SessionStorage {
 			storage.entriesById.set(entry.id, entry);
 			storage.usedIds.add(entry.id);
 			storage.log.push({ kind: "entry", seq: entry.seq, entry });
+			if (entry.type === "message") storage.stats.messageCount += 1;
 		}
 		for (const [lane, leafId] of options.scope === "tree" ? this.lanes : []) {
 			storage.log.push({ kind: "lane", seq: storage.nextSequence(), lane, leafId });

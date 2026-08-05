@@ -9,15 +9,15 @@ import {
 	Deferred,
 	type ProtocolTestClient,
 	TEST_MODEL,
-	TestSessionBackend,
+	TestServerService,
 } from "../src/testing/index.ts";
 import { createUnixServer, type UnixServerOptions } from "../src/transports/unix/index.ts";
 
 const MODEL = TEST_MODEL;
 type Client = ProtocolTestClient;
-class MemoryBackend extends TestSessionBackend {}
+class MemoryService extends TestServerService {}
 
-class OrderedSnapshotBackend extends MemoryBackend {
+class OrderedSnapshotService extends MemoryService {
 	readonly firstStarted = new Deferred<void>();
 	readonly secondStarted = new Deferred<void>();
 	readonly firstRelease = new Deferred<void>();
@@ -43,16 +43,16 @@ const servers = new Set<PiServer>();
 const clients = new Set<Client>();
 const tempDirectories = new Set<string>();
 
-async function startServer(backend = new MemoryBackend(), options: Partial<UnixServerOptions> = {}) {
+async function startServer(service = new MemoryService(), options: Partial<UnixServerOptions> = {}) {
 	const directory = await mkdtemp(join(tmpdir(), "pst-"));
 	tempDirectories.add(directory);
-	const server = createUnixServer(backend, {
+	const server = createUnixServer(service, {
 		path: join(directory, "server.sock"),
 		...options,
 	});
 	servers.add(server);
 	await server.start();
-	return { server, backend };
+	return { server, service };
 }
 
 async function connect(server: PiServer): Promise<Client> {
@@ -78,22 +78,22 @@ afterEach(async () => {
 
 describe("PiServer Unix integration", () => {
 	test("serializes server snapshot revisions", async () => {
-		const backend = new OrderedSnapshotBackend();
-		const { server } = await startServer(backend);
+		const service = new OrderedSnapshotService();
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
-		backend.controlled = true;
+		service.controlled = true;
 		const messageIndex = client.messages.length;
 
 		const firstCreate = client.request({ command: "create", name: "first" });
-		await backend.firstStarted.promise;
+		await service.firstStarted.promise;
 		const secondCreate = client.request({ command: "create", name: "second" });
 		await Promise.resolve();
-		expect(backend.startedCount).toBe(1);
+		expect(service.startedCount).toBe(1);
 
-		backend.firstRelease.resolve(undefined);
-		await backend.secondStarted.promise;
-		backend.secondRelease.resolve(undefined);
+		service.firstRelease.resolve(undefined);
+		await service.secondStarted.promise;
+		service.secondRelease.resolve(undefined);
 		await Promise.all([firstCreate, secondCreate]);
 		await client.nextFrom(
 			messageIndex,
@@ -114,7 +114,7 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("creates server-assigned durable IDs and supports list, attach, and detach", async () => {
-		const { server, backend } = await startServer();
+		const { server, service } = await startServer();
 		const client = await connect(server);
 		await client.hello();
 		const created = await client.request({ command: "create", cwd: "/work", name: "Created" });
@@ -122,7 +122,7 @@ describe("PiServer Unix integration", () => {
 		if (!created.ok || created.result.command !== "create") throw new Error("Create failed");
 		const createdId = created.result.session.id;
 		expect(created.result.session).toMatchObject({
-			id: backend.lastCreatedId,
+			id: service.lastCreatedId,
 			cwd: "/work",
 			name: "Created",
 			attached: true,
@@ -132,32 +132,32 @@ describe("PiServer Unix integration", () => {
 		const listed = await client.request({ command: "list" });
 		expect(listed).toMatchObject({
 			ok: true,
-			result: { command: "list", sessions: [{ id: backend.lastCreatedId, attached: true, locked: true }] },
+			result: { command: "list", sessions: [{ id: service.lastCreatedId, attached: true, locked: true }] },
 		});
 		const detached = await client.request({ command: "detach", sessionId: createdId });
 		expect(detached).toMatchObject({ ok: true, result: { command: "detach", sessionId: createdId } });
-		expect(backend.latestRuntime(createdId).disposeCount).toBe(1);
+		expect(service.latestRuntime(createdId).disposeCount).toBe(1);
 		const detachedAgain = await client.request({ command: "detach", sessionId: createdId });
 		expect(detachedAgain).toMatchObject({ ok: true, result: { command: "detach", sessionId: createdId } });
 
 		const attached = await attach(client, createdId);
-		expect(attached.id).toBe(backend.lastCreatedId);
-		expect(backend.runtimes.get(createdId)?.length).toBe(2);
+		expect(attached.id).toBe(service.lastCreatedId);
+		expect(service.runtimes.get(createdId)?.length).toBe(2);
 	});
 
 	test("keeps multiple attachments on one connection independent", async () => {
-		const backend = new MemoryBackend();
-		backend.seed("first");
-		backend.seed("second");
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed("first");
+		service.seed("second");
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
 		await attach(client, "first");
 		await attach(client, "second");
 
 		await client.request({ command: "detach", sessionId: "first" });
-		expect(backend.latestRuntime("first").disposeCount).toBe(1);
-		expect(backend.latestRuntime("second").disposeCount).toBe(0);
+		expect(service.latestRuntime("first").disposeCount).toBe(1);
+		expect(service.latestRuntime("second").disposeCount).toBe(0);
 		const response = await client.request({
 			command: "set_thinking",
 			sessionId: "second",
@@ -167,15 +167,15 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("broadcasts full snapshots and progress only to clients attached to that session", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server } = await startServer(service);
 		const attachedClient = await connect(server);
 		const unattachedClient = await connect(server);
 		await attachedClient.hello();
 		await unattachedClient.hello();
 		await attach(attachedClient, "session-1");
-		const runtime = backend.latestRuntime("session-1");
+		const runtime = service.latestRuntime("session-1");
 		const progress: TranscriptProgress = {
 			type: "assistant_delta",
 			messageId: "assistant-1",
@@ -218,9 +218,9 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("allows every attached client to control a singleton live runtime", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server } = await startServer(service);
 		const first = await connect(server);
 		const second = await connect(server);
 		await first.hello();
@@ -232,7 +232,7 @@ describe("PiServer Unix integration", () => {
 			result: { sessions: [{ id: "session-1", attached: false, locked: true }] },
 		});
 		await attach(second, "session-1");
-		expect(backend.runtimes.get("session-1")?.length).toBe(1);
+		expect(service.runtimes.get("session-1")?.length).toBe(1);
 
 		const modelResponse = await second.request({
 			command: "set_model",
@@ -255,9 +255,9 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("does not queue prompts and processes steer and abort while a prompt response is pending", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
 		await attach(client, "session-1");
@@ -274,16 +274,16 @@ describe("PiServer Unix integration", () => {
 
 		const steer = await client.request({ command: "steer", sessionId: "session-1", text: "adjust" });
 		expect(steer).toMatchObject({ ok: true, result: { command: "steer" } });
-		expect(backend.latestRuntime("session-1").steers).toEqual([{ text: "adjust" }]);
+		expect(service.latestRuntime("session-1").steers).toEqual([{ text: "adjust" }]);
 		const abort = await client.request({ command: "abort", sessionId: "session-1" });
 		expect(abort).toMatchObject({ ok: true, result: { command: "abort" } });
 		expect(await prompt).toMatchObject({ ok: true, result: { command: "prompt", session: { phase: "idle" } } });
 	});
 
 	test("returns operation attachment state relative to the requesting connection", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server } = await startServer(service);
 		const first = await connect(server);
 		const second = await connect(server);
 		await first.hello();
@@ -299,7 +299,7 @@ describe("PiServer Unix integration", () => {
 				message.event.snapshot.phase === "turn",
 		);
 		await first.request({ command: "detach", sessionId: "session-1" });
-		backend.latestRuntime("session-1").finishPrompt();
+		service.latestRuntime("session-1").finishPrompt();
 
 		expect(await prompt).toMatchObject({
 			ok: true,
@@ -308,9 +308,9 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("keeps busy work alive after disconnect and disposes when it next becomes idle", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
 		await attach(client, "session-1");
@@ -321,7 +321,7 @@ describe("PiServer Unix integration", () => {
 				message.event.type === "session_snapshot" &&
 				message.event.snapshot.phase === "turn",
 		);
-		const runtime = backend.latestRuntime("session-1");
+		const runtime = service.latestRuntime("session-1");
 		await client.close();
 		await expect(prompt).rejects.toThrow(Error);
 		expect(runtime.disposeCount).toBe(0);
@@ -337,9 +337,9 @@ describe("PiServer Unix integration", () => {
 	});
 
 	test("restores persisted sessions lazily after a server restart", async () => {
-		const backend = new MemoryBackend();
-		backend.seed();
-		const { server: firstServer } = await startServer(backend);
+		const service = new MemoryService();
+		service.seed();
+		const { server: firstServer } = await startServer(service);
 		const firstClient = await connect(firstServer);
 		await firstClient.hello();
 		await attach(firstClient, "session-1");
@@ -347,35 +347,35 @@ describe("PiServer Unix integration", () => {
 		await firstClient.close();
 		await firstServer.close();
 
-		const { server: secondServer } = await startServer(backend);
-		expect(backend.runtimes.get("session-1")).toHaveLength(1);
+		const { server: secondServer } = await startServer(service);
+		expect(service.runtimes.get("session-1")).toHaveLength(1);
 		const secondClient = await connect(secondServer);
 		await secondClient.hello();
 		const restored = await attach(secondClient, "session-1");
 		expect(restored.thinkingLevel).toBe("high");
-		expect(backend.runtimes.get("session-1")).toHaveLength(2);
+		expect(service.runtimes.get("session-1")).toHaveLength(2);
 	});
 
-	test("rejects and disposes a backend runtime with the wrong server-assigned ID", async () => {
-		class WrongIdBackend extends MemoryBackend {
+	test("rejects and disposes a service runtime with the wrong server-assigned ID", async () => {
+		class WrongIdService extends MemoryService {
 			override async createSession(options: CreateSessionOptions): Promise<PiSessionRuntime> {
 				return super.createSession({ ...options, id: "wrong-id" });
 			}
 		}
-		const backend = new WrongIdBackend();
-		const { server } = await startServer(backend);
+		const service = new WrongIdService();
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
 		const response = await client.request({ command: "create" });
 		expect(response).toMatchObject({ ok: false, error: { code: "invalid_request" } });
-		expect(backend.latestRuntime("wrong-id").disposeCount).toBe(1);
+		expect(service.latestRuntime("wrong-id").disposeCount).toBe(1);
 	});
 
-	test("maps backend lock errors and rejects control from unattached clients", async () => {
-		const backend = new MemoryBackend();
-		backend.seed("locked");
-		backend.locked.add("locked");
-		const { server } = await startServer(backend);
+	test("maps service lock errors and rejects control from unattached clients", async () => {
+		const service = new MemoryService();
+		service.seed("locked");
+		service.locked.add("locked");
+		const { server } = await startServer(service);
 		const client = await connect(server);
 		await client.hello();
 		const locked = await client.request({ command: "attach", sessionId: "locked" });

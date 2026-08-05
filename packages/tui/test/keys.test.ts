@@ -480,6 +480,17 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1bOF", "end"), true);
 		});
 
+		it("should match xterm Ctrl-modified viewport navigation", () => {
+			assert.strictEqual(matchesKey("\x1b[1;5H", "ctrl+home"), true);
+			assert.strictEqual(matchesKey("\x1b[1;5F", "ctrl+end"), true);
+			assert.strictEqual(matchesKey("\x1b[5;5~", "ctrl+pageUp"), true);
+			assert.strictEqual(matchesKey("\x1b[6;5~", "ctrl+pageDown"), true);
+			assert.strictEqual(parseKey("\x1b[1;5H"), "ctrl+home");
+			assert.strictEqual(parseKey("\x1b[1;5F"), "ctrl+end");
+			assert.strictEqual(parseKey("\x1b[5;5~"), "ctrl+pageUp");
+			assert.strictEqual(parseKey("\x1b[6;5~"), "ctrl+pageDown");
+		});
+
 		it("should match legacy function keys and clear", () => {
 			assert.strictEqual(matchesKey("\x1bOP", "f1"), true);
 			assert.strictEqual(matchesKey("\x1b[24~", "f12"), true);

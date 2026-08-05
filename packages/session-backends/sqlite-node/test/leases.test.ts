@@ -1,14 +1,8 @@
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	createNodeSqliteFactory,
-	type SqliteSessionMetadata,
-	SqliteSessionRepository,
-} from "../../../storage/sqlite-node/src/index.ts";
-import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { createTempDir, createUserMessage } from "./session-test-utils.ts";
-
-const repositories: SqliteSessionRepository[] = [];
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { describe, expect, it, vi } from "vitest";
+import { createNodeSqliteFactory, type SqliteSessionMetadata, SqliteSessionRepository } from "../src/index.ts";
+import { createTempDir, createUserMessage } from "./test-utils.ts";
 
 function createRepository(root: string, databasePath: string, lease?: { ttlMs: number; heartbeatIntervalMs: number }) {
 	const repository = new SqliteSessionRepository({
@@ -17,21 +11,49 @@ function createRepository(root: string, databasePath: string, lease?: { ttlMs: n
 		databasePath,
 		writerLease: lease,
 	});
-	repositories.push(repository);
 	return repository;
 }
 
-afterEach(async () => {
-	vi.useRealTimers();
-	for (const repository of repositories.splice(0)) await repository.close();
-});
-
 describe("SQLite session writer leases", () => {
+	it("shares one write queue across repeated opens in one repository", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		await using repository = createRepository(root, databasePath);
+		const session = await repository.create({ cwd: root, id: "session" });
+		const reopened = await repository.open(await session.getMetadata());
+
+		const [first, second] = await Promise.all([
+			session.appendMessage(createUserMessage("first")),
+			reopened.appendMessage(createUserMessage("second")),
+		]);
+
+		expect((await session.findEntries({ order: "oldestFirst" })).map((entry) => entry.id)).toEqual([first, second]);
+	});
+
+	it.each([
+		[{ ttlMs: 0, heartbeatIntervalMs: 1 }, "writerLease.ttlMs must be positive"],
+		[
+			{ ttlMs: 100, heartbeatIntervalMs: 100 },
+			"writerLease.heartbeatIntervalMs must be positive and less than ttlMs",
+		],
+	])("rejects invalid lease timing %o", (writerLease, message) => {
+		const root = createTempDir();
+		expect(
+			() =>
+				new SqliteSessionRepository({
+					env: new NodeExecutionEnv({ cwd: root }),
+					sqlite: createNodeSqliteFactory(),
+					databasePath: join(root, "sessions.sqlite"),
+					writerLease,
+				}),
+		).toThrow(message);
+	});
+
 	it("rejects a second writer until the first session releases its claim", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const firstRepository = createRepository(root, databasePath);
-		const secondRepository = createRepository(root, databasePath);
+		await using firstRepository = createRepository(root, databasePath);
+		await using secondRepository = createRepository(root, databasePath);
 		const first = await firstRepository.create({ cwd: root, id: "session-1" });
 		const metadata = await first.getMetadata();
 
@@ -49,8 +71,8 @@ describe("SQLite session writer leases", () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const lease = { ttlMs: 120_000, heartbeatIntervalMs: 60_000 };
-		const firstRepository = createRepository(root, databasePath, lease);
-		const secondRepository = createRepository(root, databasePath, lease);
+		await using firstRepository = createRepository(root, databasePath, lease);
+		await using secondRepository = createRepository(root, databasePath, lease);
 		const first = await firstRepository.create({ cwd: root, id: "session-1" });
 		const metadata = await first.getMetadata();
 		const sqlite = createNodeSqliteFactory();
@@ -94,7 +116,7 @@ describe("SQLite session writer leases", () => {
 	it("serializes lease-checked writes for sessions sharing one database connection", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const repository = createRepository(root, databasePath);
+		await using repository = createRepository(root, databasePath);
 		const first = await repository.create({ cwd: root, id: "session-1" });
 		const second = await repository.create({ cwd: root, id: "session-2" });
 
@@ -111,7 +133,7 @@ describe("SQLite session writer leases", () => {
 		vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
-		const repository = createRepository(root, databasePath, { ttlMs: 30_000, heartbeatIntervalMs: 10_000 });
+		await using repository = createRepository(root, databasePath, { ttlMs: 30_000, heartbeatIntervalMs: 10_000 });
 		const session = await repository.create({ cwd: root, id: "session-1" });
 		const metadata = (await session.getMetadata()) as SqliteSessionMetadata;
 		const sqlite = createNodeSqliteFactory();

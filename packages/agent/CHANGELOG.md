@@ -13,6 +13,10 @@
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
 - Added a compile-complete `AgentHarness` v2 scaffold; unfinished operation paths reject with `HarnessNotImplemented` while durable execution is implemented.
 
+### Fixed
+
+- Fixed Windows path handling for `NodeExecutionEnv` file basenames, recursive skill loading, and prompt template names.
+
 ## [0.83.0] - 2026-07-29
 
 ## [0.82.1] - 2026-07-25

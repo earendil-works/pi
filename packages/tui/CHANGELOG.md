@@ -4,12 +4,15 @@
 
 ### Fixed
 
+- Fixed Windows Shift+Enter detection by extending the native Win32 helper to report modifier key state.
+- Fixed the npm package omitting the source and build script needed to rebuild the Darwin native addon.
 - Fixed Windows console truecolor detection when Windows Terminal does not provide `WT_SESSION` to child shells.
 - Fixed terminal width accounting for Indic conjunct grapheme clusters ([#6124](https://github.com/earendil-works/pi/issues/6124) by [@petrroll](https://github.com/petrroll)).
 - Fixed phantom alternate-screen text selection from unmatched mouse events when changing terminal pane focus.
 - Fixed spaces in searchable settings queries changing the selected value instead of filtering multi-word labels.
 - Fixed alternate-screen Kitty images crossing vertical layout clip boundaries and overlapping sticky regions while scrolling.
 - Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
+- Fixed fullscreen transcript navigation leaving no editor-accessible `Home`, `End`, `PageUp`, or `PageDown` variants by adding Ctrl-modified editor bindings ([#7574](https://github.com/earendil-works/pi/issues/7574)).
 
 ### Added
 

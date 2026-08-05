@@ -1,17 +1,13 @@
 import { join } from "node:path";
 import type { SessionMetadata, SessionRepo } from "@earendil-works/pi-agent-core";
-import { describe, it } from "vitest";
-import {
-	createNodeSqliteFactory,
-	type SqliteSessionMetadata,
-	SqliteSessionRepository,
-} from "../../../../storage/sqlite-node/src/index.ts";
-import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
 	createSessionBackendConformance,
 	type SessionBackendFixture,
-} from "../../../src/harness/session/testing/index.ts";
-import { createTempDir } from "../session-test-utils.ts";
+} from "@earendil-works/pi-agent-core/session/testing";
+import { describe, it } from "vitest";
+import { createNodeSqliteFactory, type SqliteSessionMetadata, SqliteSessionRepository } from "../src/index.ts";
+import { createTempDir } from "./test-utils.ts";
 
 function requireSqliteMetadata(metadata: SessionMetadata): SqliteSessionMetadata {
 	const cwd = "cwd" in metadata ? metadata.cwd : undefined;

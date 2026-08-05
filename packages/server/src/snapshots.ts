@@ -6,11 +6,11 @@ import {
 	type SessionSummary,
 } from "@earendil-works/pi-protocol";
 import type { ConnectionState } from "./connection.ts";
-import type { PiSessionBackend } from "./types.ts";
+import type { PiServerService } from "./types.ts";
 
 interface ServerSnapshotPublisherOptions {
 	serverId: string;
-	backend: PiSessionBackend;
+	service: PiServerService;
 	connections: Set<ConnectionState>;
 	isClosing: () => boolean;
 	listSessions: (connection?: ConnectionState) => Promise<SessionSummary[]>;
@@ -37,7 +37,7 @@ export class ServerSnapshotPublisher {
 			protocolVersion: PROTOCOL_VERSION,
 			revision: this.revision,
 			sessions: await this.options.listSessions(connection),
-			models: models ?? (await this.options.backend.listModels()),
+			models: models ?? (await this.options.service.listModels()),
 		};
 	}
 
@@ -53,7 +53,7 @@ export class ServerSnapshotPublisher {
 		);
 		if (readyConnections.length === 0 || this.options.isClosing()) return;
 		const revision = ++this.revision;
-		const models = await this.options.backend.listModels();
+		const models = await this.options.service.listModels();
 		for (const connection of readyConnections) {
 			const current = await this.get(models, connection);
 			const snapshot: ServerSnapshot = { ...current, revision };
