@@ -53,7 +53,7 @@ const TEXT_MODELS = [
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
-	"qwen3.8-max-preview",
+	"qwen3.8-max",
 ];
 
 const IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"];
@@ -72,7 +72,7 @@ const QWEN_THINKING_MODELS = [
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
-	"qwen3.8-max-preview",
+	"qwen3.8-max",
 ] as const;
 
 const QWEN_THINKING_MODEL_CASES = (["qwen-token-plan", "qwen-token-plan-cn"] as const).flatMap((provider) =>
@@ -155,9 +155,9 @@ describe("Qwen Token Plan models", () => {
 	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)(
 		"exposes qwen3.8 reasoning_effort levels on %s",
 		(provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max-preview");
+			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max-preview`);
+			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
 
 			expect(model.thinkingLevelMap).toMatchObject({
 				minimal: null,
@@ -167,6 +167,14 @@ describe("Qwen Token Plan models", () => {
 				xhigh: "xhigh",
 				max: null,
 			});
+		},
+	);
+
+	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)(
+		"omits retired qwen3.8-max-preview on %s",
+		(provider) => {
+			const modelIds = getModels(provider).map((model) => model.id);
+			expect(modelIds).not.toContain("qwen3.8-max-preview");
 		},
 	);
 
@@ -205,9 +213,9 @@ describe("Qwen Token Plan models", () => {
 	it.each(["qwen-token-plan", "qwen-token-plan-cn"] as const)(
 		"sends qwen3.8 max reasoning_effort on %s",
 		async (provider) => {
-			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max-preview");
+			const model = getModels(provider).find((candidate) => candidate.id === "qwen3.8-max");
 			expect(model).toBeDefined();
-			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max-preview`);
+			if (!model) throw new Error(`Missing model: ${provider}/qwen3.8-max`);
 
 			let payload: unknown;
 			await streamSimple(

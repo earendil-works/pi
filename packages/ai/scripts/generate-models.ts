@@ -293,6 +293,8 @@ const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 	"qwen3.7-max",
 	"qwen3.7-plus",
 ]);
+// Retired preview id — models.dev may still list it after GA ships.
+const QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = new Set(["qwen3.8-max-preview"]);
 
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
@@ -2132,6 +2134,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS.has(modelId)) continue;
 				const supportsReasoningEffort = !QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS.has(modelId);
 
 				models.push({
@@ -2146,7 +2149,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(supportsReasoningEffort
 						? {
 								thinkingLevelMap:
-									modelId === "qwen3.8-max-preview"
+									modelId === "qwen3.8-max"
 										? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
 										: QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP,
 							}
