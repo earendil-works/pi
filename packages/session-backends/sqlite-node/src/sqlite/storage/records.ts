@@ -123,6 +123,7 @@ export function readOpenOperationRows(
 						AND finished.lane = started.lane
 						AND finished.run_id = started.id
 						AND finished.type = 'operation_finished'
+						AND finished.seq > started.seq
 				)
 			ORDER BY started.seq DESC${limit}`,
 		)

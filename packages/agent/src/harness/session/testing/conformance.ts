@@ -505,6 +505,25 @@ export function createSessionBackendConformance(
 			},
 		),
 
+		createCase(
+			factory,
+			"records and log",
+			"does not let an earlier finish close a later operation start",
+			async (repository) => {
+				const session = await repository.create({ id: "session" });
+				await session.appendRecord({
+					type: "operation_finished",
+					id: "early-finish",
+					lane: "main",
+					runId: "late-start",
+					outcome: "completed",
+				});
+				const started = await session.appendRecord(operationStarted("late-start", { lane: "main", kind: "run" }));
+
+				deepStrictEqual(await session.findOpenOperations("main"), [started]);
+			},
+		),
+
 		createCase(factory, "records and log", "scopes open operations by lane kind and limit", async (repository) => {
 			const session = await repository.create({ id: "session" });
 			await session.createLane("thread", null);
