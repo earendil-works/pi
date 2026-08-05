@@ -42,6 +42,30 @@ describe("SQLite FTS5 session search", () => {
 		]);
 	});
 
+	it("rejects a stored NULL session name", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		const databasePath = join(root, "sessions.sqlite");
+		await using fixture = createSqliteFixture({ env, sqlite, databasePath });
+		const { repository, search } = fixture;
+		const session = await repository.create({ cwd: root, id: "session-1" });
+		await session.appendMessage(createUserMessage("Find the auth defect"));
+		await session.setName("valid name");
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db.prepare("UPDATE facts SET value = NULL WHERE session_id = ? AND kind = 'name'").run("session-1");
+		} finally {
+			await db.close();
+		}
+
+		await expect(search.search({ text: "auth" })).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("name must be a string"),
+		});
+	});
+
 	it("handles quoted search text without exposing FTS syntax", async () => {
 		const root = createTempDir();
 		await using fixture = createSqliteFixture({

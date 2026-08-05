@@ -260,6 +260,7 @@ END;
 	it.each([
 		["invalid JSON", "not json", "name is not valid JSON"],
 		["a non-string value", "{}", "name must be a string"],
+		["a NULL value", null, "name must be a string"],
 	])("rejects stored session names containing %s", async (_case, stored, message) => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");

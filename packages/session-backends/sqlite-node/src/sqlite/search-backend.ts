@@ -105,17 +105,21 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 			const rows = db
 				.prepare(
 					`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
-						(
-							SELECT f.value
-							FROM facts AS f
-							WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
-							ORDER BY f.seq DESC
-							LIMIT 1
-						) AS session_name,
+						name_fact.seq IS NOT NULL AS has_session_name,
+						name_fact.value AS session_name,
 						se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score
 					FROM session_search_fts
 					JOIN entries AS se ON se.rowid = session_search_fts.rowid
 					JOIN sessions AS s ON s.id = se.session_id
+					LEFT JOIN facts AS name_fact
+						ON name_fact.session_id = s.id
+						AND name_fact.kind = 'name'
+						AND name_fact.key IS NULL
+						AND name_fact.seq = (
+							SELECT MAX(f.seq)
+							FROM facts AS f
+							WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
+						)
 					WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?)
 					ORDER BY score`,
 				)
