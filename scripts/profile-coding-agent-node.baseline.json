@@ -1,0 +1,10 @@
+{
+	"scenario": "bare",
+	"mode": "rpc",
+	"runtime": "node",
+	"medianMs": 2933.6,
+	"maxRegressionRatio": 0.1,
+	"hardLimitMs": 3500,
+	"runs": 3,
+	"warmupRuns": 1
+}

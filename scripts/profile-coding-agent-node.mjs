@@ -653,7 +653,9 @@ async function main() {
 		throw new Error(`CLI entrypoint not found: ${entryPath}`);
 	}
 
-	mkdirSync(profileDir, { recursive: true });
+	if (options.cpuProfile) {
+		mkdirSync(profileDir, { recursive: true });
+	}
 
 	const measuredRuns = [];
 	const totalRuns = options.warmup + options.runs;
