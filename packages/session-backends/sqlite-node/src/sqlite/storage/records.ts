@@ -58,6 +58,7 @@ export function readRecordRows(
 		lane?: string;
 		type?: string;
 		runId?: string;
+		operationKind?: string;
 		afterSeq?: number;
 		order?: "newestFirst" | "oldestFirst";
 		limit?: number;
@@ -77,6 +78,10 @@ export function readRecordRows(
 		predicates.push("run_id = ?");
 		params.push(query.runId);
 	}
+	if (query.operationKind !== undefined) {
+		predicates.push("op_kind = ?");
+		params.push(query.operationKind);
+	}
 	if (query.afterSeq !== undefined) {
 		predicates.push("seq > ?");
 		params.push(query.afterSeq);
@@ -90,6 +95,37 @@ export function readRecordRows(
 			FROM records
 			WHERE ${predicates.join(" AND ")}
 			ORDER BY seq ${direction}${limit}`,
+		)
+		.all<RecordRow>(...params);
+}
+
+export function readOpenOperationRows(
+	db: SqliteDatabase,
+	sessionId: string,
+	lane: string,
+	options: { limit?: number } = {},
+): RecordRow[] {
+	const params: unknown[] = [sessionId, lane];
+	const limit = options.limit === undefined ? "" : " LIMIT ?";
+	if (options.limit !== undefined) params.push(options.limit);
+	return db
+		.prepare(
+			`SELECT started.session_id, started.seq, started.id, started.lane, started.run_id,
+				started.type, started.op_kind, started.timestamp, started.payload
+			FROM records AS started
+			WHERE started.session_id = ?
+				AND started.lane = ?
+				AND started.type = 'operation_started'
+				AND NOT EXISTS (
+					SELECT 1
+					FROM records AS finished
+					WHERE finished.session_id = started.session_id
+						AND finished.lane = started.lane
+						AND finished.run_id = started.id
+						AND finished.type = 'operation_finished'
+						AND finished.seq > started.seq
+				)
+			ORDER BY started.seq DESC${limit}`,
 		)
 		.all<RecordRow>(...params);
 }

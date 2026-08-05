@@ -238,6 +238,8 @@ export interface RecordQuery {
 	lane?: string;
 	type?: LaneRecord["type"];
 	runId?: string;
+	/** Valid only with type "operation_started". */
+	operationKind?: OperationStartedRecord["intent"]["kind"];
 	afterSeq?: number;
 	order?: EntryOrder;
 	limit?: number;
@@ -295,6 +297,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		query: RecordQuery & { type: K },
 	): Promise<Extract<LaneRecord, { type: K }>[]>;
 	findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+	findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]>;
 	getLog(options?: { afterSeq?: number; limit?: number }): Promise<LogItem[]>;
 
 	// Global facts

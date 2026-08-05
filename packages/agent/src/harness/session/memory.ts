@@ -11,6 +11,7 @@ import {
 	type LogItem,
 	type LogOptions,
 	type NewRecord,
+	type OperationStartedRecord,
 	type ProvisionedEntry,
 	type RecordQuery,
 	type SessionCreateOptions,
@@ -50,6 +51,7 @@ export class InMemorySessionStorage implements SessionStorage {
 	private readonly entries: Entry[] = [];
 	private readonly entriesById = new Map<string, Entry>();
 	private readonly records: LaneRecord[] = [];
+	private readonly openOperationsByLane = new Map<string, Map<string, OperationStartedRecord>>();
 	private readonly lanes = new Map<string, string | null>([["main", null]]);
 	private readonly log: LogItem[] = [];
 	private readonly stats: SessionStats = {
@@ -156,6 +158,17 @@ export class InMemorySessionStorage implements SessionStorage {
 		const record = provisionRecord(clonedRecord, this.nextSequence());
 		this.usedIds.add(record.id);
 		this.records.push(record);
+		// Maintain the recovery projection incrementally so restore never scans the full record log.
+		if (record.type === "operation_started") {
+			let openOperations = this.openOperationsByLane.get(record.lane);
+			if (!openOperations) {
+				openOperations = new Map();
+				this.openOperationsByLane.set(record.lane, openOperations);
+			}
+			openOperations.set(record.id, record);
+		} else if (record.type === "operation_finished") {
+			this.openOperationsByLane.get(record.lane)?.delete(record.runId);
+		}
 		this.log.push({ kind: "record", seq: record.seq, record });
 		if (record.type === "usage") {
 			this.stats.cachedTokens += record.usage.cacheRead;
@@ -210,6 +223,12 @@ export class InMemorySessionStorage implements SessionStorage {
 			if (results.length === query.limit) break;
 		}
 		return structuredClone(results);
+	}
+
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		const openOperationsById = this.openOperationsByLane.get(lane);
+		const openOperations = openOperationsById ? [...openOperationsById.values()].reverse() : [];
+		return structuredClone(options?.limit === undefined ? openOperations : openOperations.slice(0, options.limit));
 	}
 
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
@@ -305,6 +324,8 @@ export class InMemorySessionStorage implements SessionStorage {
 				(record.type === "operation_started"
 					? record.id === query.runId
 					: "runId" in record && record.runId === query.runId)) &&
+			(query.operationKind === undefined ||
+				(record.type === "operation_started" && record.intent.kind === query.operationKind)) &&
 			(query.afterSeq === undefined || record.seq > query.afterSeq)
 		);
 	}

@@ -10,6 +10,7 @@ import type {
 	LogItem,
 	LogOptions,
 	NewRecord,
+	OperationStartedRecord,
 	ProvisionedEntry,
 	RecordBase,
 	RecordQuery,
@@ -213,12 +214,17 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 		return this.queryRecords(query);
 	}
 
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		assertValidLimit(options?.limit);
+		return this.storage.findOpenOperations(lane, options);
+	}
+
 	async getLog(options?: LogOptions): Promise<LogItem[]> {
 		return this.queryLog(options);
 	}
 
 	private async getLeafIdForLane(lane: string): Promise<string | null> {
-		const pointer = (await this.storage.getLanes()).find((candidate) => candidate.lane === lane);
+		const pointer = (await this.getLanes()).find((candidate) => candidate.lane === lane);
 		if (!pointer) throw new SessionError("invalid_lane", `Lane not found: ${lane}`);
 		return pointer.leafId;
 	}
@@ -245,6 +251,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
 		assertValidLimit(query.limit);
 		assertValidCursor(query.afterSeq);
+		if (query.operationKind !== undefined && query.type !== "operation_started") {
+			throw new SessionError("invalid_query", 'operationKind requires type "operation_started"');
+		}
 		return this.storage.findRecords(query);
 	}
 

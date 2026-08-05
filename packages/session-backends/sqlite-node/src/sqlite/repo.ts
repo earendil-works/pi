@@ -8,6 +8,7 @@ import {
 	type LogItem,
 	type LogOptions,
 	type NewRecord,
+	type OperationStartedRecord,
 	type ProvisionedEntry,
 	type RecordQuery,
 	Session,
@@ -49,7 +50,13 @@ import {
 	renewSessionLease,
 	type SessionLease,
 } from "./storage/leases.ts";
-import { appendRecordRow, deleteRecordRows, idExistsInRecords, readRecordRows } from "./storage/records.ts";
+import {
+	appendRecordRow,
+	deleteRecordRows,
+	idExistsInRecords,
+	readOpenOperationRows,
+	readRecordRows,
+} from "./storage/records.ts";
 import {
 	advanceSequence,
 	createSequence,
@@ -513,7 +520,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
 		const rows = readEntryRows(this.db, this.metadata.id, { order: query.order });
 		const entries = rows.map(decodeEntry).filter((entry) => matchesEntryQuery(entry, query));
-		return structuredClone(query.limit === undefined ? entries : entries.slice(0, query.limit));
+		return query.limit === undefined ? entries : entries.slice(0, query.limit);
 	}
 
 	async findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]> {
@@ -529,12 +536,23 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 			.map(entryRowFromCached)
 			.map(decodeEntry)
 			.filter((entry) => matchesEntryQuery(entry, query));
-		return structuredClone(query.limit === undefined ? entries : entries.slice(0, query.limit));
+		return query.limit === undefined ? entries : entries.slice(0, query.limit);
 	}
 
 	async findRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
 		const rows = readRecordRows(this.db, this.metadata.id, query);
-		return structuredClone(rows.map(decodeRecord));
+		return rows.map(decodeRecord);
+	}
+
+	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
+		const rows = readOpenOperationRows(this.db, this.metadata.id, lane, options);
+		return rows.map((row) => {
+			const record = decodeRecord(row);
+			if (record.type !== "operation_started") {
+				throw new SessionError("storage", "Expected operation_started record");
+			}
+			return record;
+		});
 	}
 
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
@@ -565,7 +583,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 				};
 			}),
 		].sort((left, right) => left.seq - right.seq);
-		return structuredClone(options.limit === undefined ? log : log.slice(0, options.limit));
+		return options.limit === undefined ? log : log.slice(0, options.limit);
 	}
 
 	async getName(): Promise<string | undefined> {
