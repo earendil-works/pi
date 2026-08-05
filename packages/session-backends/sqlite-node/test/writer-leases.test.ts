@@ -49,6 +49,63 @@ describe("SQLite session writer leases", () => {
 		).toThrow(message);
 	});
 
+	it("lists complete metadata without acquiring active sessions' writer leases", async () => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		await using writerRepository = createRepository(root, databasePath);
+		await using readerRepository = createRepository(root, databasePath);
+		const first = await writerRepository.create({
+			cwd: root,
+			id: "session-1",
+			metadata: { profile: "reviewer" },
+		});
+		const second = await writerRepository.create({
+			cwd: root,
+			id: "session-2",
+			parentSessionId: "session-1",
+			metadata: { profile: "writer", name: "application-owned name" },
+		});
+		await first.setName("Review session");
+		await second.setName("Write session");
+		const [firstMetadata, secondMetadata] = await Promise.all([first.getMetadata(), second.getMetadata()]);
+		expect(firstMetadata).toMatchObject({ name: "Review session", metadata: { profile: "reviewer" } });
+		expect(secondMetadata).toMatchObject({
+			name: "Write session",
+			metadata: { profile: "writer", name: "application-owned name" },
+		});
+		const expected = [firstMetadata, secondMetadata];
+		const sqlite = createNodeSqliteFactory();
+		const inspection = await sqlite.open(databasePath);
+		let leasesBefore: { session_id: string; owner_id: string; fence: number; expires_at_ms: number }[];
+		try {
+			leasesBefore = await inspection
+				.prepare("SELECT session_id, owner_id, fence, expires_at_ms FROM writer_leases ORDER BY session_id")
+				.all();
+		} finally {
+			await inspection.close();
+		}
+
+		const listed = await readerRepository.list({ cwd: root });
+
+		expect([...listed].sort((left, right) => left.id.localeCompare(right.id))).toEqual(
+			[...expected].sort((left, right) => left.id.localeCompare(right.id)),
+		);
+		const afterList = await sqlite.open(databasePath);
+		try {
+			expect(
+				await afterList
+					.prepare("SELECT session_id, owner_id, fence, expires_at_ms FROM writer_leases ORDER BY session_id")
+					.all(),
+			).toEqual(leasesBefore);
+		} finally {
+			await afterList.close();
+		}
+		await expect(readerRepository.open(expected[0]!)).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining("already has an active writer"),
+		});
+	});
+
 	it("rejects a second writer until the first session releases its claim", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
@@ -78,7 +135,7 @@ describe("SQLite session writer leases", () => {
 		const sqlite = createNodeSqliteFactory();
 		const db = await sqlite.open(databasePath);
 		try {
-			await db.prepare("UPDATE leases SET expires_at_ms = 0 WHERE session_id = ?").run(metadata.id);
+			await db.prepare("UPDATE writer_leases SET expires_at_ms = 0 WHERE session_id = ?").run(metadata.id);
 		} finally {
 			await db.close();
 		}
@@ -94,7 +151,7 @@ describe("SQLite session writer leases", () => {
 		let currentLease: { owner_id: string; fence: number } | undefined;
 		try {
 			currentLease = await inspection
-				.prepare("SELECT owner_id, fence FROM leases WHERE session_id = ?")
+				.prepare("SELECT owner_id, fence FROM writer_leases WHERE session_id = ?")
 				.get<{ owner_id: string; fence: number }>(metadata.id);
 			expect(currentLease?.fence).toBe(2);
 		} finally {
@@ -105,7 +162,9 @@ describe("SQLite session writer leases", () => {
 		const afterStaleClose = await sqlite.open(databasePath);
 		try {
 			expect(
-				await afterStaleClose.prepare("SELECT owner_id, fence FROM leases WHERE session_id = ?").get(metadata.id),
+				await afterStaleClose
+					.prepare("SELECT owner_id, fence FROM writer_leases WHERE session_id = ?")
+					.get(metadata.id),
 			).toEqual(currentLease);
 		} finally {
 			await afterStaleClose.close();
@@ -143,7 +202,7 @@ describe("SQLite session writer leases", () => {
 			try {
 				return (
 					await db
-						.prepare("SELECT expires_at_ms FROM leases WHERE session_id = ?")
+						.prepare("SELECT expires_at_ms FROM writer_leases WHERE session_id = ?")
 						.get<{ expires_at_ms: number }>(metadata.id)
 				)?.expires_at_ms;
 			} finally {

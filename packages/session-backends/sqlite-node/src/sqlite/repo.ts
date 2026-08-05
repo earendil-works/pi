@@ -44,13 +44,6 @@ import {
 	moveLane as updateLane,
 } from "./storage/lanes.ts";
 import {
-	acquireSessionLease,
-	deleteSessionLease,
-	releaseSessionLease,
-	renewSessionLease,
-	type SessionLease,
-} from "./storage/leases.ts";
-import {
 	appendRecordRow,
 	deleteRecordRows,
 	idExistsInRecords,
@@ -72,14 +65,21 @@ import {
 	readStats,
 } from "./storage/session-stats.ts";
 import {
+	decodeSessionMetadata,
 	deleteSessionRow,
 	insertSessionRow,
 	readSessionRow,
 	readSessionRows,
-	rowToMetadata,
 	type SessionRow,
 	sessionExists,
 } from "./storage/sessions.ts";
+import {
+	acquireWriterLease,
+	deleteWriterLease,
+	releaseWriterLease,
+	renewWriterLease,
+	type WriterLease,
+} from "./storage/writer-leases.ts";
 import type {
 	SqliteDatabase,
 	SqliteDatabaseFactory,
@@ -126,9 +126,9 @@ function lostWriterError(sessionId: string): SessionError {
 	return new SessionError("storage", `SQLite session ${sessionId} writer lease was lost`);
 }
 
-function acquireWriterLease(db: SqliteDatabase, sessionId: string, options: ResolvedWriterLeaseOptions): SessionLease {
+function claimWriterLease(db: SqliteDatabase, sessionId: string, options: ResolvedWriterLeaseOptions): WriterLease {
 	const now = Date.now();
-	const lease = acquireSessionLease(db, sessionId, uuidv7(), now, now + options.ttlMs);
+	const lease = acquireWriterLease(db, sessionId, uuidv7(), now, now + options.ttlMs);
 	if (!lease) throw activeWriterError(sessionId);
 	return lease;
 }
@@ -337,7 +337,7 @@ function requireSessionRow(db: SqliteDatabase, sessionId: string): SessionRow {
 class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	private readonly db: SqliteDatabase;
 	private readonly metadata: SqliteSessionMetadata;
-	private readonly lease: SessionLease;
+	private readonly lease: WriterLease;
 	private readonly leaseOptions: ResolvedWriterLeaseOptions;
 	private readonly onRelease: () => void;
 	private readonly operations = new SerialOperationQueue();
@@ -349,7 +349,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	constructor(
 		db: SqliteDatabase,
 		metadata: SqliteSessionMetadata,
-		lease: SessionLease,
+		lease: WriterLease,
 		leaseOptions: ResolvedWriterLeaseOptions,
 		onRelease: () => void,
 	) {
@@ -371,7 +371,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
 		try {
 			await this.operations.enqueue(() =>
-				this.db.transaction(() => releaseSessionLease(this.db, this.metadata.id, this.lease)),
+				this.db.transaction(() => releaseWriterLease(this.db, this.metadata.id, this.lease)),
 			);
 		} finally {
 			this.onRelease();
@@ -385,7 +385,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 			if (this.leaseError) throw this.leaseError;
 			return this.db.transaction(() => {
 				const now = Date.now();
-				if (!renewSessionLease(this.db, this.metadata.id, this.lease, now, now + this.leaseOptions.ttlMs)) {
+				if (!renewWriterLease(this.db, this.metadata.id, this.lease, now, now + this.leaseOptions.ttlMs)) {
 					this.leaseError = lostWriterError(this.metadata.id);
 					if (this.heartbeatTimer !== undefined) clearTimeout(this.heartbeatTimer);
 					throw this.leaseError;
@@ -404,7 +404,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 					if (this.closing || this.leaseError) return;
 					this.db.transaction(() => {
 						const now = Date.now();
-						if (!renewSessionLease(this.db, this.metadata.id, this.lease, now, now + this.leaseOptions.ttlMs)) {
+						if (!renewWriterLease(this.db, this.metadata.id, this.lease, now, now + this.leaseOptions.ttlMs)) {
 							this.leaseError = lostWriterError(this.metadata.id);
 						}
 					});
@@ -419,7 +419,7 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async getMetadata(): Promise<SqliteSessionMetadata> {
-		return structuredClone(this.metadata);
+		return decodeSessionMetadata(requireSessionRow(this.db, this.metadata.id), this.metadata.path);
 	}
 
 	isForSession(sessionId: string): boolean {
@@ -628,22 +628,18 @@ function claimStorage(
 ): SqliteSessionStorage {
 	requireSessionRow(db, metadata.id);
 	const claimed = db.transaction(() => {
-		const lease = acquireWriterLease(db, metadata.id, leaseOptions);
+		const lease = claimWriterLease(db, metadata.id, leaseOptions);
 		const row = requireSessionRow(db, metadata.id);
 		readLanes(db, metadata.id);
 		return { lease, row };
 	});
 	return new SqliteSessionStorage(
 		db,
-		metadataFromRow(claimed.row, metadata.path),
+		decodeSessionMetadata(claimed.row, metadata.path),
 		claimed.lease,
 		leaseOptions,
 		onRelease,
 	);
-}
-
-function metadataFromRow(row: SessionRow, path: string): SqliteSessionMetadata {
-	return rowToMetadata(row, path);
 }
 
 export class SqliteSessionRepository
@@ -673,7 +669,7 @@ export class SqliteSessionRepository
 	private sessionFromLease(
 		db: SqliteDatabase,
 		metadata: SqliteSessionMetadata,
-		lease: SessionLease,
+		lease: WriterLease,
 	): Session<SqliteSessionMetadata> {
 		let storage: SqliteSessionStorage;
 		storage = new SqliteSessionStorage(db, metadata, lease, this.leaseOptions, () => {
@@ -715,10 +711,10 @@ export class SqliteSessionRepository
 				createSequence(db, id);
 				createStats(db, id);
 				createInitialLane(db, id);
-				return acquireWriterLease(db, id, this.leaseOptions);
+				return claimWriterLease(db, id, this.leaseOptions);
 			});
 			const row = requireSessionRow(db, id);
-			return this.sessionFromLease(db, metadataFromRow(row, path), lease);
+			return this.sessionFromLease(db, decodeSessionMetadata(row, path), lease);
 		});
 	}
 
@@ -732,21 +728,22 @@ export class SqliteSessionRepository
 			await this.releaseStoragesForSession(metadata.id);
 			const db = await this.getDatabase();
 			db.transaction(() => {
-				const lease = acquireWriterLease(db, metadata.id, this.leaseOptions);
+				const lease = claimWriterLease(db, metadata.id, this.leaseOptions);
 				requireSessionRow(db, metadata.id);
 				rebuildBranchCache(db, metadata.id);
-				releaseSessionLease(db, metadata.id, lease);
+				releaseWriterLease(db, metadata.id, lease);
 			});
 		});
 	}
 
+	/** Reads the session catalog without acquiring or renewing per-session writer leases. */
 	async list(options: SqliteSessionListOptions = {}): Promise<SqliteSessionMetadata[]> {
 		return this.operations.enqueue(async () => {
 			const path = await this.getDatabasePath();
 			if (!resultOrThrow(await this.options.env.exists(path), `Failed to check database ${path}`)) return [];
 			const db = await this.getDatabase();
 			const rows = readSessionRows(db, options);
-			return rows.map((row) => metadataFromRow(row, path));
+			return rows.map((row) => decodeSessionMetadata(row, path));
 		});
 	}
 
@@ -756,16 +753,16 @@ export class SqliteSessionRepository
 			const db = await this.getDatabase();
 			db.transaction(() => {
 				if (!sessionExists(db, metadata.id)) {
-					deleteSessionLease(db, metadata.id);
+					deleteWriterLease(db, metadata.id);
 					return;
 				}
-				acquireWriterLease(db, metadata.id, this.leaseOptions);
+				claimWriterLease(db, metadata.id, this.leaseOptions);
 				deleteBranchCache(db, metadata.id);
 				deleteFactRows(db, metadata.id);
 				deleteLaneRows(db, metadata.id);
 				deleteRecordRows(db, metadata.id);
 				deleteEntryRows(db, metadata.id);
-				deleteSessionLease(db, metadata.id);
+				deleteWriterLease(db, metadata.id);
 				deleteStats(db, metadata.id);
 				deleteSequence(db, metadata.id);
 				deleteSessionRow(db, metadata.id);
@@ -780,7 +777,7 @@ export class SqliteSessionRepository
 		return this.operations.enqueue(async () => {
 			const db = await this.getDatabase();
 			const path = await this.getDatabasePath();
-			const sourceMetadata = metadataFromRow(requireSessionRow(db, source.id), path);
+			const sourceMetadata = decodeSessionMetadata(requireSessionRow(db, source.id), path);
 			const id = options.id ?? uuidv7();
 			if (sessionExists(db, id)) throw new SessionError("already_exists", `Session already exists: ${id}`);
 
@@ -831,7 +828,7 @@ export class SqliteSessionRepository
 			);
 			const createdAt = Date.now();
 			const metadata = options.metadata ?? sourceMetadata.metadata;
-			let lease: SessionLease;
+			let lease: WriterLease;
 
 			try {
 				lease = db.transaction(() => {
@@ -871,7 +868,7 @@ export class SqliteSessionRepository
 
 					setNextSequence(db, id, nextSeq);
 					for (const tip of branchTips) buildCachedBranch(db, id, tip);
-					return acquireWriterLease(db, id, this.leaseOptions);
+					return claimWriterLease(db, id, this.leaseOptions);
 				});
 			} catch (error) {
 				if (error instanceof SessionError) throw error;
@@ -883,7 +880,7 @@ export class SqliteSessionRepository
 			}
 
 			const row = requireSessionRow(db, id);
-			return this.sessionFromLease(db, metadataFromRow(row, path), lease);
+			return this.sessionFromLease(db, decodeSessionMetadata(row, path), lease);
 		});
 	}
 

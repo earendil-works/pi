@@ -29,7 +29,7 @@ describe("SQLite migrations", () => {
 					"records",
 					"lane_moves",
 					"facts",
-					"leases",
+					"writer_leases",
 				]),
 			);
 			const sessionColumns = db.prepare("PRAGMA table_info(sessions)").all<{ name: string }>();

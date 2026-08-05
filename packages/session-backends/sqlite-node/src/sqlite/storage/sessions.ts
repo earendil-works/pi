@@ -7,6 +7,7 @@ export interface SessionRow {
 	metadata: string | null;
 	cwd: string;
 	parent_session_id: string | null;
+	session_name: string | null;
 }
 
 export interface NewSessionRow {
@@ -60,33 +61,74 @@ export function insertSessionRow(db: SqliteDatabase, session: NewSessionRow) {
 
 export function readSessionRow(db: SqliteDatabase, sessionId: string) {
 	return db
-		.prepare("SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions WHERE id = ?")
+		.prepare(
+			`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+				(
+					SELECT f.value
+					FROM facts AS f
+					WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
+					ORDER BY f.seq DESC
+					LIMIT 1
+				) AS session_name
+			FROM sessions AS s
+			WHERE s.id = ?`,
+		)
 		.get<SessionRow>(sessionId);
 }
 
 export function readSessionRows(db: SqliteDatabase, options: { cwd?: string } = {}) {
-	return options.cwd
-		? db
-				.prepare(
-					"SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions WHERE cwd = ? ORDER BY created_at DESC",
-				)
-				.all<SessionRow>(options.cwd)
-		: db
-				.prepare("SELECT id, created_at, metadata, cwd, parent_session_id FROM sessions ORDER BY created_at DESC")
-				.all<SessionRow>();
+	const where = options.cwd === undefined ? "" : "WHERE s.cwd = ?";
+	return db
+		.prepare(
+			`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+				(
+					SELECT f.value
+					FROM facts AS f
+					WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
+					ORDER BY f.seq DESC
+					LIMIT 1
+				) AS session_name
+			FROM sessions AS s
+			${where}
+			ORDER BY s.created_at DESC`,
+		)
+		.all<SessionRow>(...(options.cwd === undefined ? [] : [options.cwd]));
 }
 
 export function deleteSessionRow(db: SqliteDatabase, sessionId: string) {
 	db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
 }
 
-export function rowToMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
+function parseSessionName(value: string, sessionId: string): string {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(value);
+	} catch (error) {
+		throw new SessionError(
+			"storage",
+			`Invalid SQLite session ${sessionId}: name is not valid JSON`,
+			error instanceof Error ? error : undefined,
+		);
+	}
+	if (typeof parsed !== "string") {
+		throw new SessionError("storage", `Invalid SQLite session ${sessionId}: name must be a string`);
+	}
+	return parsed;
+}
+
+export function decodeSessionMetadata(row: SessionRow, path: string): SqliteSessionMetadata {
+	const metadata = parseMetadata(row.metadata, row.id);
+	const name =
+		row.session_name === undefined || row.session_name === null
+			? undefined
+			: parseSessionName(row.session_name, row.id);
 	return {
 		id: row.id,
 		createdAt: Date.parse(row.created_at),
+		...(name === undefined ? {} : { name }),
 		cwd: row.cwd,
 		path,
 		parentSessionId: row.parent_session_id ?? undefined,
-		metadata: parseMetadata(row.metadata, row.id),
+		metadata,
 	};
 }

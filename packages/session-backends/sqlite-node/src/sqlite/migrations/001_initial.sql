@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS branch_tips (
 
 -- Per-session writer claim. The fence prevents an expired owner from writing
 -- after a new owner takes over the session.
-CREATE TABLE IF NOT EXISTS leases (
+CREATE TABLE IF NOT EXISTS writer_leases (
 	session_id TEXT PRIMARY KEY,
 	owner_id TEXT NOT NULL,
 	fence INTEGER NOT NULL,

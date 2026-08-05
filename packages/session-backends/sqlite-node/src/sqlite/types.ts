@@ -32,6 +32,9 @@ export interface SqliteSessionMetadata extends SessionMetadata {
 	cwd: string;
 	path: string;
 	parentSessionId?: string;
+	/** Current session name projected from SQLite global facts. */
+	name?: string;
+	/** Opaque application-owned metadata. */
 	metadata?: Record<string, unknown>;
 }
 

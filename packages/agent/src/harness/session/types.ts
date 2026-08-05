@@ -337,7 +337,9 @@ export interface SessionRepo<
 	TListOptions = void,
 > {
 	create(options: TCreateOptions): Promise<Session<TMetadata>>;
+	/** Opens the session for writing and acquires any backend writer claim. */
 	open(metadata: TMetadata): Promise<Session<TMetadata>>;
+	/** Lists session metadata without opening sessions or acquiring writer claims. */
 	list(options?: TListOptions): Promise<TMetadata[]>;
 	delete(metadata: TMetadata): Promise<void>;
 	fork(source: TMetadata, options: ForkOptions & TCreateOptions): Promise<Session<TMetadata>>;

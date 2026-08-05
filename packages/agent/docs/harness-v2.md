@@ -1683,7 +1683,7 @@ lane_moves     (session_id, seq, lane, leaf_id)     -- history; getLog parity
 facts          (session_id, seq, kind, key, value)  -- name, labels; latest by seq
 branch_entries (session_id, branch_id, entry_id, entry_seq, entry_type, custom_type)
 branch_tips    (session_id, branch_id, tip_id)      -- PRIMARY KEY (session_id, tip_id)
-leases (session_id, owner_id, fence, expires_at_ms)  -- writer claim
+writer_leases (session_id, owner_id, fence, expires_at_ms)  -- writer claim
 
 -- indexes
 records:        (session_id, lane, type, seq), (session_id, lane, type, op_kind, seq)
@@ -1692,7 +1692,9 @@ branch_entries: (session_id, branch_id, entry_type, entry_seq)
                 (session_id, entry_id)              -- reverse lookup: entry → branches
 ```
 
-`leases` enforces one writer per session with expiring, fenced claims. Storage renews the claim inside every write transaction and while idle. Repository-owned cleanup releases only its matching owner and fence.
+`writer_leases` enforces one writer per session with expiring, fenced claims. Storage renews the claim inside every write transaction and while idle. Repository-owned cleanup releases only its matching owner and fence.
+
+`open()` acquires that writer claim. `list()` never acquires or renews writer leases: it reads every matching session directly from the session catalog and projects the latest name fact into the top-level `SqliteSessionMetadata.name` field for server-side inventory. Application-owned `SqliteSessionMetadata.metadata` remains unchanged.
 
 `branch_entries` and `branch_tips` are a private read cache. No interface exposes them; no other backend has them; rebuilding them from parent pointers is an explicit repair operation, never a runtime fallback.
 

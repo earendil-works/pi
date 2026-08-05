@@ -257,6 +257,35 @@ END;
 		});
 	});
 
+	it.each([
+		["invalid JSON", "not json", "name is not valid JSON"],
+		["a non-string value", "{}", "name must be a string"],
+	])("rejects stored session names containing %s", async (_case, stored, message) => {
+		const root = createTempDir();
+		const databasePath = join(root, "sessions.sqlite");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const sqlite = createNodeSqliteFactory();
+		await using repo = new SqliteSessionRepository({ env, sqlite, databasePath });
+		const session = await repo.create({ cwd: root, id: "session-1" });
+		await session.setName("valid name");
+
+		const db = await sqlite.open(databasePath);
+		try {
+			await db.prepare("UPDATE facts SET value = ? WHERE session_id = ? AND kind = 'name'").run(stored, "session-1");
+		} finally {
+			await db.close();
+		}
+
+		await expect(repo.list()).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining(message),
+		});
+		await expect(session.getMetadata()).rejects.toMatchObject({
+			code: "storage",
+			message: expect.stringContaining(message),
+		});
+	});
+
 	it("fails loudly when a stored entry is read and cannot be decoded", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");

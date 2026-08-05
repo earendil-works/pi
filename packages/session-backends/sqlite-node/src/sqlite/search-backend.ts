@@ -1,7 +1,7 @@
 import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "@earendil-works/pi-agent-core";
 import { getFileSystemResultOrThrow } from "@earendil-works/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
-import { rowToMetadata, type SessionRow } from "./storage/sessions.ts";
+import { decodeSessionMetadata, type SessionRow } from "./storage/sessions.ts";
 import type {
 	SqliteDatabase,
 	SqliteDatabaseFactory,
@@ -104,7 +104,20 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 			const query = `"${text.replaceAll('"', '""')}"`;
 			const rows = db
 				.prepare(
-					"SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id, se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score FROM session_search_fts JOIN entries se ON se.rowid = session_search_fts.rowid JOIN sessions s ON s.id = se.session_id WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?) ORDER BY score",
+					`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+						(
+							SELECT f.value
+							FROM facts AS f
+							WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
+							ORDER BY f.seq DESC
+							LIMIT 1
+						) AS session_name,
+						se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score
+					FROM session_search_fts
+					JOIN entries AS se ON se.rowid = session_search_fts.rowid
+					JOIN sessions AS s ON s.id = se.session_id
+					WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?)
+					ORDER BY score`,
 				)
 				.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(
 					query,
@@ -113,7 +126,7 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 				);
 			const path = await this.getDatabasePath();
 			return rows.map((row) => ({
-				metadata: rowToMetadata(row, path),
+				metadata: decodeSessionMetadata(row, path),
 				entryId: row.entry_id,
 				timestamp: row.timestamp,
 				score: row.score,
