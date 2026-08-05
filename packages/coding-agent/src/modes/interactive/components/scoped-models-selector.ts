@@ -10,37 +10,13 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { getModelSearchText } from "../model-search.ts";
+import { compareModelIds, getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyText } from "./keybinding-hints.ts";
 
 // EnabledIds: null = all enabled (no filter), string[] = explicit ordered list
 type EnabledIds = string[] | null;
-
-const MODEL_ID_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-const CONTEXT_ALIAS_PATTERN = /^(.*)@(\d+(?:\.\d+)?)([km])$/i;
-
-function parseContextAlias(id: string): { base: string; tokens: number } | undefined {
-	const match = id.match(CONTEXT_ALIAS_PATTERN);
-	if (!match) return undefined;
-	const value = Number(match[2]);
-	if (!Number.isFinite(value)) return undefined;
-	return { base: match[1]!, tokens: value * (match[3]!.toLowerCase() === "m" ? 1_000_000 : 1_000) };
-}
-
-function compareModelIds(left: string, right: string): number {
-	const leftAlias = parseContextAlias(left);
-	const rightAlias = parseContextAlias(right);
-	const baseOrder = MODEL_ID_COLLATOR.compare(leftAlias?.base ?? left, rightAlias?.base ?? right);
-	if (baseOrder !== 0) return baseOrder;
-
-	// Keep a canonical model before its context aliases, then order aliases by
-	// their numeric size so @200k appears before @1m.
-	if (!leftAlias) return rightAlias ? -1 : MODEL_ID_COLLATOR.compare(left, right);
-	if (!rightAlias) return 1;
-	return leftAlias.tokens - rightAlias.tokens || MODEL_ID_COLLATOR.compare(left, right);
-}
 
 function isEnabled(enabledIds: EnabledIds, id: string): boolean {
 	return enabledIds === null || enabledIds.includes(id);
