@@ -355,7 +355,27 @@ Content`,
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
 		});
 
+		it("should prefer AGENTS.override.md within each directory while preserving ancestor layering", async () => {
+			const nestedCwd = join(cwd, "service");
+			mkdirSync(nestedCwd);
+			writeFileSync(join(agentDir, "AGENTS.md"), "global instructions");
+			writeFileSync(join(agentDir, "AGENTS.override.md"), "global override");
+			writeFileSync(join(cwd, "AGENTS.md"), "project instructions");
+			writeFileSync(join(nestedCwd, "AGENTS.md"), "service instructions");
+			writeFileSync(join(nestedCwd, "AGENTS.override.md"), "service override");
+
+			const loader = new DefaultResourceLoader({ cwd: nestedCwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getAgentsFiles().agentsFiles).toEqual([
+				{ path: join(agentDir, "AGENTS.override.md"), content: "global override" },
+				{ path: join(cwd, "AGENTS.md"), content: "project instructions" },
+				{ path: join(nestedCwd, "AGENTS.override.md"), content: "service override" },
+			]);
+		});
+
 		it("should ignore context file candidates that are directories", async () => {
+			mkdirSync(join(cwd, "AGENTS.override.md"));
 			mkdirSync(join(cwd, "AGENTS.md"));
 			writeFileSync(join(cwd, "CLAUDE.md"), "Fallback instructions");
 			const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -368,10 +388,12 @@ Content`,
 				content: "Fallback instructions",
 			});
 			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.md")));
+			expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining(join(cwd, "AGENTS.override.md")));
 			consoleError.mockRestore();
 		});
 
-		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
+		it("should skip context file discovery when noContextFiles is true", async () => {
+			writeFileSync(join(cwd, "AGENTS.override.md"), "# Override Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");
 
