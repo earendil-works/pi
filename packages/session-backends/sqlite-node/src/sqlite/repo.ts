@@ -548,7 +548,6 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
 		const rows = readOpenOperationRows(this.db, this.metadata.id, lane, options);
-
 		return rows.map((row) => {
 			const record = decodeRecord(row);
 			if (record.type !== "operation_started") {

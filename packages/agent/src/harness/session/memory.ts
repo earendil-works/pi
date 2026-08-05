@@ -227,7 +227,6 @@ export class InMemorySessionStorage implements SessionStorage {
 	async findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]> {
 		const openOperationsById = this.openOperationsByLane.get(lane);
 		const openOperations = openOperationsById ? [...openOperationsById.values()].reverse() : [];
-
 		return structuredClone(options?.limit === undefined ? openOperations : openOperations.slice(0, options.limit));
 	}
 
