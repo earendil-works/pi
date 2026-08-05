@@ -29,6 +29,8 @@
 		"eval": "npm run eval --workspace=@earendil-works/pi-evals --",
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
+		"profile:tui:bare": "node scripts/profile-coding-agent-node.mjs --mode tui --scenario bare",
+		"profile:tui:extensions": "node scripts/profile-coding-agent-node.mjs --mode tui --scenario full",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "npm run test:scripts && npm run test --workspaces --if-present",
 		"test:scripts": "node --test scripts/*.test.mjs",

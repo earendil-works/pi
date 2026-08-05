@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,8 @@ const defaultNodeProfileDir = join(repoRoot, "profiles-node");
 const defaultBunProfileDir = join(repoRoot, "profiles-bun");
 const agentDirEnvName = "PI_CODING_AGENT_DIR";
 const startupBenchmarkEnvName = "PI_STARTUP_BENCHMARK";
+const startupReadyMarker = "PI_STARTUP_BENCHMARK_READY";
+const benchmarkScenarios = ["configured", "bare", "skills", "extensions", "full"];
 
 function printHelp() {
 	console.log(`Usage:
@@ -27,6 +29,8 @@ Profiles coding-agent startup with the runtime selected below:
 
 Options:
   --mode <name>          tui or rpc (default: tui)
+  --scenario <name>      configured, bare, skills, extensions, or full
+                         (default: configured)
   --runs <n>             Number of measured runs (default: 1)
   --warmup <n>           Number of warmup runs before measurements (default: 0)
   --profile-dir <dir>    CPU profile output directory
@@ -34,6 +38,8 @@ Options:
   --label <name>         Profile name prefix (default: <mode>-startup)
   --runtime <name>       node, bun, or auto (default: auto)
   --agent-dir <dir>      Use a specific PI_CODING_AGENT_DIR for the benchmark run
+  --pi-hypa <dir>        Override the installed @hypabolic/pi-hypa package directory
+  --pi-web-access <dir>  Override the installed pi-web-access package directory
   --isolated-agent-dir   Use a fresh temporary agent dir instead of the normal one
   --no-offline           Do not force PI_OFFLINE=1 / PI_SKIP_VERSION_CHECK=1
   --skip-build           Reuse the current dist/cli.js without rebuilding first (Node only)
@@ -41,8 +47,12 @@ Options:
   --help                 Show this help
 
 Notes:
-  - By default the benchmark uses your normal configured agent dir, so global models/auth/settings work.
-  - TUI mode measures startup until the interactive UI reaches first usable state.
+  - configured uses normal resource discovery; bare disables extensions and skills.
+  - skills loads pi-web-access's skill only; extensions loads pi-hypa and pi-web-access
+    without skills; full loads both extensions and the pi-web-access skill.
+  - Extension package paths default to ~/.pi/agent/npm/node_modules.
+  - TUI mode measures wall-clock time from before process spawn until the interactive UI
+    reaches first usable state.
   - RPC mode measures startup until a real get_state request receives a response, then closes stdin to exit cleanly.
   - CPU profiles are kept in the selected profile directory for later analysis.
 `);
@@ -70,9 +80,17 @@ function parseMode(value) {
 	throw new Error(`Invalid --mode: ${value}`);
 }
 
+function parseScenario(value) {
+	if (benchmarkScenarios.includes(value)) {
+		return value;
+	}
+	throw new Error(`Invalid --scenario: ${value}`);
+}
+
 function parseArgs(argv) {
 	const options = {
 		mode: "tui",
+		scenario: "configured",
 		runs: 1,
 		warmup: 0,
 		profileDir: undefined,
@@ -81,6 +99,8 @@ function parseArgs(argv) {
 		build: true,
 		runtime: "auto",
 		agentDir: undefined,
+		piHypaPath: undefined,
+		webAccessPath: undefined,
 		isolatedAgentDir: false,
 		cpuProfile: false,
 	};
@@ -115,12 +135,15 @@ function parseArgs(argv) {
 
 		if (
 			(arg === "--mode" ||
+				arg === "--scenario" ||
 				arg === "--runs" ||
 				arg === "--warmup" ||
 				arg === "--profile-dir" ||
 				arg === "--label" ||
 				arg === "--runtime" ||
-				arg === "--agent-dir") &&
+				arg === "--agent-dir" ||
+				arg === "--pi-hypa" ||
+				arg === "--pi-web-access") &&
 			index + 1 >= argv.length
 		) {
 			throw new Error(`Missing value for ${arg}`);
@@ -128,6 +151,11 @@ function parseArgs(argv) {
 
 		if (arg === "--mode") {
 			options.mode = parseMode(argv[++index]);
+			continue;
+		}
+
+		if (arg === "--scenario") {
+			options.scenario = parseScenario(argv[++index]);
 			continue;
 		}
 
@@ -158,6 +186,16 @@ function parseArgs(argv) {
 
 		if (arg === "--agent-dir") {
 			options.agentDir = resolve(argv[++index]);
+			continue;
+		}
+
+		if (arg === "--pi-hypa") {
+			options.piHypaPath = resolve(argv[++index]);
+			continue;
+		}
+
+		if (arg === "--pi-web-access") {
+			options.webAccessPath = resolve(argv[++index]);
 			continue;
 		}
 
@@ -215,27 +253,29 @@ function summarize(values) {
 	};
 }
 
-function parseStartupTimings(stderr) {
-	const lines = stderr.split(/\r?\n/);
+export function parseStartupTimings(stderr) {
 	const timings = new Map();
-	let inBlock = false;
+	let namespace;
 
-	for (const line of lines) {
-		if (line.includes("--- Startup Timings ---")) {
-			inBlock = true;
+	for (const line of stderr.split(/\r?\n/)) {
+		const header = line.match(/^--- Startup Timings(?:: ([^-]+?))? ---$/);
+		if (header) {
+			namespace = header[1] ?? "main";
 			continue;
 		}
-		if (!inBlock) {
+		if (!namespace) {
 			continue;
 		}
-		if (line.includes("------------------------")) {
-			break;
-		}
-		const match = line.match(/^\s+([^:]+):\s+(\d+)ms$/);
-		if (!match) {
+		if (/^-{3,}$/.test(line)) {
+			namespace = undefined;
 			continue;
 		}
-		timings.set(match[1], Number.parseInt(match[2], 10));
+		const timing = line.match(/^\s+([^:]+):\s+(\d+(?:\.\d+)?)ms$/);
+		if (!timing) {
+			continue;
+		}
+		const label = namespace === "main" ? timing[1] : `${namespace}/${timing[1]}`;
+		timings.set(label, Number.parseFloat(timing[2]));
 	}
 
 	return timings;
@@ -279,7 +319,7 @@ async function waitForExit(child, errorPrefix) {
 }
 
 async function runBuild() {
-	process.stdout.write("Building packages/tui, packages/ai, packages/agent, and packages/coding-agent...\n");
+	process.stdout.write("Building coding-agent and its workspace dependencies...\n");
 	const startedAt = performance.now();
 	const child = spawn(
 		"npm",
@@ -292,6 +332,10 @@ async function runBuild() {
 			"packages/ai",
 			"--workspace",
 			"packages/agent",
+			"--workspace",
+			"packages/protocol",
+			"--workspace",
+			"packages/client",
 			"--workspace",
 			"packages/coding-agent",
 		],
@@ -328,8 +372,47 @@ async function runBuild() {
 	process.stdout.write(`Build completed in ${formatMs(performance.now() - startedAt)}\n`);
 }
 
-function getRuntimeCommand(runtime, mode, profileDir, profileName, cpuProfile) {
-	const benchmarkArgs = ["--no-session"];
+function resolveScenarioArgs(options) {
+	if (options.scenario === "configured") {
+		return [];
+	}
+
+	const args = ["--no-extensions", "--no-skills"];
+	if (options.scenario === "bare") {
+		return args;
+	}
+
+	const packageAgentDir = options.agentDir ?? process.env[agentDirEnvName] ?? join(homedir(), ".pi", "agent");
+	const piHypaPath = options.piHypaPath ?? join(packageAgentDir, "npm", "node_modules", "@hypabolic", "pi-hypa");
+	const webAccessPath = options.webAccessPath ?? join(packageAgentDir, "npm", "node_modules", "pi-web-access");
+	const webAccessSkillPath = join(webAccessPath, "skills");
+
+	if (options.scenario === "skills") {
+		if (!existsSync(webAccessSkillPath)) {
+			throw new Error(`pi-web-access skills not found: ${webAccessSkillPath}`);
+		}
+		return [...args, "--skill", webAccessSkillPath];
+	}
+
+	const piHypaExtensionPath = join(piHypaPath, "extensions");
+	const webAccessExtensionPath = join(webAccessPath, "index.ts");
+	for (const extensionPath of [piHypaExtensionPath, webAccessExtensionPath]) {
+		if (!existsSync(extensionPath)) {
+			throw new Error(`Extension not found: ${extensionPath}`);
+		}
+	}
+	args.push("--extension", piHypaExtensionPath, "--extension", webAccessExtensionPath);
+	if (options.scenario === "full") {
+		if (!existsSync(webAccessSkillPath)) {
+			throw new Error(`pi-web-access skills not found: ${webAccessSkillPath}`);
+		}
+		args.push("--skill", webAccessSkillPath);
+	}
+	return args;
+}
+
+function getRuntimeCommand(runtime, mode, profileDir, profileName, cpuProfile, scenarioArgs) {
+	const benchmarkArgs = ["--no-session", ...scenarioArgs];
 	if (mode === "rpc") {
 		benchmarkArgs.push("--mode", "rpc");
 	}
@@ -367,6 +450,7 @@ function createBenchmarkEnv(options, isolatedAgentDir) {
 	if (options.mode === "tui") {
 		env[startupBenchmarkEnvName] = "1";
 	}
+	env.PI_TIMING = "1";
 	if (options.offline) {
 		env.PI_OFFLINE = "1";
 		env.PI_SKIP_VERSION_CHECK = "1";
@@ -374,7 +458,7 @@ function createBenchmarkEnv(options, isolatedAgentDir) {
 	return env;
 }
 
-async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, profileDir }) {
+async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, profileDir, scenarioArgs }) {
 	const runNumber = runIndex + 1;
 	const suffix = String(runNumber).padStart(3, "0");
 	const profileName = `${options.label}-${suffix}.cpuprofile`;
@@ -384,7 +468,8 @@ async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 		mkdirSync(isolatedAgentDir, { recursive: true });
 	}
 
-	const command = getRuntimeCommand(runtime, "tui", profileDir, profileName, options.cpuProfile);
+	const command = getRuntimeCommand(runtime, "tui", profileDir, profileName, options.cpuProfile, scenarioArgs);
+	const startedAt = performance.now();
 	const child = spawn(command.executable, command.args, {
 		cwd: packageDir,
 		env: createBenchmarkEnv(options, isolatedAgentDir),
@@ -393,18 +478,23 @@ async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 	});
 
 	let stderr = "";
+	let readyElapsedMs;
 	child.stderr.setEncoding("utf8");
 	child.stderr.on("data", (chunk) => {
 		stderr += chunk;
+		if (readyElapsedMs === undefined && stderr.includes(startupReadyMarker)) {
+			readyElapsedMs = performance.now() - startedAt;
+		}
 	});
 
-	const startedAt = performance.now();
 	const exitCode = await waitForExit(child, `Benchmark ${measuredIndex === undefined ? `warmup ${runNumber}` : `run ${measuredIndex}`}`);
-	const elapsedMs = performance.now() - startedAt;
 
 	try {
 		if (exitCode !== 0) {
 			throw new Error(stderr.trim() || `Benchmark child exited with code ${exitCode}`);
+		}
+		if (readyElapsedMs === undefined) {
+			throw new Error("TUI benchmark did not report first usable state");
 		}
 
 		const profilePath = options.cpuProfile ? join(profileDir, profileName) : undefined;
@@ -412,7 +502,7 @@ async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 			throw new Error(`CPU profile was not written: ${profilePath}`);
 		}
 
-		return { elapsedMs, profilePath, timings: parseStartupTimings(stderr) };
+		return { elapsedMs: readyElapsedMs, profilePath, timings: parseStartupTimings(stderr) };
 	} finally {
 		if (tempRoot) {
 			rmSync(tempRoot, { recursive: true, force: true });
@@ -433,7 +523,7 @@ function splitJsonLines(buffer, onLine) {
 	}
 }
 
-async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, profileDir }) {
+async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, profileDir, scenarioArgs }) {
 	const runNumber = runIndex + 1;
 	const suffix = String(runNumber).padStart(3, "0");
 	const profileName = `${options.label}-${suffix}.cpuprofile`;
@@ -443,7 +533,8 @@ async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 		mkdirSync(isolatedAgentDir, { recursive: true });
 	}
 
-	const command = getRuntimeCommand(runtime, "rpc", profileDir, profileName, options.cpuProfile);
+	const command = getRuntimeCommand(runtime, "rpc", profileDir, profileName, options.cpuProfile, scenarioArgs);
+	const startedAt = performance.now();
 	const child = spawn(command.executable, command.args, {
 		cwd: packageDir,
 		env: createBenchmarkEnv(options, isolatedAgentDir),
@@ -456,7 +547,6 @@ async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 	let readyElapsedMs;
 	let responseError;
 	const requestId = `startup-benchmark-${runNumber}`;
-	const startedAt = performance.now();
 
 	child.stdout.setEncoding("utf8");
 	child.stdout.on("data", (chunk) => {
@@ -547,6 +637,7 @@ async function main() {
 	const runtime = resolveRuntime(options.runtime);
 	options.label = resolveLabel(options.mode, options.label);
 	const profileDir = resolveProfileDir(runtime, options.profileDir);
+	const scenarioArgs = resolveScenarioArgs(options);
 
 	if (runtime === "node" && options.build) {
 		await runBuild();
@@ -574,6 +665,7 @@ async function main() {
 			measuredIndex,
 			options,
 			profileDir,
+			scenarioArgs,
 		});
 
 		process.stdout.write(
@@ -597,6 +689,7 @@ async function main() {
 		process.stdout.write("\nResult\n");
 		process.stdout.write(`  runtime:          ${runtime}\n`);
 		process.stdout.write(`  mode:             ${options.mode}\n`);
+		process.stdout.write(`  scenario:         ${options.scenario}\n`);
 		process.stdout.write(`  elapsed:          ${formatMs(measuredRuns[0].elapsedMs)}\n`);
 		for (const [label, summary] of timingSummaries.entries()) {
 			process.stdout.write(`  ${label}: ${formatMs(summary.median)}\n`);
@@ -615,6 +708,7 @@ async function main() {
 	process.stdout.write("\nSummary\n");
 	process.stdout.write(`  runtime:          ${runtime}\n`);
 	process.stdout.write(`  mode:             ${options.mode}\n`);
+	process.stdout.write(`  scenario:         ${options.scenario}\n`);
 	process.stdout.write(`  elapsed min:      ${formatMs(elapsedSummary.min)}\n`);
 	process.stdout.write(`  elapsed median:   ${formatMs(elapsedSummary.median)}\n`);
 	process.stdout.write(`  elapsed avg:      ${formatMs(elapsedSummary.avg)}\n`);
@@ -632,8 +726,10 @@ async function main() {
 	}
 }
 
-main().catch((error) => {
-	const message = error instanceof Error ? error.message : String(error);
-	console.error(message);
-	process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	main().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(message);
+		process.exit(1);
+	});
+}
