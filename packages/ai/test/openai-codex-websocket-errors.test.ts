@@ -433,3 +433,27 @@ it("does not retry after assistant content has started", async () => {
 	expect(server.connectionCount()).toBe(1);
 	expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("does not retry a missing continuation after assistant content has started", async () => {
+	const fetchMock = vi.fn();
+	vi.stubGlobal("fetch", fetchMock);
+	const server = stubWebSocketServer(() => [
+		{ type: "response.created", response: { id: "resp_1" } },
+		{
+			type: "response.output_item.added",
+			output_index: 0,
+			item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+		},
+		{ type: "error", error: { code: "previous_response_not_found", message: "Previous response not found" } },
+	]);
+
+	const result = await streamOpenAICodexResponses(MODEL, CONTEXT, {
+		apiKey: mockToken(),
+		transport: "auto",
+		maxRetries: 2,
+	}).result();
+
+	expect(result.stopReason).toBe("error");
+	expect(server.connectionCount()).toBe(1);
+	expect(fetchMock).not.toHaveBeenCalled();
+});

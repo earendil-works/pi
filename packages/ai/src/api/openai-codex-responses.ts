@@ -370,6 +370,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							throw error;
 						}
 						if (action === "retry-missing-continuation") {
+							if (websocketOutputStarted) {
+								throw error;
+							}
 							if (!retriedMissingWebSocketContinuation) {
 								retriedMissingWebSocketContinuation = true;
 								resetCodexReplayState(output);
