@@ -2,11 +2,11 @@
  * Process @file CLI arguments into text content and image attachments
  */
 
-import { access, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { resolve } from "path";
-import { resolveReadPath } from "../core/tools/path-utils.ts";
+import { pathExists, resolveReadPath } from "../core/tools/path-utils.ts";
 import { processImage } from "../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../utils/mime.ts";
 
@@ -35,15 +35,6 @@ const LINE_RANGE_SUFFIX = /#L(\d+)-L(\d+)$/;
 function exitWithError(message: string): never {
 	console.error(chalk.red(`Error: ${message}`));
 	process.exit(1);
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 async function resolveFileArgument(fileArg: string): Promise<ResolvedFileArgument> {
@@ -83,7 +74,7 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 
 		// Check if file is empty
 		const stats = await stat(absolutePath);
-		if (stats.size === 0) {
+		if (stats.size === 0 && !lineRange) {
 			// Skip empty files
 			continue;
 		}
