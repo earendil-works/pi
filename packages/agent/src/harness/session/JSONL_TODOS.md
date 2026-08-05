@@ -1,4 +1,0 @@
-- [] use ArrayIndexSession
-- [x] don't save counted field
-- [] atomic fork file creation
-- [] v3 -> v4 migration with atomic rename
