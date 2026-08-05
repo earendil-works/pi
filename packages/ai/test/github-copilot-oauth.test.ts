@@ -55,20 +55,25 @@ function loginGitHubCopilotForTest(options: {
 	});
 }
 
-async function refreshGitHubCopilotModelsForTest(data: readonly unknown[]) {
+async function refreshGitHubCopilotModelsForTest(
+	data: readonly unknown[],
+	proxyHost: string = "proxy.individual.githubcopilot.com",
+) {
+	const accessToken = `tid=test;exp=9999999999;proxy-ep=${proxyHost};`;
+	const modelsUrl = `https://${proxyHost.replace(/^proxy\./, "api.")}/models`;
 	const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 		const url = getUrl(input);
 
 		if (url.includes("/copilot_internal/v2/token")) {
 			return jsonResponse({
-				token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+				token: accessToken,
 				expires_at: 9999999999,
 			});
 		}
 
-		if (url === "https://api.individual.githubcopilot.com/models") {
+		if (url === modelsUrl) {
 			expect(init?.headers).toMatchObject({
-				Authorization: "Bearer tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+				Authorization: `Bearer ${accessToken}`,
 			});
 			return jsonResponse({ data });
 		}
@@ -151,6 +156,28 @@ describe("GitHub Copilot OAuth device flow", () => {
 		]);
 
 		expect(credentials.availableModelIds).toEqual(["gpt-4.1"]);
+
+		const store = new InMemoryCredentialStore();
+		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+	});
+
+	it("does not fall back to policy models for non-Individual accounts", async () => {
+		const credentials = await refreshGitHubCopilotModelsForTest(
+			[
+				{
+					id: "gpt-4.1",
+					model_picker_enabled: false,
+					policy: { state: "enabled" },
+					capabilities: { supports: { tool_calls: true } },
+				},
+			],
+			"proxy.business.githubcopilot.com",
+		);
+
+		expect(credentials.availableModelIds).toEqual([]);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
