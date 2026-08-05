@@ -18,6 +18,30 @@ import { keyText } from "./keybinding-hints.ts";
 // EnabledIds: null = all enabled (no filter), string[] = explicit ordered list
 type EnabledIds = string[] | null;
 
+const MODEL_ID_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const CONTEXT_ALIAS_PATTERN = /^(.*)@(\d+(?:\.\d+)?)([km])$/i;
+
+function parseContextAlias(id: string): { base: string; tokens: number } | undefined {
+	const match = id.match(CONTEXT_ALIAS_PATTERN);
+	if (!match) return undefined;
+	const value = Number(match[2]);
+	if (!Number.isFinite(value)) return undefined;
+	return { base: match[1]!, tokens: value * (match[3]!.toLowerCase() === "m" ? 1_000_000 : 1_000) };
+}
+
+function compareModelIds(left: string, right: string): number {
+	const leftAlias = parseContextAlias(left);
+	const rightAlias = parseContextAlias(right);
+	const baseOrder = MODEL_ID_COLLATOR.compare(leftAlias?.base ?? left, rightAlias?.base ?? right);
+	if (baseOrder !== 0) return baseOrder;
+
+	// Keep a canonical model before its context aliases, then order aliases by
+	// their numeric size so @200k appears before @1m.
+	if (!leftAlias) return rightAlias ? -1 : MODEL_ID_COLLATOR.compare(left, right);
+	if (!rightAlias) return 1;
+	return leftAlias.tokens - rightAlias.tokens || MODEL_ID_COLLATOR.compare(left, right);
+}
+
 function isEnabled(enabledIds: EnabledIds, id: string): boolean {
 	return enabledIds === null || enabledIds.includes(id);
 }
@@ -60,9 +84,12 @@ function move(enabledIds: EnabledIds, id: string, delta: number): EnabledIds {
 }
 
 function getSortedIds(enabledIds: EnabledIds, allIds: string[]): string[] {
-	if (enabledIds === null) return allIds;
+	const sortedAllIds = [...allIds].sort(compareModelIds);
+	if (enabledIds === null) return sortedAllIds;
 	const enabledSet = new Set(enabledIds);
-	return [...enabledIds, ...allIds.filter((id) => !enabledSet.has(id))];
+	// Preserve the explicit enabled order because Alt+Up/Alt+Down controls it;
+	// sort the remaining catalog so newly discovered models are predictable.
+	return [...enabledIds, ...sortedAllIds.filter((id) => !enabledSet.has(id))];
 }
 
 interface ModelItem {

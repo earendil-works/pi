@@ -62,6 +62,45 @@ describe("issue #3217 scoped model ordering", () => {
 		expect(changes).toEqual([[orderedIds[1], orderedIds[0], orderedIds[2]]]);
 	});
 
+	it("sorts the unscoped catalog naturally while preserving enabled order", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "gpt-5.6-luna@1m", name: "Luna 1M" },
+				{ id: "gpt-5.6-luna@200k", name: "Luna 200K" },
+				{ id: "gpt-5.6-luna", name: "Luna" },
+				{ id: "gpt-5.6-sol@272k", name: "Sol 272K" },
+				{ id: "gpt-5.5", name: "GPT-5.5" },
+			],
+		});
+		harnesses.push(harness);
+
+		const provider = harness.models[0]!.provider;
+		const selector = new ScopedModelsSelectorComponent(
+			{
+				allModels: [...harness.models],
+				enabledModelIds: [`${provider}/gpt-5.6-luna`],
+			},
+			{
+				onChange: () => {},
+				onPersist: () => {},
+				onCancel: () => {},
+			},
+		);
+
+		const renderedIds = stripAnsi(selector.render(120).join("\\n"))
+			.split("\\n")
+			.filter((line) => line.includes(`[${provider}]`))
+			.map((line) => line.trim().replace(/^→\s*/, "").split(" [")[0]);
+
+		expect(renderedIds).toEqual([
+			"gpt-5.6-luna",
+			"gpt-5.5",
+			"gpt-5.6-luna@200k",
+			"gpt-5.6-luna@1m",
+			"gpt-5.6-sol@272k",
+		]);
+	});
+
 	it("preserves scoped model order in the /model scoped tab", async () => {
 		const harness = await createHarness({
 			models: [
