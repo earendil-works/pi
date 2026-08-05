@@ -165,6 +165,46 @@ describe("AgentSession retry", () => {
 		expect(created.session.isRetrying).toBe(false);
 	});
 
+	it("resumes an exhausted failed turn from its parent, dropping the error from context", async () => {
+		const created = await createSession({ failCount: 2, maxRetries: 1 });
+		const sessionManager = created.session.sessionManager;
+		const lastMessage = () => {
+			const msgs = created.session.messages;
+			return msgs[msgs.length - 1] as AssistantMessage;
+		};
+
+		await created.session.prompt("Test");
+		expect(created.getCallCount()).toBe(2);
+		expect(lastMessage().stopReason).toBe("error");
+
+		// Retry the failed turn the way the tree selector does. The error entry's
+		// parent is the first failed attempt (in-session retries chain error
+		// entries), so the leaf moves past them to the user message
+		const errorEntry = sessionManager.getLeafEntry()!;
+		expect(created.session.beginFailedTurnRetry(errorEntry.id)).toBe(true);
+		const resumeTarget = sessionManager.getLeafId()!;
+		expect(resumeTarget).not.toBe(errorEntry.parentId);
+		await created.session.continueTurn();
+
+		expect(created.getCallCount()).toBe(3);
+		expect(lastMessage().stopReason).toBe("stop");
+		expect(lastMessage().content).toEqual([{ type: "text", text: "Success" }]);
+		// The failed entries stay in the session as an abandoned branch but leave the
+		// active context, and the retried response becomes their sibling
+		expect(
+			created.session.messages.some((m) => m.role === "assistant" && (m as AssistantMessage).stopReason === "error"),
+		).toBe(false);
+		expect(sessionManager.getEntry(errorEntry.id)).toBeDefined();
+		expect(sessionManager.getLeafEntry()!.parentId).toBe(resumeTarget);
+	});
+
+	it("beginFailedTurnRetry returns false for entries that are not failed turns", async () => {
+		const created = await createSession({ failCount: 0 });
+		await created.session.prompt("Test");
+		const leaf = created.session.sessionManager.getLeafEntry()!;
+		expect(created.session.beginFailedTurnRetry(leaf.id)).toBe(false);
+	});
+
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {
 		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
 

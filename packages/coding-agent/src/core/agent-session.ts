@@ -2731,6 +2731,56 @@ export class AgentSession {
 	}
 
 	/**
+	 * Prepare to retry a failed turn: if the given entry is a failed assistant turn
+	 * (stopReason "error", e.g. network failure), move the session leaf to the last
+	 * good message before the chain of failed attempts (in-session retries chain
+	 * error entries) and rebuild agent state. The failures stay in the session file
+	 * as abandoned branches but leave the active context.
+	 * @returns true if the entry was a failed turn and the leaf moved
+	 */
+	beginFailedTurnRetry(entryId: string): boolean {
+		if (this.isStreaming) return false;
+		const isFailedAttempt = (entry: SessionEntry | undefined): boolean =>
+			entry?.type === "message" &&
+			entry.message.role === "assistant" &&
+			(entry.message as AssistantMessage).stopReason === "error";
+
+		const entry = this.sessionManager.getEntry(entryId);
+		if (!entry || !isFailedAttempt(entry)) return false;
+		let targetId: string | null = entry.parentId;
+		while (targetId) {
+			const parent = this.sessionManager.getEntry(targetId);
+			if (!parent || !isFailedAttempt(parent)) break;
+			targetId = parent.parentId;
+		}
+		if (!targetId) return false;
+		this.sessionManager.branch(targetId);
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		return true;
+	}
+
+	/**
+	 * Re-run the current turn from the session leaf, e.g. to retry a failed turn
+	 * after beginFailedTurnRetry moved the leaf to the entry before the failure.
+	 * The failed assistant entry stays in the session file as an abandoned branch
+	 * (visible in /tree) but leaves the active context, so the retried response
+	 * becomes its sibling.
+	 */
+	async continueTurn(): Promise<void> {
+		this._isAgentRunActive = true;
+		try {
+			await this.agent.continue();
+			while (await this._handlePostAgentRun()) {
+				await this.agent.continue();
+			}
+		} finally {
+			this._systemPromptOverride = undefined;
+			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
+		}
+	}
+
+	/**
 	 * Cancel in-progress retry.
 	 */
 	abortRetry(): void {

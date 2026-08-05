@@ -4903,6 +4903,23 @@ export class InteractiveMode {
 		}
 	}
 
+	/**
+	 * Retry a failed turn (e.g. network error) selected in the tree: moves the leaf
+	 * to the entry before the failure, re-renders without the error, and re-runs the turn.
+	 * @returns true if the entry was a failed turn
+	 */
+	private async retryFailedTurnFrom(entryId: string): Promise<boolean> {
+		if (!this.session.beginFailedTurnRetry(entryId)) return false;
+		try {
+			this.chatContainer.clear();
+			this.renderInitialMessages();
+			await this.session.continueTurn();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+		return true;
+	}
+
 	private showTreeSelector(initialSelectedId?: string): void {
 		const tree = this.sessionManager.getTree();
 		const realLeafId = this.sessionManager.getLeafId();
@@ -4919,17 +4936,27 @@ export class InteractiveMode {
 				realLeafId,
 				this.ui.terminal.rows,
 				async (entryId) => {
-					// Selecting the current leaf is a no-op (already there)
+					// Selecting the current leaf is a no-op (already there), unless it is a
+					// failed turn - then resume it (e.g. retry after a network error)
 					if (entryId === this.sessionManager.getLeafId()) {
 						done();
-						this.showStatus("Already at this point");
+						if (!(await this.retryFailedTurnFrom(entryId))) {
+							this.showStatus("Already at this point");
+						}
 						return;
 					}
 
-					// Ask about summarization
 					done(); // Close selector first
 
-					// Loop until user makes a complete choice or cancels to tree
+					// Selecting a failed turn (e.g. an assistant entry that ended with a
+					// connection error) retries it from the entry before the failure: the
+					// error leaves the active context and chat but stays in the tree as an
+					// abandoned branch
+					if (await this.retryFailedTurnFrom(entryId)) {
+						return;
+					}
+
+					// Ask about summarization, looping until the user makes a complete choice or cancels back to the tree
 					let wantsSummary = false;
 					let customInstructions: string | undefined;
 
