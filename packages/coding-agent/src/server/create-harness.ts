@@ -11,84 +11,145 @@ import {
 	type HarnessTool,
 } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
-import { buildSystemPrompt } from "../core/system-prompt.ts";
+import { type BuildSystemPromptOptions, buildSystemPrompt } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
 import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
 import { readToolSystemPromptContribution } from "../core/tools/read.ts";
 import { writeToolSystemPromptContribution } from "../core/tools/write.ts";
 
-const HARNESS_TOOL_SYSTEM_PROMPT_CONTRIBUTIONS = {
-	read: readToolSystemPromptContribution,
-	bash: bashToolSystemPromptContribution,
-	edit: editToolSystemPromptContribution,
-	write: writeToolSystemPromptContribution,
-} as const;
+export interface CodingAgentHarnessTool extends HarnessTool {
+	promptSnippet?: string;
+	promptGuidelines?: readonly string[];
+}
 
-function bindExecutionTool<TParameters extends TSchema, TDetails>(
+function createCodingAgentHarnessTool<TParameters extends TSchema, TDetails>(
 	tool: AgentHarnessTool<ExecutionToolContext, TParameters, TDetails>,
 	context: ExecutionToolContext,
-): HarnessTool {
+	prompt: Required<Pick<CodingAgentHarnessTool, "promptSnippet" | "promptGuidelines">>,
+): CodingAgentHarnessTool {
 	return {
 		...tool,
+		...prompt,
 		execute: (toolCallId, params, signal, onUpdate) =>
 			tool.execute(toolCallId, params as Static<TParameters>, signal, onUpdate, context),
 	};
 }
 
-export interface CreateCodingAgentHarnessOptions
-	extends Omit<AgentHarnessOptions, "activeToolNames" | "systemPrompt" | "toolContext" | "tools"> {
+export interface CreateCodingAgentHarnessOptions extends Omit<AgentHarnessOptions, "toolContext" | "tools"> {
 	env: ExecutionEnv;
 	bashCommandPrefix?: string;
+	tools?: CodingAgentHarnessTool[];
+	systemPromptOptions?: Omit<BuildSystemPromptOptions, "cwd" | "promptGuidelines" | "selectedTools" | "toolSnippets">;
 }
 
-export function buildCodingAgentHarnessSystemPrompt(cwd: string): string {
+export interface BuildCodingAgentHarnessSystemPromptOptions {
+	cwd: string;
+	tools: readonly CodingAgentHarnessTool[];
+	activeToolNames: readonly string[];
+	systemPromptOptions?: CreateCodingAgentHarnessOptions["systemPromptOptions"];
+}
+
+export function buildCodingAgentHarnessSystemPrompt(options: BuildCodingAgentHarnessSystemPromptOptions): string {
+	const activeTools = options.activeToolNames.flatMap((name) => {
+		const tool = options.tools.find((candidate) => candidate.name === name);
+		return tool ? [tool] : [];
+	});
 	const toolSnippets = Object.fromEntries(
-		Object.entries(HARNESS_TOOL_SYSTEM_PROMPT_CONTRIBUTIONS).map(([name, contribution]) => [
-			name,
-			contribution.snippet,
-		]),
+		activeTools.flatMap((tool) => {
+			const promptSnippet = tool.promptSnippet
+				?.replace(/[\r\n]+/g, " ")
+				.replace(/\s+/g, " ")
+				.trim();
+			return promptSnippet ? [[tool.name, promptSnippet]] : [];
+		}),
 	);
-	const promptGuidelines = [
-		...HARNESS_TOOL_SYSTEM_PROMPT_CONTRIBUTIONS.bash.guidelines,
-		...Object.entries(HARNESS_TOOL_SYSTEM_PROMPT_CONTRIBUTIONS).flatMap(([name, contribution]) =>
-			name === "bash" ? [] : contribution.guidelines,
-		),
-	];
+	const promptGuidelines = activeTools.flatMap((tool) => tool.promptGuidelines ?? []);
 	return buildSystemPrompt({
-		cwd,
-		selectedTools: Object.keys(HARNESS_TOOL_SYSTEM_PROMPT_CONTRIBUTIONS),
+		...options.systemPromptOptions,
+		cwd: options.cwd,
+		selectedTools: activeTools.map((tool) => tool.name),
 		toolSnippets,
 		promptGuidelines,
-		contextFiles: [],
-		skills: [],
 	});
 }
 
 export async function createCodingAgentHarness(options: CreateCodingAgentHarnessOptions) {
-	const { env, bashCommandPrefix, ...harnessOptions } = options;
-	const metadata = await options.session.getMetadata();
-	const toolContext = { env } satisfies ExecutionToolContext;
-	const tools: HarnessTool[] = [
-		bindExecutionTool(createReadTool<ExecutionToolContext>(), toolContext),
-		bindExecutionTool(
-			createBashTool<ExecutionToolContext>({
-				commandPrefix: bashCommandPrefix,
-				prepare: (execution) => {
-					execution.env.PI_SESSION_ID = metadata.id;
-					execution.env.PI_PROVIDER = options.model.provider;
-					execution.env.PI_MODEL = options.model.id;
-					execution.env.PI_REASONING_LEVEL = options.thinkingLevel ?? "off";
-				},
+	const {
+		env,
+		bashCommandPrefix,
+		systemPromptOptions,
+		tools: providedTools,
+		activeToolNames: providedActiveToolNames,
+		systemPrompt: providedSystemPrompt,
+		...harnessOptions
+	} = options;
+	let harness: AgentHarness | undefined;
+	const getHarness = (): AgentHarness => {
+		if (!harness) throw new Error("Coding-agent Harness callback ran before Harness initialization");
+		return harness;
+	};
+	let tools = providedTools;
+	if (tools === undefined) {
+		const metadata = await options.session.getMetadata();
+		const toolContext = { env } satisfies ExecutionToolContext;
+		tools = [
+			createCodingAgentHarnessTool(createReadTool<ExecutionToolContext>(), toolContext, {
+				promptSnippet: readToolSystemPromptContribution.snippet,
+				promptGuidelines: readToolSystemPromptContribution.guidelines,
 			}),
-			toolContext,
-		),
-		bindExecutionTool(createEditTool<ExecutionToolContext>(), toolContext),
-		bindExecutionTool(createWriteTool<ExecutionToolContext>(), toolContext),
-	];
-	return AgentHarness.create({
+			createCodingAgentHarnessTool(
+				createBashTool<ExecutionToolContext>({
+					commandPrefix: bashCommandPrefix,
+					prepare: async (execution) => {
+						const currentHarness = getHarness();
+						const [model, thinkingLevel] = await Promise.all([
+							currentHarness.getModel(),
+							currentHarness.getThinkingLevel(),
+						]);
+						execution.env.PI_SESSION_ID = metadata.id;
+						execution.env.PI_PROVIDER = model.provider;
+						execution.env.PI_MODEL = model.id;
+						execution.env.PI_REASONING_LEVEL = thinkingLevel;
+					},
+				}),
+				toolContext,
+				{
+					promptSnippet: bashToolSystemPromptContribution.snippet,
+					promptGuidelines: bashToolSystemPromptContribution.guidelines,
+				},
+			),
+			createCodingAgentHarnessTool(createEditTool<ExecutionToolContext>(), toolContext, {
+				promptSnippet: editToolSystemPromptContribution.snippet,
+				promptGuidelines: editToolSystemPromptContribution.guidelines,
+			}),
+			createCodingAgentHarnessTool(createWriteTool<ExecutionToolContext>(), toolContext, {
+				promptSnippet: writeToolSystemPromptContribution.snippet,
+				promptGuidelines: writeToolSystemPromptContribution.guidelines,
+			}),
+		];
+	}
+	const activeToolNames = [...(providedActiveToolNames ?? tools.map((tool) => tool.name))];
+	const systemPrompt =
+		providedSystemPrompt ??
+		(async () => {
+			const currentHarness = getHarness();
+			const [currentTools, currentActiveToolNames] = await Promise.all([
+				currentHarness.getTools(),
+				currentHarness.getActiveTools(),
+			]);
+			return buildCodingAgentHarnessSystemPrompt({
+				cwd: env.cwd,
+				tools: currentTools,
+				activeToolNames: currentActiveToolNames,
+				systemPromptOptions,
+			});
+		});
+	const created = await AgentHarness.create({
 		...harnessOptions,
 		tools,
-		activeToolNames: tools.map((tool) => tool.name),
-		systemPrompt: () => buildCodingAgentHarnessSystemPrompt(env.cwd),
+		activeToolNames,
+		systemPrompt,
 	});
+	harness = created.harness;
+	return created;
 }
