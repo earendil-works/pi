@@ -305,6 +305,8 @@ export class InMemorySessionStorage implements SessionStorage {
 				(record.type === "operation_started"
 					? record.id === query.runId
 					: "runId" in record && record.runId === query.runId)) &&
+			(query.operationKind === undefined ||
+				(record.type === "operation_started" && record.intent.kind === query.operationKind)) &&
 			(query.afterSeq === undefined || record.seq > query.afterSeq)
 		);
 	}

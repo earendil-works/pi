@@ -58,6 +58,7 @@ export function readRecordRows(
 		lane?: string;
 		type?: string;
 		runId?: string;
+		operationKind?: string;
 		afterSeq?: number;
 		order?: "newestFirst" | "oldestFirst";
 		limit?: number;
@@ -76,6 +77,10 @@ export function readRecordRows(
 	if (query.runId !== undefined) {
 		predicates.push("run_id = ?");
 		params.push(query.runId);
+	}
+	if (query.operationKind !== undefined) {
+		predicates.push("op_kind = ?");
+		params.push(query.operationKind);
 	}
 	if (query.afterSeq !== undefined) {
 		predicates.push("seq > ?");

@@ -245,6 +245,9 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	private async queryRecords(query: RecordQuery = {}): Promise<LaneRecord[]> {
 		assertValidLimit(query.limit);
 		assertValidCursor(query.afterSeq);
+		if (query.operationKind !== undefined && query.type !== "operation_started") {
+			throw new SessionError("invalid_query", 'operationKind requires type "operation_started"');
+		}
 		return this.storage.findRecords(query);
 	}
 

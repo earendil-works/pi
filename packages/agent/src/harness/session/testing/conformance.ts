@@ -228,6 +228,8 @@ export function createSessionBackendConformance(
 			await rejectsWithCode(thread.findEntriesOnBranch({ cursor: { afterSeq: -1 } }), "invalid_query");
 			await rejectsWithCode(thread.findEntryOnBranch({ limit: 0 }), "invalid_query");
 			await rejectsWithCode(session.findRecords({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findRecords({ operationKind: "run" }), "invalid_query");
+			await rejectsWithCode(session.findRecords({ type: "step_attempt", operationKind: "run" }), "invalid_query");
 			await rejectsWithCode(session.getLog({ afterSeq: -1 }), "invalid_query");
 		}),
 
@@ -395,6 +397,65 @@ export function createSessionBackendConformance(
 				);
 			},
 		),
+
+		createCase(factory, "records and log", "filters operation starts by operation kind", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			await session.appendRecord(operationStarted("run-old"));
+			await session.appendRecord({
+				type: "operation_started",
+				id: "compaction",
+				lane: "main",
+				sourceLeafId: null,
+				intent: { kind: "compaction", resultEntryId: "compaction-result" },
+			});
+			await session.appendRecord({
+				type: "operation_started",
+				id: "navigation",
+				lane: "main",
+				sourceLeafId: null,
+				intent: { kind: "navigation", targetId: null, summarize: false },
+			});
+			await session.appendRecord(operationStarted("run-new"));
+
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "run",
+						order: "oldestFirst",
+					})
+				).map((record) => record.id),
+				["run-old", "run-new"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "compaction",
+					})
+				).map((record) => record.id),
+				["compaction"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "navigation",
+					})
+				).map((record) => record.id),
+				["navigation"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "run",
+						limit: 1,
+					})
+				).map((record) => record.id),
+				["run-new"],
+			);
+		}),
 
 		createCase(
 			factory,

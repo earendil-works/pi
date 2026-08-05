@@ -238,6 +238,8 @@ export interface RecordQuery {
 	lane?: string;
 	type?: LaneRecord["type"];
 	runId?: string;
+	/** Valid only with type "operation_started". */
+	operationKind?: OperationStartedRecord["intent"]["kind"];
 	afterSeq?: number;
 	order?: EntryOrder;
 	limit?: number;
