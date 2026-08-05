@@ -41,8 +41,7 @@ function createAssistantMessage(text: string): AgentMessage {
 
 function operationStarted(
 	id: string,
-	lane = "main",
-	kind: OperationStartedRecord["intent"]["kind"] = "run",
+	{ lane, kind }: { lane: string; kind: OperationStartedRecord["intent"]["kind"] },
 ): NewRecord<OperationStartedRecord> {
 	let intent: OperationStartedRecord["intent"];
 	switch (kind) {
@@ -109,7 +108,7 @@ export function createSessionBackendConformance(
 					{ type: "custom", id: "child", customType: "note", data: { value: 1 } },
 					"thread",
 				);
-				const record = await session.appendRecord(operationStarted("run", "thread"));
+				const record = await session.appendRecord(operationStarted("run", { lane: "thread", kind: "run" }));
 				await session.setName("Example");
 				await session.setLabel(root.id, "checkpoint");
 				await session.moveLane("main", child.id);
@@ -185,8 +184,11 @@ export function createSessionBackendConformance(
 				{ type: "message", id: "shared", message: createUserMessage("root") },
 				"main",
 			);
-			await rejectsWithCode(session.appendRecord(operationStarted("shared")), "already_exists");
-			await session.appendRecord(operationStarted("run"));
+			await rejectsWithCode(
+				session.appendRecord(operationStarted("shared", { lane: "main", kind: "run" })),
+				"already_exists",
+			);
+			await session.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
 			await rejectsWithCode(
 				session.appendEntry<CustomEntry>({ type: "custom", id: "run", customType: "note" }, "main"),
 				"already_exists",
@@ -310,7 +312,7 @@ export function createSessionBackendConformance(
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
 				await session.createLane("thread", null);
-				await session.appendRecord(operationStarted("old-run", "thread"));
+				await session.appendRecord(operationStarted("old-run", { lane: "thread", kind: "run" }));
 				await session.appendRecord({
 					type: "queue_enqueued",
 					id: "old-next-run",
@@ -369,7 +371,7 @@ export function createSessionBackendConformance(
 			"filters records by lane type run sequence and order",
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
-				await session.appendRecord(operationStarted("run-1"));
+				await session.appendRecord(operationStarted("run-1", { lane: "main", kind: "run" }));
 				await session.appendRecord({
 					type: "step_attempt",
 					id: "attempt-1",
@@ -380,7 +382,7 @@ export function createSessionBackendConformance(
 					resultEntryId: "assistant-1",
 				});
 				await session.createLane("thread", null);
-				await session.appendRecord(operationStarted("run-2", "thread"));
+				await session.appendRecord(operationStarted("run-2", { lane: "thread", kind: "run" }));
 				await session.appendRecord({
 					type: "step_attempt",
 					id: "attempt-2",
@@ -412,7 +414,7 @@ export function createSessionBackendConformance(
 
 		createCase(factory, "records and log", "filters operation starts by operation kind", async (repository) => {
 			const session = await repository.create({ id: "session" });
-			await session.appendRecord(operationStarted("run-old"));
+			await session.appendRecord(operationStarted("run-old", { lane: "main", kind: "run" }));
 			await session.appendRecord({
 				type: "operation_started",
 				id: "compaction",
@@ -427,7 +429,7 @@ export function createSessionBackendConformance(
 				sourceLeafId: null,
 				intent: { kind: "navigation", targetId: null, summarize: false },
 			});
-			await session.appendRecord(operationStarted("run-new"));
+			await session.appendRecord(operationStarted("run-new", { lane: "main", kind: "run" }));
 
 			deepStrictEqual(
 				(
@@ -477,10 +479,10 @@ export function createSessionBackendConformance(
 				const session = await repository.create({ id: "session" });
 				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), []);
 
-				const first = await session.appendRecord(operationStarted("first"));
+				const first = await session.appendRecord(operationStarted("first", { lane: "main", kind: "run" }));
 				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [first]);
 
-				const second = await session.appendRecord(operationStarted("second"));
+				const second = await session.appendRecord(operationStarted("second", { lane: "main", kind: "run" }));
 				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [second, first]);
 
 				await session.appendRecord({
@@ -506,10 +508,12 @@ export function createSessionBackendConformance(
 		createCase(factory, "records and log", "scopes open operations by lane kind and limit", async (repository) => {
 			const session = await repository.create({ id: "session" });
 			await session.createLane("thread", null);
-			const mainRun = await session.appendRecord(operationStarted("main-run"));
-			const mainCompaction = await session.appendRecord(operationStarted("main-compaction", "main", "compaction"));
+			const mainRun = await session.appendRecord(operationStarted("main-run", { lane: "main", kind: "run" }));
+			const mainCompaction = await session.appendRecord(
+				operationStarted("main-compaction", { lane: "main", kind: "compaction" }),
+			);
 			const threadNavigation = await session.appendRecord(
-				operationStarted("thread-navigation", "thread", "navigation"),
+				operationStarted("thread-navigation", { lane: "thread", kind: "navigation" }),
 			);
 
 			deepStrictEqual(await session.findOpenOperations("main"), [mainCompaction, mainRun]);
@@ -523,7 +527,7 @@ export function createSessionBackendConformance(
 			"returns immutable open-operation records",
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
-				const committed = await session.appendRecord(operationStarted("run"));
+				const committed = await session.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
 				const [read] = await session.findOpenOperations("main");
 				if (read?.intent.kind !== "run") throw new Error("Expected an open run operation");
 				read.intent.originalPrompt.push(createUserMessage("mutated"));
@@ -781,7 +785,10 @@ export function createSessionBackendConformance(
 
 				deepStrictEqual(await session.findRecords(), []);
 				deepStrictEqual(await session.getLog(), []);
-				strictEqual((await session.appendRecord(operationStarted("valid-record"))).seq, 1);
+				strictEqual(
+					(await session.appendRecord(operationStarted("valid-record", { lane: "main", kind: "run" }))).seq,
+					1,
+				);
 			},
 		),
 
@@ -856,7 +863,7 @@ export function createSessionBackendConformance(
 				await source.setName("Source");
 				await source.setLabel(shared, "copied");
 				await source.setLabel(threadChild, "excluded");
-				await source.appendRecord(operationStarted("run"));
+				await source.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
 				await source.appendRecord({
 					type: "usage",
 					id: "source-usage",
