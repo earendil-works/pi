@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { SettingsList, type SettingsListTheme } from "../src/components/settings-list.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 
 const testTheme: SettingsListTheme = {
 	label: (text) => text,
@@ -54,5 +55,38 @@ describe("SettingsList", () => {
 		list.handleInput(" ");
 
 		assert.deepStrictEqual(changes, [{ id: "ui-mode", value: "fullscreen" }]);
+	});
+
+	it("moves by one visible page using remapped selection bindings", () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.select.pageUp": "alt+v",
+				"tui.select.pageDown": "ctrl+v",
+			}),
+		);
+		try {
+			const list = new SettingsList(
+				Array.from({ length: 12 }, (_, index) => ({
+					id: `setting-${index}`,
+					label: `Setting ${index}`,
+					currentValue: String(index),
+				})),
+				5,
+				testTheme,
+				() => {},
+				() => {},
+			);
+
+			list.handleInput("\x16");
+			assert.match(list.render(80).join("\n"), /> Setting 5/);
+
+			list.handleInput("\x16");
+			assert.match(list.render(80).join("\n"), /> Setting 10/);
+
+			list.handleInput("\x1bv");
+			assert.match(list.render(80).join("\n"), /> Setting 5/);
+		} finally {
+			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+		}
 	});
 });

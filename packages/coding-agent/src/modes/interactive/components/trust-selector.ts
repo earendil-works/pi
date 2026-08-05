@@ -7,6 +7,7 @@ import {
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 
 export type TrustSelection = Pick<ProjectTrustOption, "trusted" | "updates">;
 
@@ -30,6 +31,10 @@ function formatDecision(trustPath: string | undefined, decision: ProjectTrustSto
 }
 
 export class TrustSelectorComponent extends Container {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private selectedIndex: number;
 	private readonly listContainer: Container;
 	private readonly trustOptions: ProjectTrustOption[];
@@ -116,11 +121,21 @@ export class TrustSelectorComponent extends Container {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(
+			kb,
+			keyData,
+			this.selectedIndex,
+			this.trustOptions.length,
+			this.trustOptions.length,
+		);
 		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
 			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.selectedIndex = Math.min(this.trustOptions.length - 1, this.selectedIndex + 1);
+			this.updateList();
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
 			const selected = this.trustOptions[this.selectedIndex];

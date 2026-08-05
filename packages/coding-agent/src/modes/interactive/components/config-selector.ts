@@ -220,6 +220,7 @@ class ConfigSelectorHeader implements Component {
 }
 
 class ResourceList implements Component, Focusable {
+	readonly capturesSelectPageInput = true;
 	private groupsByScope: Record<ConfigWriteScope, ResourceGroup[]>;
 	private flatItems: FlatEntry[] = [];
 	private filteredItems: FlatEntry[] = [];

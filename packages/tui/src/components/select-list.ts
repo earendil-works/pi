@@ -1,4 +1,5 @@
 import { getKeybindings } from "../keybindings.ts";
+import { getPageSelectionIndex } from "../selection-navigation.ts";
 import type { Component } from "../tui.ts";
 import { truncateToWidth, visibleWidth } from "../utils.ts";
 
@@ -38,6 +39,7 @@ export interface SelectListLayoutOptions {
 }
 
 export class SelectList implements Component {
+	readonly capturesSelectPageInput = true;
 	private items: SelectItem[] = [];
 	private filteredItems: SelectItem[] = [];
 	private selectedIndex: number = 0;
@@ -111,6 +113,13 @@ export class SelectList implements Component {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(
+			kb,
+			keyData,
+			this.selectedIndex,
+			this.filteredItems.length,
+			this.maxVisible,
+		);
 		// Up arrow - wrap to bottom when at top
 		if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
@@ -119,6 +128,10 @@ export class SelectList implements Component {
 		// Down arrow - wrap to top when at bottom
 		else if (kb.matches(keyData, "tui.select.down")) {
 			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
+			this.notifySelectionChange();
+		} else if (pageIndex !== undefined) {
+			if (this.filteredItems.length === 0) return;
+			this.selectedIndex = pageIndex;
 			this.notifySelectionChange();
 		}
 		// Enter

@@ -33,6 +33,9 @@ export interface Component {
 	 */
 	handleInput?(data: string): void;
 
+	/** If true, selection page keys take precedence over viewport page scrolling. */
+	readonly capturesSelectPageInput?: boolean;
+
 	/**
 	 * If true, component receives key release events (Kitty protocol).
 	 * Default is false - release events are filtered out.
@@ -210,6 +213,10 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+
+	get capturesSelectPageInput(): boolean {
+		return this.children.some((child) => child.capturesSelectPageInput === true);
+	}
 
 	addChild(component: Component): void {
 		this.children.push(component);

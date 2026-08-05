@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { SelectList } from "../src/components/select-list.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import { visibleWidth } from "../src/utils.ts";
 
 const testTheme = {
@@ -112,5 +113,32 @@ describe("SelectList", () => {
 
 		assert.ok(rendered[0].includes("…"));
 		assert.equal(visibleIndexOf(rendered[0], "first"), visibleIndexOf(rendered[1], "second"));
+	});
+
+	it("moves by one visible page using remapped selection bindings", () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.select.pageUp": "alt+v",
+				"tui.select.pageDown": "ctrl+v",
+			}),
+		);
+		try {
+			const items = Array.from({ length: 12 }, (_, index) => ({
+				value: `item-${index}`,
+				label: `Item ${index}`,
+			}));
+			const list = new SelectList(items, 5, testTheme);
+			const selections: string[] = [];
+			list.onSelectionChange = (item) => selections.push(item.value);
+
+			list.handleInput("\x16");
+			list.handleInput("\x16");
+			list.handleInput("\x16");
+			list.handleInput("\x1bv");
+
+			assert.deepStrictEqual(selections, ["item-5", "item-10", "item-11", "item-6"]);
+		} finally {
+			setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+		}
 	});
 });

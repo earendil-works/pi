@@ -8,6 +8,9 @@ import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
+
+const PAGE_SIZE = 8;
 
 export interface ExtensionSelectorOptions {
 	tui?: TUI;
@@ -16,6 +19,10 @@ export interface ExtensionSelectorOptions {
 }
 
 export class ExtensionSelectorComponent extends Container {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private options: string[];
 	private selectedIndex = 0;
 	private listContainer: Container;
@@ -90,6 +97,7 @@ export class ExtensionSelectorComponent extends Container {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(kb, keyData, this.selectedIndex, this.options.length, PAGE_SIZE);
 		if (kb.matches(keyData, "app.tools.expand")) {
 			this.onToggleToolsExpanded?.();
 		} else if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
@@ -97,6 +105,9 @@ export class ExtensionSelectorComponent extends Container {
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.selectedIndex = Math.min(this.options.length - 1, this.selectedIndex + 1);
+			this.updateList();
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
 			const selected = this.options[this.selectedIndex];

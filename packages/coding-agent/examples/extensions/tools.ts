@@ -116,20 +116,12 @@ export default function toolsExtension(pi: ExtensionAPI) {
 
 				container.addChild(settingsList);
 
-				const component = {
-					render(width: number) {
-						return container.render(width);
-					},
-					invalidate() {
-						container.invalidate();
-					},
+				return Object.assign(container, {
 					handleInput(data: string) {
 						settingsList.handleInput?.(data);
 						tui.requestRender();
 					},
-				};
-
-				return component;
+				});
 			});
 		},
 	});

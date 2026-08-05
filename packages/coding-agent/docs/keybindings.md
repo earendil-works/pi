@@ -82,13 +82,13 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 
 These actions apply when interactive mode uses `--ui-mode fullscreen` and target the primary transcript scroll region. Two-finger trackpad and mouse-wheel input scroll the region under the pointer, falling back to the transcript over the fixed editor/status/footer dock. Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the primary mouse button selects text and copies it to the clipboard; holding at the transcript's top or bottom edge auto-scrolls into off-screen content.
 
-Fullscreen transcript bindings take precedence over editor bindings. The default unmodified navigation keys therefore control the transcript in fullscreen mode, while their `ctrl` variants continue to control the editor. Outside fullscreen mode, both variants control the editor.
+Fullscreen transcript bindings take precedence over editor bindings. The exception is a focused selection component that declares `capturesSelectPageInput`: overlapping `tui.select.pageUp` and `tui.select.pageDown` bindings then reach the selection instead of scrolling the transcript. The default unmodified navigation keys therefore control the transcript in fullscreen mode when no selection list is active, while their `ctrl` variants continue to control the editor. Outside fullscreen mode, both variants control the editor.
 
 | Key | Default mode | Fullscreen mode |
 |-----|--------------|-----------------|
 | `home`, `end` | Editor | Transcript |
 | `ctrl+home`, `ctrl+end` | Editor | Editor |
-| `pageUp`, `pageDown` | Editor | Transcript |
+| `pageUp`, `pageDown` | Editor | Active selection, otherwise transcript |
 | `ctrl+pageUp`, `ctrl+pageDown` | Editor | Editor |
 
 This routing remains configurable through the ordinary action bindings. For example, `"tui.altScreen.pageUp": "ctrl+pageUp"` makes `pageUp` control the editor and `ctrl+pageUp` control the transcript in fullscreen mode. Setting `"tui.altScreen.pageUp": []` disables that transcript shortcut entirely. User bindings replace the defaults for that action.

@@ -373,6 +373,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const keybindings = getKeybindings();
 		const isRelease = isKeyRelease(data);
+		const focusedComponent = this.getFocusedComponent();
+		if (
+			focusedComponent?.capturesSelectPageInput &&
+			(keybindings.matches(data, "tui.select.pageUp") || keybindings.matches(data, "tui.select.pageDown"))
+		) {
+			return undefined;
+		}
 		if (keybindings.matches(data, "tui.altScreen.pageUp")) {
 			if (!isRelease) {
 				this.scrollBy(-Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));

@@ -251,18 +251,12 @@ export default function presetExtension(pi: ExtensionAPI) {
 
 			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
-			return {
-				render(width: number) {
-					return container.render(width);
-				},
-				invalidate() {
-					container.invalidate();
-				},
+			return Object.assign(container, {
 				handleInput(data: string) {
 					selectList.handleInput(data);
 					tui.requestRender();
 				},
-			};
+			});
 		});
 
 		if (!result) return;

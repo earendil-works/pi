@@ -107,7 +107,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 			const isMulti = questions.length > 1;
 			const totalTabs = questions.length + 1; // questions + Submit
 
-			const result = await ctx.ui.custom<QuestionnaireResult>((tui, theme, _kb, done) => {
+			const result = await ctx.ui.custom<QuestionnaireResult>((tui, theme, keybindings, done) => {
 				// State
 				let currentTab = 0;
 				let optionIndex = 0;
@@ -231,12 +231,27 @@ export default function questionnaire(pi: ExtensionAPI) {
 					}
 
 					// Option navigation
-					if (matchesKey(data, Key.up)) {
+					const pageSize = Math.max(1, tui.terminal.rows - (isMulti ? 9 : 6));
+					if (keybindings.matches(data, "tui.select.pageUp")) {
+						if (opts.length === 0) return;
+						optionIndex = Math.max(0, optionIndex - pageSize);
+						refresh();
+						return;
+					}
+					if (keybindings.matches(data, "tui.select.pageDown")) {
+						if (opts.length === 0) return;
+						optionIndex = Math.min(opts.length - 1, optionIndex + pageSize);
+						refresh();
+						return;
+					}
+					if (keybindings.matches(data, "tui.select.up")) {
+						if (opts.length === 0) return;
 						optionIndex = Math.max(0, optionIndex - 1);
 						refresh();
 						return;
 					}
-					if (matchesKey(data, Key.down)) {
+					if (keybindings.matches(data, "tui.select.down")) {
+						if (opts.length === 0) return;
 						optionIndex = Math.min(opts.length - 1, optionIndex + 1);
 						refresh();
 						return;
@@ -385,6 +400,9 @@ export default function questionnaire(pi: ExtensionAPI) {
 				}
 
 				return {
+					get capturesSelectPageInput() {
+						return !inputMode && currentTab < questions.length;
+					},
 					render,
 					invalidate: () => {
 						cachedLines = undefined;

@@ -9,14 +9,20 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, type Focusable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CURSOR_MARKER,
+	type Focusable,
+	type KeybindingsManager,
+	matchesKey,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("overlay-test", {
 		description: "Test overlay rendering with edge cases",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const result = await ctx.ui.custom<{ action: string; query?: string } | undefined>(
-				(_tui, theme, _keybindings, done) => new OverlayTestComponent(theme, done),
+				(_tui, theme, keybindings, done) => new OverlayTestComponent(theme, keybindings, done),
 				{ overlay: true },
 			);
 
@@ -30,6 +36,7 @@ export default function (pi: ExtensionAPI) {
 
 class OverlayTestComponent implements Focusable {
 	readonly width = 70;
+	readonly capturesSelectPageInput = true;
 
 	/** Focusable interface - set by TUI when focus changes */
 	focused = false;
@@ -43,10 +50,16 @@ class OverlayTestComponent implements Focusable {
 	];
 
 	private theme: Theme;
+	private keybindings: Pick<KeybindingsManager, "matches">;
 	private done: (result: { action: string; query?: string } | undefined) => void;
 
-	constructor(theme: Theme, done: (result: { action: string; query?: string } | undefined) => void) {
+	constructor(
+		theme: Theme,
+		keybindings: Pick<KeybindingsManager, "matches">,
+		done: (result: { action: string; query?: string } | undefined) => void,
+	) {
 		this.theme = theme;
+		this.keybindings = keybindings;
 		this.done = done;
 	}
 
@@ -63,9 +76,13 @@ class OverlayTestComponent implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, "up")) {
+		if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.selected = Math.max(0, this.selected - this.items.length);
+		} else if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.selected = Math.min(this.items.length - 1, this.selected + this.items.length);
+		} else if (this.keybindings.matches(data, "tui.select.up")) {
 			this.selected = Math.max(0, this.selected - 1);
-		} else if (matchesKey(data, "down")) {
+		} else if (this.keybindings.matches(data, "tui.select.down")) {
 			this.selected = Math.min(this.items.length - 1, this.selected + 1);
 		} else if (current.hasInput) {
 			if (matchesKey(data, "backspace")) {

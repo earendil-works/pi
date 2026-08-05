@@ -30,6 +30,10 @@ const SETUP_LOGO_LINES = ["██████", "██  ██", "████ 
 
 /** First-time setup dialog: theme choice and analytics opt-in. */
 export class FirstTimeSetupComponent extends Container {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private step: "theme" | "analytics" = "theme";
 	private themeIndex: number;
 	private analyticsIndex = 0;
@@ -122,12 +126,20 @@ export class FirstTimeSetupComponent extends Container {
 		this.update();
 	}
 
+	private getPageSize(): number {
+		return this.step === "theme" ? THEME_OPTIONS.length : ANALYTICS_OPTIONS.length;
+	}
+
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
 			this.moveSelection(-1);
 		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
 			this.moveSelection(1);
+		} else if (kb.matches(keyData, "tui.select.pageUp")) {
+			this.moveSelection(-this.getPageSize());
+		} else if (kb.matches(keyData, "tui.select.pageDown")) {
+			this.moveSelection(this.getPageSize());
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
 			if (this.step === "theme") {
 				this.step = "analytics";
