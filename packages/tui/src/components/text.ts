@@ -1,5 +1,5 @@
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsiForRendering } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -64,7 +64,7 @@ export class Text implements Component {
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 
 		// Wrap text (this preserves ANSI codes but does NOT pad)
-		const wrappedLines = wrapTextWithAnsi(normalizedText, contentWidth);
+		const wrappedLines = wrapTextWithAnsiForRendering(normalizedText, contentWidth);
 
 		// Add margins and background to each line
 		const leftMargin = " ".repeat(this.paddingX);

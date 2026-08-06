@@ -54,6 +54,26 @@ const widthCache = new Map<string, number>();
 export const cjkBreakRegex =
 	/[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
 
+const SOFT_WRAP_MARKER_REGEX = /\x1b_pi:soft-wrap:(\d+)\x07/;
+
+export function getSoftWrapSeparator(line: string): string | undefined {
+	const match = SOFT_WRAP_MARKER_REGEX.exec(line);
+	return match ? " ".repeat(Number(match[1])) : undefined;
+}
+
+export function stripSoftWrapMarkers(line: string): string {
+	return line.replace(SOFT_WRAP_MARKER_REGEX, "");
+}
+
+export function addSoftWrapMarker(line: string, separator: string): string {
+	return `${line}\x1b_pi:soft-wrap:${separator.length}\x07`;
+}
+
+export function transferSoftWrapMarker(source: string, target: string): string {
+	const separator = getSoftWrapSeparator(source);
+	return separator === undefined ? target : addSoftWrapMarker(target, separator);
+}
+
 function isPrintableAscii(str: string): boolean {
 	for (let i = 0; i < str.length; i++) {
 		const code = str.charCodeAt(i);
@@ -830,6 +850,15 @@ function splitIntoTokensWithAnsi(text: string): string[] {
  * @returns Array of wrapped lines (NOT padded to width)
  */
 export function wrapTextWithAnsi(text: string, width: number): string[] {
+	return wrapTextWithAnsiInternal(text, width, false);
+}
+
+/** Wrap text for component rendering and annotate boundaries introduced only by visual wrapping. */
+export function wrapTextWithAnsiForRendering(text: string, width: number): string[] {
+	return wrapTextWithAnsiInternal(text, width, true);
+}
+
+function wrapTextWithAnsiInternal(text: string, width: number, markSoftWraps: boolean): string[] {
 	if (!text) {
 		return [""];
 	}
@@ -845,7 +874,11 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
 		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
 		for (const wrappedLine of wrappedLines) {
-			result.push(wrappedLine);
+			result.push(
+				markSoftWraps && wrappedLine.separator !== undefined
+					? addSoftWrapMarker(wrappedLine.text, wrappedLine.separator)
+					: wrappedLine.text,
+			);
 		}
 		// Update tracker with codes from this line for next iteration
 		updateTrackerFromText(inputLine, tracker);
@@ -854,17 +887,19 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	return result.length > 0 ? result : [""];
 }
 
-function wrapSingleLine(line: string, width: number): string[] {
+type WrappedAnsiLine = { text: string; separator?: string };
+
+function wrapSingleLine(line: string, width: number): WrappedAnsiLine[] {
 	if (!line) {
-		return [""];
+		return [{ text: "" }];
 	}
 
 	const visibleLength = visibleWidth(line);
 	if (visibleLength <= width) {
-		return [line];
+		return [{ text: line }];
 	}
 
-	const wrapped: string[] = [];
+	const wrapped: WrappedAnsiLine[] = [];
 	const tracker = new AnsiCodeTracker();
 	const tokens = splitIntoTokensWithAnsi(line);
 
@@ -878,12 +913,13 @@ function wrapSingleLine(line: string, width: number): string[] {
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
+				const separator = stripTerminalSequences(currentLine).match(/ +$/)?.[0] ?? "";
 				// Add specific reset for underline only (preserves background)
 				const lineEndReset = tracker.getLineEndReset();
 				if (lineEndReset) {
 					currentLine += lineEndReset;
 				}
-				wrapped.push(currentLine);
+				wrapped.push({ text: currentLine, separator });
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
@@ -891,7 +927,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 			// Break long token - breakLongWord handles its own resets
 			const broken = breakLongWord(token, width, tracker);
 			for (let i = 0; i < broken.length - 1; i++) {
-				wrapped.push(broken[i]!);
+				wrapped.push({ text: broken[i]!, separator: "" });
 			}
 			currentLine = broken[broken.length - 1];
 			currentVisibleLength = visibleWidth(currentLine);
@@ -903,12 +939,16 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
 			// Trim trailing whitespace, then add underline reset (not full reset, to preserve background)
-			let lineToWrap = currentLine.trimEnd();
+			const trimmedLine = currentLine.trimEnd();
+			const separator = isWhitespace
+				? " ".repeat(visibleWidth(stripTerminalSequences(token)))
+				: (stripTerminalSequences(currentLine).match(/ +$/)?.[0] ?? "");
+			let lineToWrap = trimmedLine;
 			const lineEndReset = tracker.getLineEndReset();
 			if (lineEndReset) {
 				lineToWrap += lineEndReset;
 			}
-			wrapped.push(lineToWrap);
+			wrapped.push({ text: lineToWrap, separator });
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
@@ -928,11 +968,11 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	if (currentLine) {
 		// No reset at end of final line - let caller handle it
-		wrapped.push(currentLine);
+		wrapped.push({ text: currentLine });
 	}
 
 	// Trailing whitespace can cause lines to exceed the requested width
-	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
+	return wrapped.length > 0 ? wrapped.map((line) => ({ ...line, text: line.text.trimEnd() })) : [{ text: "" }];
 }
 
 export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;

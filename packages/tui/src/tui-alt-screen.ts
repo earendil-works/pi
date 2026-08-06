@@ -35,8 +35,11 @@ import {
 	extractAnsiCode,
 	getGraphemeCellRange,
 	getOsc8LinkAtColumn,
+	getSoftWrapSeparator,
 	sliceByColumn,
+	stripSoftWrapMarkers,
 	stripTerminalSequences,
+	transferSoftWrapMarker,
 	visibleWidth,
 } from "./utils.ts";
 
@@ -230,12 +233,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
-			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
+			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${ENABLE_AUTOWRAP}`;
 			for (let row = 0; row < this.lastDocument.length; row++) {
-				if (row > 0) buffer += "\r\n";
-				buffer += `\r\x1b[2K${this.lastDocument[row] ?? ""}`;
+				const line = this.lastDocument[row] ?? "";
+				const isSoftWrapContinuation =
+					row > 0 && getSoftWrapSeparator(this.lastDocument[row - 1] ?? "") !== undefined;
+				const softWrapAfter = row + 1 < this.lastDocument.length && getSoftWrapSeparator(line) !== undefined;
+				if (!isSoftWrapContinuation) buffer += row > 0 ? "\r\n\r\x1b[2K" : "\r\x1b[2K";
+				const terminalLine = stripSoftWrapMarkers(line);
+				buffer +=
+					softWrapAfter || isSoftWrapContinuation
+						? terminalLine + " ".repeat(Math.max(0, width - visibleWidth(terminalLine)))
+						: terminalLine;
 			}
-			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
+			buffer += `\x1b[0m\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
 		}
 		if (this.savedCapabilities) {
@@ -723,17 +734,26 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!box?.scrollContentLines) return;
 			sourceLines = box.scrollContentLines;
 		}
-		const lines: string[] = [];
+		let text = "";
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
 			const line = sourceLines[row] ?? "";
 			const columns = this.getSelectionColumns(line, row, selection);
-			lines.push(
-				stripTerminalSequences(
-					sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
-				).trimEnd(),
-			);
+			let selectedText = stripTerminalSequences(
+				sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
+			).trimEnd();
+			if (row > selection.start.row) {
+				const separator = getSoftWrapSeparator(sourceLines[row - 1] ?? "");
+				if (separator === undefined) {
+					text += "\n";
+				} else {
+					// Component padding and continuation indentation are visual layout, not source text.
+					selectedText = selectedText.replace(/^ +/, "");
+					text += separator;
+				}
+			}
+			text += selectedText;
 		}
-		const text = lines.join("\n");
+
 		if (text.length === 0) return;
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
 		this.flash("Copied!");
@@ -795,13 +815,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			) {
 				return line;
 			}
-			const lineWidth = visibleWidth(line);
-			const columns = this.getSelectionColumns(line, row, screenSelection, minColumn, maxColumn);
+			const visibleLine = stripSoftWrapMarkers(line);
+			const lineWidth = visibleWidth(visibleLine);
+			const columns = this.getSelectionColumns(visibleLine, row, screenSelection, minColumn, maxColumn);
 			if (columns.end <= columns.start) return line;
-			const before = sliceByColumn(line, 0, columns.start, true);
-			const selected = sliceByColumn(line, columns.start, columns.end - columns.start, true);
-			const after = sliceByColumn(line, columns.end, Math.max(0, lineWidth - columns.end), true);
-			return `${before}${this.applySelectionHighlight(selected)}${after}`;
+			const before = sliceByColumn(visibleLine, 0, columns.start, true);
+			const selected = sliceByColumn(visibleLine, columns.start, columns.end - columns.start, true);
+			const after = sliceByColumn(visibleLine, columns.end, Math.max(0, lineWidth - columns.end), true);
+			return transferSoftWrapMarker(line, `${before}${this.applySelectionHighlight(selected)}${after}`);
 		});
 	}
 
@@ -840,6 +861,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (isImageLine(line) || visibleWidth(line) <= width) return line;
 			return sliceByColumn(line, 0, width, true);
 		});
+		const terminalScreen = screen.map((line) => stripSoftWrapMarkers(line));
 
 		const fullRedraw =
 			this.previousScreen.length === 0 || this.previousScreenWidth !== width || this.previousScreenHeight !== height;
@@ -851,8 +873,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const hadUploadedKittyImages = this.uploadedKittyImages.size > 0;
 		const preparedKittyScreen =
 			redrawImages && this.imageProtocol === "kitty"
-				? this.prepareKittyScreen(screen)
-				: { lines: screen, evictedImageDeletion: "" };
+				? this.prepareKittyScreen(terminalScreen)
+				: { lines: terminalScreen, evictedImageDeletion: "" };
 
 		let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
 		if (fullRedraw) {

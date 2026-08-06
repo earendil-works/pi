@@ -15,7 +15,15 @@ import {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
-import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
+import {
+	extractSegments,
+	normalizeTerminalOutput,
+	sliceByColumn,
+	sliceWithWidth,
+	stripSoftWrapMarkers,
+	transferSoftWrapMarker,
+	visibleWidth,
+} from "./utils.ts";
 
 /**
  * Component interface - all components must implement this
@@ -259,9 +267,12 @@ export function compositeTuiLine(
 ): string {
 	if (isImageLine(baseLine)) return baseLine;
 
+	const wrapSource = startCol === 0 && overlayWidth >= totalWidth ? overlayLine : baseLine;
+	const visibleBaseLine = stripSoftWrapMarkers(baseLine);
+	const visibleOverlayLine = stripSoftWrapMarkers(overlayLine);
 	const afterStart = startCol + overlayWidth;
-	const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
-	const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
+	const base = extractSegments(visibleBaseLine, startCol, afterStart, totalWidth - afterStart, true);
+	const overlay = sliceWithWidth(visibleOverlayLine, 0, overlayWidth, true);
 	const beforePad = Math.max(0, startCol - base.beforeWidth);
 	const overlayPad = Math.max(0, overlayWidth - overlay.width);
 	const actualBeforeWidth = Math.max(startCol, base.beforeWidth);
@@ -278,7 +289,8 @@ export function compositeTuiLine(
 		base.after +
 		" ".repeat(afterPad);
 
-	return visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
+	const clippedResult = visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
+	return transferSoftWrapMarker(wrapSource, clippedResult);
 }
 
 export type TuiMode = "regular" | "fullscreen";

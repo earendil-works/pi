@@ -6,6 +6,7 @@ import { Markdown } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
+import { getSoftWrapSeparator, stripSoftWrapMarkers } from "../src/utils.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -33,7 +34,7 @@ function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): 
 }
 
 function stripAnsi(line: string): string {
-	return line.replace(/\x1b\[[0-9;]*m/g, "");
+	return stripSoftWrapMarkers(line).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 describe("Markdown component", () => {
@@ -72,6 +73,28 @@ describe("Markdown component", () => {
 			markdown.render(60);
 			assert.deepStrictEqual(calls.at(-1), { source: "updated", availableWidth: 56 });
 			assert.strictEqual(calls.length, 4);
+		});
+	});
+
+	describe("Visual wrap metadata", () => {
+		it("marks paragraph continuations but not paragraph boundaries", () => {
+			const markdown = new Markdown("alpha beta gamma\n\ndelta", 1, 0, defaultMarkdownTheme);
+			const lines = markdown.render(12);
+
+			assert.deepStrictEqual(
+				lines.map((line) => stripAnsi(line).trimEnd()),
+				[" alpha beta", " gamma", "", " delta"],
+			);
+			assert.strictEqual(getSoftWrapSeparator(lines[0]), " ");
+			assert.strictEqual(getSoftWrapSeparator(lines[1]), undefined);
+		});
+
+		it("keeps list-item boundaries hard", () => {
+			const lines = new Markdown("- alpha beta gamma delta\n- second", 0, 0, defaultMarkdownTheme).render(12);
+			const lastFirstItemLine = lines.find((line) => stripAnsi(line).trim() === "delta");
+
+			assert.ok(lastFirstItemLine);
+			assert.strictEqual(getSoftWrapSeparator(lastFirstItemLine), undefined);
 		});
 	});
 

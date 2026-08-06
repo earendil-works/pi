@@ -1,7 +1,7 @@
 import { fuzzyFilter } from "../fuzzy.ts";
 import { getKeybindings } from "../keybindings.ts";
 import type { Component } from "../tui.ts";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsiForRendering } from "../utils.ts";
 import { Input } from "./input.ts";
 
 export interface SettingItem {
@@ -153,7 +153,7 @@ export class SettingsList implements Component {
 		const selectedItem = displayItems[this.selectedIndex];
 		if (selectedItem?.description) {
 			lines.push("");
-			const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4);
+			const wrappedDesc = wrapTextWithAnsiForRendering(selectedItem.description, width - 4);
 			for (const line of wrappedDesc) {
 				lines.push(this.theme.description(`  ${line}`));
 			}

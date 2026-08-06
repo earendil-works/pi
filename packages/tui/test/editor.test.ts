@@ -5,7 +5,7 @@ import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
 import type { TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
-import { visibleWidth } from "../src/utils.ts";
+import { getSoftWrapSeparator, stripSoftWrapMarkers, visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -726,6 +726,15 @@ describe("Editor component", () => {
 	});
 
 	describe("Grapheme-aware text wrapping", () => {
+		it("marks visual editor wraps but not logical line endings", () => {
+			const editor = new Editor(createTestTUI(12), defaultEditorTheme);
+			editor.setText("alpha beta gamma\ndelta");
+			const lines = editor.render(12);
+
+			assert.strictEqual(getSoftWrapSeparator(lines[1]!), " ");
+			assert.strictEqual(getSoftWrapSeparator(lines[2]!), undefined);
+		});
+
 		it("wraps lines correctly when text contains wide emojis", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const width = 20;
@@ -784,7 +793,9 @@ describe("Editor component", () => {
 			}
 
 			// Verify content split correctly
-			const contentLines = lines.slice(1, -1).map((l) => stripVTControlCharacters(l).trim());
+			const contentLines = lines
+				.slice(1, -1)
+				.map((line) => stripVTControlCharacters(stripSoftWrapMarkers(line)).trim());
 			assert.strictEqual(contentLines.length, 2);
 			assert.strictEqual(contentLines[0], "日本語テス"); // 5 chars = 10 columns
 			assert.strictEqual(contentLines[1], "ト"); // 1 char = 2 columns (+ padding)
@@ -867,7 +878,9 @@ describe("Editor component", () => {
 			const lines = editor.render(width);
 
 			// Get content lines (between borders)
-			const contentLines = lines.slice(1, -1).map((l) => stripVTControlCharacters(l).trim());
+			const contentLines = lines
+				.slice(1, -1)
+				.map((line) => stripVTControlCharacters(stripSoftWrapMarkers(line)).trim());
 
 			// Should NOT break mid-word
 			// Line 1 should end with a complete word

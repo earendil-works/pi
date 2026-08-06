@@ -5,6 +5,7 @@ import { KillRing } from "../kill-ring.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
+	addSoftWrapMarker,
 	cjkBreakRegex,
 	getGraphemeSegmenter,
 	getWordSegmenter,
@@ -223,6 +224,7 @@ interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
 	cursorPos?: number;
+	softWrapSeparator?: string;
 }
 
 export interface EditorTheme {
@@ -536,7 +538,7 @@ export class Editor implements Component, Focusable {
 		// autocomplete (e.g. slash-command menu) is visible.
 		const emitCursorMarker = this.focused;
 
-		for (const layoutLine of visibleLines) {
+		for (const [visibleIndex, layoutLine] of visibleLines.entries()) {
 			let displayText = layoutLine.text;
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
@@ -574,8 +576,12 @@ export class Editor implements Component, Focusable {
 			const padding = " ".repeat(Math.max(0, contentWidth - lineVisibleWidth));
 			const lineRightPadding = cursorInPadding ? rightPadding.slice(1) : rightPadding;
 
-			// Render the line (no side borders, just horizontal lines above and below)
-			result.push(`${leftPadding}${displayText}${padding}${lineRightPadding}`);
+			const renderedLine = `${leftPadding}${displayText}${padding}${lineRightPadding}`;
+			result.push(
+				layoutLine.softWrapSeparator !== undefined && visibleIndex + 1 < visibleLines.length
+					? addSoftWrapMarker(renderedLine, layoutLine.softWrapSeparator)
+					: renderedLine,
+			);
 		}
 
 		// Render bottom border (with scroll indicator if more content below)
@@ -971,18 +977,13 @@ export class Editor implements Component, Focusable {
 						}
 					}
 
-					if (hasCursorInChunk) {
-						layoutLines.push({
-							text: chunk.text,
-							hasCursor: true,
-							cursorPos: adjustedCursorPos,
-						});
-					} else {
-						layoutLines.push({
-							text: chunk.text,
-							hasCursor: false,
-						});
-					}
+					const layoutLine: LayoutLine = {
+						text: chunk.text,
+						hasCursor: hasCursorInChunk,
+						softWrapSeparator: isLastChunk ? undefined : (chunk.text.match(/ +$/)?.[0] ?? ""),
+					};
+					if (hasCursorInChunk) layoutLine.cursorPos = adjustedCursorPos;
+					layoutLines.push(layoutLine);
 				}
 			}
 		}

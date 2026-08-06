@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import { SettingsList } from "../src/components/settings-list.ts";
+import { Text } from "../src/components/text.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -88,6 +90,14 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	return cell.isItalic();
 }
 
+function isBufferLineWrapped(terminal: VirtualTerminal, row: number): boolean {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	assert.ok(line, `Missing buffer line at row ${row}`);
+	return line.isWrapped;
+}
+
 describe("TUI render scheduling", () => {
 	it("renders keyboard input without waiting for a throttled frame", async () => {
 		const terminal = new VirtualTerminal(40, 10);
@@ -110,6 +120,99 @@ describe("TUI render scheduling", () => {
 
 		assert.strictEqual(component.renderCount, renderCountBeforeInput + 1);
 		assert.deepStrictEqual(component.lines, ["typed"]);
+		tui.stop();
+	});
+});
+
+describe("TUI soft-wrap rendering", () => {
+	it("marks visual continuations as wrapped while keeping intentional line endings hard", async () => {
+		const terminal = new VirtualTerminal(12, 4);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const text = new Text("alpha beta gamma\nhard", 1, 0);
+		tui.addChild(text);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(
+			terminal
+				.getViewport()
+				.slice(0, 3)
+				.map((line) => line.trimEnd()),
+			[" alpha beta", " gamma", " hard"],
+		);
+		assert.strictEqual(isBufferLineWrapped(terminal, 1), true);
+		assert.strictEqual(isBufferLineWrapped(terminal, 2), false);
+
+		text.setText("alpha beta\ngamma");
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.strictEqual(isBufferLineWrapped(terminal, 1), false);
+
+		text.setText("alpha beta delta");
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(
+			terminal
+				.getViewport()
+				.slice(0, 2)
+				.map((line) => line.trimEnd()),
+			[" alpha beta", " delta"],
+		);
+		assert.strictEqual(isBufferLineWrapped(terminal, 1), true);
+
+		tui.stop();
+	});
+
+	it("renders short settings wraps as terminal continuations", async () => {
+		const terminal = new LoggingVirtualTerminal(14, 8);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const settings = new SettingsList(
+			[
+				{ id: "a", label: "A", currentValue: "x", description: "alpha beta very-long" },
+				{ id: "b", label: "B", currentValue: "x", description: "alpha beta x" },
+			],
+			10,
+			{
+				label: (text) => text,
+				value: (text) => text,
+				description: (text) => text,
+				cursor: "> ",
+				hint: (text) => text,
+			},
+			() => {},
+			() => {},
+		);
+		tui.addChild(settings);
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(isBufferLineWrapped(terminal, 4), true);
+		settings.handleInput("\x1b[B");
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(terminal.getViewport()[4]?.trimEnd(), "  x");
+		assert.strictEqual(isBufferLineWrapped(terminal, 4), true);
+		assert.ok(!terminal.getWrites().includes("pi:soft-wrap"));
+		tui.stop();
+	});
+
+	it("preserves exact-width continuations", async () => {
+		const terminal = new VirtualTerminal(12, 4);
+		const tui: TUI = new TuiMainScreen(terminal);
+		tui.addChild(new Text("a 123456789012 end", 1, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(
+			terminal
+				.getViewport()
+				.slice(0, 3)
+				.map((line) => line.trimEnd()),
+			[" a", " 1234567890", " 12 end"],
+		);
+		assert.strictEqual(isBufferLineWrapped(terminal, 1), true);
+		assert.strictEqual(isBufferLineWrapped(terminal, 2), true);
 		tui.stop();
 	});
 });
