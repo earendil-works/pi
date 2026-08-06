@@ -327,7 +327,17 @@ async function readOwnEntries(
 ): Promise<Entry[]> {
 	// A root-positioned lane has no entries, while an unchanged source leaf means
 	// the operation has not appended any entries.
-	if (leafId === null || leafId === sourceLeafId) return [];
+	if (leafId === null) {
+     if (sourceLeafId !== null) {
+       throw new RecordLogCorruption(
+         "inconsistent_step",
+         `Operation source leaf ${sourceLeafId} cannot restore with root current leaf`,
+       );
+     }
+     return [];
+   }
+
+   if (leafId === sourceLeafId) return [];
 
 	const newestFirst = await session.findEntriesOnBranch({
 		start: leafId,
