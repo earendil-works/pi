@@ -39,6 +39,7 @@ export type KnownProvider =
 	| "google"
 	| "google-vertex"
 	| "openai"
+	| "ollama-cloud"
 	| "azure-openai-responses"
 	| "openai-codex"
 	| "radius"

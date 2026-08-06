@@ -72,6 +72,7 @@ pi
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
+| Ollama Cloud | `OLLAMA_API_KEY` | `ollama-cloud` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
@@ -294,6 +295,16 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+### Ollama Cloud
+
+Run `/login ollama-cloud` to validate and save an Ollama Cloud API key, or set `OLLAMA_API_KEY`. Pi connects directly to `ollama.com`, refreshes the current cloud model catalog, and caches it in `models-store.json` for offline startup.
+
+```bash
+pi --provider ollama-cloud --model glm-5.2:cloud
+```
+
+The built-in `ollama-cloud` provider is separate from a local Ollama server configured in `models.json`. Use `ollama-cloud` for the hosted API and a distinct custom provider ID such as `ollama` for local models.
 
 ## llama.cpp
 

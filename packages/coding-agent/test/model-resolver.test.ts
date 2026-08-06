@@ -707,6 +707,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
+	test("ollama cloud defaults to its recommended coding model", () => {
+		expect(defaultModelPerProvider["ollama-cloud"]).toBe("glm-5.2:cloud");
+	});
+
 	test("ai-gateway default tracks current model", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});

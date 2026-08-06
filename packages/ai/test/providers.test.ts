@@ -39,6 +39,7 @@ describe("builtin providers", () => {
 		const providers = models.getProviders();
 		expect(providers.length).toBe(builtinProviders().length);
 		expect(providers.map((p) => p.id)).toContain("anthropic");
+		expect(providers.map((p) => p.id)).toContain("ollama-cloud");
 
 		const anthropic = models.getModel("anthropic", "claude-haiku-4-5");
 		expect(anthropic?.api).toBe("anthropic-messages");
@@ -46,7 +47,7 @@ describe("builtin providers", () => {
 		const all = models.getModels();
 		expect(all.length).toBeGreaterThan(500);
 
-		// Static providers list models immediately; Radius is purely dynamic.
+		// Static providers and Ollama Cloud's default list models immediately; Radius is purely dynamic.
 		for (const provider of providers) {
 			const list = models.getModels(provider.id);
 			if (provider.id === "radius") expect(list).toEqual([]);
