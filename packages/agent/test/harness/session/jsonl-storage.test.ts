@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
 import type {
 	Entry,
@@ -13,6 +13,7 @@ import type {
 	Session,
 } from "../../../src/harness/session/index.ts";
 import { JsonlSessionRepo } from "../../../src/harness/session/index.ts";
+import { FileError } from "../../../src/harness/types.ts";
 import type { AgentMessage } from "../../../src/types.ts";
 
 const tempDirs: string[] = [];
@@ -473,5 +474,24 @@ describe("JSONL v4 per-session storage", () => {
 		);
 		expect(valid.seq).toBe(1);
 		expect((await reopen(root, restored)).getEntry("valid")).resolves.toEqual(valid);
+	});
+
+	it("does not advance state or poison the write queue after an append failure", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		vi.spyOn(env, "appendFile").mockResolvedValueOnce({
+			ok: false,
+			error: new FileError("unknown", "injected append failure"),
+		});
+		const repository = new JsonlSessionRepo({ fs: env, sessionsRoot: root });
+		const session = await repository.create({ id: "append-failure", cwd: root });
+
+		await expect(session.appendCustomEntry("rejected")).rejects.toMatchObject({ code: "storage" });
+		expect(await session.getLog()).toEqual([]);
+		const committed = await session.appendEntry({ type: "custom", id: "committed", customType: "note" }, "main");
+		expect(committed.seq).toBe(1);
+
+		const reopened = await createRepository(root).open(await session.getMetadata());
+		expect(await reopened.getLog()).toEqual([{ kind: "entry", seq: 1, entry: committed }]);
 	});
 });

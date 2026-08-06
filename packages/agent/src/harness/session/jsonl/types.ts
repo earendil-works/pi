@@ -8,6 +8,7 @@ export type JsonlSessionRepoFileSystem = Pick<
 	| "readTextFile"
 	| "writeFile"
 	| "appendFile"
+	| "renameFile"
 	| "fileInfo"
 	| "listDir"
 	| "exists"

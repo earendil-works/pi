@@ -1,6 +1,7 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { assertJsonSerializable, Session } from "../session.ts";
 import { type Entry, type ForkOptions, type LanePointer, SessionError, type SessionRepo } from "../types.ts";
+import { publishFileAtomically } from "./atomic.ts";
 import { encodeHeader, metadataFromHeader, parseHeader } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
 import { JsonlSessionStorage } from "./storage.ts";
@@ -46,7 +47,7 @@ export class JsonlSessionRepo
 	}
 
 	async create(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
-		return (await this.createDirect(options)).session;
+		return this.createDirect(options);
 	}
 
 	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
@@ -89,19 +90,24 @@ export class JsonlSessionRepo
 			forkLanes = [{ lane: "main", leafId: targetId }];
 		}
 
-		const { session: target, storage: targetStorage } = await this.createDirect({
+		const { header, path } = await this.prepareCreate({
 			...options,
 			parentSessionId: options.parentSessionId ?? source.id,
 		});
-		for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
-		for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
-		const name = await sourceSession.getName();
-		if (name !== undefined) await target.setName(name);
-		for (const entry of copiedEntries) {
-			const label = await sourceSession.getLabel(entry.id);
-			if (label !== undefined) await target.setLabel(entry.id, label);
-		}
-		return target;
+		await publishFileAtomically(this.fs, path, async (tempPath) => {
+			fileResult(await this.fs.writeFile(tempPath, encodeHeader(header)), `Failed to stage fork ${path}`);
+			const fileInfo = fileResult(await this.fs.fileInfo(tempPath), `Failed to read staged fork metadata ${path}`);
+			const targetStorage = new JsonlSessionStorage(this.fs, metadataFromHeader(header, tempPath, fileInfo.mtimeMs));
+			for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
+			for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
+			const name = await sourceSession.getName();
+			if (name !== undefined) await targetStorage.setName(name);
+			for (const entry of copiedEntries) {
+				const label = await sourceSession.getLabel(entry.id);
+				if (label !== undefined) await targetStorage.setLabel(entry.id, label);
+			}
+		});
+		return new Session(await JsonlSessionStorage.load(this.fs, path));
 	}
 
 	private async openDirect(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
@@ -116,9 +122,16 @@ export class JsonlSessionRepo
 		return new Session(storage);
 	}
 
-	private async createDirect(options: JsonlSessionCreateOptions): Promise<{
-		session: Session<JsonlSessionMetadata>;
-		storage: JsonlSessionStorage;
+	private async createDirect(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
+		const { header, path } = await this.prepareCreate(options);
+		fileResult(await this.fs.writeFile(path, encodeHeader(header)), `Failed to create session ${path}`);
+		const fileInfo = fileResult(await this.fs.fileInfo(path), `Failed to read session metadata ${path}`);
+		return new Session(new JsonlSessionStorage(this.fs, metadataFromHeader(header, path, fileInfo.mtimeMs)));
+	}
+
+	private async prepareCreate(options: JsonlSessionCreateOptions): Promise<{
+		header: JsonlV4Header;
+		path: string;
 	}> {
 		const id = options.id ?? uuidv7();
 		validateSessionId(id);
@@ -145,10 +158,7 @@ export class JsonlSessionRepo
 			metadata: options.metadata,
 		};
 		fileResult(await this.fs.createDir(sessionDirectory, { recursive: true }), `Failed to create sessions directory`);
-		fileResult(await this.fs.writeFile(path, encodeHeader(header)), `Failed to create session ${path}`);
-		const fileInfo = fileResult(await this.fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		const storage = new JsonlSessionStorage(this.fs, metadataFromHeader(header, path, fileInfo.mtimeMs));
-		return { session: new Session(storage), storage };
+		return { header, path };
 	}
 
 	private async listDirect(options: JsonlSessionListOptions): Promise<JsonlSessionMetadata[]> {

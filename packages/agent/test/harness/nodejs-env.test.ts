@@ -193,6 +193,35 @@ describe("NodeExecutionEnv", () => {
 		expect(getOrThrow(await env.readTextFile("new/nested/file.txt"))).toBe("ab");
 	});
 
+	it("atomically renames a file and replaces the destination", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile("source.txt", "new"));
+		getOrThrow(await env.writeFile("destination.txt", "old"));
+
+		getOrThrow(await env.renameFile("source.txt", "destination.txt"));
+
+		expect(getOrThrow(await env.exists("source.txt"))).toBe(false);
+		expect(getOrThrow(await env.readTextFile("destination.txt"))).toBe("new");
+	});
+
+	it("reports the source path when rename fails because the source is missing", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		getOrThrow(await env.writeFile("destination.txt", "unchanged"));
+
+		const result = await env.renameFile("missing-source.txt", "destination.txt");
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				code: "not_found",
+				path: join(root, "missing-source.txt"),
+			},
+		});
+		expect(getOrThrow(await env.readTextFile("destination.txt"))).toBe("unchanged");
+	});
+
 	it("creates temporary directories and files", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -234,6 +263,7 @@ describe("NodeExecutionEnv", () => {
 			env.readTextLines("file.txt", { abortSignal: signal }),
 			env.readBinaryFile("file.txt", signal),
 			env.writeFile("other.txt", "hello", signal),
+			env.renameFile("file.txt", "renamed.txt", signal),
 			env.listDir(".", signal),
 		]);
 		for (const result of results) {

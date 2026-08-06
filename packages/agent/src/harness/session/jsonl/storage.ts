@@ -15,6 +15,7 @@ import {
 	type SessionStats,
 	type SessionStorage,
 } from "../types.ts";
+import { publishFileAtomically } from "./atomic.ts";
 import { encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
 import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem } from "./types.ts";
@@ -47,7 +48,9 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 				if (index !== physicalLines.length - 1 || !(error instanceof SessionError) || error.cause === undefined)
 					throw error;
 				const validPrefix = `${physicalLines.slice(0, index).join("\n")}\n`;
-				fileResult(await fs.writeFile(path, validPrefix), `Failed to truncate torn session tail ${path}`);
+				await publishFileAtomically(fs, path, async (tempPath) => {
+					fileResult(await fs.writeFile(tempPath, validPrefix), `Failed to stage torn-tail repair ${path}`);
+				});
 				return storage;
 			}
 			storage.applyMutation(mutation, path, index + 1);
