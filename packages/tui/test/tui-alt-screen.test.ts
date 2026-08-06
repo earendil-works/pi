@@ -874,28 +874,6 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("prints visual wraps as terminal continuations but keeps hard breaks on stop", async () => {
-		const terminal = new RecordingTerminal(12, 3);
-		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("alpha beta gamma\nhard", 1, 0));
-		tui.start();
-		await terminal.waitForRender();
-		tui.stop();
-
-		const restoreEvent = terminal.events.find(
-			(event) => event.type === "write" && event.data.includes("\x1b[?1049l") && event.data.includes("alpha"),
-		);
-		assert.ok(restoreEvent?.type === "write");
-		const betaEnd = restoreEvent.data.indexOf("beta") + "beta".length;
-		const gammaStart = restoreEvent.data.indexOf("gamma", betaEnd);
-		const gammaEnd = gammaStart + "gamma".length;
-		const hardStart = restoreEvent.data.indexOf("hard", gammaEnd);
-		assert.ok(betaEnd >= "beta".length && gammaStart > betaEnd && hardStart > gammaEnd);
-		assert.ok(!restoreEvent.data.slice(betaEnd, gammaStart).includes("\r\n"));
-		assert.ok(restoreEvent.data.slice(gammaEnd, hardStart).includes("\r\n"));
-		assert.ok(!restoreEvent.data.includes("pi:soft-wrap"));
-	});
-
 	it("restores keyboard state before leaving alt mode and prints the full document", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const tui = new TuiAltScreen(terminal);

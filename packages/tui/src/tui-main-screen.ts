@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
-import { getSoftWrapSeparator, stripSoftWrapMarkers, visibleWidth } from "./utils.ts";
+import { stripSoftWrapMarkers, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
@@ -177,40 +177,6 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		return this.deleteKittyImages(ids);
 	}
 
-	private isSoftWrapBoundary(lines: readonly string[], index: number): boolean {
-		return lines[index + 1] !== undefined && getSoftWrapSeparator(lines[index]!) !== undefined;
-	}
-
-	private expandChangedRangeForSoftWraps(
-		firstChanged: number,
-		lastChanged: number,
-		newLines: readonly string[],
-	): { firstChanged: number; lastChanged: number } {
-		let expandedFirstChanged = firstChanged;
-		let expandedLastChanged = lastChanged;
-		while (
-			expandedFirstChanged > 0 &&
-			(this.isSoftWrapBoundary(this.previousLines, expandedFirstChanged - 1) ||
-				this.isSoftWrapBoundary(newLines, expandedFirstChanged - 1))
-		) {
-			expandedFirstChanged--;
-		}
-		const maxLines = Math.max(this.previousLines.length, newLines.length);
-		while (
-			expandedLastChanged + 1 < maxLines &&
-			(this.isSoftWrapBoundary(this.previousLines, expandedLastChanged) ||
-				this.isSoftWrapBoundary(newLines, expandedLastChanged))
-		) {
-			expandedLastChanged++;
-		}
-		return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
-	}
-
-	private prepareTerminalLine(line: string, width: number, padToWidth: boolean): string {
-		const terminalLine = stripSoftWrapMarkers(line);
-		return padToWidth ? terminalLine + " ".repeat(Math.max(0, width - visibleWidth(terminalLine))) : terminalLine;
-	}
-
 	protected doRender(): void {
 		if (this.stopped) return;
 		const width = this.terminal.columns;
@@ -234,6 +200,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		if (this.hasOverlayEntries) {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
+		newLines = newLines.map(stripSoftWrapMarkers);
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
@@ -249,10 +216,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
 			}
 			for (let i = 0; i < newLines.length; i++) {
-				const isSoftWrapContinuation = i > 0 && this.isSoftWrapBoundary(newLines, i - 1);
-				if (i > 0 && !isSoftWrapContinuation) buffer += "\r\n";
+				if (i > 0) buffer += "\r\n";
 				const line = newLines[i];
-				const softWrapAfter = this.isSoftWrapBoundary(newLines, i);
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
 				if (imageReservedRows > 1 && imageReservedRows <= height) {
@@ -265,7 +230,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					i += imageReservedRows - 1;
 					continue;
 				}
-				buffer += this.prepareTerminalLine(line, width, softWrapAfter || isSoftWrapContinuation);
+				buffer += line;
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
@@ -350,14 +315,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			lastChanged = newLines.length - 1;
 		}
 		if (firstChanged !== -1) {
-			const imageRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
-			const softWrapRange = this.expandChangedRangeForSoftWraps(
-				imageRange.firstChanged,
-				imageRange.lastChanged,
-				newLines,
-			);
-			firstChanged = softWrapRange.firstChanged;
-			lastChanged = softWrapRange.lastChanged;
+			const expandedRange = this.expandChangedRangeForKittyImages(firstChanged, lastChanged, newLines);
+			firstChanged = expandedRange.firstChanged;
+			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
 
@@ -459,10 +419,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// This reduces flicker when only a single line changes (e.g., spinner animation)
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
-			const isSoftWrapContinuation = i > firstChanged && this.isSoftWrapBoundary(newLines, i - 1);
-			if (i > firstChanged && !isSoftWrapContinuation) buffer += "\r\n";
+			if (i > firstChanged) buffer += "\r\n";
 			const line = newLines[i];
-			const softWrapAfter = this.isSoftWrapBoundary(newLines, i);
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
@@ -486,7 +444,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				continue;
 			}
 
-			if (!isSoftWrapContinuation) buffer += "\x1b[2K"; // Clearing a continuation removes its wrapped flag.
+			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(this.logDirectory, "pi-crash.log");
@@ -515,7 +473,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				].join("\n");
 				throw new Error(errorMsg);
 			}
-			buffer += this.prepareTerminalLine(line, width, softWrapAfter || isSoftWrapContinuation);
+			buffer += line;
 		}
 
 		// Track where cursor ended up after rendering

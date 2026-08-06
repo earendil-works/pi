@@ -233,20 +233,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
-			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${ENABLE_AUTOWRAP}`;
+			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
 			for (let row = 0; row < this.lastDocument.length; row++) {
-				const line = this.lastDocument[row] ?? "";
-				const isSoftWrapContinuation =
-					row > 0 && getSoftWrapSeparator(this.lastDocument[row - 1] ?? "") !== undefined;
-				const softWrapAfter = row + 1 < this.lastDocument.length && getSoftWrapSeparator(line) !== undefined;
-				if (!isSoftWrapContinuation) buffer += row > 0 ? "\r\n\r\x1b[2K" : "\r\x1b[2K";
-				const terminalLine = stripSoftWrapMarkers(line);
-				buffer +=
-					softWrapAfter || isSoftWrapContinuation
-						? terminalLine + " ".repeat(Math.max(0, width - visibleWidth(terminalLine)))
-						: terminalLine;
+				if (row > 0) buffer += "\r\n";
+				buffer += `\r\x1b[2K${stripSoftWrapMarkers(this.lastDocument[row] ?? "")}`;
 			}
-			buffer += `\x1b[0m\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
+			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
 		}
 		if (this.savedCapabilities) {
