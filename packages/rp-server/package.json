@@ -1,0 +1,43 @@
+{
+	"name": "@earendil-works/pi-rp-server",
+	"version": "0.83.0",
+	"description": "Thin roleplay agent server for the Kumos Android app",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-agent-core": "^0.83.0"
+	},
+	"keywords": [
+		"ai",
+		"agent",
+		"roleplay",
+		"android"
+	],
+	"license": "MIT",
+	"private": true,
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"typescript": "5.9.3",
+		"vitest": "4.1.9"
+	}
+}

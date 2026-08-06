@@ -801,7 +801,8 @@
 			"license": "Apache-2.0",
 			"engines": {
 				"node": ">=8.0.0"
-			}
+			},
+			"peer": true
 		},
 		"node_modules/@opentelemetry/semantic-conventions": {
 			"version": "1.41.1",
@@ -1854,7 +1855,8 @@
 			"license": "MIT",
 			"funding": {
 				"url": "https://github.com/sponsors/colinhacks"
-			}
+			},
+			"peer": true
 		},
 		"node_modules/zod-to-json-schema": {
 			"version": "3.25.2",
