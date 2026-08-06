@@ -28,6 +28,9 @@ export function loadClipboardNative(
 	return null;
 }
 
-const clipboard = !process.env.TERMUX_VERSION && hasDisplay ? loadClipboardNative() : null;
+// On Linux, each native clipboard call creates an X11 event thread that keeps
+// its connection alive. Platform clipboard commands avoid leaking connections.
+const clipboard =
+	process.platform !== "linux" && !process.env.TERMUX_VERSION && hasDisplay ? loadClipboardNative() : null;
 
 export { clipboard };

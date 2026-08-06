@@ -29,4 +29,24 @@ describe("loadClipboardNative", () => {
 
 		expect(loadClipboardNative([missing])).toBeNull();
 	});
+
+	test("does not initialize the native clipboard on Linux", async () => {
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		if (!platformDescriptor) {
+			throw new Error("process.platform descriptor is unavailable");
+		}
+
+		try {
+			vi.stubEnv("DISPLAY", ":0");
+			Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
+			vi.resetModules();
+
+			const linuxModule = await import("../src/utils/clipboard-native.ts");
+			expect(linuxModule.clipboard).toBeNull();
+		} finally {
+			Object.defineProperty(process, "platform", platformDescriptor);
+			vi.unstubAllEnvs();
+			vi.resetModules();
+		}
+	});
 });

@@ -145,15 +145,20 @@ describe("readClipboardImage", () => {
 		expect(Array.from(result?.bytes ?? [])).toEqual([4, 5, 6]);
 	});
 
-	test("Non-Wayland: uses clipboard", async () => {
-		mocks.spawnSync.mockImplementation(() => {
-			throw new Error(
-				"spawnSync should not be called for non-Wayland sessions when native clipboard returns an image",
-			);
+	test("X11: uses xclip and never calls the native clipboard", async () => {
+		mocks.clipboard.hasImage.mockImplementation(() => {
+			throw new Error("clipboard.hasImage should not be called on Linux");
 		});
 
-		mocks.clipboard.hasImage.mockReturnValue(true);
-		mocks.clipboard.getImageBinary.mockResolvedValue(new Uint8Array([7]));
+		mocks.spawnSync.mockImplementation((command, args, _options) => {
+			if (command === "xclip" && args.includes("TARGETS")) {
+				return spawnOk(Buffer.from("image/png\n", "utf-8"));
+			}
+			if (command === "xclip" && args.includes("image/png")) {
+				return spawnOk(Buffer.from([7]));
+			}
+			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+		});
 
 		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
@@ -162,23 +167,15 @@ describe("readClipboardImage", () => {
 		expect(Array.from(result?.bytes ?? [])).toEqual([7]);
 	});
 
-	test("Non-Wayland: falls back to xclip when clipboard has no image", async () => {
-		mocks.spawnSync.mockImplementation((command, args, _options) => {
-			if (command === "xclip" && args.includes("TARGETS")) {
-				return spawnOk(Buffer.from("image/png\n", "utf-8"));
-			}
-			if (command === "xclip" && args.includes("image/png")) {
-				return spawnOk(Buffer.from([8, 9]));
-			}
-			throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+	test("X11: returns null without using the native clipboard when xclip is unavailable", async () => {
+		mocks.clipboard.hasImage.mockImplementation(() => {
+			throw new Error("clipboard.hasImage should not be called on Linux");
 		});
-
-		mocks.clipboard.hasImage.mockReturnValue(false);
+		mocks.spawnSync.mockReturnValue(spawnError(new Error("xclip unavailable")));
 
 		const { readClipboardImage } = await import("../src/utils/clipboard-image.ts");
 		const result = await readClipboardImage({ platform: "linux", env: {} });
-		expect(result).not.toBeNull();
-		expect(result?.mimeType).toBe("image/png");
-		expect(Array.from(result?.bytes ?? [])).toEqual([8, 9]);
+		expect(result).toBeNull();
+		expect(mocks.clipboard.getImageBinary).not.toHaveBeenCalled();
 	});
 });
