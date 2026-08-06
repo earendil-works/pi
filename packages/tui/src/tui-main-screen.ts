@@ -206,16 +206,34 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		newLines = this.applyLineResets(newLines);
 
-		// Helper to clear scrollback and viewport and render all new lines
-		const fullRender = (clear: boolean): void => {
+		// Helper to clear viewport (and optionally scrollback) and render new lines.
+		//
+		// `clear` modes:
+		//   false        - first render only; assumes a clean screen and writes everything.
+		//   true         - clear visible viewport (\x1b[2J\x1b[H) but PRESERVE scrollback.
+		//                  Only the last `height` lines of newLines are written so we don't
+		//                  duplicate content into scrollback that the natural-scroll path
+		//                  has already pushed there during prior renders. Use this for
+		//                  content-driven redraws (e.g. firstChanged above viewport).
+		//   "scrollback" - clear viewport AND scrollback (\x1b[2J\x1b[H\x1b[3J), then
+		//                  write all of newLines so the terminal scrolls them in fresh.
+		//                  Reserved for cases where existing scrollback would be visually
+		//                  wrong (e.g. width change re-flows wrapping).
+		const fullRender = (clear: boolean | "scrollback"): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			if (clear) {
+			if (clear === "scrollback") {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
+			} else if (clear === true) {
+				buffer += this.deleteKittyImages(this.previousKittyImageIds);
+				buffer += "\x1b[2J\x1b[H"; // Clear screen + home, preserve scrollback
 			}
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
+			// For viewport-only clear, write only what fits on screen so we don't push
+			// duplicate copies of earlier content into scrollback.
+			const startLine = clear === true ? Math.max(0, newLines.length - height) : 0;
+			for (let i = startLine; i < newLines.length; i++) {
+				if (i > startLine) buffer += "\r\n";
 				const line = newLines[i];
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
@@ -235,8 +253,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			this.terminal.write(buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
-			// Reset max lines when clearing, otherwise track growth
-			if (clear) {
+			// Reset max lines on scrollback wipe, otherwise track growth
+			if (clear === "scrollback") {
 				this.maxLinesRendered = newLines.length;
 			} else {
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -266,10 +284,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			return;
 		}
 
-		// Width changes always need a full re-render because wrapping changes.
+		// Width changes invalidate existing scrollback because wrapping changes,
+		// so this is one of the few cases where wiping scrollback is justified.
 		if (widthChanged) {
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			fullRender(true);
+			fullRender("scrollback");
 			return;
 		}
 
