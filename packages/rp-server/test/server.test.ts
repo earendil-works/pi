@@ -328,6 +328,15 @@ describe("rp-server", () => {
 			expect(kinds[0]).toBe("reply_start");
 			expect(kinds).toContain("thinking");
 			expect(kinds).toContain("text");
+			const thinkingTool = narrative.find(
+				(response): response is Extract<ServerResponse, { type: "narrative" }> =>
+					response.type === "narrative" && response.event.kind === "thinking",
+			);
+			expect(
+				thinkingTool?.type === "narrative" && thinkingTool.event.kind === "thinking"
+					? thinkingTool.event.tool
+					: undefined,
+			).toBe("memory_search");
 			const text = narrative
 				.filter(
 					(response): response is Extract<ServerResponse, { type: "narrative" }> => response.type === "narrative",

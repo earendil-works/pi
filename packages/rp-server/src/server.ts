@@ -146,7 +146,7 @@ export class RpServer {
 				}
 				break;
 			case "tool_execution_start":
-				this.emit({ type: "narrative", event: { kind: "thinking" } });
+				this.emit({ type: "narrative", event: { kind: "thinking", tool: event.toolName } });
 				break;
 		}
 	}

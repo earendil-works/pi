@@ -35,7 +35,10 @@ export type ServerRequest =
 	| { type: "abort" }
 	| { type: "ping" };
 
-export type NarrativeEvent = { kind: "reply_start" } | { kind: "text"; text: string } | { kind: "thinking" };
+export type NarrativeEvent =
+	| { kind: "reply_start" }
+	| { kind: "text"; text: string }
+	| { kind: "thinking"; tool?: string };
 
 export type ServerResponse =
 	| { type: "ready" }
