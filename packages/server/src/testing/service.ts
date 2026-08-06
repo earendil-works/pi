@@ -1,9 +1,9 @@
 import type {
 	ModelMetadata,
 	ModelRef,
+	SessionMetadata,
 	SessionPhase,
 	SessionSnapshot,
-	SessionSummary,
 	ThinkingLevel,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
@@ -202,7 +202,7 @@ export class TestServerService implements PiServerService {
 	lastCreatedId?: string;
 	private nextListDelay?: ListDelay;
 
-	async listSessions(): Promise<SessionSummary[]> {
+	async listSessions(): Promise<SessionMetadata[]> {
 		const delay = this.nextListDelay;
 		if (delay) {
 			this.nextListDelay = undefined;
@@ -211,15 +211,10 @@ export class TestServerService implements PiServerService {
 		}
 		return [...this.sessions.values()].map(({ snapshot }) => ({
 			id: snapshot.id,
-			name: snapshot.name,
-			cwd: snapshot.cwd,
 			createdAt: snapshot.createdAt,
 			updatedAt: snapshot.updatedAt,
-			phase: snapshot.phase,
-			model: snapshot.model,
-			thinkingLevel: snapshot.thinkingLevel,
-			attached: false,
-			locked: this.locked.has(snapshot.id),
+			sessionName: snapshot.name,
+			cwd: snapshot.cwd,
 		}));
 	}
 

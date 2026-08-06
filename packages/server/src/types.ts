@@ -2,9 +2,9 @@ import type {
 	Command,
 	ModelMetadata,
 	ModelRef,
+	SessionMetadata,
 	SessionPhase,
 	SessionSnapshot,
-	SessionSummary,
 	ThinkingLevel,
 	TranscriptProgress,
 } from "@earendil-works/pi-protocol";
@@ -53,7 +53,7 @@ export interface PiSessionRuntime {
 
 /** Service boundary for durable sessions and exclusively acquired runtimes. */
 export interface PiServerService {
-	listSessions(): Promise<SessionSummary[]>;
+	listSessions(): Promise<SessionMetadata[]>;
 	listModels(): Promise<ModelMetadata[]>;
 	createSession(options: CreateSessionOptions): Promise<PiSessionRuntime>;
 	openSession(sessionId: string): Promise<PiSessionRuntime>;

@@ -72,7 +72,7 @@ export class PiServer {
 			service,
 			connections: this.connections,
 			isClosing: () => this.closing,
-			listSessions: (connection) => this.sessions.listSummaries(connection),
+			listSessions: () => this.sessions.listMetadata(),
 			sendMessage: (connection, message) => this.sendMessage(connection, message),
 			reportError: (error) => this.reportError(error),
 		});
@@ -227,7 +227,7 @@ export class PiServer {
 			return;
 		}
 
-		const snapshot = await this.snapshots.get(undefined, state);
+		const snapshot = await this.snapshots.get();
 		if (this.closing || state.disconnected || state.stage !== "handshaking" || state.connection.closed) return;
 		const sent = await this.sendMessage(state, {
 			type: "hello",
@@ -240,7 +240,7 @@ export class PiServer {
 			state.stage = "ready";
 			clearTimeout(state.handshakeTimeout);
 			if (snapshot.revision !== this.snapshots.currentRevision) {
-				const current = await this.snapshots.get(undefined, state);
+				const current = await this.snapshots.get();
 				await this.sendMessage(state, {
 					type: "event",
 					event: { type: "server_snapshot", snapshot: current },

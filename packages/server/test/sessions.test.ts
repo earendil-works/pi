@@ -130,10 +130,16 @@ describe("PiServer Unix integration", () => {
 		});
 
 		const listed = await client.request({ command: "list" });
-		expect(listed).toMatchObject({
-			ok: true,
-			result: { command: "list", sessions: [{ id: service.lastCreatedId, attached: true, locked: true }] },
-		});
+		if (!listed.ok || listed.result.command !== "list") throw new Error("List failed");
+		expect(listed.result.sessions).toEqual([
+			{
+				id: service.lastCreatedId,
+				createdAt: 1,
+				updatedAt: 1,
+				sessionName: "Created",
+				cwd: "/work",
+			},
+		]);
 		const detached = await client.request({ command: "detach", sessionId: createdId });
 		expect(detached).toMatchObject({ ok: true, result: { command: "detach", sessionId: createdId } });
 		expect(service.latestRuntime(createdId).disposeCount).toBe(1);
@@ -143,6 +149,37 @@ describe("PiServer Unix integration", () => {
 		const attached = await attach(client, createdId);
 		expect(attached.id).toBe(service.lastCreatedId);
 		expect(service.runtimes.get(createdId)?.length).toBe(2);
+	});
+
+	test("preserves backend metadata while refreshing live session metadata", async () => {
+		class ExtendedMetadataService extends MemoryService {
+			override async listSessions() {
+				return (await super.listSessions()).map((metadata) => ({
+					...metadata,
+					parentSessionId: "parent-1",
+					sessionName: "stale name",
+				}));
+			}
+		}
+		const service = new ExtendedMetadataService();
+		service.seed("session-1", "Live name");
+		const { server } = await startServer(service);
+		const client = await connect(server);
+		await client.hello();
+		await attach(client, "session-1");
+
+		const listed = await client.request({ command: "list" });
+		if (!listed.ok || listed.result.command !== "list") throw new Error("List failed");
+		expect(listed.result.sessions).toEqual([
+			{
+				id: "session-1",
+				createdAt: 1,
+				updatedAt: 1,
+				parentSessionId: "parent-1",
+				sessionName: "Live name",
+				cwd: "/tmp/pi-server-conformance",
+			},
+		]);
 	});
 
 	test("keeps multiple attachments on one connection independent", async () => {
@@ -227,10 +264,16 @@ describe("PiServer Unix integration", () => {
 		await second.hello();
 		await attach(first, "session-1");
 		const secondList = await second.request({ command: "list" });
-		expect(secondList).toMatchObject({
-			ok: true,
-			result: { sessions: [{ id: "session-1", attached: false, locked: true }] },
-		});
+		if (!secondList.ok || secondList.result.command !== "list") throw new Error("List failed");
+		expect(secondList.result.sessions).toEqual([
+			{
+				id: "session-1",
+				createdAt: 1,
+				updatedAt: 1,
+				sessionName: "Session session-1",
+				cwd: "/tmp/pi-server-conformance",
+			},
+		]);
 		await attach(second, "session-1");
 		expect(service.runtimes.get("session-1")?.length).toBe(1);
 

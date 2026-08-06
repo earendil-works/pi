@@ -100,6 +100,38 @@ describe("protocol validation", () => {
 		expect(parseServerMessage(serverHello)).toEqual(serverHello);
 	});
 
+	test("represents listed sessions as durable metadata", () => {
+		const message = {
+			type: "response",
+			id: "request-1",
+			ok: true,
+			result: {
+				command: "list",
+				sessions: [
+					{
+						id: "session-1",
+						createdAt: 1,
+						updatedAt: 2,
+						parentSessionId: "parent-1",
+						sessionName: "Named session",
+						cwd: "/workspace",
+					},
+				],
+			},
+		} as const;
+
+		expect(parseServerMessage(message)).toEqual(message);
+		expect(() =>
+			parseServerMessage({
+				...message,
+				result: {
+					...message.result,
+					sessions: [{ id: "session-1", createdAt: 1, phase: "idle" }],
+				},
+			}),
+		).toThrow(ProtocolValidationError);
+	});
+
 	test.each(["not_implemented", "internal_error"] as const)("accepts the %s error code", (code) => {
 		const message: ServerMessage = {
 			type: "response",

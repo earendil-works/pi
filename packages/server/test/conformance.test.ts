@@ -158,7 +158,10 @@ describe("Unix transport conformance", () => {
 		);
 		expect(catchup).toMatchObject({
 			type: "event",
-			event: { type: "server_snapshot", snapshot: { sessions: [{ id: "shared", locked: true }] } },
+			event: {
+				type: "server_snapshot",
+				snapshot: { sessions: [{ id: "shared", sessionName: "Session shared" }] },
+			},
 		});
 	});
 
