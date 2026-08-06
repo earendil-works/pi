@@ -153,13 +153,14 @@ function finalizeTruncatedResult(
 	pad: boolean,
 ): string {
 	const reset = "\x1b[0m";
+	const hyperlinkClose = getActiveOsc8Close(prefix);
 	const visibleWidth = prefixWidth + ellipsisWidth;
 	let result: string;
 
 	if (ellipsis.length > 0) {
-		result = `${prefix}${reset}${ellipsis}${reset}`;
+		result = `${prefix}${hyperlinkClose}${reset}${ellipsis}${reset}`;
 	} else {
-		result = `${prefix}${reset}`;
+		result = `${prefix}${hyperlinkClose}${reset}`;
 	}
 
 	return pad ? result + " ".repeat(Math.max(0, maxWidth - visibleWidth)) : result;
@@ -476,6 +477,28 @@ function formatOsc8Hyperlink(hyperlink: ActiveHyperlink): string {
 
 function formatOsc8Close(terminator: Osc8Terminator): string {
 	return `\x1b]8;;${terminator}`;
+}
+
+function getActiveOsc8Close(prefix: string): string {
+	if (!prefix.includes("\x1b]8;")) {
+		return "";
+	}
+
+	let activeHyperlink: ActiveHyperlink | null = null;
+	let i = 0;
+	while (i < prefix.length) {
+		const ansi = extractAnsiCode(prefix, i);
+		if (ansi) {
+			const hyperlink = parseOsc8Hyperlink(ansi.code);
+			if (hyperlink !== undefined) {
+				activeHyperlink = hyperlink;
+			}
+			i += ansi.length;
+		} else {
+			i++;
+		}
+	}
+	return activeHyperlink ? formatOsc8Close(activeHyperlink.terminator) : "";
 }
 
 /**

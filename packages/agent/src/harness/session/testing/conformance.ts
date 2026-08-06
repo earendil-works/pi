@@ -39,14 +39,23 @@ function createAssistantMessage(text: string): AgentMessage {
 	};
 }
 
-function operationStarted(id: string, lane = "main"): NewRecord<OperationStartedRecord> {
-	return {
-		type: "operation_started",
-		id,
-		lane,
-		sourceLeafId: null,
-		intent: { kind: "run", originalPrompt: [], initialMessages: [] },
-	};
+function operationStarted(
+	id: string,
+	{ lane, kind }: { lane: string; kind: OperationStartedRecord["intent"]["kind"] },
+): NewRecord<OperationStartedRecord> {
+	let intent: OperationStartedRecord["intent"];
+	switch (kind) {
+		case "run":
+			intent = { kind, originalPrompt: [], initialMessages: [] };
+			break;
+		case "compaction":
+			intent = { kind, resultEntryId: `${id}-result` };
+			break;
+		case "navigation":
+			intent = { kind, targetId: null, summarize: false };
+			break;
+	}
+	return { type: "operation_started", id, lane, sourceLeafId: null, intent };
 }
 
 async function entryIds(entries: Promise<Entry[]>): Promise<string[]> {
@@ -99,7 +108,7 @@ export function createSessionBackendConformance(
 					{ type: "custom", id: "child", customType: "note", data: { value: 1 } },
 					"thread",
 				);
-				const record = await session.appendRecord(operationStarted("run", "thread"));
+				const record = await session.appendRecord(operationStarted("run", { lane: "thread", kind: "run" }));
 				await session.setName("Example");
 				await session.setLabel(root.id, "checkpoint");
 				await session.moveLane("main", child.id);
@@ -175,8 +184,11 @@ export function createSessionBackendConformance(
 				{ type: "message", id: "shared", message: createUserMessage("root") },
 				"main",
 			);
-			await rejectsWithCode(session.appendRecord(operationStarted("shared")), "already_exists");
-			await session.appendRecord(operationStarted("run"));
+			await rejectsWithCode(
+				session.appendRecord(operationStarted("shared", { lane: "main", kind: "run" })),
+				"already_exists",
+			);
+			await session.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
 			await rejectsWithCode(
 				session.appendEntry<CustomEntry>({ type: "custom", id: "run", customType: "note" }, "main"),
 				"already_exists",
@@ -228,6 +240,10 @@ export function createSessionBackendConformance(
 			await rejectsWithCode(thread.findEntriesOnBranch({ cursor: { afterSeq: -1 } }), "invalid_query");
 			await rejectsWithCode(thread.findEntryOnBranch({ limit: 0 }), "invalid_query");
 			await rejectsWithCode(session.findRecords({ limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findRecords({ operationKind: "run" }), "invalid_query");
+			await rejectsWithCode(session.findRecords({ type: "step_attempt", operationKind: "run" }), "invalid_query");
+			await rejectsWithCode(session.findOpenOperations("main", { limit: 0 }), "invalid_query");
+			await rejectsWithCode(session.findOpenOperations("main", { limit: -1 }), "invalid_query");
 			await rejectsWithCode(session.getLog({ afterSeq: -1 }), "invalid_query");
 		}),
 
@@ -296,7 +312,7 @@ export function createSessionBackendConformance(
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
 				await session.createLane("thread", null);
-				await session.appendRecord(operationStarted("old-run", "thread"));
+				await session.appendRecord(operationStarted("old-run", { lane: "thread", kind: "run" }));
 				await session.appendRecord({
 					type: "queue_enqueued",
 					id: "old-next-run",
@@ -355,7 +371,7 @@ export function createSessionBackendConformance(
 			"filters records by lane type run sequence and order",
 			async (repository) => {
 				const session = await repository.create({ id: "session" });
-				await session.appendRecord(operationStarted("run-1"));
+				await session.appendRecord(operationStarted("run-1", { lane: "main", kind: "run" }));
 				await session.appendRecord({
 					type: "step_attempt",
 					id: "attempt-1",
@@ -366,7 +382,7 @@ export function createSessionBackendConformance(
 					resultEntryId: "assistant-1",
 				});
 				await session.createLane("thread", null);
-				await session.appendRecord(operationStarted("run-2", "thread"));
+				await session.appendRecord(operationStarted("run-2", { lane: "thread", kind: "run" }));
 				await session.appendRecord({
 					type: "step_attempt",
 					id: "attempt-2",
@@ -393,6 +409,142 @@ export function createSessionBackendConformance(
 					(await session.findRecords({ limit: 1 })).map((record) => record.id),
 					["attempt-2"],
 				);
+			},
+		),
+
+		createCase(factory, "records and log", "filters operation starts by operation kind", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			await session.appendRecord(operationStarted("run-old", { lane: "main", kind: "run" }));
+			await session.appendRecord({
+				type: "operation_finished",
+				id: "run-old-finished",
+				lane: "main",
+				runId: "run-old",
+				outcome: "completed",
+			});
+			await session.appendRecord(operationStarted("compaction", { lane: "main", kind: "compaction" }));
+			await session.appendRecord({
+				type: "operation_finished",
+				id: "compaction-finished",
+				lane: "main",
+				runId: "compaction",
+				outcome: "completed",
+			});
+			await session.appendRecord(operationStarted("navigation", { lane: "main", kind: "navigation" }));
+			await session.appendRecord({
+				type: "operation_finished",
+				id: "navigation-finished",
+				lane: "main",
+				runId: "navigation",
+				outcome: "completed",
+			});
+			await session.appendRecord(operationStarted("run-new", { lane: "main", kind: "run" }));
+
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "run",
+						order: "oldestFirst",
+					})
+				).map((record) => record.id),
+				["run-old", "run-new"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "compaction",
+					})
+				).map((record) => record.id),
+				["compaction"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "navigation",
+					})
+				).map((record) => record.id),
+				["navigation"],
+			);
+			deepStrictEqual(
+				(
+					await session.findRecords({
+						type: "operation_started",
+						operationKind: "run",
+						limit: 1,
+					})
+				).map((record) => record.id),
+				["run-new"],
+			);
+		}),
+
+		createCase(factory, "records and log", "tracks and enforces one open operation per lane", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), []);
+
+			const first = await session.appendRecord(operationStarted("first", { lane: "main", kind: "run" }));
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [first]);
+			await rejectsWithCode(
+				session.appendRecord(operationStarted("second", { lane: "main", kind: "run" })),
+				"storage",
+			);
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [first]);
+
+			await session.appendRecord({
+				type: "operation_finished",
+				id: "finish-first",
+				lane: "main",
+				runId: first.id,
+				outcome: "completed",
+			});
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), []);
+		}),
+
+		createCase(
+			factory,
+			"records and log",
+			"does not let an earlier finish close a later start",
+			async (repository) => {
+				const session = await repository.create({ id: "session" });
+				await session.appendRecord({
+					type: "operation_finished",
+					id: "finish-before-start",
+					lane: "main",
+					runId: "run",
+					outcome: "completed",
+				});
+				const started = await session.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
+				deepStrictEqual(await session.findOpenOperations("main", { limit: 2 }), [started]);
+			},
+		),
+
+		createCase(factory, "records and log", "scopes open operations by lane and limit", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			await session.createLane("thread", null);
+			const mainRun = await session.appendRecord(operationStarted("main-run", { lane: "main", kind: "run" }));
+			const threadNavigation = await session.appendRecord(
+				operationStarted("thread-navigation", { lane: "thread", kind: "navigation" }),
+			);
+
+			deepStrictEqual(await session.findOpenOperations("main"), [mainRun]);
+			deepStrictEqual(await session.findOpenOperations("main", { limit: 1 }), [mainRun]);
+			deepStrictEqual(await session.findOpenOperations("thread", { limit: 2 }), [threadNavigation]);
+		}),
+
+		createCase(
+			factory,
+			"validation and immutability",
+			"returns immutable open-operation records",
+			async (repository) => {
+				const session = await repository.create({ id: "session" });
+				const committed = await session.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
+				const [read] = await session.findOpenOperations("main");
+				if (read?.intent.kind !== "run") throw new Error("Expected an open run operation");
+				read.intent.originalPrompt.push(createUserMessage("mutated"));
+
+				deepStrictEqual(await session.findOpenOperations("main"), [committed]);
 			},
 		),
 
@@ -466,6 +618,7 @@ export function createSessionBackendConformance(
 				await session.setName("Second");
 				await session.setLabel("user", "keep");
 				await session.setLabel("user", undefined);
+				await rejectsWithCode(session.setLabel("missing", "checkpoint"), "not_found");
 
 				strictEqual(await session.getName(), "Second");
 				strictEqual(await session.getLabel("user"), undefined);
@@ -644,7 +797,10 @@ export function createSessionBackendConformance(
 
 				deepStrictEqual(await session.findRecords(), []);
 				deepStrictEqual(await session.getLog(), []);
-				strictEqual((await session.appendRecord(operationStarted("valid-record"))).seq, 1);
+				strictEqual(
+					(await session.appendRecord(operationStarted("valid-record", { lane: "main", kind: "run" }))).seq,
+					1,
+				);
 			},
 		),
 
@@ -691,7 +847,11 @@ export function createSessionBackendConformance(
 			const entryId = await session.appendMessage(createUserMessage("persisted"));
 			const metadata = await session.getMetadata();
 
-			deepStrictEqual(await repository.list(), [metadata]);
+			const listed = await repository.list();
+			strictEqual(listed.length, 1);
+			strictEqual(listed[0]?.id, metadata.id);
+			strictEqual(listed[0]?.createdAt, metadata.createdAt);
+			strictEqual(listed[0]?.parentSessionId, metadata.parentSessionId);
 			deepStrictEqual(await entryIds((await repository.open(metadata)).findEntries()), [entryId]);
 			await rejectsWithCode(repository.create({ id: "one" }), "already_exists");
 		}),
@@ -719,7 +879,7 @@ export function createSessionBackendConformance(
 				await source.setName("Source");
 				await source.setLabel(shared, "copied");
 				await source.setLabel(threadChild, "excluded");
-				await source.appendRecord(operationStarted("run"));
+				await source.appendRecord(operationStarted("run", { lane: "main", kind: "run" }));
 				await source.appendRecord({
 					type: "usage",
 					id: "source-usage",
@@ -749,12 +909,14 @@ export function createSessionBackendConformance(
 				strictEqual(await fork.getLabel(threadChild), undefined);
 				deepStrictEqual(await fork.findRecords(), []);
 				deepStrictEqual(await fork.getStats(), {
-					messageCount: 0,
+					messageCount: 3,
 					cachedTokens: 0,
 					uncachedTokens: 0,
 					totalTokens: 0,
 					costTotal: 0,
 				});
+				await fork.appendMessage(createUserMessage("after fork"));
+				strictEqual((await fork.getStats()).messageCount, 4);
 				const metadata = await fork.getMetadata();
 				deepStrictEqual(
 					{ id: metadata.id, parentSessionId: metadata.parentSessionId },
@@ -778,6 +940,7 @@ export function createSessionBackendConformance(
 				{ lane: "thread", leafId: threadChild },
 			]);
 			strictEqual(await fork.getLabel(threadChild), "thread-tip");
+			strictEqual((await fork.getStats()).messageCount, 3);
 			deepStrictEqual(
 				(await fork.getLog()).filter((item) => item.kind === "lane"),
 				[

@@ -397,26 +397,34 @@ describe("SettingsManager", () => {
 		});
 	});
 
-	describe("UI mode", () => {
+	describe("TUI mode", () => {
 		it("defaults to regular and persists fullscreen mode", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getUiMode()).toBe("regular");
+			expect(manager.getTuiMode()).toBe("regular");
 
-			manager.setUiMode("fullscreen");
+			manager.setTuiMode("fullscreen");
 			await manager.flush();
 
-			expect(manager.getUiMode()).toBe("fullscreen");
+			expect(manager.getTuiMode()).toBe("fullscreen");
 			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
-			expect(savedSettings.uiMode).toBe("fullscreen");
+			expect(savedSettings.tuiMode).toBe("fullscreen");
 		});
 
 		it("falls back to regular for unsupported values", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ uiMode: "other" }));
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tuiMode: "other" }));
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getUiMode()).toBe("regular");
+			expect(manager.getTuiMode()).toBe("regular");
+		});
+
+		it("does not recognize the old uiMode setting", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ uiMode: "fullscreen" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getTuiMode()).toBe("regular");
 		});
 	});
 
@@ -452,6 +460,27 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getOutputPad()).toBe(1);
+		});
+	});
+
+	describe("markdown.mermaid", () => {
+		it("defaults to streaming and persists rendering modes", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getMermaidRenderingMode()).toBe("streaming");
+
+			manager.setMermaidRenderingMode("final");
+			await manager.flush();
+
+			expect(manager.getMermaidRenderingMode()).toBe("final");
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.markdown.mermaid).toBe("final");
+		});
+
+		it("falls back to streaming for unsupported values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ markdown: { mermaid: "sometimes" } }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getMermaidRenderingMode()).toBe("streaming");
 		});
 	});
 

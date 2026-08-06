@@ -12,8 +12,8 @@ const testTheme: SettingsListTheme = {
 
 const items = [
 	{
-		id: "ui-mode",
-		label: "UI mode",
+		id: "tui-mode",
+		label: "TUI mode",
 		currentValue: "regular",
 		values: ["regular", "fullscreen"],
 	},
@@ -31,13 +31,13 @@ describe("SettingsList", () => {
 			{ enableSearch: true },
 		);
 
-		for (const character of "UI mode") list.handleInput(character);
+		for (const character of "TUI mode") list.handleInput(character);
 
 		assert.deepStrictEqual(changes, []);
-		assert.match(list.render(80)[0] ?? "", /UI mode/);
+		assert.match(list.render(80)[0] ?? "", /TUI mode/);
 
 		list.handleInput("\r");
-		assert.deepStrictEqual(changes, [{ id: "ui-mode", value: "fullscreen" }]);
+		assert.deepStrictEqual(changes, [{ id: "tui-mode", value: "fullscreen" }]);
 	});
 
 	it("keeps Space as a change shortcut before a search query is entered", () => {
@@ -53,6 +53,6 @@ describe("SettingsList", () => {
 
 		list.handleInput(" ");
 
-		assert.deepStrictEqual(changes, [{ id: "ui-mode", value: "fullscreen" }]);
+		assert.deepStrictEqual(changes, [{ id: "tui-mode", value: "fullscreen" }]);
 	});
 });

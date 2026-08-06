@@ -21,11 +21,16 @@ import {
 	type ConnectionState,
 	isTerminalConnection,
 } from "./connection.ts";
-import { PiServerError } from "./errors.ts";
+import {
+	INTERNAL_SERVER_ERROR_MESSAGE,
+	InternalServerError,
+	NOT_IMPLEMENTED_MESSAGE,
+	PiServerError,
+} from "./errors.ts";
 import type { PiServerListener } from "./listener.ts";
 import { LiveSessionManager } from "./sessions.ts";
 import { ServerSnapshotPublisher } from "./snapshots.ts";
-import type { PiServerOptions, PiSessionBackend } from "./types.ts";
+import type { PiServerOptions, PiServerService } from "./types.ts";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_UINT32 = 0xffff_ffff;
@@ -46,7 +51,7 @@ export class PiServer {
 	private startPromise?: Promise<this>;
 	private started = false;
 
-	constructor(backend: PiSessionBackend, options: PiServerOptions) {
+	constructor(service: PiServerService, options: PiServerOptions) {
 		const resolved = resolveOptions(options);
 		this.listeners = options.listeners;
 		this.id = options.serverId ?? randomUUID();
@@ -54,7 +59,7 @@ export class PiServer {
 		this.handshakeTimeoutMs = resolved.handshakeTimeoutMs;
 		this.onError = options.onError;
 		this.sessions = new LiveSessionManager({
-			backend,
+			service,
 			isClosing: () => this.closing,
 			sendMessage: (connection, message) => this.sendMessage(connection, message),
 			closeConnection: (connection) => this.closeConnection(connection),
@@ -64,10 +69,10 @@ export class PiServer {
 		});
 		this.snapshots = new ServerSnapshotPublisher({
 			serverId: this.id,
-			backend,
+			service,
 			connections: this.connections,
 			isClosing: () => this.closing,
-			listSessions: (connection) => this.sessions.listSummaries(connection),
+			listSessions: () => this.sessions.listMetadata(),
 			sendMessage: (connection, message) => this.sendMessage(connection, message),
 			reportError: (error) => this.reportError(error),
 		});
@@ -222,7 +227,7 @@ export class PiServer {
 			return;
 		}
 
-		const snapshot = await this.snapshots.get(undefined, state);
+		const snapshot = await this.snapshots.get();
 		if (this.closing || state.disconnected || state.stage !== "handshaking" || state.connection.closed) return;
 		const sent = await this.sendMessage(state, {
 			type: "hello",
@@ -235,7 +240,7 @@ export class PiServer {
 			state.stage = "ready";
 			clearTimeout(state.handshakeTimeout);
 			if (snapshot.revision !== this.snapshots.currentRevision) {
-				const current = await this.snapshots.get(undefined, state);
+				const current = await this.snapshots.get();
 				await this.sendMessage(state, {
 					type: "event",
 					event: { type: "server_snapshot", snapshot: current },
@@ -344,7 +349,14 @@ export class PiServer {
 	}
 
 	private toProtocolError(error: unknown): ProtocolError {
+		if (error instanceof InternalServerError) {
+			this.reportError(error.cause);
+			return { code: "internal_error", message: INTERNAL_SERVER_ERROR_MESSAGE };
+		}
 		if (error instanceof PiServerError) {
+			if (error.code === "not_implemented") {
+				return { code: "not_implemented", message: NOT_IMPLEMENTED_MESSAGE };
+			}
 			return error.details === undefined
 				? { code: error.code, message: error.message }
 				: { code: error.code, message: error.message, details: error.details };
@@ -353,7 +365,7 @@ export class PiServer {
 			return { code: "invalid_request", message: error.message };
 		}
 		this.reportError(error);
-		return { code: "invalid_request", message: "Internal server error" };
+		return { code: "internal_error", message: INTERNAL_SERVER_ERROR_MESSAGE };
 	}
 
 	private reportError(error: unknown): void {

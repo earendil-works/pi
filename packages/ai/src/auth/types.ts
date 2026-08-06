@@ -207,7 +207,10 @@ export interface OAuthAuth {
 	/** Display name, e.g. "Anthropic (Claude Pro/Max)". */
 	name: string;
 
-	/** Selector label for the subscription login option, e.g. "Sign in with SuperGrok or X Premium". */
+	/** Whether access through this auth method is backed by a provider subscription. */
+	isSubscription?: boolean;
+
+	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
 	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;

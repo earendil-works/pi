@@ -7,13 +7,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage, FileAuthStorageBackend } from "../src/core/auth-storage.ts";
 
 describe("AuthStorage", () => {
-	let tempDir: string;
-	let authJsonPath: string;
+	const tempDir = join(tmpdir(), `pi-test-auth-storage-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const authJsonPath = join(tempDir, "auth.json");
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-test-auth-storage-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 		mkdirSync(tempDir, { recursive: true });
-		authJsonPath = join(tempDir, "auth.json");
 	});
 
 	afterEach(() => {
@@ -82,9 +81,9 @@ describe("AuthStorage", () => {
 		});
 
 		const [anthropic, openai, credentials] = await Promise.all([
-			first.read("anthropic"),
-			second.read("openai"),
-			first.list(),
+			first.read("anthropic", { signal: new AbortController().signal }),
+			second.read("openai", { signal: new AbortController().signal }),
+			first.list({ signal: new AbortController().signal }),
 		]);
 		expect(anthropic).toEqual({ type: "api_key", key: "new" });
 		expect(openai).toEqual({ type: "api_key", key: "openai-key" });
@@ -97,9 +96,47 @@ describe("AuthStorage", () => {
 		await expect(second.read("anthropic")).resolves.toEqual({ type: "api_key", key: "new" });
 		expect(lockSpy).toHaveBeenCalledTimes(1);
 
+		const otherPath = join(tempDir, "other-auth.json");
+		writeFileSync(otherPath, JSON.stringify({ other: { type: "api_key", key: "other-key" } }));
+		const otherFirst = AuthStorage.create(otherPath);
+		const otherSecond = AuthStorage.create(otherPath);
+		await otherFirst.read("other");
+		await otherSecond.read("other");
+		await otherFirst.list();
+		expect(lockSpy).toHaveBeenCalledTimes(1);
+
+		const third = AuthStorage.create(authJsonPath);
 		writeAuthJson({ anthropic: { type: "api_key", key: "newest" } });
-		await expect(first.read("anthropic")).resolves.toEqual({ type: "api_key", key: "newest" });
+		const [firstReload, thirdReload] = await Promise.all([first.read("anthropic"), third.read("anthropic")]);
+		expect(firstReload).toEqual({ type: "api_key", key: "newest" });
+		expect(thirdReload).toEqual({ type: "api_key", key: "newest" });
 		expect(lockSpy).toHaveBeenCalledTimes(2);
+	});
+
+	test("keeps a coalesced reload alive while another credential reader is waiting", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		const storage = AuthStorage.create(authJsonPath);
+		writeAuthJson({ anthropic: { type: "api_key", key: "new" } });
+		let grantLock: (() => void) | undefined;
+		const lockGranted = new Promise<void>((resolve) => {
+			grantLock = resolve;
+		});
+		const release = vi.fn(async () => {});
+		const lockSpy = vi.spyOn(lockfile, "lock").mockImplementation(async () => {
+			await lockGranted;
+			return release;
+		});
+		const firstController = new AbortController();
+		const secondController = new AbortController();
+		const first = storage.read("anthropic", { signal: firstController.signal });
+		const second = storage.read("anthropic", { signal: secondController.signal });
+
+		firstController.abort();
+		await expect(first).rejects.toMatchObject({ name: "AbortError" });
+		grantLock?.();
+		await expect(second).resolves.toEqual({ type: "api_key", key: "new" });
+		expect(lockSpy).toHaveBeenCalledTimes(1);
+		expect(release).toHaveBeenCalledTimes(1);
 	});
 
 	test("modify persists a credential while preserving unrelated external edits", async () => {
@@ -187,6 +224,24 @@ describe("AuthStorage", () => {
 			anthropic: { type: "api_key", key: "stored" },
 			openai: { type: "api_key", key: "new" },
 		});
+	});
+
+	test("retries a briefly contended file lock", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "stored" } });
+		const backend = new FileAuthStorageBackend(authJsonPath);
+		const release = vi.fn(async () => {});
+		const lockSpy = vi
+			.spyOn(lockfile, "lock")
+			.mockRejectedValueOnce(Object.assign(new Error("locked"), { code: "ELOCKED" }))
+			.mockResolvedValueOnce(release);
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const update = vi.fn(async () => ({ result: undefined }));
+
+		await backend.withLockAsync(update);
+
+		expect(lockSpy).toHaveBeenCalledTimes(2);
+		expect(update).toHaveBeenCalledTimes(1);
+		expect(release).toHaveBeenCalledTimes(1);
 	});
 
 	test("surfaces a compromised file storage lock", async () => {

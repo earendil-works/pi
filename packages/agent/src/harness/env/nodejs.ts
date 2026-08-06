@@ -10,11 +10,12 @@ import {
 	readdir,
 	readFile,
 	realpath,
+	rename,
 	rm,
 	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
@@ -81,7 +82,7 @@ function fileInfoFromStats(
 	const kind = fileKindFromStats(stats);
 	if (!kind) return err(new FileError("invalid", "Unsupported file type", path));
 	return ok({
-		name: path.replace(/\/+$/, "").split("/").pop() ?? path,
+		name: basename(path),
 		path,
 		kind,
 		size: stats.size,
@@ -93,12 +94,14 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
 }
 
-function toFileError(error: unknown, path?: string): FileError {
+function toFileError(error: unknown, fallbackPath?: string): FileError {
 	if (error instanceof FileError) return error;
 	const cause = toError(error);
-	if (isNodeError(error)) {
-		const message = error.message;
-		switch (error.code) {
+	const nodeError = isNodeError(error) ? error : undefined;
+	const path = typeof nodeError?.path === "string" ? nodeError.path : fallbackPath;
+	if (nodeError) {
+		const message = nodeError.message;
+		switch (nodeError.code) {
 			case "ABORT_ERR":
 				return new FileError("aborted", message, path, cause);
 			case "ENOENT":
@@ -576,6 +579,23 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			return ok(undefined);
 		} catch (error) {
 			return err(toFileError(error, resolved));
+		}
+	}
+
+	async renameFile(
+		sourcePath: string,
+		destinationPath: string,
+		abortSignal?: AbortSignal,
+	): Promise<Result<void, FileError>> {
+		const source = resolvePath(this.cwd, sourcePath);
+		const destination = resolvePath(this.cwd, destinationPath);
+		const aborted = abortResult<void>(abortSignal, destination);
+		if (aborted) return aborted;
+		try {
+			await rename(source, destination);
+			return ok(undefined);
+		} catch (error) {
+			return err(toFileError(error, source));
 		}
 	}
 

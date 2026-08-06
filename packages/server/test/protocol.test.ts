@@ -41,14 +41,10 @@ function assertValidServerPayload(item: ProtocolTranscriptItem): void {
 				sessions: [
 					{
 						id: "session-1",
-						cwd: "/workspace",
 						createdAt: 1,
 						updatedAt: 1,
-						phase: "idle",
-						model: { provider: "test-provider", id: "model-1" },
-						thinkingLevel: "off",
-						attached: true,
-						locked: true,
+						sessionName: "Session one",
+						cwd: "/workspace",
 					},
 				],
 				models: [toProtocolModelMetadata(model, true)],

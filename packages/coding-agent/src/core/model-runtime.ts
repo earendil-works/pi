@@ -455,6 +455,10 @@ export class ModelRuntime implements Models {
 		return this.snapshot.auth.get(providerId)?.type === "oauth";
 	}
 
+	isUsingSubscription(providerId: string): boolean {
+		return this.isUsingOAuth(providerId) && this.models.getProvider(providerId)?.auth.oauth?.isSubscription === true;
+	}
+
 	hasConfiguredAuth(providerId: string): boolean {
 		return this.snapshot.configuredProviders.has(providerId);
 	}

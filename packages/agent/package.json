@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "0.83.0",
+	"version": "0.84.0",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -26,6 +26,8 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
+		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
+		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
 		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
@@ -33,7 +35,8 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-ai": "^0.84.0",
+		"@earendil-works/pi-telemetry": "^0.84.0",
 		"diff": "8.0.4",
 		"ignore": "7.0.5",
 		"typebox": "1.3.7",

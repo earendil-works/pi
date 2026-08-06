@@ -89,28 +89,27 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
 }
 
-function isSelectableCopilotModel(item: Record<string, unknown>): boolean {
-	const policy = asRecord(item.policy);
-	const capabilities = asRecord(item.capabilities);
-	const supports = asRecord(capabilities?.supports);
-	return item.model_picker_enabled === true && policy?.state !== "disabled" && supports?.tool_calls !== false;
-}
-
-function parseAvailableCopilotModelIds(raw: unknown): string[] {
+function parseAvailableCopilotModelIds(raw: unknown, allowPolicyFallback: boolean): string[] {
 	const data = asRecord(raw)?.data;
 	if (!Array.isArray(data)) {
 		throw new Error("Invalid Copilot models response");
 	}
 
-	const ids: string[] = [];
+	const pickerIds: string[] = [];
+	const policyEnabledIds: string[] = [];
 	for (const rawItem of data) {
 		const item = asRecord(rawItem);
 		const id = item?.id;
-		if (typeof id === "string" && item && isSelectableCopilotModel(item)) {
-			ids.push(id);
-		}
+		if (!item || typeof id !== "string") continue;
+
+		const capabilities = asRecord(item.capabilities);
+		const supports = asRecord(capabilities?.supports);
+		if (supports?.tool_calls === false) continue;
+		const policy = asRecord(item.policy);
+		if (item.model_picker_enabled === true && policy?.state !== "disabled") pickerIds.push(id);
+		if (policy?.state === "enabled") policyEnabledIds.push(id);
 	}
-	return ids;
+	return pickerIds.length > 0 || !allowPolicyFallback ? pickerIds : policyEnabledIds;
 }
 
 async function fetchAvailableGitHubCopilotModelIds(
@@ -119,6 +118,9 @@ async function fetchAvailableGitHubCopilotModelIds(
 	signal: AbortSignal,
 ): Promise<string[]> {
 	const baseUrl = getGitHubCopilotBaseUrl(copilotToken, enterpriseDomain);
+	// Some Individual accounts return false for every picker flag despite explicit enabled policies.
+	// Limit the fallback to that endpoint so other account types keep strict picker semantics.
+	const allowPolicyFallback = baseUrl === "https://api.individual.githubcopilot.com";
 	const raw = await fetchJson(`${baseUrl}/models`, {
 		headers: {
 			Accept: "application/json",
@@ -128,7 +130,7 @@ async function fetchAvailableGitHubCopilotModelIds(
 		},
 		signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
 	});
-	return parseAvailableCopilotModelIds(raw);
+	return parseAvailableCopilotModelIds(raw, allowPolicyFallback);
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
@@ -397,6 +399,7 @@ function copilotEnterpriseDomain(credential: OAuthCredential): string | undefine
 
 export const githubCopilotOAuth: OAuthAuth = {
 	name: "GitHub Copilot",
+	isSubscription: true,
 	login: loginGitHubCopilot,
 	refresh: (credential, signal) =>
 		refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential), signal),

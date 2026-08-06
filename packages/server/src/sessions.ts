@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { Command, EventEnvelope, SessionSnapshot, SessionSummary } from "@earendil-works/pi-protocol";
+import type { Command, EventEnvelope, SessionMetadata, SessionSnapshot } from "@earendil-works/pi-protocol";
 import type { ByteConnection, ConnectionState } from "./connection.ts";
 import { PiServerError } from "./errors.ts";
-import type { CreateSessionOptions, PiSessionBackend, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";
+import type { CreateSessionOptions, PiServerService, PiSessionRuntime, PiSessionRuntimeEvent } from "./types.ts";
 
 interface LiveSession {
 	id: string;
@@ -16,7 +16,7 @@ interface LiveSession {
 }
 
 interface LiveSessionManagerOptions {
-	backend: PiSessionBackend;
+	service: PiServerService;
 	isClosing: () => boolean;
 	sendMessage: (connection: ConnectionState, message: EventEnvelope) => Promise<boolean>;
 	closeConnection: (connection: ByteConnection) => Promise<void>;
@@ -25,18 +25,13 @@ interface LiveSessionManagerOptions {
 	reportError: (error: unknown) => void;
 }
 
-function toSummary(snapshot: SessionSnapshot): SessionSummary {
+function toMetadata(snapshot: SessionSnapshot): SessionMetadata {
 	return {
 		id: snapshot.id,
-		name: snapshot.name,
-		cwd: snapshot.cwd,
 		createdAt: snapshot.createdAt,
 		updatedAt: snapshot.updatedAt,
-		phase: snapshot.phase,
-		model: snapshot.model,
-		thinkingLevel: snapshot.thinkingLevel,
-		attached: snapshot.attached,
-		locked: snapshot.locked,
+		sessionName: snapshot.name,
+		cwd: snapshot.cwd,
 	};
 }
 
@@ -52,7 +47,7 @@ export class LiveSessionManager {
 	async executeCommand(connection: ConnectionState, command: Command) {
 		switch (command.command) {
 			case "list":
-				return { command: "list" as const, sessions: await this.listSummaries(connection) };
+				return { command: "list" as const, sessions: await this.listMetadata() };
 			case "create": {
 				const id = randomUUID();
 				const options: CreateSessionOptions = {
@@ -62,7 +57,7 @@ export class LiveSessionManager {
 					model: command.model,
 					thinkingLevel: command.thinkingLevel,
 				};
-				const live = await this.acquire(id, () => this.options.backend.createSession(options));
+				const live = await this.acquire(id, () => this.options.service.createSession(options));
 				await this.attach(connection, live);
 				const session = this.forConnection(await this.broadcastSnapshot(live), connection);
 				this.options.broadcastServerSnapshot();
@@ -70,7 +65,7 @@ export class LiveSessionManager {
 			}
 			case "attach": {
 				const live = await this.acquire(command.sessionId, () =>
-					this.options.backend.openSession(command.sessionId),
+					this.options.service.openSession(command.sessionId),
 				);
 				await this.attach(connection, live);
 				const session = this.forConnection(await this.broadcastSnapshot(live), connection);
@@ -136,24 +131,22 @@ export class LiveSessionManager {
 		}
 	}
 
-	async listSummaries(connection?: ConnectionState): Promise<SessionSummary[]> {
-		const stored = await this.options.backend.listSessions();
+	async listMetadata(): Promise<SessionMetadata[]> {
+		const stored = await this.options.service.listSessions();
 		const liveSnapshots = await Promise.all(
 			[...this.liveSessions.values()]
 				.filter((live) => !live.disposing)
 				.map(async (live) => [live.id, await this.normalizedSnapshot(live)] as const),
 		);
 		const liveById = new Map(liveSnapshots);
-		const summaries = stored.map((summary) => {
-			const snapshot = liveById.get(summary.id);
-			if (!snapshot) return { ...summary, attached: false };
-			liveById.delete(summary.id);
-			return { ...toSummary(snapshot), attached: connection?.sessionIds.has(summary.id) ?? false };
+		const metadata = stored.map((item) => {
+			const snapshot = liveById.get(item.id);
+			if (!snapshot) return item;
+			liveById.delete(item.id);
+			return { ...item, ...toMetadata(snapshot) };
 		});
-		for (const snapshot of liveById.values()) {
-			summaries.push({ ...toSummary(snapshot), attached: connection?.sessionIds.has(snapshot.id) ?? false });
-		}
-		return summaries;
+		for (const snapshot of liveById.values()) metadata.push(toMetadata(snapshot));
+		return metadata;
 	}
 
 	async close(): Promise<void> {
@@ -225,7 +218,7 @@ export class LiveSessionManager {
 			if (snapshot.id !== id) {
 				throw new PiServerError(
 					"invalid_request",
-					`Backend returned session ${snapshot.id} for server-assigned session ${id}`,
+					`Service returned session ${snapshot.id} for server-assigned session ${id}`,
 				);
 			}
 			live = {

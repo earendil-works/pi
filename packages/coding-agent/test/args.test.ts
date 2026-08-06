@@ -329,22 +329,28 @@ describe("parseArgs", () => {
 		});
 	});
 
-	describe("--ui-mode flag", () => {
+	describe("--tui-mode flag", () => {
 		test.each(["regular", "fullscreen"] as const)("parses %s mode", (mode) => {
-			const result = parseArgs(["--ui-mode", mode]);
-			expect(result.uiMode).toBe(mode);
+			const result = parseArgs(["--tui-mode", mode]);
+			expect(result.tuiMode).toBe(mode);
 		});
 
 		test("rejects invalid modes", () => {
-			const result = parseArgs(["--ui-mode", "other"]);
+			const result = parseArgs(["--tui-mode", "other"]);
 			expect(result.diagnostics).toEqual([
-				{ type: "error", message: 'Invalid UI mode "other". Valid values: regular, fullscreen' },
+				{ type: "error", message: 'Invalid TUI mode "other". Valid values: regular, fullscreen' },
 			]);
 		});
 
 		test("requires a mode", () => {
-			const result = parseArgs(["--ui-mode"]);
-			expect(result.diagnostics).toEqual([{ type: "error", message: "--ui-mode requires regular or fullscreen" }]);
+			const result = parseArgs(["--tui-mode"]);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--tui-mode requires regular or fullscreen" }]);
+		});
+
+		test("does not recognize the old --ui-mode flag", () => {
+			const result = parseArgs(["--ui-mode", "fullscreen"]);
+			expect(result.tuiMode).toBeUndefined();
+			expect(result.unknownFlags.get("ui-mode")).toBe("fullscreen");
 		});
 	});
 

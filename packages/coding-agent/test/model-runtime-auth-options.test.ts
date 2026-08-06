@@ -123,6 +123,39 @@ describe("ModelRuntime auth options", () => {
 		expect(await runtime.checkAuth("anthropic")).toMatchObject({ type: "oauth" });
 	});
 
+	it("distinguishes subscription OAuth from generic OAuth sign-in", async () => {
+		const runtime = await ModelRuntime.create({
+			credentials: AuthStorage.inMemory({
+				anthropic: {
+					type: "oauth",
+					access: "anthropic-access",
+					refresh: "anthropic-refresh",
+					expires: Date.now() + 60 * 60_000,
+				},
+				openrouter: {
+					type: "oauth",
+					access: "openrouter-key",
+					refresh: "",
+					expires: Number.MAX_SAFE_INTEGER,
+				},
+				radius: {
+					type: "oauth",
+					access: "radius-access",
+					refresh: "radius-refresh",
+					expires: Date.now() + 60 * 60_000,
+				},
+			}),
+			modelsPath: null,
+		});
+
+		expect(runtime.isUsingOAuth("anthropic")).toBe(true);
+		expect(runtime.isUsingSubscription("anthropic")).toBe(true);
+		expect(runtime.isUsingOAuth("openrouter")).toBe(true);
+		expect(runtime.isUsingSubscription("openrouter")).toBe(false);
+		expect(runtime.isUsingOAuth("radius")).toBe(true);
+		expect(runtime.isUsingSubscription("radius")).toBe(false);
+	});
+
 	it("constructs an API key method for an extension API-key provider", async () => {
 		const runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null });
 		runtime.registerProvider("extension-api-key", {
@@ -274,6 +307,7 @@ describe("ModelRuntime auth options", () => {
 			api: "openai-completions",
 			oauth: {
 				name: "Extension subscription",
+				isSubscription: true,
 				login: async () => ({ access: "access", refresh: "refresh", expires: Date.now() + 60_000 }),
 				refreshToken: async (credentials) => credentials,
 				getApiKey: (credentials) => credentials.access,
@@ -286,7 +320,7 @@ describe("ModelRuntime auth options", () => {
 		expect(options[0]).toMatchObject({
 			type: "oauth",
 			provider: { id: "extension-oauth", name: "Extension OAuth" },
-			method: { name: "Extension subscription" },
+			method: { name: "Extension subscription", isSubscription: true },
 		});
 	});
 });

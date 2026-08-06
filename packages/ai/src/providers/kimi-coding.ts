@@ -13,6 +13,7 @@ export function kimiCodingProvider(): Provider<"anthropic-messages"> {
 			apiKey: envApiKeyAuth("Kimi API key", ["KIMI_API_KEY"]),
 			oauth: lazyOAuth({
 				name: "Kimi Code (subscription)",
+				isSubscription: true,
 				loginLabel: "Sign in with Kimi Code",
 				load: loadKimiCodingOAuth,
 			}),

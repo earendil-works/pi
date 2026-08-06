@@ -24,7 +24,7 @@ describe("ModelRegistry", () => {
 		tempDir = join(tmpdir(), `pi-test-model-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
-		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		authStorage = AuthStorage.inMemory();
 	});
 
 	afterEach(() => {

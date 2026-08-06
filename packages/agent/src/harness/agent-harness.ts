@@ -22,6 +22,7 @@ import type {
 	Session,
 	SessionTree,
 } from "./session/index.ts";
+import type { TelemetryContext } from "./telemetry.ts";
 import type { AgentHarnessResources, PromptTemplate, Skill } from "./types.ts";
 
 export class LaneBusy extends TaggedError("LaneBusy")<{
@@ -215,32 +216,22 @@ export interface Events {
 	on(type: string, listener: (event: unknown) => void | Promise<void>): () => void;
 }
 
-class PassiveRegistry implements Hooks, Events {
+class UnavailableRegistry implements Hooks, Events {
+	private readonly operation: string;
+	private readonly isClosed: () => boolean;
+
+	constructor(operation: string, isClosed: () => boolean) {
+		this.operation = operation;
+		this.isClosed = isClosed;
+	}
+
 	on(
 		_name: HookName | string,
 		_handler: (event: unknown) => unknown | Promise<unknown>,
 		_options?: { id?: string },
 	): () => void {
-		return () => {};
+		throw this.isClosed() ? new HarnessClosed() : new HarnessNotImplemented(this.operation);
 	}
-}
-
-export interface ExecutionSpan extends ExecutionContext {
-	addEvent(name: string, attributes?: SpanAttributes): void;
-	setAttributes(attributes: SpanAttributes): void;
-	end(result: SpanEnd): void;
-}
-
-export interface ExecutionContext {
-	startSpan(name: string, attributes?: SpanAttributes): ExecutionSpan;
-}
-export interface SpanAttributes {
-	[name: string]: string | number | boolean | undefined;
-}
-export interface SpanEnd {
-	status: "ok" | "error";
-	error?: { name: string; message: string };
-	attributes?: SpanAttributes;
 }
 
 export type HarnessTool = AgentTool & { replay?: "never" | "safe" };
@@ -268,7 +259,7 @@ export interface AgentHarnessOptions {
 	drive?: "automatic" | "manual";
 	toProviderMessages?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	entryProjectors?: Record<string, EntryProjector>;
-	context?: ExecutionContext;
+	context?: TelemetryContext;
 }
 
 export interface WatchHandle<TSnapshot> {
@@ -314,8 +305,8 @@ export interface AgentLane {
 export class AgentHarness implements AgentLane {
 	readonly name = "main";
 	readonly session: SessionTree;
-	readonly hooks: Hooks = new PassiveRegistry();
-	readonly events: Events = new PassiveRegistry();
+	readonly hooks: Hooks;
+	readonly events: Events;
 	private readonly durableSession: Session;
 	private model: Model<Api>;
 	private thinkingLevel: ThinkingLevel;
@@ -332,6 +323,8 @@ export class AgentHarness implements AgentLane {
 	private constructor(options: AgentHarnessOptions) {
 		this.durableSession = options.session;
 		this.session = options.session;
+		this.hooks = new UnavailableRegistry("hooks.on", () => this.closed);
+		this.events = new UnavailableRegistry("events.on", () => this.closed);
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel ?? "off";
 		this.activeToolNames = [...(options.activeToolNames ?? options.tools?.map((tool) => tool.name) ?? [])];
@@ -354,6 +347,8 @@ export class AgentHarness implements AgentLane {
 	static async create(
 		options: AgentHarnessOptions,
 	): Promise<{ harness: AgentHarness; suspended: SuspendedOperation[] }> {
+		const [record] = await options.session.findRecords({ limit: 1 });
+		if (record !== undefined) throw new HarnessNotImplemented("create.restore");
 		return { harness: new AgentHarness(options), suspended: [] };
 	}
 
@@ -409,17 +404,21 @@ export class AgentHarness implements AgentLane {
 	async recordUsage(_usage: Usage, _options?: { entryId?: string; details?: JsonValue }): Promise<RecordUsageResult> {
 		return this.unavailable("recordUsage");
 	}
-	async waitForIdle(): Promise<void> {}
-	async runWhenIdle(callback: () => void | Promise<void>): Promise<void> {
-		await callback();
+	async waitForIdle(): Promise<void> {
+		return this.unavailable("waitForIdle");
+	}
+	async runWhenIdle(_callback: () => void | Promise<void>): Promise<void> {
+		return this.unavailable("runWhenIdle");
 	}
 	async peekAction(): Promise<ActionInfo | undefined> {
-		return undefined;
+		return this.unavailable("peekAction");
 	}
 	async executeAction(): Promise<ActionInfo | undefined> {
-		return undefined;
+		return this.unavailable("executeAction");
 	}
-	async runToCompletion(): Promise<void> {}
+	async runToCompletion(): Promise<void> {
+		return this.unavailable("runToCompletion");
+	}
 	async getModel(): Promise<Model<Api>> {
 		return this.model;
 	}
@@ -439,36 +438,17 @@ export class AgentHarness implements AgentLane {
 		this.activeToolNames = [...names];
 	}
 	async watch(): Promise<WatchHandle<LaneSnapshot>> {
-		const leafId = await this.getLeafId();
-		const transcript =
-			leafId === null ? [] : await this.session.findEntriesOnBranch({ start: leafId, order: "oldestFirst" });
-		return {
-			snapshot: {
-				lane: this.name,
-				transcript,
-				leafId,
-				operation: null,
-				queues: { steer: [], followUp: [], nextRun: [] },
-				pendingWrites: [],
-				faulted: false,
-			},
-			start() {},
-			unsubscribe() {},
-		};
+		return this.unavailable("watch");
 	}
 
-	async lane(name: string): Promise<AgentLane | undefined> {
-		return name === "main" ? this : undefined;
+	async lane(_name: string): Promise<AgentLane | undefined> {
+		return this.unavailable("lane");
 	}
 	async createLane(_name: string, _at: string | null): Promise<CreateLaneResult> {
 		return this.unavailable("createLane");
 	}
 	async lanes(): Promise<LaneInfo[]> {
-		return (await this.durableSession.getLanes()).map(({ lane, leafId }) => ({
-			name: lane,
-			leafId,
-			operation: null,
-		}));
+		return this.unavailable("lanes");
 	}
 	async getTools(): Promise<HarnessTool[]> {
 		return [...this.tools];
@@ -520,11 +500,7 @@ export class AgentHarness implements AgentLane {
 		this.followUpMode = mode;
 	}
 	async watchSession(): Promise<WatchHandle<SessionSnapshot>> {
-		return {
-			snapshot: { lanes: await this.lanes(), faulted: false },
-			start() {},
-			unsubscribe() {},
-		};
+		return this.unavailable("watchSession");
 	}
 	async close(): Promise<void> {
 		this.closed = true;

@@ -2,13 +2,17 @@
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-08-06
+
 ### Breaking Changes
 
 - Changed `toProtocolToolResultMessage()` to require the original `ToolCall` and verify tool result association.
+- Changed `PiServerService.listSessions()` to return durable `SessionMetadata` instead of runtime `SessionSummary` values ([#7708](https://github.com/earendil-works/pi/pull/7708)).
 
 ### Fixed
 
 - Hardened protocol adapters against contradictory lifecycle states, invalid identifiers and timestamps, sparse execution arrays, and additive `pi-ai` contract drift.
+- Sanitized service and runtime failures into stable `not_implemented` and `internal_error` responses without exposing private error details ([#7644](https://github.com/earendil-works/pi/pull/7644)).
 
 ## [0.83.0] - 2026-07-29
 

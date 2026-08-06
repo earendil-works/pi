@@ -89,7 +89,10 @@ describe("test harness", () => {
 	});
 
 	it("turns a pending terminal response into an error", async () => {
-		harness = await createHarness({ responses: [{ text: "partial", stopReason: "pending" }] });
+		harness = await createHarness({
+			responses: [{ text: "partial", stopReason: "pending" }],
+			settings: { retry: { enabled: false } },
+		});
 
 		await harness.session.prompt("hi");
 

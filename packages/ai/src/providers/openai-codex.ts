@@ -10,7 +10,11 @@ export function openaiCodexProvider(): Provider<"openai-codex-responses"> {
 		name: "OpenAI Codex",
 		baseUrl: "https://chatgpt.com/backend-api",
 		auth: {
-			oauth: lazyOAuth({ name: "OpenAI (ChatGPT Plus/Pro)", load: loadOpenAICodexOAuth }),
+			oauth: lazyOAuth({
+				name: "OpenAI (ChatGPT Plus/Pro)",
+				isSubscription: true,
+				load: loadOpenAICodexOAuth,
+			}),
 		},
 		models: Object.values(OPENAI_CODEX_MODELS),
 		api: openAICodexResponsesApi(),

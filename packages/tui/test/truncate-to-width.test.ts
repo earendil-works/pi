@@ -20,6 +20,14 @@ describe("truncateToWidth", () => {
 		assert.strictEqual(truncated.endsWith("\x1b[0m…\x1b[0m"), true);
 	});
 
+	it("closes a BEL-terminated OSC 8 link when truncating its label", () => {
+		const open = "\x1b]8;;https://example.com\x07";
+		const close = "\x1b]8;;\x07";
+		const text = `${open}some-longer-label-here${close}`;
+
+		assert.strictEqual(truncateToWidth(text, 15), `${open}some-longer-${close}\x1b[0m...\x1b[0m`);
+	});
+
 	it("handles malformed ANSI escape prefixes without hanging", () => {
 		const text = `abc\x1bnot-ansi ${"🙂".repeat(1000)}`;
 		const truncated = truncateToWidth(text, 20, "…");

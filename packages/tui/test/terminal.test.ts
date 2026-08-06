@@ -1,7 +1,26 @@
 import assert from "node:assert";
 import { describe, it, mock } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
-import { normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+import { normalizeAppleTerminalInput, normalizeNativeShiftEnterInput, ProcessTerminal } from "../src/terminal.ts";
+
+describe("normalizeNativeShiftEnterInput", () => {
+	it("rewrites Return to CSI-u Shift+Enter when native Shift detection is enabled and Shift is pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, true), "\x1b[13;2u");
+	});
+
+	it("leaves Return unchanged when native Shift detection is disabled", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", false, true), "\r");
+	});
+
+	it("leaves Return unchanged when Shift is not pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, false), "\r");
+	});
+
+	it("leaves non-Return input unchanged", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b[13;2u", true, true), "\x1b[13;2u");
+		assert.equal(normalizeNativeShiftEnterInput("a", true, true), "a");
+	});
+});
 
 describe("normalizeAppleTerminalInput", () => {
 	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { attachSession, collectRequests, connectClient, MemoryByteServer, sessionSnapshot } from "./support.ts";
+import {
+	attachSession,
+	baseServerSnapshot,
+	collectRequests,
+	connectClient,
+	MemoryByteServer,
+	sessionSnapshot,
+} from "./support.ts";
 
 describe("PiClient", () => {
 	test("reduces only authoritative snapshots and supports unsubscribe", async () => {
@@ -51,6 +58,26 @@ describe("PiClient", () => {
 			event: { type: "session_snapshot", snapshot: sessionSnapshot("session-1", { revision: 3 }) },
 		});
 		expect(observed).toEqual([2]);
+	});
+
+	test("keeps session leases attached across server metadata snapshots", async () => {
+		const server = new MemoryByteServer();
+		const client = await connectClient(server);
+		const handle = await attachSession(client, server, sessionSnapshot("session-1"));
+
+		server.send({
+			type: "event",
+			event: {
+				type: "server_snapshot",
+				snapshot: {
+					...baseServerSnapshot,
+					revision: 2,
+					sessions: [{ id: "session-1", createdAt: 1, sessionName: "Named session" }],
+				},
+			},
+		});
+
+		expect(handle.attached).toBe(true);
 	});
 
 	test("does not let a delayed command response replace a newer event snapshot", async () => {

@@ -333,6 +333,8 @@ const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 	"qwen3.7-max",
 	"qwen3.7-plus",
 ]);
+// Retired preview id — models.dev may still list it after GA ships.
+const QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = new Set(["qwen3.8-max-preview"]);
 
 const KIMI_K3_MAX_TOKENS = 131072;
 const KIMI_K3_COST = {
@@ -898,7 +900,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (isGoogleThinkingApi(model) && isGemma4Model(model.id)) {
 		mergeThinkingLevelMap(model, { off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH" });
 	}
-	if (model.provider === "groq" && model.id === "qwen/qwen3-32b") {
+	if (model.provider === "groq" && model.id === "qwen/qwen3.6-27b") {
 		mergeThinkingLevelMap(model, { minimal: null, low: null, medium: null, high: "default" });
 	}
 	if (model.provider === "openai-codex" && supportsOpenAiXhigh(model.id)) {
@@ -1388,6 +1390,84 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	return models;
 }
 
+function processFireworksModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
+	if (!provider?.models) return [];
+
+	const anthropicCompat: AnthropicMessagesCompat = {
+		sendSessionAffinityHeaders: true,
+		supportsEagerToolInputStreaming: false,
+		supportsCacheControlOnTools: false,
+		supportsLongCacheRetention: false,
+	};
+	const openAICompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		sendSessionAffinityHeaders: true,
+		supportsLongCacheRetention: false,
+	};
+	const kimiK3Compat: OpenAICompletionsCompat = {
+		...openAICompat,
+		requiresReasoningContentOnAssistantMessages: true,
+		thinkingFormat: "openai",
+		deferredToolsMode: "kimi",
+	};
+	const models: Model<Api>[] = [];
+
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		if (model.tool_call !== true) continue;
+
+		const input: ("text" | "image")[] = model.modalities?.input?.includes("image")
+			? ["text", "image"]
+			: ["text"];
+		const common = {
+			id: modelId,
+			name: model.name || modelId,
+			provider: "fireworks",
+			reasoning: model.reasoning === true,
+			input,
+			cost: {
+				input: model.cost?.input || 0,
+				output: model.cost?.output || 0,
+				cacheRead: model.cost?.cache_read || 0,
+				cacheWrite: model.cost?.cache_write || 0,
+			},
+			contextWindow: model.limit?.context || 4096,
+			maxTokens: model.limit?.output || 4096,
+		};
+
+		if (modelId.includes("glm-5p2")) {
+			models.push({
+				...common,
+				api: "openai-completions",
+				baseUrl: "https://api.fireworks.ai/inference/v1",
+				compat: openAICompat,
+			});
+		} else if (modelId.includes("kimi-k3")) {
+			models.push({
+				...common,
+				api: "openai-completions",
+				baseUrl: "https://api.fireworks.ai/inference/v1",
+				compat: kimiK3Compat,
+			});
+		} else {
+			models.push({
+				...common,
+				api: "anthropic-messages",
+				// Fireworks Anthropic-compatible API - SDK appends /v1/messages.
+				baseUrl: "https://api.fireworks.ai/inference",
+				// Fireworks prompt caching uses automatic prefix matching + session affinity.
+				// x-session-affinity routes requests to the same replica for cache hits.
+				// cache_control on tools and eager_input_streaming are not supported.
+				// See: https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
+				compat: anthropicCompat,
+			});
+		}
+		recordModelsDevReasoningOptions("fireworks", modelId, model);
+	}
+
+	return models;
+}
+
 async function loadModelsDevData(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from models.dev API...");
@@ -1840,43 +1920,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Fireworks models
-		if (data["fireworks-ai"]?.models) {
-			for (const [modelId, model] of Object.entries(data["fireworks-ai"].models)) {
-				const m = model as ModelsDevModel;
-				if (m.tool_call !== true) continue;
-
-				models.push({
-					id: modelId,
-					name: m.name || modelId,
-					api: "anthropic-messages",
-					provider: "fireworks",
-					// Fireworks Anthropic-compatible API - SDK appends /v1/messages
-					baseUrl: "https://api.fireworks.ai/inference",
-					reasoning: m.reasoning === true,
-					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
-					},
-					contextWindow: m.limit?.context || 4096,
-					maxTokens: m.limit?.output || 4096,
-					// Fireworks prompt caching uses automatic prefix matching + session affinity.
-					// x-session-affinity routes requests to the same replica for cache hits.
-					// cache_control on tools and eager_input_streaming are not supported.
-					// See: https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
-					compat: {
-						sendSessionAffinityHeaders: true,
-						supportsEagerToolInputStreaming: false,
-						supportsCacheControlOnTools: false,
-						supportsLongCacheRetention: false,
-					},
-				});
-				recordModelsDevReasoningOptions("fireworks", modelId, m);
-			}
-		}
+		models.push(...processFireworksModels(data["fireworks-ai"]));
 
 		// Process NVIDIA NIM models
 		if (data.nvidia?.models) {
@@ -2335,6 +2379,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS.has(modelId)) continue;
 				const supportsReasoningEffort = !QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS.has(modelId);
 
 				models.push({
@@ -2349,7 +2394,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					...(supportsReasoningEffort
 						? {
 								thinkingLevelMap:
-									modelId === "qwen3.8-max-preview"
+									modelId === "qwen3.8-max"
 										? QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
 										: QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP,
 							}
@@ -2469,24 +2514,6 @@ async function generateModels() {
 			candidate.cost.input = 0.6;
 			candidate.cost.output = 1.9;
 			candidate.cost.cacheRead = 0.119;
-		}
-		if (candidate.provider === "fireworks" && candidate.id.includes("glm-5p2")) {
-			candidate.api = "openai-completions";
-			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
-			candidate.compat = { supportsStore: false, supportsDeveloperRole: false };
-		}
-		if (candidate.provider === "fireworks" && candidate.id.includes("kimi-k3")) {
-			candidate.api = "openai-completions";
-			candidate.baseUrl = "https://api.fireworks.ai/inference/v1";
-			candidate.compat = {
-				supportsStore: false,
-				supportsDeveloperRole: false,
-				requiresReasoningContentOnAssistantMessages: true,
-				thinkingFormat: "openai",
-				deferredToolsMode: "kimi",
-				sendSessionAffinityHeaders: true,
-				supportsLongCacheRetention: false,
-			};
 		}
 	}
 

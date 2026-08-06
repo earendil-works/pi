@@ -32,6 +32,8 @@ import {
 
 export interface ExtensionOAuthConfig {
 	name: string;
+	/** Whether access through this auth method is backed by a provider subscription. */
+	isSubscription?: boolean;
 	/** @deprecated Retained for extension source compatibility; ignored by canonical auth flows. */
 	usesCallbackServer?: boolean;
 	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
@@ -235,6 +237,7 @@ function applyExtension(
 function adaptOAuth(config: ExtensionOAuthConfig): OAuthAuth {
 	return {
 		name: config.name,
+		isSubscription: config.isSubscription,
 		login: async (callbacks) => {
 			const credential = await config.login({
 				onAuth: (info) => callbacks.notify({ type: "auth_url", ...info }),

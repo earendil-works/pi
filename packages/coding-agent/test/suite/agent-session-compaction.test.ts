@@ -6,7 +6,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
-import { createHarness, type Harness } from "./harness.ts";
+import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
@@ -146,6 +146,42 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
 		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+	});
+
+	it("allows a queued prompt to start when manual compaction ends", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "manual compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.setResponses([fauxAssistantMessage("queued response")]);
+
+		let queuedPrompt: Promise<void> | undefined;
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.reason === "manual" && event.result) {
+				expect(harness.session.isCompacting).toBe(false);
+				queuedPrompt = harness.session.prompt("queued after compaction");
+			}
+		});
+
+		await harness.session.compact();
+		if (!queuedPrompt) throw new Error("compaction_end did not start the queued prompt");
+		await queuedPrompt;
+
+		expect(getUserTexts(harness)).toContain("queued after compaction");
+		expect(harness.session.getLastAssistantText()).toBe("queued response");
 	});
 
 	it("throws when compacting without a model", async () => {

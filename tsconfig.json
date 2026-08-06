@@ -6,13 +6,19 @@
 		"moduleResolution": "NodeNext",
 		"paths": {
 			"*": ["./*"],
+			"@earendil-works/pi-telemetry": ["./packages/telemetry/src/index.ts"],
+			"@earendil-works/pi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
 			"@earendil-works/pi-ai": ["./packages/ai/src/index.ts"],
 			"@earendil-works/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
 			"@earendil-works/pi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
 			"@earendil-works/pi-ai/dist/*": ["./packages/ai/src/*"],
 			"@earendil-works/pi-agent-core": ["./packages/agent/src/index.ts"],
+			"@earendil-works/pi-agent-core/node": ["./packages/agent/src/node.ts"],
+			"@earendil-works/pi-agent-core/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
+			],
 			"@earendil-works/pi-agent-core/*": ["./packages/agent/src/*"],
-			"@earendil-works/pi-agent-sqlite-node": ["./packages/storage/sqlite-node/src/index.ts"],
+			"@earendil-works/pi-session-backend-sqlite-node": ["./packages/session-backends/sqlite-node/src/index.ts"],
 			"@earendil-works/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@earendil-works/pi-coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
 			"@earendil-works/pi-coding-agent/*": ["./packages/coding-agent/src/*"],
@@ -29,6 +35,6 @@
 			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"]
 		}
 	},
-	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/storage/*/src/**/*", "packages/storage/*/test/**/*", "packages/coding-agent/examples/**/*"],
+	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/session-backends/*/src/**/*", "packages/session-backends/*/test/**/*", "packages/coding-agent/examples/**/*"],
 	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }

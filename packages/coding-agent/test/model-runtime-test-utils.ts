@@ -1,6 +1,7 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { InMemoryCodingAgentModelsStore } from "../src/core/models-store.ts";
 
 const runtimes = new WeakMap<ModelRegistry, ModelRuntime>();
 
@@ -10,8 +11,16 @@ function wrap(runtime: ModelRuntime): ModelRegistry {
 	return registry;
 }
 
+/** Load optional models.json configuration without introducing file-backed catalog locks into unit tests. */
 export async function createModelRegistry(credentials: CredentialStore, modelsPath?: string): Promise<ModelRegistry> {
-	return wrap(await ModelRuntime.create({ credentials, modelsPath, allowModelNetwork: false }));
+	return wrap(
+		await ModelRuntime.create({
+			credentials,
+			modelsPath,
+			modelsStore: new InMemoryCodingAgentModelsStore(),
+			allowModelNetwork: false,
+		}),
+	);
 }
 
 export async function createInMemoryModelRegistry(credentials: CredentialStore): Promise<ModelRegistry> {

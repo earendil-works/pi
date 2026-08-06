@@ -891,7 +891,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialImages,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
-			uiMode: parsed.uiMode,
+			tuiMode: parsed.tuiMode,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

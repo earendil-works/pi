@@ -307,6 +307,50 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("routes Ctrl-modified viewport navigation to the focused component", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true },
+		);
+		const editorInputs: string[] = [];
+		const editor = {
+			focused: false,
+			render: () => ["editor"],
+			invalidate: () => {},
+			handleInput: (data: string) => editorInputs.push(data),
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: editor, basis: 1, shrink: 0 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1bOH");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 0);
+		assert.deepStrictEqual(editorInputs, []);
+
+		const modifiedInputs = ["\x1b[1;5H", "\x1b[1;5F", "\x1b[5;5~", "\x1b[6;5~", "\x1b[57423;5u"];
+		for (const input of modifiedInputs) terminal.sendInput(input);
+		terminal.sendInput("\x1b[57423;5:3u");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 0);
+		assert.deepStrictEqual(editorInputs, modifiedInputs);
+
+		terminal.sendInput("\x1b[6~");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 1);
+		assert.deepStrictEqual(editorInputs, modifiedInputs);
+
+		tui.stop();
+	});
+
 	it("jumps between OSC 133 semantic prompt markers", async () => {
 		const terminal = new VirtualTerminal(20, 3);
 		const tui = new TuiAltScreen(terminal);

@@ -171,6 +171,16 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBe("session-affinity");
 	});
 
+	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+		"sends Fireworks session affinity for %s",
+		async (modelId) => {
+			const model = getModel("fireworks", modelId);
+			const { headers } = await captureRequest({ sessionId: "fireworks-session" }, model);
+
+			expect(headers["x-session-affinity"]).toBe("fireworks-session");
+		},
+	);
+
 	it("uses OpenAI no-session format when configured", async () => {
 		const model = createModel({
 			compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openai-nosession" },

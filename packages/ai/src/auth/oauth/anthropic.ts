@@ -354,6 +354,7 @@ async function refreshAnthropicToken(refreshToken: string, signal: AbortSignal):
 
 export const anthropicOAuth: OAuthAuth = {
 	name: "Anthropic (Claude Pro/Max)",
+	isSubscription: true,
 	login: loginAnthropic,
 	refresh: (credential, signal) => refreshAnthropicToken(credential.refresh, signal),
 

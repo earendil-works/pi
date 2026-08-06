@@ -8,7 +8,7 @@ import {
 	type ResultForCommand,
 	type ServerEvent,
 	type ServerSnapshot,
-	type SessionSummary,
+	type SessionMetadata,
 } from "@earendil-works/pi-protocol";
 import { Connection } from "./connection.ts";
 import {
@@ -134,7 +134,7 @@ export class PiClient {
 		return () => this.#connectionStateListeners.delete(listener);
 	}
 
-	async listSessions(): Promise<readonly SessionSummary[]> {
+	async listSessions(): Promise<readonly SessionMetadata[]> {
 		return (await this.#request({ command: "list" })).sessions;
 	}
 

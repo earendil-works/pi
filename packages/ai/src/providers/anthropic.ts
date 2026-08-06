@@ -47,7 +47,11 @@ export function anthropicProvider(): Provider<"anthropic-messages"> {
 		baseUrl: "https://api.anthropic.com",
 		auth: {
 			apiKey: anthropicApiKeyAuth(),
-			oauth: lazyOAuth({ name: "Anthropic (Claude Pro/Max)", load: loadAnthropicOAuth }),
+			oauth: lazyOAuth({
+				name: "Anthropic (Claude Pro/Max)",
+				isSubscription: true,
+				load: loadAnthropicOAuth,
+			}),
 		},
 		models: Object.values(ANTHROPIC_MODELS),
 		api: anthropicMessagesApi(),

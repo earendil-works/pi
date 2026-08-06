@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
+import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
 import { llmGatewayOAuth } from "../src/auth/oauth/llmgateway.ts";
 import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
 import { openRouterOAuth } from "../src/auth/oauth/openrouter.ts";
@@ -25,6 +26,13 @@ describe.sequential("OAuthAuth adapters", () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
+	});
+
+	it("identifies only subscription-backed OAuth flows as subscriptions", () => {
+		for (const oauth of [anthropicOAuth, openaiCodexOAuth, githubCopilotOAuth, kimiCodingOAuth, xaiOAuth]) {
+			expect(oauth.isSubscription).toBe(true);
+		}
+		expect(openRouterOAuth.isSubscription).not.toBe(true);
 	});
 
 	it("anthropic toAuth derives the api key from the access token", async () => {

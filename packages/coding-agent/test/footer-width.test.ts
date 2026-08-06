@@ -24,6 +24,7 @@ function createSession(options: {
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
+	usingSubscription?: boolean;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -79,7 +80,7 @@ function createSession(options: {
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
-			isUsingOAuth: () => false,
+			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
 	};
 
@@ -221,5 +222,31 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+	});
+
+	it("marks explicitly identified subscription auth", () => {
+		const session = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("$0.000 (sub)");
+	});
+
+	it("does not mark generic OAuth sign-in as a subscription", () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "openrouter",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 1.234 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+		const stats = stripAnsi(footer.render(120)[1]);
+
+		expect(stats).toContain("$1.234");
+		expect(stats).not.toContain("(sub)");
 	});
 });

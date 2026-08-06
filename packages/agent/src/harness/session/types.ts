@@ -238,6 +238,8 @@ export interface RecordQuery {
 	lane?: string;
 	type?: LaneRecord["type"];
 	runId?: string;
+	/** Valid only with type "operation_started". */
+	operationKind?: OperationStartedRecord["intent"]["kind"];
 	afterSeq?: number;
 	order?: EntryOrder;
 	limit?: number;
@@ -295,6 +297,13 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 		query: RecordQuery & { type: K },
 	): Promise<Extract<LaneRecord, { type: K }>[]>;
 	findRecords(query?: RecordQuery): Promise<LaneRecord[]>;
+	/**
+	 * Returns unfinished operation starts newest first. Recovery uses `limit: 2`:
+	 * zero results mean the lane is idle, one means it is suspended, and two
+	 * mean at least two operations are open, which is corruption. Further
+	 * results provide no additional recovery state.
+	 */
+	findOpenOperations(lane: string, options?: { limit?: number }): Promise<OperationStartedRecord[]>;
 	getLog(options?: { afterSeq?: number; limit?: number }): Promise<LogItem[]>;
 
 	// Global facts
@@ -334,7 +343,9 @@ export interface SessionRepo<
 	TListOptions = void,
 > {
 	create(options: TCreateOptions): Promise<Session<TMetadata>>;
+	/** Opens the session for writing and acquires any backend writer claim. */
 	open(metadata: TMetadata): Promise<Session<TMetadata>>;
+	/** Lists session metadata without opening sessions or acquiring writer claims. */
 	list(options?: TListOptions): Promise<TMetadata[]>;
 	delete(metadata: TMetadata): Promise<void>;
 	fork(source: TMetadata, options: ForkOptions & TCreateOptions): Promise<Session<TMetadata>>;

@@ -1,4 +1,4 @@
-import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
+import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 /**
  * Test harness for AgentSession runtime testing.
  *
@@ -395,9 +395,10 @@ async function createHarnessWithResourceLoader(
 		settingsManager.applyOverrides(options.settings);
 	}
 
-	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
-	const modelRegistry = await createModelRegistry(authStorage, tempDir);
+	const authStorage = AuthStorage.inMemory({
+		[model.provider]: { type: "api_key", key: "faux-key" },
+	});
+	const modelRegistry = await createInMemoryModelRegistry(authStorage);
 	modelRegistry.registerProvider(model.provider, {
 		baseUrl: model.baseUrl,
 		api: model.api,

@@ -294,6 +294,7 @@ async function loginKimiCoding(interaction: ProviderAuthInteraction): Promise<OA
 
 export const kimiCodingOAuth: OAuthAuth = {
 	name: "Kimi Code (subscription)",
+	isSubscription: true,
 	loginLabel: "Sign in with Kimi Code",
 
 	login: loginKimiCoding,
