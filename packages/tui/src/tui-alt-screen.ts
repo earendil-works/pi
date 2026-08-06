@@ -109,7 +109,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	readonly mode = "fullscreen" as const;
 	readonly [VIEWPORT_TUI] = true as const;
 	private previousScreen: string[] = [];
-	private lastDocument: string[] = [];
 	private previousScreenWidth = 0;
 	private previousScreenHeight = 0;
 	private layoutRoot: Component | undefined;
@@ -198,7 +197,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			setCapabilities({ ...capabilities, images: null });
 			this.invalidate();
 		}
-		this.lastDocument = [];
 		this.selectionAnchor = undefined;
 		this.selectionFocus = undefined;
 		this.pressedUrl = undefined;
@@ -230,13 +228,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		} else {
 			const width = Math.max(1, this.terminal.columns);
 			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
-			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
+			const lines = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
 			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
-			for (let row = 0; row < this.lastDocument.length; row++) {
+			for (let row = 0; row < lines.length; row++) {
 				if (row > 0) buffer += "\r\n";
-				buffer += `\r\x1b[2K${stripSoftWrapMarkers(this.lastDocument[row] ?? "")}`;
+				buffer += `\r\x1b[2K${stripSoftWrapMarkers(lines[row] ?? "")}`;
 			}
 			buffer += `\x1b[0m${ENABLE_AUTOWRAP}\r\n\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`;
 			this.terminal.write(buffer);
@@ -734,13 +732,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
 			).trimEnd();
 			if (row > selection.start.row) {
-				const separator = getSoftWrapSeparator(sourceLines[row - 1] ?? "");
-				if (separator === undefined) {
+				const softWrapSeparator = getSoftWrapSeparator(sourceLines[row - 1] ?? "");
+				if (softWrapSeparator === undefined) {
 					text += "\n";
 				} else {
-					// Component padding and continuation indentation are visual layout, not source text.
 					selectedText = selectedText.replace(/^ +/, "");
-					text += separator;
+					text += softWrapSeparator;
 				}
 			}
 			text += selectedText;

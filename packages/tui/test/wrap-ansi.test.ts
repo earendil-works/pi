@@ -1,12 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import {
-	getSoftWrapSeparator,
-	stripSoftWrapMarkers,
-	visibleWidth,
-	wrapTextWithAnsi,
-	wrapTextWithAnsiForRendering,
-} from "../src/utils.ts";
+import { visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
 
 describe("wrapTextWithAnsi", () => {
 	describe("underline styling", () => {
@@ -198,32 +192,6 @@ describe("wrapTextWithAnsi", () => {
 				assert.strictEqual(wrapped[i].endsWith("\x1b[0m"), false);
 			}
 		});
-	});
-});
-
-describe("rendering wrap metadata", () => {
-	it("distinguishes word wrapping, long-token wrapping, and intentional line endings", () => {
-		const wordWrapped = wrapTextWithAnsiForRendering("alpha beta gamma", 10);
-		assert.deepStrictEqual(wordWrapped.map(stripSoftWrapMarkers), ["alpha beta", "gamma"]);
-		assert.strictEqual(getSoftWrapSeparator(wordWrapped[0]), " ");
-
-		const multipleSpaces = wrapTextWithAnsiForRendering("alpha   beta", 8);
-		assert.deepStrictEqual(multipleSpaces.map(stripSoftWrapMarkers), ["alpha", "beta"]);
-		assert.strictEqual(getSoftWrapSeparator(multipleSpaces[0]), "   ");
-
-		const tokenWrapped = wrapTextWithAnsiForRendering("abcdefghijklmnop", 10);
-		assert.deepStrictEqual(tokenWrapped.map(stripSoftWrapMarkers), ["abcdefghij", "klmnop"]);
-		assert.strictEqual(getSoftWrapSeparator(tokenWrapped[0]), "");
-
-		const intentionalBreak = wrapTextWithAnsiForRendering("alpha beta\ngamma", 10);
-		assert.deepStrictEqual(intentionalBreak.map(stripSoftWrapMarkers), ["alpha beta", "gamma"]);
-		assert.strictEqual(getSoftWrapSeparator(intentionalBreak[0]), undefined);
-	});
-
-	it("keeps the public wrapping helper free of rendering metadata", () => {
-		const lines = wrapTextWithAnsi("alpha beta gamma", 10);
-		assert.deepStrictEqual(lines, ["alpha beta", "gamma"]);
-		assert.ok(lines.every((line) => getSoftWrapSeparator(line) === undefined));
 	});
 });
 

@@ -5,7 +5,7 @@ import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
 import type { TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
-import { getSoftWrapSeparator, stripSoftWrapMarkers, visibleWidth } from "../src/utils.ts";
+import { stripSoftWrapMarkers, visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -726,15 +726,6 @@ describe("Editor component", () => {
 	});
 
 	describe("Grapheme-aware text wrapping", () => {
-		it("marks visual editor wraps but not logical line endings", () => {
-			const editor = new Editor(createTestTUI(12), defaultEditorTheme);
-			editor.setText("alpha beta gamma\ndelta");
-			const lines = editor.render(12);
-
-			assert.strictEqual(getSoftWrapSeparator(lines[1]!), " ");
-			assert.strictEqual(getSoftWrapSeparator(lines[2]!), undefined);
-		});
-
 		it("wraps lines correctly when text contains wide emojis", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const width = 20;

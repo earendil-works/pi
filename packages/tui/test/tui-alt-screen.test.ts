@@ -718,20 +718,20 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("copies word-wrapped text without visual line breaks", async () => {
-		const terminal = new RecordingTerminal(14, 3);
+	it("copies soft-wrapped text with its original spacing", async () => {
+		const terminal = new RecordingTerminal(14, 4);
 		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("alpha   beta gamma", 2, 0));
+		tui.addChild(new Text("alpha   beta abcdefghijklmnop", 2, 0));
 		tui.start();
 		await terminal.waitForRender();
 
 		terminal.sendInput("\x1b[<0;3;1M");
-		terminal.sendInput("\x1b[<32;12;2M");
+		terminal.sendInput("\x1b[<32;8;4M");
 		await terminal.waitForRender();
-		terminal.sendInput("\x1b[<0;12;2m");
+		terminal.sendInput("\x1b[<0;8;4m");
 		await terminal.waitForRender();
 
-		const expected = `\x1b]52;c;${Buffer.from("alpha   beta gamma").toString("base64")}\x07`;
+		const expected = `\x1b]52;c;${Buffer.from("alpha   beta abcdefghijklmnop").toString("base64")}\x07`;
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(expected)));
 		tui.stop();
 	});

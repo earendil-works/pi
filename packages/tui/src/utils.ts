@@ -70,8 +70,8 @@ export function addSoftWrapMarker(line: string, separator: string): string {
 }
 
 export function transferSoftWrapMarker(source: string, target: string): string {
-	const separator = getSoftWrapSeparator(source);
-	return separator === undefined ? target : addSoftWrapMarker(target, separator);
+	const marker = SOFT_WRAP_MARKER_REGEX.exec(source)?.[0];
+	return marker ? target + marker : target;
 }
 
 function isPrintableAscii(str: string): boolean {
@@ -939,11 +939,10 @@ function wrapSingleLine(line: string, width: number): WrappedAnsiLine[] {
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
 			// Trim trailing whitespace, then add underline reset (not full reset, to preserve background)
-			const trimmedLine = currentLine.trimEnd();
 			const separator = isWhitespace
 				? " ".repeat(visibleWidth(stripTerminalSequences(token)))
 				: (stripTerminalSequences(currentLine).match(/ +$/)?.[0] ?? "");
-			let lineToWrap = trimmedLine;
+			let lineToWrap = currentLine.trimEnd();
 			const lineEndReset = tracker.getLineEndReset();
 			if (lineEndReset) {
 				lineToWrap += lineEndReset;
