@@ -2,7 +2,8 @@
 
 > 基于 `earendil-works/pi`（⭐84k，MIT）二次开发
 > 目标：安卓本地运行的 agent 式角色扮演应用，替代 SillyTavern（酒馆）静态角色卡方案
-> 修订版 v2：App 壳改为原生 Kotlin + Jetpack Compose，运行时改为 Node 官方 android-arm64 构建，自写薄 RP 服务而非复用 CLI 的 `--mode rpc`
+> 修订版 v3：App 壳改为原生 Kotlin + Jetpack Compose，运行时改为 Node 官方 android-arm64 构建，自写薄 RP 服务而非复用 CLI 的 `--mode rpc`
+> 执行状态：阶段 1（t5-t9）已完成并验证（分支 `feat/rp-app`，5 个提交）；阶段 2/3（安卓）待开始。详见文末"执行状态与差异"。
 
 ---
 
@@ -180,15 +181,20 @@
 - 安装依赖：`npm install --ignore-scripts`（约 339 packages，1 分钟）
 - 验证环境：`npm run build` 或 `./test.sh`
 
-### 阶段 1：RP 核心开发（开发机 Node，不碰安卓，t5-t9）
+### 阶段 1：RP 核心开发（开发机 Node，不碰安卓，t5-t9）✅ 已完成
 
-> 先验证逻辑再打包。测试可用 `packages/ai/src/providers/faux.ts`（假 provider）或真实 API。
+> 全部完成并提交到 `feat/rp-app`。测试用 faux provider（单测）+ 真实 API（gpt-5.6-luna）双路验证。
 
 1. **t5** rp-server 骨架：新建 `packages/rp-server/`，接线 `runAgentLoop`（streamFn = `getApiProvider(model.api).streamSimple`）、`convertToLlm` 恒等、JSONL-over-stdio 协议、faux provider 冒烟
+   - 提交 `f5065add9`；协议 `init/card/prompt/abort/ping`；用 `Agent` 类（比裸 `runAgentLoop` 更简单）包装状态与事件订阅
 2. **t6** 角色卡解析器：V2 解析 + 人格锚生成
-3. **t7** 记忆系统：node:sqlite/JSON 存储 + systemPrompt 注入 + memory_search 工具
+   - 提交 `1263ba436`；JSON（V1/V2）+ PNG tEXt `chara` chunk 提取；`first_mes` 注入为首条 assistant 消息
+3. **t7** 记忆系统：JSON 存储 + systemPrompt 注入 + memory_search 工具
+   - 提交 `6f42d7211`；`MemoryStore`（JSON 文件 + CJK 字符 bigram 关键词检索）、`memory_search`/`memory_remember` 工具、LLM 滚动摘要（每 N 轮）
 4. **t8** 叙事转译：工具结果规范 + thinkingLevel + 事件过滤（只转 text_delta）
+   - 提交 `7b022eef3`；人格锚新增 "Senses and information" 规则段；narrative 事件流（`reply_start`/`text`/`thinking`）
 5. **t9** 集成验证：用真实角色卡跑通 agent RP 对话（重点验证：动态调整 + 信息获取 + 不出戏）
+   - 提交 `ef7fc1f98`；3 轮真实对话验证：memory_search 主动检索 2 次、memory_remember 落账 1 次、全程不出戏、摘要质量高
 
 ### 阶段 2：安卓打包（t10-t11）
 
@@ -248,13 +254,24 @@ packages/ai/src/compat.ts             # getApiProvider / registerApiProvider
 packages/ai/src/models.ts             # createProvider
 packages/ai/src/providers/faux.ts     # 测试用假 provider
 packages/coding-agent/src/core/sdk.ts # streamFn 接线参考（sdk.ts:302）
-packages/coding-agent/src/core/compaction/ # 精简版 compaction 移植来源
 packages/session-backends/sqlite-node # node:sqlite 后端参考（零原生依赖）
+
+# 本项目新增（packages/rp-server/）
+packages/rp-server/src/server.ts        # RpServer（agent 包装/记忆注入/摘要/narrative 分发）+ stdio 入口
+packages/rp-server/src/protocol.ts      # JSONL 协议：init/card/prompt/abort/ping + narrative 事件
+packages/rp-server/src/model.ts         # createRpModel（baseUrl/apiKey → OpenAI 兼容 Model）
+packages/rp-server/src/stream-fn.ts     # createStreamFn / installStreamFn
+packages/rp-server/src/cli.ts           # 命令行入口（--model/--memory-dir/--narrative 等）
+packages/rp-server/src/character-card/  # 角色卡 V1/V2 解析 + PNG tEXt 提取 + 人格锚生成
+packages/rp-server/src/memory/          # MemoryStore + memory_search/remember 工具 + 摘要注入
+packages/rp-server/test/                # 33 个单元测试（faux provider、PNG 构造、server 流程）
 ```
 
 > 注：以上均为本仓库（pi fork）根目录下的相对路径。`packages/rp-server/`（新包）与 `android/`（Gradle 工程）为本项目新增。本计划不依赖任何特定服务器，全部在开发机本地执行。
 
 **建议开发顺序**：t5 → t6 → t8 → t7 → t9（先验证核心体验，记忆系统最后接）；阶段 2 的运行时 smoke test（t10）可提前与 t5 并行，尽早暴露 Node android-arm64 兼容性问题。
+
+> 阶段 1 实际按 t5 → t6 → t7 → t8 → t9 顺序完成（记忆系统提前接入便于集成验证）。阶段 2 开始时优先做 t10 运行时 smoke test。
 
 ---
 
@@ -269,3 +286,41 @@ packages/session-backends/sqlite-node # node:sqlite 后端参考（零原生依�
 | systemPrompt 注入 | 引 harness 函数式 | string 直拼（agent.ts:75 仅 string） |
 | server/client/protocol 包 | 列为 App 通信现成层 | 明确不用（实验性、未接 main） |
 | 记忆存储 | 纯 JS 规避 SQLite | node:sqlite（官方 Node 22 内置，无编译问题） |
+
+---
+
+## 九、执行状态与差异（截至 2026-08，分支 feat/rp-app）
+
+### 已完成
+
+| 任务 | 状态 | 提交 | 说明 |
+|---|---|---|---|
+| t5 rp-server 骨架 | ✅ | `f5065add9` | 协议 + Agent 接线 + stdio JSONL；4 单测 |
+| t6 角色卡层 | ✅ | `1263ba436` | V1/V2 + PNG tEXt + 人格锚 + first_mes 注入；5 单测 |
+| t7 记忆系统 | ✅ | `6f42d7211` | 存储/检索/工具/摘要；13 单测 |
+| t8 叙事转译 | ✅ | `7b022eef3` | narrative 事件流 + 规则段；narrative 单测 |
+| t9 集成验证 | ✅ | `ef7fc1f98` | thinking 带工具名；真实 API 3 轮验证通过 |
+
+- 单测共 33 个，`npm run check` 全绿（biome / tsgo / pinned-deps / shrinkwrap / install-lock / browser-smoke）
+- 真实 API（one-api.kumomo.cc，模型 gpt-5.6-luna）端到端验证：卡片加载、开场白注入、记忆检索与落账、叙事流、滚动摘要全部正常
+
+### 与计划的实现差异
+
+| 计划 | 实际实现 |
+|---|---|
+| 记忆系统 node:sqlite / JSON | **JSON 文件先行**（`memory.json`），CJK 字符 bigram 关键词检索；未迁 node:sqlite，v1 够用 |
+| 精简版 compaction（移植 coding-agent） | **LLM 滚动摘要**替代（`summaryInterval` 每 N 轮，`conversation-summary` 条目 upsert），逻辑更简单且无需移植 |
+| 工具集含 knowledge_query / get_time 等 | 仅实现 `memory_search` / `memory_remember`，聚焦记忆；其余感知类工具留待后续 |
+| 叙事转译用 beforeToolCall / thinkingLevel | 未启用钩子，`thinkingLevel` 默认 off；靠人格锚规则 + **narrative 事件流**（`reply_start`/`text`/`thinking`，thinking 带工具名）实现，App 只消费叙事事件 |
+| `Agent` vs `runAgentLoop` | 用 `Agent` 类（状态管理 + 事件订阅）而非直接驱动 `runAgentLoop`，更贴合服务端封装 |
+
+### 环境备注
+
+- `packages/ai/src/providers/data/` 为 gitignore 生成数据（模型目录），需网络生成；本机 models.dev 被墙，用系统代理（127.0.0.1:7890）+ `NODE_USE_ENV_PROXY=1` 跑 `npm run generate-models` 生成。该目录不提交，新环境需重跑
+- 开发中代理偶发断连（"Connection error" / 524），为代理环境问题，非代码缺陷
+- 已修复：CLI `parseArgs` 对无值 flag（`--narrative`）在末位时被跳过的问题
+
+### 待办
+
+- 阶段 2：**t10** Node android-arm64 运行时（brotli assets + ProcessBuilder + 前台服务）；**t11** Kotlin/Compose App（聊天 UI、设置页、卡片导入、会话持久化、IPC 客户端）
+- 阶段 3：**t12** 真机验证；**t13** APK 体积优化（tree-shake、剔除无用 provider/models catalog）
