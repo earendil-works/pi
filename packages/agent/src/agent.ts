@@ -331,6 +331,10 @@ export class Agent {
 
 	/** Clear transcript state, runtime state, and queued messages. */
 	reset(): void {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing. Wait for completion before resetting.");
+		}
+
 		this._state.messages = [];
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;
