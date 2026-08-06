@@ -20,6 +20,10 @@ export interface RpConfig {
 	/** Persona anchor system prompt. */
 	systemPrompt?: string;
 	thinkingLevel?: ThinkingLevel;
+	/** Directory for persistent long-term memory. Memory is disabled when omitted. */
+	memoryDir?: string;
+	/** Summarize the conversation into memory every N turns. Default: 8. Disabled when memoryDir is unset. */
+	summaryInterval?: number;
 }
 
 export type ServerRequest =

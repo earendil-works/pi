@@ -7,6 +7,8 @@ interface CliOptions {
 	api?: string;
 	provider?: string;
 	systemPrompt?: string;
+	memoryDir?: string;
+	summaryInterval?: number;
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -42,6 +44,14 @@ function parseArgs(args: string[]): CliOptions {
 				options.systemPrompt = value;
 				index++;
 				break;
+			case "--memory-dir":
+				options.memoryDir = value;
+				index++;
+				break;
+			case "--summary-interval":
+				options.summaryInterval = Number(value);
+				index++;
+				break;
 		}
 	}
 	return options;
@@ -61,6 +71,8 @@ function buildConfig(options: CliOptions): RpConfig | undefined {
 	return {
 		model: modelConfig,
 		systemPrompt: options.systemPrompt,
+		memoryDir: options.memoryDir,
+		summaryInterval: options.summaryInterval,
 	};
 }
 

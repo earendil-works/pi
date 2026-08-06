@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type FauxProviderRegistration, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { type FauxProviderRegistration, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { MemoryStore, SUMMARY_TAG } from "../src/memory/index.ts";
 import type { ServerResponse } from "../src/protocol.ts";
 import { RpServer } from "../src/server.ts";
 import { buildPngWithCard } from "./png-util.ts";
@@ -179,6 +183,113 @@ describe("rp-server", () => {
 			expect(io.responses()[0]).toMatchObject({ type: "card_loaded", name: "PNG角色" });
 		} finally {
 			faux.unregister();
+		}
+	});
+
+	it("registers memory tools and injects relevant memories into the system prompt", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rp-mem-"));
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const store = new MemoryStore(join(dir, "memory.json"));
+			store.add("阿琳养了一只叫煤球的猫，猫很粘人", ["pet"]);
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: {
+						model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl },
+						memoryDir: dir,
+					},
+				}),
+			);
+			io.lines.length = 0;
+
+			let seenSystemPrompt = "";
+			let toolNames: string[] = [];
+			faux.setResponses([
+				(context) => {
+					seenSystemPrompt = context.systemPrompt ?? "";
+					toolNames = (context.tools ?? []).map((tool) => tool.name);
+					return fauxAssistantMessage("好的。");
+				},
+			]);
+			await server.handleLine(JSON.stringify({ type: "prompt", text: "你的猫呢？" }));
+			expect(io.responses().at(-1)).toEqual({ type: "result" });
+			expect(toolNames).toContain("memory_search");
+			expect(toolNames).toContain("memory_remember");
+			expect(seenSystemPrompt).toContain("## Relevant memories");
+			expect(seenSystemPrompt).toContain("煤球");
+		} finally {
+			faux.unregister();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("executes a memory_search tool call during the agent loop", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rp-mem-"));
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const store = new MemoryStore(join(dir, "memory.json"));
+			store.add("客人的名字叫叶轻舟", ["user"]);
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: {
+						model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl },
+						memoryDir: dir,
+					},
+				}),
+			);
+			io.lines.length = 0;
+
+			let recalledText = "";
+			faux.setResponses([
+				fauxAssistantMessage([fauxToolCall("memory_search", { query: "客人名字" })]),
+				(context) => {
+					const toolResults = context.messages.filter((message) => message.role === "toolResult");
+					recalledText = toolResults.map((message) => JSON.stringify(message.content)).join("");
+					return fauxAssistantMessage("我记得你叫叶轻舟。");
+				},
+			]);
+			await server.handleLine(JSON.stringify({ type: "prompt", text: "你还记得我叫什么吗？" }));
+			expect(io.responses().at(-1)).toEqual({ type: "result" });
+			expect(recalledText).toContain("叶轻舟");
+		} finally {
+			faux.unregister();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("summarizes the conversation into memory every summaryInterval turns", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rp-mem-"));
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: {
+						model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl },
+						memoryDir: dir,
+						summaryInterval: 1,
+					},
+				}),
+			);
+			io.lines.length = 0;
+
+			faux.setResponses([fauxAssistantMessage("回复一"), fauxAssistantMessage("摘要：聊到了天气。")]);
+			await server.handleLine(JSON.stringify({ type: "prompt", text: "今天天气不错" }));
+			expect(io.responses().at(-1)).toEqual({ type: "result" });
+
+			const reloaded = new MemoryStore(join(dir, "memory.json"));
+			expect(reloaded.findByTag(SUMMARY_TAG)?.text).toBe("摘要：聊到了天气。");
+		} finally {
+			faux.unregister();
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

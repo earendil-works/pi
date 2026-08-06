@@ -1,7 +1,11 @@
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { buildPersonaAnchor, extractCharacterCardFromPng, parseCharacterCard } from "./character-card/index.ts";
+import { buildMemorySection, SUMMARY_TAG, summarizeConversation } from "./memory/index.ts";
+import { MemoryStore } from "./memory/store.ts";
+import { createMemoryRememberTool, createMemorySearchTool } from "./memory/tools.ts";
 import { createRpModel } from "./model.ts";
 import { decodeRequest, encodeResponse, type RpConfig, type ServerRequest, type ServerResponse } from "./protocol.ts";
 import { createStreamFn, installStreamFn } from "./stream-fn.ts";
@@ -19,10 +23,18 @@ const EMPTY_USAGE: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
+const DEFAULT_SUMMARY_INTERVAL = 8;
+
 export class RpServer {
 	private readonly io: ServerIO;
 	private readonly streamFn: StreamFn;
 	private agent: Agent | undefined;
+	private memoryStore: MemoryStore | undefined;
+	private summaryInterval = DEFAULT_SUMMARY_INTERVAL;
+	private turnCount = 0;
+	private apiKey: string | undefined;
+	private persona = "";
+	private characterName = "";
 	private pendingPersona: string | undefined;
 
 	constructor(io: ServerIO) {
@@ -45,11 +57,19 @@ export class RpServer {
 	async handleRequest(request: ServerRequest): Promise<void> {
 		switch (request.type) {
 			case "init": {
+				this.memoryStore = request.config.memoryDir
+					? new MemoryStore(join(request.config.memoryDir, "memory.json"))
+					: undefined;
+				this.summaryInterval = request.config.summaryInterval ?? DEFAULT_SUMMARY_INTERVAL;
+				this.apiKey = request.config.model.apiKey;
+				this.persona = request.config.systemPrompt ?? "";
 				this.agent = this.createAgent(request.config);
 				if (this.pendingPersona) {
-					this.agent.state.systemPrompt = this.pendingPersona;
+					this.persona = this.pendingPersona;
 					this.pendingPersona = undefined;
 				}
+				this.agent.state.systemPrompt = this.persona;
+				this.turnCount = 0;
 				this.emit({ type: "ready" });
 				return;
 			}
@@ -68,7 +88,9 @@ export class RpServer {
 					return;
 				}
 				try {
+					this.agent.state.systemPrompt = this.buildSystemPrompt(request.text);
 					await this.agent.prompt(request.text);
+					await this.maybeSummarize();
 					this.emit({ type: "result" });
 				} catch (error) {
 					this.emit({ type: "result", error: toErrorMessage(error) });
@@ -86,12 +108,15 @@ export class RpServer {
 
 	private createAgent(config: RpConfig): Agent {
 		const model = createRpModel(config.model);
+		const tools = this.memoryStore
+			? [createMemorySearchTool(this.memoryStore), createMemoryRememberTool(this.memoryStore)]
+			: [];
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: config.systemPrompt ?? "",
 				model,
 				thinkingLevel: config.thinkingLevel ?? "off",
-				tools: [],
+				tools,
 			},
 			streamFn: this.streamFn,
 			getApiKey: () => config.model.apiKey,
@@ -114,6 +139,8 @@ export class RpServer {
 			const card = parseCharacterCard(text);
 			const persona = buildPersonaAnchor(card);
 			const greeting = card.firstMes ?? card.alternateGreetings[0] ?? "";
+			this.persona = persona;
+			this.characterName = card.name;
 			if (this.agent) {
 				this.agent.state.systemPrompt = persona;
 				if (greeting) {
@@ -126,6 +153,33 @@ export class RpServer {
 			return { ok: true, name: card.name, greeting };
 		} catch (error) {
 			return { ok: false, error: toErrorMessage(error) };
+		}
+	}
+
+	private buildSystemPrompt(query: string): string {
+		const parts = [this.persona];
+		if (this.memoryStore) {
+			parts.push(buildMemorySection(this.memoryStore, query));
+		}
+		return parts.filter(Boolean).join("\n\n");
+	}
+
+	private async maybeSummarize(): Promise<void> {
+		if (!this.memoryStore || !this.agent || this.summaryInterval <= 0) {
+			return;
+		}
+		this.turnCount++;
+		if (this.turnCount % this.summaryInterval !== 0) {
+			return;
+		}
+		try {
+			const summary = await summarizeConversation(this.agent.state.model, this.streamFn, this.agent.state.messages, {
+				apiKey: this.apiKey,
+				characterName: this.characterName || undefined,
+			});
+			this.memoryStore.upsertByTag(SUMMARY_TAG, summary);
+		} catch (error) {
+			console.error("[rp-server] conversation summarization failed:", toErrorMessage(error));
 		}
 	}
 

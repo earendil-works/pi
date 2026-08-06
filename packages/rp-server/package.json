@@ -22,7 +22,8 @@
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "^0.83.0",
-		"@earendil-works/pi-agent-core": "^0.83.0"
+		"@earendil-works/pi-agent-core": "^0.83.0",
+		"typebox": "1.3.7"
 	},
 	"keywords": [
 		"ai",
