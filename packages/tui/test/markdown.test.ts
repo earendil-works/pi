@@ -6,7 +6,7 @@ import { Markdown } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import type { Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
-import { stripSoftWrapMarkers } from "../src/utils.ts";
+import { stripTerminalSequences } from "../src/utils.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
@@ -34,7 +34,7 @@ function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): 
 }
 
 function stripAnsi(line: string): string {
-	return stripSoftWrapMarkers(line).replace(/\x1b\[[0-9;]*m/g, "");
+	return stripTerminalSequences(line);
 }
 
 describe("Markdown component", () => {
