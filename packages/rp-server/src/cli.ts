@@ -9,48 +9,39 @@ interface CliOptions {
 	systemPrompt?: string;
 	memoryDir?: string;
 	summaryInterval?: number;
+	narrative?: boolean;
 }
 
 function parseArgs(args: string[]): CliOptions {
 	const options: CliOptions = {};
 	for (let index = 0; index < args.length; index++) {
-		const arg = args[index];
-		const value = args[index + 1];
-		if (value === undefined) {
-			continue;
-		}
-		switch (arg) {
+		switch (args[index]) {
 			case "--base-url":
-				options.baseUrl = value;
-				index++;
+				options.baseUrl = args[++index];
 				break;
 			case "--api-key":
-				options.apiKey = value;
-				index++;
+				options.apiKey = args[++index];
 				break;
 			case "--model":
-				options.model = value;
-				index++;
+				options.model = args[++index];
 				break;
 			case "--api":
-				options.api = value;
-				index++;
+				options.api = args[++index];
 				break;
 			case "--provider":
-				options.provider = value;
-				index++;
+				options.provider = args[++index];
 				break;
 			case "--system-prompt":
-				options.systemPrompt = value;
-				index++;
+				options.systemPrompt = args[++index];
 				break;
 			case "--memory-dir":
-				options.memoryDir = value;
-				index++;
+				options.memoryDir = args[++index];
 				break;
 			case "--summary-interval":
-				options.summaryInterval = Number(value);
-				index++;
+				options.summaryInterval = Number(args[++index]);
+				break;
+			case "--narrative":
+				options.narrative = true;
 				break;
 		}
 	}
@@ -73,6 +64,7 @@ function buildConfig(options: CliOptions): RpConfig | undefined {
 		systemPrompt: options.systemPrompt,
 		memoryDir: options.memoryDir,
 		summaryInterval: options.summaryInterval,
+		narrative: options.narrative,
 	};
 }
 

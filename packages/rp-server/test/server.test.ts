@@ -292,4 +292,53 @@ describe("rp-server", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("emits a narrative event stream instead of raw agent events", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rp-mem-"));
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const store = new MemoryStore(join(dir, "memory.json"));
+			store.add("阿琳记得客人的名字是叶轻舟", ["user"]);
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: {
+						model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl },
+						memoryDir: dir,
+						narrative: true,
+					},
+				}),
+			);
+			io.lines.length = 0;
+
+			faux.setResponses([
+				fauxAssistantMessage([fauxToolCall("memory_search", { query: "客人名字" })]),
+				fauxAssistantMessage("我记得，他叫叶轻舟。"),
+			]);
+			await server.handleLine(JSON.stringify({ type: "prompt", text: "你还记得我吗？" }));
+
+			const responses = io.responses();
+			expect(responses.at(-1)).toEqual({ type: "result" });
+			expect(responses.some((response) => response.type === "event")).toBe(false);
+
+			const narrative = responses.filter((response) => response.type === "narrative");
+			const kinds = narrative.map((response) => (response.type === "narrative" ? response.event.kind : ""));
+			expect(kinds[0]).toBe("reply_start");
+			expect(kinds).toContain("thinking");
+			expect(kinds).toContain("text");
+			const text = narrative
+				.filter(
+					(response): response is Extract<ServerResponse, { type: "narrative" }> => response.type === "narrative",
+				)
+				.filter((response) => response.event.kind === "text")
+				.map((response) => (response.event.kind === "text" ? response.event.text : ""))
+				.join("");
+			expect(text).toContain("叶轻舟");
+		} finally {
+			faux.unregister();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

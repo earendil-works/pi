@@ -24,6 +24,8 @@ export interface RpConfig {
 	memoryDir?: string;
 	/** Summarize the conversation into memory every N turns. Default: 8. Disabled when memoryDir is unset. */
 	summaryInterval?: number;
+	/** Emit a UI-friendly narrative event stream instead of raw agent events. Default: false. */
+	narrative?: boolean;
 }
 
 export type ServerRequest =
@@ -33,9 +35,12 @@ export type ServerRequest =
 	| { type: "abort" }
 	| { type: "ping" };
 
+export type NarrativeEvent = { kind: "reply_start" } | { kind: "text"; text: string } | { kind: "thinking" };
+
 export type ServerResponse =
 	| { type: "ready" }
 	| { type: "event"; event: AgentEvent }
+	| { type: "narrative"; event: NarrativeEvent }
 	| { type: "result"; error?: string }
 	| { type: "card_loaded"; name: string; greeting: string }
 	| { type: "pong" }

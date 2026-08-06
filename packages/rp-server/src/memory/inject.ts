@@ -4,6 +4,10 @@ import { type MemoryStore, SUMMARY_TAG } from "./store.ts";
 
 const DEFAULT_MEMORY_LIMIT = 5;
 
+/** Short usage hint appended whenever long-term memory is enabled. */
+export const MEMORY_USAGE_NOTE =
+	"You have a long-term memory. Use memory_search to recall things you may have forgotten, and memory_remember to store important facts or events.";
+
 /**
  * Build the per-turn memory section injected into the system prompt: the
  * rolling conversation summary plus memories relevant to the current message.

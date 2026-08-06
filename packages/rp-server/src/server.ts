@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { buildPersonaAnchor, extractCharacterCardFromPng, parseCharacterCard } from "./character-card/index.ts";
-import { buildMemorySection, SUMMARY_TAG, summarizeConversation } from "./memory/index.ts";
+import { buildMemorySection, MEMORY_USAGE_NOTE, SUMMARY_TAG, summarizeConversation } from "./memory/index.ts";
 import { MemoryStore } from "./memory/store.ts";
 import { createMemoryRememberTool, createMemorySearchTool } from "./memory/tools.ts";
 import { createRpModel } from "./model.ts";
@@ -36,6 +36,7 @@ export class RpServer {
 	private persona = "";
 	private characterName = "";
 	private pendingPersona: string | undefined;
+	private narrative = false;
 
 	constructor(io: ServerIO) {
 		this.io = io;
@@ -63,6 +64,7 @@ export class RpServer {
 				this.summaryInterval = request.config.summaryInterval ?? DEFAULT_SUMMARY_INTERVAL;
 				this.apiKey = request.config.model.apiKey;
 				this.persona = request.config.systemPrompt ?? "";
+				this.narrative = request.config.narrative ?? false;
 				this.agent = this.createAgent(request.config);
 				if (this.pendingPersona) {
 					this.persona = this.pendingPersona;
@@ -122,9 +124,31 @@ export class RpServer {
 			getApiKey: () => config.model.apiKey,
 		});
 		agent.subscribe((event) => {
-			this.emit({ type: "event", event });
+			if (this.narrative) {
+				this.emitNarrative(event);
+			} else {
+				this.emit({ type: "event", event });
+			}
 		});
 		return agent;
+	}
+
+	private emitNarrative(event: AgentEvent): void {
+		switch (event.type) {
+			case "message_start":
+				if (event.message.role === "assistant") {
+					this.emit({ type: "narrative", event: { kind: "reply_start" } });
+				}
+				break;
+			case "message_update":
+				if (event.assistantMessageEvent.type === "text_delta") {
+					this.emit({ type: "narrative", event: { kind: "text", text: event.assistantMessageEvent.delta } });
+				}
+				break;
+			case "tool_execution_start":
+				this.emit({ type: "narrative", event: { kind: "thinking" } });
+				break;
+		}
 	}
 
 	private loadCard(
@@ -159,6 +183,7 @@ export class RpServer {
 	private buildSystemPrompt(query: string): string {
 		const parts = [this.persona];
 		if (this.memoryStore) {
+			parts.push(MEMORY_USAGE_NOTE);
 			parts.push(buildMemorySection(this.memoryStore, query));
 		}
 		return parts.filter(Boolean).join("\n\n");
