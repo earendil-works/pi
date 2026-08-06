@@ -1,5 +1,7 @@
 import { createInterface } from "node:readline";
 import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { buildPersonaAnchor, extractCharacterCardFromPng, parseCharacterCard } from "./character-card/index.ts";
 import { createRpModel } from "./model.ts";
 import { decodeRequest, encodeResponse, type RpConfig, type ServerRequest, type ServerResponse } from "./protocol.ts";
 import { createStreamFn, installStreamFn } from "./stream-fn.ts";
@@ -8,10 +10,20 @@ export interface ServerIO {
 	write(line: string): void;
 }
 
+const EMPTY_USAGE: Usage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
 export class RpServer {
 	private readonly io: ServerIO;
 	private readonly streamFn: StreamFn;
 	private agent: Agent | undefined;
+	private pendingPersona: string | undefined;
 
 	constructor(io: ServerIO) {
 		this.io = io;
@@ -34,7 +46,20 @@ export class RpServer {
 		switch (request.type) {
 			case "init": {
 				this.agent = this.createAgent(request.config);
+				if (this.pendingPersona) {
+					this.agent.state.systemPrompt = this.pendingPersona;
+					this.pendingPersona = undefined;
+				}
 				this.emit({ type: "ready" });
+				return;
+			}
+			case "card": {
+				const result = this.loadCard(request.format, request.data);
+				if (!result.ok) {
+					this.emit({ type: "error", error: result.error });
+					return;
+				}
+				this.emit({ type: "card_loaded", name: result.name, greeting: result.greeting });
 				return;
 			}
 			case "prompt": {
@@ -77,6 +102,47 @@ export class RpServer {
 		return agent;
 	}
 
+	private loadCard(
+		format: "json" | "png",
+		data: string,
+	): { ok: true; name: string; greeting: string } | { ok: false; error: string } {
+		try {
+			const text = format === "png" ? extractCharacterCardFromPng(base64ToBytes(data)) : data;
+			if (!text) {
+				return { ok: false, error: "No character card found in PNG" };
+			}
+			const card = parseCharacterCard(text);
+			const persona = buildPersonaAnchor(card);
+			const greeting = card.firstMes ?? card.alternateGreetings[0] ?? "";
+			if (this.agent) {
+				this.agent.state.systemPrompt = persona;
+				if (greeting) {
+					const message = this.buildAssistantMessage(greeting);
+					this.agent.state.messages = [message];
+				}
+			} else {
+				this.pendingPersona = persona;
+			}
+			return { ok: true, name: card.name, greeting };
+		} catch (error) {
+			return { ok: false, error: toErrorMessage(error) };
+		}
+	}
+
+	private buildAssistantMessage(text: string): AssistantMessage {
+		const model = this.agent?.state.model;
+		return {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: model?.api ?? "openai-completions",
+			provider: model?.provider ?? "custom",
+			model: model?.id ?? "unknown",
+			usage: EMPTY_USAGE,
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+	}
+
 	private emit(response: ServerResponse): void {
 		this.io.write(encodeResponse(response));
 	}
@@ -102,4 +168,8 @@ export function startStdioServer(): RpServer {
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function base64ToBytes(data: string): Uint8Array {
+	return Buffer.from(data, "base64");
 }

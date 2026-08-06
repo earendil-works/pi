@@ -24,6 +24,7 @@ export interface RpConfig {
 
 export type ServerRequest =
 	| { type: "init"; config: RpConfig }
+	| { type: "card"; format: "json" | "png"; data: string }
 	| { type: "prompt"; text: string }
 	| { type: "abort" }
 	| { type: "ping" };
@@ -32,6 +33,7 @@ export type ServerResponse =
 	| { type: "ready" }
 	| { type: "event"; event: AgentEvent }
 	| { type: "result"; error?: string }
+	| { type: "card_loaded"; name: string; greeting: string }
 	| { type: "pong" }
 	| { type: "error"; error: string };
 
@@ -61,6 +63,14 @@ export function decodeRequest(line: string): ServerRequest {
 				throw new Error('Prompt request missing string field "text"');
 			}
 			return { type: "prompt", text: request.text };
+		case "card":
+			if (request.format !== "json" && request.format !== "png") {
+				throw new Error('Card request missing valid "format" ("json" or "png")');
+			}
+			if (typeof request.data !== "string") {
+				throw new Error('Card request missing string field "data"');
+			}
+			return { type: "card", format: request.format, data: request.data };
 		case "abort":
 			return { type: "abort" };
 		case "ping":

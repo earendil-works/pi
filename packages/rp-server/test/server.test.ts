@@ -4,6 +4,7 @@ import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { ServerResponse } from "../src/protocol.ts";
 import { RpServer } from "../src/server.ts";
+import { buildPngWithCard } from "./png-util.ts";
 
 class MemoryIO {
 	public lines: string[] = [];
@@ -98,6 +99,84 @@ describe("rp-server", () => {
 				.map((block) => (block.type === "text" ? block.text : ""))
 				.join("");
 			expect(text).toContain("Welcome to the Rusty Lantern!");
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("loads a character card and injects greeting + persona into context", async () => {
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: { model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl } },
+				}),
+			);
+			io.lines.length = 0;
+
+			const cardJson = JSON.stringify({
+				spec: "chara_card_v2",
+				data: { name: "阿琳", description: "酒馆老板娘", first_mes: "欢迎光临～" },
+			});
+
+			let seenSystemPrompt = "";
+			let greetingInContext = false;
+			faux.setResponses([
+				(context) => {
+					seenSystemPrompt = context.systemPrompt ?? "";
+					greetingInContext = context.messages.some(
+						(message) => message.role === "assistant" && JSON.stringify(message.content).includes("欢迎光临～"),
+					);
+					return fauxAssistantMessage("要喝一杯吗？");
+				},
+			]);
+
+			await server.handleLine(JSON.stringify({ type: "card", format: "json", data: cardJson }));
+			const responses = io.responses();
+			expect(responses[0]).toMatchObject({
+				type: "card_loaded",
+				name: "阿琳",
+				greeting: "欢迎光临～",
+			});
+
+			io.lines.length = 0;
+			await server.handleLine(JSON.stringify({ type: "prompt", text: "来一杯麦酒" }));
+			expect(io.responses().at(-1)).toEqual({ type: "result" });
+			expect(seenSystemPrompt).toContain("You are 阿琳.");
+			expect(seenSystemPrompt).toContain("酒馆老板娘");
+			expect(seenSystemPrompt).toContain("Never break character");
+			expect(greetingInContext).toBe(true);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("rejects a card with an invalid format", async () => {
+		const { server, io } = createTestServer();
+		await server.handleLine(JSON.stringify({ type: "card", format: "bogus", data: "{}" }));
+		expect(io.responses()[0]).toMatchObject({ type: "error" });
+	});
+
+	it("loads a card from a PNG payload", async () => {
+		const faux: FauxProviderRegistration = registerFauxProvider();
+		try {
+			const { server, io } = createTestServer();
+			const model = faux.getModel();
+			await server.handleLine(
+				JSON.stringify({
+					type: "init",
+					config: { model: { id: model.id, api: faux.api, provider: model.provider, baseUrl: model.baseUrl } },
+				}),
+			);
+			io.lines.length = 0;
+
+			const cardJson = JSON.stringify({ name: "PNG角色", first_mes: "从 PNG 来的你好" });
+			const encoded = Buffer.from(buildPngWithCard(cardJson)).toString("base64");
+			await server.handleLine(JSON.stringify({ type: "card", format: "png", data: encoded }));
+			expect(io.responses()[0]).toMatchObject({ type: "card_loaded", name: "PNG角色" });
 		} finally {
 			faux.unregister();
 		}
