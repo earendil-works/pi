@@ -97,36 +97,12 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	}
 
 	async fork(path: string, header: JsonlV4Header, options: ForkOptions): Promise<JsonlSessionStorage> {
-		let copiedEntries: Entry[];
-		let forkLanes: LanePointer[];
-		if (options.scope === "tree") {
-			copiedEntries = this.state.findEntries({ order: "oldestFirst" });
-			forkLanes = this.state.getLanes();
-		} else {
-			const selectedEntryId = options.entryId ?? this.state.requireLane("main");
-			let targetId: string | null = null;
-			if (selectedEntryId !== null) {
-				const entry = this.state.getEntry(selectedEntryId);
-				if (!entry || entry.type !== "message") {
-					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
-				}
-				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
-				targetId = position === "at" ? entry.id : entry.parentId;
-			}
-			copiedEntries =
-				targetId === null ? [] : this.state.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
-			forkLanes = [{ lane: "main", leafId: targetId }];
-		}
-
+		const mutations = this.state.createForkMutations(options);
 		await publishFileAtomically(this.fs, path, async (tempPath) => {
 			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
-			for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
-			for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
-			const name = this.state.getName();
-			if (name !== undefined) await targetStorage.setName(name);
-			for (const entry of copiedEntries) {
-				const label = this.state.getLabel(entry.id);
-				if (label !== undefined) await targetStorage.setLabel(entry.id, label);
+			for (const mutation of mutations) {
+				await targetStorage.appendMutation(mutation);
+				targetStorage.applyMutation(mutation);
 			}
 		});
 		return JsonlSessionStorage.load(this.fs, path);
@@ -178,27 +154,6 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			await this.appendMutation(mutation);
 			this.applyMutation(mutation);
 			return structuredClone(entry);
-		});
-	}
-
-	appendCopiedEntry<TEntry extends Entry>(source: TEntry): Promise<TEntry> {
-		return this.enqueue(async () => {
-			this.state.validateUnusedId(source.id);
-			this.state.validateTarget(source.parentId);
-			const entry = { ...structuredClone(source), seq: this.state.nextSequence };
-			const mutation: SessionMutation = { kind: "entry", entry };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
-			return structuredClone(entry);
-		});
-	}
-
-	appendForkLane(lane: string, leafId: string | null): Promise<void> {
-		return this.enqueue(async () => {
-			this.state.validateTarget(leafId);
-			const mutation: SessionMutation = { kind: "lane", seq: this.state.nextSequence, lane, leafId };
-			await this.appendMutation(mutation);
-			this.applyMutation(mutation);
 		});
 	}
 

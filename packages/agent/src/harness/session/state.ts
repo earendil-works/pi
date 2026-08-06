@@ -3,6 +3,7 @@ import {
 	type Entry,
 	type EntryOrder,
 	type EntryQuery,
+	type ForkOptions,
 	type LanePointer,
 	type LaneRecord,
 	type LogItem,
@@ -254,6 +255,47 @@ export class SessionState {
 
 	getStats(): SessionStats {
 		return this.stats;
+	}
+
+	createForkMutations(options: ForkOptions): SessionMutation[] {
+		let copiedEntries: Entry[];
+		let forkLanes: LanePointer[];
+		if (options.scope === "tree") {
+			copiedEntries = this.findEntries({ order: "oldestFirst" });
+			forkLanes = this.getLanes();
+		} else {
+			const selectedEntryId = options.entryId ?? this.requireLane("main");
+			let targetId: string | null = null;
+			if (selectedEntryId !== null) {
+				const entry = this.getEntry(selectedEntryId);
+				if (!entry || entry.type !== "message") {
+					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
+				}
+				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
+				targetId = position === "at" ? entry.id : entry.parentId;
+			}
+			copiedEntries = targetId === null ? [] : this.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
+			forkLanes = [{ lane: "main", leafId: targetId }];
+		}
+
+		const mutations: SessionMutation[] = [];
+		let sequence = 1;
+		for (const sourceEntry of copiedEntries) {
+			mutations.push({ kind: "entry", entry: { ...structuredClone(sourceEntry), seq: sequence++ } });
+		}
+		for (const pointer of forkLanes) {
+			mutations.push({ kind: "lane", seq: sequence++, lane: pointer.lane, leafId: pointer.leafId });
+		}
+		if (this.name !== undefined) {
+			mutations.push({ kind: "fact", seq: sequence++, fact: "name", name: this.name });
+		}
+		for (const entry of copiedEntries) {
+			const label = this.labels.get(entry.id);
+			if (label !== undefined) {
+				mutations.push({ kind: "fact", seq: sequence++, fact: "label", targetId: entry.id, label });
+			}
+		}
+		return mutations;
 	}
 
 	private *walkToRoot(

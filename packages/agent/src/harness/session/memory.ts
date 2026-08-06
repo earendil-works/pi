@@ -32,54 +32,7 @@ export class InMemorySessionStorage implements SessionStorage {
 
 	fork(metadata: SessionMetadata, options: ForkOptions & SessionCreateOptions): InMemorySessionStorage {
 		const storage = new InMemorySessionStorage(metadata);
-		let copiedEntries: Entry[];
-		let forkLanes: LanePointer[];
-		if (options.scope === "tree") {
-			copiedEntries = this.state.findEntries({ order: "oldestFirst" });
-			forkLanes = this.state.getLanes();
-		} else {
-			const selectedEntryId = options.entryId ?? this.state.requireLane("main");
-			let targetId: string | null = null;
-			if (selectedEntryId !== null) {
-				const target = this.state.getEntry(selectedEntryId);
-				if (!target || target.type !== "message") {
-					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
-				}
-				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
-				targetId = position === "at" ? target.id : target.parentId;
-			}
-			copiedEntries =
-				targetId === null ? [] : this.state.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
-			forkLanes = [{ lane: "main", leafId: targetId }];
-		}
-
-		for (const sourceEntry of copiedEntries) {
-			const entry = { ...structuredClone(sourceEntry), seq: storage.state.nextSequence };
-			storage.state.applyMutation({ kind: "entry", entry });
-		}
-		for (const pointer of forkLanes) {
-			storage.state.applyMutation({
-				kind: "lane",
-				seq: storage.state.nextSequence,
-				lane: pointer.lane,
-				leafId: pointer.leafId,
-			});
-		}
-		const name = this.state.getName();
-		if (name !== undefined) {
-			storage.state.applyMutation({ kind: "fact", seq: storage.state.nextSequence, fact: "name", name });
-		}
-		for (const entry of copiedEntries) {
-			const label = this.state.getLabel(entry.id);
-			if (label === undefined) continue;
-			storage.state.applyMutation({
-				kind: "fact",
-				seq: storage.state.nextSequence,
-				fact: "label",
-				targetId: entry.id,
-				label,
-			});
-		}
+		for (const mutation of this.state.createForkMutations(options)) storage.state.applyMutation(mutation);
 		return storage;
 	}
 
