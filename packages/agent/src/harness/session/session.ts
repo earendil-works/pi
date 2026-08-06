@@ -172,6 +172,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> implem
 	}
 
 	async findEntryOnBranch(query: EntryQuery & BranchBounds = {}): Promise<Entry | undefined> {
+		// TODO: Improve! The query has a leafId so main gets ignored.
 		return (await this.queryBranchEntries("main", query, 1))[0];
 	}
 
