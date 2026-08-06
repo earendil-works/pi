@@ -2,24 +2,18 @@ import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import type { ApiKeyAuth, ApiKeyCredential } from "../auth/types.ts";
 import type { Provider } from "../models.ts";
-import type { Model, OpenAICompletionsCompat, ThinkingLevelMap } from "../types.ts";
+import type { Model, OpenAICompletionsCompat } from "../types.ts";
+import { OLLAMA_CLOUD_MODELS } from "./ollama-cloud.models.ts";
 
 const DEFAULT_BASE_URL = "https://ollama.com";
-const DEFAULT_MODEL_ID = "glm-5.2:cloud";
+const DEFAULT_MODEL_ID = "glm-5.2";
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 
-const THINKING_LEVEL_MAP = {
-	off: "none",
-	minimal: "low",
-	xhigh: "max",
-	max: "max",
-} satisfies ThinkingLevelMap;
-
-const COMPAT: OpenAICompletionsCompat = {
+const FALLBACK_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
 	supportsDeveloperRole: false,
-	supportsReasoningEffort: true,
+	supportsReasoningEffort: false,
 	supportsUsageInStreaming: false,
 	maxTokensField: "max_tokens",
 	supportsStrictMode: false,
@@ -28,17 +22,6 @@ const COMPAT: OpenAICompletionsCompat = {
 
 interface ModelsResponse {
 	data?: unknown;
-}
-
-interface ShowResponse {
-	capabilities?: unknown;
-	model_info?: unknown;
-}
-
-interface ModelDetails {
-	contextWindow?: number;
-	input?: Model<"openai-completions">["input"];
-	reasoning?: boolean;
 }
 
 export interface OllamaCloudProviderOptions {
@@ -69,43 +52,21 @@ function parseModelIds(value: ModelsResponse): string[] {
 	return ids;
 }
 
-function contextWindow(modelInfo: unknown): number | undefined {
-	if (!modelInfo || typeof modelInfo !== "object" || Array.isArray(modelInfo)) return undefined;
-	for (const [name, value] of Object.entries(modelInfo)) {
-		if (name.endsWith(".context_length") && typeof value === "number" && Number.isFinite(value) && value > 0) {
-			return value;
-		}
-	}
-	return undefined;
-}
-
-function parseDetails(value: ShowResponse): ModelDetails {
-	const capabilities = Array.isArray(value.capabilities)
-		? value.capabilities.filter((item): item is string => typeof item === "string")
-		: [];
-	return {
-		contextWindow: contextWindow(value.model_info),
-		input: capabilities.includes("vision") ? ["text", "image"] : ["text"],
-		reasoning: capabilities.includes("thinking"),
-	};
-}
-
-function model(id: string, baseUrl: string, details: ModelDetails = {}): Model<"openai-completions"> {
-	const context = details.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-	const reasoning = details.reasoning ?? id === DEFAULT_MODEL_ID;
+function model(id: string, baseUrl: string): Model<"openai-completions"> {
+	const catalogModel = (OLLAMA_CLOUD_MODELS as Record<string, Model<"openai-completions">>)[id];
+	if (catalogModel) return { ...catalogModel, baseUrl: `${baseUrl}/v1` };
 	return {
 		id,
 		name: id,
 		api: "openai-completions",
 		provider: "ollama-cloud",
 		baseUrl: `${baseUrl}/v1`,
-		reasoning,
-		...(reasoning ? { thinkingLevelMap: THINKING_LEVEL_MAP } : {}),
-		input: details.input ?? ["text"],
+		reasoning: false,
+		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: context,
-		maxTokens: Math.min(DEFAULT_MAX_TOKENS, context),
-		compat: COMPAT,
+		contextWindow: DEFAULT_CONTEXT_WINDOW,
+		maxTokens: DEFAULT_MAX_TOKENS,
+		compat: FALLBACK_COMPAT,
 	};
 }
 
@@ -121,32 +82,6 @@ async function requestModels(fetchImpl: typeof fetch, baseUrl: string, key: stri
 	return parseModelIds((await response.json()) as ModelsResponse);
 }
 
-async function requestDetails(
-	fetchImpl: typeof fetch,
-	baseUrl: string,
-	key: string,
-	id: string,
-	signal?: AbortSignal,
-): Promise<ModelDetails> {
-	try {
-		const response = await fetchImpl(`${baseUrl}/api/show`, {
-			method: "POST",
-			headers: {
-				Accept: "application/json",
-				Authorization: `Bearer ${key}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({ model: id }),
-			signal,
-		});
-		if (!response.ok) return {};
-		return parseDetails((await response.json()) as ShowResponse);
-	} catch (error) {
-		if (signal?.aborted) throw error;
-		return {};
-	}
-}
-
 async function loadModels(
 	fetchImpl: typeof fetch,
 	baseUrl: string,
@@ -154,8 +89,7 @@ async function loadModels(
 	signal?: AbortSignal,
 ): Promise<Model<"openai-completions">[]> {
 	const ids = await requestModels(fetchImpl, baseUrl, key, signal);
-	const details = await Promise.all(ids.map((id) => requestDetails(fetchImpl, baseUrl, key, id, signal)));
-	return ids.map((id, index) => model(id, baseUrl, details[index]));
+	return ids.map((id) => model(id, baseUrl));
 }
 
 /** Ollama Cloud provider with API-key login and a dynamically refreshed model catalog. */

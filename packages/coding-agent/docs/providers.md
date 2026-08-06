@@ -301,7 +301,7 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 Run `/login ollama-cloud` to validate and save an Ollama Cloud API key, or set `OLLAMA_API_KEY`. Pi connects directly to `ollama.com`, refreshes the current cloud model catalog, and caches it in `models-store.json` for offline startup.
 
 ```bash
-pi --provider ollama-cloud --model glm-5.2:cloud
+pi --provider ollama-cloud --model glm-5.2
 ```
 
 The built-in `ollama-cloud` provider is separate from a local Ollama server configured in `models.json`. Use `ollama-cloud` for the hosted API and a distinct custom provider ID such as `ollama` for local models.

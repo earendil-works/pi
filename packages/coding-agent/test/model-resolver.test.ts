@@ -708,7 +708,7 @@ describe("default model selection", () => {
 	});
 
 	test("ollama cloud defaults to its recommended coding model", () => {
-		expect(defaultModelPerProvider["ollama-cloud"]).toBe("glm-5.2:cloud");
+		expect(defaultModelPerProvider["ollama-cloud"]).toBe("glm-5.2");
 	});
 
 	test("ai-gateway default tracks current model", () => {

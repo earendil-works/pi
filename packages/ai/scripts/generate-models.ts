@@ -152,6 +152,15 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1";
+const OLLAMA_CLOUD_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsUsageInStreaming: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+	supportsLongCacheRetention: false,
+};
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -1463,6 +1472,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 				});
 				recordModelsDevReasoningOptions("openai", modelId, m);
+			}
+		}
+
+		// Process Ollama Cloud models
+		if (data["ollama-cloud"]?.models) {
+			for (const [modelId, model] of Object.entries(data["ollama-cloud"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				const supportsReasoningEffort = m.reasoning_options?.some((option) => option.type === "effort") === true;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "ollama-cloud",
+					baseUrl: OLLAMA_CLOUD_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { ...OLLAMA_CLOUD_COMPAT, supportsReasoningEffort },
+				});
+				recordModelsDevReasoningOptions("ollama-cloud", modelId, m);
 			}
 		}
 

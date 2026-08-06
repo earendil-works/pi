@@ -28,14 +28,7 @@ describe("ollamaCloudProvider", () => {
 			requests.push({ url, init });
 			if (url.endsWith("/v1/models")) {
 				return Response.json({
-					data: [{ id: "kimi-k2.7-code" }, { id: "gemma4:31b" }, { id: "kimi-k2.7-code" }],
-				});
-			}
-			if (url.endsWith("/api/show")) {
-				const id = JSON.parse(String(init?.body)).model;
-				return Response.json({
-					capabilities: id === "gemma4:31b" ? ["vision", "thinking", "tools"] : ["thinking", "tools"],
-					model_info: { "test.context_length": id === "gemma4:31b" ? 262_144 : 131_072 },
+					data: [{ id: "glm-5.2" }, { id: "minimax-m3" }, { id: "glm-5.2" }],
 				});
 			}
 			return new Response(null, { status: 404 });
@@ -58,27 +51,35 @@ describe("ollamaCloudProvider", () => {
 		expect(notifications).toEqual(["Checking Ollama Cloud API key..."]);
 		expect(requests[0]?.url).toBe("https://cloud.example/v1/models");
 		expect(new Headers(requests[0]?.init?.headers).get("Authorization")).toBe("Bearer secret-key");
-		expect(provider.getModels().map((entry) => entry.id)).toEqual(["kimi-k2.7-code", "gemma4:31b"]);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["glm-5.2", "minimax-m3"]);
 
 		const result = await models.refresh({ providers: ["ollama-cloud"] });
 
 		expect(result.errors.size).toBe(0);
-		expect(fetchImpl).toHaveBeenCalledTimes(4);
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+		expect(requests.map((request) => request.url)).toEqual([
+			"https://cloud.example/v1/models",
+			"https://cloud.example/v1/models",
+		]);
 		expect(provider.getModels()).toMatchObject([
 			{
-				id: "kimi-k2.7-code",
+				id: "glm-5.2",
 				baseUrl: "https://cloud.example/v1",
-				contextWindow: 131_072,
+				contextWindow: 976_000,
+				maxTokens: 131_072,
 				reasoning: true,
-				thinkingLevelMap: { off: "none", minimal: "low", xhigh: "max", max: "max" },
+				thinkingLevelMap: { high: "high", max: "max" },
 				input: ["text"],
 				compat: { supportsReasoningEffort: true },
 			},
 			{
-				id: "gemma4:31b",
-				contextWindow: 262_144,
+				id: "minimax-m3",
+				contextWindow: 512_000,
+				maxTokens: 131_072,
 				reasoning: true,
+				thinkingLevelMap: { low: "low", medium: "medium", high: "high", max: "max" },
 				input: ["text", "image"],
+				compat: { supportsReasoningEffort: true },
 			},
 		]);
 		expect((await modelsStore.read("ollama-cloud"))?.models).toHaveLength(2);
@@ -99,10 +100,10 @@ describe("ollamaCloudProvider", () => {
 			}),
 		).rejects.toThrow("Ollama Cloud rejected the API key");
 		expect(await credentials.read("ollama-cloud")).toBeUndefined();
-		expect(provider.getModels().map((model) => model.id)).toEqual(["glm-5.2:cloud"]);
+		expect(provider.getModels().map((model) => model.id)).toEqual(["glm-5.2"]);
 		expect(provider.getModels()[0]).toMatchObject({
 			reasoning: true,
-			thinkingLevelMap: { off: "none", minimal: "low", xhigh: "max", max: "max" },
+			thinkingLevelMap: { high: "high", max: "max" },
 			compat: { supportsReasoningEffort: true },
 		});
 	});
@@ -124,7 +125,7 @@ describe("ollamaCloudProvider", () => {
 		expect(provider.getModels().map((model) => model.id)).toEqual(["cached"]);
 	});
 
-	it("keeps catalog entries when model detail lookup fails", async () => {
+	it("uses conservative metadata for models missing from the generated catalog", async () => {
 		const credentials = new InMemoryCredentialStore();
 		await credentials.modify("ollama-cloud", async () => ({ type: "api_key", key: "secret-key" }));
 		const fetchImpl = vi.fn(async (input: string | URL | Request) => {
