@@ -3,6 +3,7 @@ import {
 	type BranchBounds,
 	type Entry,
 	type EntryQuery,
+	type ForkOptions,
 	type LanePointer,
 	type LaneRecord,
 	type LogItem,
@@ -15,10 +16,34 @@ import {
 	type SessionStats,
 	type SessionStorage,
 } from "../types.ts";
-import { publishFileAtomically } from "./atomic.ts";
 import { encodeHeader, encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
 import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header } from "./types.ts";
+
+/**
+ * Build a complete sibling temporary file, then atomically rename it over the destination.
+ * The populate callback must create or overwrite `tempPath` with the complete file. The
+ * destination is untouched until the rename commits, so a process crash while populating
+ * can leave only the ignored `.tmp` file behind.
+ *
+ * Rejects when population or rename fails. On rejection, temporary-file removal is
+ * best-effort and the original error is preserved. Callers must serialize publications to
+ * the same destination because they share its deterministic `.tmp` path.
+ */
+async function publishFileAtomically(
+	fs: JsonlSessionRepoFileSystem,
+	destinationPath: string,
+	populate: (tempPath: string) => Promise<void>,
+): Promise<void> {
+	const tempPath = `${destinationPath}.tmp`;
+	try {
+		await populate(tempPath);
+		fileResult(await fs.renameFile(tempPath, destinationPath), `Failed to publish staged file ${destinationPath}`);
+	} catch (error) {
+		await fs.remove(tempPath, { force: true });
+		throw error;
+	}
+}
 
 export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
 	private readonly fs: JsonlSessionRepoFileSystem;
@@ -69,6 +94,42 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 			fileResult(await fs.appendFile(path, "\n"), `Failed to repair unterminated session tail ${path}`);
 		}
 		return storage;
+	}
+
+	async fork(path: string, header: JsonlV4Header, options: ForkOptions): Promise<JsonlSessionStorage> {
+		let copiedEntries: Entry[];
+		let forkLanes: LanePointer[];
+		if (options.scope === "tree") {
+			copiedEntries = this.state.findEntries({ order: "oldestFirst" });
+			forkLanes = this.state.getLanes();
+		} else {
+			const selectedEntryId = options.entryId ?? this.state.requireLane("main");
+			let targetId: string | null = null;
+			if (selectedEntryId !== null) {
+				const entry = this.state.getEntry(selectedEntryId);
+				if (!entry || entry.type !== "message") {
+					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
+				}
+				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
+				targetId = position === "at" ? entry.id : entry.parentId;
+			}
+			copiedEntries =
+				targetId === null ? [] : this.state.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
+			forkLanes = [{ lane: "main", leafId: targetId }];
+		}
+
+		await publishFileAtomically(this.fs, path, async (tempPath) => {
+			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
+			for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
+			for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
+			const name = this.state.getName();
+			if (name !== undefined) await targetStorage.setName(name);
+			for (const entry of copiedEntries) {
+				const label = this.state.getLabel(entry.id);
+				if (label !== undefined) await targetStorage.setLabel(entry.id, label);
+			}
+		});
+		return JsonlSessionStorage.load(this.fs, path);
 	}
 
 	async drain(): Promise<void> {

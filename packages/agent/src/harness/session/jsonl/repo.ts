@@ -1,7 +1,6 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { assertJsonSerializable, Session } from "../session.ts";
-import { type Entry, type ForkOptions, type LanePointer, SessionError, type SessionRepo } from "../types.ts";
-import { publishFileAtomically } from "./atomic.ts";
+import { type ForkOptions, SessionError, type SessionRepo } from "../types.ts";
 import { metadataFromHeader, parseHeader } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
 import { JsonlSessionStorage } from "./storage.ts";
@@ -47,11 +46,12 @@ export class JsonlSessionRepo
 	}
 
 	async create(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
-		return this.createDirect(options);
+		const { header, path } = await this.prepareCreate(options);
+		return new Session(await JsonlSessionStorage.create(this.fs, path, header));
 	}
 
 	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
-		return this.openDirect(metadata);
+		return new Session(await this.loadStorage(metadata));
 	}
 
 	list(): Promise<JsonlSessionMetadata[]>;
@@ -68,47 +68,15 @@ export class JsonlSessionRepo
 		source: JsonlSessionMetadata,
 		options: ForkOptions & JsonlSessionCreateOptions,
 	): Promise<Session<JsonlSessionMetadata>> {
-		const sourceSession = await this.openDirect(source);
-		let copiedEntries: Entry[];
-		let forkLanes: LanePointer[];
-		if (options.scope === "tree") {
-			copiedEntries = await sourceSession.findEntries({ order: "oldestFirst" });
-			forkLanes = await sourceSession.getLanes();
-		} else {
-			const selectedEntryId = options.entryId ?? (await sourceSession.getLeafId());
-			let targetId: string | null = null;
-			if (selectedEntryId !== null) {
-				const entry = await sourceSession.getEntry(selectedEntryId);
-				if (!entry || entry.type !== "message") {
-					throw new SessionError("invalid_fork_target", `Fork target is not a message entry: ${selectedEntryId}`);
-				}
-				const position = options.position ?? (options.entryId === undefined ? "at" : "before");
-				targetId = position === "at" ? entry.id : entry.parentId;
-			}
-			copiedEntries =
-				targetId === null ? [] : await sourceSession.findEntriesOnBranch({ start: targetId, order: "oldestFirst" });
-			forkLanes = [{ lane: "main", leafId: targetId }];
-		}
-
+		const sourceStorage = await this.loadStorage(source);
 		const { header, path } = await this.prepareCreate({
 			...options,
 			parentSessionId: options.parentSessionId ?? source.id,
 		});
-		await publishFileAtomically(this.fs, path, async (tempPath) => {
-			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
-			for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
-			for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
-			const name = await sourceSession.getName();
-			if (name !== undefined) await targetStorage.setName(name);
-			for (const entry of copiedEntries) {
-				const label = await sourceSession.getLabel(entry.id);
-				if (label !== undefined) await targetStorage.setLabel(entry.id, label);
-			}
-		});
-		return new Session(await JsonlSessionStorage.load(this.fs, path));
+		return new Session(await sourceStorage.fork(path, header, options));
 	}
 
-	private async openDirect(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
+	private async loadStorage(metadata: JsonlSessionMetadata): Promise<JsonlSessionStorage> {
 		if (!fileResult(await this.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)) {
 			throw new SessionError("not_found", `Session not found: ${metadata.id}`);
 		}
@@ -117,12 +85,7 @@ export class JsonlSessionRepo
 		if (loadedMetadata.id !== metadata.id) {
 			throw new SessionError("invalid_entry", `Session id does not match header: ${metadata.id}`);
 		}
-		return new Session(storage);
-	}
-
-	private async createDirect(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
-		const { header, path } = await this.prepareCreate(options);
-		return new Session(await JsonlSessionStorage.create(this.fs, path, header));
+		return storage;
 	}
 
 	private async prepareCreate(options: JsonlSessionCreateOptions): Promise<{
