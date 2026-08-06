@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 
 export type AuthSelectorProvider = {
 	id: string;
@@ -23,10 +24,16 @@ export function formatAuthSelectorProviderType(authType: AuthSelectorProvider["a
 	return authType === "oauth" ? "subscription" : "API key";
 }
 
+const PAGE_SIZE = 8;
+
 /**
  * Component that renders an auth provider selector
  */
 export class OAuthSelectorComponent extends Container implements Focusable {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to search input for IME cursor positioning
@@ -114,12 +121,11 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		const maxVisible = 8;
 		const startIndex = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredProviders.length - maxVisible),
+			Math.min(this.selectedIndex - Math.floor(PAGE_SIZE / 2), this.filteredProviders.length - PAGE_SIZE),
 		);
-		const endIndex = Math.min(startIndex + maxVisible, this.filteredProviders.length);
+		const endIndex = Math.min(startIndex + PAGE_SIZE, this.filteredProviders.length);
 
 		for (let i = startIndex; i < endIndex; i++) {
 			const provider = this.filteredProviders[i];
@@ -182,6 +188,13 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(
+			kb,
+			keyData,
+			this.selectedIndex,
+			this.filteredProviders.length,
+			PAGE_SIZE,
+		);
 		// Up arrow
 		if (kb.matches(keyData, "tui.select.up")) {
 			if (this.filteredProviders.length === 0) return;
@@ -192,6 +205,9 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.down")) {
 			if (this.filteredProviders.length === 0) return;
 			this.selectedIndex = Math.min(this.filteredProviders.length - 1, this.selectedIndex + 1);
+			this.updateList();
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 			this.updateList();
 		}
 		// Enter

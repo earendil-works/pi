@@ -16,11 +16,13 @@ import type { ExtensionCommandContext } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
 import { DynamicBorder } from "../../modes/interactive/components/dynamic-border.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
+import { getPageSelectionIndex } from "../../modes/interactive/components/select-navigation.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { LlamaModelInfo, LlamaProgress } from "./client.ts";
 import type { HuggingFaceModel } from "./huggingface.ts";
 
 const DOWNLOAD_VALUE = "\0download";
+const SEARCH_PAGE_SIZE = 10;
 
 export type LlamaManagerAction = { type: "model"; model: LlamaModelInfo } | { type: "download" } | { type: "close" };
 
@@ -94,6 +96,10 @@ function compactCount(value: number): string {
 }
 
 class HuggingFaceSearch extends Container implements Focusable {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
@@ -145,12 +151,14 @@ class HuggingFaceSearch extends Container implements Focusable {
 
 	private updateResults(): void {
 		this.resultsContainer.clear();
-		const maxVisible = 10;
 		const start = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredResults.length - maxVisible),
+			Math.min(
+				this.selectedIndex - Math.floor(SEARCH_PAGE_SIZE / 2),
+				this.filteredResults.length - SEARCH_PAGE_SIZE,
+			),
 		);
-		const end = Math.min(start + maxVisible, this.filteredResults.length);
+		const end = Math.min(start + SEARCH_PAGE_SIZE, this.filteredResults.length);
 		for (let index = start; index < end; index++) {
 			const model = this.filteredResults[index];
 			if (!model) continue;
@@ -241,6 +249,13 @@ class HuggingFaceSearch extends Container implements Focusable {
 	}
 
 	handleInput(data: string): void {
+		const pageIndex = getPageSelectionIndex(
+			this.keybindings,
+			data,
+			this.selectedIndex,
+			this.filteredResults.length,
+			SEARCH_PAGE_SIZE,
+		);
 		if (this.keybindings.matches(data, "tui.select.up")) {
 			if (this.filteredResults.length > 0) {
 				this.selectedIndex = this.selectedIndex === 0 ? this.filteredResults.length - 1 : this.selectedIndex - 1;
@@ -253,6 +268,11 @@ class HuggingFaceSearch extends Container implements Focusable {
 				this.selectedIndex = this.selectedIndex === this.filteredResults.length - 1 ? 0 : this.selectedIndex + 1;
 				this.updateResults();
 			}
+			return;
+		}
+		if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
+			this.updateResults();
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.select.confirm")) {
@@ -279,7 +299,7 @@ class LlamaView implements LlamaUi, Focusable {
 	private readonly keybindings: KeybindingsManager;
 	private readonly searchCache = new Map<string, HuggingFaceModel[]>();
 	private content: Container;
-	private inputHandler: { handleInput?(data: string): void } | undefined;
+	private inputHandler: { handleInput?(data: string): void; readonly capturesSelectPageInput?: boolean } | undefined;
 	private inputTarget: Focusable | undefined;
 	private progressPromise: Promise<void> | undefined;
 	private progressResolver: (() => void) | undefined;
@@ -302,9 +322,13 @@ class LlamaView implements LlamaUi, Focusable {
 		if (this.inputTarget) this.inputTarget.focused = value;
 	}
 
+	get capturesSelectPageInput(): boolean {
+		return this.inputHandler?.capturesSelectPageInput === true;
+	}
+
 	private setContent(
 		content: Container,
-		inputHandler?: { handleInput?(data: string): void },
+		inputHandler?: { handleInput?(data: string): void; readonly capturesSelectPageInput?: boolean },
 		inputTarget?: Focusable,
 	): void {
 		if (this.inputTarget) this.inputTarget.focused = false;

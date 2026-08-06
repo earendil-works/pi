@@ -1,5 +1,6 @@
 import { fuzzyFilter } from "../fuzzy.ts";
 import { getKeybindings } from "../keybindings.ts";
+import { getPageSelectionIndex } from "../selection-navigation.ts";
 import type { Component } from "../tui.ts";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 import { Input } from "./input.ts";
@@ -32,6 +33,7 @@ export interface SettingsListOptions {
 }
 
 export class SettingsList implements Component {
+	readonly capturesSelectPageInput = true;
 	private items: SettingItem[];
 	private filteredItems: SettingItem[];
 	private theme: SettingsListTheme;
@@ -176,12 +178,16 @@ export class SettingsList implements Component {
 		// Main list input handling
 		const kb = getKeybindings();
 		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
+		const pageIndex = getPageSelectionIndex(kb, data, this.selectedIndex, displayItems.length, this.maxVisible);
 		if (kb.matches(data, "tui.select.up")) {
 			if (displayItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
 		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
+		} else if (pageIndex !== undefined) {
+			if (displayItems.length === 0) return;
+			this.selectedIndex = pageIndex;
 		} else if (
 			kb.matches(data, "tui.select.confirm") ||
 			(data === " " && (!this.searchEnabled || this.searchInput?.getValue().length === 0))

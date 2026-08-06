@@ -20,7 +20,14 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, OverlayAnchor, OverlayHandle, OverlayOptions, TUI } from "@earendil-works/pi-tui";
+import type {
+	Component,
+	KeybindingsManager,
+	OverlayAnchor,
+	OverlayHandle,
+	OverlayOptions,
+	TUI,
+} from "@earendil-works/pi-tui";
 import { Input, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 
@@ -228,17 +235,20 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("overlay-sidepanel", {
 		description: "Test responsive sidepanel (hides when terminal < 100 cols)",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			await ctx.ui.custom<void>((tui, theme, _kb, done) => new SidepanelComponent(tui, theme, done), {
-				overlay: true,
-				overlayOptions: {
-					anchor: "right-center",
-					width: "25%",
-					minWidth: 30,
-					margin: { right: 1 },
-					// Only show when terminal is wide enough
-					visible: (termWidth) => termWidth >= 100,
+			await ctx.ui.custom<void>(
+				(tui, theme, keybindings, done) => new SidepanelComponent(tui, theme, keybindings, done),
+				{
+					overlay: true,
+					overlayOptions: {
+						anchor: "right-center",
+						width: "25%",
+						minWidth: 30,
+						margin: { right: 1 },
+						// Only show when terminal is wide enough
+						visible: (termWidth) => termWidth >= 100,
+					},
 				},
-			});
+			);
 		},
 	});
 
@@ -701,24 +711,33 @@ class MaxHeightTestComponent extends BaseOverlay {
 
 // Responsive sidepanel - demonstrates percentage width and visibility callback
 class SidepanelComponent extends BaseOverlay {
+	readonly capturesSelectPageInput = true;
 	private tui: TUI;
 	private items = ["Dashboard", "Messages", "Settings", "Help", "About"];
 	private selectedIndex = 0;
+	private keybindings: Pick<KeybindingsManager, "matches">;
 	private done: () => void;
 
-	constructor(tui: TUI, theme: Theme, done: () => void) {
+	constructor(tui: TUI, theme: Theme, keybindings: Pick<KeybindingsManager, "matches">, done: () => void) {
 		super(theme);
 		this.tui = tui;
+		this.keybindings = keybindings;
 		this.done = done;
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			this.done();
-		} else if (matchesKey(data, "up")) {
+		} else if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.selectedIndex = Math.max(0, this.selectedIndex - this.items.length);
+			this.tui.requestRender();
+		} else if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + this.items.length);
+			this.tui.requestRender();
+		} else if (this.keybindings.matches(data, "tui.select.up")) {
 			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
 			this.tui.requestRender();
-		} else if (matchesKey(data, "down")) {
+		} else if (this.keybindings.matches(data, "tui.select.down")) {
 			this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + 1);
 			this.tui.requestRender();
 		} else if (matchesKey(data, "return")) {

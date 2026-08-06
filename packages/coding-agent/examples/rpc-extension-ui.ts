@@ -173,6 +173,10 @@ class SelectDialog implements Component {
 	onSelect?: (value: string) => void;
 	onCancel?: () => void;
 
+	get capturesSelectPageInput(): boolean {
+		return this.list.capturesSelectPageInput;
+	}
+
 	constructor(title: string, options: string[]) {
 		this.title = title;
 		const items = options.map((o) => ({ value: o, label: o }));

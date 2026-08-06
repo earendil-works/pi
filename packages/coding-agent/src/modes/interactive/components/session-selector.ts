@@ -19,6 +19,7 @@ import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
 
 type SessionScope = "current" | "all";
@@ -281,6 +282,7 @@ function flattenSessionTree(roots: SessionTreeNode[]): FlatSessionNode[] {
  * Custom session list component with multi-line items and search
  */
 class SessionList implements Component, Focusable {
+	readonly capturesSelectPageInput = true;
 	public getSelectedSessionPath(): string | undefined {
 		const selected = this.filteredSessions[this.selectedIndex];
 		return selected?.session.path;
@@ -531,6 +533,13 @@ class SessionList implements Component, Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(
+			kb,
+			keyData,
+			this.selectedIndex,
+			this.filteredSessions.length,
+			this.maxVisible,
+		);
 
 		// Handle delete confirmation state first - intercept all keys
 		if (this.confirmingDeletePath !== null) {
@@ -607,14 +616,8 @@ class SessionList implements Component, Focusable {
 		// Down arrow
 		else if (kb.matches(keyData, "tui.select.down")) {
 			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + 1);
-		}
-		// Page up - jump up by maxVisible items
-		else if (kb.matches(keyData, "tui.select.pageUp")) {
-			this.selectedIndex = Math.max(0, this.selectedIndex - this.maxVisible);
-		}
-		// Page down - jump down by maxVisible items
-		else if (kb.matches(keyData, "tui.select.pageDown")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + this.maxVisible);
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {

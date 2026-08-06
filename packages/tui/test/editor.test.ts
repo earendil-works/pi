@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import type { TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { visibleWidth } from "../src/utils.ts";
@@ -2199,6 +2200,41 @@ describe("Editor component", () => {
 			editor.handleInput("\t");
 			assert.strictEqual(editor.getText(), "src/");
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		it("forwards remapped selection page keys to the autocomplete menu", async () => {
+			setKeybindings(
+				new KeybindingsManager(TUI_KEYBINDINGS, {
+					"tui.editor.pageDown": "ctrl+v",
+					"tui.select.pageDown": "ctrl+v",
+				}),
+			);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				let submitted = "";
+				editor.onSubmit = (text) => {
+					submitted = text;
+				};
+				editor.setAutocompleteProvider({
+					getSuggestions: async () => ({
+						items: Array.from({ length: 12 }, (_, index) => ({
+							value: `/command-${index}`,
+							label: `command-${index}`,
+						})),
+						prefix: "/",
+					}),
+					applyCompletion,
+				});
+
+				editor.handleInput("/");
+				await flushAutocomplete();
+				editor.handleInput("\x16");
+				editor.handleInput("\r");
+
+				assert.strictEqual(submitted, "/command-5");
+			} finally {
+				setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+			}
 		});
 
 		it("keeps suggestions open when typing in force mode (Tab-triggered)", async () => {

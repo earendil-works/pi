@@ -71,7 +71,7 @@ export default function question(pi: ExtensionAPI) {
 			const allOptions: DisplayOption[] = [...params.options, { label: "Type something.", isOther: true }];
 
 			const result = await ctx.ui.custom<{ answer: string; wasCustom: boolean; index?: number } | null>(
-				(tui, theme, _kb, done) => {
+				(tui, theme, keybindings, done) => {
 					let optionIndex = 0;
 					let editMode = false;
 					let cachedLines: string[] | undefined;
@@ -117,12 +117,23 @@ export default function question(pi: ExtensionAPI) {
 							return;
 						}
 
-						if (matchesKey(data, Key.up)) {
+						const pageSize = Math.max(1, tui.terminal.rows - 6);
+						if (keybindings.matches(data, "tui.select.pageUp")) {
+							optionIndex = Math.max(0, optionIndex - pageSize);
+							refresh();
+							return;
+						}
+						if (keybindings.matches(data, "tui.select.pageDown")) {
+							optionIndex = Math.min(allOptions.length - 1, optionIndex + pageSize);
+							refresh();
+							return;
+						}
+						if (keybindings.matches(data, "tui.select.up")) {
 							optionIndex = Math.max(0, optionIndex - 1);
 							refresh();
 							return;
 						}
-						if (matchesKey(data, Key.down)) {
+						if (keybindings.matches(data, "tui.select.down")) {
 							optionIndex = Math.min(allOptions.length - 1, optionIndex + 1);
 							refresh();
 							return;
@@ -208,6 +219,9 @@ export default function question(pi: ExtensionAPI) {
 					}
 
 					return {
+						get capturesSelectPageInput() {
+							return !editMode;
+						},
 						render,
 						invalidate: () => {
 							cachedLines = undefined;

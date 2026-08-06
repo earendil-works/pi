@@ -14,6 +14,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  readonly capturesSelectPageInput?: boolean;
   wantsKeyRelease?: boolean;
   invalidate(): void;
 }
@@ -23,8 +24,20 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Return array of strings (one per line). Each line **must not exceed `width`**. |
 | `handleInput?(data)` | Receive keyboard input when component has focus. |
+| `capturesSelectPageInput?` | If true, selection page keys take precedence over fullscreen viewport scrolling. |
 | `wantsKeyRelease?` | If true, component receives key release events (Kitty protocol). Default: false. |
 | `invalidate()` | Clear cached render state. Called on theme changes. |
+
+`SelectList` and `SettingsList` set `capturesSelectPageInput` automatically. `Container` propagates the capability from its children. When adding `handleInput` to a container, preserve the container instance instead of returning a plain wrapper object, which would drop propagated component capabilities:
+
+```typescript
+return Object.assign(container, {
+  handleInput(data: string) {
+    selectList.handleInput(data);
+    tui.requestRender();
+  },
+});
+```
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
@@ -283,23 +296,29 @@ const image = new Image(
 
 ## Keyboard Input
 
-Use `matchesKey()` for key detection:
+Use the injected keybindings manager for configurable selection actions. Selection components should also set `capturesSelectPageInput` so overlapping PageUp/PageDown bindings reach the focused list in fullscreen mode:
 
 ```typescript
-import { matchesKey, Key } from "@earendil-works/pi-tui";
+readonly capturesSelectPageInput = true;
 
 handleInput(data: string) {
-  if (matchesKey(data, Key.up)) {
-    this.selectedIndex--;
-  } else if (matchesKey(data, Key.enter)) {
+  if (this.keybindings.matches(data, "tui.select.pageUp")) {
+    this.selectedIndex = Math.max(0, this.selectedIndex - this.pageSize);
+  } else if (this.keybindings.matches(data, "tui.select.pageDown")) {
+    this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + this.pageSize);
+  } else if (this.keybindings.matches(data, "tui.select.up")) {
+    this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+  } else if (this.keybindings.matches(data, "tui.select.down")) {
+    this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + 1);
+  } else if (this.keybindings.matches(data, "tui.select.confirm")) {
     this.onSelect?.(this.selectedIndex);
-  } else if (matchesKey(data, Key.escape)) {
+  } else if (this.keybindings.matches(data, "tui.select.cancel")) {
     this.onCancel?.();
-  } else if (matchesKey(data, Key.ctrl("c"))) {
-    // Ctrl+C
   }
 }
 ```
+
+Use `matchesKey()` with `Key.*` only when a component intentionally handles a physical key rather than a configurable action.
 
 **Key identifiers** (use `Key.*` for autocomplete, or string literals):
 - Basic keys: `Key.enter`, `Key.escape`, `Key.tab`, `Key.space`, `Key.backspace`, `Key.delete`, `Key.home`, `Key.end`
@@ -331,12 +350,15 @@ Example: Interactive selector
 
 ```typescript
 import {
-  matchesKey, Key,
-  truncateToWidth, visibleWidth
+  type KeybindingsManager,
+  truncateToWidth
 } from "@earendil-works/pi-tui";
 
 class MySelector {
+  readonly capturesSelectPageInput = true;
   private items: string[];
+  private keybindings: Pick<KeybindingsManager, "matches">;
+  private onChange: () => void;
   private selected = 0;
   private cachedWidth?: number;
   private cachedLines?: string[];
@@ -344,20 +366,36 @@ class MySelector {
   public onSelect?: (item: string) => void;
   public onCancel?: () => void;
 
-  constructor(items: string[]) {
+  constructor(
+    items: string[],
+    keybindings: Pick<KeybindingsManager, "matches">,
+    onChange: () => void,
+  ) {
     this.items = items;
+    this.keybindings = keybindings;
+    this.onChange = onChange;
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.up) && this.selected > 0) {
-      this.selected--;
+    if (this.keybindings.matches(data, "tui.select.pageUp")) {
+      this.selected = Math.max(0, this.selected - 5);
       this.invalidate();
-    } else if (matchesKey(data, Key.down) && this.selected < this.items.length - 1) {
-      this.selected++;
+      this.onChange();
+    } else if (this.keybindings.matches(data, "tui.select.pageDown")) {
+      this.selected = Math.min(this.items.length - 1, this.selected + 5);
       this.invalidate();
-    } else if (matchesKey(data, Key.enter)) {
+      this.onChange();
+    } else if (this.keybindings.matches(data, "tui.select.up")) {
+      this.selected = Math.max(0, this.selected - 1);
+      this.invalidate();
+      this.onChange();
+    } else if (this.keybindings.matches(data, "tui.select.down")) {
+      this.selected = Math.min(this.items.length - 1, this.selected + 1);
+      this.invalidate();
+      this.onChange();
+    } else if (this.keybindings.matches(data, "tui.select.confirm")) {
       this.onSelect?.(this.items[this.selected]);
-    } else if (matchesKey(data, Key.escape)) {
+    } else if (this.keybindings.matches(data, "tui.select.cancel")) {
       this.onCancel?.();
     }
   }
@@ -389,19 +427,12 @@ pi.registerCommand("pick", {
   description: "Pick an item",
   handler: async (_args, ctx) => {
     const items = ["Option A", "Option B", "Option C"];
-    const selected = await ctx.ui.custom<string | null>((tui, _theme, _keybindings, done) => {
-      const selector = new MySelector(items);
+    const selected = await ctx.ui.custom<string | null>((tui, _theme, keybindings, done) => {
+      const selector = new MySelector(items, keybindings, () => tui.requestRender());
       selector.onSelect = done;
       selector.onCancel = () => done(null);
 
-      return {
-        render: (width) => selector.render(width),
-        handleInput: (data) => {
-          selector.handleInput(data);
-          tui.requestRender();
-        },
-        invalidate: () => selector.invalidate(),
-      };
+      return selector;
     });
 
     if (selected !== null) {
@@ -653,11 +684,9 @@ pi.registerCommand("pick", {
       // Bottom border
       container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
-      return {
-        render: (w) => container.render(w),
-        invalidate: () => container.invalidate(),
+      return Object.assign(container, {
         handleInput: (data) => { selectList.handleInput(data); tui.requestRender(); },
-      };
+      });
     });
 
     if (result) {
@@ -733,11 +762,9 @@ pi.registerCommand("settings", {
       );
       container.addChild(settingsList);
 
-      return {
-        render: (w) => container.render(w),
-        invalidate: () => container.invalidate(),
+      return Object.assign(container, {
         handleInput: (data) => settingsList.handleInput?.(data),
-      };
+      });
     });
   },
 });
@@ -925,7 +952,7 @@ export default function (pi: ExtensionAPI) {
 
 3. **Call tui.requestRender() after state changes** - In `handleInput`, call `tui.requestRender()` after updating state.
 
-4. **Return the three-method object** - Custom components need `{ render, invalidate, handleInput }`.
+4. **Preserve component capabilities** - When adding input handling to a `Container`, return the container itself with `Object.assign()` instead of wrapping its `render()` and `invalidate()` methods in a plain object.
 
 5. **Use existing components** - `SelectList`, `SettingsList`, `BorderedLoader` cover 90% of cases. Don't rebuild them.
 

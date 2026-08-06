@@ -15,6 +15,7 @@ import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 
 interface ModelItem {
 	provider: string;
@@ -28,11 +29,16 @@ interface ScopedModelItem {
 }
 
 type ModelScope = "all" | "scoped";
+const PAGE_SIZE = 10;
 
 /**
  * Component that renders a model selector with search
  */
 export class ModelSelectorComponent extends Container implements Focusable {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -257,12 +263,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		const maxVisible = 10;
 		const startIndex = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredModels.length - maxVisible),
+			Math.min(this.selectedIndex - Math.floor(PAGE_SIZE / 2), this.filteredModels.length - PAGE_SIZE),
 		);
-		const endIndex = Math.min(startIndex + maxVisible, this.filteredModels.length);
+		const endIndex = Math.min(startIndex + PAGE_SIZE, this.filteredModels.length);
 
 		// Show visible slice of filtered models
 		for (let i = startIndex; i < endIndex; i++) {
@@ -319,6 +324,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(kb, keyData, this.selectedIndex, this.filteredModels.length, PAGE_SIZE);
 		if (kb.matches(keyData, "tui.input.tab")) {
 			if (this.scopedModelItems.length > 0) {
 				const nextScope: ModelScope = this.scope === "all" ? "scoped" : "all";
@@ -339,6 +345,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.down")) {
 			if (this.filteredModels.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.filteredModels.length - 1 ? 0 : this.selectedIndex + 1;
+			this.updateList();
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 			this.updateList();
 		}
 		// Enter

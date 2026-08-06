@@ -1,10 +1,13 @@
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
+import { Editor } from "../src/components/editor.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
+import { SelectList } from "../src/components/select-list.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import {
 	encodeKitty,
 	hyperlink,
@@ -12,7 +15,9 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
+import { Container } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
+import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -37,6 +42,10 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	afterEach(() => {
+		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+	});
+
 	it("renders a terminal-height viewport and preserves manual scroll position", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
@@ -348,6 +357,107 @@ describe("TuiAltScreen", () => {
 		assert.strictEqual(transcript.scrollTop, 1);
 		assert.deepStrictEqual(editorInputs, modifiedInputs);
 
+		tui.stop();
+	});
+
+	it("routes an overlapping remapped page key to an open editor autocomplete menu", async () => {
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.editor.pageDown": "ctrl+v",
+				"tui.select.pageDown": "ctrl+v",
+				"tui.altScreen.pageDown": "ctrl+v",
+			}),
+		);
+		const terminal = new VirtualTerminal(80, 12);
+		const tui = new TuiAltScreen(terminal);
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true },
+		);
+		const editor = new Editor(tui, defaultEditorTheme);
+		let submitted = "";
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.setAutocompleteProvider({
+			getSuggestions: async () => ({
+				items: Array.from({ length: 12 }, (_, index) => ({
+					value: `/command-${index}`,
+					label: `command-${index}`,
+				})),
+				prefix: "/",
+			}),
+			applyCompletion: (lines, cursorLine, cursorCol, item, prefix) => {
+				const newLines = [...lines];
+				newLines[cursorLine] = (lines[cursorLine] ?? "").slice(0, cursorCol - prefix.length) + item.value;
+				return { lines: newLines, cursorLine, cursorCol: item.value.length };
+			},
+		});
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: editor, basis: "auto", shrink: 0 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("/");
+		await new Promise((resolve) => setImmediate(resolve));
+		await terminal.waitForRender();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const scrollTop = transcript.scrollTop;
+
+		terminal.sendInput("\x16");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, scrollTop);
+
+		terminal.sendInput("\r");
+		assert.strictEqual(submitted, "/command-5");
+		tui.stop();
+	});
+
+	it("routes selection page keys through a focused container wrapper", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const tui = new TuiAltScreen(terminal);
+		const transcript = new ScrollView(
+			new Text(Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0),
+			{ follow: "end", primary: true },
+		);
+		const selectList = new SelectList(
+			Array.from({ length: 12 }, (_, index) => ({ value: `item-${index}`, label: `Item ${index}` })),
+			5,
+			{
+				selectedPrefix: (text) => text,
+				selectedText: (text) => text,
+				description: (text) => text,
+				scrollInfo: (text) => text,
+				noMatch: (text) => text,
+			},
+		);
+		const wrapper = Object.assign(new Container(), {
+			handleInput(data: string) {
+				selectList.handleInput(data);
+			},
+		});
+		wrapper.addChild(selectList);
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: wrapper, basis: "auto", shrink: 0 },
+			]),
+		);
+		tui.setFocus(wrapper);
+		tui.start();
+		await terminal.waitForRender();
+		const scrollTop = transcript.scrollTop;
+
+		terminal.sendInput("\x1b[6~");
+		await terminal.waitForRender();
+
+		assert.strictEqual(transcript.scrollTop, scrollTop);
+		assert.strictEqual(selectList.getSelectedItem()?.value, "item-5");
 		tui.stop();
 	});
 

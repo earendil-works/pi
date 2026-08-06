@@ -211,6 +211,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  readonly capturesSelectPageInput?: boolean;
   invalidate?(): void;
 }
 ```
@@ -219,7 +220,10 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
+| `capturesSelectPageInput?` | If true, selection page keys take precedence over alternate-screen viewport scrolling. |
 | `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
+
+`SelectList` and `SettingsList` set `capturesSelectPageInput` automatically. `Container` propagates the capability from its children, so return the container itself when adding input handling instead of wrapping its methods in a plain object.
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
@@ -515,6 +519,7 @@ list.setFilter("opt"); // Filter items
 
 **Controls:**
 - Arrow keys: Navigate
+- PageUp/PageDown: Move by one visible page
 - Enter: Select
 - Escape: Cancel
 
@@ -555,6 +560,7 @@ settings.updateValue("theme", "light");
 
 **Controls:**
 - Arrow keys: Navigate
+- PageUp/PageDown: Move by one visible page
 - Enter/Space: Activate (cycle value or open submenu)
 - Escape: Cancel
 
@@ -710,13 +716,14 @@ When creating custom components, **each line returned by `render()` must not exc
 
 ### Handling Input
 
-Use `matchesKey()` with the `Key` helper for keyboard input:
+Use keybinding actions for configurable selection navigation:
 
 ```typescript
-import { matchesKey, Key, truncateToWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 
 class MyInteractiveComponent implements Component {
+  readonly capturesSelectPageInput = true;
   private selectedIndex = 0;
   private items = ["Option 1", "Option 2", "Option 3"];
   
@@ -724,13 +731,18 @@ class MyInteractiveComponent implements Component {
   public onCancel?: () => void;
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.up)) {
+    const keybindings = getKeybindings();
+    if (keybindings.matches(data, "tui.select.pageUp")) {
+      this.selectedIndex = Math.max(0, this.selectedIndex - 5);
+    } else if (keybindings.matches(data, "tui.select.pageDown")) {
+      this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + 5);
+    } else if (keybindings.matches(data, "tui.select.up")) {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-    } else if (matchesKey(data, Key.down)) {
+    } else if (keybindings.matches(data, "tui.select.down")) {
       this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + 1);
-    } else if (matchesKey(data, Key.enter)) {
+    } else if (keybindings.matches(data, "tui.select.confirm")) {
       this.onSelect?.(this.selectedIndex);
-    } else if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+    } else if (keybindings.matches(data, "tui.select.cancel")) {
       this.onCancel?.();
     }
   }

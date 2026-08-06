@@ -16,6 +16,7 @@ import type { SessionTreeNode } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { formatKeyText, keyHint } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 
 /** Gutter info: position (displayIndent where connector was) and whether to show │ */
 interface GutterInfo {
@@ -104,6 +105,7 @@ interface ToolCallInfo {
 }
 
 class TreeList implements Component {
+	readonly capturesSelectPageInput = true;
 	private flatNodes: FlatNode[] = [];
 	private filteredNodes: FlatNode[] = [];
 	private selectedIndex = 0;
@@ -995,6 +997,13 @@ class TreeList implements Component {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(
+			kb,
+			keyData,
+			this.selectedIndex,
+			this.filteredNodes.length,
+			this.maxVisibleLines,
+		);
 		if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredNodes.length - 1 : this.selectedIndex - 1;
 		} else if (kb.matches(keyData, "tui.select.down")) {
@@ -1015,12 +1024,12 @@ class TreeList implements Component {
 			} else {
 				this.selectedIndex = this.findBranchSegmentStart("down");
 			}
-		} else if (kb.matches(keyData, "tui.editor.cursorLeft") || kb.matches(keyData, "tui.select.pageUp")) {
-			// Page up
+		} else if (kb.matches(keyData, "tui.editor.cursorLeft")) {
 			this.selectedIndex = Math.max(0, this.selectedIndex - this.maxVisibleLines);
-		} else if (kb.matches(keyData, "tui.editor.cursorRight") || kb.matches(keyData, "tui.select.pageDown")) {
-			// Page down
+		} else if (kb.matches(keyData, "tui.editor.cursorRight")) {
 			this.selectedIndex = Math.min(this.filteredNodes.length - 1, this.selectedIndex + this.maxVisibleLines);
+		} else if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 		} else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selected = this.filteredNodes[this.selectedIndex];
 			if (selected && this.onSelect) {

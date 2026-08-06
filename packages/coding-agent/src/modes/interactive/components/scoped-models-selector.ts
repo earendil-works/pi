@@ -14,6 +14,7 @@ import { getModelSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyText } from "./keybinding-hints.ts";
+import { getPageSelectionIndex } from "./select-navigation.ts";
 
 // EnabledIds: null = all enabled (no filter), string[] = explicit ordered list
 type EnabledIds = string[] | null;
@@ -90,6 +91,10 @@ export interface ModelsCallbacks {
  * Changes are session-only until explicitly persisted with Ctrl+S.
  */
 export class ScopedModelsSelectorComponent extends Container implements Focusable {
+	override get capturesSelectPageInput(): boolean {
+		return true;
+	}
+
 	private modelsById: Map<string, Model<any>> = new Map();
 	private allIds: string[] = [];
 	private enabledIds: EnabledIds = null;
@@ -281,6 +286,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
+		const pageIndex = getPageSelectionIndex(kb, data, this.selectedIndex, this.filteredItems.length, this.maxVisible);
 
 		// Navigation
 		if (kb.matches(data, "tui.select.up")) {
@@ -292,6 +298,11 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		if (kb.matches(data, "tui.select.down")) {
 			if (this.filteredItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
+			this.updateList();
+			return;
+		}
+		if (pageIndex !== undefined) {
+			this.selectedIndex = pageIndex;
 			this.updateList();
 			return;
 		}
