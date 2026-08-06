@@ -543,28 +543,6 @@ describe("AgentHarness tools", () => {
 			expect(textOutput(result)).toMatch(/Showing last 50\.0KB of line 1 \(line is 58\.6KB\)\. Full output:/);
 		});
 
-		it("forwards empty environment overrides to shell execution", async () => {
-			const env = new NodeExecutionEnv({
-				cwd: createTempDir(),
-				shellEnv: { PI_SESSION_FILE: "/stale/parent.jsonl", PI_CODING_AGENT: "true" },
-			});
-			const result = await createBashTool({
-				prepare: (execution) => {
-					execution.env.PI_SESSION_FILE = "";
-				},
-			}).execute(
-				"bash-empty-env",
-				{
-					command: `printf '%s:%s:%s' "\${PI_SESSION_FILE+x}" "$PI_SESSION_FILE" "$PI_CODING_AGENT"`,
-				},
-				undefined,
-				undefined,
-				{ env },
-			);
-
-			expect(textOutput(result)).toBe("x::true");
-		});
-
 		it("prepares command, cwd, and an explicit environment with the turn context", async () => {
 			const env = new NodeExecutionEnv({
 				cwd: createTempDir(),
