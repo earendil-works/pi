@@ -763,10 +763,43 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("selects whole words on double click, extends word drags, and selects lines on triple click", async () => {
-		const terminal = new RecordingTerminal(20, 2);
+	it("does not append whitespace to double-click word highlighting", async () => {
+		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("zero alpha beta\ngamma delta", 0, 0));
+		tui.addChild(new Text("foo  bar", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<0;1;1m");
+		terminal.sendInput("\x1b[<0;3;1M");
+		await terminal.waitForRender();
+
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("foo\x1b[27m")));
+		tui.stop();
+	});
+
+	it("highlights a complete whitespace segment during a word drag", async () => {
+		const terminal = new RecordingTerminal(20, 1);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("foo  bar", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<0;1;1m");
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<32;4;1M");
+		await terminal.waitForRender();
+
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("foo  \x1b[27m")));
+		tui.stop();
+	});
+
+	it("selects whole words on double click, extends word drags, and selects paragraphs on triple click", async () => {
+		const terminal = new RecordingTerminal(20, 5);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("zero alpha beta\ngamma delta\ncontinued here\n\nfinal paragraph", 0, 0));
 		tui.start();
 		await terminal.waitForRender();
 
@@ -796,8 +829,8 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("\x1b[<0;11;2M");
 		terminal.sendInput("\x1b[<0;11;2m");
 		await terminal.waitForRender();
-		const line = `\x1b]52;c;${Buffer.from("gamma delta").toString("base64")}\x07`;
-		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(line)));
+		const paragraph = `\x1b]52;c;${Buffer.from("zero alpha beta\ngamma delta\ncontinued here").toString("base64")}\x07`;
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(paragraph)));
 
 		tui.stop();
 	});

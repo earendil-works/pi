@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added double-click word selection, word-aware drag selection, and triple-click line selection in the fullscreen TUI ([#7725](https://github.com/earendil-works/pi/issues/7725)).
+- Added double-click word selection, word-aware drag selection, and triple-click paragraph selection in the fullscreen TUI ([#7725](https://github.com/earendil-works/pi/issues/7725)).
 
 ### Fixed
 

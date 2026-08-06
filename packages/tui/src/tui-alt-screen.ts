@@ -80,7 +80,7 @@ interface SelectionRange {
 	end: SelectionPoint;
 }
 
-type SelectionGranularity = "character" | "word" | "line";
+type SelectionGranularity = "character" | "word" | "paragraph";
 
 interface ClickTarget {
 	timestamp: number;
@@ -608,16 +608,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		};
 	}
 
-	private getSelectionSourceLine(point: SelectionPoint): string {
+	private getSelectionSourceLines(point: SelectionPoint): readonly string[] {
 		if (point.scrollView && this.currentLayout) {
 			const lines = getScrollViewBox(this.currentLayout, point.scrollView)?.scrollContentLines;
-			if (lines) return lines[point.row] ?? "";
+			if (lines) return lines;
 		}
-		return this.previousScreen[point.row] ?? "";
+		return this.previousScreen;
 	}
 
 	private getWordSelection(point: SelectionPoint): SelectionRange | undefined {
-		const line = stripTerminalSequences(this.getSelectionSourceLine(point));
+		const line = stripTerminalSequences(this.getSelectionSourceLines(point)[point.row] ?? "");
 		let start = 0;
 		for (const segment of wordSegmenter.segment(line)) {
 			const end = start + visibleWidth(segment.segment);
@@ -632,10 +632,23 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return undefined;
 	}
 
-	private getLineSelection(point: SelectionPoint): SelectionRange {
+	private getParagraphSelection(point: SelectionPoint): SelectionRange {
+		const lines = this.getSelectionSourceLines(point);
+		const isBlank = (row: number) => stripTerminalSequences(lines[row] ?? "").trim().length === 0;
+		let startRow = point.row;
+		let endRow = point.row;
+		if (!isBlank(point.row)) {
+			while (startRow > 0 && !isBlank(startRow - 1)) startRow--;
+			while (endRow + 1 < lines.length && !isBlank(endRow + 1)) endRow++;
+		}
 		return {
-			start: { ...point, col: 0 },
-			end: { ...point, col: visibleWidth(this.getSelectionSourceLine(point)), boundary: true },
+			start: { ...point, row: startRow, col: 0 },
+			end: {
+				...point,
+				row: endRow,
+				col: visibleWidth(lines[endRow] ?? ""),
+				boundary: true,
+			},
 		};
 	}
 
@@ -644,7 +657,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.selectionFocus = point;
 			return;
 		}
-		const range = this.selectionGranularity === "word" ? this.getWordSelection(point) : this.getLineSelection(point);
+		const range =
+			this.selectionGranularity === "word" ? this.getWordSelection(point) : this.getParagraphSelection(point);
 		if (!range) return;
 		const initial = this.selectionInitialRange;
 		const targetBeforeInitial =
@@ -792,8 +806,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const anchor = this.getSelectionPoint(event, scrollView);
 		const word = this.getWordSelection(anchor);
 		const clickCount = this.getClickCount(anchor, word);
-		const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;
-		this.selectionGranularity = range ? (clickCount === 2 ? "word" : "line") : "character";
+		const range = clickCount === 2 ? word : clickCount === 3 ? this.getParagraphSelection(anchor) : undefined;
+		this.selectionGranularity = range ? (clickCount === 2 ? "word" : "paragraph") : "character";
 		this.selectionInitialRange = range;
 		this.selectionAnchor = range?.start ?? anchor;
 		this.selectionFocus = range?.end ?? anchor;
@@ -906,14 +920,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width);
 			screenSelection = {
 				start: {
+					...selection.start,
 					row: box.rect.y + selection.start.row - selection.start.scrollView.scrollTop,
 					col: box.rect.x + selection.start.col,
-					scrollView: selection.start.scrollView,
 				},
 				end: {
+					...selection.end,
 					row: box.rect.y + selection.end.row - selection.start.scrollView.scrollTop,
 					col: box.rect.x + selection.end.col,
-					scrollView: selection.start.scrollView,
 				},
 			};
 		}
