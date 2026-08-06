@@ -1096,7 +1096,17 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const useMaxTokens = baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
+	// DeepSeek models can also be served through gateway proxies (e.g. opencode's
+	// zen endpoint at opencode.ai/zen/v1), where the upstream still enforces the
+	// DeepSeek API contract: `reasoning_content` must be passed back on assistant
+	// messages in multi-turn/tool-call conversations. Without this detection,
+	// those models get `requiresReasoningContentOnAssistantMessages: false` and the
+	// upstream rejects the request with a 400
+	// ("The `reasoning_content` in the thinking mode must be passed back to the API.").
+	const isDeepSeek =
+		provider === "deepseek" ||
+		baseUrl.includes("deepseek.com") ||
+		(model.id.toLowerCase().startsWith("deepseek") && baseUrl.includes("opencode.ai"));
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
