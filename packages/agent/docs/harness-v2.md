@@ -2086,6 +2086,8 @@ interface LaneState {
     kind: "run" | "compaction" | "navigation";
     intent: OperationStartedRecord["intent"];
     aborting: boolean;
+    /** Queue payloads cleared by an accepted abort, retained for suspended inventory and requeue. */
+    abortingQueues: null | { steer: AgentMessage[]; followUp: AgentMessage[] };
     step: null | {                          // unfinished step: newest attempt's result entry missing
       kind: "assistant" | "compaction" | "branch_summary";
       attempts: number;
@@ -3235,7 +3237,8 @@ These packages merge R0 → R1 → R2 → R3. R1 and R2 add a reducer module ins
 - [ ] **R3 — harness restore inventory.** Dependencies: F0, R2.
   - Primary files: `packages/agent/src/harness/agent-harness.ts`, reducer integration helpers, and restore tests.
   - Wire `AgentHarness.create()` to use indexed open-operation discovery, bounded idle/open scans, explicit provisioned-id point lookups, and bounded configuration lookups. Return accurate `SuspendedOperation[]` without starting effects.
-  - Acceptance: idle and multi-lane restore write nothing, multiple open operations reject as corruption, suspended metadata is complete, and one lane never scans another lane's traffic. `resume()` may still reject as unimplemented.
+  - Known limitation: anchor configuration currently restores model state from `model_change` entries or harness defaults; restoring a newer assistant message's model requires the bounded role-aware branch query assigned to H4.
+  - Acceptance: idle and multi-lane restore write nothing, multiple open operations reject as corruption, suspended metadata is complete subject to the assistant-derived model limitation above, and one lane never scans another lane's traffic. `resume()` may still reject as unimplemented.
 
 ### Track J — JSONL storage
 
@@ -3333,7 +3336,8 @@ H0 converges restore and primitives into `agent-harness.ts`. H0–H8 then merge 
   - Acceptance: both orders of race rows 2, 5, 7, and 12; provider context grows only at the tail.
 - [ ] **H4 — deferred writes, persisted configuration, and adjustments.** Dependencies: H3.
   - Add deferred lane-view tree/configuration writes, direct idle writes, model/thinking/active-tool persistence and lookup, `recordUsage`, pending-write snapshots/events, and finish conditionals.
-  - Acceptance: both orders of race rows 3 and 9; accepted writes survive crashes and abort markers; adjustments affect ledger totals but never entries.
+  - Extend the bounded branch-query contract to find the newest assistant message at an anchor. Restore effective model state from that message or the latest `model_change`, whichever has the newer sequence, and use the result for missing-model inventory.
+  - Acceptance: both orders of race rows 3 and 9; accepted writes survive crashes and abort markers; restored effective model state and missing-model inventory honor the newest assistant message versus `model_change`; adjustments affect ledger totals but never entries.
 - [ ] **H5 — abort, wait, run-when-idle, and close.** Dependencies: H4.
   - Add durable abort acceptance, queue draining, pending-write application, synthetic closure messages/results, suspended abort, idle waiters/callbacks, and process-local close settlement.
   - Acceptance: both orders of race rows 4, 6, 8, and 10 and crash/reopen after every abort action.

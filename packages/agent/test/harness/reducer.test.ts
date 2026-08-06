@@ -827,6 +827,10 @@ describe("lane-state reduction", () => {
 			pendingFollowUp: [],
 			pendingWrites: [pendingWrite],
 		});
+		expect(result.laneState.operation?.abortingQueues).toEqual({
+			steer: [steer.message],
+			followUp: [followUp.message],
+		});
 	});
 
 	it.each([

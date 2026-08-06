@@ -12,12 +12,20 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
 import type { CompactionSettings } from "./compaction/compaction.ts";
+import {
+	type EffectiveLaneConfiguration,
+	type LaneReductionInput,
+	type LaneReductionResult,
+	RecordLogCorruption,
+	reduceLaneState,
+} from "./reducer.ts";
 import { type Result as ResultValue, TaggedError } from "./result.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
 	Entry,
 	JsonValue,
+	OperationStartedRecord,
 	ProvisionedEntry,
 	Session,
 	SessionTree,
@@ -302,12 +310,373 @@ export interface AgentLane {
 	watch(): Promise<WatchHandle<LaneSnapshot>>;
 }
 
+/**
+ * Reads entries appended by an operation whose starting leaf remains an
+ * ancestor of the lane's current leaf. The branch query walks newest-first
+ * from `leafId` to the inclusive `sourceLeafId` boundary; this helper removes
+ * that pre-operation anchor and returns only operation-owned entries in
+ * oldest-first reducer order. A null source denotes an operation accepted at
+ * the root. Post-move navigation does not satisfy the ancestry requirement;
+ * its provisioned summary must be restored by point lookup instead.
+ */
+async function readOwnEntries(
+	session: Session,
+	leafId: string | null,
+	sourceLeafId: string | null,
+	operationStartedSeq: number,
+): Promise<Entry[]> {
+	// A root-positioned lane has no entries, while an unchanged source leaf means
+	// the operation has not appended any entries.
+	if (leafId === null || leafId === sourceLeafId) return [];
+
+	const newestFirst = await session.findEntriesOnBranch({
+		start: leafId,
+		...(sourceLeafId === null ? {} : { stopAtId: sourceLeafId }),
+		order: "newestFirst",
+	});
+	if (sourceLeafId !== null) {
+		// stopAtId is inclusive, so remove the pre-operation source anchor.
+		const sourceEntry = newestFirst.pop();
+		if (sourceEntry?.id !== sourceLeafId) {
+			throw new RecordLogCorruption(
+				"inconsistent_step",
+				`Operation source leaf ${sourceLeafId} is not an ancestor of current leaf ${leafId}`,
+			);
+		}
+	}
+	const ownEntries = newestFirst.reverse();
+	if (ownEntries.some((entry) => entry.seq <= operationStartedSeq)) {
+		throw new RecordLogCorruption(
+			"inconsistent_step",
+			`Operation at sequence ${operationStartedSeq} includes a pre-operation entry on its current branch`,
+		);
+	}
+	return ownEntries;
+}
+
+/**
+ * Navigation moves away from its source before appending its only possible own
+ * tree entry. The lane move and optional label are not entries, so this returns
+ * no entries before the summary append and exactly the summary afterward.
+ *
+ * The point lookup distinguishes the three durable states: source (before
+ * move), target (after move), and summary (after append). A null leaf is the
+ * tree root and can therefore be either the source or target; source and target
+ * must differ, so those states remain distinguishable.
+ */
+function restoreNavigationOwnEntries(
+	started: OperationStartedRecord,
+	leafId: string | null,
+	recoveryTargetEntries: readonly Entry[],
+): Entry[] {
+	if (started.intent.kind !== "navigation") throw new Error("Expected a navigation operation");
+	const intent = started.intent;
+	const hasSummaryId = intent.summaryEntryId !== undefined;
+	if (intent.targetId === started.sourceLeafId || intent.summarize !== hasSummaryId) {
+		throw new RecordLogCorruption(
+			"inconsistent_step",
+			`Navigation ${started.id} has an inconsistent source, target, or summary intent`,
+		);
+	}
+
+	const summary = intent.summaryEntryId
+		? recoveryTargetEntries.find((entry) => entry.id === intent.summaryEntryId)
+		: undefined;
+	if (!summary) {
+		const laneIsBeforeOrAfterMove = leafId === started.sourceLeafId || leafId === intent.targetId;
+		if (!laneIsBeforeOrAfterMove) {
+			throw new RecordLogCorruption(
+				"inconsistent_step",
+				`Navigation ${started.id} has leaf ${leafId} before its summary was appended`,
+			);
+		}
+		return [];
+	}
+
+	// A committed summary must be the first post-start entry on the target
+	// branch, describe the abandoned source branch, and remain the lane leaf.
+	const isPostStartEntry = summary.seq > started.seq;
+	const isOnTargetBranch = summary.parentId === intent.targetId;
+	const describesSourceBranch = summary.type === "branch_summary" && summary.fromId === started.sourceLeafId;
+	const isLaneLeaf = leafId === summary.id;
+	const isValidSummary = isPostStartEntry && isOnTargetBranch && describesSourceBranch && isLaneLeaf;
+	if (!isValidSummary) {
+		throw new RecordLogCorruption(
+			"inconsistent_step",
+			`Navigation ${started.id} has a summary that is not the post-move lane leaf`,
+		);
+	}
+	return [summary];
+}
+
+/**
+ * Point-looks up entries named by recovery records. These lookups both close
+ * provisioned intents and detect an id whose entry exists outside this lane's
+ * current branch with content different from its durable intent.
+ */
+async function readRecoveryTargetEntries(session: Session, records: LaneReductionInput["records"]): Promise<Entry[]> {
+	const targetIds = new Set<string>();
+	for (const record of records) {
+		switch (record.type) {
+			case "operation_started":
+				switch (record.intent.kind) {
+					case "run":
+						for (const target of record.intent.initialMessages) targetIds.add(target.id);
+						break;
+					case "compaction":
+						targetIds.add(record.intent.resultEntryId);
+						break;
+					case "navigation":
+						if (record.intent.summaryEntryId) targetIds.add(record.intent.summaryEntryId);
+						break;
+				}
+				break;
+			case "step_attempt":
+				targetIds.add(record.resultEntryId);
+				break;
+			case "tool_started":
+				targetIds.add(record.assistantEntryId);
+				targetIds.add(record.resultEntryId);
+				break;
+			case "queue_enqueued":
+				targetIds.add(record.target.id);
+				break;
+			case "write_deferred":
+				targetIds.add(record.target.id);
+				break;
+		}
+	}
+	// TODO: Add a batched lookup or bounded concurrency before remote storage backends use restore;
+	// one request per recovery target currently has no backpressure.
+	const entries = await Promise.all([...targetIds].map((id) => session.getEntry(id)));
+	return entries.filter((entry): entry is Entry => entry !== undefined);
+}
+
+/**
+ * Reads the bounded queue slice relevant to an idle lane. The latest run start
+ * is the cutoff because that run captured every older next-run item; only
+ * subsequent next-run enqueues and cancellations can still be pending.
+ */
+async function readIdleQueueRecords(session: Session, lane: string): Promise<LaneReductionInput["records"]> {
+	const [latestRun] = await session.findRecords({
+		lane,
+		type: "operation_started",
+		operationKind: "run",
+		order: "newestFirst",
+		limit: 1,
+	});
+	const afterLatestRun = latestRun === undefined ? {} : { afterSeq: latestRun.seq };
+	const [enqueued, cancelled] = await Promise.all([
+		session.findRecords({
+			lane,
+			type: "queue_enqueued",
+			...afterLatestRun,
+			order: "oldestFirst",
+		}),
+		session.findRecords({
+			lane,
+			type: "queue_cancelled",
+			...afterLatestRun,
+			order: "oldestFirst",
+		}),
+	]);
+
+	// A run captures every older next-run item at acceptance. Only uncaptured
+	// next-run records after that boundary remain relevant while the lane is idle.
+	return [
+		...enqueued.filter((record) => record.queue === "nextRun"),
+		...cancelled.filter((record) => record.runId === undefined),
+	].sort((left, right) => left.seq - right.seq);
+}
+
+/** Reads the latest explicit persisted value for each lane configuration dimension. */
+async function readConfigurationEntries(session: Session, leafId: string | null): Promise<Entry[]> {
+	// A root-positioned lane has no ancestor entries from which to derive configuration.
+	if (leafId === null) return [];
+
+	// Read each independent persisted configuration dimension concurrently.
+	// Operation-owned assistant entries are supplied separately through ownEntries.
+	// TODO(H4): Also restore model state from the newest assistant message or model_change,
+	// whichever is newer. This requires a bounded branch query that can filter by message role.
+	// TODO: Push entry filters and limits into SQLite's branch query before treating these as
+	// bounded lookups; it currently filters and slices after decoding the complete branch.
+	const entries = await Promise.all([
+		session.findEntryOnBranch({ start: leafId, type: "model_change" }),
+		session.findEntryOnBranch({ start: leafId, type: "thinking_level_change" }),
+		session.findEntryOnBranch({ start: leafId, type: "active_tools_change" }),
+	]);
+
+	// Drop configuration dimensions with no persisted value, then order the
+	// remaining entries chronologically so the reducer applies the newest last.
+	return entries.filter((entry): entry is Entry => entry !== undefined).sort((left, right) => left.seq - right.seq);
+}
+
+interface RestoredLane {
+	reduction: LaneReductionResult;
+	started?: OperationStartedRecord;
+}
+
+/**
+ * Restores one lane from its current durable pointer and recovery records.
+ * `leafId === null` means the lane currently points at the tree root; it does
+ * not imply that the lane is idle or has no records. A root-positioned lane
+ * may still have an open operation or pending next-run input.
+ */
+async function restoreLane(
+	options: AgentHarnessOptions,
+	lane: string,
+	leafId: string | null,
+	defaultConfiguration: EffectiveLaneConfiguration,
+): Promise<RestoredLane> {
+	const openOperations = await options.session.findOpenOperations(lane, { limit: 2 });
+	if (openOperations.length > 1) {
+		throw new RecordLogCorruption("multiple_open_operations", `Lane ${lane} has multiple open operations`);
+	}
+
+	// One open start means the lane is suspended; reconstruct its operation
+	// records, operation-owned entries, and configuration at the start anchor.
+	const started = openOperations[0];
+	if (started) {
+		const ownEntriesPromise =
+			started.intent.kind === "navigation"
+				? Promise.resolve<Entry[]>([])
+				: readOwnEntries(options.session, leafId, started.sourceLeafId, started.seq);
+		const [laterRecords, branchOwnEntries, configurationEntries] = await Promise.all([
+			options.session.findRecords({ lane, afterSeq: started.seq, order: "oldestFirst" }),
+			ownEntriesPromise,
+			readConfigurationEntries(options.session, started.sourceLeafId),
+		]);
+
+		const recoveryTargetEntries = await readRecoveryTargetEntries(options.session, [started, ...laterRecords]);
+		const ownEntries =
+			started.intent.kind === "navigation"
+				? restoreNavigationOwnEntries(started, leafId, recoveryTargetEntries)
+				: branchOwnEntries;
+		// Deduplicate targets already present in the operation-owned entries.
+		const entries = [
+			...new Map([...ownEntries, ...recoveryTargetEntries].map((entry) => [entry.id, entry])).values(),
+		];
+		const laneReductionInput: LaneReductionInput = {
+			lane,
+			leafId,
+			openOperations,
+			records: [started, ...laterRecords],
+			entries,
+			ownEntries,
+			configurationEntries,
+			defaults: defaultConfiguration,
+		};
+		return { reduction: reduceLaneState(laneReductionInput), started };
+	}
+
+	// An idle lane has no operation-owned entries; restore only pending next-run
+	// input and the effective configuration at its current leaf.
+	const [records, configurationEntries] = await Promise.all([
+		readIdleQueueRecords(options.session, lane),
+		readConfigurationEntries(options.session, leafId),
+	]);
+	const entries = await readRecoveryTargetEntries(options.session, records);
+	return {
+		reduction: reduceLaneState({
+			lane,
+			leafId,
+			openOperations,
+			records,
+			entries,
+			ownEntries: [],
+			configurationEntries,
+			defaults: defaultConfiguration,
+		}),
+	};
+}
+
+function findMissingIdentities(
+	options: AgentHarnessOptions,
+	reduction: LaneReductionResult,
+): SuspendedOperation["missing"] {
+	const operation = reduction.laneState.operation;
+	if (!operation || operation.aborting) return { tools: [], models: [] };
+
+	const availableTools = new Set((options.tools ?? []).map((tool) => tool.name));
+	const requiredTools = new Set(operation.kind === "run" ? reduction.effectiveConfiguration.activeToolNames : []);
+	const toolBatch = operation.toolBatch;
+	// Truncated batches and replay-never calls synthesize unresolved results
+	// without executing the referenced tools.
+	if (toolBatch && !toolBatch.truncated) {
+		for (const call of toolBatch.calls) {
+			if (!call.resultExists && call.started?.replay !== "never") {
+				requiredTools.add(call.started?.toolName ?? call.toolCall.name);
+			}
+		}
+	}
+
+	const requiredModels = new Map<string, { provider: string; modelId: string }>();
+	const needsEffectiveModel =
+		operation.kind === "run" ||
+		(operation.kind === "compaction" && operation.targets.result !== true) ||
+		(operation.kind === "navigation" &&
+			operation.intent.kind === "navigation" &&
+			operation.intent.summarize &&
+			operation.targets.summary !== true);
+	if (needsEffectiveModel) {
+		const effectiveModel = reduction.effectiveConfiguration.model;
+		requiredModels.set(`${effectiveModel.provider}/${effectiveModel.modelId}`, effectiveModel);
+	}
+	const deferred = operation.deferred;
+	if (deferred) {
+		requiredModels.set(`${deferred.provider}/${deferred.modelId}`, {
+			provider: deferred.provider,
+			modelId: deferred.modelId,
+		});
+	}
+
+	return {
+		tools: [...requiredTools].filter((name) => !availableTools.has(name)),
+		models: [...requiredModels].flatMap(([identity, model]) =>
+			options.models.getModel(model.provider, model.modelId) ? [] : [identity],
+		),
+	};
+}
+
+/**
+ * Projects reducer-owned restored state into the public suspended inventory.
+ * This performs runtime identity checks only; it neither mutates durable state
+ * nor starts recovery work.
+ */
+function buildSuspendedOperation(options: AgentHarnessOptions, restored: RestoredLane): SuspendedOperation | undefined {
+	const operation = restored.reduction.laneState.operation;
+	if (!operation) return undefined;
+	if (!restored.started || restored.started.id !== operation.id) {
+		throw new Error(`Restored lane ${restored.reduction.laneState.lane} is missing its operation start`);
+	}
+
+	const deferred = operation.deferred ? structuredClone(operation.deferred) : undefined;
+	let abortingQueues: { steer: AgentMessage[]; followUp: AgentMessage[] } | undefined;
+	if (operation.aborting) {
+		if (operation.abortingQueues === null) {
+			throw new Error(`Restored aborting lane ${restored.reduction.laneState.lane} is missing its cleared queues`);
+		}
+		abortingQueues = operation.abortingQueues;
+	}
+	return {
+		lane: restored.reduction.laneState.lane,
+		kind: operation.kind,
+		id: operation.id,
+		startedAt: restored.started.timestamp,
+		reason: deferred ? "deferred" : "crash",
+		...(operation.intent.kind === "run" ? { prompt: structuredClone(operation.intent.originalPrompt) } : {}),
+		...(deferred ? { deferred } : {}),
+		...(abortingQueues ? { aborting: structuredClone(abortingQueues) } : {}),
+		missing: findMissingIdentities(options, restored.reduction),
+	};
+}
+
 export class AgentHarness implements AgentLane {
 	readonly name = "main";
 	readonly session: SessionTree;
 	readonly hooks: Hooks;
 	readonly events: Events;
-	private readonly durableSession: Session;
+	private readonly restoredLanes: Map<string, LaneReductionResult>;
 	private model: Model<Api>;
 	private thinkingLevel: ThinkingLevel;
 	private activeToolNames: string[];
@@ -320,8 +689,8 @@ export class AgentHarness implements AgentLane {
 	private followUpMode: QueueMode;
 	private closed = false;
 
-	private constructor(options: AgentHarnessOptions) {
-		this.durableSession = options.session;
+	private constructor(options: AgentHarnessOptions, restoredLanes: ReadonlyMap<string, LaneReductionResult>) {
+		this.restoredLanes = new Map(restoredLanes);
 		this.session = options.session;
 		this.hooks = new UnavailableRegistry("hooks.on", () => this.closed);
 		this.events = new UnavailableRegistry("events.on", () => this.closed);
@@ -344,12 +713,41 @@ export class AgentHarness implements AgentLane {
 		this.followUpMode = options.followUpMode ?? "one-at-a-time";
 	}
 
+	/**
+	 * Opens the durable session and reconstructs every lane without starting work.
+	 * For each lane, restore performs bounded recovery queries, validates the
+	 * durable prefix (the committed operation sequence up to the crash boundary),
+	 * reduces it into process-local lane state and effective configuration,
+	 * and retains that state in the returned harness. Corrupt session state rejects
+	 * creation. Missing tools or models are reported on the corresponding suspended
+	 * operation instead of rejecting creation.
+	 *
+	 * The returned suspended inventory describes every open operation so the
+	 * caller can decide whether to resume or abort it. Creation itself performs
+	 * no durable writes, provider requests, tool calls, hooks, or automatic
+	 * resumes.
+	 */
 	static async create(
 		options: AgentHarnessOptions,
 	): Promise<{ harness: AgentHarness; suspended: SuspendedOperation[] }> {
-		const [record] = await options.session.findRecords({ limit: 1 });
-		if (record !== undefined) throw new HarnessNotImplemented("create.restore");
-		return { harness: new AgentHarness(options), suspended: [] };
+		// Use the spread operator here to snapshot the option so
+		// caller mutations during async restore cannot change lane defaults.
+		const activeToolNames = [...(options.activeToolNames ?? options.tools?.map((tool) => tool.name) ?? [])];
+		const defaultConfiguration: EffectiveLaneConfiguration = {
+			model: { provider: options.model.provider, modelId: options.model.id },
+			thinkingLevel: options.thinkingLevel ?? "off",
+			activeToolNames,
+		};
+		const restoredLanes = new Map<string, LaneReductionResult>();
+		const suspended: SuspendedOperation[] = [];
+		for (const { lane, leafId } of await options.session.getLanes()) {
+			const restored = await restoreLane(options, lane, leafId, defaultConfiguration);
+			restoredLanes.set(lane, restored.reduction);
+			const suspendedOperation = buildSuspendedOperation(options, restored);
+			if (suspendedOperation) suspended.push(suspendedOperation);
+		}
+
+		return { harness: new AgentHarness(options, restoredLanes), suspended };
 	}
 
 	private unavailable<T>(operation: string): Promise<T> {
@@ -357,7 +755,8 @@ export class AgentHarness implements AgentLane {
 	}
 
 	async getLeafId(): Promise<string | null> {
-		return this.durableSession.getLeafId();
+		if (!this.restoredLanes.has("main")) throw new Error("Restored session does not contain the main lane");
+		return this.session.getLeafId();
 	}
 
 	async prompt(_text: string, _images?: ImageContent[]): Promise<RunResult>;

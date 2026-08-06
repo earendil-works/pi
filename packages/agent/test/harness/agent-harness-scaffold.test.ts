@@ -8,12 +8,7 @@ import {
 	type HarnessTool,
 	type Resources,
 } from "../../src/harness/agent-harness.ts";
-import {
-	InMemorySessionStorage,
-	type NewRecord,
-	type OperationStartedRecord,
-	Session,
-} from "../../src/harness/session/index.ts";
+import { InMemorySessionStorage, Session } from "../../src/harness/session/index.ts";
 import type { AgentMessage } from "../../src/types.ts";
 
 function createSession(id = "session"): Session {
@@ -26,16 +21,6 @@ function createHarness(session = createSession()): Promise<AgentHarness> {
 		models: createModels(),
 		model: getModel("google", "gemini-2.5-flash"),
 	}).then(({ harness }) => harness);
-}
-
-function operationStarted(id: string): NewRecord<OperationStartedRecord> {
-	return {
-		type: "operation_started",
-		id,
-		lane: "main",
-		sourceLeafId: null,
-		intent: { kind: "run", originalPrompt: [], initialMessages: [] },
-	};
 }
 
 const userMessage: AgentMessage = {
@@ -54,7 +39,7 @@ const usage: Usage = {
 };
 
 describe("AgentHarness v2 scaffold", () => {
-	it("opens only record-free sessions before restore is implemented", async () => {
+	it("opens record-free sessions", async () => {
 		const session = createSession();
 		const { harness, suspended } = await AgentHarness.create({
 			session,
@@ -69,16 +54,6 @@ describe("AgentHarness v2 scaffold", () => {
 		expect(await harness.session.getLeafId()).toBeNull();
 
 		await expect(harness.close()).resolves.toBeUndefined();
-
-		const recorded = createSession("recorded");
-		await recorded.appendRecord(operationStarted("run"));
-		await expect(
-			AgentHarness.create({
-				session: recorded,
-				models: createModels(),
-				model: getModel("google", "gemini-2.5-flash"),
-			}),
-		).rejects.toMatchObject({ name: "HarnessNotImplemented", operation: "create.restore" });
 	});
 
 	it("keeps scaffold-safe configuration as defensive copies", async () => {

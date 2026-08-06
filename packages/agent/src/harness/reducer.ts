@@ -84,6 +84,8 @@ export interface LaneState {
 		kind: "run" | "compaction" | "navigation";
 		intent: OperationStartedRecord["intent"];
 		aborting: boolean;
+		/** Queue payloads cleared by an accepted abort, retained for suspended inventory and requeue. */
+		abortingQueues: null | { steer: AgentMessage[]; followUp: AgentMessage[] };
 		step: null | {
 			kind: "assistant" | "compaction" | "branch_summary";
 			attempts: number;
@@ -540,16 +542,25 @@ export function reduceLaneState(input: LaneReductionInput): LaneReductionResult 
 		record.type === "operation_started" ? record.id === started.id : "runId" in record && record.runId === started.id,
 	);
 	const aborting = operationRecords.some((record) => record.type === "abort_requested");
+	const runQueueRecords = pendingQueueRecords.filter(
+		(record) => record.queue !== "nextRun" && record.runId === started.id,
+	);
+	const abortingQueues = aborting
+		? {
+				steer: runQueueRecords.flatMap((record) =>
+					record.queue === "steer" && record.target.type === "message" ? [clone(record.target.message)] : [],
+				),
+				followUp: runQueueRecords.flatMap((record) =>
+					record.queue === "followUp" && record.target.type === "message" ? [clone(record.target.message)] : [],
+				),
+			}
+		: null;
 	const pendingSteer = aborting
 		? []
-		: pendingQueueRecords
-				.filter((record) => record.queue === "steer" && record.runId === started.id)
-				.map((record) => clone(record.target));
+		: runQueueRecords.filter((record) => record.queue === "steer").map((record) => clone(record.target));
 	const pendingFollowUp = aborting
 		? []
-		: pendingQueueRecords
-				.filter((record) => record.queue === "followUp" && record.runId === started.id)
-				.map((record) => clone(record.target));
+		: runQueueRecords.filter((record) => record.queue === "followUp").map((record) => clone(record.target));
 	const pendingWrites = operationRecords
 		.filter(
 			(record): record is WriteDeferredRecord =>
@@ -648,6 +659,7 @@ export function reduceLaneState(input: LaneReductionInput): LaneReductionResult 
 				kind: started.intent.kind,
 				intent: clone(started.intent),
 				aborting,
+				abortingQueues,
 				step,
 				toolBatch: deriveToolBatch(started.id, operationRecords, ownEntries, entriesById, deferredWriteIds),
 				missingInitialMessages,
