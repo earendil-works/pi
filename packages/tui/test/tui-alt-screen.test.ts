@@ -796,10 +796,10 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("selects whole words on double click, extends word drags, and selects paragraphs on triple click", async () => {
-		const terminal = new RecordingTerminal(20, 5);
+	it("selects whole words on double click, extends word drags, and selects lines on triple click", async () => {
+		const terminal = new RecordingTerminal(20, 2);
 		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("zero alpha beta\ngamma delta\ncontinued here\n\nfinal paragraph", 0, 0));
+		tui.addChild(new Text("zero alpha beta\ngamma delta", 0, 0));
 		tui.start();
 		await terminal.waitForRender();
 
@@ -829,8 +829,8 @@ describe("TuiAltScreen", () => {
 		terminal.sendInput("\x1b[<0;11;2M");
 		terminal.sendInput("\x1b[<0;11;2m");
 		await terminal.waitForRender();
-		const paragraph = `\x1b]52;c;${Buffer.from("zero alpha beta\ngamma delta\ncontinued here").toString("base64")}\x07`;
-		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(paragraph)));
+		const line = `\x1b]52;c;${Buffer.from("gamma delta").toString("base64")}\x07`;
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes(line)));
 
 		tui.stop();
 	});
