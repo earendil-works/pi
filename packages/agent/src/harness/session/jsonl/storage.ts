@@ -16,9 +16,9 @@ import {
 	type SessionStorage,
 } from "../types.ts";
 import { publishFileAtomically } from "./atomic.ts";
-import { encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
+import { encodeHeader, encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
-import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem } from "./types.ts";
+import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header } from "./types.ts";
 
 export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata> {
 	private readonly fs: JsonlSessionRepoFileSystem;
@@ -29,6 +29,16 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 	constructor(fs: JsonlSessionRepoFileSystem, metadata: JsonlSessionMetadata) {
 		this.fs = fs;
 		this.metadata = structuredClone(metadata);
+	}
+
+	static async create(
+		fs: JsonlSessionRepoFileSystem,
+		path: string,
+		header: JsonlV4Header,
+	): Promise<JsonlSessionStorage> {
+		fileResult(await fs.writeFile(path, encodeHeader(header)), `Failed to initialize session ${path}`);
+		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
+		return new JsonlSessionStorage(fs, metadataFromHeader(header, path, fileInfo.mtimeMs));
 	}
 
 	static async load(fs: JsonlSessionRepoFileSystem, path: string): Promise<JsonlSessionStorage> {

@@ -2,7 +2,7 @@ import { uuidv7 } from "@earendil-works/pi-ai";
 import { assertJsonSerializable, Session } from "../session.ts";
 import { type Entry, type ForkOptions, type LanePointer, SessionError, type SessionRepo } from "../types.ts";
 import { publishFileAtomically } from "./atomic.ts";
-import { encodeHeader, metadataFromHeader, parseHeader } from "./codec.ts";
+import { metadataFromHeader, parseHeader } from "./codec.ts";
 import { fileResult, invalidFile } from "./errors.ts";
 import { JsonlSessionStorage } from "./storage.ts";
 import type {
@@ -95,9 +95,7 @@ export class JsonlSessionRepo
 			parentSessionId: options.parentSessionId ?? source.id,
 		});
 		await publishFileAtomically(this.fs, path, async (tempPath) => {
-			fileResult(await this.fs.writeFile(tempPath, encodeHeader(header)), `Failed to stage fork ${path}`);
-			const fileInfo = fileResult(await this.fs.fileInfo(tempPath), `Failed to read staged fork metadata ${path}`);
-			const targetStorage = new JsonlSessionStorage(this.fs, metadataFromHeader(header, tempPath, fileInfo.mtimeMs));
+			const targetStorage = await JsonlSessionStorage.create(this.fs, tempPath, header);
 			for (const entry of copiedEntries) await targetStorage.appendCopiedEntry(entry);
 			for (const pointer of forkLanes) await targetStorage.appendForkLane(pointer.lane, pointer.leafId);
 			const name = await sourceSession.getName();
@@ -124,9 +122,7 @@ export class JsonlSessionRepo
 
 	private async createDirect(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
 		const { header, path } = await this.prepareCreate(options);
-		fileResult(await this.fs.writeFile(path, encodeHeader(header)), `Failed to create session ${path}`);
-		const fileInfo = fileResult(await this.fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		return new Session(new JsonlSessionStorage(this.fs, metadataFromHeader(header, path, fileInfo.mtimeMs)));
+		return new Session(await JsonlSessionStorage.create(this.fs, path, header));
 	}
 
 	private async prepareCreate(options: JsonlSessionCreateOptions): Promise<{
