@@ -127,7 +127,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 					if (isWayland && hasWaylandDisplay) {
 						try {
 							// Verify wl-copy exists (spawn errors are async and won't be caught)
-							execSync("which wl-copy", { stdio: "ignore" });
+							execSync("command -v wl-copy", { stdio: "ignore" });
 							// wl-copy with execSync hangs due to fork behavior; use spawn instead.
 							// Await the exit code and only claim success on a clean exit, so a
 							// failed wl-copy falls through to the xclip/OSC 52 fallbacks.
