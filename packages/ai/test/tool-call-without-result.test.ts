@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel } from "../src/compat.ts";
 import type { Api, Context, Model, StreamOptions, Tool } from "../src/types.ts";
 
@@ -8,6 +8,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { resolveLMStudioTestModel } from "./lm-studio-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -355,5 +356,18 @@ describe("Tool Call Without Result Tests", () => {
 				await testToolCallWithoutResult(model, { apiKey: openaiCodexToken });
 			},
 		);
+	});
+
+	// LM Studio (local) - skipped unless LM_STUDIO_BASE_URL is configured
+	describe.skipIf(!process.env.LM_STUDIO_BASE_URL)("LM Studio Provider", () => {
+		let model: Model<"openai-responses">;
+
+		beforeAll(async () => {
+			model = await resolveLMStudioTestModel();
+		});
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model, { apiKey: "nokey" });
+		});
 	});
 });

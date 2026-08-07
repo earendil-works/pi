@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { complete, getModel } from "../src/compat.ts";
 import type { Api, AssistantMessage, Context, Model, StreamOptions, UserMessage } from "../src/types.ts";
 
@@ -7,6 +7,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { resolveLMStudioTestModel } from "./lm-studio-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -818,5 +819,30 @@ describe("AI Providers Empty Message Tests", () => {
 				await testEmptyAssistantMessage(llm, { apiKey: openaiCodexToken });
 			},
 		);
+	});
+
+	// LM Studio (local) - skipped unless LM_STUDIO_BASE_URL is configured
+	describe.skipIf(!process.env.LM_STUDIO_BASE_URL)("LM Studio Provider Empty Messages", () => {
+		let llm: Model<"openai-responses">;
+
+		beforeAll(async () => {
+			llm = await resolveLMStudioTestModel();
+		});
+
+		it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyMessage(llm, { apiKey: "nokey" });
+		});
+
+		it("should handle empty string content", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyStringMessage(llm, { apiKey: "nokey" });
+		});
+
+		it("should handle whitespace-only content", { retry: 3, timeout: 30000 }, async () => {
+			await testWhitespaceOnlyMessage(llm, { apiKey: "nokey" });
+		});
+
+		it("should handle empty assistant message in conversation", { retry: 3, timeout: 30000 }, async () => {
+			await testEmptyAssistantMessage(llm, { apiKey: "nokey" });
+		});
 	});
 });

@@ -319,6 +319,15 @@ await models.refresh();                            // refresh all providers conc
 const fresh = models.getModel('llamacpp', 'qwen3-30b');
 ```
 
+LM Studio is a built-in dynamic provider: models are fetched from the local server's native `/api/v1/models` endpoint and cached in the models store. The provider factory takes optional `id`, `name`, and `baseUrl` (default `http://localhost:1234`):
+
+```typescript
+import { lmStudioProvider } from '@earendil-works/pi-ai/providers/lm-studio';
+
+models.setProvider(lmStudioProvider());
+await models.refresh({ providers: ['lm-studio'] });
+```
+
 Static built-in providers are no-ops for `refresh()`. See [createProvider()](#createprovider) for building a dynamic provider.
 
 ## Auth
@@ -441,7 +450,9 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Kimi For Coding | `KIMI_API_KEY` |
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` |
+| Qwen Token Plan | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| LM Studio (local) | Optional `LM_STUDIO_API_KEY`; optional `LM_STUDIO_BASE_URL` (default `http://localhost:1234`, also configurable via `lmStudioProvider({ baseUrl })` and the login prompt) |
 | Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |

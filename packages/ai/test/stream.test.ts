@@ -13,6 +13,7 @@ import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { resolveLMStudioTestModel } from "./lm-studio-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1742,6 +1743,21 @@ describe("Generate E2E Tests", () => {
 
 		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
 			await multiTurn(llm, { apiKey: "test", reasoningEffort: "medium" });
+		});
+	});
+
+	// LM Studio (local) - skipped unless LM_STUDIO_BASE_URL is configured
+	describe.skipIf(!process.env.LM_STUDIO_BASE_URL)("LM Studio Provider (via OpenAI Responses)", () => {
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(await resolveLMStudioTestModel(), { apiKey: "nokey" });
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(await resolveLMStudioTestModel(), { apiKey: "nokey" });
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(await resolveLMStudioTestModel(), { apiKey: "nokey" });
 		});
 	});
 });

@@ -94,6 +94,7 @@ pi
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Baseten | `BASETEN_API_KEY` | `baseten` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
+| LM Studio (local) | `LM_STUDIO_API_KEY` (optional; keyless local server) | `lm-studio` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
@@ -300,6 +301,25 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
 
 See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
+
+## LM Studio
+
+Pi supports LM Studio as a built-in provider. It connects to the local server's OpenAI-compatible API (default `http://localhost:1234`), discovers the loaded models, and lists them in `/model`. The model catalog refreshes automatically; run `pi update --models` to force an immediate refresh.
+
+No API key is required — LM Studio is a keyless local server. `/login lm-studio` prompts for an optional API key (for auth proxies) and an optional server base URL; leaving the key empty stores `nokey`, and leaving the URL empty keeps the default `http://localhost:1234`. The optional `LM_STUDIO_API_KEY` and `LM_STUDIO_BASE_URL` environment variables are used when no stored credential exists. A URL stored via `/login` takes precedence over the default and over the environment variable; requests and the model catalog both use it.
+
+The default server address can be overridden per installation with a custom provider in `models.json`:
+
+```json
+{
+  "providers": {
+    "lm-studio": {
+      "baseUrl": "http://localhost:1234",
+      "api": "openai-responses"
+    }
+  }
+}
+```
 
 ## Custom Providers
 
