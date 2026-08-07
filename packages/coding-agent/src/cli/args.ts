@@ -249,7 +249,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
+  ${APP_NAME} cursor status [--json]    Check local Cursor CLI session auth
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/cursor
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)

@@ -84,5 +84,6 @@ These variables are read by Pi itself:
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
+| `CURSOR_AGENT_BIN` | Absolute path to the Cursor agent CLI binary (`agent` / `cursor-agent`). Used by the built-in Cursor CLI bridge when the binary is not on `PATH`. See [Cursor (CLI bridge)](providers.md#cursor-cli-bridge). |
 
-Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).
+Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file). The Cursor CLI bridge does not use `CURSOR_API_KEY`; authenticate with `agent login` instead.

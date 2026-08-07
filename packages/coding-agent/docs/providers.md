@@ -9,6 +9,7 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
 - [llama.cpp](#llamacpp)
+- [Cursor (CLI bridge)](#cursor-cli-bridge)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -300,6 +301,28 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
 
 See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
+
+## Cursor (CLI bridge)
+
+Pi can use an already-authenticated local [Cursor CLI](https://cursor.com/docs/cli/overview) session (`agent` / `cursor-agent`) as a provider. This path does **not** use `CURSOR_API_KEY`, Pi OAuth, or entries in `~/.pi/agent/auth.json`. Login stays on the Cursor CLI.
+
+Prerequisites:
+
+1. Install the Cursor agent CLI and ensure `agent` (or `cursor-agent`) is on `PATH` (or set `CURSOR_AGENT_BIN`; see [Environment variables](environment-variables.md)).
+2. Run `agent login` and confirm with `agent status`.
+
+Then:
+
+```bash
+pi cursor status          # human-readable; exit 0 when authenticated
+pi cursor status --json   # normalized JSON
+pi --list-models          # includes provider "cursor" Team models when the CLI session is ready
+pi -p --provider cursor --model <id> "Say exactly: ok"
+```
+
+While a Cursor model is selected, Pi built-in tools are disabled so the child `agent` turn does not nest Pi tool loops. The child runs in Cursor `--mode ask`.
+
+`agent status` / `agent login` remain the source of truth for authentication. `pi cursor status` only reports what the local CLI reports.
 
 ## Custom Providers
 

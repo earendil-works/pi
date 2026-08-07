@@ -26,6 +26,7 @@ import {
 	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { runCursorCommand } from "./cli/cursor-command.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
@@ -576,6 +577,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await runAuthCommand(args)) {
+		return;
+	}
+
+	if (await runCursorCommand(args)) {
 		return;
 	}
 
