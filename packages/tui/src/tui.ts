@@ -1465,12 +1465,44 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// Differential rendering can only touch what's currently visible. Lines
+		// above the viewport have scrolled into the terminal scrollback and aren't
+		// addressable for in-place updates. We must NOT answer this with a full
+		// redraw: fullRender emits \x1b[3J (clear-scrollback) + \x1b[2J\x1b[H, which
+		// wipes the user's scrollback history and yanks the view — felt as
+		// "刷新置顶" / lost history when a mid-stream dynamic element (pet bubble,
+		// a non-latest streamed line) updates while the user is scrolled up.
+		// Scrollback lines are historical snapshots; they don't need repainting.
+		// Clamp the changed range into the viewport and let the differential path
+		// paint only what's on screen.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			// Clamp-and-skip is only safe when the working area carries no stale
+			// residue from a prior transient inflation (maxLinesRendered). If the
+			// current content is shorter than that high-water mark, stale lines
+			// remain on screen and the viewport needs re-anchoring — full redraw.
+			if (this.maxLinesRendered > newLines.length) {
+				logRedraw(
+					`firstChanged < viewportTop with stale working area (${firstChanged} < ${prevViewportTop}, maxLinesRendered=${this.maxLinesRendered} > ${newLines.length})`,
+				);
+				fullRender(true);
+				return;
+			}
+			if (lastChanged < prevViewportTop) {
+				// Entirely above the viewport — nothing visible changed. Realign
+				// bookkeeping only: no terminal output, scrollback untouched.
+				logRedraw(`change entirely above viewport (${firstChanged}..${lastChanged} < ${prevViewportTop})`);
+				this.previousLines = newLines;
+				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				return;
+			}
+			// Spans scrollback + viewport — clamp to viewport top and repaint the
+			// visible tail differentially. The scrollback portion is left as-is.
+			logRedraw(`clamped firstChanged into viewport (${firstChanged} -> ${prevViewportTop})`);
+			firstChanged = prevViewportTop;
 		}
 
 		// Render from first changed line to end
