@@ -1,14 +1,19 @@
 import { compare, valid } from "semver";
-import { fetchWithRetry } from "./management-http.ts";
-import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
-const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
+// Version check against pi.dev is DISABLED for the MatwingsVenus distribution.
+// The fork does not phone home to pi.dev and does not prompt the user about
+// upstream pi releases. The public signatures are preserved so callers compile
+// unchanged; the comparison helpers are retained for local self-update tooling.
 
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
 	note?: string;
+}
+
+export interface VersionCheckOptions {
+	timeoutMs?: number;
+	retry?: boolean;
 }
 
 /** Include useful errno details hidden behind Node's generic "fetch failed" error. */
@@ -25,9 +30,8 @@ export function formatVersionCheckError(error: unknown): string {
 		.filter((code): code is string => code !== undefined);
 
 	if (codes.length > 0) return `${rootMessage} (${[...new Set(codes)].join(", ")})`;
-	const causeMessage = causes.find(
-		(value): value is Error => value instanceof Error && Boolean(value.message),
-	)?.message;
+	const causeMessage = causes.find((value): value is Error => value instanceof Error && Boolean(value.message))
+		?.message;
 	return causeMessage ? `${rootMessage} (cause: ${causeMessage})` : rootMessage;
 }
 
@@ -48,62 +52,25 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 	return candidateVersion.trim() !== currentVersion.trim();
 }
 
+/** Disabled in the MatwingsVenus distribution — never reaches the network. */
 export async function getLatestPiRelease(
-	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	_currentVersion?: string,
+	_options?: VersionCheckOptions,
 ): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_OFFLINE) return undefined;
-
-	const response = await fetchWithRetry(
-		LATEST_VERSION_URL,
-		{
-			headers: {
-				"User-Agent": getPiUserAgent(currentVersion),
-				accept: "application/json",
-			},
-		},
-		{
-			maxRetries: options.retry ? 2 : 0,
-			timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS,
-		},
-	);
-	if (!response.ok) return undefined;
-
-	const data = (await response.json()) as {
-		packageName?: unknown;
-		version?: unknown;
-		note?: unknown;
-	};
-	if (typeof data.version !== "string" || !data.version.trim()) {
-		return undefined;
-	}
-	const packageName =
-		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
-	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
-	return {
-		version: data.version.trim(),
-		packageName,
-		...(note ? { note } : {}),
-	};
+	return undefined;
 }
 
+/** Disabled in the MatwingsVenus distribution — never reaches the network. */
 export async function getLatestPiVersion(
-	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	_currentVersion?: string,
+	_options?: VersionCheckOptions,
 ): Promise<string | undefined> {
-	return (await getLatestPiRelease(currentVersion, options))?.version;
+	return undefined;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
-	if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
-
-	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
-		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
-			return latestRelease;
-		}
-		return undefined;
-	} catch {
-		return undefined;
-	}
+/** Disabled in the MatwingsVenus distribution — never reaches the network. */
+export async function checkForNewPiVersion(
+	_currentVersion?: string,
+): Promise<LatestPiRelease | undefined> {
+	return undefined;
 }

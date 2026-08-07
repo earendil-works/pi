@@ -1,5 +1,6 @@
 import type { AuthResult } from "@earendil-works/pi-ai";
 import type { Args } from "./args.ts";
+import { APP_NAME } from "../config.ts";
 
 export type AuthCommandKind = "check" | "api_key" | "bearer_token";
 
@@ -15,9 +16,9 @@ export interface AuthCommand {
 export class AuthCommandError extends Error {}
 
 const AUTH_COMMAND_USAGE: Record<AuthCommandKind, string> = {
-	check: "pi auth check --provider <provider> [--json] [--credentials] [--no-refresh]",
-	api_key: "pi auth print-api-key --provider <provider> [--model <model>]",
-	bearer_token: "pi auth print-bearer-token --provider <provider> [--model <model>] [--min-expiry <duration>]",
+	check: `${APP_NAME} auth check --provider <provider> [--json] [--credentials] [--no-refresh]`,
+	api_key: `${APP_NAME} auth print-api-key --provider <provider> [--model <model>]`,
+	bearer_token: `${APP_NAME} auth print-bearer-token --provider <provider> [--model <model>] [--min-expiry <duration>]`,
 };
 
 export function getAuthCommandName(kind: AuthCommandKind): string {
@@ -37,9 +38,9 @@ export function isAuthCommandHelp(args: string[]): boolean {
 
 export function printAuthCommandHelp(): void {
 	console.log(`Usage:
-  pi auth print-api-key [--provider <provider>] [--model <model>]
-  pi auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
-  pi auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
+  ${APP_NAME} auth print-api-key [--provider <provider>] [--model <model>]
+  ${APP_NAME} auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
+  ${APP_NAME} auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
 
 Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.`);
 }
@@ -57,7 +58,7 @@ export function parseAuthCommand(args: string[]): AuthCommand | undefined {
 					: undefined;
 	if (!kind) {
 		throw new AuthCommandError(
-			`Unknown auth command "${args[1] ?? ""}". Use "pi auth print-api-key", "pi auth print-bearer-token", or "pi auth check".`,
+			`Unknown auth command "${args[1] ?? ""}". Use "${APP_NAME} auth print-api-key", "${APP_NAME} auth print-bearer-token", or "${APP_NAME} auth check".`,
 		);
 	}
 

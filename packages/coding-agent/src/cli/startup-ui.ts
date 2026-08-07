@@ -24,8 +24,8 @@ import {
 } from "../modes/interactive/theme/theme.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const OFFICIAL_APP_NAME = "pi";
-const OFFICIAL_CONFIG_DIR_NAME = ".pi";
+const OFFICIAL_APP_NAME = "matvenus";
+const OFFICIAL_CONFIG_DIR_NAME = ".matvenus";
 
 interface DistributionMetadata {
 	packageName: string;
