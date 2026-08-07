@@ -942,7 +942,7 @@ export class AgentSession {
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 	}
 
-	/** Whether compaction or branch summarization is currently running */
+	/** Whether a compaction or tree navigation is currently running */
 	get isCompacting(): boolean {
 		return (
 			this._autoCompactionAbortController !== undefined ||
@@ -1130,7 +1130,12 @@ export class AgentSession {
 				}
 			}
 
-			if (this._compactionAbortController !== undefined) {
+			if (this.isCompacting) {
+				if (this._branchSummaryAbortController) {
+					throw new Error(
+						"Cannot submit a prompt while tree navigation is in progress. Wait for it to finish and retry.",
+					);
+				}
 				throw new Error(
 					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
 				);
@@ -1788,11 +1793,23 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		await this.abort();
-		this._compactionAbortController = new AbortController();
-		this._emit({ type: "compaction_start", reason: "manual" });
+		if (this.isCompacting) {
+			const operation = this._branchSummaryAbortController ? "Tree navigation" : "Compaction";
+			throw new Error(`${operation} already in progress`);
+		}
+
+		const abortController = new AbortController();
+		this._compactionAbortController = abortController;
+		const clearCompactionState = () => {
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
+		};
 
 		try {
+			await this.abort();
+			this._emit({ type: "compaction_start", reason: "manual" });
+
 			if (!this.model) {
 				throw new Error(formatNoModelSelectedMessage());
 			}
@@ -1823,7 +1840,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: this._compactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -1857,7 +1874,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					customInstructions,
-					this._compactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -1871,7 +1888,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -1905,7 +1922,7 @@ export class AgentSession {
 				details,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
-			this._compactionAbortController = undefined;
+			clearCompactionState();
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -1917,7 +1934,7 @@ export class AgentSession {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
-			this._compactionAbortController = undefined;
+			clearCompactionState();
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -1928,7 +1945,7 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._compactionAbortController = undefined;
+			clearCompactionState();
 		}
 	}
 
@@ -2056,7 +2073,18 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+		if (this.isCompacting) {
+			return false;
+		}
+
 		const settings = this.settingsManager.getCompactionSettings();
+		const abortController = new AbortController();
+		this._autoCompactionAbortController = abortController;
+		const clearCompactionState = () => {
+			if (this._autoCompactionAbortController === abortController) {
+				this._autoCompactionAbortController = undefined;
+			}
+		};
 		let started = false;
 
 		try {
@@ -2074,7 +2102,6 @@ export class AgentSession {
 			}
 
 			this._emit({ type: "compaction_start", reason });
-			this._autoCompactionAbortController = new AbortController();
 			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -2088,10 +2115,11 @@ export class AgentSession {
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
+					clearCompactionState();
 					this._emit({
 						type: "compaction_end",
 						reason,
@@ -2129,7 +2157,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -2143,7 +2171,8 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
+				clearCompactionState();
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2183,6 +2212,7 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			clearCompactionState();
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) {
@@ -2204,6 +2234,7 @@ export class AgentSession {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			if (started) {
+				clearCompactionState();
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2218,7 +2249,7 @@ export class AgentSession {
 			}
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			clearCompactionState();
 		}
 	}
 
@@ -2906,6 +2937,10 @@ export class AgentSession {
 		targetId: string,
 		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
+		if (this.isCompacting) {
+			const operation = this._branchSummaryAbortController ? "Tree navigation" : "Compaction";
+			throw new Error(`${operation} already in progress`);
+		}
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
 		}
@@ -2950,8 +2985,13 @@ export class AgentSession {
 			label,
 		};
 
-		// Set up abort controller for summarization
-		this._branchSummaryAbortController = new AbortController();
+		const abortController = new AbortController();
+		this._branchSummaryAbortController = abortController;
+		const clearNavigationState = () => {
+			if (this._branchSummaryAbortController === abortController) {
+				this._branchSummaryAbortController = undefined;
+			}
+		};
 
 		try {
 			let extensionSummary: { summary: string; details?: unknown; usage?: Usage } | undefined;
@@ -2962,7 +3002,7 @@ export class AgentSession {
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_tree",
 					preparation,
-					signal: this._branchSummaryAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeTreeResult | undefined;
 
 				if (result?.cancel) {
@@ -2999,7 +3039,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					env,
-					signal: this._branchSummaryAbortController.signal,
+					signal: abortController.signal,
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
@@ -3078,6 +3118,7 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 
 			// Emit session_tree event
+			clearNavigationState();
 			await this._extensionRunner.emit({
 				type: "session_tree",
 				newLeafId: this.sessionManager.getLeafId(),
@@ -3090,7 +3131,7 @@ export class AgentSession {
 
 			return { editorText, cancelled: false, summaryEntry };
 		} finally {
-			this._branchSummaryAbortController = undefined;
+			clearNavigationState();
 		}
 	}
 
