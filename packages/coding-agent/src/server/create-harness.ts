@@ -9,7 +9,7 @@ import {
 	type ExecutionEnv,
 	type ExecutionToolContext,
 	type HarnessTool,
-} from "@earendil-works/pi-agent-core";
+} from "@mupt-ai/pi-agent-core";
 import type { Static, TSchema } from "typebox";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "../core/system-prompt.ts";
 import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";

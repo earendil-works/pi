@@ -1,5 +1,5 @@
-import { createModels, type Usage } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { createModels, type Usage } from "@mupt-ai/pi-ai";
+import { getModel } from "@mupt-ai/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import {
 	AgentHarness,

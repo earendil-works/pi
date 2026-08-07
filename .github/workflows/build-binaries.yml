@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-mupt.*'
   workflow_dispatch:
     inputs:
       tag:

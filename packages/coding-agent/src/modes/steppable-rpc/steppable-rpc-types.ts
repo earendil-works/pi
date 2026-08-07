@@ -3,7 +3,7 @@ import type {
 	AgentSteppableResult,
 	AgentSteppableSnapshot,
 	AgentSteppableToolExecutionResult,
-} from "@earendil-works/pi-agent-core";
+} from "@mupt-ai/pi-agent-core";
 
 export type SteppableRpcCommand =
 	| { id?: string; type: "restore"; snapshot: AgentSteppableSnapshot }

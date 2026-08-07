@@ -1,6 +1,6 @@
 {
-	"name": "@earendil-works/pi-agent-core",
-	"version": "0.84.1",
+	"name": "@mupt-ai/pi-agent-core",
+	"version": "0.84.1-mupt.1",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -35,7 +35,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.1",
+		"@mupt-ai/pi-ai": "0.84.1-mupt.1",
 		"@earendil-works/pi-telemetry": "^0.84.1",
 		"diff": "8.0.4",
 		"ignore": "7.0.5",
@@ -53,7 +53,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/mupt-ai/steppable-pi.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

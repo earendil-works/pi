@@ -1,4 +1,4 @@
-import type { Api, CredentialInfo, Model } from "@earendil-works/pi-ai";
+import type { Api, CredentialInfo, Model } from "@mupt-ai/pi-ai";
 import { resolveCliModel } from "../core/model-resolver.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { Args } from "./args.ts";

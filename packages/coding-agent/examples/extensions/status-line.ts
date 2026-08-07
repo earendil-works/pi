@@ -5,7 +5,7 @@
  * Shows turn progress with themed colors.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@mupt-ai/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	let turnCount = 0;

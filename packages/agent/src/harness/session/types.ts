@@ -1,4 +1,4 @@
-import type { StopReason, Usage } from "@earendil-works/pi-ai";
+import type { StopReason, Usage } from "@mupt-ai/pi-ai";
 import "../messages.ts";
 import type { AgentMessage } from "../../types.ts";
 import type { Session } from "./session.ts";

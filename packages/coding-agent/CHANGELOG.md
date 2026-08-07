@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `createSteppableSession()` and the `--mode steppable-rpc` JSONL protocol for externally driven durable agent execution.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 
 ## [0.84.1] - 2026-08-07

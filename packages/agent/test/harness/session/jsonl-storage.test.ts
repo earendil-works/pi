@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@mupt-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeExecutionEnv } from "../../../src/harness/env/nodejs.ts";
 import type {

@@ -10,7 +10,7 @@ import {
 	type ToolResultMessage,
 	type Transport,
 	validateToolArguments,
-} from "@earendil-works/pi-ai";
+} from "@mupt-ai/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {

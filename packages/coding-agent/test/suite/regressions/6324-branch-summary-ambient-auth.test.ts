@@ -1,4 +1,4 @@
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@mupt-ai/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { assistantMsg, userMsg } from "../../utilities.ts";
 import { createHarness, type Harness } from "../harness.ts";

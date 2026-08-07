@@ -1,3 +1,12 @@
+import type {
+	AssistantTranscriptItem,
+	JsonValue,
+	ModelMetadata,
+	ThinkingLevel,
+	ToolTranscriptItem,
+	Usage,
+	UserTranscriptItem,
+} from "@earendil-works/pi-protocol";
 import {
 	type ImageContent as AiImageContent,
 	type TextContent as AiTextContent,
@@ -10,16 +19,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@earendil-works/pi-ai";
-import type {
-	AssistantTranscriptItem,
-	JsonValue,
-	ModelMetadata,
-	ThinkingLevel,
-	ToolTranscriptItem,
-	Usage,
-	UserTranscriptItem,
-} from "@earendil-works/pi-protocol";
+} from "@mupt-ai/pi-ai";
 
 type Assert<T extends true> = T;
 type ExactKeys<T, Keys extends keyof T> = keyof T extends Keys ? true : false;
@@ -35,7 +35,9 @@ type _ProtocolModelInputsFitAi = Assert<ProtocolModelInput extends AiModelInput 
  * model sampling defaults, pricing tiers, and deferred-tool availability remain intentionally
  * server-side.
  */
-type _AiTextContentFieldsAccountedFor = Assert<ExactKeys<AiTextContent, "type" | "text" | "textSignature">>;
+type _AiTextContentFieldsAccountedFor = Assert<
+	ExactKeys<AiTextContent, "type" | "text" | "textSignature" | "annotations">
+>;
 type _AiThinkingContentFieldsAccountedFor = Assert<
 	ExactKeys<
 		Extract<AssistantMessage["content"][number], { type: "thinking" }>,
@@ -255,7 +257,7 @@ export function toProtocolUserMessage(message: UserMessage, options: UserTranscr
 }
 
 function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscriptItem["content"] {
-	return message.content.map((part) => {
+	return message.content.flatMap((part) => {
 		switch (part.type) {
 			case "text":
 				return { type: "text", text: part.text };
@@ -272,6 +274,9 @@ function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscr
 					toolName: identifier(part.name, "Tool call name"),
 					input: toProtocolJsonValue(part.arguments),
 				};
+			case "serverToolCall":
+			case "toolSearchResult":
+				return [];
 			default: {
 				const exhaustive: never = part;
 				return exhaustive;

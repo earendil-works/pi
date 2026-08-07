@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added boundary-by-boundary agent execution with portable snapshots, external LLM/tool result injection, and configurable tool execution placement.
+
 ## [0.84.1] - 2026-08-07
 
 ### Added

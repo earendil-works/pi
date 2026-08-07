@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { contentText } from "@earendil-works/pi-ai";
+import { contentText } from "@mupt-ai/pi-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -12,7 +12,7 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@mupt-ai/pi-coding-agent";
 import {
 	createHarness,
 	type Harness,

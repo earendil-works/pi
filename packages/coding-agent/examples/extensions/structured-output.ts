@@ -5,8 +5,8 @@
  * without paying for an extra follow-up LLM turn.
  */
 
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { defineTool, type ExtensionAPI } from "@mupt-ai/pi-coding-agent";
 import { Type } from "typebox";
 
 interface StructuredOutputDetails {

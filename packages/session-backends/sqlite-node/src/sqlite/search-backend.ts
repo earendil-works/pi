@@ -1,5 +1,5 @@
-import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "@earendil-works/pi-agent-core";
-import { getFileSystemResultOrThrow } from "@earendil-works/pi-agent-core";
+import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "@mupt-ai/pi-agent-core";
+import { getFileSystemResultOrThrow } from "@mupt-ai/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
 import { sql } from "./sql.ts";
 import { decodeSessionMetadata, type SessionRow } from "./storage/sessions.ts";

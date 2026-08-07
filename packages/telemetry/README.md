@@ -323,7 +323,7 @@ Attributes do not end the span. Returning, resolving, throwing, or rejecting fro
 A starter can compose multiple independently versioned schemas:
 
 ```typescript
-import { AGENT_TELEMETRY_SCHEMAS } from '@earendil-works/pi-agent-core';
+import { AGENT_TELEMETRY_SCHEMAS } from '@mupt-ai/pi-agent-core';
 
 const startAgentSpan = createTypedSpanStarter(
   telemetryContext,
@@ -367,8 +367,8 @@ Adapters do not need to understand schema objects. Instrumentation helpers and t
 Package ownership is intentionally split:
 
 - `@earendil-works/pi-telemetry` owns the vendor-neutral contract, no-op and in-memory reference contexts, schema utilities, and adapter conformance suite;
-- `@earendil-works/pi-ai` accepts and propagates `telemetryContext` in provider request options but owns no telemetry schema;
-- `@earendil-works/pi-agent-core` owns and exports the pi AI-request and harness schemas, their combined readonly schema tuple, and typed span helpers.
+- `@mupt-ai/pi-ai` accepts and propagates `telemetryContext` in provider request options but owns no telemetry schema;
+- `@mupt-ai/pi-agent-core` owns and exports the pi AI-request and harness schemas, their combined readonly schema tuple, and typed span helpers.
 
 ```typescript
 import {
@@ -377,7 +377,7 @@ import {
   HARNESS_TELEMETRY_SCHEMA,
   startAiSpan,
   startHarnessSpan,
-} from '@earendil-works/pi-agent-core';
+} from '@mupt-ai/pi-agent-core';
 ```
 
 The pi schemas use pi-owned `pi.ai.*`, `pi.harness.*`, and `pi.session.*` names. Adapters may translate them to backend conventions without changing the emitted pi vocabulary.

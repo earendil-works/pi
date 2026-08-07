@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { type ImageContent, modelsAreEqual } from "@mupt-ai/pi-ai";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -756,11 +756,7 @@ export async function main(args: string[], options?: MainOptions) {
 									projectTrustContext ??
 									createProjectTrustContext({
 										cwd,
-										mode: isInitialRuntime
-										? trustPromptMode
-										: appMode === "steppable-rpc"
-											? "rpc"
-											: appMode,
+										mode: isInitialRuntime ? trustPromptMode : appMode === "steppable-rpc" ? "rpc" : appMode,
 										settingsManager: startupSettingsManager,
 										hasUI: isInitialRuntime && trustPromptMode === "interactive",
 									}),

@@ -9,6 +9,7 @@ interface AnthropicToolPayload {
 	name: string;
 	description?: string;
 	defer_loading?: boolean;
+	cache_control?: unknown;
 }
 
 interface AnthropicContentBlock {

@@ -1,0 +1,63 @@
+name: Publish Mupt Packages
+
+on:
+  push:
+    tags:
+      - "v*-mupt.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            test "${REF_NAME}" = "main"
+          else
+            git merge-base --is-ancestor "${SHA}" origin/main
+            version=$(node -p "require('./packages/ai/package.json').version")
+            test "v${version}" = "${REF_NAME}"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build forked packages
+        run: |
+          npm run build --workspace packages/ai
+          npm run build --workspace packages/agent
+          npm run build --workspace packages/coding-agent
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest --ignore-scripts
+
+      - name: Publish
+        run: node scripts/publish-mupt-packages.mjs

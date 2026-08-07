@@ -12,7 +12,7 @@
  * 2. Use the extension — it automatically adapts to your active tools and skills
  */
 
-import type { BuildSystemPromptOptions, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ExtensionAPI } from "@mupt-ai/pi-coding-agent";
 
 /**
  * Adds tool-specific guidance that adapts to the active tool set.

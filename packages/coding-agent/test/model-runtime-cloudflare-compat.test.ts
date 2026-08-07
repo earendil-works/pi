@@ -1,4 +1,4 @@
-import { complete, resetApiProviders } from "@earendil-works/pi-ai/compat";
+import { complete, resetApiProviders } from "@mupt-ai/pi-ai/compat";
 import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";

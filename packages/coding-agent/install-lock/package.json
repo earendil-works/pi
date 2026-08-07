@@ -1,10 +1,10 @@
 {
-	"name": "@earendil-works/pi-coding-agent-install",
-	"version": "0.84.1",
+	"name": "@mupt-ai/pi-coding-agent-install",
+	"version": "0.84.1-mupt.1",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "0.84.1"
+		"@mupt-ai/pi-coding-agent": "0.84.1-mupt.1"
 	},
 	"overrides": {
 		"protobufjs": "7.6.5",

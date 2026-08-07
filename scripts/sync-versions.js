@@ -48,7 +48,7 @@ for (const pkg of workspacePackages) {
 		}
 
 		for (const [dependencyName, currentSpecifier] of Object.entries(dependencies)) {
-			// Registry aliases such as `npm:@earendil-works/pi-ai@0.1.2` are never workspace-linked,
+			// Registry aliases such as `npm:@mupt-ai/pi-ai@0.1.2` are never workspace-linked,
 			// so lockstep bumping them would point at a version that is not published yet.
 			const version = versionMap.get(dependencyName);
 			const newSpecifier = version ? `^${version}` : null;

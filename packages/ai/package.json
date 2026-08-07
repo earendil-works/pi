@@ -1,6 +1,6 @@
 {
-	"name": "@earendil-works/pi-ai",
-	"version": "0.84.1",
+	"name": "@mupt-ai/pi-ai",
+	"version": "0.84.1-mupt.1",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -87,7 +87,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/mupt-ai/steppable-pi.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

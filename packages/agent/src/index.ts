@@ -1,6 +1,5 @@
 // Core Agent
 
-export { uuidv7 } from "@earendil-works/pi-ai";
 export type {
 	AttributeValue,
 	ExactTelemetryAttributes,
@@ -40,6 +39,7 @@ export {
 	InMemoryTelemetryContext,
 	NOOP_TELEMETRY_CONTEXT,
 } from "@earendil-works/pi-telemetry";
+export { uuidv7 } from "@mupt-ai/pi-ai";
 export * from "./agent.ts";
 // Loop functions
 export * from "./agent-loop.ts";

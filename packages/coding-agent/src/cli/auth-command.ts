@@ -1,4 +1,4 @@
-import type { AuthResult } from "@earendil-works/pi-ai";
+import type { AuthResult } from "@mupt-ai/pi-ai";
 import type { Args } from "./args.ts";
 
 export type AuthCommandKind = "check" | "api_key" | "bearer_token";

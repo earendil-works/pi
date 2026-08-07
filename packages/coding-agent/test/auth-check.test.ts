@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore } from "@mupt-ai/pi-ai";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { checkProviderAuth, createAuthCheckModelRuntime, getProviderCredential } from "../src/cli/auth-check.ts";

@@ -1,6 +1,6 @@
 {
-	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.84.1",
+	"name": "@mupt-ai/pi-coding-agent",
+	"version": "0.84.1-mupt.1",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -43,8 +43,8 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.84.1",
-		"@earendil-works/pi-ai": "^0.84.1",
+		"@mupt-ai/pi-agent-core": "0.84.1-mupt.1",
+		"@mupt-ai/pi-ai": "0.84.1-mupt.1",
 		"@earendil-works/pi-client": "^0.84.1",
 		"@earendil-works/pi-protocol": "^0.84.1",
 		"@earendil-works/pi-tui": "^0.84.1",
@@ -99,7 +99,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/mupt-ai/steppable-pi.git",
 		"directory": "packages/coding-agent"
 	},
 	"engines": {

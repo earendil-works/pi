@@ -1,4 +1,4 @@
-import { uuidv7 } from "@earendil-works/pi-ai";
+import { uuidv7 } from "@mupt-ai/pi-ai";
 import { assertJsonSerializable, Session } from "../session.ts";
 import { type ForkOptions, SessionError, type SessionRepo } from "../types.ts";
 import { metadataFromHeader, parseHeader } from "./codec.ts";

@@ -304,7 +304,11 @@ async function multiTurn<TApi extends Api>(model: Model<TApi>, options?: StreamO
 				expect(block.id).toBeTruthy();
 				expect(block.arguments).toBeTruthy();
 
-				const { a, b, operation } = block.arguments;
+				const { a, b, operation } = block.arguments as {
+					a: number;
+					b: number;
+					operation: "add" | "multiply";
+				};
 				let result: number;
 				switch (operation) {
 					case "add":

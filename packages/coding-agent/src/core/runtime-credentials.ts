@@ -1,4 +1,4 @@
-import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@mupt-ai/pi-ai";
 
 /** Async credential store overlay for non-persistent runtime API keys. */
 export class RuntimeCredentials implements CredentialStore {

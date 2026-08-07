@@ -1,11 +1,11 @@
-# @earendil-works/pi-agent-core
+# @mupt-ai/pi-agent-core
 
-Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
+Stateful agent with tool execution and event streaming. Built on `@mupt-ai/pi-ai`.
 
 ## Installation
 
 ```bash
-npm install @earendil-works/pi-agent-core
+npm install @mupt-ai/pi-agent-core
 ```
 
 ### SQLite session backends
@@ -15,9 +15,9 @@ The SQLite session backend and the `node:sqlite` adapter live in a separate pack
 ## Quick Start
 
 ```typescript
-import { Agent } from "@earendil-works/pi-agent-core";
-import { createModels } from "@earendil-works/pi-ai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { Agent } from "@mupt-ai/pi-agent-core";
+import { createModels } from "@mupt-ai/pi-ai";
+import { anthropicProvider } from "@mupt-ai/pi-ai/providers/anthropic";
 
 const models = createModels();
 models.setProvider(anthropicProvider());
@@ -378,7 +378,7 @@ Follow-up messages are checked only when there are no more tool calls and no ste
 Extend `AgentMessage` via declaration merging:
 
 ```typescript
-declare module "@earendil-works/pi-agent-core" {
+declare module "@mupt-ai/pi-agent-core" {
   interface CustomAgentMessages {
     notification: { role: "notification"; text: string; timestamp: number };
   }
@@ -460,7 +460,7 @@ Return `terminate: true` from `execute()`, a blocked `beforeToolCall`, or `after
 For browser apps that proxy through a backend:
 
 ```typescript
-import { Agent, streamProxy } from "@earendil-works/pi-agent-core";
+import { Agent, streamProxy } from "@mupt-ai/pi-agent-core";
 
 const agent = new Agent({
   streamFn: (model, context, options) =>
@@ -477,7 +477,7 @@ const agent = new Agent({
 For direct control without the Agent class:
 
 ```typescript
-import { agentLoop, agentLoopContinue } from "@earendil-works/pi-agent-core";
+import { agentLoop, agentLoopContinue } from "@mupt-ai/pi-agent-core";
 
 const context: AgentContext = {
   systemPrompt: "You are helpful.",

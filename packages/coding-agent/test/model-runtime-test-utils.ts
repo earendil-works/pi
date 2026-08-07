@@ -1,4 +1,4 @@
-import type { CredentialStore } from "@earendil-works/pi-ai";
+import type { CredentialStore } from "@mupt-ai/pi-ai";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../src/core/models-store.ts";

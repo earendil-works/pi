@@ -1,6 +1,6 @@
 import { PiClient } from "@earendil-works/pi-client";
-import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
-import { complete, getModel, getProviders, streamSimple } from "@earendil-works/pi-ai/compat";
+import { createAssistantMessageEventStream, Type } from "@mupt-ai/pi-ai";
+import { complete, getModel, getProviders, streamSimple } from "@mupt-ai/pi-ai/compat";
 import {
 	Agent,
 	bashExecutionToText,
@@ -17,7 +17,7 @@ import {
 	streamProxy,
 	toError,
 	truncateHead,
-} from "@earendil-works/pi-agent-core";
+} from "@mupt-ai/pi-agent-core";
 import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@earendil-works/pi-protocol";
 
 // Keep this entry browser-safe. It is bundled by scripts/check-browser-smoke.mjs

@@ -3,7 +3,7 @@ import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	type Model,
-} from "@earendil-works/pi-ai";
+} from "@mupt-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";

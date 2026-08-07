@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added optional raw Responses provider events and replayable opaque provider items for OpenAI, Azure OpenAI, and Codex transports.
+- Added Anthropic server-tool content and client-marked deferred tool loading support.
+
 ### Fixed
 
 - Fixed upstream request buffer limit failures to trigger automatic assistant retries.
