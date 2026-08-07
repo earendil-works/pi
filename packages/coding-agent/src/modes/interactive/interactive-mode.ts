@@ -98,6 +98,7 @@ import type { SourceInfo } from "../../core/source-info.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { renderWelcomeBanner, WELCOME_HEADING, WELCOME_HINT } from "../../core/branding.ts";
+import { hasStoredAuth } from "../../core/matwings-auth/index.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
@@ -909,6 +910,11 @@ export class InteractiveMode {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 			const banner = renderWelcomeBanner();
 			const welcome = `${theme.bold(theme.fg("accent", WELCOME_HEADING))}\n${theme.fg("dim", WELCOME_HINT)}`;
+			// MatwingsVenus access gate notice: the TUI launches UI-first; if the user
+			// is not authenticated, prompt them to run `matvenus login` (UI-first like
+			// kimi-code, rather than blocking before the TUI starts).
+			const authed = await hasStoredAuth();
+			const loginNotice = authed ? "" : `\n⚠ Not logged in — run \`matvenus login\` to authenticate, then restart.`;
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -950,8 +956,8 @@ export class InteractiveMode {
 				`Matvenus can explain its own features and look up its docs. Ask it how to use or extend Matvenus.`,
 			);
 			this.builtInHeader = new ExpandableText(
-				() => `${banner}\n\n${welcome}\n\n${compactInstructions}\n${compactOnboarding}`,
-				() => `${banner}\n\n${welcome}\n\n${expandedInstructions}\n\n${onboarding}`,
+				() => `${banner}\n\n${welcome}${loginNotice}\n\n${compactInstructions}\n${compactOnboarding}`,
+				() => `${banner}\n\n${welcome}${loginNotice}\n\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
 				1,
 				0,

@@ -876,9 +876,15 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// MatwingsVenus access gate: require a valid (possibly refreshed) session
-	// before any interactive/print/rpc usage. Meta commands above are exempt.
-	await requireMatvenusAuth();
+	// MatwingsVenus access gate (UI-first, kimi-code style):
+	// - Non-interactive (print/rpc) modes require a valid session up front — there
+	//   is no UI to prompt from, so fail fast with "not logged in".
+	// - Interactive mode launches the TUI first and shows the banner regardless;
+	//   InteractiveMode renders a "not logged in" notice when unauthenticated,
+	//   and the user authenticates via `matvenus login`.
+	if (appMode !== "interactive") {
+		await requireMatvenusAuth();
+	}
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
