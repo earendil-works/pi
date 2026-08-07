@@ -27,21 +27,10 @@ export function renderMatwingsWelcome(state: MatwingsWelcomeState, width: number
 	const innerWidth = Math.max(1, safeWidth - 4);
 	const pad = "  ";
 
-	// Compact 2-row mark (left) + wordmark/subtext (right).
-	const logo = ["▐█▛█▌", "▐█▄█▌"];
-	const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
-	const gap = "  ";
-	const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
-
-	const title = truncateToWidth(accent(bold(`Welcome to ${PRODUCT_NAME}`)), textWidth, "…");
-	const subtext = truncateToWidth(
-		state.authed ? dim("The SAION AI Scientist is ready.") : warning("Not logged in — type /login to authenticate."),
-		textWidth,
-		"…",
-	);
+	// Brand on a single line, subtext below.
 	const headerLines = [
-		`${accent(logo[0]!.padEnd(logoWidth))}${gap}${title}`,
-		`${accent(logo[1]!.padEnd(logoWidth))}${gap}${subtext}`,
+		accent(bold(PRODUCT_NAME)),
+		state.authed ? dim("The SAION AI Scientist is ready.") : warning("Not logged in — type /login to authenticate."),
 	];
 
 	const label = (s: string): string => dim(bold(s));
