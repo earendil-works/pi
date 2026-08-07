@@ -1972,6 +1972,14 @@ export class InteractiveMode {
 		return this.session.getToolDefinition(toolName);
 	}
 
+	private refreshToolRenderers(): void {
+		for (const child of this.chatContainer.children) {
+			if (child instanceof ToolExecutionComponent) {
+				child.updateToolDefinition(this.getRegisteredToolDefinition(child.getToolName()));
+			}
+		}
+	}
+
 	private getMarkdownTransformers(): MarkdownTransformer[] {
 		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
 	}
@@ -5727,7 +5735,12 @@ export class InteractiveMode {
 
 		try {
 			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
-			restoreChatBeforeSessionStart();
+			if (chatRestoredBeforeSessionStart) {
+				// session_start handlers may register tool renderers after the initial rebuild.
+				this.refreshToolRenderers();
+			} else {
+				restoreChatBeforeSessionStart();
+			}
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {

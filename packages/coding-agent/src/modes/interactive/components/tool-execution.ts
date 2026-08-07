@@ -149,6 +149,37 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	getToolName(): string {
+		return this.toolName;
+	}
+
+	updateToolDefinition(toolDefinition: ToolDefinition<any, any> | undefined): void {
+		this.toolDefinition = toolDefinition;
+		this.callRendererComponent = undefined;
+		this.resultRendererComponent = undefined;
+		this.rendererState = {};
+
+		for (const img of this.imageComponents) {
+			this.removeChild(img);
+		}
+		this.imageComponents = [];
+		for (const spacer of this.imageSpacers) {
+			this.removeChild(spacer);
+		}
+		this.imageSpacers = [];
+
+		this.removeChild(this.contentBox);
+		this.removeChild(this.contentText);
+		this.removeChild(this.selfRenderContainer);
+		if (this.hasRendererDefinition()) {
+			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
+		} else {
+			this.addChild(this.contentText);
+		}
+
+		this.updateDisplay();
+	}
+
 	markExecutionStarted(): void {
 		this.executionStarted = true;
 		this.updateDisplay();

@@ -67,6 +67,30 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("custom result");
 	});
 
+	test("updates custom renderers after the tool is registered", () => {
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-registered-late",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("custom_tool");
+
+		component.updateToolDefinition({
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("late custom call", 0, 0),
+			renderResult: () => new Text("late custom result", 0, 0),
+		});
+		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false });
+
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("late custom call");
+		expect(rendered).toContain("late custom result");
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

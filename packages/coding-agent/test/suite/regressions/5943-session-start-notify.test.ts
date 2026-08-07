@@ -120,6 +120,7 @@ type ReloadCommandContext = {
 	themeController: { applyFromSettings: () => Promise<void> };
 	resetExtensionUI: () => void;
 	rebuildChatFromMessages: () => void;
+	refreshToolRenderers: () => void;
 	setupAutocompleteProvider: () => void;
 	setupExtensionShortcuts: (runner: unknown) => void;
 	showLoadedResources: (options: unknown) => void;
@@ -194,6 +195,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		builtInHeader: overrides.builtInHeader,
 		resetExtensionUI: overrides.resetExtensionUI ?? (() => {}),
 		rebuildChatFromMessages: overrides.rebuildChatFromMessages ?? (() => {}),
+		refreshToolRenderers: overrides.refreshToolRenderers ?? (() => {}),
 		setupAutocompleteProvider: overrides.setupAutocompleteProvider ?? (() => {}),
 		setupExtensionShortcuts: overrides.setupExtensionShortcuts ?? (() => {}),
 		showLoadedResources: overrides.showLoadedResources ?? (() => {}),
