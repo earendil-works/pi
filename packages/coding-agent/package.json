@@ -4,10 +4,11 @@
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
-		"configDir": ".pi"
+		"name": "matvenus",
+		"configDir": ".matvenus"
 	},
 	"bin": {
-		"pi": "dist/cli.js"
+		"matvenus": "dist/cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
