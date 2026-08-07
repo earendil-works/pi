@@ -154,6 +154,75 @@ describe("AssistantMessageComponent", () => {
 		expect(streamingStates).toEqual([true, false]);
 	});
 
+	test("updates growing streaming text in place without rebuilding components", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1);
+
+		const grow = (text: string) => {
+			const message = createAssistantMessage([{ type: "text", text }]);
+			component.updateContent(message, true);
+			return component;
+		};
+
+		// First update builds the component tree.
+		grow("first part of the answer");
+		const first = stripAnsi(component.render(80).join("\n"));
+		expect(first).toContain("first part of the answer");
+
+		// Subsequent streaming updates must not rebuild the tree.
+		grow("first part of the answer, then more content follows here");
+		expect(component.streamingEditableComponents).toHaveLength(1);
+		const textComponent = component.streamingEditableComponents[0]!.component;
+
+		grow("first part of the answer, then more content follows here, and even more at the end");
+		expect(component.streamingEditableComponents).toHaveLength(1);
+		expect(component.streamingEditableComponents[0]!.component).toBe(textComponent);
+
+		// The in-place streaming render must match a from-scratch render.
+		const fresh = new AssistantMessageComponent(
+			createAssistantMessage([
+				{
+					type: "text",
+					text: "first part of the answer, then more content follows here, and even more at the end",
+				},
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+		);
+		expect(stripAnsi(component.render(80).join("\n"))).toBe(stripAnsi(fresh.render(80).join("\n")));
+	});
+
+	test("rebuilds when streaming structure changes (tool call appears)", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1);
+
+		component.updateContent(createAssistantMessage([{ type: "text", text: "checking" }]), true);
+		const textOnly = component.streamingEditableComponents.map((e) => e.kind);
+		expect(textOnly).toEqual(["text"]);
+
+		// Structure change: a tool call is added. The in-place fast path cannot
+		// apply, so the component tree must be rebuilt.
+		component.updateContent(
+			createAssistantMessage([
+				{ type: "text", text: "checking" },
+				{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
+			]),
+			true,
+		);
+		expect(component.streamingEditableComponents.map((e) => e.kind)).toEqual(["text"]);
+		const rebuilt = component.streamingEditableComponents[0]!.component;
+		component.updateContent(
+			createAssistantMessage([
+				{ type: "text", text: "checking more" },
+				{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
+			]),
+			true,
+		);
+		expect(component.streamingEditableComponents[0]!.component).toBe(rebuilt);
+	});
+
 	test("reapplies Markdown transformers when available width changes", () => {
 		initTheme("dark");
 		const availableWidths: number[] = [];

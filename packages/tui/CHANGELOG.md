@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Markdown components now re-render incrementally when the text grows by appending (streaming output), re-lexing and re-rendering only the affected tail instead of the whole message. Large streaming responses render several times faster.
+- Inline LaTeX detection now uses a single scan for math markers, reducing lexing cost on large transcripts that contain little or no LaTeX.
+- The incremental markdown cache now references the source text instead of keeping a normalized copy, dropping one full copy of every rendered message from memory.
+- Markdown components accept a `streaming` option that renders code blocks without syntax highlighting, so streaming chunks stay cheap; the finished message is re-rendered with highlighting once.
+- Added `LazyContainer` and a `lazy` ScrollView mode: the transcript parses only the visible window at startup, shows a "N earlier messages" marker above it, and parses older messages in batches as the user scrolls up, keeping the viewport steady. Also supports main-screen window mode (terminal height as the visible region, no scroll-up loading) and a full-history disable.
+
+### Fixed
+
+- Reduced per-frame work in the main screen renderer: line style resets are now applied only to lines that actually changed, so periodic redraws (e.g. spinner ticks) scale with the changed content instead of the full transcript.
+
 ## [0.84.1] - 2026-08-07
 
 ### Added

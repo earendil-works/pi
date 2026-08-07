@@ -1,5 +1,6 @@
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
 import { type Component, Container } from "../tui.ts";
+import { LazyContainer } from "./lazy-container.ts";
 
 export type ScrollViewScrollbar = "hidden" | "auto" | "always";
 
@@ -11,6 +12,12 @@ export interface ScrollViewOptions {
 	scrollbar?: ScrollViewScrollbar;
 	scrollbarStyle?: (text: string) => string;
 	scrollbarHideDelayMs?: number;
+	/**
+	 * Render the child lazily: only the content near the viewport is parsed and
+	 * the rest is loaded in batches as the user scrolls. Requires the child to
+	 * be a LazyContainer.
+	 */
+	lazy?: boolean;
 }
 
 export class ScrollView extends Container {
@@ -29,6 +36,8 @@ export class ScrollView extends Container {
 	private transientScrollbarVisible = false;
 	private scrollbarActive = false;
 	private scrollbarHideTimer: NodeJS.Timeout | undefined;
+	private lazyChild: LazyContainer | undefined;
+	private pendingScrollAdjust = 0;
 
 	constructor(component: Component, options: ScrollViewOptions = {}) {
 		super();
@@ -44,6 +53,25 @@ export class ScrollView extends Container {
 		this.currentScrollbar = options.scrollbar ?? "hidden";
 		this.scrollbarStyle = options.scrollbarStyle ?? ((text) => `\x1b[100m${text}\x1b[49m`);
 		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
+		if (options.lazy) {
+			if (!(component instanceof LazyContainer)) {
+				throw new Error("ScrollView lazy mode requires a LazyContainer child");
+			}
+			this.lazyChild = component;
+			component.setScrollAdjust((rows) => {
+				this.pendingScrollAdjust += rows;
+			});
+			// Establish a viewport before the first layout so the child renders
+			// lazily from the very first frame.
+			this.syncLazyViewport();
+		}
+	}
+
+	private syncLazyViewport(): void {
+		if (!this.lazyChild) return;
+		this.lazyChild.setRequestRender(this.requestRenderCallback ?? (() => {}));
+		this.lazyChild.setFollowingEnd(this.followingEnd);
+		this.lazyChild.setViewport(this.currentScrollTop, this.currentViewportHeight);
 	}
 
 	get scrollTop(): number {
@@ -117,6 +145,7 @@ export class ScrollView extends Container {
 		if (next === this.currentScrollTop) return;
 		this.currentScrollTop = next;
 		this.followingEnd = this.followEnd && next === maxScrollTop;
+		this.syncLazyViewport();
 		this.markScrollbarActivity();
 		this.requestRenderCallback?.();
 	}
@@ -131,6 +160,7 @@ export class ScrollView extends Container {
 		this.currentScrollTop = next;
 		this.followingEnd = this.followEnd && next === maxScrollTop;
 		if (moved !== 0) {
+			this.syncLazyViewport();
 			this.markScrollbarActivity();
 			this.requestRenderCallback?.();
 		}
@@ -144,6 +174,7 @@ export class ScrollView extends Container {
 		this.currentScrollTop = 0;
 		this.followingEnd = this.followEnd && this.contentHeight <= this.currentViewportHeight;
 		if (changed) {
+			this.syncLazyViewport();
 			this.markScrollbarActivity();
 			this.requestRenderCallback?.();
 		}
@@ -155,6 +186,7 @@ export class ScrollView extends Container {
 		this.currentScrollTop = next;
 		this.followingEnd = this.followEnd;
 		if (changed) {
+			this.syncLazyViewport();
 			this.markScrollbarActivity();
 			this.requestRenderCallback?.();
 		}
@@ -165,10 +197,24 @@ export class ScrollView extends Container {
 		this.currentViewportHeight = Math.max(0, Math.floor(viewportHeight));
 		this.requestRenderCallback = requestRender;
 		const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
-		if (this.followingEnd) this.currentScrollTop = maxScrollTop;
-		else this.currentScrollTop = Math.max(0, Math.min(this.currentScrollTop, maxScrollTop));
+		if (this.followingEnd) {
+			this.currentScrollTop = maxScrollTop;
+			this.pendingScrollAdjust = 0;
+		} else {
+			this.currentScrollTop = Math.max(0, Math.min(this.currentScrollTop, maxScrollTop));
+			// Lazy loads insert content above the viewport; shift the scroll
+			// position by the inserted rows so the viewport stays put.
+			if (this.pendingScrollAdjust !== 0) {
+				this.currentScrollTop = Math.max(
+					0,
+					Math.min(this.currentScrollTop + this.pendingScrollAdjust, maxScrollTop),
+				);
+				this.pendingScrollAdjust = 0;
+			}
+		}
 		if (this.followEnd && this.currentScrollTop === maxScrollTop) this.followingEnd = true;
 		if (this.contentHeight <= this.currentViewportHeight) this.hideTransientScrollbar();
+		this.syncLazyViewport();
 	}
 
 	override addChild(_component: Component): void {

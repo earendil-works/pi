@@ -31,6 +31,7 @@ import {
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
+	LazyContainer,
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
@@ -389,7 +390,7 @@ export class InteractiveMode {
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
-	private documentContainer: Container;
+	private documentContainer: LazyContainer;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
@@ -548,10 +549,21 @@ export class InteractiveMode {
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
-		this.documentContainer = new Container();
-		this.documentContainer.addChild(this.headerContainer);
-		this.documentContainer.addChild(this.loadedResourcesContainer);
-		this.documentContainer.addChild(this.chatContainer);
+		this.documentContainer = new LazyContainer({
+			// Parse a viewport plus a modest preload margin at startup; older
+			// messages are parsed in batches when the user scrolls up to them.
+			batchSize: 10,
+			preloadRows: 30,
+		});
+		this.documentContainer.addFixed(this.headerContainer);
+		this.documentContainer.addFixed(this.loadedResourcesContainer);
+		this.documentContainer.setBulkChild(this.chatContainer);
+		this.documentContainer.setMarkerLabel((count) => theme.fg("dim", `──── ${count} earlier messages ────`));
+		// PI_FULL_HISTORY=1 disables lazy transcript rendering: the whole session
+		// is parsed and written (full terminal scrollback) as before.
+		if (process.env.PI_FULL_HISTORY === "1") {
+			this.documentContainer.setEnabled(false);
+		}
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
@@ -770,6 +782,12 @@ export class InteractiveMode {
 
 	private mountInteractiveTui(tui: TuiMainScreen | TuiAltScreen, components: readonly Component[]): void {
 		for (const component of components) tui.addChild(component);
+		// Lazy transcript: in the main screen the terminal window is the visible
+		// region (no scroll-up loading, the terminal owns scrolling); in
+		// fullscreen mode the owning ScrollView manages the viewport.
+		this.documentContainer.setWindowHeightProvider(
+			TuiLayouts.isViewportTUI(tui) ? undefined : () => tui.terminal.rows,
+		);
 		if (TuiLayouts.isViewportTUI(tui)) {
 			if (!this.fullscreenLayoutRoot) throw new Error("Fullscreen layout is not initialized");
 			tui.setLayoutRoot(this.fullscreenLayoutRoot);
@@ -872,6 +890,7 @@ export class InteractiveMode {
 			overscroll: "chain",
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
+			lazy: true,
 		});
 		const dock = new TuiLayouts.VStack([
 			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
@@ -971,7 +990,7 @@ export class InteractiveMode {
 		await this.rebindCurrentSession();
 
 		// Render initial messages AFTER showing loaded resources
-		this.renderInitialMessages();
+		await this.renderInitialMessages();
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -1856,7 +1875,7 @@ export class InteractiveMode {
 					}
 
 					this.chatContainer.clear();
-					this.renderInitialMessages();
+					await this.renderInitialMessages();
 					if (result.editorText && !this.editor.getText().trim()) {
 						this.editor.setText(result.editorText);
 					}
@@ -1927,7 +1946,7 @@ export class InteractiveMode {
 		this.applyRuntimeSettings();
 
 		if (options.renderBeforeBind) {
-			this.renderCurrentSessionState();
+			await this.renderCurrentSessionState();
 			this.subscribeToAgent();
 		}
 
@@ -1954,7 +1973,7 @@ export class InteractiveMode {
 		process.exit(1);
 	}
 
-	private renderCurrentSessionState(): void {
+	private async renderCurrentSessionState(): Promise<void> {
 		this.loadedResourcesContainer.clear();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
@@ -1962,7 +1981,7 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
-		this.renderInitialMessages();
+		await this.renderInitialMessages();
 	}
 
 	/**
@@ -3557,10 +3576,10 @@ export class InteractiveMode {
 		}
 	}
 
-	private renderSessionItems(
+	private async renderSessionItems(
 		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
-	): void {
+	): Promise<void> {
 		this.pendingTools.clear();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache-miss notices are not persisted; re-derive them from the full entry
@@ -3574,7 +3593,18 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
-		for (const item of items) {
+		// Large resumes render every message, and the first render parses all of
+		// them through the markdown pipeline. Process them in batches, rendering
+		// each batch before starting the next, so the UI appears immediately and
+		// stays responsive while the transcript fills in. Small sessions render
+		// synchronously exactly as before. With the lazy transcript enabled the
+		// first render only parses the visible window, so batching is not needed
+		// (and would defeat laziness by appending after the first render).
+		const BATCH_SIZE = 40;
+		const progressive = items.length > BATCH_SIZE && !this.documentContainer.isLazy();
+
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i]!;
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);
 				continue;
@@ -3634,6 +3664,13 @@ export class InteractiveMode {
 				// All other messages use standard rendering
 				this.addMessageToChat(message, options);
 			}
+
+			// Let the UI paint this batch and keep the event loop responsive before
+			// building the next one.
+			if (progressive && (i + 1) % BATCH_SIZE === 0 && i + 1 < items.length) {
+				this.ui.renderNow();
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			}
 		}
 
 		for (const [toolCallId, component] of renderedPendingTools) {
@@ -3648,17 +3685,17 @@ export class InteractiveMode {
 	 * @param options.updateFooter Update footer state
 	 * @param options.populateHistory Add user messages to editor history
 	 */
-	private renderSessionEntries(
+	private async renderSessionEntries(
 		entries: SessionEntry[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
-	): void {
+	): Promise<void> {
 		const items = entries.flatMap((entry): RenderSessionItem[] => {
 			if (entry.type === "custom") {
 				return [entry];
 			}
 			return sessionEntryToContextMessages(entry);
 		});
-		this.renderSessionItems(items, options);
+		await this.renderSessionItems(items, options);
 	}
 
 	/**
@@ -3690,9 +3727,9 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Text(text, 1, 0));
 	}
 
-	renderInitialMessages(): void {
+	async renderInitialMessages(): Promise<void> {
 		const entries = this.sessionManager.buildContextEntries();
-		this.renderSessionEntries(entries, {
+		await this.renderSessionEntries(entries, {
 			updateFooter: true,
 			populateHistory: true,
 		});
@@ -3741,9 +3778,9 @@ export class InteractiveMode {
 		});
 	}
 
-	private rebuildChatFromMessages(): void {
+	private async rebuildChatFromMessages(): Promise<void> {
 		this.chatContainer.clear();
-		this.renderSessionEntries(this.sessionManager.buildContextEntries());
+		await this.renderSessionEntries(this.sessionManager.buildContextEntries());
 	}
 
 	// =========================================================================
@@ -5044,7 +5081,7 @@ export class InteractiveMode {
 
 						// Update UI
 						this.chatContainer.clear();
-						this.renderInitialMessages();
+						await this.renderInitialMessages();
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);
 						}

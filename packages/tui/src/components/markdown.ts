@@ -134,10 +134,19 @@ const LATEX_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
 		name: "latex",
 		level: "inline",
 		start(source) {
-			const indices = [source.indexOf("$"), source.indexOf("\\("), source.indexOf("\\[")].filter(
-				(index) => index >= 0,
-			);
-			return indices.length > 0 ? Math.min(...indices) : undefined;
+			// Fast path: most content has no latex markers. A single scan for "$"
+			// and a backslash followed by "(" or "[" avoids two extra substring
+			// searches over the whole source, which matters on large transcripts.
+			const dollar = source.indexOf("$");
+			let backslash = source.indexOf("\\");
+			while (backslash !== -1) {
+				const next = source[backslash + 1];
+				if (next === "(" || next === "[") break;
+				backslash = source.indexOf("\\", backslash + 1);
+			}
+			if (dollar === -1) return backslash === -1 ? undefined : backslash;
+			if (backslash === -1) return dollar;
+			return Math.min(dollar, backslash);
 		},
 		tokenizer: tokenizeInlineLatex,
 	},
@@ -226,6 +235,12 @@ export interface MarkdownOptions {
 	transform?: (markdown: string, availableWidth: number) => string;
 	/** Render supported LaTeX math expressions as Unicode text (default: true). */
 	renderLatex?: boolean;
+	/**
+	 * Render code blocks without syntax highlighting. Used while output is
+	 * streaming so each chunk stays cheap; the finished message is re-rendered
+	 * with highlighting once, when the block is known to be complete.
+	 */
+	streaming?: boolean;
 }
 
 interface InlineStyleContext {
@@ -247,6 +262,18 @@ export class Markdown implements Component {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
+	// State of the last full render, used to re-render only the appended tail
+	// when setText() extends the previous text (streaming output). Kept separate
+	// from the cached lines so an append-only update avoids re-lexing and
+	// re-rendering the entire (stable) prefix. cachedIncrementalBase holds the
+	// last-rendered transformed text; for identity transforms it is the same
+	// string object as this.text, so no copy is retained for static messages.
+	private cachedIncrementalBase?: string;
+	private cachedContentWidth?: number;
+	private cachedReparseStart?: number;
+	private cachedReparseLineStart?: number;
+	private cachedReparseGuardType?: string;
+
 	constructor(
 		text: string,
 		paddingX: number,
@@ -265,13 +292,196 @@ export class Markdown implements Component {
 
 	setText(text: string): void {
 		this.text = text;
-		this.invalidate();
+		// Keep cachedLines and the incremental append state: render() re-lexes and
+		// re-renders only the appended tail when the new text extends the previously
+		// rendered text (streaming output). The exact-hit cache check requires
+		// cachedText === this.text, so clearing cachedText disables that path.
+		// invalidate() (theme changes, etc.) clears everything.
+		this.cachedText = undefined;
+		this.cachedWidth = undefined;
 	}
 
 	invalidate(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.cachedIncrementalBase = undefined;
+		this.cachedContentWidth = undefined;
+		this.cachedReparseStart = undefined;
+		this.cachedReparseLineStart = undefined;
+		this.cachedReparseGuardType = undefined;
+	}
+
+	private resetIncrementalCache(): void {
+		this.cachedIncrementalBase = undefined;
+		this.cachedContentWidth = undefined;
+		this.cachedReparseStart = undefined;
+		this.cachedReparseLineStart = undefined;
+		this.cachedReparseGuardType = undefined;
+	}
+
+	private tryRenderIncremental(
+		text: string,
+		normalizedText: string,
+		contentWidth: number,
+		width: number,
+	): string[] | undefined {
+		// Only applies when the new text is a strict extension of the previously
+		// rendered text at the same width (streaming output). Checking the
+		// transformed text (pre tab-normalization) is equivalent to checking the
+		// normalized text: tab-to-space replacement is monotonic, so a raw
+		// extension always yields a normalized extension, and the reparse offsets
+		// stay aligned. Edge cases where the raw text does not extend simply fall
+		// back to a full render.
+		if (
+			this.cachedLines === undefined ||
+			this.cachedIncrementalBase === undefined ||
+			this.cachedContentWidth !== contentWidth ||
+			this.cachedReparseStart === undefined ||
+			this.cachedReparseLineStart === undefined ||
+			this.cachedReparseGuardType === undefined ||
+			text.length <= this.cachedIncrementalBase.length ||
+			!text.startsWith(this.cachedIncrementalBase)
+		) {
+			return undefined;
+		}
+
+		// Re-lex just the tail that changed. The tail starts at the second-to-last
+		// token of the previous render: the last token can absorb appended lines
+		// (e.g. an open list or paragraph), and the second-to-last token is the
+		// earliest token whose rendered output could be affected by that (its
+		// trailing spacing depends on the next token). Everything before it is
+		// complete and stable.
+		const tailSource = normalizedText.slice(this.cachedReparseStart);
+		const tailTokens = markdownParser.lexer(tailSource);
+		trimPartialClosingFences(tailTokens);
+
+		// If the re-lexed tail does not start with the same token type as the
+		// previous render's boundary token (e.g. a paragraph that grew into a
+		// table), the token before the boundary could change its spacing. Fall
+		// back to a full render in that case.
+		if (tailTokens.length === 0 || tailTokens[0]!.type !== this.cachedReparseGuardType) {
+			return undefined;
+		}
+
+		const tail = this.renderTokensToLines(tailTokens, contentWidth, tailSource, width);
+		// The document-level top padding lives at the start of the cached prefix;
+		// the tail must not repeat it.
+		const stripTopPadding = this.cachedReparseLineStart > 0 && this.paddingY > 0;
+		const tailLines = stripTopPadding ? tail.lines.slice(this.paddingY) : tail.lines;
+		const result = this.cachedLines.slice(0, this.cachedReparseLineStart).concat(tailLines);
+
+		// Reparse state now points at the second-to-last token of the rendered tail.
+		const boundaryIndex = tailTokens.length >= 2 ? tailTokens.length - 2 : tailTokens.length - 1;
+		this.cachedText = this.text;
+		this.cachedWidth = width;
+		this.cachedLines = result;
+		this.cachedIncrementalBase = text;
+		this.cachedContentWidth = contentWidth;
+		this.cachedReparseStart = this.cachedReparseStart + tail.tokenSourceStarts[boundaryIndex]!;
+		this.cachedReparseLineStart =
+			this.cachedReparseLineStart + tail.tokenLineStarts[boundaryIndex]! - (stripTopPadding ? this.paddingY : 0);
+		this.cachedReparseGuardType = tailTokens[boundaryIndex]!.type;
+		return result;
+	}
+
+	/**
+	 * Render a token list to final padded lines, tracking where each token's
+	 * contribution starts (in the transformed source and in the output lines) so
+	 * an append-only update can re-render just the affected tail.
+	 */
+	private renderTokensToLines(
+		tokens: readonly Token[],
+		contentWidth: number,
+		normalizedText: string,
+		width: number,
+	): { lines: string[]; tokenSourceStarts: number[]; tokenLineStarts: number[] } {
+		// Token source offsets: each non-last token's raw is its exact source span.
+		// The last token's raw may extend past the source (marked appends a final
+		// newline to some open tokens), so clamp it to the source length.
+		let runningStart = 0;
+		const tokenSourceStarts: number[] = [];
+		for (let i = 0; i < tokens.length; i++) {
+			const raw = tokens[i]!.raw;
+			if (i === tokens.length - 1) {
+				tokenSourceStarts.push(Math.max(0, normalizedText.length - raw.length));
+			} else {
+				tokenSourceStarts.push(Math.min(runningStart, normalizedText.length));
+				runningStart += raw.length;
+			}
+		}
+
+		// Convert tokens to styled terminal output, tracking rendered line ranges.
+		const tokenRenderedStarts: number[] = [];
+		const renderedLines: string[] = [];
+		for (let i = 0; i < tokens.length; i++) {
+			tokenRenderedStarts.push(renderedLines.length);
+			const tokenLines = this.renderToken(tokens[i]!, contentWidth, tokens[i + 1]?.type);
+			for (const tokenLine of tokenLines) {
+				renderedLines.push(tokenLine);
+			}
+		}
+
+		// Wrap lines (NO padding, NO background yet), tracking wrapped line ranges.
+		const tokenWrappedStarts: number[] = [];
+		const wrappedLines: string[] = [];
+		for (let i = 0; i < tokens.length; i++) {
+			tokenWrappedStarts.push(wrappedLines.length);
+			const tokenEnd = i + 1 < tokens.length ? tokenRenderedStarts[i + 1]! : renderedLines.length;
+			for (let j = tokenRenderedStarts[i]!; j < tokenEnd; j++) {
+				const line = renderedLines[j]!;
+				if (isImageLine(line)) {
+					wrappedLines.push(line);
+				} else {
+					for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+						wrappedLines.push(wrappedLine);
+					}
+				}
+			}
+		}
+
+		// Add margins and background to each wrapped line, tracking content ranges.
+		const leftMargin = " ".repeat(this.paddingX);
+		const rightMargin = " ".repeat(this.paddingX);
+		const bgFn = this.defaultTextStyle?.bgColor;
+		const tokenContentStarts: number[] = [];
+		const contentLines: string[] = [];
+
+		for (let i = 0; i < tokens.length; i++) {
+			tokenContentStarts.push(contentLines.length);
+			const tokenEnd = i + 1 < tokens.length ? tokenWrappedStarts[i + 1]! : wrappedLines.length;
+			for (let j = tokenWrappedStarts[i]!; j < tokenEnd; j++) {
+				const line = wrappedLines[j]!;
+				if (isImageLine(line)) {
+					contentLines.push(line);
+					continue;
+				}
+
+				const lineWithMargins = leftMargin + line + rightMargin;
+
+				if (bgFn) {
+					contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
+				} else {
+					// No background - just pad to width
+					const visibleLen = visibleWidth(lineWithMargins);
+					const paddingNeeded = Math.max(0, width - visibleLen);
+					contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
+				}
+			}
+		}
+
+		// Add top/bottom padding (empty lines)
+		const emptyLine = " ".repeat(width);
+		const emptyLines: string[] = [];
+		for (let i = 0; i < this.paddingY; i++) {
+			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
+			emptyLines.push(line);
+		}
+
+		// Combine top padding, content, and bottom padding
+		const lines = emptyLines.concat(contentLines, emptyLines);
+		const tokenLineStarts = tokenContentStarts.map((start) => this.paddingY + start);
+		return { lines, tokenSourceStarts, tokenLineStarts };
 	}
 
 	render(width: number): string[] {
@@ -291,79 +501,41 @@ export class Markdown implements Component {
 			this.cachedText = this.text;
 			this.cachedWidth = width;
 			this.cachedLines = result;
+			this.resetIncrementalCache();
 			return result;
 		}
 
 		// Replace tabs with 3 spaces for consistent rendering
 		const normalizedText = text.replace(/\t/g, "   ");
 
+		// Incremental append path: streaming output extends the previously rendered
+		// text. Only the tail that changed is re-lexed and re-rendered; the stable
+		// prefix lines are reused from the cache.
+		const incremental = this.tryRenderIncremental(text, normalizedText, contentWidth, width);
+		if (incremental) {
+			return incremental;
+		}
+
 		// Parse markdown to HTML-like tokens
 		const tokens = markdownParser.lexer(normalizedText);
 		trimPartialClosingFences(tokens);
 
 		// Convert tokens to styled terminal output
-		const renderedLines: string[] = [];
-
-		for (let i = 0; i < tokens.length; i++) {
-			const token = tokens[i];
-			const nextToken = tokens[i + 1];
-			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
-			for (const tokenLine of tokenLines) {
-				renderedLines.push(tokenLine);
-			}
-		}
-
-		// Wrap lines (NO padding, NO background yet)
-		const wrappedLines: string[] = [];
-		for (const line of renderedLines) {
-			if (isImageLine(line)) {
-				wrappedLines.push(line);
-			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
-					wrappedLines.push(wrappedLine);
-				}
-			}
-		}
-
-		// Add margins and background to each wrapped line
-		const leftMargin = " ".repeat(this.paddingX);
-		const rightMargin = " ".repeat(this.paddingX);
-		const bgFn = this.defaultTextStyle?.bgColor;
-		const contentLines: string[] = [];
-
-		for (const line of wrappedLines) {
-			if (isImageLine(line)) {
-				contentLines.push(line);
-				continue;
-			}
-
-			const lineWithMargins = leftMargin + line + rightMargin;
-
-			if (bgFn) {
-				contentLines.push(applyBackgroundToLine(lineWithMargins, width, bgFn));
-			} else {
-				// No background - just pad to width
-				const visibleLen = visibleWidth(lineWithMargins);
-				const paddingNeeded = Math.max(0, width - visibleLen);
-				contentLines.push(lineWithMargins + " ".repeat(paddingNeeded));
-			}
-		}
-
-		// Add top/bottom padding (empty lines)
-		const emptyLine = " ".repeat(width);
-		const emptyLines: string[] = [];
-		for (let i = 0; i < this.paddingY; i++) {
-			const line = bgFn ? applyBackgroundToLine(emptyLine, width, bgFn) : emptyLine;
-			emptyLines.push(line);
-		}
-
-		// Combine top padding, content, and bottom padding
-		const result = emptyLines.concat(contentLines, emptyLines);
+		const rendered = this.renderTokensToLines(tokens, contentWidth, normalizedText, width);
+		const result = rendered.lines;
 
 		// Update cache
 		this.cachedText = this.text;
 		this.cachedWidth = width;
 		this.cachedLines = result;
+		this.cachedIncrementalBase = text;
+		this.cachedContentWidth = contentWidth;
+		// Reparse state points at the second-to-last token so an append-only
+		// update can re-render just the affected tail.
+		const boundaryIndex = tokens.length >= 2 ? tokens.length - 2 : tokens.length - 1;
+		this.cachedReparseStart = rendered.tokenSourceStarts[boundaryIndex]!;
+		this.cachedReparseLineStart = rendered.tokenLineStarts[boundaryIndex]!;
+		this.cachedReparseGuardType = tokens[boundaryIndex]!.type;
 
 		return result.length > 0 ? result : [""];
 	}
@@ -520,13 +692,15 @@ export class Markdown implements Component {
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
+				if (this.theme.highlightCode && !this.options.streaming) {
 					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
 					for (const hlLine of highlightedLines) {
 						lines.push(`${indent}${hlLine}`);
 					}
 				} else {
-					// Split code by newlines and style each line
+					// Streaming (or no highlighter): render code with plain block coloring.
+					// Syntax highlighting is skipped until the block is known to be
+					// complete, keeping per-chunk streaming renders cheap.
 					const codeLines = token.text.split("\n");
 					for (const codeLine of codeLines) {
 						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);

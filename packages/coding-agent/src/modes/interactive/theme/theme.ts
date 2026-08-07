@@ -1153,6 +1153,51 @@ function getCliHighlightTheme(t: Theme): CliHighlightTheme {
 	return cachedCliHighlightTheme;
 }
 
+// Syntax highlighting budget: the regex-based highlighter is fast for short
+// blocks but slow for large ones, and slow devices multiply that cost. Track how
+// much time highlighting consumed in a rolling window and stop highlighting when
+// the budget is exhausted, so rendering stays responsive under load and cheap on
+// low-end hardware. Blocks that are skipped render with plain block coloring;
+// the next render within a fresh window retries them.
+const HIGHLIGHT_WINDOW_MS = 1000;
+const HIGHLIGHT_BUDGET_MS = 40;
+/** Skip highlighting single blocks above this size; they take tens of ms each. */
+const HIGHLIGHT_MAX_BLOCK_CHARS = 32 * 1024;
+let highlightWindowStart = 0;
+let highlightWindowUsed = 0;
+
+function highlightBudgetAvailable(): boolean {
+	const now = performance.now();
+	if (now - highlightWindowStart >= HIGHLIGHT_WINDOW_MS) {
+		highlightWindowStart = now;
+		highlightWindowUsed = 0;
+	}
+	return highlightWindowUsed < HIGHLIGHT_BUDGET_MS;
+}
+
+function plainCodeLines(code: string): string[] {
+	return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+}
+
+function highlightWithBudget(code: string, language: string): string[] {
+	if (code.length > HIGHLIGHT_MAX_BLOCK_CHARS || !highlightBudgetAvailable()) {
+		return plainCodeLines(code);
+	}
+	const opts = {
+		language,
+		ignoreIllegals: true,
+		theme: getCliHighlightTheme(theme),
+	};
+	const started = performance.now();
+	try {
+		const lines = highlight(code, opts).split("\n");
+		highlightWindowUsed += performance.now() - started;
+		return lines;
+	} catch {
+		return plainCodeLines(code);
+	}
+}
+
 /**
  * Highlight code with syntax coloring based on file extension or language.
  * Returns array of highlighted lines.
@@ -1164,18 +1209,9 @@ export function highlightCode(code: string, lang?: string): string[] {
 	// auto-detection is unreliable and can misidentify prose as AppleScript,
 	// LiveCodeServer, etc., coloring random English words as keywords.
 	if (!validLang) {
-		return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+		return plainCodeLines(code);
 	}
-	const opts = {
-		language: validLang,
-		ignoreIllegals: true,
-		theme: getCliHighlightTheme(theme),
-	};
-	try {
-		return highlight(code, opts).split("\n");
-	} catch {
-		return code.split("\n");
-	}
+	return highlightWithBudget(code, validLang);
 }
 
 /**
@@ -1272,18 +1308,9 @@ export function getMarkdownTheme(): MarkdownTheme {
 			// auto-detection is unreliable and can misidentify prose as AppleScript,
 			// LiveCodeServer, etc., coloring random English words as keywords.
 			if (!validLang) {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+				return plainCodeLines(code);
 			}
-			const opts = {
-				language: validLang,
-				ignoreIllegals: true,
-				theme: getCliHighlightTheme(theme),
-			};
-			try {
-				return highlight(code, opts).split("\n");
-			} catch {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
+			return highlightWithBudget(code, validLang);
 		},
 	};
 }

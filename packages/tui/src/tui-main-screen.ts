@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
-import { visibleWidth } from "./utils.ts";
+import { normalizeTerminalOutput, visibleWidth } from "./utils.ts";
+
+const SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
@@ -201,10 +203,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
 
-		// Extract cursor position before applying line resets (marker must be found first)
+		// Extract cursor position before writing (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
-		newLines = this.applyLineResets(newLines);
+		// Reset styles after each rendered line so styling never leaks into the
+		// next line. Only lines that are actually written need the reset: unchanged
+		// lines keep the resets already on screen, so the per-frame work is
+		// proportional to the number of changed lines rather than the whole
+		// (potentially huge) transcript. previousLines stores the raw lines, and
+		// normalizeTerminalOutput() + SEGMENT_RESET are deterministic per line, so
+		// the raw-vs-raw diff below is equivalent to the previous reset-vs-reset diff.
+		const resetLine = (line: string): string =>
+			isImageLine(line) ? line : normalizeTerminalOutput(line) + SEGMENT_RESET;
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
@@ -216,7 +226,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				const line = newLines[i];
+				const line = resetLine(newLines[i]);
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
 				if (imageReservedRows > 1 && imageReservedRows <= height) {
@@ -419,7 +429,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			const line = newLines[i];
+			const line = resetLine(newLines[i]);
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {

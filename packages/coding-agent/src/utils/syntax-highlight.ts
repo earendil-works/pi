@@ -1,5 +1,98 @@
-import hljs from "highlight.js/lib/index.js";
+// Use the highlight.js core and register only the languages pi actually renders.
+// The full index bundles ~190 language definitions; most sessions never touch most
+// of them, so registering just the languages mapped from file extensions keeps the
+// startup footprint and regex compilation down without changing what gets highlighted.
+import hljs from "highlight.js/lib/core.js";
+import bash from "highlight.js/lib/languages/bash.js";
+import c from "highlight.js/lib/languages/c.js";
+import clojure from "highlight.js/lib/languages/clojure.js";
+import cmake from "highlight.js/lib/languages/cmake.js";
+import cpp from "highlight.js/lib/languages/cpp.js";
+import csharp from "highlight.js/lib/languages/csharp.js";
+import css from "highlight.js/lib/languages/css.js";
+import dockerfile from "highlight.js/lib/languages/dockerfile.js";
+import elixir from "highlight.js/lib/languages/elixir.js";
+import erlang from "highlight.js/lib/languages/erlang.js";
+import go from "highlight.js/lib/languages/go.js";
+import haskell from "highlight.js/lib/languages/haskell.js";
+import ini from "highlight.js/lib/languages/ini.js";
+import java from "highlight.js/lib/languages/java.js";
+import javascript from "highlight.js/lib/languages/javascript.js";
+import json from "highlight.js/lib/languages/json.js";
+import kotlin from "highlight.js/lib/languages/kotlin.js";
+import less from "highlight.js/lib/languages/less.js";
+import lua from "highlight.js/lib/languages/lua.js";
+import makefile from "highlight.js/lib/languages/makefile.js";
+import markdown from "highlight.js/lib/languages/markdown.js";
+import ocaml from "highlight.js/lib/languages/ocaml.js";
+import perl from "highlight.js/lib/languages/perl.js";
+import php from "highlight.js/lib/languages/php.js";
+import plaintext from "highlight.js/lib/languages/plaintext.js";
+import powershell from "highlight.js/lib/languages/powershell.js";
+import protobuf from "highlight.js/lib/languages/protobuf.js";
+import python from "highlight.js/lib/languages/python.js";
+import r from "highlight.js/lib/languages/r.js";
+import ruby from "highlight.js/lib/languages/ruby.js";
+import rust from "highlight.js/lib/languages/rust.js";
+import scala from "highlight.js/lib/languages/scala.js";
+import scss from "highlight.js/lib/languages/scss.js";
+import sql from "highlight.js/lib/languages/sql.js";
+import swift from "highlight.js/lib/languages/swift.js";
+import typescript from "highlight.js/lib/languages/typescript.js";
+import vim from "highlight.js/lib/languages/vim.js";
+import xml from "highlight.js/lib/languages/xml.js";
+import yaml from "highlight.js/lib/languages/yaml.js";
 import { decodeHtmlEntityAt } from "./html.ts";
+
+// Languages mapped from file extensions by getLanguageFromPath(), plus the
+// modules whose aliases cover the remaining entries (xml -> html, ini -> toml).
+// sass/fish/graphql/hcl are not registered by highlight.js's full index either,
+// so those paths fall back to plain coloring exactly as before.
+const REGISTERED_LANGUAGES: ReadonlyArray<[string, unknown]> = [
+	["bash", bash],
+	["c", c],
+	["clojure", clojure],
+	["cmake", cmake],
+	["cpp", cpp],
+	["csharp", csharp],
+	["css", css],
+	["dockerfile", dockerfile],
+	["elixir", elixir],
+	["erlang", erlang],
+	["go", go],
+	["haskell", haskell],
+	["ini", ini],
+	["java", java],
+	["javascript", javascript],
+	["json", json],
+	["kotlin", kotlin],
+	["less", less],
+	["lua", lua],
+	["makefile", makefile],
+	["markdown", markdown],
+	["ocaml", ocaml],
+	["perl", perl],
+	["php", php],
+	["plaintext", plaintext],
+	["powershell", powershell],
+	["protobuf", protobuf],
+	["python", python],
+	["r", r],
+	["ruby", ruby],
+	["rust", rust],
+	["scala", scala],
+	["scss", scss],
+	["sql", sql],
+	["swift", swift],
+	["typescript", typescript],
+	["vim", vim],
+	["xml", xml],
+	["yaml", yaml],
+];
+
+for (const [name, definition] of REGISTERED_LANGUAGES) {
+	hljs.registerLanguage(name, definition as never);
+}
 
 export type HighlightFormatter = (text: string) => string;
 export type HighlightTheme = Partial<Record<string, HighlightFormatter>>;

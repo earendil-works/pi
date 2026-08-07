@@ -22,6 +22,24 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private isStreaming = false;
 
+	// Text/thinking components created by the last content build, in content
+	// order. During streaming, message_update events arrive per chunk; when the
+	// run structure is unchanged the Markdown components are updated in place via
+	// setText() instead of being destroyed and recreated, so their append-aware
+	// render cache re-renders only the tail that grew.
+	private streamingEditable: Array<{ kind: "text" | "thinking"; component: Markdown | Text }> = [];
+
+	/** Read-only view for tests: components created by the last content build. */
+	get streamingEditableComponents(): ReadonlyArray<{ kind: "text" | "thinking"; component: Markdown | Text }> {
+		return this.streamingEditable;
+	}
+
+	private builtWithTheme?: MarkdownTheme;
+	private builtWithOutputPad = 0;
+	private builtWithHideThinkingBlock = false;
+	private builtWithHiddenThinkingLabel = "";
+	private builtWithTransformers: readonly MarkdownTransformer[] = [];
+
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
@@ -87,8 +105,26 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		const previousMessage = this.lastMessage;
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
+
+		// Fast path: during streaming the content usually just grows. If the
+		// sequence of text/thinking runs is unchanged and nothing that affects the
+		// components' construction (theme, padding, ...) changed, update the
+		// existing Markdown components in place so their append-aware render cache
+		// stays warm.
+		if (
+			isStreaming &&
+			previousMessage !== undefined &&
+			previousMessage.stopReason === message.stopReason &&
+			previousMessage.errorMessage === message.errorMessage &&
+			this.tryUpdateStreamingInPlace(previousMessage, message)
+		) {
+			this.hasToolCalls = message.content.some((c) => c.type === "toolCall");
+			return;
+		}
+		this.streamingEditable = [];
 
 		// Clear content container
 		this.contentContainer.clear();
@@ -102,16 +138,18 @@ export class AssistantMessageComponent extends Container {
 		}
 
 		// Render content in order
+		const editable: Array<{ kind: "text" | "thinking"; component: Markdown | Text }> = [];
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(
-					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
-						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
-					}),
-				);
+				const component = new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
+					transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+					streaming: this.isStreaming,
+				});
+				this.contentContainer.addChild(component);
+				editable.push({ kind: "text", component });
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
@@ -138,36 +176,47 @@ export class AssistantMessageComponent extends Container {
 
 				if (this.hideThinkingBlock) {
 					// Show one static label for each run of thinking blocks when hidden.
-					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0),
+					const component = new Text(
+						theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)),
+						this.outputPad,
+						0,
 					);
+					this.contentContainer.addChild(component);
+					editable.push({ kind: "thinking", component });
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
-					this.contentContainer.addChild(
-						new Markdown(
-							thinkingBlocks.join("\n\n"),
-							this.outputPad,
-							0,
-							this.markdownTheme,
-							{
-								color: (text: string) => theme.fg("thinkingText", text),
-								italic: true,
-							},
-							{
-								transform: createMarkdownTransform(
-									"assistant-thinking",
-									this.isStreaming,
-									this.markdownTransformers,
-								),
-							},
-						),
+					const component = new Markdown(
+						thinkingBlocks.join("\n\n"),
+						this.outputPad,
+						0,
+						this.markdownTheme,
+						{
+							color: (text: string) => theme.fg("thinkingText", text),
+							italic: true,
+						},
+						{
+							transform: createMarkdownTransform(
+								"assistant-thinking",
+								this.isStreaming,
+								this.markdownTransformers,
+							),
+							streaming: this.isStreaming,
+						},
 					);
+					this.contentContainer.addChild(component);
+					editable.push({ kind: "thinking", component });
 				}
 				if (hasVisibleContentAfter) {
 					this.contentContainer.addChild(new Spacer(1));
 				}
 			}
 		}
+		this.streamingEditable = editable;
+		this.builtWithTheme = this.markdownTheme;
+		this.builtWithOutputPad = this.outputPad;
+		this.builtWithHideThinkingBlock = this.hideThinkingBlock;
+		this.builtWithHiddenThinkingLabel = this.hiddenThinkingLabel;
+		this.builtWithTransformers = this.markdownTransformers;
 
 		// Check if incomplete/failed - show after partial content.
 		// For aborted/error tool calls, tool execution components show the error.
@@ -193,5 +242,62 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
+	}
+
+	/**
+	 * Streaming fast path: when the sequence of visible text/thinking runs is
+	 * unchanged between two consecutive message_update events, update the existing
+	 * Markdown components in place via setText() instead of rebuilding them. This
+	 * keeps the components' append-aware render cache warm, so each chunk only
+	 * re-renders the appended tail instead of re-parsing the whole message.
+	 */
+	private tryUpdateStreamingInPlace(previous: AssistantMessage, message: AssistantMessage): boolean {
+		// Rebuild if anything that affects component construction changed.
+		if (
+			this.markdownTheme !== this.builtWithTheme ||
+			this.outputPad !== this.builtWithOutputPad ||
+			this.hideThinkingBlock !== this.builtWithHideThinkingBlock ||
+			this.hiddenThinkingLabel !== this.builtWithHiddenThinkingLabel ||
+			this.markdownTransformers !== this.builtWithTransformers
+		) {
+			return false;
+		}
+		if (this.streamingEditable.length === 0) return false;
+
+		const extractRuns = (msg: AssistantMessage): Array<{ kind: "text" | "thinking"; text: string }> => {
+			const runs: Array<{ kind: "text" | "thinking"; text: string }> = [];
+			for (let i = 0; i < msg.content.length; i++) {
+				const content = msg.content[i];
+				if (content.type === "text") {
+					if (content.text.trim()) runs.push({ kind: "text", text: content.text });
+				} else if (content.type === "thinking") {
+					const thinkingBlocks: string[] = [];
+					for (; i < msg.content.length; i++) {
+						const thinkingContent = msg.content[i];
+						if (thinkingContent.type !== "thinking") break;
+						if (thinkingContent.thinking.trim()) thinkingBlocks.push(thinkingContent.thinking);
+					}
+					i--;
+					if (thinkingBlocks.length === 0) continue;
+					runs.push({ kind: "thinking", text: thinkingBlocks.join("\n\n") });
+				}
+			}
+			return runs;
+		};
+
+		const prevRuns = extractRuns(previous);
+		const nextRuns = extractRuns(message);
+		if (prevRuns.length === 0 || prevRuns.length !== nextRuns.length) return false;
+		for (let i = 0; i < prevRuns.length; i++) {
+			if (prevRuns[i]!.kind !== nextRuns[i]!.kind) return false;
+			const component = this.streamingEditable[i]?.component;
+			if (!component || !("setText" in component)) return false;
+		}
+
+		for (let i = 0; i < nextRuns.length; i++) {
+			const editable = this.streamingEditable[i]!;
+			(editable.component as Markdown | Text).setText(nextRuns[i]!.text);
+		}
+		return true;
 	}
 }

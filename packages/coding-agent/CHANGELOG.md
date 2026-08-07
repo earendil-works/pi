@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Streaming assistant messages update their Markdown components in place instead of rebuilding them on every chunk, so streaming output renders significantly faster for long responses.
+- Session resumes render the transcript progressively in batches instead of parsing every message synchronously up front, so the UI appears immediately and stays responsive while large sessions fill in.
+- Syntax highlighting now registers only the languages pi renders from file extensions (via highlight.js core) instead of bundling all ~190 highlight.js languages, reducing startup memory and load time with identical highlighting output.
+- Streaming assistant messages render code blocks without syntax highlighting and highlight them once the message completes, so per-chunk renders are cheap.
+- Syntax highlighting is now performance-adaptive: it runs within a rolling time budget (and skips very large blocks), so slow devices degrade to plain code blocks instead of stalling rendering.
+- Session resumes now parse only the visible transcript window in both modes: in the main screen the terminal window is the visible region (history above it is truncated with a marker), and in fullscreen mode older messages load in batches as you scroll up. Set `PI_FULL_HISTORY=1` to restore the previous behavior of parsing and writing the entire session.
+
 ## [0.84.1] - 2026-08-07
 
 ### New Features
@@ -32,6 +41,10 @@
 - Fixed inherited `Agent.reset()` clearing transcript and runtime state during active runs; it now rejects until the agent is idle ([#7717](https://github.com/earendil-works/pi/pull/7717) by [@wesleyzhangwq](https://github.com/wesleyzhangwq)).
 - Fixed inherited LaTeX relation, multiplication, and named-operator spacing, and matrix composition with stacked fractions, operator limits, and adjacent matrices.
 - Reduced inherited fullscreen mouse event volume under tmux, Zellij, and GNU Screen by using button-motion tracking instead of all-motion tracking.
+
+
+
+
 
 ## [0.84.0] - 2026-08-06
 
