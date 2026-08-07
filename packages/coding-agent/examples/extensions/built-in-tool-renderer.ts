@@ -56,9 +56,13 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded, isPartial }, theme, _context) {
+		renderResult(result, { expanded, isPartial }, theme, context) {
 			if (isPartial) return new Text(theme.fg("warning", "Reading..."), 0, 0);
 
+			if (context.isError) {
+				const errorText = result.content.find((c) => c.type === "text")?.text ?? "Error";
+				return new Text(theme.fg("error", errorText.split("\n")[0]), 0, 0);
+			}
 			const details = result.details as ReadToolDetails | undefined;
 			const content = result.content[0];
 
@@ -169,15 +173,15 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded, isPartial }, theme, _context) {
+		renderResult(result, { expanded, isPartial }, theme, context) {
 			if (isPartial) return new Text(theme.fg("warning", "Editing..."), 0, 0);
 
+			if (context.isError) {
+				const errorText = result.content.find((c) => c.type === "text")?.text ?? "Error";
+				return new Text(theme.fg("error", errorText.split("\n")[0]), 0, 0);
+			}
 			const details = result.details as EditToolDetails | undefined;
 			const content = result.content[0];
-
-			if (content?.type === "text" && content.text.startsWith("Error")) {
-				return new Text(theme.fg("error", content.text.split("\n")[0]), 0, 0);
-			}
 
 			if (!details?.diff) {
 				return new Text(theme.fg("success", "Applied"), 0, 0);
@@ -235,13 +239,14 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { isPartial }, theme, _context) {
+		renderResult(result, { isPartial }, theme, context) {
 			if (isPartial) return new Text(theme.fg("warning", "Writing..."), 0, 0);
 
-			const content = result.content[0];
-			if (content?.type === "text" && content.text.startsWith("Error")) {
-				return new Text(theme.fg("error", content.text.split("\n")[0]), 0, 0);
+			if (context.isError) {
+				const errorText = result.content.find((c) => c.type === "text")?.text ?? "Error";
+				return new Text(theme.fg("error", errorText.split("\n")[0]), 0, 0);
 			}
+			const content = result.content[0];
 
 			return new Text(theme.fg("success", "Written"), 0, 0);
 		},
