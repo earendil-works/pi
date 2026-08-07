@@ -32,6 +32,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { requireMatvenusAuth, runMatvenusLoginCommand, runMatvenusLogoutCommand } from "./cli/matwings-login.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
@@ -579,6 +580,16 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
+	// MatwingsVenus platform login/logout (access-gate subcommands).
+	if (args[0] === "login") {
+		await runMatvenusLoginCommand();
+		return;
+	}
+	if (args[0] === "logout") {
+		await runMatvenusLogoutCommand();
+		return;
+	}
+
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
@@ -864,6 +875,10 @@ export async function main(args: string[], options?: MainOptions) {
 		await listModels(modelRuntime, searchPattern, AbortSignal.timeout(15_000));
 		process.exit(0);
 	}
+
+	// MatwingsVenus access gate: require a valid (possibly refreshed) session
+	// before any interactive/print/rpc usage. Meta commands above are exempt.
+	await requireMatvenusAuth();
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
