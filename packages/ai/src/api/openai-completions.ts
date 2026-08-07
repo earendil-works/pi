@@ -179,6 +179,37 @@ type OpenAIEncryptedReasoningDetail = {
 	data: string;
 };
 
+type GeminiThoughtSignatureExtraContent = Partial<Record<"google" | "vertex", { thought_signature: string }>>;
+
+type ChatCompletionMessageToolCallWithExtraContent = ChatCompletionMessageToolCall & {
+	extra_content?: GeminiThoughtSignatureExtraContent;
+};
+
+function getGeminiThoughtSignatureExtraContent(value: unknown): GeminiThoughtSignatureExtraContent | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	for (const namespace of ["google", "vertex"] as const) {
+		const providerContent = record[namespace];
+		if (typeof providerContent !== "object" || providerContent === null) continue;
+		const thoughtSignature = (providerContent as Record<string, unknown>).thought_signature;
+		if (typeof thoughtSignature !== "string" || thoughtSignature.length === 0) continue;
+		return { [namespace]: { thought_signature: thoughtSignature } };
+	}
+	return undefined;
+}
+
+function parseGeminiThoughtSignatureExtraContent(
+	thoughtSignature: string | undefined,
+): GeminiThoughtSignatureExtraContent | undefined {
+	if (!thoughtSignature) return undefined;
+	try {
+		const parsed: unknown = JSON.parse(thoughtSignature);
+		return getGeminiThoughtSignatureExtraContent(parsed);
+	} catch {
+		return undefined;
+	}
+}
+
 type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
 };
@@ -269,6 +300,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				type?: string;
 				function?: { name?: string; arguments?: string };
 				custom?: { name?: string; input?: string };
+				extra_content?: unknown;
 			};
 
 			let textBlock: TextContent | null = null;
@@ -521,6 +553,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					if (choice?.delta?.tool_calls) {
 						for (const toolCall of choice.delta.tool_calls as StreamingToolCallDelta[]) {
 							const block = ensureToolCallBlock(toolCall);
+							const extraContent = getGeminiThoughtSignatureExtraContent(toolCall.extra_content);
+							if (extraContent) {
+								block.thoughtSignature = JSON.stringify(extraContent);
+							}
 							if (!block.id && toolCall.id) {
 								block.id = toolCall.id;
 								toolCallBlocksById.set(toolCall.id, block);
@@ -1197,7 +1233,7 @@ export function convertMessages(
 							},
 						};
 					}
-					return {
+					const toolCall: ChatCompletionMessageToolCallWithExtraContent = {
 						id: tc.id,
 						type: "function",
 						function: {
@@ -1205,12 +1241,18 @@ export function convertMessages(
 							arguments: JSON.stringify(tc.arguments),
 						},
 					};
+					const extraContent = parseGeminiThoughtSignatureExtraContent(tc.thoughtSignature);
+					if (extraContent) {
+						toolCall.extra_content = extraContent;
+					}
+					return toolCall;
 				});
 				const reasoningDetails = toolCalls
 					.filter((tc) => tc.thoughtSignature)
 					.map((tc) => {
 						try {
-							return JSON.parse(tc.thoughtSignature!);
+							const detail: unknown = JSON.parse(tc.thoughtSignature!);
+							return getGeminiThoughtSignatureExtraContent(detail) ? null : detail;
 						} catch {
 							return null;
 						}

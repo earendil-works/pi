@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
-import type { AssistantMessage, Model, Tool } from "../src/types.ts";
+import type { AssistantMessage, Message, Model, Tool } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	chunkSets: [] as unknown[][],
@@ -67,7 +67,7 @@ function chunk(delta: Record<string, unknown>, finishReason: string | null = nul
 	};
 }
 
-function toolCallChunk(): unknown {
+function toolCallChunk(extraContent?: unknown): unknown {
 	return chunk({
 		tool_calls: [
 			{
@@ -75,21 +75,27 @@ function toolCallChunk(): unknown {
 				id: "call_1",
 				type: "function",
 				function: { name: "read", arguments: '{"path":"README.md"}' },
+				...(extraContent ? { extra_content: extraContent } : {}),
 			},
 		],
 	});
 }
 
-async function runOpenAICompletionsStream(messages: AssistantMessage[] = []): Promise<AssistantMessage> {
+async function runOpenAICompletionsStream(messages: Message[] = []): Promise<AssistantMessage> {
 	return await streamOpenAICompletions(model(), { messages, tools: [readTool] }, { apiKey: "test" }).result();
 }
 
-function getAssistantPayload(payload: unknown): { reasoning_details?: unknown } | undefined {
-	const messages = (payload as { messages?: Array<{ role?: string; reasoning_details?: unknown }> }).messages ?? [];
+type AssistantPayload = {
+	reasoning_details?: unknown;
+	tool_calls?: Array<{ extra_content?: unknown }>;
+};
+
+function getAssistantPayload(payload: unknown): AssistantPayload | undefined {
+	const messages = (payload as { messages?: Array<AssistantPayload & { role?: string }> }).messages ?? [];
 	return messages.find((message) => message.role === "assistant");
 }
 
-describe("openai-completions reasoning_details streaming", () => {
+describe("openai-completions tool call signature streaming", () => {
 	beforeEach(() => {
 		mockState.chunkSets = [];
 		mockState.payloads = [];
@@ -115,4 +121,42 @@ describe("openai-completions reasoning_details streaming", () => {
 
 		expect(getAssistantPayload(mockState.payloads[1])?.reasoning_details).toEqual([reasoningDetail]);
 	});
+
+	it.each(["google", "vertex"] as const)(
+		"round-trips %s thought signatures from tool call extra_content",
+		async (namespace) => {
+			const extraContent = { [namespace]: { thought_signature: "opaque-signature" } };
+			mockState.chunkSets = [
+				[toolCallChunk(extraContent), chunk({}, "tool_calls")],
+				[chunk({ content: "ok" }), chunk({}, "stop")],
+			];
+
+			const userMessage: Message = {
+				role: "user",
+				content: "Read README.md",
+				timestamp: 1,
+			};
+			const assistantMessage = await runOpenAICompletionsStream([userMessage]);
+			const toolCall = assistantMessage.content.find((block) => block.type === "toolCall");
+			expect(toolCall).toMatchObject({
+				type: "toolCall",
+				id: "call_1",
+				thoughtSignature: JSON.stringify(extraContent),
+			});
+
+			const toolResult: Message = {
+				role: "toolResult",
+				toolCallId: "call_1",
+				toolName: "read",
+				content: [{ type: "text", text: "README contents" }],
+				isError: false,
+				timestamp: 2,
+			};
+			await runOpenAICompletionsStream([userMessage, assistantMessage, toolResult]);
+
+			const replayedAssistant = getAssistantPayload(mockState.payloads[1]);
+			expect(replayedAssistant?.tool_calls?.[0]?.extra_content).toEqual(extraContent);
+			expect(replayedAssistant?.reasoning_details).toBeUndefined();
+		},
+	);
 });
