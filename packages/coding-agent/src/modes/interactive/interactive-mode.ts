@@ -98,7 +98,8 @@ import type { SourceInfo } from "../../core/source-info.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { renderWelcomeBanner, WELCOME_HEADING, WELCOME_HINT } from "../../core/branding.ts";
-import { hasStoredAuth } from "../../core/matwings-auth/index.ts";
+import { hasStoredAuth, logout } from "../../core/matwings-auth/index.ts";
+import { runLoginFlow } from "../../cli/matwings-login.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
@@ -913,8 +914,9 @@ export class InteractiveMode {
 			// MatwingsVenus access gate notice: the TUI launches UI-first; if the user
 			// is not authenticated, prompt them to run `matvenus login` (UI-first like
 			// kimi-code, rather than blocking before the TUI starts).
-			const authed = await hasStoredAuth();
-			const loginNotice = authed ? "" : `\n⚠ Not logged in — run \`matvenus login\` to authenticate, then restart.`;
+			this.matvenusAuthNotice = (await hasStoredAuth())
+				? ""
+				: `\n⚠ Not logged in — type /login to authenticate.`;
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -956,8 +958,8 @@ export class InteractiveMode {
 				`Matvenus can explain its own features and look up its docs. Ask it how to use or extend Matvenus.`,
 			);
 			this.builtInHeader = new ExpandableText(
-				() => `${banner}\n\n${welcome}${loginNotice}\n\n${compactInstructions}\n${compactOnboarding}`,
-				() => `${banner}\n\n${welcome}${loginNotice}\n\n${expandedInstructions}\n\n${onboarding}`,
+				() => `${banner}\n\n${welcome}${this.matvenusAuthNotice}\n\n${compactInstructions}\n${compactOnboarding}`,
+				() => `${banner}\n\n${welcome}${this.matvenusAuthNotice}\n\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
 				1,
 				0,
@@ -2942,14 +2944,13 @@ export class InteractiveMode {
 				return;
 			}
 			if (text === "/login" || text.startsWith("/login ")) {
-				const providerRef = text.startsWith("/login ") ? text.slice(7).trim() : undefined;
 				this.editor.setText("");
-				await this.handleLoginCommand(providerRef);
+				await this.handleMatvenusLoginCommand();
 				return;
 			}
 			if (text === "/logout") {
-				this.showOAuthSelector("logout");
 				this.editor.setText("");
+				await this.handleMatvenusLogoutCommand();
 				return;
 			}
 			if (text === "/new") {
@@ -5207,6 +5208,32 @@ export class InteractiveMode {
 				provider.id.toLowerCase() === normalizedProviderRef ||
 				provider.name.toLowerCase() === normalizedProviderRef,
 		);
+	}
+
+	private matvenusAuthNotice = "";
+
+	/** `/login` — MatwingsVenus platform login (access gate). Suspends the TUI,
+	 * runs the interactive readline login in the cooked terminal, then resumes. */
+	private async handleMatvenusLoginCommand(): Promise<void> {
+		this.ui.stop();
+		let ok = false;
+		try {
+			const result = await runLoginFlow();
+			ok = result !== null;
+			if (ok) this.matvenusAuthNotice = "";
+		} finally {
+			this.ui.start();
+			this.ui.requestRender(true);
+		}
+		this.showStatus(ok ? "Logged in to MatwingsVenus." : "MatwingsVenus login cancelled or failed.");
+	}
+
+	/** `/logout` — clear the MatwingsVenus platform session. */
+	private async handleMatvenusLogoutCommand(): Promise<void> {
+		await logout();
+		this.matvenusAuthNotice = `\n⚠ Not logged in — type /login to authenticate.`;
+		this.showStatus("Logged out of MatwingsVenus.");
+		this.ui.requestRender(true);
 	}
 
 	private async handleLoginCommand(providerRef?: string): Promise<void> {
