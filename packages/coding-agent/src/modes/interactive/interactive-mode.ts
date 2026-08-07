@@ -97,9 +97,9 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
-import { renderWelcomeBanner, WELCOME_HEADING, WELCOME_HINT } from "../../core/branding.ts";
+import { renderMatwingsWelcome } from "./components/matwings-welcome.ts";
 import { hasStoredAuth, logout } from "../../core/matwings-auth/index.ts";
-import { runLoginFlow } from "../../cli/matwings-login.ts";
+import { fork } from "node:child_process";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
@@ -908,15 +908,19 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
-			const banner = renderWelcomeBanner();
-			const welcome = `${theme.bold(theme.fg("accent", WELCOME_HEADING))}\n${theme.fg("dim", WELCOME_HINT)}`;
-			// MatwingsVenus access gate notice: the TUI launches UI-first; if the user
-			// is not authenticated, prompt them to run `matvenus login` (UI-first like
-			// kimi-code, rather than blocking before the TUI starts).
-			this.matvenusAuthNotice = (await hasStoredAuth())
-				? ""
-				: `\n⚠ Not logged in — type /login to authenticate.`;
+			// MatwingsVenus welcome (kimi-code-style rounded box) + access-gate notice.
+			// The TUI launches UI-first; auth status is reflected inside the box.
+			this.matvenusAuthNotice = (await hasStoredAuth()) ? "" : "not-logged-in";
+			const welcomeBox = (): string =>
+				renderMatwingsWelcome(
+					{
+						workDir: process.cwd(),
+						sessionId: this.sessionManager?.getSessionId() ?? "",
+						modelLabel: this.session?.model?.id ?? "",
+						authed: this.matvenusAuthNotice === "",
+					},
+					process.stdout.columns ?? 80,
+				);
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -958,8 +962,8 @@ export class InteractiveMode {
 				`Matvenus can explain its own features and look up its docs. Ask it how to use or extend Matvenus.`,
 			);
 			this.builtInHeader = new ExpandableText(
-				() => `${banner}\n\n${welcome}${this.matvenusAuthNotice}\n\n${compactInstructions}\n${compactOnboarding}`,
-				() => `${banner}\n\n${welcome}${this.matvenusAuthNotice}\n\n${expandedInstructions}\n\n${onboarding}`,
+				() => `${welcomeBox()}\n${compactInstructions}\n${compactOnboarding}`,
+				() => `${welcomeBox()}\n\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
 				1,
 				0,
@@ -5218,9 +5222,20 @@ export class InteractiveMode {
 		this.ui.stop();
 		let ok = false;
 		try {
-			const result = await runLoginFlow();
-			ok = result !== null;
-			if (ok) this.matvenusAuthNotice = "";
+			// Re-invoke `matvenus login` as a child process with inherited stdio so the
+			// interactive readline login runs in a clean terminal — the parent TUI's
+			// raw-mode stdin would otherwise conflict with an in-process readline flow.
+			// execArgv is forwarded so tsx/loaders are preserved when run from source.
+			const code = await new Promise<number>((resolve) => {
+				const child = fork(process.argv[1] ?? "", ["login"], {
+					execArgv: process.execArgv,
+					stdio: "inherit",
+				});
+				child.on("close", (exitCode) => resolve(exitCode ?? 1));
+				child.on("error", () => resolve(1));
+			});
+			ok = code === 0 && (await hasStoredAuth());
+			this.matvenusAuthNotice = ok ? "" : `\n⚠ Not logged in — type /login to authenticate.`;
 		} finally {
 			this.ui.start();
 			this.ui.requestRender(true);
