@@ -112,68 +112,102 @@ export function metadataFromHeader(header: JsonlV4Header, path: string, modified
 	};
 }
 
+function parseEntryMutation(
+	value: Record<string, unknown>,
+	path: string,
+	lineNumber: number,
+	seq: number,
+): Extract<SessionMutation, { kind: "entry" }> {
+	const lane = value.lane === undefined ? undefined : requireString(value.lane, path, lineNumber, "lane");
+	const id = requireString(value.id, path, lineNumber, "id");
+	const type = requireString(value.type, path, lineNumber, "entry type");
+	if (!ENTRY_TYPES.has(type as Entry["type"])) throw invalidFile(path, lineNumber, `has unknown entry type ${type}`);
+	const parentId = requireNullableId(value.parentId, path, lineNumber, "parentId");
+	const timestamp = requireTimestamp(value.timestamp, path, lineNumber);
+	if (type === "custom") requireString(value.customType, path, lineNumber, "customType");
+	const { kind: _kind, lane: _lane, ...entryFields } = value;
+	const entry = { ...entryFields, id, type, parentId, seq, timestamp } as unknown as Entry;
+	return lane === undefined ? { kind: "entry", entry } : { kind: "entry", lane, entry };
+}
+
+function parseRecordMutation(
+	value: Record<string, unknown>,
+	path: string,
+	lineNumber: number,
+	seq: number,
+): Extract<SessionMutation, { kind: "record" }> {
+	const id = requireString(value.id, path, lineNumber, "id");
+	const lane = requireString(value.lane, path, lineNumber, "lane");
+	const type = requireString(value.type, path, lineNumber, "record type");
+	if (!RECORD_TYPES.has(type as LaneRecord["type"])) {
+		throw invalidFile(path, lineNumber, `has unknown record type ${type}`);
+	}
+	const timestamp = requireTimestamp(value.timestamp, path, lineNumber);
+	if (type === "operation_started") {
+		if (!isObject(value.intent)) throw invalidFile(path, lineNumber, "has invalid intent");
+		const operationKind = requireString(value.intent.kind, path, lineNumber, "operation kind");
+		if (!OPERATION_KINDS.has(operationKind)) {
+			throw invalidFile(path, lineNumber, `has unknown operation kind ${operationKind}`);
+		}
+	}
+	if (type === "operation_finished") requireString(value.runId, path, lineNumber, "runId");
+	const { kind: _kind, ...recordFields } = value;
+	return {
+		kind: "record",
+		record: { ...recordFields, id, lane, type, seq, timestamp } as unknown as LaneRecord,
+	};
+}
+
+function parseLaneMutation(
+	value: Record<string, unknown>,
+	path: string,
+	lineNumber: number,
+	seq: number,
+): Extract<SessionMutation, { kind: "lane" }> {
+	return {
+		kind: "lane",
+		seq,
+		lane: requireString(value.lane, path, lineNumber, "lane"),
+		leafId: requireNullableId(value.leafId, path, lineNumber, "leafId"),
+	};
+}
+
+function parseFactMutation(
+	value: Record<string, unknown>,
+	path: string,
+	lineNumber: number,
+	seq: number,
+): Extract<SessionMutation, { kind: "fact" }> {
+	if (value.fact === "name") {
+		return { kind: "fact", seq, fact: "name", name: requireString(value.name, path, lineNumber, "name") };
+	}
+	if (value.fact === "label") {
+		if (value.label !== undefined && typeof value.label !== "string") {
+			throw invalidFile(path, lineNumber, "has invalid label");
+		}
+		return {
+			kind: "fact",
+			seq,
+			fact: "label",
+			targetId: requireString(value.targetId, path, lineNumber, "targetId"),
+			label: value.label,
+		};
+	}
+	throw invalidFile(path, lineNumber, "has unknown fact type");
+}
+
 export function parseMutation(line: string, path: string, lineNumber: number): SessionMutation {
 	const value = parseObject(line, path, lineNumber);
 	const seq = requireSequence(value.seq, path, lineNumber);
 	switch (value.kind) {
-		case "entry": {
-			const lane = value.lane === undefined ? undefined : requireString(value.lane, path, lineNumber, "lane");
-			const id = requireString(value.id, path, lineNumber, "id");
-			const type = requireString(value.type, path, lineNumber, "entry type");
-			if (!ENTRY_TYPES.has(type as Entry["type"]))
-				throw invalidFile(path, lineNumber, `has unknown entry type ${type}`);
-			const parentId = requireNullableId(value.parentId, path, lineNumber, "parentId");
-			const timestamp = requireTimestamp(value.timestamp, path, lineNumber);
-			if (type === "custom") requireString(value.customType, path, lineNumber, "customType");
-			const { kind: _kind, lane: _lane, ...entryFields } = value;
-			const entry = { ...entryFields, id, type, parentId, seq, timestamp } as unknown as Entry;
-			return lane === undefined ? { kind: "entry", entry } : { kind: "entry", lane, entry };
-		}
-		case "record": {
-			const id = requireString(value.id, path, lineNumber, "id");
-			const lane = requireString(value.lane, path, lineNumber, "lane");
-			const type = requireString(value.type, path, lineNumber, "record type");
-			if (!RECORD_TYPES.has(type as LaneRecord["type"]))
-				throw invalidFile(path, lineNumber, `has unknown record type ${type}`);
-			const timestamp = requireTimestamp(value.timestamp, path, lineNumber);
-			if (type === "operation_started") {
-				if (!isObject(value.intent)) throw invalidFile(path, lineNumber, "has invalid intent");
-				const operationKind = requireString(value.intent.kind, path, lineNumber, "operation kind");
-				if (!OPERATION_KINDS.has(operationKind)) {
-					throw invalidFile(path, lineNumber, `has unknown operation kind ${operationKind}`);
-				}
-			}
-			if (type === "operation_finished") requireString(value.runId, path, lineNumber, "runId");
-			const { kind: _kind, ...recordFields } = value;
-			return {
-				kind: "record",
-				record: { ...recordFields, id, lane, type, seq, timestamp } as unknown as LaneRecord,
-			};
-		}
+		case "entry":
+			return parseEntryMutation(value, path, lineNumber, seq);
+		case "record":
+			return parseRecordMutation(value, path, lineNumber, seq);
 		case "lane":
-			return {
-				kind: "lane",
-				seq,
-				lane: requireString(value.lane, path, lineNumber, "lane"),
-				leafId: requireNullableId(value.leafId, path, lineNumber, "leafId"),
-			};
+			return parseLaneMutation(value, path, lineNumber, seq);
 		case "fact":
-			if (value.fact === "name") {
-				return { kind: "fact", seq, fact: "name", name: requireString(value.name, path, lineNumber, "name") };
-			}
-			if (value.fact === "label") {
-				if (value.label !== undefined && typeof value.label !== "string") {
-					throw invalidFile(path, lineNumber, "has invalid label");
-				}
-				return {
-					kind: "fact",
-					seq,
-					fact: "label",
-					targetId: requireString(value.targetId, path, lineNumber, "targetId"),
-					label: value.label,
-				};
-			}
-			throw invalidFile(path, lineNumber, "has unknown fact type");
+			return parseFactMutation(value, path, lineNumber, seq);
 		default:
 			throw invalidFile(path, lineNumber, "has unknown mutation kind");
 	}

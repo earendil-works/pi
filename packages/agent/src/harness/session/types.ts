@@ -236,13 +236,23 @@ export interface BranchBounds {
 }
 
 export interface RecordQuery {
+	/** Exact lane match. Omit to query every lane. */
 	lane?: string;
+	/** Exact record discriminant match. Omit to query every record type. */
 	type?: LaneRecord["type"];
+	/**
+	 * Operation identity. Matches OperationStartedRecord.id and the runId
+	 * property of operation-owned records. Records without an operation
+	 * identity do not match.
+	 */
 	runId?: string;
-	/** Valid only with type "operation_started". */
+	/** Exact operation intent kind. Valid only with type "operation_started". */
 	operationKind?: OperationStartedRecord["intent"]["kind"];
+	/** Exclusive chronological lower bound: seq > afterSeq, regardless of order. */
 	afterSeq?: number;
+	/** Sequence order. Default: "newestFirst". */
 	order?: EntryOrder;
+	/** Positive maximum number of matching records. */
 	limit?: number;
 }
 

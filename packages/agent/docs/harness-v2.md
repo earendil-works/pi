@@ -1553,13 +1553,23 @@ class Session implements SessionTree {          // bound to "main"
 interface IdGenerator { next(): string; }
 
 interface RecordQuery {
+  /** Exact lane match. Omit to query every lane. */
   lane?: string;
+  /** Exact record discriminant match. Omit to query every record type. */
   type?: LaneRecord["type"];
+  /**
+   * Operation identity. Matches OperationStartedRecord.id and the runId
+   * property of operation-owned records. Records without an operation
+   * identity do not match.
+   */
   runId?: string;
-  /** Valid only with type "operation_started". */
+  /** Exact operation intent kind. Valid only with type "operation_started". */
   operationKind?: OperationStartedRecord["intent"]["kind"];
+  /** Exclusive chronological lower bound: seq > afterSeq, regardless of order. */
   afterSeq?: number;
+  /** Sequence order. Default: "newestFirst". */
   order?: "oldestFirst" | "newestFirst";
+  /** Positive maximum number of matching records. */
   limit?: number;
 }
 ```
@@ -2229,7 +2239,10 @@ async function driverLoop(): Promise<RunResult> {
     for (const w of [...op.pendingWrites])            await fx.applyPendingWrite(op.id, w.id);
     for (const m of steeringForThisCheckpoint(op))    await fx.consumeQueueItem(op.id, "steer", m.id);
     if (op.aborting) return await abortPath();
-    if (await contextOverLimit()) await autoCompact(pressureReason());   // may throw RunFailed
+    if (await contextOverLimit()) {
+      await autoCompact(pressureReason());                  // may throw RunFailed
+      continue;                                             // fresh checkpoint: input may have arrived during compaction
+    }
 
     if (needsAssistant()) {
       const outcome = await runTurn();
@@ -3203,9 +3216,9 @@ Implementation packages derive their tests from this design and do not use the p
 
 - [x] **QA2 — salvage storage and query tests.** Dependencies: QA1, R0.
   - Port worthwhile bounded-query, corruption, fork, immutable-read, lane, record-query, and recovery-query cases whose replacement APIs already exist. Skip deleted implementation details and behavior already covered by backend conformance.
-  - Acceptance: each reviewed storage/query case is covered by a cited current test, ported as a comprehensive invariant test, marked inapplicable, or left blocked on J1–J5.
+  - Acceptance: each reviewed storage/query case is covered by a cited current test, ported as a comprehensive invariant test, marked inapplicable, or left blocked on J1–J6.
 
-- [ ] **QA3 — salvage remaining legacy tests.** Dependencies: QA2, J5, O2.
+- [ ] **QA3 — salvage remaining legacy tests.** Dependencies: QA2, J6, O2.
   - After the new storage and harness runtime are complete, review every matrix case still blocked or uncovered. Port only still-valid invariants against the new public APIs; do not restore deleted APIs or old implementation details. QA3 may change focused tests and the matrix, but no production code.
   - Acceptance: every matrix row ends covered by a cited current test, ported by a comprehensive new test, or explicitly inapplicable; no row remains blocked or uncovered.
 
@@ -3237,9 +3250,9 @@ These packages merge R0 → R1 → R2 → R3. R1 and R2 add a reducer module ins
 
 ### Track J — JSONL storage
 
-**In progress and reserved: @davidbrai.** The work began before this plan was split into J0–J5. Before merge, the track owner must include or rebase onto R0's recovery-query contract and report which J packages are complete. Other agents must not pick a J package while this ownership marker remains.
+**In progress and reserved: @davidbrai.** The work began before this plan was split into J0–J6. Before merge, the track owner must include or rebase onto R0's recovery-query contract and report which J packages are complete. Other agents must not pick a J package while this ownership marker remains.
 
-These packages own `packages/agent/src/harness/session/jsonl/**`, the concrete `JsonlSessionRepo` export, and `packages/agent/test/harness/session/jsonl*.test.ts`. They merge J0 → J1 → J2 → J3 → J4 → J5 and may proceed in parallel with tracks L and I after R0.
+These packages own `packages/agent/src/harness/session/jsonl/**`, the concrete `JsonlSessionRepo` export, and `packages/agent/test/harness/session/jsonl*.test.ts`. They merge J0 → J1 → J2 → J3 → J4 → J5 → J6 and may proceed in parallel with tracks L and I after R0.
 
 - [x] **J0 — JSONL metadata and codec contracts.** Dependencies: R0.
   - Primary files: JSONL type/codec modules and focused codec tests; no public repository export yet.
@@ -3262,6 +3275,10 @@ These packages own `packages/agent/src/harness/session/jsonl/**`, the concrete `
 - [ ] **J5 — first-write v3 conversion.** Dependencies: J4.
   - Rewrite through a temporary format-4 file on the first mutation, preserve metadata/facts/tree and resolved or legacy parent linkage, and add the aggregate v3 usage adjustment.
   - Acceptance: crash-safe conversion tests cover failure before rename, successful reopen, statistics preservation, unresolved legacy parent paths, and no second conversion.
+
+- [ ] **J6 — schema-based durable payload validation.** Dependencies: J5.
+  - Define shared TypeBox schemas for format-4 JSON and derive session types from them, including runtime schema registration for application-defined `AgentMessage` variants.
+  - Acceptance: malformed durable payloads are rejected consistently and JSONL decoding uses the shared schemas.
 
 ### Track I — primitives
 
@@ -3365,7 +3382,7 @@ These packages also own `agent-harness.ts` and merge after H8, in order C1 → C
 
 ### Track O — observability and core completion
 
-These packages merge O1 → O2 → O3 → O4 after N1, with QA3 between O2 and O3. QA3 also requires J5. They may not modify `packages/coding-agent/**`.
+These packages merge O1 → O2 → O3 → O4 after N1, with QA3 between O2 and O3. QA3 also requires J6. They may not modify `packages/coding-agent/**`.
 
 - [ ] **O1 — snapshots and event completeness.** Dependencies: N1, I2.
   - Finish live lane/session snapshots, event filtering, streaming/running-tool state, and all section 10 event insertion points.
@@ -3376,15 +3393,15 @@ These packages merge O1 → O2 → O3 → O4 after N1, with QA3 between O2 and O
 - [ ] **O3 — action-prefix and race audit.** Dependencies: O2, QA3.
   - Complete Tier C for every race row, mechanically reopen every action prefix, compare automatic/manual logs, and verify reducer/live-state fixed points.
   - Acceptance: every race row has both orders and no documented crash action lacks a reopen test.
-- [ ] **O4 — backend parity and final core audit.** Dependencies: J5, O3.
+- [ ] **O4 — backend parity and final core audit.** Dependencies: J6, O3.
   - Run the complete storage/recovery matrix across memory, JSONL, and SQLite; remove dead agent/storage declarations and compatibility comments; verify exports/declarations and `./node`; update changelogs and core documentation.
   - Acceptance: all non-e2e tests and `npm run check` pass, no active harness operation remains scaffolded, `packages/coding-agent/**` is unchanged, and the worktree is clean.
 
 ### Dependency, priority, and merge summary
 
-The serial storage lane is **R0 → J0 → J1 → J2 → J3 → J4 → J5**. The reducer lane is **R0 → R1 → R2 → R3**. The loop lane is **I0 → L1 → L2 → L3**. The effects lane is **R2 → I3 → I4 → I5**, with I4 also requiring I0, I1, and L3. Before H0, the convergence gate is **F0 + R3 + I2 + I5**.
+The serial storage lane is **R0 → J0 → J1 → J2 → J3 → J4 → J5 → J6**. The reducer lane is **R0 → R1 → R2 → R3**. The loop lane is **I0 → L1 → L2 → L3**. The effects lane is **R2 → I3 → I4 → I5**, with I4 also requiring I0, I1, and L3. Before H0, the convergence gate is **F0 + R3 + I2 + I5**.
 
-The runtime merge lane is strictly **H0 → H1 → H2 → H3 → H4 → H5 → H6 → H7 → H8 → C1 → C2 → C3 → N1 → O1 → O2 → QA3 → O3 → O4**. J5 may land independently at any time before QA3. This ordering prevents concurrent rewrites of `agent-harness.ts`, assigns every public method, and ensures every live path lands only after its reducer, telemetry, interception, and effect boundaries exist.
+The runtime merge lane is strictly **H0 → H1 → H2 → H3 → H4 → H5 → H6 → H7 → H8 → C1 → C2 → C3 → N1 → O1 → O2 → QA3 → O3 → O4**. J6 may land independently at any time before QA3. This ordering prevents concurrent rewrites of `agent-harness.ts`, assigns every public method, and ensures every live path lands only after its reducer, telemetry, interception, and effect boundaries exist.
 
 ## 21. Required reading
 
