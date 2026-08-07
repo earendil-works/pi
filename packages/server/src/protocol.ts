@@ -94,6 +94,7 @@ type _AiAssistantMessageFieldsAccountedFor = Assert<
 		| "deferred"
 		| "errorMessage"
 		| "rawStopReason"
+		| "endTurn"
 		| "timestamp"
 	>
 >;

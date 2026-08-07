@@ -424,6 +424,11 @@ export interface AssistantMessage {
 	deferred?: DeferredHandle;
 	errorMessage?: string;
 	rawStopReason?: string;
+	/**
+	 * Provider indication of whether the model explicitly ended its turn.
+	 * Preserved for debugging and does not currently affect agent control flow.
+	 */
+	endTurn?: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
