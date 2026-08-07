@@ -99,6 +99,7 @@ describe("ExtensionRunner", () => {
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
+		getVersion: () => "0.0.0-test",
 	};
 
 	describe("project_trust", () => {
@@ -902,6 +903,7 @@ describe("ExtensionRunner", () => {
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload: async () => {},
+				setExitForegroundTask: vi.fn(),
 			});
 
 			const commandContext = runner.createCommandContext();

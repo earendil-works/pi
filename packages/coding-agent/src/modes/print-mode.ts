@@ -94,6 +94,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				reload: async () => {
 					await session.reload();
 				},
+				setExitForegroundTask: () => {
+					throw new Error("setExitForegroundTask is only available in TUI mode");
+				},
 			},
 			onError: (err) => {
 				console.error(`Extension error (${err.extensionPath}): ${err.error}`);

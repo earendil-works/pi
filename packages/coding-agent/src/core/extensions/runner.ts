@@ -5,6 +5,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
+import { VERSION } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -289,6 +290,12 @@ export class ExtensionRunner {
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
 	private shutdownHandler: ShutdownHandler = () => {};
+	private version = VERSION;
+	private getVersionFn: () => string = () => this.version;
+	private exitForegroundTaskHandler: (task: (exitCode: number) => Promise<void> | void) => void = () => {
+		throw new Error("setExitForegroundTask is only available in TUI mode");
+	};
+	private exitForegroundTaskRegistered = false;
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
@@ -345,6 +352,8 @@ export class ExtensionRunner {
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.getVersionFn = contextActions.getVersion;
+		this.runtime.version = this.getVersionFn();
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -415,6 +424,7 @@ export class ExtensionRunner {
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
+			this.exitForegroundTaskHandler = actions.setExitForegroundTask;
 			return;
 		}
 
@@ -424,6 +434,9 @@ export class ExtensionRunner {
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
+		this.exitForegroundTaskHandler = () => {
+			throw new Error("setExitForegroundTask is only available in TUI mode");
+		};
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
@@ -734,6 +747,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			get version() {
+				runner.assertActive();
+				return runner.getVersionFn();
+			},
 		};
 	}
 
@@ -772,6 +789,14 @@ export class ExtensionRunner {
 		context.reload = () => {
 			this.assertActive();
 			return this.reloadHandler();
+		};
+		context.setExitForegroundTask = (task) => {
+			this.assertActive();
+			if (this.exitForegroundTaskRegistered) {
+				throw new Error("An exit foreground task is already registered");
+			}
+			this.exitForegroundTaskHandler(task);
+			this.exitForegroundTaskRegistered = true;
 		};
 		return context;
 	}

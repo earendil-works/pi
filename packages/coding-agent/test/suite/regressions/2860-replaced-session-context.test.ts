@@ -124,6 +124,9 @@ describe("regression #2860: replaced session callbacks", () => {
 					reload: async () => {
 						await session.reload();
 					},
+					setExitForegroundTask: () => {
+						throw new Error("setExitForegroundTask is only available in TUI mode");
+					},
 				},
 			});
 		};

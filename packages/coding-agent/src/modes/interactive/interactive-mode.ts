@@ -1685,6 +1685,12 @@ export class InteractiveMode {
 				reload: async () => {
 					await this.handleReloadCommand();
 				},
+				setExitForegroundTask: (task) => {
+					if (this.exitForegroundTask !== undefined) {
+						throw new Error("An exit foreground task is already registered");
+					}
+					this.exitForegroundTask = task;
+				},
 			},
 			shutdownHandler: () => {
 				this.shutdownRequested = true;
@@ -1812,6 +1818,7 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			version: VERSION,
 		});
 
 		// Set up the extension shortcut handler on the default editor
@@ -3541,6 +3548,7 @@ export class InteractiveMode {
 	 * repaint the final frame while the process is exiting.
 	 */
 	private isShuttingDown = false;
+	private exitForegroundTask: ((exitCode: number) => Promise<void> | void) | undefined = undefined;
 
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
@@ -3578,6 +3586,19 @@ export class InteractiveMode {
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
 			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
+		}
+
+		const exitForegroundTask = this.exitForegroundTask;
+		if (exitForegroundTask !== undefined) {
+			// The foreground task owns the terminal now (like Kimi's /web server).
+			// Drop pi's TUI signal handlers; plain exit handlers forward the
+			// signal as an exit code instead of re-entering shutdown().
+			this.unregisterSignalHandlers();
+			process.once("SIGTERM", () => process.exit(143));
+			if (process.platform !== "win32") {
+				process.once("SIGHUP", () => process.exit(129));
+			}
+			await exitForegroundTask(0);
 		}
 
 		process.exit(0);

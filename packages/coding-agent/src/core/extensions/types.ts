@@ -310,6 +310,8 @@ export interface ExtensionContext {
 	mode: ExtensionMode;
 	/** Whether dialog-capable UI is available (true in TUI and RPC modes) */
 	hasUI: boolean;
+	/** The version of the host pi that is running this extension. */
+	version: string;
 	/** Current working directory */
 	cwd: string;
 	/** Session manager (read-only) */
@@ -378,6 +380,13 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Reload extensions, skills, prompts, themes, and context files. */
 	reload(): Promise<void>;
+
+	/**
+	 * Register a task that runs after the TUI shuts down, before the process
+	 * exits. The task takes over the foreground process (e.g. to run a server).
+	 * Only available in TUI mode, at most once per process.
+	 */
+	setExitForegroundTask: (task: (exitCode: number) => Promise<void> | void) => void;
 }
 
 /**
@@ -1310,6 +1319,9 @@ export interface ExtensionAPI {
 	/** Execute a shell command. */
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
 
+	/** The version of the host pi that is running this extension. */
+	version: string;
+
 	/** Get the list of currently active tool names. */
 	getActiveTools(): string[];
 
@@ -1568,6 +1580,8 @@ export type SetLabelHandler = (entryId: string, label: string | undefined) => vo
  * Contains flag values (defaults set during registration, CLI values set after).
  */
 export interface ExtensionRuntimeState {
+	/** The version of the host pi that is running this extension. */
+	version: string;
 	flagValues: Map<string, boolean | string>;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
@@ -1625,6 +1639,7 @@ export interface ExtensionContextActions {
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	getVersion: () => string;
 }
 
 /**
@@ -1651,6 +1666,7 @@ export interface ExtensionCommandContextActions {
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
 	reload: () => Promise<void>;
+	setExitForegroundTask: (task: (exitCode: number) => Promise<void> | void) => void;
 }
 
 /**

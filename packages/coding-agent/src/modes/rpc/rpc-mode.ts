@@ -340,6 +340,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				reload: async () => {
 					await session.reload();
 				},
+				setExitForegroundTask: () => {
+					throw new Error("setExitForegroundTask is only available in TUI mode");
+				},
 			},
 			shutdownHandler: () => {
 				shutdownRequested = true;

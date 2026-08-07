@@ -941,6 +941,10 @@ UI methods for user interaction. See [Custom UI](#custom-ui) for full details.
 
 Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "tui"` to guard terminal-only features such as `custom()`, component factories, terminal input, and direct TUI rendering.
 
+### ctx.version
+
+The version of the host pi running the extension (for example `"0.82.1"`). Use it to gate features that depend on a minimum host version, e.g. before calling `ctx.setExitForegroundTask()`.
+
 ### ctx.hasUI
 
 `true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
@@ -1079,6 +1083,25 @@ pi.on("before_agent_start", (event, ctx) => {
 ## ExtensionCommandContext
 
 Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods. These are only available in commands because they can deadlock if called from event handlers.
+
+### ctx.setExitForegroundTask()
+
+Register a task that takes over the foreground process after pi's TUI shuts down. Available **only in TUI command contexts** and **at most once per process** (a second registration throws `Error("An exit foreground task is already registered")`). Calling it from RPC, print, or JSON mode throws `Error("setExitForegroundTask is only available in TUI mode")`.
+
+The task runs after the TUI has stopped, the agent session has been fully disposed (`session_shutdown` emitted, `runtimeHost.dispose()` completed) and the terminal has been restored, but before the process exits. When shutdown was triggered by a signal (`SIGTERM`/`SIGHUP`), the task does not run. Once the task returns, the process exits with the code the task was given. While the task owns the foreground process, pi's own signal handlers are dropped: a later `SIGTERM` or `SIGHUP` exits the process with code 143 or 129 instead of re-entering pi's shutdown sequence.
+
+Because the extension context is already torn down by the time the task runs, the task must only use plain data captured at registration time (for example the session id, session directory, and cwd), and must not call any `ctx` or `pi` methods.
+
+```typescript
+pi.on("command", async (args, ctx) => {
+  if (args.trim() !== "/web") return;
+  const sessionId = ctx.sessionManager.getSessionId();
+  ctx.setExitForegroundTask(async (code) => {
+    await startWebServer({ sessionId, cwd: ctx.cwd });
+  });
+  ctx.shutdown();
+});
+```
 
 ### ctx.getSystemPromptOptions()
 
@@ -1327,6 +1350,10 @@ export default function (pi: ExtensionAPI) {
 ```
 
 ## ExtensionAPI Methods
+
+### pi.version
+
+The version of the host pi running the extension, identical to `ctx.version`.
 
 ### pi.on(event, handler)
 
