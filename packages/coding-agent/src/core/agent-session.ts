@@ -21,9 +21,12 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	MemoryEntry,
+	MemoryStore,
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
+import { createReviewTool, createTaskTool } from "@earendil-works/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
@@ -225,6 +228,13 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/**
+	 * Pre-formatted cross-session memory block (from `formatMemoriesBlock`),
+	 * appended to the base system prompt.
+	 */
+	memoryBlock?: string;
+	/** Optional memory store backing `session.remember()`. */
+	memoryStore?: MemoryStore;
 }
 
 export interface ExtensionBindings {
@@ -373,6 +383,8 @@ export class AgentSession {
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
+	private _memoryBlock = "";
+	private _memoryStore?: MemoryStore;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -389,6 +401,8 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._memoryBlock = config.memoryBlock ?? "";
+		this._memoryStore = config.memoryStore;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -404,6 +418,23 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
+	}
+
+	/**
+	 * Persist a durable fact to the session's memory store (if configured) so a
+	 * later session in this project can recall it via the injected memory block.
+	 * @returns the saved entry, or undefined when no memory store is configured.
+	 */
+	async remember(content: string, tags?: string[], sourceSessionId?: string): Promise<MemoryEntry | undefined> {
+		if (!this._memoryStore) {
+			return undefined;
+		}
+		return this._memoryStore.save({
+			content,
+			tags,
+			sourceSessionId: sourceSessionId ?? this.sessionManager.getSessionId(),
+			cwd: this._cwd,
+		});
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -1039,7 +1070,9 @@ export class AgentSession {
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
 		const appendSystemPrompt =
-			loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined;
+			loaderAppendSystemPrompt.length > 0 || this._memoryBlock.length > 0
+				? [...loaderAppendSystemPrompt, ...(this._memoryBlock.length > 0 ? [this._memoryBlock] : [])].join("\n\n")
+				: undefined;
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
@@ -2576,6 +2609,29 @@ export class AgentSession {
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
+
+		// The `task` and `review` tools spawn subagents using this session's own
+		// model, stream function, and auth resolution, so they are wired at
+		// runtime rather than inside the pure tool factories. They are registered
+		// as built-ins (subject to noTools/active-tool filtering) but not active
+		// by default.
+		if (!this._baseToolsOverride) {
+			const subagentToolOptions = {
+				model: this.agent.state.model,
+				streamFn: this.agent.streamFunction,
+				convertToLlm: this.agent.convertToLlm,
+				getApiKey: this.agent.getApiKey,
+				// Resolved lazily per subagent spawn so children see the current
+				// system prompt (skills, AGENTS.md context, memory block) rather
+				// than the empty prompt captured at construction time.
+				getSystemPrompt: () => this.agent.state.systemPrompt,
+			};
+			this._baseToolDefinitions.set("task", createToolDefinitionFromAgentTool(createTaskTool(subagentToolOptions)));
+			this._baseToolDefinitions.set(
+				"review",
+				createToolDefinitionFromAgentTool(createReviewTool(subagentToolOptions)),
+			);
+		}
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {

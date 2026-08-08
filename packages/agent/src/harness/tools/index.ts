@@ -19,5 +19,23 @@ export {
 	type ReadToolInput,
 	type ReadToolOptions,
 } from "./read.ts";
+export {
+	createReviewTool,
+	type ReviewIssue,
+	type ReviewParameters,
+	type ReviewSeverity,
+	type ReviewToolDetails,
+	type ReviewToolOptions,
+	type ReviewVerdict,
+	reviewParametersSchema,
+} from "./review.ts";
+export {
+	createTaskTool,
+	extractJson,
+	type TaskParameters,
+	type TaskToolDetails,
+	type TaskToolOptions,
+	taskParametersSchema,
+} from "./task.ts";
 export type { ExecutionToolContext } from "./tool-context.ts";
 export { createWriteTool, type WriteToolInput } from "./write.ts";
