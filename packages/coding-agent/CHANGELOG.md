@@ -6,6 +6,10 @@
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 
+### Fixed
+
+- Fixed a crash on concurrent manual compaction calls. Pressing the compact shortcut twice in quick succession could fail with `Cannot read properties of undefined (reading 'signal')`; a second compact request while one is in progress now rejects with "Compaction already in progress".
+
 ## [0.84.1] - 2026-08-07
 
 ### New Features

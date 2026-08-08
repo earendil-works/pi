@@ -1789,7 +1789,15 @@ export class AgentSession {
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		await this.abort();
+		// Reject concurrent compaction calls: the shared AbortController field
+		// would be overwritten by the new call, causing the previous call to
+		// crash on `this._compactionAbortController.signal` after the field
+		// is cleared to undefined.
+		if (this._compactionAbortController !== undefined) {
+			throw new Error("Compaction already in progress");
+		}
 		this._compactionAbortController = new AbortController();
+		const controller = this._compactionAbortController;
 		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
@@ -1823,7 +1831,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: this._compactionAbortController.signal,
+					signal: controller.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -1857,7 +1865,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					customInstructions,
-					this._compactionAbortController.signal,
+					controller.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -1871,7 +1879,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (controller.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -2075,6 +2083,7 @@ export class AgentSession {
 
 			this._emit({ type: "compaction_start", reason });
 			this._autoCompactionAbortController = new AbortController();
+			const controller = this._autoCompactionAbortController;
 			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -2088,7 +2097,7 @@ export class AgentSession {
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: controller.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
@@ -2129,7 +2138,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					controller.signal,
 					this.thinkingLevel,
 					this.agent.streamFunction,
 					env,
@@ -2143,7 +2152,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (controller.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
