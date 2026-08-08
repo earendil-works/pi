@@ -40,6 +40,8 @@ export {
 	InMemoryTelemetryContext,
 	NOOP_TELEMETRY_CONTEXT,
 } from "@earendil-works/pi-telemetry";
+// Advisor (secondary-model turn observer)
+export { type Advisor, type AdvisorOptions, createAdvisor } from "./advisor.ts";
 export * from "./agent.ts";
 // Loop functions
 export * from "./agent-loop.ts";
@@ -73,6 +75,16 @@ export {
 	serializeConversation,
 	shouldCompact,
 } from "./harness/compaction/compaction.ts";
+// Cross-session memory stores
+export {
+	FileMemoryStore,
+	formatMemoriesBlock,
+	InMemoryMemoryStore,
+	type MemoryEntry,
+	type MemoryQuery,
+	type MemoryStore,
+	type NewMemory,
+} from "./harness/memory/memory-store.ts";
 export * from "./harness/messages.ts";
 export * from "./harness/prompt-templates.ts";
 // Harness

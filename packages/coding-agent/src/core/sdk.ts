@@ -1,5 +1,13 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	formatMemoriesBlock,
+	type MemoryQuery,
+	type MemoryStore,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -82,6 +90,15 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+
+	/**
+	 * Optional cross-session memory store. When provided, matching memories are
+	 * injected into the system prompt at session start and `session.remember()`
+	 * persists new facts.
+	 */
+	memoryStore?: MemoryStore;
+	/** Query controlling which memories are recalled at session start. */
+	memoryQuery?: Omit<MemoryQuery, "cwd">;
 }
 
 /** Result from createAgentSession */
@@ -299,6 +316,20 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
+		// Time-traveling stream rules from settings (invalid patterns are skipped).
+		streamRules: settingsManager.getStreamRules().flatMap((rule) => {
+			try {
+				return [
+					{
+						name: rule.name,
+						pattern: new RegExp(rule.pattern),
+						reminder: rule.reminder,
+					},
+				];
+			} catch {
+				return [];
+			}
+		}),
 		streamFn: async (model, context, options) => {
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
@@ -373,6 +404,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
+	// Recall cross-session memories for this project and inject them into the
+	// base system prompt at session start.
+	const memoryBlock = options.memoryStore
+		? formatMemoriesBlock(
+				await options.memoryStore.list({
+					cwd,
+					...options.memoryQuery,
+				}),
+			)
+		: undefined;
+
 	const session = new AgentSession({
 		agent,
 		sessionManager,
@@ -387,6 +429,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		memoryBlock,
+		memoryStore: options.memoryStore,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 
