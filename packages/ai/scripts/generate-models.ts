@@ -2421,6 +2421,7 @@ async function generateModels() {
 	const deepseekCompat: OpenAICompletionsCompat = {
 		requiresReasoningContentOnAssistantMessages: true,
 		thinkingFormat: "deepseek",
+		maxTokensField: "max_tokens",
 	};
 	const deepseekV4Models: Model<"openai-completions">[] = [
 		{
