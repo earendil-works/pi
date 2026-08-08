@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced alternate-screen per-frame allocation churn roughly 9-18x by painting full-width layout rows as direct line references instead of recompositing every visible row through ANSI/grapheme segmentation on each frame.
+
+## [0.84.1] - 2026-08-07
+
+### Added
+
+- Added unbound half-page transcript scrolling actions, `tui.altScreen.halfPageUp` and `tui.altScreen.halfPageDown`, for fullscreen TUI keybindings ([#7735](https://github.com/earendil-works/pi/issues/7735)).
+- Added double-click word and whitespace selection, granularity-aware drag selection, and triple-click paragraph selection in the fullscreen TUI ([#7725](https://github.com/earendil-works/pi/issues/7725), [#7733](https://github.com/earendil-works/pi/pull/7733) by [@volsa](https://github.com/volsa)).
+- Added an optional right-click paste handler to the alternate-screen TUI, currently enabled on Windows.
+
+### Fixed
+
+- Fixed LaTeX relation, multiplication, and named-operator spacing, and correctly composed matrices with stacked fractions, operator limits, and adjacent matrices.
+- Reduced fullscreen mouse event volume under tmux, Zellij, and GNU Screen by using button-motion tracking instead of all-motion tracking.
+
 ## [0.84.0] - 2026-08-06
 
 ### Added

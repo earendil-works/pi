@@ -39,6 +39,13 @@ function describeSetDifference(expected: readonly string[], actual: readonly str
 		.join("; ");
 }
 
+export function assertExactModelIds(label: string, expected: Iterable<string>, actual: Iterable<string>): void {
+	const expectedIds = Array.from(new Set(expected)).sort();
+	const actualIds = Array.from(new Set(actual)).sort();
+	if (sameStrings(expectedIds, actualIds)) return;
+	throw new Error(`${label} model IDs do not match (${describeSetDifference(expectedIds, actualIds)})`);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

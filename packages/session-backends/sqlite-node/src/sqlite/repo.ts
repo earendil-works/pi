@@ -20,6 +20,7 @@ import {
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { appendEntryToBranchCache, buildCachedBranch, deleteBranchCache, rebuildBranchCache } from "./branch-cache.ts";
 import { applyMigrations } from "./migrations.ts";
+import { sql } from "./sql.ts";
 import { type CachedBranchEntryRow, queryCachedBranchRows, readCachedBranch } from "./storage/branch-entries.ts";
 import { readBranchTipIds } from "./storage/branch-tips.ts";
 import {
@@ -169,9 +170,9 @@ function getParentPath(path: string): string {
 }
 
 function configureSqliteDatabase(db: SqliteDatabase): void {
-	db.exec("PRAGMA journal_mode=WAL");
-	db.exec("PRAGMA synchronous=FULL");
-	db.exec("PRAGMA busy_timeout=5000");
+	sql`PRAGMA journal_mode=WAL`.exec(db);
+	sql`PRAGMA synchronous=FULL`.exec(db);
+	sql`PRAGMA busy_timeout=5000`.exec(db);
 }
 
 function timestampToText(timestamp: number): string {
@@ -300,10 +301,15 @@ function decodeRecord(row: { seq: number; timestamp: string; payload: string }):
 	}
 }
 
-function validateCachedBranchRows(rows: readonly CachedBranchEntryRow[], query: BranchBounds): void {
-	if (rows.length === 0) return;
+function validateCachedBranchRows(rows: readonly CachedBranchEntryRow[], query: BranchBounds & EntryQuery): void {
+	if (rows.length === 0 || query.type !== undefined || query.customType !== undefined) return;
 	const path = [...rows].sort((left, right) => left.entry_seq - right.entry_seq);
-	if (query.stopAtId === undefined && query.stopAtType === undefined && path[0]?.parent_id !== null) {
+	const shouldIncludeRoot =
+		query.stopAtId === undefined &&
+		query.stopAtType === undefined &&
+		query.cursor === undefined &&
+		(query.order === "oldestFirst" || query.limit === undefined);
+	if (shouldIncludeRoot && path[0]?.parent_id !== null) {
 		throw new SessionError("invalid_entry", `Entry ${path[0]?.parent_id} not found`);
 	}
 	for (let index = 1; index < path.length; index++) {
@@ -526,7 +532,14 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 	}
 
 	async findEntries(query: EntryQuery = {}): Promise<Entry[]> {
-		const rows = readEntryRows(this.db, this.metadata.id, { order: query.order });
+		const sqlType = query.type ?? (query.customType === undefined ? undefined : "custom");
+		const sqlLimit = query.customType === undefined ? query.limit : undefined;
+		const rows = readEntryRows(this.db, this.metadata.id, {
+			cursor: query.cursor,
+			limit: sqlLimit,
+			order: query.order,
+			type: sqlType,
+		});
 		const entries = rows.map(decodeEntry).filter((entry) => matchesEntryQuery(entry, query));
 		return query.limit === undefined ? entries : entries.slice(0, query.limit);
 	}
@@ -566,33 +579,47 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 
 	async getLog(options: LogOptions = {}): Promise<LogItem[]> {
 		const afterSeq = options.afterSeq ?? 0;
-		const entryRows = readEntryRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst" });
-		const recordRows = readRecordRows(this.db, this.metadata.id, { afterSeq });
-		const laneRows = readLaneMoveRows(this.db, this.metadata.id, { afterSeq });
-		const factRows = readFactRows(this.db, this.metadata.id, { afterSeq });
+		const limit = options.limit;
+		const entryRows = readEntryRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst", limit });
+		const recordRows = readRecordRows(this.db, this.metadata.id, { afterSeq, order: "oldestFirst", limit });
+		const laneRows = readLaneMoveRows(this.db, this.metadata.id, { afterSeq, limit });
+		const factRows = readFactRows(this.db, this.metadata.id, { afterSeq, limit });
 
-		const log: LogItem[] = [
-			...entryRows.map((row) => ({ kind: "entry" as const, seq: row.seq, entry: decodeEntry(row) })),
-			...recordRows.map((row) => ({ kind: "record" as const, seq: row.seq, record: decodeRecord(row) })),
-			...laneRows.map((row) => ({ kind: "lane" as const, seq: row.seq, lane: row.lane, leafId: row.leaf_id })),
-			...factRows.map((row) => {
-				if (row.kind === "name")
+		const logRows: { seq: number; decode: () => LogItem }[] = [
+			...entryRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "entry" as const, seq: row.seq, entry: decodeEntry(row) }),
+			})),
+			...recordRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "record" as const, seq: row.seq, record: decodeRecord(row) }),
+			})),
+			...laneRows.map((row) => ({
+				seq: row.seq,
+				decode: () => ({ kind: "lane" as const, seq: row.seq, lane: row.lane, leafId: row.leaf_id }),
+			})),
+			...factRows.map((row) => ({
+				seq: row.seq,
+				decode: () => {
+					if (row.kind === "name")
+						return {
+							kind: "fact" as const,
+							seq: row.seq,
+							fact: "name" as const,
+							name: row.value === null ? undefined : (JSON.parse(row.value) as string),
+						};
 					return {
 						kind: "fact" as const,
 						seq: row.seq,
-						fact: "name" as const,
-						name: JSON.parse(row.value ?? "null") as string,
+						fact: "label" as const,
+						targetId: row.key ?? "",
+						label: row.value === null ? undefined : (JSON.parse(row.value) as string),
 					};
-				return {
-					kind: "fact" as const,
-					seq: row.seq,
-					fact: "label" as const,
-					targetId: row.key ?? "",
-					label: row.value === null ? undefined : (JSON.parse(row.value) as string),
-				};
-			}),
+				},
+			})),
 		].sort((left, right) => left.seq - right.seq);
-		return options.limit === undefined ? log : log.slice(0, options.limit);
+		const selectedRows = options.limit === undefined ? logRows : logRows.slice(0, options.limit);
+		return selectedRows.map((row) => row.decode());
 	}
 
 	async getName(): Promise<string | undefined> {
@@ -600,10 +627,10 @@ class SqliteSessionStorage implements SessionStorage<SqliteSessionMetadata> {
 		return row?.value === undefined || row.value === null ? undefined : (JSON.parse(row.value) as string);
 	}
 
-	async setName(name: string): Promise<void> {
+	async setName(name: string | undefined): Promise<void> {
 		return this.enqueueWrite(() => {
 			const seq = getNextSequence(this.db, this.metadata.id);
-			appendFact(this.db, this.metadata.id, seq, "name", null, JSON.stringify(name));
+			appendFact(this.db, this.metadata.id, seq, "name", null, name === undefined ? null : JSON.stringify(name));
 			advanceSequence(this.db, this.metadata.id, seq);
 		});
 	}

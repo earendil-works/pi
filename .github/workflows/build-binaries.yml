@@ -270,11 +270,51 @@ jobs:
       - name: Publish npm packages
         run: node scripts/publish.mjs
 
+  announce-pi-dev-release:
+    runs-on: ubuntu-latest
+    needs: publish-npm
+    environment: pi-model-upload
+    concurrency:
+      group: announce-pi-dev-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.PI_ARTIFACTS_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PI_ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: 'true'
+      R2_ENDPOINT: https://67c0d357268b0fca6e0b465bb9d01b84.r2.cloudflarestorage.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Verify AWS CLI
+        run: aws --version
+
+      - name: Announce verified release on pi.dev
+        run: |
+          node scripts/publish-release-announcement.mjs \
+            --version "${RELEASE_TAG#v}" \
+            --bucket pi-artifacts \
+            --endpoint "$R2_ENDPOINT"
+
   publish-github-release:
     runs-on: ubuntu-latest
     needs:
       - stage-github-release
       - publish-npm
+      - announce-pi-dev-release
     permissions:
       contents: write
     env:
@@ -305,8 +345,9 @@ jobs:
       - build
       - stage-github-release
       - publish-npm
+      - announce-pi-dev-release
       - publish-github-release
-    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.publish-github-release.result != 'success') }}
+    if: ${{ always() && needs.stage-github-release.result != 'skipped' && (needs.stage-github-release.result != 'success' || needs.publish-npm.result != 'success' || needs.announce-pi-dev-release.result != 'success' || needs.publish-github-release.result != 'success') }}
     permissions:
       contents: write
     env:

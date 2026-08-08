@@ -1,5 +1,6 @@
 import { SessionError, type SessionStats } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
+import { sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface SessionStatsRow {
@@ -12,21 +13,15 @@ export interface SessionStatsRow {
 }
 
 export function createStats(db: SqliteDatabase, sessionId: string, messageCount = 0): void {
-	db.prepare(
-		`INSERT INTO session_stats
+	sql`INSERT INTO session_stats
 			(session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total)
-			VALUES (?, ?, 0, 0, 0, 0)`,
-	).run(sessionId, messageCount);
+			VALUES (${sessionId}, ${messageCount}, 0, 0, 0, 0)`.run(db);
 }
 
 export function readStats(db: SqliteDatabase, sessionId: string): SessionStats {
-	const row = db
-		.prepare(
-			`SELECT session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total
-			FROM session_stats
-			WHERE session_id = ?`,
-		)
-		.get<SessionStatsRow>(sessionId);
+	const row = sql`SELECT session_id, message_count, cached_tokens, uncached_tokens, total_tokens, cost_total
+		FROM session_stats
+		WHERE session_id = ${sessionId}`.get<SessionStatsRow>(db);
 	if (!row) throw new SessionError("storage", `Missing stats row for session ${sessionId}`);
 	return {
 		messageCount: row.message_count,
@@ -38,26 +33,22 @@ export function readStats(db: SqliteDatabase, sessionId: string): SessionStats {
 }
 
 export function incrementMessageCount(db: SqliteDatabase, sessionId: string): void {
-	const result = db
-		.prepare("UPDATE session_stats SET message_count = message_count + 1 WHERE session_id = ?")
-		.run(sessionId);
+	const result = sql`UPDATE session_stats SET message_count = message_count + 1 WHERE session_id = ${sessionId}`.run(
+		db,
+	);
 	if (result.changes !== 1) throw new SessionError("storage", `Missing stats row for session ${sessionId}`);
 }
 
 export function addUsageToStats(db: SqliteDatabase, sessionId: string, usage: Usage): void {
-	const result = db
-		.prepare(
-			`UPDATE session_stats
-			SET cached_tokens = cached_tokens + ?,
-				uncached_tokens = uncached_tokens + ?,
-				total_tokens = total_tokens + ?,
-				cost_total = cost_total + ?
-			WHERE session_id = ?`,
-		)
-		.run(usage.cacheRead, usage.input + usage.cacheWrite, usage.totalTokens, usage.cost.total, sessionId);
+	const result = sql`UPDATE session_stats
+		SET cached_tokens = cached_tokens + ${usage.cacheRead},
+			uncached_tokens = uncached_tokens + ${usage.input + usage.cacheWrite},
+			total_tokens = total_tokens + ${usage.totalTokens},
+			cost_total = cost_total + ${usage.cost.total}
+		WHERE session_id = ${sessionId}`.run(db);
 	if (result.changes !== 1) throw new SessionError("storage", `Missing stats row for session ${sessionId}`);
 }
 
 export function deleteStats(db: SqliteDatabase, sessionId: string): void {
-	db.prepare("DELETE FROM session_stats WHERE session_id = ?").run(sessionId);
+	sql`DELETE FROM session_stats WHERE session_id = ${sessionId}`.run(db);
 }

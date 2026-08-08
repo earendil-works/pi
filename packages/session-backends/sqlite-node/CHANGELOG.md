@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.84.1] - 2026-08-07
+
+### Added
+
+- Added the composable, parameterized `sql` template tag for SQLite queries.
+
+### Fixed
+
+- Fixed SQLite branch queries to apply filters, cursors, and limits in SQL; bounded log reads; and added covering indexes for session, record, branch, and fact queries ([#7727](https://github.com/earendil-works/pi/pull/7727) by [@cristinaponcela](https://github.com/cristinaponcela)).
+
 ## [0.84.0] - 2026-08-06
 
 ### Breaking Changes

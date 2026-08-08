@@ -35,6 +35,7 @@ import {
 	extractAnsiCode,
 	getGraphemeCellRange,
 	getOsc8LinkAtColumn,
+	getWordSegmenter,
 	sliceByColumn,
 	stripTerminalSequences,
 	visibleWidth,
@@ -44,7 +45,8 @@ const ENTER_ALT_SCREEN = "\x1b[?1049h";
 const EXIT_ALT_SCREEN = "\x1b[?1049l";
 const DISABLE_AUTOWRAP = "\x1b[?7l";
 const ENABLE_AUTOWRAP = "\x1b[?7h";
-const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h";
+const ENABLE_BUTTON_MOTION_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1004h\x1b[?1006h";
+const ENABLE_ALL_MOTION_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h";
 const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 const FOCUS_IN = "\x1b[I";
 const FOCUS_OUT = "\x1b[O";
@@ -56,6 +58,8 @@ const PAGE_SCROLL_OVERLAP = 4;
 const MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
 const MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
+const DOUBLE_CLICK_INTERVAL_MS = 500;
+const wordSegmenter = getWordSegmenter();
 
 interface CachedKittyImage {
 	transmissionGeneration: number;
@@ -67,6 +71,24 @@ interface SelectionPoint {
 	row: number;
 	col: number;
 	scrollView?: ScrollView;
+	/** Whether this point lies between terminal cells rather than on a cell. */
+	boundary?: boolean;
+}
+
+interface SelectionRange {
+	start: SelectionPoint;
+	end: SelectionPoint;
+}
+
+type SelectionGranularity = "character" | "word" | "line";
+
+interface ClickTarget {
+	timestamp: number;
+	count: number;
+	row: number;
+	scrollView?: ScrollView;
+	wordStart: number;
+	wordEnd: number;
 }
 
 interface SgrMouseEvent {
@@ -99,6 +121,8 @@ export interface TuiAltScreenOptions {
 	mouse?: boolean;
 	/** Open an OSC 8 hyperlink activated with a primary-button click. */
 	openUrl?: (url: string) => void;
+	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
+	onRightClickPaste?: () => void;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -120,6 +144,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly uploadedKittyImages = new Map<number, CachedKittyImage>();
 	private selectionAnchor?: SelectionPoint;
 	private selectionFocus?: SelectionPoint;
+	private selectionGranularity: SelectionGranularity = "character";
+	private selectionInitialRange?: SelectionRange;
+	private lastClick?: ClickTarget;
 	private selectionDragPointer?: { x: number; y: number };
 	private selectionAutoScrollDirection: -1 | 0 | 1 = 0;
 	private selectionAutoScrollTimer?: NodeJS.Timeout;
@@ -131,6 +158,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly wheelScrollLines: number;
 	private readonly mouseEnabled: boolean;
 	private readonly openUrl?: (url: string) => void;
+	private readonly onRightClickPaste?: () => void;
 
 	constructor(
 		terminal: Terminal,
@@ -150,6 +178,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.wheelScrollLines = Math.max(1, Math.floor(options.wheelScrollLines ?? 1));
 		this.mouseEnabled = options.mouse ?? true;
 		this.openUrl = options.openUrl;
+		this.onRightClickPaste = options.onRightClickPaste;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -198,11 +227,25 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.lastDocument = [];
 		this.selectionAnchor = undefined;
 		this.selectionFocus = undefined;
+		this.selectionGranularity = "character";
+		this.selectionInitialRange = undefined;
+		this.lastClick = undefined;
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
 		this.resetRenderState();
+		const term = process.env.TERM?.toLowerCase() ?? "";
+		// Multiplexers can lag when every pointer movement is forwarded. Button-motion
+		// tracking preserves clicks, wheel events, selections, and scrollbar dragging.
+		const mouseSequence =
+			process.env.TMUX !== undefined ||
+			process.env.ZELLIJ !== undefined ||
+			process.env.STY !== undefined ||
+			term.startsWith("tmux") ||
+			term.startsWith("screen")
+				? ENABLE_BUTTON_MOTION_MOUSE
+				: ENABLE_ALL_MOTION_MOUSE;
 		this.terminal.write(
-			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? ENABLE_MOUSE : ""}\x1b[2J\x1b[H\x1b[?25l`,
+			`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1b[2J\x1b[H\x1b[?25l`,
 		);
 	}
 
@@ -351,7 +394,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (hadActiveSelection) {
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
+				this.selectionGranularity = "character";
+				this.selectionInitialRange = undefined;
 			}
+			this.lastClick = undefined;
 			this.requestRender();
 			return { consume: true };
 		}
@@ -364,6 +410,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		const mouseEvent = this.parseSgrMouseEvent(data);
 		if (mouseEvent) {
+			if (this.handleRightClickPaste(mouseEvent)) return { consume: true };
 			const handled = this.handleScrollbarMouseEvent(mouseEvent);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(mouseEvent.x, mouseEvent.y);
 			if (!handled) this.handleSelectionMouseEvent(mouseEvent);
@@ -383,6 +430,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!isRelease) {
 				this.scrollBy(Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));
 			}
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.halfPageUp")) {
+			if (!isRelease) this.scrollBy(-Math.max(1, Math.floor(this.getPrimaryScrollView().viewportHeight / 2)));
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.halfPageDown")) {
+			if (!isRelease) this.scrollBy(Math.max(1, Math.floor(this.getPrimaryScrollView().viewportHeight / 2)));
 			return { consume: true };
 		}
 		if (keybindings.matches(data, "tui.altScreen.previousPrompt")) {
@@ -456,6 +511,18 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		};
 	}
 
+	private handleRightClickPaste(event: SgrMouseEvent): boolean {
+		if (!this.onRightClickPaste || process.platform !== "win32" || event.release || event.button !== 2) {
+			return false;
+		}
+		try {
+			this.onRightClickPaste();
+		} catch {
+			// Clipboard paste is best-effort.
+		}
+		return true;
+	}
+
 	private getScrollbarTargetAt(x: number, y: number): ScrollbarTarget | undefined {
 		if (this.hasOverlay() || !this.currentLayout) return undefined;
 		for (const scrollView of getScrollViewsAt(this.currentLayout, x, y)) {
@@ -518,6 +585,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.selectionPressActive = false;
 		this.selectionAnchor = undefined;
 		this.selectionFocus = undefined;
+		this.selectionGranularity = "character";
+		this.selectionInitialRange = undefined;
+		this.lastClick = undefined;
 		this.pressedUrl = undefined;
 		this.selectionDragged = false;
 		this.setScrollbarHover(target.scrollView);
@@ -563,6 +633,83 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		};
 	}
 
+	private getSelectionSourceLine(point: SelectionPoint): string {
+		if (point.scrollView && this.currentLayout) {
+			const lines = getScrollViewBox(this.currentLayout, point.scrollView)?.scrollContentLines;
+			if (lines) return lines[point.row] ?? "";
+		}
+		return this.previousScreen[point.row] ?? "";
+	}
+
+	private getWordSelection(point: SelectionPoint): SelectionRange | undefined {
+		const line = stripTerminalSequences(this.getSelectionSourceLine(point));
+		let start = 0;
+		for (const segment of wordSegmenter.segment(line)) {
+			const end = start + visibleWidth(segment.segment);
+			if (point.col >= start && point.col < end) {
+				return {
+					start: { ...point, col: start },
+					end: { ...point, col: end, boundary: true },
+				};
+			}
+			start = end;
+		}
+		return undefined;
+	}
+
+	private getLineSelection(point: SelectionPoint): SelectionRange {
+		return {
+			start: { ...point, col: 0 },
+			end: { ...point, col: visibleWidth(this.getSelectionSourceLine(point)), boundary: true },
+		};
+	}
+
+	private updateSelectionFocus(point: SelectionPoint): void {
+		if (this.selectionGranularity === "character" || !this.selectionInitialRange) {
+			this.selectionFocus = point;
+			return;
+		}
+		const range = this.selectionGranularity === "word" ? this.getWordSelection(point) : this.getLineSelection(point);
+		if (!range) return;
+		const initial = this.selectionInitialRange;
+		const targetBeforeInitial =
+			range.start.row < initial.start.row ||
+			(range.start.row === initial.start.row && range.start.col < initial.start.col);
+		if (targetBeforeInitial) {
+			this.selectionAnchor = initial.end;
+			this.selectionFocus = range.start;
+		} else {
+			this.selectionAnchor = initial.start;
+			this.selectionFocus = range.end;
+		}
+	}
+
+	private getClickCount(point: SelectionPoint, word: SelectionRange | undefined): number {
+		const now = Date.now();
+		const previous = this.lastClick;
+		const count =
+			word &&
+			previous &&
+			now - previous.timestamp <= DOUBLE_CLICK_INTERVAL_MS &&
+			previous.row === point.row &&
+			previous.scrollView === point.scrollView &&
+			previous.wordStart === word.start.col &&
+			previous.wordEnd === word.end.col
+				? (previous.count % 3) + 1
+				: 1;
+		this.lastClick = word
+			? {
+					timestamp: now,
+					count,
+					row: point.row,
+					scrollView: point.scrollView,
+					wordStart: word.start.col,
+					wordEnd: word.end.col,
+				}
+			: undefined;
+		return count;
+	}
+
 	private updateSelectionAutoScroll(event: SgrMouseEvent): void {
 		const scrollView = this.selectionAnchor?.scrollView;
 		if (!scrollView || !this.currentLayout) {
@@ -605,7 +752,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return;
 		}
 		const point = this.getScrollSelectionPoint(scrollView, pointer.x, pointer.y);
-		if (point) this.selectionFocus = point;
+		if (point) this.updateSelectionFocus(point);
 		this.requestRender();
 	}
 
@@ -627,7 +774,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.selectionPressActive = false;
 			this.stopSelectionAutoScroll();
 			if (!this.selectionAnchor) return;
-			this.selectionFocus = point;
+			this.updateSelectionFocus(point);
 			const clickedUrl =
 				!this.selectionDragged &&
 				this.selectionAnchor.scrollView === point.scrollView &&
@@ -654,8 +801,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if ((event.button & 32) !== 0) {
 			if (!this.selectionPressActive || !this.selectionAnchor) return;
 			this.selectionDragged = true;
+			this.lastClick = undefined;
 			this.pressedUrl = undefined;
-			this.selectionFocus = point;
+			this.updateSelectionFocus(point);
 			this.updateSelectionAutoScroll(event);
 			this.requestRender();
 			return;
@@ -667,13 +815,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				? getScrollViewsAt(this.currentLayout, event.x, event.y)[0]
 				: undefined;
 		const anchor = this.getSelectionPoint(event, scrollView);
-		this.selectionAnchor = anchor;
-		this.selectionFocus = anchor;
+		const word = this.getWordSelection(anchor);
+		const clickCount = this.getClickCount(anchor, word);
+		const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;
+		this.selectionGranularity = range ? (clickCount === 2 ? "word" : "line") : "character";
+		this.selectionInitialRange = range;
+		this.selectionAnchor = range?.start ?? anchor;
+		this.selectionFocus = range?.end ?? anchor;
 		this.selectionDragged = false;
-		this.pressedUrl = getOsc8LinkAtColumn(
-			this.previousScreen[Math.max(0, Math.min(this.terminal.rows - 1, event.y))] ?? "",
-			Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
-		);
+		this.pressedUrl = range
+			? undefined
+			: getOsc8LinkAtColumn(
+					this.previousScreen[Math.max(0, Math.min(this.terminal.rows - 1, event.y))] ?? "",
+					Math.max(0, Math.min(this.terminal.columns - 1, event.x)),
+				);
 		this.requestRender();
 	}
 
@@ -708,7 +863,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			start = getGraphemeCellRange(line, selection.start.col)?.start ?? Math.min(selection.start.col, lineWidth);
 		}
 		if (row === selection.end.row) {
-			end = getGraphemeCellRange(line, selection.end.col)?.end ?? Math.min(selection.end.col + 1, lineWidth);
+			end = selection.end.boundary
+				? Math.min(selection.end.col, lineWidth)
+				: (getGraphemeCellRange(line, selection.end.col)?.end ?? Math.min(selection.end.col + 1, lineWidth));
 		}
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
@@ -774,14 +931,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width);
 			screenSelection = {
 				start: {
+					...selection.start,
 					row: box.rect.y + selection.start.row - selection.start.scrollView.scrollTop,
 					col: box.rect.x + selection.start.col,
-					scrollView: selection.start.scrollView,
 				},
 				end: {
+					...selection.end,
 					row: box.rect.y + selection.end.row - selection.start.scrollView.scrollTop,
 					col: box.rect.x + selection.end.col,
-					scrollView: selection.start.scrollView,
 				},
 			};
 		}

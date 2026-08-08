@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).
+
+## [0.84.1] - 2026-08-07
+
+### Added
+
+- Added `BeforeToolCallResult.terminate` so blocked tool calls can participate in the existing batch early-termination rule ([#7715](https://github.com/earendil-works/pi/pull/7715) by [@muyiyr](https://github.com/muyiyr)).
+
+### Fixed
+
+- Fixed `Agent.reset()` clearing transcript and runtime state during active runs; it now rejects until the agent is idle ([#7717](https://github.com/earendil-works/pi/pull/7717) by [@wesleyzhangwq](https://github.com/wesleyzhangwq)).
+
 ## [0.84.0] - 2026-08-06
 
 ### Breaking Changes

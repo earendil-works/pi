@@ -1,4 +1,5 @@
 import { SessionError } from "@earendil-works/pi-agent-core";
+import { joinSqlFragments, sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 
 export interface RecordRow {
@@ -25,31 +26,21 @@ export interface NewRecordRow {
 }
 
 export function appendRecordRow(db: SqliteDatabase, sessionId: string, record: NewRecordRow) {
-	db.prepare(
-		`INSERT INTO records
+	sql`INSERT INTO records
 			(session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-	).run(
-		sessionId,
-		record.seq,
-		record.id,
-		record.lane,
-		record.runId ?? null,
-		record.type,
-		record.opKind ?? null,
-		record.timestamp,
-		record.payload,
+			VALUES (${sessionId}, ${record.seq}, ${record.id}, ${record.lane}, ${record.runId ?? null}, ${record.type}, ${record.opKind ?? null}, ${record.timestamp}, ${record.payload})`.run(
+		db,
 	);
 }
 
 export function idExistsInRecords(db: SqliteDatabase, sessionId: string, id: string) {
-	return !!db
-		.prepare("SELECT 1 AS found FROM records WHERE session_id = ? AND id = ? LIMIT 1")
-		.get<{ found: number }>(sessionId, id);
+	return !!sql`SELECT 1 AS found FROM records WHERE session_id = ${sessionId} AND id = ${id} LIMIT 1`.get<{
+		found: number;
+	}>(db);
 }
 
 export function deleteRecordRows(db: SqliteDatabase, sessionId: string) {
-	db.prepare("DELETE FROM records WHERE session_id = ?").run(sessionId);
+	sql`DELETE FROM records WHERE session_id = ${sessionId}`.run(db);
 }
 
 export function readRecordRows(
@@ -65,39 +56,18 @@ export function readRecordRows(
 		limit?: number;
 	} = {},
 ) {
-	const predicates = ["session_id = ?"];
-	const params: unknown[] = [sessionId];
-	if (query.lane !== undefined) {
-		predicates.push("lane = ?");
-		params.push(query.lane);
-	}
-	if (query.type !== undefined) {
-		predicates.push("type = ?");
-		params.push(query.type);
-	}
-	if (query.runId !== undefined) {
-		predicates.push("run_id = ?");
-		params.push(query.runId);
-	}
-	if (query.operationKind !== undefined) {
-		predicates.push("op_kind = ?");
-		params.push(query.operationKind);
-	}
-	if (query.afterSeq !== undefined) {
-		predicates.push("seq > ?");
-		params.push(query.afterSeq);
-	}
-	const limit = query.limit === undefined ? "" : " LIMIT ?";
-	if (query.limit !== undefined) params.push(query.limit);
-	const direction = query.order === "oldestFirst" ? "ASC" : "DESC";
-	return db
-		.prepare(
-			`SELECT session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload
-			FROM records
-			WHERE ${predicates.join(" AND ")}
-			ORDER BY seq ${direction}${limit}`,
-		)
-		.all<RecordRow>(...params);
+	const predicates = [sql`session_id = ${sessionId}`];
+	if (query.lane !== undefined) predicates.push(sql`lane = ${query.lane}`);
+	if (query.type !== undefined) predicates.push(sql`type = ${query.type}`);
+	if (query.runId !== undefined) predicates.push(sql`run_id = ${query.runId}`);
+	if (query.operationKind !== undefined) predicates.push(sql`op_kind = ${query.operationKind}`);
+	if (query.afterSeq !== undefined) predicates.push(sql`seq > ${query.afterSeq}`);
+	const direction = query.order === "oldestFirst" ? sql`ASC` : sql`DESC`;
+	const limit = query.limit === undefined ? sql`` : sql` LIMIT ${query.limit}`;
+	return sql`SELECT session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload
+		FROM records
+		WHERE ${joinSqlFragments(predicates, " AND ")}
+		ORDER BY seq ${direction}${limit}`.all<RecordRow>(db);
 }
 
 export function readOpenOperationRows(
@@ -106,19 +76,15 @@ export function readOpenOperationRows(
 	lane: string,
 	_options: { limit?: number } = {},
 ): RecordRow[] {
-	const laneRow = db
-		.prepare("SELECT open_operation_id FROM lanes WHERE session_id = ? AND lane = ?")
-		.get<{ open_operation_id: string | null }>(sessionId, lane);
+	const laneRow = sql`SELECT open_operation_id FROM lanes WHERE session_id = ${sessionId} AND lane = ${lane}`.get<{
+		open_operation_id: string | null;
+	}>(db);
 	if (!laneRow?.open_operation_id) return [];
 
-	const record = db
-		.prepare(
-			`SELECT session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload
-			FROM records
-			WHERE session_id = ?
-				AND id = ?`,
-		)
-		.get<RecordRow>(sessionId, laneRow.open_operation_id);
+	const record = sql`SELECT session_id, seq, id, lane, run_id, type, op_kind, timestamp, payload
+		FROM records
+		WHERE session_id = ${sessionId}
+			AND id = ${laneRow.open_operation_id}`.get<RecordRow>(db);
 	if (!record) {
 		throw new SessionError("storage", `Lane ${lane} points at missing open operation ${laneRow.open_operation_id}`);
 	}

@@ -1,5 +1,6 @@
 import { SessionError } from "@earendil-works/pi-agent-core";
 import { uuidv7 } from "@earendil-works/pi-ai";
+import { sql } from "./sql.ts";
 import {
 	copyBranchEntriesThroughSeq,
 	deleteBranchEntries,
@@ -7,7 +8,6 @@ import {
 	insertBranchEntry,
 	readBranchContainingEntry,
 } from "./storage/branch-entries.ts";
-
 import { deleteBranchTips, insertBranchTip, readBranchTipBranchId, updateBranchTip } from "./storage/branch-tips.ts";
 import type { SqliteDatabase } from "./types.ts";
 
@@ -17,32 +17,28 @@ export function deleteBranchCache(db: SqliteDatabase, sessionId: string) {
 }
 
 export function rebuildBranchCache(db: SqliteDatabase, sessionId: string) {
-	const tips = db
-		.prepare(
-			`SELECT leaf.id
-			FROM entries AS leaf
-			WHERE leaf.session_id = ?
-				AND NOT EXISTS (
-					SELECT 1 FROM entries AS child WHERE child.session_id = leaf.session_id AND child.parent_id = leaf.id
-				)
-			ORDER BY leaf.seq`,
-		)
-		.all<{ id: string }>(sessionId);
+	const tips = sql`SELECT leaf.id
+		FROM entries AS leaf
+		WHERE leaf.session_id = ${sessionId}
+			AND NOT EXISTS (
+				SELECT 1 FROM entries AS child WHERE child.session_id = leaf.session_id AND child.parent_id = leaf.id
+			)
+		ORDER BY leaf.seq`.all<{ id: string }>(db);
 	deleteBranchCache(db, sessionId);
 	for (const tip of tips) buildCachedBranch(db, sessionId, tip.id);
 }
 
 export function buildCachedBranch(db: SqliteDatabase, sessionId: string, leafId: string) {
-	db.exec("SAVEPOINT build_branch_cache");
+	sql`SAVEPOINT build_branch_cache`.exec(db);
 	try {
 		const branchId = uuidv7();
 		insertBranchEntriesForPath(db, sessionId, branchId, leafId);
 		insertBranchTip(db, sessionId, leafId, branchId);
-		db.exec("RELEASE SAVEPOINT build_branch_cache");
+		sql`RELEASE SAVEPOINT build_branch_cache`.exec(db);
 	} catch (error) {
 		try {
-			db.exec("ROLLBACK TO SAVEPOINT build_branch_cache");
-			db.exec("RELEASE SAVEPOINT build_branch_cache");
+			sql`ROLLBACK TO SAVEPOINT build_branch_cache`.exec(db);
+			sql`RELEASE SAVEPOINT build_branch_cache`.exec(db);
 		} catch {
 			// Preserve the original build failure.
 		}

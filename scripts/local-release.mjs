@@ -195,7 +195,9 @@ function packPackage(pkg, tarballDirectory) {
 		capture: true,
 		cwd: pkg.directory,
 	});
-	const packed = JSON.parse(output)[0];
+	// npm <11.6 returns an array; newer npm returns an object keyed by package name.
+	const parsed = JSON.parse(output);
+	const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 	return join(tarballDirectory, packed.filename);
 }
 

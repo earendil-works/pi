@@ -14,9 +14,9 @@ export interface IdGenerator {
 export interface EntryBase {
 	type: string;
 	id: string;
-	seq: number;
-	parentId: string | null;
-	timestamp: number;
+	seq: number; // shared sequence; read-side, storage-assigned
+	parentId: string | null; // storage-assigned: the appending lane's leaf
+	timestamp: number; // Unix ms, storage-assigned
 }
 
 export interface MessageEntry extends EntryBase {
@@ -222,26 +222,37 @@ export interface EntryCursor {
 
 export interface EntryQuery {
 	type?: Entry["type"];
-	customType?: string;
-	order?: EntryOrder;
+	customType?: string; // for type "custom"
+	order?: EntryOrder; // default newestFirst
 	limit?: number;
 	cursor?: EntryCursor;
 }
 
+/** Bounds of a branch scan. Default: the whole path, leaf to root. */
 export interface BranchBounds {
-	start?: string;
-	stopAtType?: Entry["type"];
+	start?: string; // default: the view's lane leaf
+	stopAtType?: Entry["type"]; // scan ends after the first match, inclusive
 	stopAtId?: string;
 }
 
 export interface RecordQuery {
+	/** Exact lane match. Omit to query every lane. */
 	lane?: string;
+	/** Exact record discriminant match. Omit to query every record type. */
 	type?: LaneRecord["type"];
+	/**
+	 * Operation identity. Matches OperationStartedRecord.id and the runId
+	 * property of operation-owned records. Records without an operation
+	 * identity do not match.
+	 */
 	runId?: string;
-	/** Valid only with type "operation_started". */
+	/** Exact operation intent kind. Valid only with type "operation_started". */
 	operationKind?: OperationStartedRecord["intent"]["kind"];
+	/** Exclusive chronological lower bound: seq > afterSeq, regardless of order. */
 	afterSeq?: number;
+	/** Sequence order. Default: "newestFirst". */
 	order?: EntryOrder;
+	/** Positive maximum number of matching records. */
 	limit?: number;
 }
 
@@ -268,7 +279,7 @@ export type LogItem =
 	| { kind: "entry"; seq: number; entry: Entry }
 	| { kind: "record"; seq: number; record: LaneRecord }
 	| { kind: "lane"; seq: number; lane: string; leafId: string | null }
-	| { kind: "fact"; seq: number; fact: "name"; name: string }
+	| { kind: "fact"; seq: number; fact: "name"; name: string | undefined }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
 
 export interface LogOptions {
@@ -291,7 +302,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	// Reads
 	getEntry(id: string): Promise<Entry | undefined>;
 	findEntries(query?: EntryQuery): Promise<Entry[]>;
-	/** start is mandatory here; defaulting to a lane's leaf is view sugar. */
+	/** start is mandatory here (as opposed to SessionTree's findEntriesOnBranch); defaulting to a lane's leaf is view sugar. */
 	findEntriesOnBranch(query: EntryQuery & BranchBounds & { start: string }): Promise<Entry[]>;
 	findRecords<K extends LaneRecord["type"]>(
 		query: RecordQuery & { type: K },
@@ -308,7 +319,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 
 	// Global facts
 	getName(): Promise<string | undefined>;
-	setName(name: string): Promise<void>;
+	setName(name: string | undefined): Promise<void>;
 	getLabel(id: string): Promise<string | undefined>;
 	setLabel(id: string, label: string | undefined): Promise<void>;
 	getStats(): Promise<SessionStats>;
@@ -318,14 +329,24 @@ export interface SessionTree {
 	getLeafId(): Promise<string | null>;
 	getEntry(id: string): Promise<Entry | undefined>;
 	getStats(): Promise<SessionStats>;
+
+	// Global facts. Latest wins; not branch-scoped. "set", not "append":
+	// append vocabulary is reserved for tree writes.
 	getName(): Promise<string | undefined>;
-	setName(name: string): Promise<void>;
+	setName(name: string | undefined): Promise<void>;
 	getLabel(targetId: string): Promise<string | undefined>;
 	setLabel(targetId: string, label: string | undefined): Promise<void>;
+
+	/** Session-wide, all branches, sequence order. */
 	findEntries(query?: EntryQuery): Promise<Entry[]>;
 	findEntry(query?: EntryQuery): Promise<Entry | undefined>;
+
+	/** Branch-scoped: the path from start toward root. */
 	findEntriesOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry[]>;
 	findEntryOnBranch(query?: EntryQuery & BranchBounds): Promise<Entry | undefined>;
+
+	// Writes. Resolve on durable acceptance; the returned id is the entry's
+	// id (provisioned when the write defers).
 	appendMessage(message: AgentMessage): Promise<string>;
 	appendCustomEntry(customType: string, data?: unknown): Promise<string>;
 }

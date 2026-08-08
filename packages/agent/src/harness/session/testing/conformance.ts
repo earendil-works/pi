@@ -640,6 +640,29 @@ export function createSessionBackendConformance(
 			},
 		),
 
+		createCase(factory, "queries and facts", "clears session names durably", async (repository) => {
+			const session = await repository.create({ id: "session" });
+			await session.setName("Temporary");
+			await session.setName(undefined);
+
+			strictEqual(await session.getName(), undefined);
+			deepStrictEqual(await session.getLog(), [
+				{ kind: "fact", seq: 1, fact: "name", name: "Temporary" },
+				{ kind: "fact", seq: 2, fact: "name", name: undefined },
+			]);
+
+			const metadata = await session.getMetadata();
+			const reopened = await repository.open(metadata);
+			strictEqual(await reopened.getName(), undefined);
+			deepStrictEqual(await reopened.getLog(), [
+				{ kind: "fact", seq: 1, fact: "name", name: "Temporary" },
+				{ kind: "fact", seq: 2, fact: "name", name: undefined },
+			]);
+
+			const fork = await repository.fork(metadata, { id: "fork" });
+			strictEqual(await fork.getName(), undefined);
+		}),
+
 		createCase(factory, "validation and immutability", "returns immutable copies from reads", async (repository) => {
 			const session = await repository.create({ id: "immutable" });
 			const metadata = await session.getMetadata();

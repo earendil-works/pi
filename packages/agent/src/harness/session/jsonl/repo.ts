@@ -2,7 +2,7 @@ import { uuidv7 } from "@earendil-works/pi-ai";
 import { assertJsonSerializable, Session } from "../session.ts";
 import { type ForkOptions, SessionError, type SessionRepo } from "../types.ts";
 import { metadataFromHeader, parseHeader } from "./codec.ts";
-import { fileResult, invalidFile } from "./errors.ts";
+import { fileResult } from "./errors.ts";
 import { JsonlSessionStorage } from "./storage.ts";
 import type {
 	JsonlSessionCreateOptions,
@@ -38,6 +38,7 @@ export class JsonlSessionRepo
 {
 	private readonly fs: JsonlSessionRepoFileSystem;
 	private readonly sessionsRootInput: string;
+	private readonly activeCreateDestinations = new Set<string>();
 	private rootPromise: Promise<string> | undefined;
 
 	constructor(options: JsonlSessionRepoOptions) {
@@ -46,16 +47,17 @@ export class JsonlSessionRepo
 	}
 
 	async create(options: JsonlSessionCreateOptions): Promise<Session<JsonlSessionMetadata>> {
-		const { header, path } = await this.prepareCreate(options);
-		return new Session(await JsonlSessionStorage.create(this.fs, path, header));
+		const destination = await this.resolveCreateDestination(options);
+		return this.claimCreateDestination(destination, async () => {
+			const { header, path } = await this.prepareCreate(destination, options);
+			return new Session(await JsonlSessionStorage.create(this.fs, path, header));
+		});
 	}
 
 	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
 		return new Session(await this.loadStorage(metadata));
 	}
 
-	list(): Promise<JsonlSessionMetadata[]>;
-	list(options: JsonlSessionListOptions): Promise<JsonlSessionMetadata[]>;
 	async list(options: JsonlSessionListOptions = {}): Promise<JsonlSessionMetadata[]> {
 		return this.listDirect(options);
 	}
@@ -69,11 +71,15 @@ export class JsonlSessionRepo
 		options: ForkOptions & JsonlSessionCreateOptions,
 	): Promise<Session<JsonlSessionMetadata>> {
 		const sourceStorage = await this.loadStorage(source);
-		const { header, path } = await this.prepareCreate({
+		const createOptions = {
 			...options,
 			parentSessionId: options.parentSessionId ?? source.id,
+		};
+		const destination = await this.resolveCreateDestination(createOptions);
+		return this.claimCreateDestination(destination, async () => {
+			const { header, path } = await this.prepareCreate(destination, createOptions);
+			return new Session(await sourceStorage.fork(path, header, options));
 		});
-		return new Session(await sourceStorage.fork(path, header, options));
 	}
 
 	private async loadStorage(metadata: JsonlSessionMetadata): Promise<JsonlSessionStorage> {
@@ -88,13 +94,42 @@ export class JsonlSessionRepo
 		return storage;
 	}
 
-	private async prepareCreate(options: JsonlSessionCreateOptions): Promise<{
-		header: JsonlV4Header;
-		path: string;
-	}> {
+	private async resolveCreateDestination(options: JsonlSessionCreateOptions): Promise<{ id: string; cwd: string }> {
 		const id = options.id ?? uuidv7();
 		validateSessionId(id);
 		const cwd = fileResult(await this.fs.absolutePath(options.cwd), `Failed to resolve session cwd ${options.cwd}`);
+		return { id, cwd };
+	}
+
+	/**
+	 * Prevent same-process create/fork races for one logical destination. The durable filename includes a
+	 * timestamp, so the async filesystem existence check alone can let two concurrent calls both decide the
+	 * same {cwd, id} is free and publish duplicate sessions.
+	 */
+	private async claimCreateDestination<T>(
+		destination: { id: string; cwd: string },
+		operation: () => Promise<T>,
+	): Promise<T> {
+		const key = `${destination.cwd}\0${destination.id}`;
+		if (this.activeCreateDestinations.has(key)) {
+			throw new SessionError("already_exists", `Session already exists: ${destination.id}`);
+		}
+		this.activeCreateDestinations.add(key);
+		try {
+			return await operation();
+		} finally {
+			this.activeCreateDestinations.delete(key);
+		}
+	}
+
+	private async prepareCreate(
+		destination: { id: string; cwd: string },
+		options: JsonlSessionCreateOptions,
+	): Promise<{
+		header: JsonlV4Header;
+		path: string;
+	}> {
+		const { id, cwd } = destination;
 		if (await this.sessionIdExists(id, cwd)) {
 			throw new SessionError("already_exists", `Session already exists: ${id}`);
 		}
@@ -128,13 +163,14 @@ export class JsonlSessionRepo
 				`Failed to list sessions directory ${directory}`,
 			).filter((entry) => entry.kind !== "directory" && entry.name.endsWith(".jsonl"));
 			for (const file of files) {
-				const content = fileResult(
-					await this.fs.readTextFile(file.path),
+				const [firstLine] = fileResult(
+					await this.fs.readTextLines(file.path, { maxLines: 1 }),
 					`Failed to read session header ${file.path}`,
 				);
-				const firstLine = content.split("\n", 1)[0];
-				if (!firstLine) throw invalidFile(file.path, 1, "is missing a header");
-				metadata.push(metadataFromHeader(parseHeader(firstLine, file.path), file.path, file.mtimeMs));
+				if (!firstLine) continue;
+				const headerResult = parseHeader(firstLine);
+				if (!headerResult.ok) continue;
+				metadata.push(metadataFromHeader(headerResult.value, file.path, file.mtimeMs));
 			}
 		}
 		return metadata.sort((left, right) => right.modifiedAt - left.modifiedAt);

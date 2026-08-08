@@ -18,7 +18,7 @@ export type SessionMutation =
 	| { kind: "entry"; lane?: string; entry: Entry }
 	| { kind: "record"; record: LaneRecord }
 	| { kind: "lane"; seq: number; lane: string; leafId: string | null }
-	| { kind: "fact"; seq: number; fact: "name"; name: string }
+	| { kind: "fact"; seq: number; fact: "name"; name: string | undefined }
 	| { kind: "fact"; seq: number; fact: "label"; targetId: string; label: string | undefined };
 
 type InvalidMutation = (message: string) => never;

@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-protocol",
-	"version": "0.84.0",
+	"version": "0.84.1",
 	"description": "Transport-neutral CBOR protocol for remote pi sessions",
 	"type": "module",
 	"main": "./dist/index.js",

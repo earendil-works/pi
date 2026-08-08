@@ -51,7 +51,7 @@ describe("SQLite branch queries", () => {
 		});
 	});
 
-	it("validates entries before branch query filters and limits", async () => {
+	it("does not decode entries excluded by branch query filters and limits", async () => {
 		const root = createTempDir();
 		const databasePath = join(root, "sessions.sqlite");
 		const env = new NodeExecutionEnv({ cwd: root });
@@ -70,10 +70,9 @@ describe("SQLite branch queries", () => {
 		} finally {
 			await db.close();
 		}
-		await expect(session.findEntriesOnBranch({ start: leafId, type: "message", limit: 1 })).rejects.toMatchObject({
-			code: "invalid_entry",
-			message: expect.stringContaining(`failed to decode entry ${customId}`),
-		});
+		expect(
+			(await session.findEntriesOnBranch({ start: leafId, type: "message", limit: 1 })).map((entry) => entry.id),
+		).toEqual([leafId]);
 
 		const invalidJsonDb = await sqlite.open(databasePath);
 		try {
@@ -83,10 +82,7 @@ describe("SQLite branch queries", () => {
 		} finally {
 			await invalidJsonDb.close();
 		}
-		await expect(session.findEntriesOnBranch({ start: leafId, customType: "other" })).rejects.toMatchObject({
-			code: "invalid_entry",
-			message: expect.stringContaining(`failed to decode entry ${customId}`),
-		});
+		expect(await session.findEntriesOnBranch({ start: leafId, customType: "other" })).toEqual([]);
 	});
 
 	it("does not validate ancestors beyond newest-first stop bounds", async () => {

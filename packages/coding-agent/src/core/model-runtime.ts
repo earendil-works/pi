@@ -77,6 +77,8 @@ export interface CreateModelRuntimeOptions {
 	catalogBaseUrl?: string;
 	/** Optional caller cancellation for initial cache restoration and availability checks. */
 	signal?: AbortSignal;
+	/** Skip initial catalog and availability refresh. Static models remain available. */
+	refreshOnCreate?: boolean;
 }
 
 export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
@@ -205,7 +207,9 @@ export class ModelRuntime implements Models {
 				: controller.signal
 			: options.signal;
 		try {
-			await runtime.refresh({ allowNetwork: refreshFromNetwork, signal });
+			if (options.refreshOnCreate !== false) {
+				await runtime.refresh({ allowNetwork: refreshFromNetwork, signal });
+			}
 		} finally {
 			if (timeout) clearTimeout(timeout);
 		}

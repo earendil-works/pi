@@ -505,6 +505,40 @@ describe("Agent", () => {
 		expect(() => agent.abort()).not.toThrow();
 	});
 
+	it("should reject reset while processing without corrupting the transcript", async () => {
+		const streamStarted = createDeferred();
+		const releaseResponse = createDeferred();
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(async () => {
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					streamStarted.resolve();
+					await releaseResponse.promise;
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Done") });
+				});
+				return stream;
+			},
+		});
+
+		const promptPromise = agent.prompt("Hello");
+		await streamStarted.promise;
+
+		try {
+			expect(agent.state.isStreaming).toBe(true);
+			expect(agent.state.messages.map((message) => message.role)).toEqual(["user"]);
+			expect(() => agent.reset()).toThrow("Agent is already processing. Wait for completion before resetting.");
+			expect(agent.state.isStreaming).toBe(true);
+			expect(agent.state.messages.map((message) => message.role)).toEqual(["user"]);
+		} finally {
+			releaseResponse.resolve();
+			await promptPromise;
+		}
+
+		expect(agent.state.isStreaming).toBe(false);
+		expect(agent.state.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+	});
+
 	it("should throw when prompt() called while streaming", async () => {
 		let abortSignal: AbortSignal | undefined;
 		const agent = new Agent({

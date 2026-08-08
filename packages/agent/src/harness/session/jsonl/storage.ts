@@ -17,7 +17,7 @@ import {
 	type SessionStorage,
 } from "../types.ts";
 import { encodeHeader, encodeMutation, metadataFromHeader, parseHeader, parseMutation } from "./codec.ts";
-import { fileResult, invalidFile } from "./errors.ts";
+import { fileResult, invalidFile, JsonlDecodeError } from "./errors.ts";
 import type { JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header } from "./types.ts";
 
 /**
@@ -70,25 +70,36 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		const content = fileResult(await fs.readTextFile(path), `Failed to read session ${path}`);
 		const physicalLines = content.split("\n");
 		if (physicalLines.at(-1) === "") physicalLines.pop();
-		if (physicalLines.length === 0 || !physicalLines[0]) throw invalidFile(path, 1, "is missing a header");
-		const header = parseHeader(physicalLines[0], path);
+		if (physicalLines.length === 0 || !physicalLines[0]) {
+			throw invalidFile(path, 1, new JsonlDecodeError("schema", "is missing a header"));
+		}
+		const headerResult = parseHeader(physicalLines[0]);
+		if (!headerResult.ok) throw invalidFile(path, 1, headerResult.error);
 		const fileInfo = fileResult(await fs.fileInfo(path), `Failed to read session metadata ${path}`);
-		const storage = new JsonlSessionStorage(fs, metadataFromHeader(header, path, fileInfo.mtimeMs));
+		const storage = new JsonlSessionStorage(fs, metadataFromHeader(headerResult.value, path, fileInfo.mtimeMs));
 		for (let index = 1; index < physicalLines.length; index++) {
 			const line = physicalLines[index]!;
-			let mutation: SessionMutation;
-			try {
-				mutation = parseMutation(line, path, index + 1);
-			} catch (error) {
-				if (index !== physicalLines.length - 1 || !(error instanceof SessionError) || error.cause === undefined)
-					throw error;
-				const validPrefix = `${physicalLines.slice(0, index).join("\n")}\n`;
-				await publishFileAtomically(fs, path, async (tempPath) => {
-					fileResult(await fs.writeFile(tempPath, validPrefix), `Failed to stage torn-tail repair ${path}`);
-				});
-				return storage;
+			const mutationResult = parseMutation(line);
+			if (!mutationResult.ok) {
+				const isTornTail = index === physicalLines.length - 1 && mutationResult.error.kind === "syntax";
+				if (isTornTail) {
+					// Drop the unacknowledged partial append by atomically publishing the valid prefix.
+					const validPrefix = `${physicalLines.slice(0, index).join("\n")}\n`;
+					await publishFileAtomically(fs, path, async (tempPath) => {
+						fileResult(await fs.writeFile(tempPath, validPrefix), `Failed to stage torn-tail repair ${path}`);
+					});
+					return storage;
+				}
+				throw invalidFile(path, index + 1, mutationResult.error);
 			}
-			storage.applyMutation(mutation, path, index + 1);
+			try {
+				storage.applyMutation(mutationResult.value);
+			} catch (error) {
+				if (error instanceof SessionError && error.code === "invalid_entry") {
+					throw invalidFile(path, index + 1, error);
+				}
+				throw error;
+			}
 		}
 		if (!content.endsWith("\n")) {
 			fileResult(await fs.appendFile(path, "\n"), `Failed to repair unterminated session tail ${path}`);
@@ -213,7 +224,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		return this.state.getName();
 	}
 
-	setName(name: string): Promise<void> {
+	setName(name: string | undefined): Promise<void> {
 		return this.enqueue(async () => {
 			const mutation: SessionMutation = { kind: "fact", seq: this.state.nextSequence, fact: "name", name };
 			await this.appendMutation(mutation);
@@ -260,13 +271,7 @@ export class JsonlSessionStorage implements SessionStorage<JsonlSessionMetadata>
 		);
 	}
 
-	private applyMutation(
-		mutation: SessionMutation,
-		path = this.metadata.path,
-		line = this.state.nextSequence + 1,
-	): void {
-		this.state.applyMutation(mutation, (message) => {
-			throw invalidFile(path, line, message);
-		});
+	private applyMutation(mutation: SessionMutation): void {
+		this.state.applyMutation(mutation);
 	}
 }

@@ -16,10 +16,10 @@ No production or test changes are part of QA1.
 | Area | Removed cases | Status |
 |---|---:|---|
 | Harness runtime and stream behavior | 37 | Mostly uncovered by design while `AgentHarness` is scaffolded; assigned to H/L/I/C/N packages. Scaffold-safe configuration is covered by F0. |
-| Branch query and corruption behavior | 6 | Core query semantics are covered; bounded SQLite validation gaps were ported by QA2, and remaining JSONL corruption gaps are assigned to J3. |
+| Branch query and corruption behavior | 6 | Core query semantics are covered; bounded SQLite validation gaps were ported by QA2, and JSONL corruption behavior is covered by J3. |
 | Compaction helper behavior | 2 | Covered by current compaction/context tests. |
 | Memory/SQLite v4 conformance entrypoints | 3 | Ported to `packages/agent/test/harness/session/*` and `packages/session-backends/sqlite-node/test/conformance.test.ts`. |
-| Repository/backend lifecycle and JSONL behavior | 38 | Most covered by v4 conformance or J0–J2; QA2 lifecycle/query audits are resolved, with remaining crash/corruption/v3 gaps assigned to J3–J5. |
+| Repository/backend lifecycle and JSONL behavior | 38 | Format-4 lifecycle and crash/corruption behavior are covered by v4 conformance and J0–J3; format-3 normalization and conversion remain assigned to J4–J5. |
 | Session aggregate/context behavior | 17 | Covered by v4 conformance plus current context tests. |
 | SQLite search | 1 | Ported to SQLite package search tests; old scanning backend is inapplicable. |
 
@@ -122,7 +122,7 @@ Removed files:
 | builds context from the branch storage without loading complete history | Inapplicable / Covered | Old branch-storage optimization was deleted; v4 context behavior is covered by `session/context.test.ts`. |
 | rejects repository operations and session writes after disposal | Covered / Inapplicable | The v4 core `SessionRepo` contract has no disposable state, and the in-memory/JSONL repos do not implement permanent disposal. SQLite disposal is resource release rather than repo poisoning; `packages/session-backends/sqlite-node/test/repository.test.ts` covers the remaining applicable behavior in `closes active sessions when the repository is disposed`, proving active session writes reject after repository disposal. |
 | supports lexical ownership with await using | Inapplicable | The old test covered permanent disposal on the deleted in-memory repository. The v4 core `SessionRepo` contract has no disposable surface, and memory/JSONL repos do not implement lexical ownership. SQLite `await using` is resource cleanup rather than repo poisoning; active-session closure is covered by `closes active sessions when the repository is disposed` in `packages/session-backends/sqlite-node/test/repository.test.ts`. |
-| serializes conflicting create and fork destinations | Uncovered / J3 | The old test covered JSONL backend-wide serialization for concurrent create/create and create/fork operations targeting the same id. V4 intentionally removed global repository serialization, but the remaining format-4 lifecycle/concurrency question is whether conflicting destination creation can duplicate files or silently overwrite; assign to J3 lifecycle/concurrency edge cases. |
+| serializes conflicting create and fork destinations | Covered | JSONL tests cover concurrent create/create, create/fork, and fork/fork operations targeting the same destination, plus reservation release after failed operations. |
 | encodes custom session IDs used in filenames | Covered | J2 JSONL repository lifecycle validates file-safe ids; `jsonl.test.ts` rejects invalid coding-agent filenames. |
 | allows appends to different sessions to run concurrently | Covered | J2/v4 repository conformance and JSONL concurrent write tests cover accepted concurrent writes without the old keyed queue. |
 | caps concurrent operations across JSONL sessions at four by default | Inapplicable | Old JSONL keyed-operation-queue implementation detail was deleted. |
@@ -135,8 +135,8 @@ Removed files:
 | waits for accepted appends before disposal and rejects later writes | Inapplicable | The old test covered deleted JSONL repository disposal: drain accepted appends, enter a permanent disposed state, then reject later writes through existing sessions. V4 JSONL repos are not disposable, do not retain opened storages, and have no repo-level closed state. Per-session append serialization remains covered by backend conformance `linearizes concurrent writes across two lanes` and JSONL-specific `persists concurrent cross-lane writes in shared sequence order`; close/drain/reject-after-close semantics belong to harness H5/O3, not `SessionRepo` disposal. |
 | parses once when opened and retains state across appends | Inapplicable | Old JSONL in-memory aggregate implementation detail; v4 correctness is covered by reopen/shared-sequence tests. |
 | collects sessions below encoded cwd directories and lists by cwd | Covered | J2 metadata lifecycle and listing tests cover v4 JSONL metadata and cwd filtering. |
-| fails loudly when listing a malformed session file | Uncovered | J3 owns JSONL crash/corruption behavior for malformed files. |
-| rejects a missing active leaf when opened | Uncovered | J3 owns JSONL missing-reference rejection. SQLite equivalent is covered in `repository.test.ts`. |
+| fails loudly when listing a malformed session file | Inapplicable / Covered | Section 13 now requires best-effort listing: malformed headers are skipped without opening or replaying the session. JSONL tests cover skipping the malformed file while retaining valid results; direct `open()` still rejects it. |
+| rejects a missing active leaf when opened | Covered | JSONL and SQLite tests cover missing-reference rejection. |
 | opens, deletes, and forks by metadata (JSONL) | Covered | J2 JSONL repo conformance. |
 | persists header metadata through create, list, and fork | Covered | J0 codec and J2 repository metadata tests. |
 | repository disposal closes its owned storage | Covered / Inapplicable | Old in-memory repo disposal is inapplicable because v4 memory/JSONL repos are not disposable and do not own returned session storage lifetimes. SQLite is the only disposable repository because it owns DB/lease resources; active-session closure is covered by `closes active sessions when the repository is disposed`, and DB close behavior is covered by existing SQLite connection lifecycle tests. |
@@ -145,10 +145,10 @@ Removed files:
 | includes assistant and summary usage in statistics | Covered | v4 conformance `keeps latest-value facts and computes ledger statistics across lanes`, JSONL storage, and SQLite repository statistics tests. |
 | stops branch traversal at retained-tail compaction | Covered / Inapplicable | Branch-query stop semantics are still required outside context projection and are covered explicitly by backend conformance `supports bounded filtered and cursor-based queries` via `findEntriesOnBranch({ stopAtType: "compaction" })` across memory, JSONL, and SQLite. Retained-tail materialization is covered by context test `starts at the latest compaction and materializes its retained tail`. The old implicit `getBranch()` auto-stop-at-retained-tail-compaction behavior is inapplicable because v4 uses explicit branch bounds plus context projection. |
 | writes headers and entries and reopens the aggregate | Covered | J1/J2 JSONL storage/repository tests. |
-| fails loudly for malformed headers and entries | Covered / J3 | J3 owns malformed physical file behavior; current JSONL tests already cover malformed tail/middle lines. |
+| fails loudly for malformed headers and entries | Covered | Direct JSONL opens reject malformed headers and complete invalid mutations without modifying the file; only a torn final JSON fragment is repaired. Listing separately skips malformed headers as required by section 13. |
 | enforces entry uniqueness and does not recreate deleted files | Covered | v4 conformance rejects duplicate ids; J2 lifecycle covers delete/reopen behavior. |
 | scopes entry uniqueness to the session path | Covered | v4 repository/session isolation conformance. |
-| rejects non-object header metadata | Uncovered | J3/J4 should cover malformed JSONL header metadata for format-4 and v3 normalization. |
+| rejects non-object header metadata | Covered | Format-4 open rejects non-object header metadata, while listing skips that malformed file. Format-3 normalization remains assigned to J4. |
 
 ## Session aggregate and context tests
 
@@ -187,7 +187,7 @@ Removed case from `packages/agent/test/harness/sqlite-node.test.ts`.
 These packages must land before QA3 can re-evaluate the uncovered rows above. They do not use this matrix as their test plan.
 
 - **QA2**: completed storage/query audit and ports for bounded-query corruption/validation behavior, repository/session disposal lifecycle, listing/disposal barriers, and branch-query retained-tail semantics outside context projection.
-- **J3**: JSONL malformed file, torn-tail, missing-reference, and lifecycle/concurrency edge cases.
+- **J3**: completed JSONL malformed-file, torn-tail, missing-reference, and lifecycle/concurrency coverage.
 - **J4/J5**: v3 read-only normalization and first-write conversion; include malformed v3/header metadata cases.
 - **I1/I2/I3/I4/L1-L3**: hook/event/mutation/effects/loop primitive coverage required before runtime harness tests can return.
 - **H1-H8**: durable run, queue, configuration, wait/abort, tool, recovery, and deferred-provider runtime behavior formerly covered by legacy `agent-harness*.test.ts`.

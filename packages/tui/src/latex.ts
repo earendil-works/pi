@@ -288,6 +288,90 @@ const DISPLAY_LIMIT_SYMBOLS = new Set([
 	"sum",
 ]);
 
+const RELATION_COMMANDS = new Set([
+	"Leftarrow",
+	"Leftrightarrow",
+	"Longleftarrow",
+	"Longleftrightarrow",
+	"Longrightarrow",
+	"Rightarrow",
+	"Vdash",
+	"Vvdash",
+	"approx",
+	"asymp",
+	"cong",
+	"dashv",
+	"doteq",
+	"downarrow",
+	"equiv",
+	"ge",
+	"geq",
+	"geqslant",
+	"gets",
+	"gg",
+	"hookleftarrow",
+	"hookrightarrow",
+	"iff",
+	"implies",
+	"in",
+	"leadsto",
+	"le",
+	"leftarrow",
+	"leftharpoondown",
+	"leftharpoonup",
+	"leftrightarrow",
+	"leftrightharpoons",
+	"leq",
+	"leqslant",
+	"ll",
+	"longleftarrow",
+	"longleftrightarrow",
+	"longmapsto",
+	"longrightarrow",
+	"mapsto",
+	"mid",
+	"models",
+	"ne",
+	"nearrow",
+	"neq",
+	"ni",
+	"notin",
+	"nvdash",
+	"nvDash",
+	"nwarrow",
+	"parallel",
+	"perp",
+	"prec",
+	"preceq",
+	"propto",
+	"rightharpoondown",
+	"rightharpoonup",
+	"rightleftharpoons",
+	"rightarrow",
+	"rightsquigarrow",
+	"searrow",
+	"sim",
+	"simeq",
+	"sqsubset",
+	"sqsubseteq",
+	"sqsupset",
+	"sqsupseteq",
+	"subset",
+	"subseteq",
+	"succ",
+	"succeq",
+	"supset",
+	"supseteq",
+	"swarrow",
+	"to",
+	"triangleleft",
+	"triangleright",
+	"twoheadleftarrow",
+	"twoheadrightarrow",
+	"uparrow",
+	"vdash",
+]);
+
 const NEGATED_SYMBOLS: Readonly<Record<string, string>> = {
 	"<": "≮",
 	">": "≯",
@@ -515,7 +599,7 @@ function replaceCharacters(value: string, replacements: Readonly<Record<string, 
 function formatScript(value: string, kind: "sub" | "sup"): string {
 	value = value.trim();
 	const replacements = kind === "sub" ? SUBSCRIPTS : SUPERSCRIPTS;
-	const unicode = replaceCharacters(value, replacements);
+	const unicode = replaceCharacters(value.replace(/\s*([=+-])\s*/g, "$1"), replacements);
 	if (unicode !== undefined) {
 		return unicode;
 	}
@@ -540,8 +624,17 @@ function formatRoot(value: string, symbol = "√"): string {
 	return /^[\p{L}\p{N}.]+$/u.test(value) ? `${symbol}${value}` : `${symbol}(${value})`;
 }
 
+const NAMED_OPERATOR_START = "\u{f0004}";
+const NAMED_OPERATOR_END = "\u{f0005}";
+const NAMED_OPERATOR_LEFT_SPACING_PATTERN = /(?<=[\p{L}\p{N})\]}\u{f0001}])\u{f0004}/gu;
+const NAMED_OPERATOR_RIGHT_SPACING_PATTERN = /\u{f0005}(?=[\p{L}\p{N}√\u{f0000}])/gu;
+
 function normalizeOutput(value: string): string {
 	return value
+		.replace(NAMED_OPERATOR_LEFT_SPACING_PATTERN, " ")
+		.replaceAll(NAMED_OPERATOR_START, "")
+		.replace(NAMED_OPERATOR_RIGHT_SPACING_PATTERN, " ")
+		.replaceAll(NAMED_OPERATOR_END, "")
 		.split("\n")
 		.map((line) => line.replace(/[ \t]+/g, " ").trim())
 		.filter((line, index, lines) => line.length > 0 || (index > 0 && index < lines.length - 1))
@@ -562,7 +655,13 @@ interface OperatorNode {
 	upper?: string;
 }
 
-type LayoutNode = FractionNode | OperatorNode;
+interface MatrixNode {
+	type: "matrix";
+	lines: string[];
+	baseline: number;
+}
+
+type LayoutNode = FractionNode | OperatorNode | MatrixNode;
 
 interface Layout {
 	lines: string[];
@@ -573,7 +672,8 @@ interface Layout {
 const LAYOUT_MARKER_START = "\u{f0000}";
 const LAYOUT_MARKER_END = "\u{f0001}";
 const LAYOUT_MARKER_PATTERN = /\u{f0000}(\d+)\u{f0001}/gu;
-const PROTECTED_SPACE = "\u00a0";
+const TRAILING_LAYOUT_MARKER_PATTERN = /\u{f0000}(\d+)\u{f0001}$/u;
+const PROTECTED_SPACE = "\u{f0002}";
 
 function padLayoutLine(line: string, width: number, centered = false): string {
 	const padding = Math.max(0, width - visibleWidth(line));
@@ -612,17 +712,24 @@ function renderLayout(source: string, nodes: readonly LayoutNode[]): Layout {
 	for (const sourceLine of source.split("\n")) {
 		const layouts: Layout[] = [];
 		let position = 0;
-		let previousWasNode = false;
+		let previousNode: LayoutNode | undefined;
 		for (const match of sourceLine.matchAll(LAYOUT_MARKER_PATTERN)) {
 			const index = match.index;
-			if (index > position) {
-				const sliced = sourceLine.slice(position, index);
-				const text = (previousWasNode ? sliced.trimStart() : sliced).trimEnd();
-				layouts.push({ lines: [text], width: visibleWidth(text), baseline: 0 });
-			}
 			const node = nodes[Number(match[1])];
 			if (!node) {
 				continue;
+			}
+			if (index > position) {
+				const sliced = sourceLine.slice(position, index);
+				const trimmed = (previousNode ? sliced.trimStart() : sliced).trimEnd();
+				const preserveLeadingSpace = previousNode?.type === "matrix" && /^\s/.test(sliced);
+				const preserveTrailingSpace = node.type === "matrix" && /\s$/.test(sliced);
+				const text = trimmed
+					? `${preserveLeadingSpace ? " " : ""}${trimmed}${preserveTrailingSpace ? " " : ""}`
+					: preserveLeadingSpace || preserveTrailingSpace
+						? " "
+						: "";
+				layouts.push({ lines: [text], width: visibleWidth(text), baseline: 0 });
 			}
 			if (node.type === "fraction") {
 				const numerator = renderLayout(node.numerator, nodes);
@@ -638,7 +745,7 @@ function renderLayout(source: string, nodes: readonly LayoutNode[]): Layout {
 					width,
 					baseline: numerator.lines.length,
 				});
-			} else {
+			} else if (node.type === "operator") {
 				const contentWidth = Math.max(
 					visibleWidth(node.operator),
 					node.lower === undefined ? 0 : visibleWidth(node.lower),
@@ -657,13 +764,21 @@ function renderLayout(source: string, nodes: readonly LayoutNode[]): Layout {
 					width: contentWidth + 1,
 					baseline: node.upper === undefined ? 0 : 1,
 				});
+			} else {
+				const width = Math.max(0, ...node.lines.map((line) => visibleWidth(line)));
+				layouts.push({
+					lines: node.lines.map((line) => padLayoutLine(line, width)),
+					width,
+					baseline: node.baseline,
+				});
 			}
 			position = index + match[0].length;
-			previousWasNode = true;
+			previousNode = node;
 		}
 		if (position < sourceLine.length) {
 			const sliced = sourceLine.slice(position);
-			const text = previousWasNode ? sliced.trimStart() : sliced;
+			const trimmed = previousNode ? sliced.trimStart() : sliced;
+			const text = previousNode?.type === "matrix" && /^\s/.test(sliced) ? ` ${trimmed}` : trimmed;
 			layouts.push({ lines: [text], width: visibleWidth(text), baseline: 0 });
 		}
 		const lineLayout = joinLayouts(layouts);
@@ -681,14 +796,16 @@ function renderLayout(source: string, nodes: readonly LayoutNode[]): Layout {
 
 class LatexParser {
 	private readonly source: string;
-	private readonly layoutNodes: LayoutNode[] | undefined;
+	private readonly layoutNodes: LayoutNode[];
+	private readonly display: boolean;
 	private position = 0;
 	private supported = true;
 	private stackFractions = true;
 
-	constructor(source: string, layoutNodes?: LayoutNode[]) {
+	constructor(source: string, layoutNodes: LayoutNode[], display: boolean) {
 		this.source = source;
 		this.layoutNodes = layoutNodes;
+		this.display = display;
 	}
 
 	render(): string | undefined {
@@ -723,6 +840,9 @@ class LatexParser {
 				const command = this.parseCommand();
 				if (command === NEGATIVE_SPACE) {
 					result = result.trimEnd();
+					if (result.endsWith(NAMED_OPERATOR_END)) {
+						result = result.slice(0, -NAMED_OPERATOR_END.length);
+					}
 				} else {
 					result += command;
 				}
@@ -732,12 +852,23 @@ class LatexParser {
 			if (character === "^" || character === "_") {
 				this.position++;
 				result = result.trimEnd();
-				result += formatScript(this.parseRequiredArgument(false), character === "_" ? "sub" : "sup");
+				const script = formatScript(this.parseRequiredArgument(false), character === "_" ? "sub" : "sup");
+				if (result.endsWith(NAMED_OPERATOR_END)) {
+					result = `${result.slice(0, -NAMED_OPERATOR_END.length)}${script}${NAMED_OPERATOR_END}`;
+				} else {
+					result += script;
+				}
 				continue;
 			}
 
 			if (/\s/.test(character)) {
 				result += this.parseWhitespace();
+				continue;
+			}
+
+			if (character === "=" || character === "<" || character === ">") {
+				result = `${result.trimEnd()} ${character} `;
+				this.position++;
 				continue;
 			}
 
@@ -750,6 +881,17 @@ class LatexParser {
 				this.position++;
 				result += " ";
 				continue;
+			}
+
+			if (character === ".") {
+				const marker = TRAILING_LAYOUT_MARKER_PATTERN.exec(result);
+				const node = marker ? this.layoutNodes[Number(marker[1])] : undefined;
+				if (node?.type === "matrix") {
+					const lastLine = node.lines.length - 1;
+					node.lines[lastLine] = `${node.lines[lastLine] ?? ""}${character}`;
+					this.position++;
+					continue;
+				}
 			}
 
 			result += character;
@@ -819,14 +961,14 @@ class LatexParser {
 			const value = this.parseRequiredArgument(false).trim();
 			const negated = NEGATED_SYMBOLS[value];
 			if (negated !== undefined) {
-				return negated;
+				return ` ${negated} `;
 			}
 			const characters = Array.from(value);
 			if (characters.length === 0) {
 				this.supported = false;
 				return "";
 			}
-			return `${characters[0]}\u0338${characters.slice(1).join("")}`;
+			return ` ${characters[0]}\u0338${characters.slice(1).join("")} `;
 		}
 		if (LIMIT_OPERATORS.has(command)) {
 			return this.parseOperator(command, "bracket", true, true);
@@ -834,10 +976,13 @@ class LatexParser {
 
 		const symbol = SYMBOLS[command];
 		if (symbol !== undefined) {
-			return DISPLAY_LIMIT_SYMBOLS.has(command) ? this.parseOperator(symbol, "script", true) : symbol;
+			if (DISPLAY_LIMIT_SYMBOLS.has(command)) {
+				return this.parseOperator(symbol, "script", true);
+			}
+			return command === "cdot" || command === "times" || RELATION_COMMANDS.has(command) ? ` ${symbol} ` : symbol;
 		}
 		if (NAMED_OPERATORS.has(command)) {
-			return ` ${command} `;
+			return `${NAMED_OPERATOR_START}${command}${NAMED_OPERATOR_END}`;
 		}
 		if (SIZE_COMMANDS.has(command)) {
 			return "";
@@ -849,10 +994,10 @@ class LatexParser {
 			return "";
 		}
 		if (command === "frac" || command === "dfrac" || command === "tfrac") {
-			const shouldStack = this.layoutNodes !== undefined && this.stackFractions && command !== "tfrac";
+			const shouldStack = this.display && this.stackFractions && command !== "tfrac";
 			const numerator = this.parseRequiredArgument(!shouldStack);
 			const denominator = this.parseRequiredArgument(!shouldStack);
-			if (shouldStack && this.layoutNodes) {
+			if (shouldStack) {
 				const index =
 					this.layoutNodes.push({
 						type: "fraction",
@@ -976,7 +1121,7 @@ class LatexParser {
 			}
 		}
 
-		if (this.layoutNodes && useDisplayLimits && (lower !== undefined || upper !== undefined)) {
+		if (this.display && useDisplayLimits && (lower !== undefined || upper !== undefined)) {
 			const index = this.layoutNodes.push({ type: "operator", operator, lower, upper }) - 1;
 			return `${LAYOUT_MARKER_START}${index}${LAYOUT_MARKER_END}`;
 		}
@@ -1157,36 +1302,39 @@ class LatexParser {
 				return `${cell}${PROTECTED_SPACE.repeat(Math.max(0, (columnWidths[column] ?? 0) - visibleWidth(cell)))}`;
 			}).join(" │ "),
 		);
-		if (environment === "array" || environment === "matrix" || environment === "smallmatrix") {
-			return rows.join("\n");
-		}
 
-		const delimiters: Readonly<Record<string, readonly [string, string, string, string, string, string]>> = {
-			pmatrix: ["⎛", "⎞", "⎜", "⎟", "⎝", "⎠"],
-			bmatrix: ["⎡", "⎤", "⎢", "⎥", "⎣", "⎦"],
-			Bmatrix: ["⎧", "⎫", "⎨", "⎬", "⎩", "⎭"],
-			vmatrix: ["│", "│", "│", "│", "│", "│"],
-			Vmatrix: ["║", "║", "║", "║", "║", "║"],
-		};
-		const delimiter = delimiters[environment];
-		if (!delimiter) {
-			this.supported = false;
-			return rows.join("\n");
-		}
-		if (rows.length === 1) {
-			return `${delimiter[0]} ${rows[0]} ${delimiter[1]}`;
-		}
-		return rows
-			.map((row, index) => {
+		let lines: string[];
+		if (environment === "array" || environment === "matrix" || environment === "smallmatrix") {
+			lines = rows;
+		} else {
+			const delimiters: Readonly<Record<string, readonly [string, string, string, string, string, string]>> = {
+				pmatrix: ["⎛", "⎞", "⎜", "⎟", "⎝", "⎠"],
+				bmatrix: ["⎡", "⎤", "⎢", "⎥", "⎣", "⎦"],
+				Bmatrix: ["⎧", "⎫", "⎨", "⎬", "⎩", "⎭"],
+				vmatrix: ["│", "│", "│", "│", "│", "│"],
+				Vmatrix: ["║", "║", "║", "║", "║", "║"],
+			};
+			const delimiter = delimiters[environment];
+			if (!delimiter) {
+				this.supported = false;
+				return rows.join("\n");
+			}
+			lines = rows.map((row, index) => {
 				const left = index === 0 ? delimiter[0] : index === rows.length - 1 ? delimiter[4] : delimiter[2];
 				const right = index === 0 ? delimiter[1] : index === rows.length - 1 ? delimiter[5] : delimiter[3];
 				return `${left} ${row} ${right}`;
-			})
-			.join("\n");
+			});
+		}
+
+		if (lines.length <= 1) {
+			return lines[0] ?? "";
+		}
+		const index = this.layoutNodes.push({ type: "matrix", lines, baseline: 0 }) - 1;
+		return `${LAYOUT_MARKER_START}${index}${LAYOUT_MARKER_END}`;
 	}
 
 	private renderNested(source: string, stackFractions = true): string {
-		const rendered = new LatexParser(source, stackFractions ? this.layoutNodes : undefined).render();
+		const rendered = new LatexParser(source, this.layoutNodes, this.display && stackFractions).render();
 		if (rendered === undefined) {
 			this.supported = false;
 			return source;
@@ -1205,12 +1353,12 @@ export interface RenderLatexOptions {
  * Returns undefined when the expression contains unsupported or malformed syntax.
  */
 export function renderLatex(source: string, options: RenderLatexOptions = {}): string | undefined {
-	const layoutNodes: LayoutNode[] | undefined = options.display ? [] : undefined;
-	const rendered = new LatexParser(source, layoutNodes).render();
+	const layoutNodes: LayoutNode[] = [];
+	const rendered = new LatexParser(source, layoutNodes, options.display === true).render();
 	if (rendered === undefined) {
 		return undefined;
 	}
-	if (!layoutNodes || layoutNodes.length === 0) {
+	if (layoutNodes.length === 0) {
 		return rendered.replaceAll(PROTECTED_SPACE, " ");
 	}
 	const lines = renderLayout(rendered, layoutNodes).lines;

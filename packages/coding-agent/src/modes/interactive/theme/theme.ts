@@ -793,13 +793,21 @@ export async function detectTerminalThemeForAuto({
 	timeoutMs,
 	env,
 }: TerminalAutoThemeDetectionOptions): Promise<TerminalTheme> {
+	let colorSchemePromise: Promise<TerminalTheme | undefined> | undefined;
 	try {
-		const colorScheme = await ui.queryTerminalColorScheme?.({ timeoutMs });
+		colorSchemePromise = ui.queryTerminalColorScheme?.({ timeoutMs });
+	} catch {
+		// Fall back to OSC 11 / COLORFGBG detection when starting the color-scheme query fails.
+	}
+	const backgroundThemePromise = detectTerminalBackgroundTheme({ ui, timeoutMs, env });
+
+	try {
+		const colorScheme = await colorSchemePromise;
 		if (colorScheme) return colorScheme;
 	} catch {
-		// Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR is unsupported.
+		// Fall back to the concurrently queried OSC 11 / COLORFGBG detection.
 	}
-	return (await detectTerminalBackgroundTheme({ ui, timeoutMs, env })).theme;
+	return (await backgroundThemePromise).theme;
 }
 
 export function getDefaultTheme(): string {

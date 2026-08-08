@@ -119,6 +119,7 @@ export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
+	deferredToolsMode?: "additional-tools" | "tool-search";
 	toolOptions?: ConvertResponsesToolsOptions;
 }
 
@@ -210,10 +211,9 @@ export function convertResponsesMessages<TApi extends Api>(
 		} else if (msg.role === "assistant") {
 			const output: ResponseInput = [];
 			const assistantMsg = msg as AssistantMessage;
-			const isDifferentModel =
-				assistantMsg.model !== model.id &&
-				assistantMsg.provider === model.provider &&
-				assistantMsg.api === model.api;
+			const isSameProviderAndApi = assistantMsg.provider === model.provider && assistantMsg.api === model.api;
+			const isSameModel = isSameProviderAndApi && assistantMsg.model === model.id;
+			const isDifferentModel = isSameProviderAndApi && assistantMsg.model !== model.id;
 			let textBlockIndex = 0;
 
 			for (const block of msg.content) {
@@ -261,6 +261,8 @@ export function convertResponsesMessages<TApi extends Api>(
 						itemId = undefined;
 					}
 
+					const canReplayNamespace = isSameModel || options?.deferredTools?.has(toolCall.name) === true;
+
 					if (customInputProperty !== undefined) {
 						output.push({
 							type: "custom_tool_call",
@@ -270,6 +272,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							input: sanitizeSurrogates(
 								getGrammarToolInput(toolCall.name, toolCall.arguments, customInputProperty),
 							),
+							...(canReplayNamespace && toolCall.namespace !== undefined
+								? { namespace: toolCall.namespace }
+								: {}),
 						} satisfies ResponseOutputItem);
 					} else {
 						output.push({
@@ -278,6 +283,9 @@ export function convertResponsesMessages<TApi extends Api>(
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
+							...(canReplayNamespace && toolCall.namespace !== undefined
+								? { namespace: toolCall.namespace }
+								: {}),
 						});
 					}
 				}
@@ -309,7 +317,13 @@ export function convertResponsesMessages<TApi extends Api>(
 				loadedToolNames.add(name);
 				deferredTools.push(tool);
 			}
-			if (deferredTools.length > 0) {
+			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
+				messages.push({
+					type: "additional_tools",
+					role: "developer",
+					tools: convertResponsesTools(deferredTools, options.toolOptions),
+				} satisfies ResponseInputItem);
+			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
 				const names = deferredTools.map((tool) => tool.name);
 				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
 				messages.push({
@@ -325,7 +339,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					execution: "client",
 					status: "completed",
 					tools: convertResponsesTools(deferredTools, {
-						...options?.toolOptions,
+						...options.toolOptions,
 						deferLoading: true,
 					}),
 				} satisfies ResponseToolSearchOutputItemParam);
@@ -472,6 +486,7 @@ export async function processResponsesStream<TApi extends Api>(
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
 				arguments: {},
+				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				partialJson: item.arguments || "",
 			};
 			output.content.push(block);
@@ -492,6 +507,7 @@ export async function processResponsesStream<TApi extends Api>(
 				id: `${item.call_id}|${item.id}`,
 				name: item.name,
 				arguments: { [inputProperty]: input },
+				...(item.namespace !== undefined ? { namespace: item.namespace } : {}),
 				customInput: {
 					property: inputProperty,
 					jsonBuffer: { input: "", started: false, closed: false },
@@ -693,6 +709,7 @@ export async function processResponsesStream<TApi extends Api>(
 				slot.block.partialJson !== undefined
 			) {
 				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
+				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries parsed arguments.
 				delete slot.block.partialJson;
@@ -708,6 +725,7 @@ export async function processResponsesStream<TApi extends Api>(
 					slot,
 					appendCustomToolCallInput(slot.block, item.input ?? getCustomToolCallInput(slot.block), true),
 				);
+				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				delete slot.block.customInput;
 				stream.push({
 					type: "toolcall_end",

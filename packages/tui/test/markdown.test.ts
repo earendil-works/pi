@@ -743,6 +743,27 @@ after`,
 			assert.deepStrictEqual(lines, ["Before", "", "    0.1 lux", "E ≈ ────────", "    100 lm/W", "", "after"]);
 		});
 
+		it("aligns matrix rows with the opening delimiter", () => {
+			const markdown = new Markdown(
+				String.raw`Consider the matrix
+
+\[
+A=
+\begin{pmatrix}
+\pi & 0\\
+0 & \frac{1}{\pi}
+\end{pmatrix}.
+\]`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepStrictEqual(lines, ["Consider the matrix", "", "A = ⎛ π │ 0   ⎞", "    ⎝ 0 │ 1/π ⎠."]);
+		});
+
 		it("renders lower limits beneath display operators", () => {
 			const markdown = new Markdown(
 				String.raw`\[
@@ -755,7 +776,7 @@ after`,
 
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["     (sin x)/x-1", "lim  ─────────── =0", "x→0  (eˣ-1)/x-1"]);
+			assert.deepStrictEqual(lines, ["     (sin x)/x-1", "lim  ─────────── = 0", "x→0  (eˣ-1)/x-1"]);
 		});
 
 		it("renders math inside lists and tables", () => {

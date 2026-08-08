@@ -121,7 +121,7 @@ export class InMemorySessionStorage implements SessionStorage {
 		return this.state.getName();
 	}
 
-	async setName(name: string): Promise<void> {
+	async setName(name: string | undefined): Promise<void> {
 		this.state.applyMutation({ kind: "fact", seq: this.state.nextSequence, fact: "name", name });
 	}
 

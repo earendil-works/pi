@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalBackgroundTheme,
+	detectTerminalThemeForAuto,
 	getThemeByName,
 	getThemeForRgbColor,
 	parseAutoThemeSetting,
@@ -96,6 +97,46 @@ describe("detectTerminalBackgroundTheme", () => {
 			source: "COLORFGBG",
 			confidence: "high",
 		});
+	});
+});
+
+describe("detectTerminalThemeForAuto", () => {
+	it("starts both queries and returns the preferred color-scheme result without waiting", async () => {
+		let resolveColorScheme!: (theme: "dark" | "light" | undefined) => void;
+		let backgroundQueryStarted = false;
+		const detection = detectTerminalThemeForAuto({
+			timeoutMs: 100,
+			ui: {
+				queryTerminalColorScheme: () =>
+					new Promise((resolve) => {
+						resolveColorScheme = resolve;
+					}),
+				queryTerminalBackgroundColor: () => {
+					backgroundQueryStarted = true;
+					return new Promise<RgbColor | undefined>(() => {});
+				},
+			},
+		});
+
+		expect(backgroundQueryStarted).toBe(true);
+		resolveColorScheme("dark");
+		await expect(detection).resolves.toBe("dark");
+	});
+
+	it("uses the background result when the color-scheme query fails", async () => {
+		await expect(
+			detectTerminalThemeForAuto({
+				timeoutMs: 100,
+				ui: {
+					async queryTerminalColorScheme(): Promise<undefined> {
+						throw new Error("color-scheme query failed");
+					},
+					async queryTerminalBackgroundColor(): Promise<RgbColor> {
+						return { r: 250, g: 250, b: 250 };
+					},
+				},
+			}),
+		).resolves.toBe("light");
 	});
 });
 

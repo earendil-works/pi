@@ -74,7 +74,7 @@ describe("AgentSession dynamic tool registration", () => {
 
 		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
 		expect(session.systemPrompt).toContain(
-			"Inspect PI_* environment variables for current model and session details.",
+			"You can inspect PI_* environment variables for current model and session details.",
 		);
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({

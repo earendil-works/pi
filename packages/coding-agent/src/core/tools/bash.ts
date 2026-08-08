@@ -42,6 +42,11 @@ const bashSchema = Type.Object({
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
+export const bashToolSystemPromptContribution = {
+	snippet: "Execute bash commands (ls, grep, find, etc.)",
+	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+} as const;
+
 export type BashToolInput = Static<typeof bashSchema>;
 
 export interface BashToolDetails {
@@ -325,10 +330,8 @@ export function createBashToolDefinition(
 		name: "bash",
 		label: "bash",
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
-		promptGuidelines: exposeSessionEnvironment
-			? ["Inspect PI_* environment variables for current model and session details."]
-			: undefined,
+		promptSnippet: bashToolSystemPromptContribution.snippet,
+		promptGuidelines: exposeSessionEnvironment ? [...bashToolSystemPromptContribution.guidelines] : undefined,
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,

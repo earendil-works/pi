@@ -5,6 +5,7 @@ export {
 	type SqliteWriterLeaseOptions,
 } from "./repo.ts";
 export * from "./search-backend.ts";
+export * from "./sql.ts";
 export type {
 	SqliteDatabase,
 	SqliteDatabaseFactory,

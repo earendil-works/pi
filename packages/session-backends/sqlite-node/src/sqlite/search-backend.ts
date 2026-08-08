@@ -1,6 +1,7 @@
 import type { SessionSearch, SessionSearchHit, SessionSearchOptions } from "@earendil-works/pi-agent-core";
 import { getFileSystemResultOrThrow } from "@earendil-works/pi-agent-core";
 import { applyMigrations } from "./migrations.ts";
+import { sql } from "./sql.ts";
 import { decodeSessionMetadata, type SessionRow } from "./storage/sessions.ts";
 import type {
 	SqliteDatabase,
@@ -18,9 +19,9 @@ function getParentPath(path: string): string {
 }
 
 function configureSqliteDatabase(db: SqliteDatabase): void {
-	db.exec("PRAGMA journal_mode=WAL");
-	db.exec("PRAGMA synchronous=FULL");
-	db.exec("PRAGMA busy_timeout=5000");
+	sql`PRAGMA journal_mode=WAL`.exec(db);
+	sql`PRAGMA synchronous=FULL`.exec(db);
+	sql`PRAGMA busy_timeout=5000`.exec(db);
 }
 
 export interface SqliteSessionSearchOptions {
@@ -30,14 +31,14 @@ export interface SqliteSessionSearchOptions {
 }
 
 function tableExists(db: SqliteDatabase, name: string): boolean {
-	return !!db
-		.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-		.get<{ found: number }>(name);
+	return !!sql`SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ${name} LIMIT 1`.get<{
+		found: number;
+	}>(db);
 }
 
 function ensureSearchSchema(db: SqliteDatabase): void {
 	const ftsExists = tableExists(db, "session_search_fts");
-	db.exec(`
+	sql`
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
   payload,
   content = 'entries',
@@ -54,8 +55,8 @@ CREATE TRIGGER IF NOT EXISTS session_search_fts_au AFTER UPDATE OF payload ON en
   INSERT INTO session_search_fts(session_search_fts, rowid, payload) VALUES('delete', old.rowid, old.payload);
   INSERT INTO session_search_fts(rowid, payload) VALUES (new.rowid, new.payload);
 END;
-`);
-	if (!ftsExists) db.exec("INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')");
+`.exec(db);
+	if (!ftsExists) sql`INSERT INTO session_search_fts(session_search_fts) VALUES('rebuild')`.exec(db);
 }
 
 /** SQLite FTS search over a co-located canonical session database. */
@@ -102,32 +103,25 @@ class SqliteSessionSearch implements SessionSearch<SqliteSessionMetadata> {
 		const db = await this.openDatabase();
 		try {
 			const query = `"${text.replaceAll('"', '""')}"`;
-			const rows = db
-				.prepare(
-					`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
-						name_fact.seq IS NOT NULL AS has_session_name,
-						name_fact.value AS session_name,
-						se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score
-					FROM session_search_fts
-					JOIN entries AS se ON se.rowid = session_search_fts.rowid
-					JOIN sessions AS s ON s.id = se.session_id
-					LEFT JOIN facts AS name_fact
-						ON name_fact.session_id = s.id
-						AND name_fact.kind = 'name'
-						AND name_fact.key IS NULL
-						AND name_fact.seq = (
-							SELECT MAX(f.seq)
-							FROM facts AS f
-							WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
-						)
-					WHERE session_search_fts MATCH ? AND (? IS NULL OR s.cwd = ?)
-					ORDER BY score`,
+			const cwd = options.cwd ?? null;
+			const rows = sql`SELECT s.id, s.created_at, s.metadata, s.cwd, s.parent_session_id,
+				name_fact.seq IS NOT NULL AS has_session_name,
+				name_fact.value AS session_name,
+				se.id AS entry_id, se.timestamp, bm25(session_search_fts) AS score
+			FROM session_search_fts
+			JOIN entries AS se ON se.rowid = session_search_fts.rowid
+			JOIN sessions AS s ON s.id = se.session_id
+			LEFT JOIN facts AS name_fact
+				ON name_fact.session_id = s.id
+				AND name_fact.kind = 'name'
+				AND name_fact.key IS NULL
+				AND name_fact.seq = (
+					SELECT MAX(f.seq)
+					FROM facts AS f
+					WHERE f.session_id = s.id AND f.kind = 'name' AND f.key IS NULL
 				)
-				.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(
-					query,
-					options.cwd ?? null,
-					options.cwd ?? null,
-				);
+			WHERE session_search_fts MATCH ${query} AND (${cwd} IS NULL OR s.cwd = ${cwd})
+			ORDER BY score`.all<SessionRow & { entry_id: string; timestamp: string; score: number }>(db);
 			const path = await this.getDatabasePath();
 			return rows.map((row) => ({
 				metadata: decodeSessionMetadata(row, path),

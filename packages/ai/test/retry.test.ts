@@ -40,6 +40,17 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches upstream request buffer exhaustion wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Error: exceeded request buffer limit while retrying upstream",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it.each([
 		wrappedDnsLookupError,
 		"connect ENOTFOUND api.example.com",

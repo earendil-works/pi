@@ -1,14 +1,15 @@
 import { SessionError } from "@earendil-works/pi-agent-core";
+import { sql } from "../sql.ts";
 import type { SqliteDatabase } from "../types.ts";
 
 export function createSequence(db: SqliteDatabase, sessionId: string, nextSeq = 1) {
-	db.prepare("INSERT INTO session_sequences (session_id, next_seq) VALUES (?, ?)").run(sessionId, nextSeq);
+	sql`INSERT INTO session_sequences (session_id, next_seq) VALUES (${sessionId}, ${nextSeq})`.run(db);
 }
 
 export function getNextSequence(db: SqliteDatabase, sessionId: string) {
-	const sequenceRow = db
-		.prepare("SELECT next_seq FROM session_sequences WHERE session_id = ?")
-		.get<{ next_seq: number }>(sessionId);
+	const sequenceRow = sql`SELECT next_seq FROM session_sequences WHERE session_id = ${sessionId}`.get<{
+		next_seq: number;
+	}>(db);
 	if (!sequenceRow) {
 		throw new SessionError("storage", `Missing sequence row for session ${sessionId}`);
 	}
@@ -16,7 +17,7 @@ export function getNextSequence(db: SqliteDatabase, sessionId: string) {
 }
 
 export function setNextSequence(db: SqliteDatabase, sessionId: string, nextSeq: number) {
-	db.prepare("UPDATE session_sequences SET next_seq = ? WHERE session_id = ?").run(nextSeq, sessionId);
+	sql`UPDATE session_sequences SET next_seq = ${nextSeq} WHERE session_id = ${sessionId}`.run(db);
 }
 
 export function advanceSequence(db: SqliteDatabase, sessionId: string, seq: number) {
@@ -24,5 +25,5 @@ export function advanceSequence(db: SqliteDatabase, sessionId: string, seq: numb
 }
 
 export function deleteSequence(db: SqliteDatabase, sessionId: string) {
-	db.prepare("DELETE FROM session_sequences WHERE session_id = ?").run(sessionId);
+	sql`DELETE FROM session_sequences WHERE session_id = ${sessionId}`.run(db);
 }

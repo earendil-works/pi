@@ -6,19 +6,20 @@ import {
 	parseHeader,
 	parseMutation,
 } from "../../../src/harness/session/jsonl/codec.ts";
+import { JsonlDecodeError } from "../../../src/harness/session/jsonl/errors.ts";
 import type { JsonlV4Header } from "../../../src/harness/session/jsonl/types.ts";
 import type { SessionMutation } from "../../../src/harness/session/state.ts";
 
 function expectHeaderRoundTrip(header: JsonlV4Header): void {
 	const encoded = encodeHeader(header);
 	expect(encoded.endsWith("\n")).toBe(true);
-	expect(parseHeader(encoded.trimEnd(), "/sessions/example.jsonl")).toEqual(header);
+	expect(parseHeader(encoded.trimEnd())).toEqual({ ok: true, value: header });
 }
 
 function expectMutationRoundTrip(mutation: SessionMutation): void {
 	const encoded = encodeMutation(mutation);
 	expect(encoded.endsWith("\n")).toBe(true);
-	expect(parseMutation(encoded.trimEnd(), "/sessions/example.jsonl", 2)).toEqual(mutation);
+	expect(parseMutation(encoded.trimEnd())).toEqual({ ok: true, value: mutation });
 }
 
 describe("JSONL v4 codec", () => {
@@ -71,6 +72,19 @@ describe("JSONL v4 codec", () => {
 	});
 
 	describe("mutation lines", () => {
+		it("returns syntax and schema errors", () => {
+			for (const [line, kind] of [
+				["{", "syntax"],
+				[JSON.stringify({ kind: "unknown", seq: 1 }), "schema"],
+			] as const) {
+				const result = parseMutation(line);
+				expect(result.ok).toBe(false);
+				if (result.ok) throw new Error(`Expected ${kind} decode error`);
+				expect(result.error).toBeInstanceOf(JsonlDecodeError);
+				expect(result.error).toMatchObject({ kind });
+			}
+		});
+
 		it("round trips a lane-bound entry line", () => {
 			expectMutationRoundTrip({
 				kind: "entry",
@@ -120,11 +134,12 @@ describe("JSONL v4 codec", () => {
 			expectMutationRoundTrip({ kind: "lane", seq: 1, lane: "thread", leafId: "entry-1" });
 		});
 
-		it("round trips both fact line discriminants", () => {
+		it("round trips fact lines, including cleared values", () => {
 			expectMutationRoundTrip({ kind: "fact", seq: 1, fact: "name", name: "Example" });
+			expectMutationRoundTrip({ kind: "fact", seq: 2, fact: "name", name: undefined });
 			expectMutationRoundTrip({
 				kind: "fact",
-				seq: 2,
+				seq: 3,
 				fact: "label",
 				targetId: "entry-1",
 				label: "checkpoint",
@@ -161,7 +176,7 @@ describe("JSONL v4 codec", () => {
 				},
 			},
 		])("rejects $name", ({ mutation }) => {
-			expect(() => parseMutation(JSON.stringify(mutation), "/sessions/example.jsonl", 2)).toThrow();
+			expect(parseMutation(JSON.stringify(mutation))).toMatchObject({ ok: false });
 		});
 	});
 });

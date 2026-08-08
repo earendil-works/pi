@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { sql } from "./sql.ts";
 import type { SqliteDatabase } from "./types.ts";
 
 export interface SqliteMigration {
@@ -23,28 +24,25 @@ export async function loadMigrations(): Promise<SqliteMigration[]> {
 }
 
 function ensureMigrationsTable(db: SqliteDatabase): void {
-	db.exec(`
+	sql`
 CREATE TABLE IF NOT EXISTS migrations (
 	id TEXT PRIMARY KEY,
 	applied_at TEXT NOT NULL
 );
-`);
+`.exec(db);
 }
 
 export async function applyMigrations(db: SqliteDatabase): Promise<void> {
 	ensureMigrationsTable(db);
 	const migrations = await loadMigrations();
-	const appliedRows = db.prepare("SELECT id FROM migrations ORDER BY applied_at, id").all<{ id: string }>();
+	const appliedRows = sql`SELECT id FROM migrations ORDER BY applied_at, id`.all<{ id: string }>(db);
 	const applied = new Set(appliedRows.map((row) => row.id));
 
 	for (const migration of migrations) {
 		if (applied.has(migration.id)) continue;
 		db.transaction(() => {
 			db.exec(migration.sql);
-			db.prepare("INSERT INTO migrations (id, applied_at) VALUES (?, ?)").run(
-				migration.id,
-				new Date().toISOString(),
-			);
+			sql`INSERT INTO migrations (id, applied_at) VALUES (${migration.id}, ${new Date().toISOString()})`.run(db);
 		});
 		applied.add(migration.id);
 	}
