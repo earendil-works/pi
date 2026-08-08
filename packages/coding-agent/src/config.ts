@@ -491,6 +491,23 @@ export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
+/**
+ * Detects the current JavaScript runtime name.
+ */
+export function getRuntimeName(): string {
+	const v = process.versions;
+	if (v.bun) return "bun";
+	if (v.deno) return "deno";
+	return process.release?.name || "node";
+}
+
+/**
+ * Returns the version string annotated with the current runtime.
+ */
+export function formatVersionWithRuntime(): string {
+	return `${VERSION} (${getRuntimeName()})`;
+}
+
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
