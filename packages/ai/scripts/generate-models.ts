@@ -267,6 +267,10 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
+const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
+	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
+	low: "low",
+} as const;
 const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
 	minimal: null,
 	low: null,
@@ -865,7 +869,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: model.provider === "deepseek" && model.id === "deepseek-v4-flash"
+					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (isGoogleThinkingApi(model) && isGemini3ProModel(model.id)) {
