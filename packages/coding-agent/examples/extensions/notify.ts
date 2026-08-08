@@ -49,7 +49,10 @@ function notify(title: string, body: string): void {
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("agent_end", async () => {
+	// Use agent_settled instead of agent_end so that the notification fires
+	// only after Pi is truly done — after automatic retries, compaction retries,
+	// and queued follow-up continuations have all completed.
+	pi.on("agent_settled", async () => {
 		notify("Pi", "Ready for input");
 	});
 }
