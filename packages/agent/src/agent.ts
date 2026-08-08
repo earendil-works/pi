@@ -7,6 +7,7 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
+import type { Advisor } from "./advisor.ts";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -25,6 +26,7 @@ import type {
 	QueueMode,
 	ShouldStopAfterTurnContext,
 	StreamFn,
+	StreamRule,
 	ToolExecutionMode,
 } from "./types.ts";
 
@@ -120,6 +122,15 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/** Time-traveling stream rules applied to every assistant turn (see AgentLoopConfig.streamRules). */
+	streamRules?: StreamRule[];
+	/** Maximum stream-rule retries per turn. Defaults to 2. */
+	streamRuleMaxRetries?: number;
+	/**
+	 * Optional advisor: observes each completed assistant turn and may return a
+	 * corrective note injected into the next turn's context (one-shot steer).
+	 */
+	advisor?: Advisor;
 }
 
 class PendingMessageQueue {
@@ -210,6 +221,12 @@ export class Agent {
 	public transport: Transport;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
+	/** Time-traveling stream rules applied to every assistant turn. */
+	public streamRules?: StreamRule[];
+	/** Maximum stream-rule retries per turn. Defaults to 2. */
+	public streamRuleMaxRetries?: number;
+	/** Advisor observing each completed assistant turn. */
+	public advisor?: Advisor;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 
@@ -235,6 +252,9 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.streamRules = runtimeOptions.streamRules;
+		this.streamRuleMaxRetries = runtimeOptions.streamRuleMaxRetries;
+		this.advisor = runtimeOptions.advisor;
 	}
 
 	/**
@@ -463,12 +483,14 @@ export class Agent {
 			prepareNextTurn:
 				this.prepareNextTurnWithContext || this.prepareNextTurn
 					? async (context) => {
-							if (this.prepareNextTurnWithContext) {
-								return await this.prepareNextTurnWithContext(context, this.signal);
-							}
-							return await this.prepareNextTurn?.(this.signal);
+							const update = this.prepareNextTurnWithContext
+								? await this.prepareNextTurnWithContext(context, this.signal)
+								: await this.prepareNextTurn?.(this.signal);
+							return await this.applyAdvisor(update, context, this.signal);
 						}
-					: undefined,
+					: this.advisor
+						? async (context) => await this.applyAdvisor(undefined, context, this.signal)
+						: undefined,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
@@ -480,7 +502,43 @@ export class Agent {
 				return this.steeringQueue.drain();
 			},
 			getFollowUpMessages: async () => this.followUpQueue.drain(),
+			streamRules: this.streamRules,
+			streamRuleMaxRetries: this.streamRuleMaxRetries,
 		};
+	}
+
+	/**
+	 * Runs the advisor over the latest assistant turn and, when a corrective
+	 * note is returned, injects it into the next turn's context as a one-shot
+	 * user steer message.
+	 */
+	private async applyAdvisor(
+		update: AgentLoopTurnUpdate | undefined,
+		turnContext: PrepareNextTurnContext,
+		signal?: AbortSignal,
+	): Promise<AgentLoopTurnUpdate | undefined> {
+		if (!this.advisor) {
+			return update;
+		}
+		const context = turnContext.context;
+		// Only review turns that produced actual text; pure tool-call turns are skipped.
+		const hasText = turnContext.message.content.some((c) => c.type === "text" && c.text.trim().length > 0);
+		if (!hasText) {
+			return update;
+		}
+		const note = await this.advisor.evaluate(context, turnContext.message, signal ?? this.signal);
+		if (!note) {
+			return update;
+		}
+		const nextContext = update?.context
+			? { ...update.context, messages: [...update.context.messages] }
+			: { systemPrompt: context.systemPrompt, messages: [...context.messages], tools: context.tools };
+		nextContext.messages.push({
+			role: "user",
+			content: `[advisor] ${note}`,
+			timestamp: Date.now(),
+		});
+		return { ...update, context: nextContext };
 	}
 
 	private async runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void> {
