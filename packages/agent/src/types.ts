@@ -290,6 +290,45 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * Time-traveling stream rules.
+	 *
+	 * Each rule watches the assistant text as it streams. When the accumulated
+	 * text matches `pattern`, the current LLM stream is aborted mid-token, the
+	 * rule's `reminder` is injected into the system prompt, and the stream is
+	 * retried from the same point (the partially generated text is discarded).
+	 * This course-corrects the model without paying context tax on every turn.
+	 *
+	 * Up to `streamRuleMaxRetries` retries are attempted per turn; if the text
+	 * still matches a rule afterwards, the response is finalized as-is.
+	 *
+	 * `pattern` must not use the `g` or `y` flags (stateful matching is not
+	 * supported; each check tests against the accumulated text from scratch).
+	 */
+	streamRules?: StreamRule[];
+
+	/**
+	 * Maximum number of stream-rule retries per assistant turn. Defaults to 2.
+	 */
+	streamRuleMaxRetries?: number;
+}
+
+/**
+ * A time-traveling stream rule.
+ *
+ * While the model streams text, every rule is tested against the text
+ * accumulated so far in the current response. The first rule whose `pattern`
+ * matches fires: the stream is aborted, `reminder` is appended to the system
+ * prompt, and generation restarts from the beginning of the response.
+ */
+export interface StreamRule {
+	/** Rule name, surfaced in `stream_rule_triggered` events and diagnostics. */
+	name: string;
+	/** Regex tested against the accumulated assistant text. Must not use `g` or `y` flags. */
+	pattern: RegExp;
+	/** Reminder injected into the system prompt when the rule fires. */
+	reminder: string;
 }
 
 /**
@@ -440,4 +479,6 @@ export type AgentEvent =
 	// Tool execution lifecycle
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }
-	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };
+	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean }
+	// Stream rules (time-traveling course correction)
+	| { type: "stream_rule_triggered"; rule: string; attempt: number };

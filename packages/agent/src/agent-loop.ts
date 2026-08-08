@@ -20,6 +20,7 @@ import type {
 	AgentToolCall,
 	AgentToolResult,
 	StreamFn,
+	StreamRule,
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
@@ -291,84 +292,143 @@ async function streamAssistantResponse(
 		messages = await config.transformContext(messages, signal);
 	}
 
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
+	const rules = config.streamRules ?? [];
+	const maxRetries = config.streamRuleMaxRetries ?? 2;
+	let attempts = 0;
+	let systemPrompt = context.systemPrompt;
 
-	// Build LLM context
-	const llmContext: Context = {
-		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
-		tools: context.tools,
-	};
+	// Time-traveling stream rules: watch the streaming text, and when a rule
+	// matches, abort the stream mid-token, inject the reminder into the system
+	// prompt, and retry generation from the same point. The partially generated
+	// text is discarded (the aborted message is surfaced via message_end so the
+	// UI can show what was corrected).
+	while (true) {
+		// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+		const llmMessages = await config.convertToLlm(messages);
 
-	// Resolve API key (important for expiring tokens)
-	const resolvedApiKey =
-		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+		// Build LLM context
+		const llmContext: Context = {
+			systemPrompt,
+			messages: llmMessages,
+			tools: context.tools,
+		};
 
-	const response = await streamFunction(config.model, llmContext, {
-		...config,
-		apiKey: resolvedApiKey,
-		signal,
-	});
+		// Resolve API key (important for expiring tokens)
+		const resolvedApiKey =
+			(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
-	let partialMessage: AssistantMessage | null = null;
-	let addedPartial = false;
+		// A per-attempt AbortController lets a rule fire abort the current stream
+		// without tearing down the whole agent run.
+		const retryController = new AbortController();
+		const combinedSignal = signal ? AbortSignal.any([signal, retryController.signal]) : retryController.signal;
 
-	for await (const event of response) {
-		switch (event.type) {
-			case "start":
-				partialMessage = event.partial;
-				context.messages.push(partialMessage);
-				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
-				break;
+		const response = await streamFunction(config.model, llmContext, {
+			...config,
+			apiKey: resolvedApiKey,
+			signal: combinedSignal,
+		});
 
-			case "text_start":
-			case "text_delta":
-			case "text_end":
-			case "thinking_start":
-			case "thinking_delta":
-			case "thinking_end":
-			case "toolcall_start":
-			case "toolcall_delta":
-			case "toolcall_end":
-				if (partialMessage) {
+		let partialMessage: AssistantMessage | null = null;
+		let addedPartial = false;
+		let buffer = "";
+		let matchedRule: StreamRule | null = null;
+
+		for await (const event of response) {
+			// Watch the accumulated text for stream rules before dispatching.
+			if (event.type === "text_delta" && rules.length > 0) {
+				buffer += event.delta;
+				for (const rule of rules) {
+					// Defensive: patterns must not use g/y flags, but resetting
+					// lastIndex keeps a stray stateful pattern from breaking us.
+					rule.pattern.lastIndex = 0;
+					if (rule.pattern.test(buffer)) {
+						matchedRule = rule;
+						break;
+					}
+				}
+				if (matchedRule && attempts < maxRetries) {
+					// Abort and retry, but only while retries remain. On the
+					// final attempt the stream is left to finish so the response
+					// is delivered as-is (see streamRuleMaxRetries).
+					retryController.abort();
+					break;
+				}
+				// On the final attempt the rule match is accepted: keep streaming.
+			}
+
+			switch (event.type) {
+				case "start":
 					partialMessage = event.partial;
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: { ...partialMessage },
-					});
-				}
-				break;
+					context.messages.push(partialMessage);
+					addedPartial = true;
+					await emit({ type: "message_start", message: { ...partialMessage } });
+					break;
 
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
+				case "text_start":
+				case "text_delta":
+				case "text_end":
+				case "thinking_start":
+				case "thinking_delta":
+				case "thinking_end":
+				case "toolcall_start":
+				case "toolcall_delta":
+				case "toolcall_end":
+					if (partialMessage) {
+						partialMessage = event.partial;
+						context.messages[context.messages.length - 1] = partialMessage;
+						await emit({
+							type: "message_update",
+							assistantMessageEvent: event,
+							message: { ...partialMessage },
+						});
+					}
+					break;
+
+				case "done":
+				case "error": {
+					const finalMessage = await response.result();
+					if (addedPartial) {
+						context.messages[context.messages.length - 1] = finalMessage;
+					} else {
+						context.messages.push(finalMessage);
+					}
+					if (!addedPartial) {
+						await emit({ type: "message_start", message: { ...finalMessage } });
+					}
+					await emit({ type: "message_end", message: finalMessage });
+					return finalMessage;
 				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
 			}
 		}
-	}
 
-	const finalMessage = await response.result();
-	if (addedPartial) {
-		context.messages[context.messages.length - 1] = finalMessage;
-	} else {
-		context.messages.push(finalMessage);
-		await emit({ type: "message_start", message: { ...finalMessage } });
+		// A rule fired: inject the reminder and retry from the same point. The
+		// discarded partial is dropped from the context only — it is never
+		// emitted as a terminal message, so it cannot leak into the agent's
+		// persisted state or a later LLM call. The UI observes the correction
+		// via the `stream_rule_triggered` event.
+		if (matchedRule && attempts < maxRetries) {
+			attempts++;
+			systemPrompt += `\n\n[System reminder (stream rule "${matchedRule.name}"): ${matchedRule.reminder}]`;
+			await emit({ type: "stream_rule_triggered", rule: matchedRule.name, attempt: attempts });
+
+			if (addedPartial) {
+				context.messages.pop();
+				addedPartial = false;
+				partialMessage = null;
+			}
+			continue;
+		}
+
+		const finalMessage = await response.result();
+		if (addedPartial) {
+			context.messages[context.messages.length - 1] = finalMessage;
+		} else {
+			context.messages.push(finalMessage);
+			await emit({ type: "message_start", message: { ...finalMessage } });
+		}
+		await emit({ type: "message_end", message: finalMessage });
+		return finalMessage;
 	}
-	await emit({ type: "message_end", message: finalMessage });
-	return finalMessage;
 }
 
 /**

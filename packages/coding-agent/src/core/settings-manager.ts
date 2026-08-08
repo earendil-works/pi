@@ -136,6 +136,14 @@ export interface Settings {
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	streamRules?: StreamRuleConfig[]; // Time-traveling stream rules
+}
+
+/** Serializable stream-rule config. `pattern` is a regex source string, compiled at load time. */
+export interface StreamRuleConfig {
+	name: string;
+	pattern: string;
+	reminder: string;
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -1280,5 +1288,10 @@ export class SettingsManager {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
 		this.save();
+	}
+
+	/** Stream rules configured via settings; empty when none are set. */
+	getStreamRules(): StreamRuleConfig[] {
+		return this.settings.streamRules ?? [];
 	}
 }

@@ -418,6 +418,8 @@ export class InteractiveMode {
 	private workingVisible = true;
 	private workingIndicatorOptions: WorkingIndicatorOptions | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
+	/** Stream-rule injections fired during the current streaming turn (transient, not persisted). */
+	private streamRuleNotices: string[] = [];
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
 
@@ -3100,6 +3102,13 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "stream_rule_triggered":
+				// Time-traveling stream rule fired: record it for the aborted
+				// message's error display (transient, not persisted).
+				this.streamRuleNotices.push(`${event.rule} (attempt ${event.attempt})`);
+				this.ui.requestRender();
+				break;
+
 			case "entry_appended":
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
@@ -3188,6 +3197,10 @@ export class InteractiveMode {
 							retryAttempt > 0
 								? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
 								: "Operation aborted";
+						if (this.streamRuleNotices.length > 0) {
+							errorMessage += `\nStream rules fired: ${this.streamRuleNotices.join(", ")}`;
+							this.streamRuleNotices = [];
+						}
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
