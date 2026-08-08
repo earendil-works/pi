@@ -766,7 +766,7 @@ function mapStopReason(
 		case "completed":
 			return { stopReason: "stop" };
 		case "incomplete":
-			if (incompleteReason === "max_output_tokens") {
+			if (incompleteReason === "max_output_tokens" || incompleteReason === "length") {
 				return { stopReason: "length" };
 			}
 			return {

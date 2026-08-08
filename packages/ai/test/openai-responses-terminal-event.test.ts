@@ -319,6 +319,25 @@ describe("OpenAI Responses terminal event handling", () => {
 		});
 	});
 
+	it("finalizes incomplete responses with reason=length as length stops", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createIncompleteEvents("length"), output, stream, model);
+
+		expect(output.responseId).toBe("resp_incomplete");
+		expect(output.stopReason).toBe("length");
+		expect(output.rawStopReason).toBe("incomplete.length");
+		expect(output.usage).toMatchObject({
+			input: 25,
+			output: 12,
+			cacheRead: 5,
+			cacheWrite: 0,
+			totalTokens: 42,
+		});
+	});
+
 	it("finalizes content-filtered incomplete responses as non-retryable errors", async () => {
 		const model = createModel();
 		const output = createOutput(model);
