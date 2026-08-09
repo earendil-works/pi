@@ -239,6 +239,59 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await loginPromise;
 	});
 
+	it("enables model policies one at a time after device authorization", async () => {
+		vi.useFakeTimers();
+		let policyRequests = 0;
+		let inFlightPolicyRequests = 0;
+		let maxInFlightPolicyRequests = 0;
+
+		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+			const url = getUrl(input);
+
+			if (url.endsWith("/login/device/code")) {
+				return jsonResponse({
+					device_code: "device-code",
+					user_code: "ABCD-EFGH",
+					verification_uri: "https://github.com/login/device",
+					interval: 1,
+					expires_in: 900,
+				});
+			}
+			if (url.endsWith("/login/oauth/access_token")) {
+				return jsonResponse({ access_token: "ghu_refresh_token" });
+			}
+			if (url.includes("/copilot_internal/v2/token")) {
+				return jsonResponse({
+					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+					expires_at: 9999999999,
+				});
+			}
+			if (url.includes("/models/") && url.endsWith("/policy")) {
+				policyRequests++;
+				inFlightPolicyRequests++;
+				maxInFlightPolicyRequests = Math.max(maxInFlightPolicyRequests, inFlightPolicyRequests);
+				await Promise.resolve();
+				inFlightPolicyRequests--;
+				return new Response("", { status: 200 });
+			}
+			if (url.endsWith("/models")) {
+				return jsonResponse({ data: [] });
+			}
+			throw new Error(`Unexpected fetch URL: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const loginPromise = loginGitHubCopilotForTest({
+			onDeviceCode: () => {},
+			onPrompt: async () => "",
+		});
+		await vi.advanceTimersByTimeAsync(1000);
+		await loginPromise;
+
+		expect(policyRequests).toBeGreaterThan(1);
+		expect(maxInFlightPolicyRequests).toBe(1);
+	});
+
 	it("rejects a non-http(s) verification_uri before it reaches onDeviceCode", async () => {
 		// A malicious enterprise OAuth server could return a verification_uri that
 		// the browser launcher would otherwise hand to the OS. Ensure such values

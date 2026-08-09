@@ -344,11 +344,9 @@ async function enableAllGitHubCopilotModels(
 	signal: AbortSignal,
 ): Promise<void> {
 	const models = Object.values(GITHUB_COPILOT_MODELS);
-	await Promise.all(
-		models.map(async (model) => {
-			await enableGitHubCopilotModel(token, model.id, enterpriseDomain, signal);
-		}),
-	);
+	for (const model of models) {
+		await enableGitHubCopilotModel(token, model.id, enterpriseDomain, signal);
+	}
 }
 
 async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
