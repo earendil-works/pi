@@ -162,4 +162,125 @@ describe("validateToolArguments", () => {
 			expect(() => validateToolArguments(tool, toolCall)).toThrow("Validation failed");
 		}
 	});
+
+	it("repairs a JSON-serialized object string for an object-typed property", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{
+				type: "object",
+				properties: { inline: { type: "string" }, version: { type: "integer" } },
+				required: ["inline"],
+				additionalProperties: false,
+			} as Tool["parameters"],
+			'{"inline":"echo hi","version":"2"}',
+		);
+
+		// Nested primitive coercion still applies to the parsed value.
+		expect(validateToolArguments(tool, toolCall)).toEqual({
+			value: { inline: "echo hi", version: 2 },
+		});
+	});
+
+	it("repairs a JSON-serialized array string for an array-typed property", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{ type: "array", items: { type: "integer" } } as Tool["parameters"],
+			'["1", 2]',
+		);
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: [1, 2] });
+	});
+
+	it("still rejects non-JSON strings for object-typed properties", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{
+				type: "object",
+				properties: { inline: { type: "string" } },
+				additionalProperties: false,
+			} as Tool["parameters"],
+			'\n<parameter name="inline">cd /repo\necho hi',
+		);
+
+		expect(() => validateToolArguments(tool, toolCall)).toThrow("must be object");
+	});
+
+	it("rejects a JSON object string that does not validate the object schema", () => {
+		const { tool, toolCall } = createToolCallWithPlainSchema(
+			{
+				type: "object",
+				properties: { inline: { type: "string" } },
+				required: ["inline"],
+				additionalProperties: false,
+			} as Tool["parameters"],
+			'{"weird":true}',
+		);
+
+		expect(() => validateToolArguments(tool, toolCall)).toThrow("Validation failed");
+	});
+
+	it("prefers a validating object member over a string member in unions", () => {
+		const unionSchema = {
+			anyOf: [
+				{
+					type: "object",
+					properties: { inline: { type: "string" } },
+					required: ["inline"],
+					additionalProperties: false,
+				},
+				{ type: "string" },
+			],
+		} as Tool["parameters"];
+
+		const serialized = createToolCallWithPlainSchema(unionSchema, '{"inline":"echo hi"}');
+		expect(validateToolArguments(serialized.tool, serialized.toolCall)).toEqual({
+			value: { inline: "echo hi" },
+		});
+
+		// Ordinary strings and JSON not matching the object member keep the
+		// string member.
+		const plain = createToolCallWithPlainSchema(unionSchema, "just a plain command");
+		expect(validateToolArguments(plain.tool, plain.toolCall)).toEqual({
+			value: "just a plain command",
+		});
+
+		const mismatched = createToolCallWithPlainSchema(unionSchema, '{"weird":true}');
+		expect(validateToolArguments(mismatched.tool, mismatched.toolCall)).toEqual({
+			value: '{"weird":true}',
+		});
+	});
+
+	it("repairs JSON-serialized object strings for TypeBox schemas", () => {
+		// TypeBox schemas skip the generic pre-check coercion, so the repair
+		// must also run as a last-chance pass after validation fails.
+		const tool: Tool = {
+			name: "spawn",
+			description: "Spawn tool",
+			parameters: Type.Object(
+				{
+					script: Type.Object(
+						{
+							inline: Type.Optional(Type.String({ minLength: 1 })),
+							artifactId: Type.Optional(Type.String({ minLength: 1 })),
+						},
+						{ additionalProperties: false },
+					),
+				},
+				{ additionalProperties: false },
+			),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "tool-1",
+			name: "spawn",
+			arguments: { script: '{"inline":"echo hi"}' },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({
+			script: { inline: "echo hi" },
+		});
+
+		const garbage: ToolCall = {
+			...toolCall,
+			arguments: { script: '\n<parameter name="inline">cd /repo' },
+		};
+		expect(() => validateToolArguments(tool, garbage)).toThrow("must be object");
+	});
 });

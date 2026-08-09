@@ -171,7 +171,75 @@ function applySchemaArrayCoercion(value: unknown[], schema: JsonSchemaObject): v
 	}
 }
 
+function parseJsonStringForTypes(
+	value: unknown,
+	wantsObject: boolean,
+	wantsArray: boolean,
+): unknown {
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	const looksObject = trimmed.startsWith("{") && trimmed.endsWith("}");
+	const looksArray = trimmed.startsWith("[") && trimmed.endsWith("]");
+	if (!(wantsObject && looksObject) && !(wantsArray && looksArray)) {
+		return undefined;
+	}
+	try {
+		const parsed: unknown = JSON.parse(trimmed);
+		if (wantsObject && typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+			return parsed;
+		}
+		if (wantsArray && Array.isArray(parsed)) {
+			return parsed;
+		}
+	} catch {
+		// Not JSON: leave the original string for normal validation errors.
+	}
+	return undefined;
+}
+
+/**
+ * Repair a JSON-serialized object/array delivered as a string for a schema
+ * that expects the structured type. Providers and models double-serialize
+ * nested tool arguments often enough that this is a common failure mode.
+ * The parsed value is adopted only when, after recursive coercion, it fully
+ * validates against the target schema; anything else is left untouched so
+ * validation still fails with the original precise error.
+ */
+function coerceJsonStringWithSchema(value: unknown, schema: JsonSchemaObject): unknown {
+	const schemaTypes = getSchemaTypes(schema);
+	if (schemaTypes.includes("string")) {
+		return undefined;
+	}
+	const parsed = parseJsonStringForTypes(
+		value,
+		schemaTypes.includes("object"),
+		schemaTypes.includes("array"),
+	);
+	if (parsed === undefined) {
+		return undefined;
+	}
+	const candidate = coerceWithJsonSchema(parsed, schema);
+	const validator = getSubSchemaValidator(schema);
+	if (validator?.Check(candidate)) {
+		return candidate;
+	}
+	return undefined;
+}
+
 function coerceWithUnionSchema(value: unknown, schemas: JsonSchemaObject[]): unknown {
+	// Prefer a typed member for a string that parses as validating JSON so a
+	// double-serialized object is not silently kept as a string member.
+	if (typeof value === "string") {
+		for (const schema of schemas) {
+			const repaired = coerceJsonStringWithSchema(value, schema);
+			if (repaired !== undefined) {
+				return repaired;
+			}
+		}
+	}
+
 	for (const schema of schemas) {
 		const validator = getSubSchemaValidator(schema);
 		if (validator?.Check(value)) {
@@ -217,6 +285,16 @@ function coerceWithJsonSchema(value: unknown, schema: JsonSchemaObject): unknown
 				nextValue = candidate;
 				break;
 			}
+		}
+	}
+
+	if (
+		typeof nextValue === "string" &&
+		(schemaTypes.includes("object") || schemaTypes.includes("array"))
+	) {
+		const repaired = coerceJsonStringWithSchema(nextValue, schema);
+		if (repaired !== undefined) {
+			nextValue = repaired;
 		}
 	}
 
@@ -303,6 +381,15 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 
 	if (validator.Check(args)) {
 		return args;
+	}
+
+	// Last-chance repair for JSON-serialized structured arguments. This pass
+	// is reached only when validation has already failed, so it cannot change
+	// the behavior of any currently-valid call, and it also covers TypeBox
+	// schemas that skip the generic pre-check coercion above.
+	const repaired = coerceWithJsonSchema(structuredClone(args), tool.parameters as JsonSchemaObject);
+	if (validator.Check(repaired)) {
+		return repaired;
 	}
 
 	const errors =
