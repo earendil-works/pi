@@ -341,6 +341,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.selectedIndex = this.selectedIndex === this.filteredModels.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();
 		}
+		// Page up - move up by one page
+		else if (kb.matches(keyData, "tui.select.pageUp")) {
+			if (this.filteredModels.length === 0) return;
+			this.selectedIndex = Math.max(0, this.selectedIndex - 10);
+			this.updateList();
+		}
+		// Page down - move down by one page
+		else if (kb.matches(keyData, "tui.select.pageDown")) {
+			if (this.filteredModels.length === 0) return;
+			this.selectedIndex = Math.min(this.filteredModels.length - 1, this.selectedIndex + 10);
+			this.updateList();
+		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedModel = this.filteredModels[this.selectedIndex];
