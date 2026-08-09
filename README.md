@@ -103,6 +103,10 @@ I regularly publish my own `pi-mono` work sessions here:
 
 - [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
 
+## Related Tools
+
+- [**Aliyun Model Studio CLI**](https://github.com/modelstudioai/cli) () — Official CLI for the Aliyun AI platform. Extends coding agents with image/video generation, knowledge retrieval, app orchestration, and model deployment.
+
 ## License
 
 MIT
