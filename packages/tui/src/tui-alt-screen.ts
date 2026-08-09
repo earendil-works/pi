@@ -123,6 +123,8 @@ export interface TuiAltScreenOptions {
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
 	onRightClickPaste?: () => void;
+	/** Automatically copy selected text to the clipboard on mouse release (default: true). */
+	copyOnSelect?: boolean;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -159,6 +161,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly mouseEnabled: boolean;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
+	private readonly copyOnSelect: boolean;
 
 	constructor(
 		terminal: Terminal,
@@ -179,6 +182,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.mouseEnabled = options.mouse ?? true;
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
+		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -794,7 +798,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
-			this.copySelectionToClipboard();
+			if (this.copyOnSelect) {
+				this.copySelectionToClipboard();
+			}
 			this.requestRender();
 			return;
 		}
