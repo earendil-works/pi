@@ -180,7 +180,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		expect(credentials.availableModelIds).toEqual([]);
 	});
 
-	it("reports device-code details through onDeviceCode", async () => {
+	it("reports device-code details without mutating model policies", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
 
@@ -237,6 +237,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		});
 		await vi.advanceTimersByTimeAsync(1000);
 		await loginPromise;
+		expect(fetchMock.mock.calls.some(([input]) => getUrl(input).endsWith("/policy"))).toBe(false);
 	});
 
 	it("rejects a non-http(s) verification_uri before it reaches onDeviceCode", async () => {

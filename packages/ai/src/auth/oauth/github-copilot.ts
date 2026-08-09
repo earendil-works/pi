@@ -2,7 +2,6 @@
  * GitHub Copilot OAuth flow
  */
 
-import { GITHUB_COPILOT_MODELS } from "../../providers/github-copilot.models.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
@@ -301,56 +300,6 @@ async function refreshGitHubCopilotToken(
 	};
 }
 
-/**
- * Enable a model for the user's GitHub Copilot account.
- * This is required for some models (like Claude, Grok) before they can be used.
- */
-async function enableGitHubCopilotModel(
-	token: string,
-	modelId: string,
-	enterpriseDomain: string | undefined,
-	signal: AbortSignal,
-): Promise<boolean> {
-	const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain);
-	const url = `${baseUrl}/models/${modelId}/policy`;
-
-	try {
-		const response = await fetch(url, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${token}`,
-				...COPILOT_HEADERS,
-				"openai-intent": "chat-policy",
-				"x-interaction-type": "chat-policy",
-			},
-			body: JSON.stringify({ state: "enabled" }),
-			signal,
-		});
-		return response.ok;
-	} catch (error) {
-		if (signal.aborted) throw error;
-		return false;
-	}
-}
-
-/**
- * Enable all known GitHub Copilot models that may require policy acceptance.
- * Called after successful login to ensure all models are available.
- */
-async function enableAllGitHubCopilotModels(
-	token: string,
-	enterpriseDomain: string | undefined,
-	signal: AbortSignal,
-): Promise<void> {
-	const models = Object.values(GITHUB_COPILOT_MODELS);
-	await Promise.all(
-		models.map(async (model) => {
-			await enableGitHubCopilotModel(token, model.id, enterpriseDomain, signal);
-		}),
-	);
-}
-
 async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
 	const input = await interaction.prompt({
 		type: "text",
@@ -379,8 +328,6 @@ async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise
 		enterpriseDomain ?? undefined,
 		interaction.signal,
 	);
-	interaction.notify({ type: "progress", message: "Enabling models..." });
-	await enableAllGitHubCopilotModels(credentials.access, enterpriseDomain ?? undefined, interaction.signal);
 	return {
 		...credentials,
 		availableModelIds: await fetchAvailableGitHubCopilotModelIds(
