@@ -1119,9 +1119,13 @@ export class AgentSession {
 		let messages: AgentMessage[] | undefined;
 
 		try {
-			// Handle extension commands first (execute immediately, even during streaming)
+			// Handle extension commands first (execute immediately, even during streaming).
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
-			if (expandPromptTemplates && text.startsWith("/")) {
+			// NOTE: command routing is intentionally NOT gated by expandPromptTemplates,
+			// so programmatic messages (pi.sendUserMessage with expandPromptTemplates:false)
+			// can still trigger extension commands like /mdr-reload. Only exact command
+			// names match, so arbitrary "/..." text still flows through as a normal prompt.
+			if (text.startsWith("/")) {
 				const handled = await this._tryExecuteExtensionCommand(text);
 				if (handled) {
 					// Extension command executed, no prompt to send
