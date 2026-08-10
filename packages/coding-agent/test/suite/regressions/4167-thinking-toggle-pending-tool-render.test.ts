@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
-import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode, PendingMessageIdentity } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 
@@ -47,6 +47,7 @@ type RenderSessionContextThis = {
 	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
+	pendingMessageIdentity: PendingMessageIdentity;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
@@ -77,6 +78,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
+		pendingMessageIdentity: new PendingMessageIdentity(),
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })

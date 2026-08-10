@@ -99,7 +99,14 @@ import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
+import type {
+	BranchSummaryEntry,
+	CompactionEntry,
+	CustomMessageEntry,
+	SessionEntry,
+	SessionManager,
+	SessionMessageEntry,
+} from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -153,6 +160,7 @@ export type AgentSessionEvent =
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "entry_appended"; entry: SessionEntry }
+	| { type: "message_persisted"; entry: SessionMessageEntry | CustomMessageEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
@@ -662,8 +670,8 @@ export class AgentSession {
 			// canonical entry identity (messageId/timestamp) after the fact.
 			if (entryId) {
 				const entry = this.sessionManager.getEntry(entryId);
-				if (entry) {
-					this._emit({ type: "entry_appended", entry });
+				if (entry && (entry.type === "message" || entry.type === "custom_message")) {
+					this._emit({ type: "message_persisted", entry });
 				}
 			}
 

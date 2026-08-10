@@ -92,7 +92,13 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
-import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import {
+	type CustomMessageEntry,
+	type SessionEntry,
+	SessionManager,
+	type SessionMessageEntry,
+	sessionEntryToContextMessages,
+} from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -224,6 +230,47 @@ export function sessionEntriesToRenderItems(entries: SessionEntry[]): RenderSess
 		const entryMeta: MarkdownMessageMeta = { messageId: entry.id, timestamp: entry.timestamp };
 		return sessionEntryToContextMessages(entry).map((message) => ({ kind: "message", message, entryMeta }));
 	});
+}
+
+/**
+ * Live component-association state: the user/assistant component rendered for
+ * the message currently awaiting persistence. message_start registers the
+ * component (or explicitly clears it when a message renders no markdown
+ * component, e.g. skill-only user messages); message_persisted attaches the
+ * canonical entry identity to the matching component and clears the state.
+ */
+export class PendingMessageIdentity {
+	private userComponent: UserMessageComponent | undefined;
+	private assistantComponent: AssistantMessageComponent | undefined;
+
+	setUserComponent(component: UserMessageComponent | undefined): void {
+		this.userComponent = component;
+	}
+
+	setAssistantComponent(component: AssistantMessageComponent | undefined): void {
+		this.assistantComponent = component;
+	}
+
+	/** Reset association state (e.g. before a full chat rebuild). */
+	clear(): void {
+		this.userComponent = undefined;
+		this.assistantComponent = undefined;
+	}
+
+	/** Attach the persisted entry identity to the waiting live component, then clear. */
+	attachPersistedEntry(entry: SessionMessageEntry | CustomMessageEntry): void {
+		if (entry.type !== "message") {
+			return;
+		}
+		const entryMeta: MarkdownMessageMeta = { messageId: entry.id, timestamp: entry.timestamp };
+		if (entry.message.role === "assistant") {
+			this.assistantComponent?.setMessageMeta(entryMeta);
+		} else if (entry.message.role === "user") {
+			this.userComponent?.setMessageMeta(entryMeta);
+		}
+		this.userComponent = undefined;
+		this.assistantComponent = undefined;
+	}
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -451,10 +498,8 @@ export class InteractiveMode {
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
-	// Last live-rendered user message / finished assistant message, so the persisted
-	// entry identity (entry_appended) can be attached after persistence.
-	private lastUserMessageComponent: UserMessageComponent | undefined = undefined;
-	private lastAssistantComponent: AssistantMessageComponent | undefined = undefined;
+	// Live components waiting for their persisted entry identity (message_persisted)
+	private pendingMessageIdentity = new PendingMessageIdentity();
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3125,17 +3170,15 @@ export class InteractiveMode {
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
-				} else if (event.entry.type === "message") {
-					// Attach the persisted entry identity to the live-rendered component
-					// so live and rebuilt rendering agree once the entry exists.
-					const entryMeta: MarkdownMessageMeta = { messageId: event.entry.id, timestamp: event.entry.timestamp };
-					if (event.entry.message.role === "assistant") {
-						this.lastAssistantComponent?.setMessageMeta(entryMeta);
-					} else if (event.entry.message.role === "user") {
-						this.lastUserMessageComponent?.setMessageMeta(entryMeta);
-					}
-					this.ui.requestRender();
 				}
+				break;
+
+			case "message_persisted":
+				// Attach the persisted entry identity to the live component rendered for
+				// this message (registered at message_start), so live and rebuilt
+				// rendering agree once the entry exists.
+				this.pendingMessageIdentity.attachPersistedEntry(event.entry);
+				this.ui.requestRender();
 				break;
 
 			case "session_info_changed":
@@ -3154,7 +3197,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					this.pendingMessageIdentity.setUserComponent(this.addMessageToChat(event.message));
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -3166,6 +3209,7 @@ export class InteractiveMode {
 						this.outputPad,
 						this.getMarkdownTransformers(),
 					);
+					this.pendingMessageIdentity.setAssistantComponent(this.streamingComponent);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3241,7 +3285,6 @@ export class InteractiveMode {
 						}
 						this.maybeShowCacheMissNotice(this.streamingMessage);
 					}
-					this.lastAssistantComponent = this.streamingComponent;
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
@@ -3485,7 +3528,7 @@ export class InteractiveMode {
 	private addMessageToChat(
 		message: AgentMessage,
 		options?: { populateHistory?: boolean; entryMeta?: MarkdownMessageMeta },
-	): void {
+	): UserMessageComponent | undefined {
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -3531,6 +3574,7 @@ export class InteractiveMode {
 			}
 			case "user": {
 				const textContent = this.getUserMessageText(message);
+				let userComponent: UserMessageComponent | undefined;
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
@@ -3547,7 +3591,7 @@ export class InteractiveMode {
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
 							this.chatContainer.addChild(new Spacer(1));
-							const userComponent = new UserMessageComponent(
+							userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
@@ -3555,10 +3599,9 @@ export class InteractiveMode {
 								options?.entryMeta,
 							);
 							this.chatContainer.addChild(userComponent);
-							this.lastUserMessageComponent = userComponent;
 						}
 					} else {
-						const userComponent = new UserMessageComponent(
+						userComponent = new UserMessageComponent(
 							textContent,
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
@@ -3566,13 +3609,12 @@ export class InteractiveMode {
 							options?.entryMeta,
 						);
 						this.chatContainer.addChild(userComponent);
-						this.lastUserMessageComponent = userComponent;
 					}
 					if (options?.populateHistory) {
 						this.editor.addToHistory?.(textContent);
 					}
 				}
-				break;
+				return userComponent;
 			}
 			case "assistant": {
 				const assistantComponent = new AssistantMessageComponent(
@@ -3585,7 +3627,6 @@ export class InteractiveMode {
 					options?.entryMeta,
 				);
 				this.chatContainer.addChild(assistantComponent);
-				this.lastAssistantComponent = assistantComponent;
 				break;
 			}
 			case "toolResult": {
@@ -3596,6 +3637,7 @@ export class InteractiveMode {
 				const _exhaustive: never = message;
 			}
 		}
+		return undefined;
 	}
 
 	private renderSessionItems(
@@ -3693,6 +3735,9 @@ export class InteractiveMode {
 		entries: SessionEntry[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
+		// A full re-render resets any live association state; restored components
+		// already carry their entry identity from the projection.
+		this.pendingMessageIdentity.clear();
 		this.renderSessionItems(sessionEntriesToRenderItems(entries), options);
 	}
 

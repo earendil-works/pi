@@ -4,11 +4,14 @@ import type {
 	MarkdownTransformer,
 } from "../../../core/extensions/types.ts";
 
+/** Persisted entry metadata plus the separately-named transient render identity. */
+export type MarkdownTransformMeta = MarkdownMessageMeta & { transientId?: string };
+
 export function createMarkdownTransform(
 	messageType: MarkdownTransformContext["messageType"],
 	isStreaming: boolean,
 	transformers: readonly MarkdownTransformer[],
-	meta: MarkdownMessageMeta = {},
+	meta: MarkdownTransformMeta = {},
 ): (markdown: string, availableWidth: number) => string {
 	return (markdown, availableWidth) =>
 		applyMarkdownTransformers(markdown, { messageType, isStreaming, availableWidth, ...meta }, transformers);

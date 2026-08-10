@@ -1164,8 +1164,8 @@ export interface MarkdownTransformContext {
 	transientId?: string;
 }
 
-/** Bundle of per-message identity fields carried through the render pipeline. */
-export type MarkdownMessageMeta = Pick<MarkdownTransformContext, "messageId" | "timestamp" | "transientId">;
+/** Bundle of persisted per-message identity fields carried through the render pipeline. */
+export type MarkdownMessageMeta = Pick<MarkdownTransformContext, "messageId" | "timestamp">;
 
 export type MarkdownTransformer = (markdown: string, context: MarkdownTransformContext) => string;
 
