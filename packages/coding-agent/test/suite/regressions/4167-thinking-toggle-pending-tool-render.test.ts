@@ -52,7 +52,6 @@ type RenderSessionContextThis = {
 	getRegisteredToolDefinition(toolName: string): undefined;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 	renderSessionItems: RenderSessionItems;
-	applyMarkdownIdentityEvent(event: AgentSessionEvent): void;
 };
 
 type RenderSessionEntries = (
@@ -61,13 +60,11 @@ type RenderSessionEntries = (
 	options?: { updateFooter?: boolean; populateHistory?: boolean },
 ) => void;
 
-type ApplyMarkdownIdentityEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) => void;
-
 type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) => Promise<void>;
 
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
-	const fakeThis: RenderSessionContextThis = {
+	return {
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
@@ -86,14 +83,10 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })
 			.renderSessionItems,
-		applyMarkdownIdentityEvent: (
-			InteractiveMode.prototype as unknown as { applyMarkdownIdentityEvent: ApplyMarkdownIdentityEvent }
-		).applyMarkdownIdentityEvent,
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},
 	};
-	return fakeThis;
 }
 
 function createAssistantToolCallMessage(): AssistantMessage {

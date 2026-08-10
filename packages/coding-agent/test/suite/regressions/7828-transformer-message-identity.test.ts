@@ -1,13 +1,16 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Container, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { MarkdownTransformContext, MarkdownTransformer } from "../../../src/core/extensions/types.ts";
 import type { SessionEntry, SessionMessageEntry } from "../../../src/core/session-manager.ts";
 import { AssistantMessageComponent } from "../../../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../../../src/modes/interactive/components/user-message.ts";
 import {
+	InteractiveMode,
 	isMarkdownIdentityEntry,
 	sessionEntriesToRenderItems,
 } from "../../../src/modes/interactive/interactive-mode.ts";
@@ -204,6 +207,74 @@ describe("pending Markdown identity handoff (#7828)", () => {
 		expect(capturedContexts.at(-1)).toMatchObject({
 			messageId: "entry-A",
 			timestamp: "2025-01-15T10:30:00.000Z",
+		});
+	});
+});
+
+describe("InteractiveMode message_start → entry_appended identity handoff", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	type IdentityHandleEvent = (
+		this: {
+			isInitialized: boolean;
+			pendingMarkdownComponent: UserMessageComponent | AssistantMessageComponent | undefined;
+			footer: { invalidate(): void };
+			ui: TUI;
+			chatContainer: Container;
+			updatePendingMessagesDisplay(): void;
+			addMessageToChat(message: AgentMessage): UserMessageComponent | undefined;
+		},
+		event: AgentSessionEvent,
+	) => Promise<void>;
+
+	test("message_start sets pending; entry_appended attaches canonical identity and clears", async () => {
+		const capturedContexts: MarkdownTransformContext[] = [];
+		const chatContainer = new Container();
+		const fakeThis = {
+			isInitialized: true,
+			pendingMarkdownComponent: undefined as UserMessageComponent | AssistantMessageComponent | undefined,
+			footer: { invalidate: vi.fn() },
+			ui: { requestRender: vi.fn() } as unknown as TUI,
+			chatContainer,
+			updatePendingMessagesDisplay: vi.fn(),
+			addMessageToChat(message: AgentMessage) {
+				if (message.role !== "user") return undefined;
+				const text =
+					typeof message.content === "string"
+						? message.content
+						: message.content
+								.filter((part): part is { type: "text"; text: string } => part.type === "text")
+								.map((part) => part.text)
+								.join("");
+				const component = new UserMessageComponent(text, undefined, 1, [
+					createCaptureTransformer(capturedContexts),
+				]);
+				chatContainer.addChild(component);
+				return component;
+			},
+		};
+
+		const handleEvent = (InteractiveMode.prototype as unknown as { handleEvent: IdentityHandleEvent }).handleEvent;
+		const userMessage = createUserMessage("hello");
+		const entry = createMessageEntry(userMessage, "entry-live", "2025-01-15T10:30:00.000Z");
+
+		await handleEvent.call(fakeThis, { type: "message_start", message: userMessage });
+		const pending = fakeThis.pendingMarkdownComponent;
+		expect(pending).toBeInstanceOf(UserMessageComponent);
+		pending?.render(80);
+		expect(capturedContexts.at(-1)?.messageId).toBeUndefined();
+		const transientId = capturedContexts.at(-1)?.transientId;
+
+		await handleEvent.call(fakeThis, { type: "entry_appended", entry });
+		expect(fakeThis.pendingMarkdownComponent).toBeUndefined();
+
+		pending?.render(80);
+		expect(capturedContexts.at(-1)).toMatchObject({
+			messageId: "entry-live",
+			timestamp: "2025-01-15T10:30:00.000Z",
+			transientId,
 		});
 	});
 });

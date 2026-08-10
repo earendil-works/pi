@@ -3089,60 +3089,15 @@ export class InteractiveMode {
 		};
 	}
 
-	/**
-	 * Register/attach Markdown message identity without awaiting.
-	 * Must stay ordered with AgentSession._emit (sync, non-awaited listeners).
-	 */
-	private applyMarkdownIdentityEvent(event: AgentSessionEvent): void {
-		if (event.type === "message_start") {
-			if (event.message.role === "user") {
-				// undefined clears pending when the message renders no Markdown component
-				// (e.g. skill-only user messages).
-				this.pendingMarkdownComponent = this.addMessageToChat(event.message);
-			} else if (event.message.role === "assistant") {
-				this.streamingComponent = new AssistantMessageComponent(
-					undefined,
-					this.hideThinkingBlock,
-					this.getMarkdownThemeWithSettings(),
-					this.hiddenThinkingLabel,
-					this.outputPad,
-					this.getMarkdownTransformers(),
-				);
-				this.pendingMarkdownComponent = this.streamingComponent;
-				this.streamingMessage = event.message;
-				this.chatContainer.addChild(this.streamingComponent);
-				this.streamingComponent.updateContent(this.streamingMessage, true);
-			}
-			return;
-		}
-
-		if (event.type === "entry_appended" && isMarkdownIdentityEntry(event.entry)) {
-			const component = this.pendingMarkdownComponent;
-			this.pendingMarkdownComponent = undefined;
-			component?.setMessageMeta({ messageId: event.entry.id, timestamp: event.entry.timestamp });
-		}
-	}
-
 	private subscribeToAgent(): void {
-		// Listener is typed sync; keep identity handoff synchronous with AgentSession._emit
-		// (which does not await listeners). handleEvent may be async for init/other work,
-		// but message_start / entry_appended identity runs before any await once initialized.
-		this.unsubscribe = this.session.subscribe((event) => {
-			void this.handleEvent(event);
+		this.unsubscribe = this.session.subscribe(async (event) => {
+			await this.handleEvent(event);
 		});
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
-		// Identity registration/attach must not race across events: AgentSession emits
-		// message_start then later entry_appended via non-awaited _emit. Apply identity
-		// side effects before any await when already initialized.
-		if (this.isInitialized) {
-			this.applyMarkdownIdentityEvent(event);
-		}
-
 		if (!this.isInitialized) {
 			await this.init();
-			this.applyMarkdownIdentityEvent(event);
 		}
 
 		this.footer.invalidate();
@@ -3183,7 +3138,9 @@ export class InteractiveMode {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
 				} else if (isMarkdownIdentityEntry(event.entry)) {
-					// Identity already applied in applyMarkdownIdentityEvent.
+					const component = this.pendingMarkdownComponent;
+					this.pendingMarkdownComponent = undefined;
+					component?.setMessageMeta({ messageId: event.entry.id, timestamp: event.entry.timestamp });
 					this.ui.requestRender();
 				}
 				break;
@@ -3204,11 +3161,24 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					// pendingMarkdownComponent set in applyMarkdownIdentityEvent.
+					// undefined clears pending when the message renders no Markdown component
+					// (e.g. skill-only user messages).
+					this.pendingMarkdownComponent = this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					// streamingComponent / pendingMarkdownComponent set in applyMarkdownIdentityEvent.
+					this.streamingComponent = new AssistantMessageComponent(
+						undefined,
+						this.hideThinkingBlock,
+						this.getMarkdownThemeWithSettings(),
+						this.hiddenThinkingLabel,
+						this.outputPad,
+						this.getMarkdownTransformers(),
+					);
+					this.pendingMarkdownComponent = this.streamingComponent;
+					this.streamingMessage = event.message;
+					this.chatContainer.addChild(this.streamingComponent);
+					this.streamingComponent.updateContent(this.streamingMessage, true);
 					this.ui.requestRender();
 				}
 				break;
