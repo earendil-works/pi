@@ -891,7 +891,7 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("ignores orphan selection events and cancels an active selection on focus loss", async () => {
+	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
 		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
@@ -902,7 +902,6 @@ describe("TuiAltScreen", () => {
 		const clipboardWriteCount = () =>
 			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length;
 
-		// An idle focus transition must not emit terminal output and trigger a background-tab activity indicator.
 		const idleWriteCount = writeCount();
 		terminal.sendInput("\x1b[O");
 		terminal.sendInput("\x1b[I");
@@ -917,16 +916,14 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.strictEqual(clipboardWriteCount(), 0);
 
-		// Losing focus cancels an active visible selection, repaints to clear its highlight,
-		// and ignores later events whose matching press was abandoned.
-		terminal.sendInput("\x1b[<0;1;1M");
-		terminal.sendInput("\x1b[<32;4;2M");
+		// Losing focus after a press without a drag cancels the press without repainting.
+		terminal.sendInput("\x1b[<0;1;3M");
 		await terminal.waitForRender();
-		const focusLossWriteCount = writeCount();
+		const pressedWriteCount = writeCount();
 		terminal.sendInput("\x1b[O");
 		terminal.sendInput("\x1b[I");
 		await terminal.waitForRender();
-		assert.ok(writeCount() > focusLossWriteCount);
+		assert.strictEqual(writeCount(), pressedWriteCount);
 		terminal.sendInput("\x1b[<32;4;2M");
 		terminal.sendInput("\x1b[<0;4;2m");
 		await terminal.waitForRender();
@@ -935,6 +932,66 @@ describe("TuiAltScreen", () => {
 
 		tui.stop();
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1004l")));
+	});
+
+	it("clears an active visible selection on focus loss and ignores orphan events", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		await terminal.waitForRender();
+		const focusLossEventCount = terminal.events.length;
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		const focusLossWrites = terminal.events
+			.slice(focusLossEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(focusLossWrites.includes("alpha"));
+		assert.ok(focusLossWrites.includes("beta"));
+		assert.ok(!focusLossWrites.includes("\x1b[7m"));
+
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
+		tui.stop();
+	});
+
+	it("retains a completed visible selection across focus changes", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		const completedWriteCount = terminal.events.filter((event) => event.type === "write").length;
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, completedWriteCount);
+
+		const redrawEventCount = terminal.events.length;
+		tui.renderNow(true);
+		const redrawWrites = terminal.events
+			.slice(redrawEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(redrawWrites.includes("alpha"));
+		assert.ok(redrawWrites.includes("beta"));
+		assert.ok(redrawWrites.includes("\x1b[7m"));
+		tui.stop();
 	});
 
 	it("stacks flash messages and collapses them as they expire", async () => {
