@@ -112,8 +112,21 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	if (typeof args.edits === "string") {
 		try {
 			const parsed = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
+			if (Array.isArray(parsed)) {
+				args.edits = parsed;
+			} else if (parsed && typeof parsed === "object" && "oldText" in parsed && "newText" in parsed) {
+				// Single object: wrap into a one-element array
+				args.edits = [parsed];
+			}
 		} catch {}
+	}
+
+	// Some models send edits as a single object instead of an array
+	if (args.edits && typeof args.edits === "object" && !Array.isArray(args.edits)) {
+		const single = args.edits as Record<string, unknown>;
+		if (typeof single.oldText === "string" && typeof single.newText === "string") {
+			args.edits = [single];
+		}
 	}
 
 	const legacy = args as LegacyEditToolInput;
