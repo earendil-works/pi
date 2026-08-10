@@ -396,9 +396,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.selectionFocus = undefined;
 				this.selectionGranularity = "character";
 				this.selectionInitialRange = undefined;
+				this.requestRender();
 			}
 			this.lastClick = undefined;
-			this.requestRender();
 			return { consume: true };
 		}
 		if (data === FOCUS_IN) return { consume: true };

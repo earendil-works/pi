@@ -898,8 +898,16 @@ describe("TuiAltScreen", () => {
 		tui.start();
 		await terminal.waitForRender();
 
+		const writeCount = () => terminal.events.filter((event) => event.type === "write").length;
 		const clipboardWriteCount = () =>
 			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length;
+
+		// An idle focus transition must not emit terminal output and trigger a background-tab activity indicator.
+		const idleWriteCount = writeCount();
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.strictEqual(writeCount(), idleWriteCount);
 
 		// A completed click leaves a zero-width anchor, but later orphaned drag/release events must not extend it.
 		terminal.sendInput("\x1b[<0;1;1M");
@@ -909,10 +917,16 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.strictEqual(clipboardWriteCount(), 0);
 
-		// Losing focus also cancels a press whose matching release never arrived.
+		// Losing focus cancels an active visible selection, repaints to clear its highlight,
+		// and ignores later events whose matching press was abandoned.
 		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		await terminal.waitForRender();
+		const focusLossWriteCount = writeCount();
 		terminal.sendInput("\x1b[O");
 		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.ok(writeCount() > focusLossWriteCount);
 		terminal.sendInput("\x1b[<32;4;2M");
 		terminal.sendInput("\x1b[<0;4;2m");
 		await terminal.waitForRender();
