@@ -230,7 +230,8 @@ export function convertResponsesMessages<TApi extends Api>(
 					textBlockIndex++;
 					// OpenAI requires id to be max 64 characters
 					let msgId = parsedSignature?.id;
-					if (!msgId) {
+					// Reject item_* content IDs - they belong to a different namespace than message-level msg_* IDs
+					if (!msgId || msgId.startsWith("item_")) {
 						msgId = fallbackMessageId;
 					} else if (msgId.length > 64) {
 						msgId = `msg_${shortHash(msgId)}`;
