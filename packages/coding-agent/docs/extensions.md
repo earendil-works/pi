@@ -2960,6 +2960,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `mac-system-theme.ts` | Auto-switch theme | `setTheme`, `exec` |
 | **Complex Extensions** |||
 | `plan-mode/` | Full plan mode implementation | All event types, `registerCommand`, `registerShortcut`, `registerFlag`, `setStatus`, `setWidget`, `sendMessage`, `setActiveTools` |
+| `goal-mode/` | Long-running goal mode with `/goal` lifecycle commands, persistent state, automatic continuation, and evidence-based completion | `registerCommand`, `registerFlag`, `registerTool`, `appendEntry`, `on("turn_end")`, `on("agent_settled")`, `on("context")` |
 | `preset.ts` | Saveable presets (model, tools, thinking) | `registerCommand`, `registerShortcut`, `registerFlag`, `setModel`, `setActiveTools`, `setThinkingLevel`, `appendEntry` |
 | `tools.ts` | Toggle tools on/off UI | `registerCommand`, `setActiveTools`, `SettingsList`, session events |
 | **Remote & Sandbox** |||

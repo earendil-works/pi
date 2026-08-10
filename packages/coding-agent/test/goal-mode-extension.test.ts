@@ -1,0 +1,297 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
+import goalModeExtension from "../examples/extensions/goal-mode/index.ts";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/index.ts";
+
+type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
+type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
+
+function createAssistantMessage(text: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "mock",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	};
+}
+
+function createTextMessage(text: string): AgentMessage {
+	return {
+		role: "user",
+		content: [{ type: "text", text }],
+		timestamp: Date.now(),
+	};
+}
+
+function customData(entry: SessionEntry | undefined): unknown {
+	return entry && entry.type === "custom" ? entry.data : undefined;
+}
+
+function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string } = {}) {
+	const commands = new Map<string, CommandHandler>();
+	const handlers = new Map<string, EventHandler>();
+	const tools = new Map<string, ToolDefinition>();
+	const entries: SessionEntry[] = [];
+
+	const sendUserMessage = vi.fn<ExtensionAPI["sendUserMessage"]>();
+	const appendEntry = vi.fn<ExtensionAPI["appendEntry"]>((customType: string, data: unknown) => {
+		entries.push({
+			type: "custom",
+			customType,
+			data,
+			id: `entry-${entries.length}`,
+			parentId: entries.length > 0 ? entries[entries.length - 1]!.id : null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+	});
+	const notify = vi.fn();
+	const setStatus = vi.fn();
+	const setWidget = vi.fn();
+
+	const api = {
+		registerFlag: vi.fn(),
+		registerCommand(name: string, command: { handler: CommandHandler }) {
+			commands.set(name, command.handler);
+		},
+		registerTool(tool: ToolDefinition) {
+			tools.set(tool.name, tool);
+		},
+		on(event: string, handler: EventHandler) {
+			handlers.set(event, handler);
+		},
+		getFlag: vi.fn((name: string) => {
+			if (name === "goal") return options.flagGoal;
+			return undefined;
+		}),
+		sendUserMessage,
+		appendEntry,
+	} as unknown as ExtensionAPI;
+
+	goalModeExtension(api);
+
+	const ctx = {
+		hasUI: true,
+		ui: { notify, setStatus, setWidget },
+		sessionManager: { getBranch: () => entries },
+		isIdle: () => options.idle ?? true,
+		hasPendingMessages: () => options.pending ?? false,
+		mode: "tui",
+	} as unknown as ExtensionContext;
+
+	async function runCommand(name: string, args = ""): Promise<void> {
+		const command = commands.get(name);
+		if (!command) throw new Error(`Missing command: ${name}`);
+		await command(args, ctx);
+	}
+
+	async function emit(event: string, payload: unknown): Promise<unknown> {
+		const handler = handlers.get(event);
+		if (!handler) throw new Error(`Missing handler: ${event}`);
+		return await handler(payload, ctx);
+	}
+
+	return {
+		appendEntry,
+		commands,
+		ctx,
+		emit,
+		entries,
+		handlers,
+		notify,
+		runCommand,
+		sendUserMessage,
+		setStatus,
+		setWidget,
+		tools,
+	};
+}
+
+describe("goal-mode example extension", () => {
+	it("sets a goal, persists it, and starts work", async () => {
+		const { entries, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix the flaky suite --tokens 100");
+
+		const goalEntry = entries.find((entry) => entry.type === "custom" && entry.customType === "goal-mode");
+		expect(goalEntry).toBeDefined();
+		expect(customData(goalEntry)).toMatchObject({
+			objective: "Fix the flaky suite",
+			status: "active",
+			budget: { tokens: 100 },
+		});
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Fix the flaky suite");
+	});
+
+	it("pauses, resumes, and clears a goal", async () => {
+		const { entries, runCommand } = setup();
+
+		await runCommand("goal", "Fix tests");
+		await runCommand("goal", "pause");
+		expect(customData(entries.at(-1))).toMatchObject({ status: "paused" });
+
+		await runCommand("goal", "resume");
+		expect(customData(entries.at(-1))).toMatchObject({ status: "active" });
+
+		await runCommand("goal", "clear");
+		expect(customData(entries.at(-1))).toBeNull();
+	});
+
+	it("tracks tool usage and progress on turn end", async () => {
+		const { emit, runCommand, entries } = setup();
+
+		await runCommand("goal", "Fix tests");
+		const assistant = createAssistantMessage("Ran the suite and fixed one failure");
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: assistant,
+			toolResults: [{ role: "toolResult", toolCallId: "t1", toolName: "bash", content: [], timestamp: 0 }],
+		});
+
+		const latest = customData(entries.at(-1)) as {
+			lastTurnHadToolCall?: boolean;
+			progress?: string[];
+		};
+		expect(latest.lastTurnHadToolCall).toBe(true);
+		expect(latest.progress?.[0]).toContain("Ran the suite");
+	});
+
+	it("continues only when the goal is active, idle, and the last turn used a tool", async () => {
+		const { emit, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests");
+		const assistant = createAssistantMessage("checked the suite");
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: assistant,
+			toolResults: [{ role: "toolResult", toolCallId: "t1", toolName: "bash", content: [], timestamp: 0 }],
+		});
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(sendUserMessage).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not spin after a turn with no tool calls", async () => {
+		const { emit, notify, runCommand, sendUserMessage } = setup();
+
+		await runCommand("goal", "Fix tests");
+		await emit("turn_end", {
+			type: "turn_end",
+			turnIndex: 1,
+			message: createAssistantMessage("I checked and the suite is green"),
+			toolResults: [],
+		});
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("no tool calls"), "info");
+	});
+
+	it("respects queued user input before auto-continuing", async () => {
+		const { emit, runCommand, sendUserMessage } = setup({ pending: true });
+
+		await runCommand("goal", "Fix tests");
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+	});
+
+	it("marks the goal budget-limited instead of continuing", async () => {
+		const { emit, runCommand, entries } = setup();
+
+		await runCommand("goal", "Fix tests --tokens 10");
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "mock",
+				usage: {
+					input: 10,
+					output: 10,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 20,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			},
+			id: "usage",
+			parentId: null,
+			timestamp: new Date().toISOString(),
+		} as SessionEntry);
+		await emit("agent_settled", { type: "agent_settled" });
+
+		expect(customData(entries.at(-1))).toMatchObject({ status: "budget_limited" });
+	});
+
+	it("injects active goal context and removes stale context", async () => {
+		const { emit, runCommand } = setup();
+		const stale = {
+			role: "custom",
+			customType: "goal-mode-context",
+			content: "old",
+			display: false,
+			timestamp: 0,
+		} as AgentMessage;
+
+		await runCommand("goal", "Fix tests");
+		const activeResult = (await emit("context", {
+			type: "context",
+			messages: [createTextMessage("hello"), stale],
+		})) as { messages: AgentMessage[] };
+		expect(activeResult.messages).toHaveLength(2);
+		expect(activeResult.messages[1]).toMatchObject({ customType: "goal-mode-context" });
+
+		await runCommand("goal", "pause");
+		const pausedResult = (await emit("context", {
+			type: "context",
+			messages: [createTextMessage("hello"), stale],
+		})) as { messages: AgentMessage[] };
+		expect(pausedResult.messages).toHaveLength(1);
+		expect(pausedResult.messages[0]).toMatchObject({ role: "user" });
+	});
+
+	it("registers a complete_goal tool that requires evidence", async () => {
+		const { ctx, entries, runCommand, tools } = setup();
+		await runCommand("goal", "Fix tests");
+
+		const tool = tools.get("complete_goal");
+		expect(tool).toBeDefined();
+		const result = await tool!.execute("call-1", { evidence: "suite passes" }, undefined, undefined, ctx);
+
+		expect(result.terminate).toBe(true);
+		expect(customData(entries.at(-1))).toMatchObject({
+			status: "complete",
+			lastCompletionEvidence: "suite passes",
+		});
+	});
+
+	it("starts a goal from the --goal startup flag", async () => {
+		const { emit, sendUserMessage, entries } = setup({ flagGoal: "Startup goal" });
+
+		await emit("session_start", { type: "session_start", reason: "startup" });
+
+		expect(customData(entries.at(-1))).toMatchObject({ objective: "Startup goal", status: "active" });
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Startup goal");
+	});
+});
