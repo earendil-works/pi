@@ -1,18 +1,17 @@
-import type { MarkdownTransformContext, MarkdownTransformer } from "../../../core/extensions/types.ts";
+import type {
+	MarkdownMessageMeta,
+	MarkdownTransformContext,
+	MarkdownTransformer,
+} from "../../../core/extensions/types.ts";
 
 export function createMarkdownTransform(
 	messageType: MarkdownTransformContext["messageType"],
 	isStreaming: boolean,
 	transformers: readonly MarkdownTransformer[],
-	messageId?: string,
-	timestamp?: string,
+	meta: MarkdownMessageMeta = {},
 ): (markdown: string, availableWidth: number) => string {
 	return (markdown, availableWidth) =>
-		applyMarkdownTransformers(
-			markdown,
-			{ messageType, isStreaming, availableWidth, messageId, timestamp },
-			transformers,
-		);
+		applyMarkdownTransformers(markdown, { messageType, isStreaming, availableWidth, ...meta }, transformers);
 }
 
 function applyMarkdownTransformers(

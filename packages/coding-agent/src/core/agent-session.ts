@@ -638,10 +638,11 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			let entryId: string | undefined;
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
 				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
+				entryId = this.sessionManager.appendCustomMessageEntry(
 					event.message.customType,
 					event.message.content,
 					event.message.display,
@@ -653,9 +654,18 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				entryId = this.sessionManager.appendMessage(event.message);
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
+
+			// Emit the persisted entry so live-rendered components can attach the
+			// canonical entry identity (messageId/timestamp) after the fact.
+			if (entryId) {
+				const entry = this.sessionManager.getEntry(entryId);
+				if (entry) {
+					this._emit({ type: "entry_appended", entry });
+				}
+			}
 
 			// Track assistant message for auto-compaction (checked on agent_end)
 			if (event.message.role === "assistant") {

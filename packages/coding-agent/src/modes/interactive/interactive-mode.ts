@@ -74,6 +74,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	MarkdownMessageMeta,
 	MarkdownTransformer,
 	ProjectTrustContext,
 	WorkingIndicatorOptions,
@@ -203,10 +204,26 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
-type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
+export type RenderSessionItem =
+	| { kind: "message"; message: AgentMessage; entryMeta: MarkdownMessageMeta }
+	| Extract<SessionEntry, { type: "custom" }>;
 
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
+}
+
+/**
+ * Project persisted session entries into render items, carrying the entry
+ * identity (id + timestamp) alongside each message. Pure: no component state.
+ */
+export function sessionEntriesToRenderItems(entries: SessionEntry[]): RenderSessionItem[] {
+	return entries.flatMap((entry): RenderSessionItem[] => {
+		if (entry.type === "custom") {
+			return [entry];
+		}
+		const entryMeta: MarkdownMessageMeta = { messageId: entry.id, timestamp: entry.timestamp };
+		return sessionEntryToContextMessages(entry).map((message) => ({ kind: "message", message, entryMeta }));
+	});
 }
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -434,6 +451,10 @@ export class InteractiveMode {
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
+	// Last live-rendered user message / finished assistant message, so the persisted
+	// entry identity (entry_appended) can be attached after persistence.
+	private lastUserMessageComponent: UserMessageComponent | undefined = undefined;
+	private lastAssistantComponent: AssistantMessageComponent | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3104,6 +3125,16 @@ export class InteractiveMode {
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
+				} else if (event.entry.type === "message") {
+					// Attach the persisted entry identity to the live-rendered component
+					// so live and rebuilt rendering agree once the entry exists.
+					const entryMeta: MarkdownMessageMeta = { messageId: event.entry.id, timestamp: event.entry.timestamp };
+					if (event.entry.message.role === "assistant") {
+						this.lastAssistantComponent?.setMessageMeta(entryMeta);
+					} else if (event.entry.message.role === "user") {
+						this.lastUserMessageComponent?.setMessageMeta(entryMeta);
+					}
+					this.ui.requestRender();
 				}
 				break;
 
@@ -3210,6 +3241,7 @@ export class InteractiveMode {
 						}
 						this.maybeShowCacheMissNotice(this.streamingMessage);
 					}
+					this.lastAssistantComponent = this.streamingComponent;
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
@@ -3452,7 +3484,7 @@ export class InteractiveMode {
 
 	private addMessageToChat(
 		message: AgentMessage,
-		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
+		options?: { populateHistory?: boolean; entryMeta?: MarkdownMessageMeta },
 	): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -3520,10 +3552,10 @@ export class InteractiveMode {
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
 								this.getMarkdownTransformers(),
-								options?.messageId,
-								options?.timestamp,
+								options?.entryMeta,
 							);
 							this.chatContainer.addChild(userComponent);
+							this.lastUserMessageComponent = userComponent;
 						}
 					} else {
 						const userComponent = new UserMessageComponent(
@@ -3531,10 +3563,10 @@ export class InteractiveMode {
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
-							options?.messageId,
-							options?.timestamp,
+							options?.entryMeta,
 						);
 						this.chatContainer.addChild(userComponent);
+						this.lastUserMessageComponent = userComponent;
 					}
 					if (options?.populateHistory) {
 						this.editor.addToHistory?.(textContent);
@@ -3550,10 +3582,10 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
-					options?.messageId,
-					options?.timestamp,
+					options?.entryMeta,
 				);
 				this.chatContainer.addChild(assistantComponent);
+				this.lastAssistantComponent = assistantComponent;
 				break;
 			}
 			case "toolResult": {
@@ -3568,7 +3600,6 @@ export class InteractiveMode {
 
 	private renderSessionItems(
 		items: readonly RenderSessionItem[],
-		messageMeta?: Map<AgentMessage, { id: string; timestamp: string }>,
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
@@ -3590,14 +3621,10 @@ export class InteractiveMode {
 				continue;
 			}
 
-			const message = item;
+			const { message, entryMeta } = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				const meta = messageMeta?.get(message);
-				this.addMessageToChat(message, {
-					messageId: meta?.id,
-					timestamp: meta?.timestamp,
-				});
+				this.addMessageToChat(message, { entryMeta });
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
@@ -3646,12 +3673,7 @@ export class InteractiveMode {
 				}
 			} else {
 				// All other messages use standard rendering
-				const meta = messageMeta?.get(message);
-				this.addMessageToChat(message, {
-					...options,
-					messageId: meta?.id,
-					timestamp: meta?.timestamp,
-				});
+				this.addMessageToChat(message, { ...options, entryMeta });
 			}
 		}
 
@@ -3671,18 +3693,7 @@ export class InteractiveMode {
 		entries: SessionEntry[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		const messageMeta = new Map<AgentMessage, { id: string; timestamp: string }>();
-		const items = entries.flatMap((entry): RenderSessionItem[] => {
-			if (entry.type === "custom") {
-				return [entry];
-			}
-			const messages = sessionEntryToContextMessages(entry);
-			for (const msg of messages) {
-				messageMeta.set(msg, { id: entry.id, timestamp: entry.timestamp });
-			}
-			return messages;
-		});
-		this.renderSessionItems(items, messageMeta, options);
+		this.renderSessionItems(sessionEntriesToRenderItems(entries), options);
 	}
 
 	/**

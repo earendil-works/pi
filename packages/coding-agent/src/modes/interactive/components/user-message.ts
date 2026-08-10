@@ -1,5 +1,5 @@
 import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
-import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import type { MarkdownMessageMeta, MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -15,29 +15,35 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
-	private messageId?: string;
-	private timestamp?: string;
+	private messageMeta: MarkdownMessageMeta = {};
 
 	constructor(
 		text: string,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
-		messageId?: string,
-		timestamp?: string,
+		messageMeta: MarkdownMessageMeta = {},
 	) {
 		super();
 		this.text = text;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
-		this.messageId = messageId;
-		this.timestamp = timestamp;
+		this.messageMeta = messageMeta;
 		this.rebuild();
 	}
 
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
+		this.rebuild();
+	}
+
+	/**
+	 * Attach the persisted session-entry identity once the entry exists
+	 * (live messages render before persistence). Rebuilds the markdown.
+	 */
+	setMessageMeta(meta: MarkdownMessageMeta): void {
+		this.messageMeta = { ...this.messageMeta, ...meta };
 		this.rebuild();
 	}
 
@@ -56,13 +62,7 @@ export class UserMessageComponent extends Container {
 				{
 					preserveOrderedListMarkers: true,
 					preserveBackslashEscapes: true,
-					transform: createMarkdownTransform(
-						"user",
-						false,
-						this.markdownTransformers,
-						this.messageId,
-						this.timestamp,
-					),
+					transform: createMarkdownTransform("user", false, this.markdownTransformers, this.messageMeta),
 				},
 			),
 		);

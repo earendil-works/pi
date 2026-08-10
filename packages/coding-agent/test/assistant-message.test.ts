@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
+import type { MarkdownTransformContext } from "../src/core/extensions/types.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -239,9 +240,9 @@ describe("AssistantMessageComponent", () => {
 		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
 	});
 
-	test("passes message identity to assistant Markdown transformer context", () => {
+	test("passes persisted entry identity to assistant Markdown transformer context", () => {
 		initTheme("dark");
-		const capturedContexts: any[] = [];
+		const capturedContexts: MarkdownTransformContext[] = [];
 		const message = createAssistantMessage([{ type: "text", text: "answer" }]);
 		const component = new AssistantMessageComponent(
 			message,
@@ -255,8 +256,7 @@ describe("AssistantMessageComponent", () => {
 					return markdown;
 				},
 			],
-			"entry-def456",
-			"2025-06-15T14:00:00.000Z",
+			{ messageId: "entry-def456", timestamp: "2025-06-15T14:00:00.000Z" },
 		);
 
 		component.render(80);
@@ -270,32 +270,54 @@ describe("AssistantMessageComponent", () => {
 		});
 	});
 
-	test("generates a stable temp messageId for streaming assistant messages", () => {
+	test("live assistant message keeps messageId undefined until persisted; transientId stays stable", () => {
 		initTheme("dark");
-		const capturedIds: string[] = [];
-		const component = new AssistantMessageComponent(
-			undefined,
-			false,
-			undefined,
-			"Thinking...",
-			1,
-			[
-				(markdown, context) => {
-					capturedIds.push(context.messageId ?? "");
-					return markdown;
-				},
-			],
-		);
+		const capturedContexts: MarkdownTransformContext[] = [];
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1, [
+			(markdown, context) => {
+				capturedContexts.push(context);
+				return markdown;
+			},
+		]);
 
-		// Simulate streaming updates to the same component
+		// Simulate streaming updates and a width change on the same component
 		component.updateContent(createAssistantMessage([{ type: "text", text: "partial" }]), true);
 		component.render(80);
 		component.updateContent(createAssistantMessage([{ type: "text", text: "more" }]), true);
 		component.render(80);
+		component.render(60);
 
-		// All transformer calls for this component should have the same messageId
-		expect(capturedIds.length).toBeGreaterThan(1);
-		expect(new Set(capturedIds).size).toBe(1);
-		expect(capturedIds[0].length).toBeGreaterThan(0);
+		expect(capturedContexts.length).toBeGreaterThan(1);
+		for (const ctx of capturedContexts) {
+			expect(ctx.messageId).toBeUndefined();
+			expect(ctx.timestamp).toBeUndefined();
+			expect(ctx.transientId).toBeDefined();
+		}
+		expect(new Set(capturedContexts.map((ctx) => ctx.transientId)).size).toBe(1);
+	});
+
+	test("setMessageMeta attaches persisted entry identity to a live assistant message", () => {
+		initTheme("dark");
+		const capturedContexts: MarkdownTransformContext[] = [];
+		const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1, [
+			(markdown, context) => {
+				capturedContexts.push(context);
+				return markdown;
+			},
+		]);
+
+		component.updateContent(createAssistantMessage([{ type: "text", text: "final" }]), false);
+		component.render(80);
+		expect(capturedContexts.at(-1)?.messageId).toBeUndefined();
+
+		component.setMessageMeta({ messageId: "entry-live1", timestamp: "2025-06-15T14:00:00.000Z" });
+		component.render(80);
+
+		expect(capturedContexts.at(-1)).toMatchObject({
+			messageId: "entry-live1",
+			timestamp: "2025-06-15T14:00:00.000Z",
+		});
+		// transientId unchanged after the canonical entry identity arrives
+		expect(capturedContexts.at(-1)?.transientId).toBe(capturedContexts[0].transientId);
 	});
 });

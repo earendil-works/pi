@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
-import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import type { MarkdownMessageMeta, MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -22,8 +22,9 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
-	private messageId?: string;
-	private timestamp?: string;
+	private messageMeta: MarkdownMessageMeta;
+	/** Per-render-session identity for streaming frames; NOT the session entry id. */
+	private transientId = randomUUID();
 
 	constructor(
 		message?: AssistantMessage,
@@ -32,8 +33,7 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
-		messageId?: string,
-		timestamp?: string,
+		messageMeta: MarkdownMessageMeta = {},
 	) {
 		super();
 
@@ -42,8 +42,7 @@ export class AssistantMessageComponent extends Container {
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
-		this.messageId = messageId ?? `temp-${randomUUID().slice(0, 8)}`;
-		this.timestamp = timestamp;
+		this.messageMeta = messageMeta;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -77,6 +76,17 @@ export class AssistantMessageComponent extends Container {
 
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	/**
+	 * Attach the persisted session-entry identity once the entry exists
+	 * (live messages render before persistence). Re-renders the message.
+	 */
+	setMessageMeta(meta: MarkdownMessageMeta): void {
+		this.messageMeta = { ...this.messageMeta, ...meta };
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
@@ -116,7 +126,10 @@ export class AssistantMessageComponent extends Container {
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				this.contentContainer.addChild(
 					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
-						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers, this.messageId, this.timestamp),
+						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers, {
+							...this.messageMeta,
+							transientId: this.transientId,
+						}),
 					}),
 				);
 			} else if (content.type === "thinking") {
@@ -165,8 +178,10 @@ export class AssistantMessageComponent extends Container {
 									"assistant-thinking",
 									this.isStreaming,
 									this.markdownTransformers,
-									this.messageId,
-									this.timestamp,
+									{
+										...this.messageMeta,
+										transientId: this.transientId,
+									},
 								),
 							},
 						),

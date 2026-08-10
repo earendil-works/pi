@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { MarkdownTransformContext } from "../src/core/extensions/types.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -56,9 +57,9 @@ describe("UserMessageComponent", () => {
 		expect(stripAnsi(component.render(80).join("\n"))).toContain("Message after");
 	});
 
-	test("passes message identity to Markdown transformer context", () => {
+	test("passes persisted entry identity to Markdown transformer context", () => {
 		initTheme("dark");
-		let capturedContext: any;
+		let capturedContext: MarkdownTransformContext | undefined;
 		const component = new UserMessageComponent(
 			"hello",
 			undefined,
@@ -69,8 +70,7 @@ describe("UserMessageComponent", () => {
 					return markdown;
 				},
 			],
-			"entry-abc123",
-			"2025-01-15T10:30:00.000Z",
+			{ messageId: "entry-abc123", timestamp: "2025-01-15T10:30:00.000Z" },
 		);
 
 		component.render(80);
@@ -79,6 +79,28 @@ describe("UserMessageComponent", () => {
 			messageType: "user",
 			isStreaming: false,
 			messageId: "entry-abc123",
+			timestamp: "2025-01-15T10:30:00.000Z",
+		});
+	});
+
+	test("live user message keeps messageId undefined until persisted; setMessageMeta attaches it", () => {
+		initTheme("dark");
+		const capturedContexts: MarkdownTransformContext[] = [];
+		const component = new UserMessageComponent("hello", undefined, 1, [
+			(markdown, context) => {
+				capturedContexts.push(context);
+				return markdown;
+			},
+		]);
+
+		component.render(80);
+		expect(capturedContexts[0].messageId).toBeUndefined();
+
+		component.setMessageMeta({ messageId: "entry-live2", timestamp: "2025-01-15T10:30:00.000Z" });
+		component.render(80);
+
+		expect(capturedContexts.at(-1)).toMatchObject({
+			messageId: "entry-live2",
 			timestamp: "2025-01-15T10:30:00.000Z",
 		});
 	});
