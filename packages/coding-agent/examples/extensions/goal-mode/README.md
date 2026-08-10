@@ -44,6 +44,8 @@ pi --extension examples/extensions/goal-mode/index.ts \
   after the objective is satisfied.
 - The model can only request completion through `complete_goal`. Pause, resume,
   and clear are user-only commands.
+- `/goal pause` and `/goal clear` abort any in-flight autonomous work before
+  switching state, so the UI returns to the paused or normal mode immediately.
 - Automatic continuation happens only when the goal is active, the agent is
   idle, no user input is queued, the budget is not exhausted, and the previous
   turn actually used a tool. A turn with no tool calls stops the loop instead

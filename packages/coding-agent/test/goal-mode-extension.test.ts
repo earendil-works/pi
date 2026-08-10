@@ -67,6 +67,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 	const setStatus = vi.fn();
 	const setWidget = vi.fn();
 	const setTitle = vi.fn();
+	const abort = vi.fn();
 
 	const api = {
 		registerFlag: vi.fn(),
@@ -97,6 +98,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 		sessionManager: { getBranch: () => entries },
 		isIdle: () => options.idle ?? true,
 		hasPendingMessages: () => options.pending ?? false,
+		abort,
 		mode: "tui",
 	} as unknown as ExtensionContext;
 
@@ -113,6 +115,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 	}
 
 	return {
+		abort,
 		appendEntry,
 		commandOptions,
 		commands,
@@ -171,13 +174,14 @@ describe("goal-mode example extension", () => {
 	});
 
 	it("pauses, resumes, and clears a goal", async () => {
-		const { entries, runCommand, setStatus, setTitle, setWidget } = setup();
+		const { abort, entries, runCommand, setStatus, setTitle, setWidget } = setup();
 
 		await runCommand("goal", "Fix tests");
 		await runCommand("goal", "pause");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "paused" });
 		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: paused");
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", ["[GOAL PAUSED]", "Objective: Fix tests"]);
+		expect(abort).toHaveBeenCalledTimes(1);
 
 		await runCommand("goal", "resume");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "active" });
@@ -188,6 +192,7 @@ describe("goal-mode example extension", () => {
 		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", undefined);
 		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", undefined);
 		expect(setTitle).toHaveBeenLastCalledWith(expect.stringContaining("pi - "));
+		expect(abort).toHaveBeenCalledTimes(2);
 	});
 
 	it("tracks tool usage and progress on turn end", async () => {

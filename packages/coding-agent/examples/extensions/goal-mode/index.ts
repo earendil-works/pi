@@ -154,6 +154,9 @@ function pauseGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 		ctx.ui.notify(`Goal is already ${goal.status}.`, "info");
 		return;
 	}
+	// Stop any in-flight autonomous work before switching state, so pause takes
+	// effect immediately instead of waiting for the current run to settle.
+	ctx.abort();
 	setGoal(pi, ctx, { ...goal, status: "paused", updatedAt: Date.now() }, { notify: "Goal paused." });
 }
 
@@ -171,6 +174,9 @@ function resumeGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 function clearGoal(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	// Stop any in-flight autonomous work before clearing the goal, so the UI
+	// returns to normal mode immediately instead of continuing the current run.
+	ctx.abort();
 	setGoal(pi, ctx, undefined, { notify: "Goal cleared." });
 }
 
