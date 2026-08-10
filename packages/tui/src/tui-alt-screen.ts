@@ -385,7 +385,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
 		if (data === FOCUS_OUT) {
 			const hadActiveSelection = this.selectionPressActive;
-			const hadVisibleActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
+			const hadNonEmptyActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
 			this.selectionPressActive = false;
 			this.stopSelectionAutoScroll();
 			this.stopScrollbarHover();
@@ -397,7 +397,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.selectionFocus = undefined;
 				this.selectionGranularity = "character";
 				this.selectionInitialRange = undefined;
-				if (hadVisibleActiveSelection) this.requestRender();
+				if (hadNonEmptyActiveSelection) this.requestRender();
 			}
 			this.lastClick = undefined;
 			return { consume: true };
