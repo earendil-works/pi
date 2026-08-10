@@ -77,7 +77,13 @@ export function detectInstallMethod(): InstallMethod {
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
 
-	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
+	// Match genuine pnpm installations: internal store structure (.pnpm), global root, or store directory.
+	// Avoids false positives from paths that merely share PNPM_HOME but aren't pnpm-managed (e.g., $PNPM_HOME/global-nub/...).
+	if (
+		resolvedPath.includes("/.pnpm/") ||
+		resolvedPath.includes("/pnpm/global/") ||
+		resolvedPath.includes("/pnpm/store/")
+	) {
 		return "pnpm";
 	}
 	if (resolvedPath.includes("/yarn/") || resolvedPath.includes("/.yarn/")) {
@@ -348,7 +354,7 @@ export function getSelfUpdateUnavailableInstruction(
 export function getUpdateInstruction(packageName: string): string {
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName);
-	if (command) {
+	if (command && isManagedByGlobalPackageManager(method, packageName)) {
 		return `Run: ${command.display}`;
 	}
 	return getSelfUpdateUnavailableInstruction(packageName);
