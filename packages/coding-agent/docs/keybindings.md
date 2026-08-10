@@ -107,6 +107,10 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `tui.altScreen.halfPageDown` | *(none)* | Scroll the transcript down by half a page |
 | `tui.altScreen.previousPrompt` | `ctrl+shift+up` | Jump to the previous marked message |
 | `tui.altScreen.nextPrompt` | `ctrl+shift+down` | Jump to the next marked message |
+| `tui.altScreen.search` | `ctrl+shift+f` | Search the rendered transcript |
+| `tui.altScreen.searchNext` | `enter`, `ctrl+g` | Select the next search match while searching |
+| `tui.altScreen.searchPrevious` | `shift+enter`, `ctrl+shift+g` | Select the previous search match while searching |
+| `tui.altScreen.searchClose` | `escape` | Close transcript search |
 | `tui.altScreen.top` | `home` | Scroll to the beginning of the transcript |
 | `tui.altScreen.bottom` | `end` | Scroll to the transcript end and follow new output |
 

@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
@@ -375,6 +376,105 @@ describe("TuiAltScreen", () => {
 			terminal.getViewport().map((line) => line.trimEnd()),
 			["line 5", "line 6", "line 7", "line 8", "line 9", "line 10", "line 11", "line 12"],
 		);
+
+		tui.stop();
+	});
+
+	it("searches normalized rendered transcript text across rows", () => {
+		assert.deepStrictEqual(findAltScreenSearchMatches(["alpha QUICK", "brown fox"], "quick brown"), [
+			{
+				segments: [
+					{ row: 0, startCol: 6, endCol: 11 },
+					{ row: 1, startCol: 0, endCol: 5 },
+				],
+			},
+		]);
+	});
+
+	it("uses configured styles for current and non-current search matches", async () => {
+		const terminal = new RecordingTerminal(60, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchMatchStyle: (text) => `\x1b[41m${text}\x1b[49m`,
+			searchCurrentMatchStyle: (text) => `\x1b[42m${text}\x1b[49m`,
+		});
+		tui.addChild(new Text("needle first\nmiddle\nneedle second\nend", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[42mneedle\x1b[49m")),
+		);
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[41mneedle\x1b[49m")),
+		);
+		tui.stop();
+	});
+
+	it("searches the transcript with Ctrl+Shift+F and restores editor focus on close", async () => {
+		const terminal = new RecordingTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		const transcriptText = new Text(
+			Array.from({ length: 12 }, (_, index) => {
+				if (index === 4) return "line 5 needle one";
+				if (index === 9) return "line 10 needle two";
+				return `line ${index + 1}`;
+			}).join("\n"),
+			0,
+			0,
+		);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		const editorInputs: string[] = [];
+		const editor = {
+			focused: false,
+			render: () => ["editor"],
+			invalidate: () => {},
+			handleInput: (data: string) => editorInputs.push(data),
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: editor, basis: 1, shrink: 0 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
+		assert.deepStrictEqual(editorInputs, []);
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[1;7mneedle\x1b[22;27m")),
+		);
+
+		for (let index = 0; index < 6; index++) terminal.sendInput("\x1b[<64;1;4M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 0);
+		assert.ok(terminal.getViewport().some((line) => line.includes("> needle")));
+
+		terminal.sendInput("\x07");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 5 needle one")));
+
+		terminal.sendInput("\x1b[103;6u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
+
+		terminal.sendInput("\x1b");
+		terminal.sendInput("x");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.deepStrictEqual(editorInputs, ["x"]);
 
 		tui.stop();
 	});
