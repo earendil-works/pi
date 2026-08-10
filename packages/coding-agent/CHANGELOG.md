@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a fullscreen-only fixed top bar showing abbreviated cwd/branch and context usage outside the transcript scroll view.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 
 ### Changed

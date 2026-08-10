@@ -125,6 +125,8 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
+import { FullscreenTopBar } from "./components/fullscreen-top-bar.ts";
+import { buildInteractiveLayouts } from "./components/interactive-layout.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
@@ -406,6 +408,7 @@ export class InteractiveMode {
 	private footer: FooterComponent;
 	private footerContainer: Container;
 	private footerDataProvider: FooterDataProvider;
+	private fullscreenTopBar: FullscreenTopBar;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
 	private version: string;
@@ -572,6 +575,8 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
+		this.fullscreenTopBar = new FullscreenTopBar(this.session, this.footerDataProvider);
+		this.fullscreenTopBar.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -873,27 +878,21 @@ export class InteractiveMode {
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
 			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
 		});
-		const dock = new TuiLayouts.VStack([
-			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
-			{ component: this.statusContainer, shrink: 1, minSize: 0 },
-			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
-			{ component: this.editorContainer, shrink: 1, minSize: 3 },
-			{ component: this.widgetContainerBelow, shrink: 1, minSize: 0 },
-			{ component: this.footerContainer, shrink: 1, minSize: 1 },
-		]);
-		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
-			{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
-		]);
-		this.mountInteractiveTui(this.renderer, [
-			this.documentContainer,
-			this.pendingMessagesContainer,
-			this.statusContainer,
-			this.widgetContainerAbove,
-			this.editorContainer,
-			this.widgetContainerBelow,
-			this.footerContainer,
-		]);
+		// Top bar is fullscreen-only: fixed outside the transcript ScrollView.
+		// Regular mode mounts only the child list (no top bar) — see buildInteractiveLayouts.
+		const layouts = buildInteractiveLayouts({
+			topBar: this.fullscreenTopBar,
+			transcriptScrollView: this.transcriptScrollView,
+			document: this.documentContainer,
+			pendingMessages: this.pendingMessagesContainer,
+			status: this.statusContainer,
+			widgetAbove: this.widgetContainerAbove,
+			editor: this.editorContainer,
+			widgetBelow: this.widgetContainerBelow,
+			footer: this.footerContainer,
+		});
+		this.fullscreenLayoutRoot = layouts.fullscreenLayoutRoot;
+		this.mountInteractiveTui(this.renderer, layouts.regularModeMountChildren);
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -1900,6 +1899,8 @@ export class InteractiveMode {
 		this.applyFullscreenScrollbarSetting();
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.fullscreenTopBar.setSession(this.session);
+		this.fullscreenTopBar.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
@@ -4417,6 +4418,7 @@ export class InteractiveMode {
 					onAutoCompactChange: (enabled) => {
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
+						this.fullscreenTopBar.setAutoCompactEnabled(enabled);
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);
@@ -6386,6 +6388,7 @@ export class InteractiveMode {
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
+		this.fullscreenTopBar.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {
 			this.unsubscribe();
