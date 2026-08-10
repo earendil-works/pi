@@ -125,14 +125,14 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
-		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
+		// Build cumulative usage separately so context and model can be kept together on narrow panes.
+		const usageParts: string[] = [];
+		if (usageTotals.input) usageParts.push(`↑${formatTokens(usageTotals.input)}`);
+		if (usageTotals.output) usageParts.push(`↓${formatTokens(usageTotals.output)}`);
+		if (usageTotals.cacheRead) usageParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
+		if (usageTotals.cacheWrite) usageParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
 		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+			usageParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
 		}
 
 		// Kimi Coding is subscription-backed despite using API-key authentication.
@@ -140,11 +140,10 @@ export class FooterComponent implements Component {
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
 		if (usageTotals.cost || usingSubscription) {
-			const costStr = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			usageParts.push(`$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
 		}
 
-		// Colorize context percentage based on usage
+		// Colorize context percentage based on usage.
 		let contextPercentStr: string;
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
 		const contextPercentDisplay =
@@ -158,28 +157,17 @@ export class FooterComponent implements Component {
 		} else {
 			contextPercentStr = contextPercentDisplay;
 		}
-		statsParts.push(contextPercentStr);
+
+		const statsParts = [...usageParts, contextPercentStr];
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
+		const statsLeft = statsParts.join(" ");
+		const statsLeftWidth = visibleWidth(statsLeft);
 
-		let statsLeft = statsParts.join(" ");
-
-		// Add model name on the right side, plus thinking level if model supports it
+		// Add model name on the right side, plus thinking level if model supports it.
 		const modelName = state.model?.id || "no-model";
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
 		let rightSideWithoutProvider = modelName;
 		if (state.model?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
@@ -187,47 +175,54 @@ export class FooterComponent implements Component {
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
+		// Prepend the provider in parentheses if there are multiple providers and there's enough room.
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
+			rightSide = `(${state.model.provider}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
 				rightSide = rightSideWithoutProvider;
 			}
 		}
 
 		const rightSideWidth = visibleWidth(rightSide);
 		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
-		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
-		}
-
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
-
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const lines = [pwdLine];
+
+		if (totalNeeded <= width) {
+			// Preserve the established single-line layout whenever all footer data fits.
+			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
+			const statsLine = statsLeft + padding + rightSide;
+			// statsLeft may contain color codes that end with a reset, so dim both sections separately.
+			lines.push(theme.fg("dim", statsLeft) + theme.fg("dim", statsLine.slice(statsLeft.length)));
+		} else {
+			// Usage is cumulative and lower priority than the active context/model pair, so reflow it first.
+			const secondaryParts = [...usageParts];
+			if (areExperimentalFeaturesEnabled()) {
+				secondaryParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+			}
+			let usageLine = "";
+			for (const part of secondaryParts) {
+				const candidate = usageLine ? `${usageLine} ${part}` : part;
+				if (usageLine && visibleWidth(candidate) > width) {
+					lines.push(theme.fg("dim", truncateToWidth(usageLine, width, "")));
+					usageLine = part;
+				} else {
+					usageLine = candidate;
+				}
+			}
+			if (usageLine) {
+				lines.push(theme.fg("dim", truncateToWidth(usageLine, width, "")));
+			}
+
+			const compactContext = truncateToWidth(contextPercentStr, Math.max(1, width - minPadding - 1), "");
+			const availableForModel = Math.max(1, width - visibleWidth(compactContext) - minPadding);
+			const compactRight =
+				visibleWidth(rightSideWithoutProvider) <= availableForModel ? rightSideWithoutProvider : modelName;
+			const modelDisplay = truncateToWidth(compactRight, availableForModel, "");
+			const padding = " ".repeat(Math.max(0, width - visibleWidth(compactContext) - visibleWidth(modelDisplay)));
+			lines.push(theme.fg("dim", compactContext) + theme.fg("dim", padding + modelDisplay));
+		}
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

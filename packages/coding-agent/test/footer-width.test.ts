@@ -25,6 +25,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	cwd?: string;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -76,7 +77,7 @@ function createSession(options: {
 		sessionManager: {
 			getEntries: () => entries,
 			getSessionName: () => options.sessionName,
-			getCwd: () => "/tmp/project",
+			getCwd: () => options.cwd ?? "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
@@ -87,10 +88,13 @@ function createSession(options: {
 	return session as unknown as AgentSession;
 }
 
-function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
+function createFooterData(
+	providerCount: number,
+	extensionStatuses = new Map<string, string>(),
+): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
-		getExtensionStatuses: () => new Map<string, string>(),
+		getExtensionStatuses: () => extensionStatuses,
 		getAvailableProviderCount: () => providerCount,
 		onBranchChange: (callback: () => void) => {
 			void callback;
@@ -149,6 +153,76 @@ describe("FooterComponent width handling", () => {
 		const lines = footer.render(width);
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	it("keeps context and model visible at narrow widths by reflowing cumulative usage", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 12_345,
+				output: 6_789,
+				cacheRead: 4_321,
+				cacheWrite: 2_345,
+				cost: { total: 1.234 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		for (const width of [40, 60, 80]) {
+			const lines = footer.render(width);
+			const output = stripAnsi(lines.join("\n"));
+			expect(output).toContain("12.3%/200k (auto)");
+			expect(output).toContain("test-model");
+			for (const line of lines) {
+				expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			}
+		}
+	});
+
+	it("preserves the single-line stats layout at wide widths", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 12_345,
+				output: 6_789,
+				cacheRead: 4_321,
+				cacheWrite: 2_345,
+				cost: { total: 1.234 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const lines = footer.render(120);
+		expect(lines).toHaveLength(2);
+		expect(stripAnsi(lines[1]!)).toContain("↑12k ↓6.8k R4.3k W2.3k CH22.7% $1.234 12.3%/200k (auto)");
+		expect(stripAnsi(lines[1]!)).toMatch(/test-model$/);
+	});
+
+	it("truncates long path, model, and extension status values without overflowing", () => {
+		const session = createSession({
+			sessionName: "session-name-".repeat(10),
+			cwd: "/tmp/very-long-project-path/".repeat(4),
+			modelId: "model-name-".repeat(10),
+			usage: {
+				input: 12_345,
+				output: 6_789,
+				cacheRead: 4_321,
+				cacheWrite: 2_345,
+				cost: { total: 1.234 },
+			},
+		});
+		const footer = new FooterComponent(
+			session,
+			createFooterData(1, new Map([["status", "status-value-".repeat(20)]])),
+		);
+
+		const lines = footer.render(40);
+		expect(stripAnsi(lines[0]!)).toContain("...");
+		expect(stripAnsi(lines.join("\n"))).toContain("model-name-");
+		expect(stripAnsi(lines.at(-1)!)).toMatch(/^status-value-/);
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(40);
 		}
 	});
 
