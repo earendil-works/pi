@@ -6281,14 +6281,17 @@ export class InteractiveMode {
 	}
 
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
-		const extensionRunner = this.session.extensionRunner;
+		// Bind the command to its originating session before awaiting extension hooks.
+		const session = this.session;
+		const sessionManager = session.sessionManager;
+		const extensionRunner = session.extensionRunner;
 
 		// Emit user_bash event to let extensions intercept
 		const eventResult = await extensionRunner.emitUserBash({
 			type: "user_bash",
 			command,
 			excludeFromContext,
-			cwd: this.sessionManager.getCwd(),
+			cwd: sessionManager.getCwd(),
 		});
 
 		// If extension returned a full result, use it directly
@@ -6297,7 +6300,7 @@ export class InteractiveMode {
 
 			// Create UI component for display
 			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
-			if (this.session.isStreaming) {
+			if (session.isStreaming) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
 			} else {
@@ -6316,14 +6319,14 @@ export class InteractiveMode {
 			);
 
 			// Record the result in session
-			this.session.recordBashResult(command, result, { excludeFromContext });
+			session.recordBashResult(command, result, { excludeFromContext });
 			this.bashComponent = undefined;
 			this.ui.requestRender();
 			return;
 		}
 
 		// Normal execution path (possibly with custom operations)
-		const isDeferred = this.session.isStreaming;
+		const isDeferred = session.isStreaming;
 		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
 
 		if (isDeferred) {
@@ -6337,7 +6340,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 
 		try {
-			const result = await this.session.executeBash(
+			const result = await session.executeBash(
 				command,
 				(chunk) => {
 					if (this.bashComponent) {
