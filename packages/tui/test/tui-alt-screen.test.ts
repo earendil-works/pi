@@ -408,6 +408,35 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
+	it("scrolls the transcript by one line with custom bindings", async () => {
+		const originalKeybindings = getKeybindings();
+		const terminal = new VirtualTerminal(20, 10);
+		const tui = new TuiAltScreen(terminal);
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.altScreen.lineUp": "ctrl+y",
+				"tui.altScreen.lineDown": "ctrl+e",
+			}),
+		);
+		try {
+			tui.addChild(new Text(Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 20);
+
+			terminal.sendInput("\x19");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 19);
+
+			terminal.sendInput("\x05");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 20);
+		} finally {
+			tui.stop();
+			setKeybindings(originalKeybindings);
+		}
+	});
+
 	it("routes Ctrl-modified viewport navigation to the focused component", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const tui = new TuiAltScreen(terminal);

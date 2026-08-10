@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added unbound single-line transcript scrolling actions, `tui.altScreen.lineUp` and `tui.altScreen.lineDown`, for fullscreen TUI keybindings ([#7830](https://github.com/earendil-works/pi/issues/7830)).
+
 ### Changed
 
 - Reduced alternate-screen per-frame allocation churn roughly 9-18x by painting full-width layout rows as direct line references instead of recompositing every visible row through ANSI/grapheme segmentation on each frame.

@@ -440,6 +440,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!isRelease) this.scrollBy(Math.max(1, Math.floor(this.getPrimaryScrollView().viewportHeight / 2)));
 			return { consume: true };
 		}
+		if (keybindings.matches(data, "tui.altScreen.lineUp")) {
+			if (!isRelease) this.scrollBy(-1);
+			return { consume: true };
+		}
+		if (keybindings.matches(data, "tui.altScreen.lineDown")) {
+			if (!isRelease) this.scrollBy(1);
+			return { consume: true };
+		}
 		if (keybindings.matches(data, "tui.altScreen.previousPrompt")) {
 			if (!isRelease) this.scrollToPrompt(-1);
 			return { consume: true };

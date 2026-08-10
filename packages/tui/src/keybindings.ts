@@ -46,6 +46,8 @@ export interface Keybindings {
 	"tui.altScreen.pageDown": true;
 	"tui.altScreen.halfPageUp": true;
 	"tui.altScreen.halfPageDown": true;
+	"tui.altScreen.lineUp": true;
+	"tui.altScreen.lineDown": true;
 	"tui.altScreen.previousPrompt": true;
 	"tui.altScreen.nextPrompt": true;
 	"tui.altScreen.top": true;
@@ -166,6 +168,14 @@ export const TUI_KEYBINDINGS = {
 	"tui.altScreen.halfPageDown": {
 		defaultKeys: [],
 		description: "Scroll viewport down half a page",
+	},
+	"tui.altScreen.lineUp": {
+		defaultKeys: [],
+		description: "Scroll viewport up one line",
+	},
+	"tui.altScreen.lineDown": {
+		defaultKeys: [],
+		description: "Scroll viewport down one line",
 	},
 	"tui.altScreen.previousPrompt": {
 		defaultKeys: "ctrl+shift+up",
