@@ -1148,6 +1148,10 @@ export interface MarkdownTransformContext {
 	messageType: "user" | "assistant" | "assistant-thinking";
 	isStreaming: boolean;
 	availableWidth: number;
+	/** Stable id for the session entry this message belongs to. Available for restored sessions; undefined for new streaming messages until persisted. */
+	messageId?: string;
+	/** ISO timestamp of the session entry this message belongs to. Available for restored sessions; undefined for new streaming messages until persisted. */
+	timestamp?: string;
 }
 
 export type MarkdownTransformer = (markdown: string, context: MarkdownTransformContext) => string;

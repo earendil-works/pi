@@ -30,7 +30,7 @@ describe("UserMessageComponent", () => {
 		const component = new UserMessageComponent("The input is $x^2$.", undefined, 1, [
 			(markdown, context) => {
 				calls.push("formula");
-				expect(context).toEqual({ messageType: "user", isStreaming: false, availableWidth: 78 });
+				expect(context).toMatchObject({ messageType: "user", isStreaming: false, availableWidth: 78 });
 				return markdown.replace("$x^2$", "x²");
 			},
 			(markdown) => {
@@ -54,5 +54,32 @@ describe("UserMessageComponent", () => {
 		component.invalidate();
 
 		expect(stripAnsi(component.render(80).join("\n"))).toContain("Message after");
+	});
+
+	test("passes message identity to Markdown transformer context", () => {
+		initTheme("dark");
+		let capturedContext: any;
+		const component = new UserMessageComponent(
+			"hello",
+			undefined,
+			1,
+			[
+				(markdown, context) => {
+					capturedContext = context;
+					return markdown;
+				},
+			],
+			"entry-abc123",
+			"2025-01-15T10:30:00.000Z",
+		);
+
+		component.render(80);
+
+		expect(capturedContext).toMatchObject({
+			messageType: "user",
+			isStreaming: false,
+			messageId: "entry-abc123",
+			timestamp: "2025-01-15T10:30:00.000Z",
+		});
 	});
 });

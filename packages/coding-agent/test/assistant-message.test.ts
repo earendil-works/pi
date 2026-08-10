@@ -122,7 +122,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [
 			(markdown, context) => {
 				calls.push("formula");
-				expect(context).toEqual({ messageType: "assistant", isStreaming: false, availableWidth: 78 });
+				expect(context).toMatchObject({ messageType: "assistant", isStreaming: false, availableWidth: 78 });
 				return markdown.replace("$x^2$", "x²");
 			},
 			(markdown) => {
@@ -237,5 +237,65 @@ describe("AssistantMessageComponent", () => {
 		const unpaddedComponent = new UserMessageComponent("hello", undefined, 0);
 		const unpaddedLines = unpaddedComponent.render(40).map((line) => stripAnsi(line));
 		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
+	});
+
+	test("passes message identity to assistant Markdown transformer context", () => {
+		initTheme("dark");
+		const capturedContexts: any[] = [];
+		const message = createAssistantMessage([{ type: "text", text: "answer" }]);
+		const component = new AssistantMessageComponent(
+			message,
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			[
+				(markdown, context) => {
+					capturedContexts.push(context);
+					return markdown;
+				},
+			],
+			"entry-def456",
+			"2025-06-15T14:00:00.000Z",
+		);
+
+		component.render(80);
+
+		expect(capturedContexts.length).toBeGreaterThan(0);
+		expect(capturedContexts[0]).toMatchObject({
+			messageType: "assistant",
+			isStreaming: false,
+			messageId: "entry-def456",
+			timestamp: "2025-06-15T14:00:00.000Z",
+		});
+	});
+
+	test("generates a stable temp messageId for streaming assistant messages", () => {
+		initTheme("dark");
+		const capturedIds: string[] = [];
+		const component = new AssistantMessageComponent(
+			undefined,
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			[
+				(markdown, context) => {
+					capturedIds.push(context.messageId ?? "");
+					return markdown;
+				},
+			],
+		);
+
+		// Simulate streaming updates to the same component
+		component.updateContent(createAssistantMessage([{ type: "text", text: "partial" }]), true);
+		component.render(80);
+		component.updateContent(createAssistantMessage([{ type: "text", text: "more" }]), true);
+		component.render(80);
+
+		// All transformer calls for this component should have the same messageId
+		expect(capturedIds.length).toBeGreaterThan(1);
+		expect(new Set(capturedIds).size).toBe(1);
+		expect(capturedIds[0].length).toBeGreaterThan(0);
 	});
 });
