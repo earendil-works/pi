@@ -18,6 +18,7 @@
  *   pi --extension examples/extensions/goal-mode/index.ts --goal "Fix the flaky suite"
  */
 
+import { basename } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -46,15 +47,51 @@ function persistGoal(pi: ExtensionAPI, goal: GoalState | undefined): void {
 	pi.appendEntry(ENTRY_TYPE, goal ?? null);
 }
 
-function updateStatus(_pi: ExtensionAPI, ctx: ExtensionContext): void {
-	if (!goal || goal.status !== "active") {
+function getBaseTitle(pi: ExtensionAPI): string {
+	const cwd = basename(process.cwd());
+	const sessionName = pi.getSessionName();
+	return sessionName ? `pi - ${sessionName} - ${cwd}` : `pi - ${cwd}`;
+}
+
+function getGoalStatusLabel(status: GoalState["status"]): string {
+	switch (status) {
+		case "active":
+			return "GOAL MODE";
+		case "paused":
+			return "GOAL PAUSED";
+		case "complete":
+			return "GOAL COMPLETE";
+		case "budget_limited":
+			return "GOAL BUDGET LIMITED";
+	}
+}
+
+function updateStatus(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	if (!goal) {
 		ctx.ui.setStatus("goal-mode", undefined);
 		ctx.ui.setWidget("goal-mode", undefined);
+		ctx.ui.setTitle(getBaseTitle(pi));
 		return;
 	}
+
+	const label = getGoalStatusLabel(goal.status);
 	ctx.ui.setStatus("goal-mode", `goal: ${goal.status}`);
-	const lines = [`Goal (${goal.status}): ${goal.objective}`, ...goal.progress.slice(-3).map((line) => `  ${line}`)];
+
+	const lines = [`[${label}]`, `Objective: ${goal.objective}`];
+	if (goal.budget?.tokens !== undefined || goal.budget?.cost !== undefined) {
+		const budget = goal.budget;
+		const parts: string[] = [];
+		if (budget.tokens !== undefined) parts.push(`tokens ${budget.tokens}`);
+		if (budget.cost !== undefined) parts.push(`cost ${budget.cost}`);
+		lines.push(`Budget: ${parts.join(", ")}`);
+	}
+	if (goal.progress.length > 0) {
+		lines.push("Progress:", ...goal.progress.slice(-3).map((line) => `  ${line}`));
+	}
 	ctx.ui.setWidget("goal-mode", lines);
+
+	const titleObjective = goal.objective.length > 48 ? `${goal.objective.slice(0, 45)}...` : goal.objective;
+	ctx.ui.setTitle(`[${label}] ${titleObjective}`);
 }
 
 function parseBudgetFlags(pi: ExtensionAPI): GoalBudget {

@@ -60,6 +60,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 	const notify = vi.fn();
 	const setStatus = vi.fn();
 	const setWidget = vi.fn();
+	const setTitle = vi.fn();
 
 	const api = {
 		registerFlag: vi.fn(),
@@ -76,6 +77,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 			if (name === "goal") return options.flagGoal;
 			return undefined;
 		}),
+		getSessionName: vi.fn(() => undefined),
 		sendUserMessage,
 		appendEntry,
 	} as unknown as ExtensionAPI;
@@ -84,7 +86,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 
 	const ctx = {
 		hasUI: true,
-		ui: { notify, setStatus, setWidget },
+		ui: { notify, setStatus, setWidget, setTitle },
 		sessionManager: { getBranch: () => entries },
 		isIdle: () => options.idle ?? true,
 		hasPendingMessages: () => options.pending ?? false,
@@ -114,6 +116,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 		runCommand,
 		sendUserMessage,
 		setStatus,
+		setTitle,
 		setWidget,
 		tools,
 	};
@@ -121,7 +124,7 @@ function setup(options: { idle?: boolean; pending?: boolean; flagGoal?: string }
 
 describe("goal-mode example extension", () => {
 	it("sets a goal, persists it, and starts work", async () => {
-		const { entries, runCommand, sendUserMessage } = setup();
+		const { entries, runCommand, sendUserMessage, setStatus, setTitle, setWidget } = setup();
 
 		await runCommand("goal", "Fix the flaky suite --tokens 100");
 
@@ -134,20 +137,33 @@ describe("goal-mode example extension", () => {
 		});
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage.mock.calls[0]?.[0]).toContain("Fix the flaky suite");
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: active");
+		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", [
+			"[GOAL MODE]",
+			"Objective: Fix the flaky suite",
+			"Budget: tokens 100",
+		]);
+		expect(setTitle).toHaveBeenLastCalledWith("[GOAL MODE] Fix the flaky suite");
 	});
 
 	it("pauses, resumes, and clears a goal", async () => {
-		const { entries, runCommand } = setup();
+		const { entries, runCommand, setStatus, setTitle, setWidget } = setup();
 
 		await runCommand("goal", "Fix tests");
 		await runCommand("goal", "pause");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "paused" });
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: paused");
+		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", ["[GOAL PAUSED]", "Objective: Fix tests"]);
 
 		await runCommand("goal", "resume");
 		expect(customData(entries.at(-1))).toMatchObject({ status: "active" });
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", "goal: active");
 
 		await runCommand("goal", "clear");
 		expect(customData(entries.at(-1))).toBeNull();
+		expect(setStatus).toHaveBeenLastCalledWith("goal-mode", undefined);
+		expect(setWidget).toHaveBeenLastCalledWith("goal-mode", undefined);
+		expect(setTitle).toHaveBeenLastCalledWith(expect.stringContaining("pi - "));
 	});
 
 	it("tracks tool usage and progress on turn end", async () => {

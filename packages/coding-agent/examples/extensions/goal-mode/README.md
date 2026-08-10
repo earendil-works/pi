@@ -34,6 +34,9 @@ pi --extension examples/extensions/goal-mode/index.ts \
 
 - The goal is stored as a custom session entry, so it survives resume, fork,
   and compaction. The active branch's most recent goal entry wins.
+- When a goal exists, the footer/status bar, editor widget, and terminal title
+  show `GOAL MODE`, `GOAL PAUSED`, `GOAL COMPLETE`, or `GOAL BUDGET LIMITED`.
+  Clearing the goal restores the normal-mode display with no goal indicator.
 - The active goal is injected into every model request. The model is told to
   verify progress against concrete evidence and to call `complete_goal` only
   after the objective is satisfied.
