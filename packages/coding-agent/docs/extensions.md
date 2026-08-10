@@ -397,7 +397,9 @@ Fired when a session is started, loaded, or reloaded.
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
   // event.previousSessionFile - present for "new", "resume", and "fork"
-  ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
+  // event.contextFiles - loaded context files, in system-prompt order
+  const contextBytes = event.contextFiles?.reduce((total, file) => total + Buffer.byteLength(file.content), 0) ?? 0;
+  ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"} (${contextBytes} context bytes)`, "info");
 });
 ```
 

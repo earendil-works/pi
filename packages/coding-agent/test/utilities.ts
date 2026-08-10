@@ -208,6 +208,7 @@ export async function createTestExtensionsResult(
 
 export interface CreateTestResourceLoaderOptions {
 	extensionsResult?: LoadExtensionsResult;
+	contextFiles?: Array<{ path: string; content: string }>;
 }
 
 export function createTestResourceLoader(options: CreateTestResourceLoaderOptions = {}): ResourceLoader {
@@ -222,7 +223,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		getSkills: () => ({ skills: [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
-		getAgentsFiles: () => ({ agentsFiles: [] }),
+		getAgentsFiles: () => ({ agentsFiles: options.contextFiles ?? [] }),
 		getSystemPrompt: () => undefined,
 		getSystemPromptSource: () => undefined,
 		getAppendSystemPrompt: () => [],

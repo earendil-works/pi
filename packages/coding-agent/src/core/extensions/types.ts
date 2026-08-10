@@ -565,6 +565,8 @@ export interface SessionStartEvent {
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Previously active session file. Present for "new", "resume", and "fork". */
 	previousSessionFile?: string;
+	/** Context files loaded into the system prompt, in prompt order. */
+	contextFiles?: Array<{ path: string; content: string }>;
 }
 
 /** Fired when the current session metadata changes. */

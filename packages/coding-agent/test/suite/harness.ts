@@ -69,6 +69,7 @@ export interface HarnessOptions {
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
+	contextFiles?: Array<{ path: string; content: string }>;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
@@ -177,7 +178,11 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)
 		: undefined;
 	const resourceLoader =
-		options.resourceLoader ?? createTestResourceLoader(extensionsResult ? { extensionsResult } : undefined);
+		options.resourceLoader ??
+		createTestResourceLoader({
+			extensionsResult,
+			contextFiles: options.contextFiles,
+		});
 
 	const session = new AgentSession({
 		agent,

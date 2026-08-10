@@ -2255,8 +2255,15 @@ export class AgentSession {
 		}
 
 		this._applyExtensionBindings(this._extensionRunner);
-		await this._extensionRunner.emit(this._sessionStartEvent);
+		await this._extensionRunner.emit(this._withLoadedContextFiles(this._sessionStartEvent));
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+	}
+
+	private _withLoadedContextFiles(event: SessionStartEvent): SessionStartEvent {
+		const contextFiles = this._resourceLoader
+			.getAgentsFiles()
+			.agentsFiles.map(({ path, content }) => ({ path, content }));
+		return contextFiles.length > 0 ? { ...event, contextFiles } : event;
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2629,7 +2636,7 @@ export class AgentSession {
 			this._extensionErrorListener;
 		if (hasBindings) {
 			await options?.beforeSessionStart?.();
-			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
+			await this._extensionRunner.emit(this._withLoadedContextFiles({ type: "session_start", reason: "reload" }));
 			await this.extendResourcesFromExtensions("reload");
 		}
 	}
